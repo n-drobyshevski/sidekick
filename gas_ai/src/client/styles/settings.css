@@ -165,3 +165,15 @@ details.why[open] > summary .why__caret { transform: rotate(90deg); }
    no surface of its own. Only the focus ring matters, because the panel is tabbable (tabindex
    0) so a keyboard reader landing past the strip has somewhere to be. */
 .settings-tabpanel:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+
+/* The rank editor's small labelled number fields — the shares, the two weight tables and the
+   EPSS threshold. Same recipe as the AARS band rail's precise-entry row (aars.css
+   .band-rail__inputs, .rule-row): a flex-wrap row of field() columns, so four shares read as
+   one group of numbers rather than four settings-rows competing for the full row width. */
+.rank-inputs { display: flex; flex-wrap: wrap; gap: var(--space-3); margin: var(--space-2) 0; }
+.rank-inputs .field { display: flex; flex-direction: column; }
+.rank-inputs input[type="number"] { width: 88px; }
+.rank-inputs__title {
+  flex-basis: 100%; font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--ink);
+  margin: var(--space-2) 0 0;
+}

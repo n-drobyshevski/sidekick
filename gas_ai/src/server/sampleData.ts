@@ -20,7 +20,7 @@ import type {
   GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
 } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
-import { classifyIssue, OTHER_GROUP_ID } from "../domain/toxicCombos";
+import { classifyIssue, OTHER_GROUP_ID, RISK_CATEGORY_ID } from "../domain/toxicCombos";
 
 const T0 = "2026-04-02T08:00:00Z"; // firstSeen for long-lived assets
 const T1 = "2026-06-28T05:00:00Z"; // lastSeen (the seed "sync" horizon)
@@ -102,6 +102,38 @@ interface NodeSeed {
   tags?: Array<{ key: string; value: string }>;
 }
 
+/**
+ * The project CHAIN a seed's project names stand for — the objects a live sync would return.
+ *
+ * ONE recipe, called by `node()` and by `issue()` below, rather than the same literal written
+ * twice. The ids matter more than they look: the project switcher keys on `id` and never on
+ * name, so a seed whose asset refs and issue refs were built by two different expressions
+ * could disagree about which project a row is in and the demo would show a filter dropping
+ * rows for no visible reason. See `ProjectRef` in domain/graphTypes.ts for the ancestry rule
+ * the folder entries encode.
+ *
+ * `businessImpact` is stamped on the LEAVES only, matching Wiz — a folder has no risk
+ * profile of its own — and only when the caller has one to give.
+ */
+function projectRefsFor(
+  names: string[] | undefined, businessImpact?: string,
+): NonNullable<GNode["projects"]> {
+  const list = names ?? [];
+  if (!list.length) return [];
+  return [
+    { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
+    ...(list.some((name) => SUPPORT_GROUP_OVER.indexOf(name) >= 0)
+      ? [{ id: DEMO_SUPPORT.id, name: DEMO_SUPPORT.name, isFolder: true }]
+      : []),
+    ...list.map((name) => ({
+      id: `proj-${name.toLowerCase()}`,
+      name,
+      isFolder: false,
+      ...(businessImpact ? { businessImpact } : {}),
+    })),
+  ];
+}
+
 function node(seed: NodeSeed): GNode {
   return {
     id: seed.id,
@@ -154,20 +186,7 @@ function node(seed: NodeSeed): GNode {
     // register only, so "select the unit", "select the support group" and "select a project"
     // are three visibly different selections rather than two. See its own comment for why it
     // is a folder and still not a business unit.
-    projects: (seed.projects ?? []).length
-      ? [
-        { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
-        ...((seed.projects ?? []).some((name) => SUPPORT_GROUP_OVER.indexOf(name) >= 0)
-          ? [{ id: DEMO_SUPPORT.id, name: DEMO_SUPPORT.name, isFolder: true }]
-          : []),
-        ...(seed.projects ?? []).map((name) => ({
-          id: `proj-${name.toLowerCase()}`,
-          name,
-          isFolder: false,
-          ...(seed.businessImpact ? { businessImpact: seed.businessImpact } : {}),
-        })),
-      ]
-      : [],
+    projects: projectRefsFor(seed.projects, seed.businessImpact),
     technologyCategories: seed.techCats,
     identityPurpose: seed.identityPurpose,
     issueAnalytics: seed.issueAnalytics,
@@ -647,6 +666,16 @@ function issue(seed: IssueSeed): IssueRow {
     region: seed.region,
     account: seed.account,
     projects: seed.projects,
+    // The same projects as objects, built by the SAME recipe the assets use, so an issue and
+    // the asset it hangs off can never claim different project ids. A live sync writes this
+    // on every row (syncNormalize.normalizeIssuesPage), so the seed does too — an empty array
+    // where a seed names no project, which is what a sync reports when Wiz attributed the
+    // issue to nothing, and NOT the absent value that means "written before the column".
+    //
+    // No `businessImpact` on these entries, deliberately: `IssueSeed.businessImpact` is the
+    // issue's own worst-of roll-up, and spreading a worst-of back onto each project would
+    // invent a per-project tier from a figure that already threw the per-project split away.
+    projectRefs: projectRefsFor(seed.projects),
     frameworks: seed.frameworks,
     justification: seed.justification,
     createdAt: seed.createdAt,
@@ -661,6 +690,12 @@ function issue(seed: IssueSeed): IssueRow {
     ignoreExpiredAt: seed.ignoreExpiredAt,
     aiVerdict: seed.aiVerdict,
     aiRecommendedSeverity: seed.aiRecommendedSeverity,
+    // The register's scope stamp, exactly as a live sync at the default scope would write
+    // it. Not a seed knob: the sample landscape stands in for a sync, and a sync that wrote
+    // rows with no stamp beside a commit record naming a scope would have the tab and the
+    // history row telling two stories about one fact. One category, because that is the
+    // default and the default is what everything pinned about this landscape is true of.
+    categories: [RISK_CATEGORY_ID],
   };
   if (seed.environments?.length) row.environments = seed.environments;
   if (seed.ticketUrls?.length) row.ticketUrls = seed.ticketUrls;

@@ -19,7 +19,7 @@ const STALE_REMEDIES = {
 /**
  * The staleness notices this register should be carrying, worst first.
  *
- * TWO KINDS, AND THEY HAVE DIFFERENT REMEDIES — which is the whole reason this is a list
+ * THREE KINDS, AND THEY HAVE DIFFERENT REMEDIES — which is the whole reason this is a list
  * rather than a flag. `aarsRule.stale` means the model moved since these scores were computed
  * and Recompute repairs it with no Wiz call. `derivation.stale` means the STORED FACTS came
  * from an older normalizer, and Recompute cannot repair it at all: the original reading was
@@ -27,6 +27,10 @@ const STALE_REMEDIES = {
  * Only a full sync does. Pointing an operator at a button that cannot help is worse than not
  * warning at all, so the derivation notice goes FIRST — someone who reads one line reads the
  * one that Recompute will not fix.
+ *
+ * `registerScope.kind` is the third: the stored figures are not damaged, they count a
+ * DIFFERENT POPULATION than the settings now select, and only a sync reconciles the two. It
+ * sits between the other two — a sync remedy like the first, but nothing was lost.
  *
  * Pure, and exported for the same reason actionView's filters are: the page's logic is tested
  * here, the page's pixels are checked in the dev harness.
@@ -39,6 +43,21 @@ export function staleNotices(boot) {
       text: "These scores were computed from facts an older sync collected. Recompute cannot "
         + "repair them — the original readings were lost at ingest — only a full sync can.",
       ...(STALE_REMEDIES[boot.derivation.remedy] || STALE_REMEDIES.sync),
+    });
+  }
+  // A THIRD kind, and it belongs BELOW the derivation notice and ABOVE the rule one: like
+  // derivation it needs a sync and Recompute cannot touch it, but unlike derivation the
+  // stored readings are not damaged — they are correct answers to a narrower question than
+  // the settings now ask. Both sides are printed, because "the register moved" is useless
+  // without saying from what to what.
+  if (boot && boot.registerScope && boot.registerScope.kind === "registerScope") {
+    const n = boot.registerScope;
+    out.push({
+      id: "registerScope",
+      text: "These figures count the risk categories the last sync collected ("
+        + n.persisted + "). Settings now select " + n.current
+        + " — the register will not count them until the next sync.",
+      ...(STALE_REMEDIES[n.remedy] || STALE_REMEDIES.sync),
     });
   }
   if (boot && boot.aarsRule && boot.aarsRule.stale) {

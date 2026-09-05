@@ -127,13 +127,30 @@ function destroyExisting(canvas) {
   if (existing) existing.destroy();
 }
 
+/** `#rrggbb` at an alpha — the stacked bands' fill, from the same hue as their line. */
+function withAlpha(hex, alpha) {
+  const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(String(hex || ""));
+  if (!m) return `rgba(190, 18, 60, ${alpha})`;
+  return `rgba(${parseInt(m[1], 16)}, ${parseInt(m[2], 16)}, ${parseInt(m[3], 16)}, ${alpha})`;
+}
+
 /**
  * Lines over ISO dates (sync trend). `series` is [{ label, color, data }] — one entry
  * draws the accent-colored single line the sync trend uses; several draw one line per
  * severity, each in its own severity token, with the legend on (the only way to tell
  * them apart, so color is never carrying it alone).
+ *
+ * `stacked` draws them as bands summing to the population instead of as independent lines —
+ * for a series that IS a partition (every issue is in exactly one adjacency state), where
+ * the total is as much of the reading as the parts.
+ *
+ * `pointNotes` is one string per POINT, appended to that point's tooltip title. It exists for
+ * a denominator that must never become a series: `edgesKnown` beside the adjacency counts is
+ * a count of EDGES, and putting it on an axis counting issues is the other way to lose it
+ * (aarsTrend.ts TrendPoint.annotations). The app's hover card renders the title lines, so the
+ * note arrives in the same card as the values rather than in a second vocabulary.
  */
-export function trendLine(canvas, points, { yLabel, series } = {}) {
+export function trendLine(canvas, points, { yLabel, series, stacked, pointNotes } = {}) {
   destroyExisting(canvas);
   const opts = baseOptions();
   opts.scales.y.beginAtZero = true;
@@ -145,6 +162,20 @@ export function trendLine(canvas, points, { yLabel, series } = {}) {
     : { display: false };
   }
   const multi = Array.isArray(series) && series.length > 1;
+  if (stacked) opts.scales.y.stacked = true;
+  if (Array.isArray(pointNotes) && pointNotes.length) {
+    opts.plugins.tooltip.callbacks = {
+      ...(opts.plugins.tooltip.callbacks || {}),
+      // An ARRAY of title lines: ui/tip.js walks `model.title` and then the body, so the note
+      // sits above the values in the same card. A point with no note keeps the bare date.
+      title: (items) => {
+        const i = items && items.length ? items[0].dataIndex : -1;
+        const date = i >= 0 ? String((points[i] || {}).x || "").slice(0, 10) : "";
+        const note = i >= 0 ? pointNotes[i] : "";
+        return note ? [date, note] : [date];
+      },
+    };
+  }
   if (multi) {
     opts.plugins.legend = {
       display: true,
@@ -159,8 +190,12 @@ export function trendLine(canvas, points, { yLabel, series } = {}) {
       label: s.label,
       data: s.data,
       borderColor: s.color || ACCENT,
-      backgroundColor: multi ? s.color || ACCENT : "rgba(190, 18, 60, 0.08)",
-      fill: !multi,
+      // A stacked band is a SURFACE and takes a translucent fill; an unstacked multi-series
+      // line is a line and its background only colours the legend swatch.
+      backgroundColor: stacked
+        ? withAlpha(s.color || ACCENT, 0.35)
+        : (multi ? s.color || ACCENT : "rgba(190, 18, 60, 0.08)"),
+      fill: stacked || !multi,
       tension: 0.25,
       pointRadius: points.length > 40 ? 0 : 3,
       pointBackgroundColor: s.color || ACCENT,

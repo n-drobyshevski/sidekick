@@ -13,6 +13,22 @@ import type { ProblemVerdictInput } from "./problem";
 import type { Rec } from "./util";
 
 /**
+ * Where a row sits relative to the AI estate: `DIRECT` on an AI asset, `ADJACENT` one edge
+ * away, `UNLINKED` neither. RE-EXPORTED from rank.ts rather than declared a second time —
+ * rank.ts is the module that READS the field (`RankInput.aiAdjacency`, `adjacencyOf`), so a
+ * copied union would be a second place for the same three words to drift, and the drift
+ * would be silent: a value the ledger writes and the ranker has never heard of scores as
+ * unmeasured rather than failing. rank.ts imports nothing at all, so this closes no cycle,
+ * and `export type` is erased at compile time.
+ *
+ * ABSENT is a fourth state and a different one: no adjacency pass ran over the row.
+ * `UNLINKED` says we looked; absent says we did not, and `adjacencyOf` already returns a
+ * `null` component for it rather than the mid-scale UNLINKED weight.
+ */
+import type { AiAdjacency, ExploitationTier } from "./rank";
+export type { AiAdjacency, ExploitationTier };
+
+/**
  * Position on the severity scale, LOWER = WORSE, with anything unrecognised sorting last.
  *
  * Graph-local on purpose. It lived as three byte-identical private copies in graphEnrich,
@@ -667,10 +683,90 @@ export interface IssueRow {
    * ledger synced before attribution existed). `none` says we looked; absent says we did not.
    */
   attributionHop?: "direct" | "RUNS_AS" | "none";
+  /**
+   * Where this row sits relative to the AI estate — `DIRECT` on an AI asset, `ADJACENT` one
+   * edge away along `ADJACENCY_EDGE_TYPES`, `UNLINKED` neither. Set by `withAiAdjacency`.
+   *
+   * A WIDER QUESTION THAN `attributedAssetIds`, not a duplicate of it. Attribution walks one
+   * edge type (`RUNS_AS`) and answers "which AI asset does this issue DESCRIBE"; adjacency
+   * walks twelve and answers "is this row anywhere near the estate at all". A row can be
+   * ADJACENT and attributed to nothing — reachable, but not about an AI asset.
+   *
+   * ABSENT means no adjacency pass ran, which is what a row synced before this existed
+   * carries, and `rank.adjacencyOf` reads as unmeasured. `UNLINKED` is a measurement.
+   */
+  aiAdjacency?: AiAdjacency;
+  /**
+   * The edge type the adjacency came through, on an `ADJACENT` row only — the audit trail,
+   * for the same reason `attributionHop` is one. Absent on `DIRECT` (the row is ON the asset,
+   * no edge was walked) and on `UNLINKED` (no edge reached one).
+   */
+  adjacencyVia?: string;
+  /**
+   * The AI assets reached in that one hop, sorted so a re-run cannot reorder a persisted list
+   * and look like a change. EMPTY on `DIRECT` as well as on `UNLINKED`: the AI asset a DIRECT
+   * row sits on is `assetId` itself and is already on the row, and this field means "assets
+   * one edge away" throughout rather than meaning two different things by state.
+   */
+  adjacentAssetIds?: string[];
+  /**
+   * The exploitation evidence folded onto this issue from the vulnerability findings that
+   * NAME it (`domain/exploitation.ts`), and the three fields `rank.RankInput` already reads
+   * under exactly these names — the vocabulary is matched deliberately so the ranker needs no
+   * join and no translation layer between the ledger and the model.
+   *
+   * ALL THREE ABSENT IS A FOURTH STATE, and the load-bearing one: no evidence pass ran over
+   * this register at all (VULN_FINDINGS refused, or a row synced before the step existed).
+   * `rank.exploitationOf` prices an absent tier as `null` — the term drops out of the blend —
+   * where `"none"` is a measurement that scores. A row that WAS looked at and joined no
+   * exploited finding carries `tier: "none"`; one that joined a finding whose three signals
+   * were all null carries `"unknown"`. Absent, none and unknown are three different claims
+   * and nothing here may collapse them.
+   *
+   * `epssPeak` is the HIGHEST EPSS seen across the folded findings, never a mean: the question
+   * the register answers is whether anything under this issue should have been prioritised.
+   */
+  exploitationTier?: ExploitationTier;
+  epssPeak?: number | null;
+  /** How many findings the tier was folded from — the reasons text, and the audit trail. */
+  exploitationFindingCount?: number;
   assetName: string;
+  /**
+   * The risk categories this issue was FETCHED under — the register's own scope stamp.
+   *
+   * Wiz says nothing about it: `Issue` carries 51 fields and not one names a category, so
+   * the only record of which question a row answers is which step asked it (see
+   * domain/registerScope.ts). Widening the category list without this field would turn
+   * "AI issues" into "issues" with no field able to catch it.
+   *
+   * More than one entry when an issue sits in several selected categories: it arrives once
+   * per category and mergeParts unions the stamps. Absent only on a row written before the
+   * column existed, which reads back as the AI category — the only scope those syncs ran.
+   */
+  categories?: string[];
   region?: string;
   account?: string;
   projects?: string[];
+  /**
+   * The SAME projects as `projects` above, as the objects Wiz returned rather than as names.
+   *
+   * Two fields for one fact, and the split is load-bearing in both directions. `projects`
+   * stays the name list because the facets and the asset table read it and names are what an
+   * operator recognises. This one exists because names are NOT the project switcher's key:
+   * they are not unique across a thousand-project tenant and they carry no ancestry, so only
+   * the id can answer "is this row inside VALUE-CHAIN" (see `ProjectRef`).
+   *
+   * The defect it fixes: the project view scoped issues by their ASSET alone, and an issue
+   * raised on a VM, a container or an identity has no asset row at all — `kindFromWizType`
+   * refuses those types, so no node is written. Every one of those issues disappeared under
+   * any project view, silently, which is the worst shape a security register can take: a
+   * filtered list that looks complete. The row's own attribution is the second way in.
+   *
+   * ABSENT is not empty. A row written before this column existed carries unknown refs, and
+   * reading that as "belongs to no project" would assert something no sync ever measured;
+   * an empty ARRAY is a live sync saying Wiz attributed this issue to nothing.
+   */
+  projectRefs?: ProjectRef[];
   frameworks?: {
     owaspLlm?: string[];
     owaspAgentic?: string[];
@@ -1043,4 +1139,46 @@ export function domainCatalogue(assets: readonly GNode[]): DomainCatalogueEntry[
     else byName.set(name, { name, assets: 1 });
   }
   return [...byName.values()].sort((x, y) => x.name.localeCompare(y.name));
+}
+
+/**
+ * One `vulnerabilityFindings` row, normalized — the raw exploitation observation before it is
+ * folded onto an issue (`domain/exploitation.ts`).
+ *
+ * NOT A LEDGER ROW. Nothing writes these to a tab: 7,368 of them fold into at most a few
+ * thousand `ExploitationRow`s, and the finding itself belongs to the OS-vulnerability register
+ * that already owns that population. What survives the sync is the fold.
+ *
+ * THE THREE SIGNALS ARE TRI-STATE and stay that way from here to the sheet. Wiz answers `null`
+ * for a flag it never evaluated, and collapsing that to `false` is what makes an unassessed
+ * finding read as a clean one — the same failure `measurability.ts` exists to prevent one
+ * register over. `triBool` / `triNum` in the normalizer are the only things allowed to produce
+ * these values.
+ */
+export interface NormalizedVulnFinding {
+  id: string;
+  name?: string;
+  status?: string;
+  severity?: string;
+  /** `null` = Wiz never evaluated it. Never `false` by default. */
+  hasKev: boolean | null;
+  /** `null` = Wiz never evaluated it. Never `false` by default. */
+  hasExploit: boolean | null;
+  /** `null` = no EPSS score was captured. Never `0` by default. */
+  epss: number | null;
+  epssPercentile?: number | null;
+  epssSeverity?: string;
+  firstDetectedAt?: string;
+  resolvedAt?: string;
+  /**
+   * The issues this finding names, from whichever shape the tenant's schema uses — see
+   * `relatedIssueIdsOf`. EMPTY is a real reading and is counted (`unjoined`): the filter asked
+   * for `hasRelatedIssue: true`, so a row arriving with no id is the join field being absent
+   * or differently shaped, which is a finding about the query rather than about the estate.
+   */
+  issueIds: string[];
+  /** The vulnerable asset, when the union member carried an id. Absent is not empty. */
+  assetId?: string;
+  assetType?: string;
+  assetName?: string;
 }

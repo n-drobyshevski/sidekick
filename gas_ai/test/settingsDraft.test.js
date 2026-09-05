@@ -8,6 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  categoryDraftPatch,
   changeCountText,
   changeSummary,
   changedFields,
@@ -15,6 +16,9 @@ import {
   dirtyTabs,
   draftWarnings,
   normalizeTab,
+  rankDraftFromPreset,
+  rankDraftPatch,
+  rankShareTotal,
   SETTING_FIELDS,
   SETTING_KEYS,
   SETTINGS_TABS,
@@ -22,6 +26,12 @@ import {
   settingsPatch,
   validateDraft,
 } from "../src/client/js/settingsModel.js";
+// The real rule, not a hand-written copy of its shape — the same argument helpContent.test.js
+// makes for importing DEFAULT_AARS_RULE: a fixture that spells out its own `shares` or
+// `exploitationWeights` asserts against a fiction, which is exactly how a settings page can
+// ship reading a field the model renamed. A .js test importing a .ts domain module is fine;
+// only the reverse direction is the one tsc rejects (see this file's own header).
+import { DEFAULT_RANK_RULE, RANK_PRESET_V2 } from "../src/domain/rank";
 
 /** The api_getSettings shape, as the page receives it. */
 const PAYLOAD = {
@@ -32,7 +42,19 @@ const PAYLOAD = {
   autoExpand: true,
   hasCredentials: true,
   fiveRsPins: { in: ["p1"], out: ["p2", "p3"] },
+  issueCategories: ["wct-id-1998"],
+  rankRule: DEFAULT_RANK_RULE,
+  rankLeadsSort: false,
 };
+
+/** The candidateCategories shape: the AI category always first, by CANDIDATE_CATEGORIES's own
+ * construction — categoryDraftPatch takes that id as a plain argument and never assumes it. */
+const CANDIDATES = [
+  { id: "wct-id-1998", name: "AI Security" },
+  { id: "wct-id-3", name: "Vulnerability Assessment" },
+  { id: "cat-data", name: "Data Security" },
+];
+const AI_ID = CANDIDATES[0].id;
 
 const ALL_TABS = SETTINGS_TABS.map((t) => t.key);
 
@@ -271,5 +293,144 @@ describe("draftWarnings", () => {
   it("does not warn when the scope never loaded", () => {
     expect(draftWarnings(saved, settingsDraft(PAYLOAD), null)).toEqual([]);
     expect(draftWarnings(saved, settingsDraft(PAYLOAD), undefined)).toEqual([]);
+  });
+});
+
+describe("settingsDraft: register scope and rank", () => {
+  it("copies the category list rather than aliasing the payload", () => {
+    const draft = settingsDraft(PAYLOAD);
+    draft.issueCategories.push("wct-id-3");
+    expect(PAYLOAD.issueCategories).toEqual(["wct-id-1998"]);
+  });
+
+  it("defaults an absent category list to empty rather than throwing", () => {
+    expect(settingsDraft({}).issueCategories).toEqual([]);
+    expect(settingsDraft(undefined).issueCategories).toEqual([]);
+  });
+
+  it("deep-clones rankRule so editing the draft cannot mutate the shipped default", () => {
+    const draft = settingsDraft(PAYLOAD);
+    draft.rankRule.shares.time = 0.9;
+    draft.rankRule.exploitationWeights.kev = 0.1;
+    expect(PAYLOAD.rankRule.shares.time).toBe(DEFAULT_RANK_RULE.shares.time);
+    expect(PAYLOAD.rankRule.exploitationWeights.kev).toBe(DEFAULT_RANK_RULE.exploitationWeights.kev);
+  });
+
+  it("defaults an absent rankRule to an empty object rather than throwing", () => {
+    expect(settingsDraft({}).rankRule).toEqual({});
+  });
+
+  // Off by default, matching settingsStore.getRankLeadsSort — not duplicated as a literal
+  // constant, just read the same way autoExpand's default is: absent means "not yet on".
+  it("reads rankLeadsSort as off unless the payload says true", () => {
+    expect(settingsDraft(PAYLOAD).rankLeadsSort).toBe(false);
+    expect(settingsDraft({ rankLeadsSort: true }).rankLeadsSort).toBe(true);
+    expect(settingsDraft({ rankLeadsSort: "true" }).rankLeadsSort).toBe(false);
+  });
+
+  it("lists the register tab's fields under it, in the tablist", () => {
+    expect(SETTING_FIELDS.issueCategories.tab).toBe("register");
+    expect(SETTING_FIELDS.rankRule.tab).toBe("register");
+    expect(SETTING_FIELDS.rankLeadsSort.tab).toBe("register");
+    expect(ALL_TABS).toContain("register");
+  });
+});
+
+describe("categoryDraftPatch", () => {
+  it("adds a category that was not selected", () => {
+    expect(categoryDraftPatch(["wct-id-1998"], "cat-data", true, AI_ID))
+      .toEqual(["wct-id-1998", "cat-data"]);
+  });
+
+  it("removes a category that was selected", () => {
+    expect(categoryDraftPatch(["wct-id-1998", "cat-data"], "cat-data", false, AI_ID))
+      .toEqual(["wct-id-1998"]);
+  });
+
+  it("is a no-op checking an already-selected category", () => {
+    expect(categoryDraftPatch(["wct-id-1998", "cat-data"], "cat-data", true, AI_ID))
+      .toEqual(["wct-id-1998", "cat-data"]);
+  });
+
+  // THE ONE THAT MATTERS. The AI category is what makes the register an AI register, so
+  // unchecking it is silently ignored rather than refused — a checkbox that snaps back needs
+  // no error dialog.
+  it("refuses to remove the required category", () => {
+    expect(categoryDraftPatch(["wct-id-1998", "cat-data"], AI_ID, false, AI_ID))
+      .toEqual(["wct-id-1998", "cat-data"]);
+  });
+
+  it("restores the required category to a draft that somehow arrived without it", () => {
+    expect(categoryDraftPatch(["cat-data"], "cat-data", true, AI_ID))
+      .toEqual(["wct-id-1998", "cat-data"]);
+  });
+
+  it("preserves given order rather than sorting", () => {
+    expect(categoryDraftPatch(["cat-data", "wct-id-1998"], "wct-id-3", true, AI_ID))
+      .toEqual(["cat-data", "wct-id-1998", "wct-id-3"]);
+  });
+});
+
+describe("rankDraftPatch", () => {
+  it("replaces a top-level field outright", () => {
+    const out = rankDraftPatch(DEFAULT_RANK_RULE, { epssThreshold: 0.2 });
+    expect(out.epssThreshold).toBe(0.2);
+    expect(out.timeSource).toBe(DEFAULT_RANK_RULE.timeSource);
+  });
+
+  // THE ONE THAT MATTERS. Editing one share must not clobber the other three — each number
+  // input in the Settings page patches one leaf at a time.
+  it("merges one level into a nested table, leaving its siblings untouched", () => {
+    const out = rankDraftPatch(DEFAULT_RANK_RULE, { shares: { time: 0.4 } });
+    expect(out.shares).toEqual({ ...DEFAULT_RANK_RULE.shares, time: 0.4 });
+  });
+
+  it("merges independently across the two weight tables", () => {
+    const out = rankDraftPatch(DEFAULT_RANK_RULE, { exploitationWeights: { kev: 0.5 } });
+    expect(out.exploitationWeights).toEqual({ ...DEFAULT_RANK_RULE.exploitationWeights, kev: 0.5 });
+    expect(out.adjacencyWeights).toEqual(DEFAULT_RANK_RULE.adjacencyWeights);
+  });
+
+  it("does not mutate the rule handed in", () => {
+    const base = rankDraftFromPreset(DEFAULT_RANK_RULE);
+    const snapshot = JSON.parse(JSON.stringify(base));
+    rankDraftPatch(base, { shares: { rule: 0.9 } });
+    expect(base).toEqual(snapshot);
+  });
+});
+
+describe("rankDraftFromPreset", () => {
+  it("loads a preset as an independent deep clone", () => {
+    const draft = rankDraftFromPreset(RANK_PRESET_V2);
+    draft.shares.time = 0.99;
+    expect(RANK_PRESET_V2.shares.time).not.toBe(0.99);
+  });
+
+  it("carries the preset's own values across, not the other preset's", () => {
+    const draft = rankDraftFromPreset(RANK_PRESET_V2);
+    expect(draft.timeSource).toBe(RANK_PRESET_V2.timeSource);
+    expect(draft.shares).toEqual(RANK_PRESET_V2.shares);
+  });
+
+  it("survives an empty preset without throwing", () => {
+    expect(rankDraftFromPreset(undefined)).toEqual({});
+  });
+});
+
+describe("rankShareTotal", () => {
+  it("sums the four shares", () => {
+    expect(rankShareTotal({ rule: 0.25, time: 0.25, exploitation: 0.25, adjacency: 0.25 })).toBe(1);
+  });
+
+  // v1's shares (rule 0.5, time 0.5, exploitation 0, adjacency 0) already sum to 1 — the total
+  // is an orientation figure, not a validity check, and both shapes should read sensibly.
+  it("reads v1's two-term shares the same way", () => {
+    expect(rankShareTotal(DEFAULT_RANK_RULE.shares)).toBeCloseTo(1, 10);
+  });
+
+  it("treats a missing or non-numeric share as zero rather than throwing", () => {
+    expect(rankShareTotal({})).toBe(0);
+    expect(rankShareTotal({ rule: "x", time: 0.3 })).toBe(0.3);
+    expect(rankShareTotal(undefined)).toBe(0);
   });
 });

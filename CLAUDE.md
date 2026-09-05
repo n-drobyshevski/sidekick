@@ -372,11 +372,35 @@ be pinned by tests). The seed-estate figures live in `ai/AARS_ASSESSMENT.md` and
   coverage is 100%. Measured over a wider category set (`AARS_LIVE_MEASUREMENTS.md` §6.3):
   `dueAt` coverage falls to **38.4%**, and at the whole-project ceiling to **26.4%**, while
   **age keeps 100% coverage by construction and its effective cardinality rises to 4.26**. So
-  prefer `createdAt` age buckets for anything scored outside `wct-id-1998`, and read the pair
-  above as a fact about that slice rather than about time. `>730d` is always empty here.
+  prefer `createdAt` age buckets for anything scored outside the DEFAULT scope
+  (`issueCategories: [wct-id-1998]`), and read the pair above as a fact about that one-category
+  slice rather than about time in general — the register is no longer fixed to it, only
+  defaulted to it (see the widening bullet below). `>730d` is always empty here.
 - **Non-agent assets get their own lattice**, rather than exclusion from posture.
 - **Findings land in `ai/AARS_LIVE_MEASUREMENTS.md`.** Update it as they land, dated and
   tenant-stamped; do not open a new assessment document for them.
+- **The register widens by a versioned settings key, and every row carries the category that
+  fetched it.** `issueCategories` (default `[wct-id-1998]`) selects which of the six candidate
+  `frameworkCategory` values the issue register collects; `Issue` has 51 fields and not one
+  names a category (`AARS_LIVE_MEASUREMENTS.md` §6.8), so a widened register that did not stamp
+  its rows would make "AI issues" silently mean "all issues" the moment a second category was
+  added. Every issue-shaped figure this app publishes counts only the rows the scope in force
+  AT SYNC TIME returned, and `ai_issue_ledger` (`9636d29`) refuses to date a resolution by
+  disappearance across a scope change in either direction — a row absent from a register that
+  was asked a different question is not a remediation, and resolving it as one would manufacture
+  a remediation wave out of nothing but a settings edit.
+- **The rank blends over MEASURED terms only, the default vector is pinned to the bit, and a
+  mean of one term never divides.** `rank.ts`'s four-term blend (rule, clock, exploitation,
+  adjacency) drops a term nobody could measure on a given row from BOTH sides of the weighted
+  mean rather than scoring it 0 — the same "absent is never zero" rule this file states above,
+  applied to a fraction instead of a flag. `DEFAULT_RANK_RULE` is pinned byte-identical to the
+  pre-v2 code by a 12-row vector; the ULP finding that pin caught: an undated row at legacy
+  `timeShare` 0.7 leaves only the rule term measured, and its share is computed as
+  `1 - timeShare` — `1 - 0.7` is `0.30000000000000004`, not `0.3`. Dividing that share by
+  itself (`numerator / denominator`, the general renormalising form) lands a ULP high at
+  `0.9000000000000001` where v1 returned the raw component untouched. So a mean over exactly
+  one measured term is returned AS that term's own component, with no division at all — the
+  only form floating point cannot perturb.
 
 ## gas_ai — environment traps
 

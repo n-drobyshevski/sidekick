@@ -466,7 +466,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a575fcadee40" : "dev";
+  var BUILD_ID = true ? "1ad135f7e534" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -811,12 +811,25 @@ var Server = (() => {
     const t = Date.parse(s);
     return Number.isNaN(t) ? null : t;
   }
-  function toIso(ms) {
-    if (ms === null || !Number.isFinite(ms)) return null;
-    return new Date(Math.floor(ms / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
+  function toIso(ms2) {
+    if (ms2 === null || !Number.isFinite(ms2)) return null;
+    return new Date(Math.floor(ms2 / 1e3) * 1e3).toISOString().replace(".000Z", "Z");
   }
   function nowIso(now) {
     return toIso(now != null ? now : Date.now());
+  }
+  function mean(values) {
+    if (!values.length) return null;
+    return values.reduce((a, b) => a + b, 0) / values.length;
+  }
+  function quantile(values, q) {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const idx = q * (sorted.length - 1);
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
   }
 
   // src/server/sheetsDb.ts
@@ -831,6 +844,8 @@ var Server = (() => {
     frameworkPolicies: "ai_framework_policies",
     configRules: "ai_config_rules",
     identityFindings: "ai_identity_findings",
+    issueExploitation: "ai_issue_exploitation",
+    issueLedger: "ai_issue_ledger",
     syncHistory: "sync_history",
     settings: "settings",
     jobs: "jobs",
@@ -974,7 +989,54 @@ var Server = (() => {
       // entity Wiz raised the issue on so the drill-down still matches the console — see
       // IssueRow.attributedAssetIds for the measurement that made this necessary.
       "attributed_asset_ids",
-      "attribution_hop"
+      "attribution_hop",
+      // WHICH RISK CATEGORIES THIS ROW WAS COLLECTED UNDER. Appended, same no-migration
+      // contract as every block above — and declared here rather than only written, because
+      // writeGrid projects a row onto the DECLARED headers and silently discards the rest: an
+      // undeclared column is written every sync and read back as a default, forever.
+      //
+      // Comma-joined, matching `environments` and `attributed_asset_ids`; the `_json` suffix
+      // is reserved for structures. A row written before this column reads back as the AI
+      // category, which is the only scope those syncs ever ran.
+      "categories",
+      // THE ISSUE'S OWN PROJECT ATTRIBUTION, as objects. Appended, same no-migration contract —
+      // and declared here for the same `writeGrid` reason the block above states.
+      //
+      // `projects_json` beside it holds NAMES and must keep doing so (the facets and the asset
+      // table read them); this holds `{id, name, isFolder, businessImpact}`, because only the
+      // id can decide project membership — a name is not unique across the tenant and carries
+      // no ancestry. The project view needs that: an issue raised on a VM or an identity has no
+      // asset row to hang off, so scoping by the asset alone made every one of them vanish.
+      //
+      // An EMPTY CELL reads back as undefined, never as an empty array. A row written before
+      // this column has unknown refs; a live sync writing `[]` is saying Wiz attributed the
+      // issue to nothing. The project view must be able to tell those apart.
+      "project_refs_json",
+      // WHERE THE ROW SITS RELATIVE TO THE AI ESTATE — DIRECT / ADJACENT / UNLINKED, the edge
+      // type the hop came through, and the AI assets it reached. Appended, same no-migration
+      // contract, and declared here for the same `writeGrid` reason the two blocks above state:
+      // an undeclared column is projected away on every write and read back as a default.
+      //
+      // The ids are comma-joined, matching `attributed_asset_ids` and `environments`; the
+      // `_json` suffix stays reserved for structures. An empty `ai_adjacency` cell reads back as
+      // UNDEFINED and never as "UNLINKED" — no pass ran over that row, which is a different
+      // claim from having looked and found no link, and the ranker prices the two differently.
+      "ai_adjacency",
+      "adjacency_via",
+      "adjacent_asset_ids",
+      // THE EXPLOITATION READING, folded from the vulnerability findings that name this issue
+      // (ai_issue_exploitation holds the evidence). Appended, same no-migration contract, and
+      // declared here for the same `writeGrid` reason the three blocks above state.
+      //
+      // ALL THREE EMPTY IS THE FOURTH STATE and the one that matters: no evidence pass ran over
+      // this row — VULN_FINDINGS was refused, or the row predates the step. `rank.exploitationOf`
+      // prices an absent tier as null (the term leaves the blend) and `"none"` as a measurement
+      // that scores, so a reader defaulting the blank to "none" would score every register that
+      // never ran the step as one where nothing is exploited. `epss_peak` is empty rather than 0
+      // for the same reason one column over: 0 is a computed EPSS, blank is no EPSS.
+      "exploitation_tier",
+      "epss_peak",
+      "exploitation_findings"
     ],
     [TABS.findings]: [
       "id",
@@ -1133,6 +1195,75 @@ var Server = (() => {
       "remediation",
       "hygiene"
     ],
+    // Exploitation evidence, one row per ISSUE rather than per finding. The findings themselves
+    // are not stored: 7,368 of them fold to at most a few thousand rows here, they describe assets
+    // `ai_assets` does not hold (AARS_LIVE_MEASUREMENTS.md §6.4), and the OS-vulnerability register
+    // already owns that population. This tab is the fold and its audit trail.
+    //
+    // `has_kev` / `has_exploit` / `epss_peak` are TRI-STATE and an empty cell means UNMEASURED —
+    // Wiz answers null for a signal it never evaluated. The reader must not read a blank as false
+    // or as zero; `tier: "unknown"` is what an all-null row says out loud.
+    //
+    // The three derived columns also ride on `ai_issues` (`exploitation_tier`, `epss_peak`,
+    // `exploitation_findings`) so the ranker needs no join. Two homes for one fact, the same split
+    // `projects_json` / `project_refs_json` already carries: this tab is the evidence, those
+    // columns are the reading, and only this one can say WHICH findings it was folded from.
+    [TABS.issueExploitation]: [
+      "issue_id",
+      "tier",
+      "has_kev",
+      "has_exploit",
+      "epss_peak",
+      "finding_count",
+      "sample_finding_ids",
+      "observed_at"
+    ],
+    // THE ISSUE LIFECYCLE LEDGER — the one tab here that is never a snapshot.
+    //
+    // Every other data tab above is rewritten wholesale from what the last sync saw, which is
+    // correct for a register that describes today and useless for one that has to say when a
+    // row LEFT. `ai_issues` is filtered to OPEN/IN_PROGRESS, so a remediated issue simply
+    // vanishes from it on the next sync with nothing recording that it was ever there.
+    //
+    // "Never overwritten" is a claim about the CONTENT, not about the write call: `syncStore`
+    // reconciles the stored rows with this sync's register and writes the whole reconciled grid
+    // back, which is a full rewrite of the ledger FROM ITS OWN PRIOR CONTENT and never a
+    // replacement of it by the current snapshot. Nothing may write this tab from `ai_issues`
+    // alone — that is exactly the erasure the tab exists to prevent.
+    //
+    // `disappeared_at` IS NOT A RESOLUTION DATE. It is the timestamp of the sync that first
+    // failed to see the row: an upper bound whose error is the sync interval. `resolution_src`
+    // carries the provenance in the same row so a surface cannot render the date without the
+    // word that qualifies it — "gone by", never "resolved". See domain/issueLedger.ts.
+    //
+    // `register_scope` is the scope the sync that last SAW the row applied; `categories` is the
+    // union of every category that has ever matched it. Two different facts — which questions
+    // were asked, and which ones answered — and only the first can explain an absence.
+    //
+    // Comma-joined for `categories`, matching `environments` and `attributed_asset_ids` on
+    // ai_issues; the `_json` suffix stays reserved for structures. An empty `exploitation_tier`
+    // or `ai_adjacency` cell reads back as UNDEFINED and never as "none"/"UNLINKED": the fold
+    // did not reach the row on the sync that last saw it, which the ranker prices differently
+    // from a measurement.
+    [TABS.issueLedger]: [
+      "issue_id",
+      "first_seen_sync",
+      "first_seen_at",
+      "last_seen_sync",
+      "last_seen_at",
+      "disappeared_at",
+      "resolution_src",
+      "last_status",
+      "categories",
+      "rule_id",
+      "created_at",
+      "due_at",
+      "ai_adjacency",
+      "exploitation_tier",
+      "epss_peak",
+      "register_scope",
+      "episode"
+    ],
     [TABS.syncHistory]: [
       "sync_id",
       "started_at",
@@ -1177,7 +1308,72 @@ var Server = (() => {
       // rule version moves when an operator edits a model; this moves when a code change alters
       // what a stored fact MEANS, which only a full sync can repair. The trend marks the break
       // here so a step is never read as movement.
-      "derivation_version"
+      "derivation_version",
+      // THE SCOPE THIS SYNC APPLIED — the sorted category signature, not the one settings hold
+      // now. The two differ across a settings change, and a total counted under six categories
+      // is not comparable with one counted under one; stamping today's list onto yesterday's
+      // row would erase exactly the discontinuity the trend has to mark. Same argument as
+      // `derivation_version` above it, one axis over: that records what a fact MEANS, this
+      // records which population was asked. Empty on a row written before the column, which
+      // reads as "unknown" and never as "a different scope".
+      "register_scope",
+      // THE ADJACENCY CENSUS THIS SYNC MEASURED — `{DIRECT, ADJACENT, UNLINKED, edgesKnown}`,
+      // mirroring `aars_severity_json` and `problem_outcome_json` one row up. Appended, same
+      // no-migration contract; absent on a row written before the column, which reads as "no
+      // adjacency pass" and never as an all-UNLINKED register.
+      //
+      // `edgesKnown` travels INSIDE the object rather than as its own column because the three
+      // counts are unreadable without it: 68 asset edges on the reference tenant means UNLINKED
+      // is mostly "not traversed". Splitting them into two columns is how a later reader ends up
+      // plotting the counts alone.
+      "adjacency_json",
+      // THE EXPLOITATION CENSUS THIS SYNC MEASURED — the five tiers, plus the two counts that say
+      // what the fold could NOT use (`unjoined`, `droppedNotInRegister`) and the number of findings
+      // it read. Appended, same no-migration contract.
+      //
+      // NULL, NOT A ZEROED CENSUS, when no evidence pass ran. VULN_FINDINGS is optional; a tenant
+      // that refuses it has no reading here, and "no issue carries exploitation evidence" is a very
+      // different claim from "we never asked". The two counts travel INSIDE the object for the
+      // reason `edgesKnown` does one row up: the tier counts are unreadable without them, and split
+      // into their own columns a later reader plots the tiers alone.
+      "exploitation_json",
+      // WHAT THE LIFECYCLE LEDGER DID ON THIS SYNC — `{new, resolved, reopened, carried,
+      // skippedNarrowedScope}` (domain/issueLedger.IssueLedgerDeltas). Appended, same
+      // no-migration contract as every column above.
+      //
+      // TRANSITION COUNTS, not a census of the tab: a row present on both syncs is counted by
+      // none of the five, so these numbers do not sum to the ledger's size and a reader must not
+      // try to make them. `skippedNarrowedScope` is the one to watch — a non-zero there says the
+      // category scope moved and that this sync deliberately resolved nothing by absence, which
+      // is what keeps a re-scoping from being read as a remediation programme.
+      //
+      // Rides here rather than on its own tab because it is one object per sync, exactly like
+      // `adjacency_json` and `exploitation_json` above it, and because `bootstrap.latestSync`
+      // ships the whole history row — so the client gets it with no new endpoint.
+      "ledger_json",
+      // OPEN ISSUES PER RISK CATEGORY at this sync — `{[categoryId]: openIssues}`, counted once
+      // per category a row carries. The scope-over-time series: `register_scope` beside it says
+      // WHICH questions this sync asked, and this says what each one answered.
+      //
+      // THE COUNTS DO NOT SUM TO `issue_count`, and that is a property of the register rather
+      // than a defect: an issue sits in roughly five categories on the reference tenant
+      // (AARS_LIVE_MEASUREMENTS.md §6.1), arrives once per selected category it matches, and is
+      // counted under each. A reader adding them up is measuring the overlap, not the register.
+      //
+      // A KEY ABSENT FROM THE OBJECT IS NOT A ZERO. A sync run under a narrower scope never
+      // collected the categories it was not asked for, so it has no number for them — the
+      // trend plots the gap (aarsTrend.ts CATEGORY_SPEC, `absentKeyIsNull`) rather than drawing
+      // a category that sat at zero until the day it was selected.
+      "category_counts_json",
+      // Issues carrying a KEV-tier exploitation reading at this sync — the one exploitation
+      // figure that earns a scalar column of its own, because it is the tier every surface
+      // leads with.
+      //
+      // NULL, NOT ZERO, when no evidence pass ran, exactly as `exploitation_json` beside it is
+      // null: VULN_FINDINGS is optional, and "no issue is on the KEV catalogue" is a very
+      // different claim from "we never asked". Derived from the same fold that writes that
+      // census, so the two can never disagree about one sync.
+      "kev_linked_count"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -2879,10 +3075,16 @@ var Server = (() => {
     };
   }
   var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n        ... on CloudEventRule {\n          id\n          name\n          description\n          risks\n          threats\n        }\n      }\n    }\n  }\n}\n";
-  function aiIssuesVariables(scope) {
+  function aiIssuesVariables(scope, categoryIds) {
     const filterBy = {
       status: ["OPEN", "IN_PROGRESS"],
-      frameworkCategory: [RISK_CATEGORY_ID]
+      // ONE STEP PER CATEGORY, so this is a one-element list on every step the battery runs —
+      // never the whole selection at once. The response says nothing about which category a
+      // row matched (Issue has no category field), so a filter naming six of them returns rows
+      // that cannot be stamped, and an unstamped row is what turns "AI issues" into "issues"
+      // with nothing on the page to catch it. Absent means the default, which is what this
+      // register collected before the list was a setting.
+      frameworkCategory: categoryIds && categoryIds.length ? [...categoryIds] : [RISK_CATEGORY_ID]
     };
     if (scope && scope.length) filterBy["project"] = scope;
     return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
@@ -2895,6 +3097,37 @@ var Server = (() => {
     };
     if (scope && scope.length) filterBy["resource"] = { projectId: scope };
     return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
+  }
+  var VULNERABLE_ASSET_MEMBERS = [
+    "VulnerableAssetBase",
+    "VulnerableAssetVirtualMachine",
+    "VulnerableAssetServerless",
+    "VulnerableAssetContainerImage",
+    "VulnerableAssetContainer",
+    "VulnerableAssetRepositoryBranch",
+    "VulnerableAssetIde",
+    "VulnerableAssetEndpoint",
+    "VulnerableAssetPaaSResource",
+    "VulnerableAssetVirtualMachineImage",
+    "VulnerableAssetCommon",
+    "VulnerableAssetDevice"
+  ];
+  var VULNERABLE_ASSET_SELECTION = "      vulnerableAsset {\n" + VULNERABLE_ASSET_MEMBERS.map((m) => `        ... on ${m} { id type name }
+`).join("") + "        ... on VulnerableAssetNetworkAddress { __typename }\n      }\n";
+  var RELATED_ISSUE_SELECTION = "      relatedIssues { id }\n";
+  var Q_VULN_FINDINGS = "query SidekickAiVulnFindings($first: Int, $after: String, $filterBy: VulnerabilityFindingFilters) {\n  vulnerabilityFindings(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      status\n      severity\n      hasExploit\n      hasCisaKevExploit\n      epssProbability\n      epssPercentile\n      epssSeverity\n      firstDetectedAt\n      resolvedAt\n" + RELATED_ISSUE_SELECTION + VULNERABLE_ASSET_SELECTION + "    }\n  }\n}\n";
+  function aiVulnFindingsVariables(scope, categoryIds) {
+    const filterBy = {
+      // OPEN only. `IN_PROGRESS` is an ISSUE state; this root's statuses are the finding's own,
+      // and the funnel §6.4 counted was OPEN.
+      status: ["OPEN"],
+      hasRelatedIssue: true,
+      relatedIssueFrameworkCategory: {
+        equalsAny: categoryIds && categoryIds.length ? [...categoryIds] : [RISK_CATEGORY_ID]
+      }
+    };
+    if (scope && scope.length) filterBy["projectIdV2"] = { equals: [...scope] };
+    return { filterBy };
   }
   var Q_AI_PROPERTIES = "query SidekickAiAssetProperties($first: Int, $after: String, $filterBy: CloudResourceV2Filters) {\n  cloudResourcesV2(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n" + indented(IDENTITY_FIELDS, 6) + "      graphEntity { properties }\n    }\n  }\n}\n";
   function aiPropertiesVariables(types, scope = null) {
@@ -2913,7 +3146,10 @@ var Server = (() => {
     if (project) filterBy["project"] = project;
     return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
   }
-  var Q_CONFIG_RULES = "query SidekickAiConfigRules($first: Int, $after: String) {\n  cloudConfigurationRules(first: $first, after: $after) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      shortId\n      subjectEntityType\n      externalReferences { id name }\n    }\n  }\n}\n";
+  var Q_CONFIG_RULES = "query SidekickAiConfigRules($first: Int, $after: String, $filterBy: CloudConfigurationRuleFilters) {\n  cloudConfigurationRules(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      shortId\n      subjectEntityType\n      externalReferences { id name }\n    }\n  }\n}\n";
+  function aiConfigRulesVariables() {
+    return { filterBy: { hasFindings: true } };
+  }
   function aiIdentityHygieneVariables(ruleIds, scope) {
     const filterBy = {
       status: ["OPEN"],
@@ -3286,6 +3522,12 @@ var Server = (() => {
   function triBool2(v) {
     return v === true ? true : v === false ? false : null;
   }
+  function triNum(v) {
+    const c = clean(v);
+    if (c === null) return null;
+    const n = Number(c);
+    return isFinite(n) ? n : null;
+  }
   function discoveryMethodList(v) {
     if (typeof v === "string") return v.trim() ? [v.trim()] : [];
     if (!Array.isArray(v)) return [];
@@ -3348,14 +3590,14 @@ var Server = (() => {
     }
     const ia = raw["issueAnalytics"];
     if (ia && typeof ia === "object") {
-      const num = (v) => typeof v === "number" ? v : Number(v) || 0;
+      const num2 = (v) => typeof v === "number" ? v : Number(v) || 0;
       node2.issueAnalytics = {
-        total: num(ia["issueCount"]),
-        info: num(ia["informationalSeverityCount"]),
-        low: num(ia["lowSeverityCount"]),
-        medium: num(ia["mediumSeverityCount"]),
-        high: num(ia["highSeverityCount"]),
-        critical: num(ia["criticalSeverityCount"])
+        total: num2(ia["issueCount"]),
+        info: num2(ia["informationalSeverityCount"]),
+        low: num2(ia["lowSeverityCount"]),
+        medium: num2(ia["mediumSeverityCount"]),
+        high: num2(ia["highSeverityCount"]),
+        critical: num2(ia["criticalSeverityCount"])
       };
     }
     const account = raw["cloudAccount"];
@@ -3388,10 +3630,12 @@ var Server = (() => {
       frameworkPolicies: [],
       configRules: [],
       identityFindings: [],
-      effectiveAccess: []
+      effectiveAccess: [],
+      vulnFindings: []
     };
   }
   function appendPart(target, part) {
+    var _a5;
     target.nodes.push(...part.nodes);
     target.edges.push(...part.edges);
     target.issues.push(...part.issues);
@@ -3403,9 +3647,15 @@ var Server = (() => {
     target.configRules.push(...part.configRules);
     target.identityFindings.push(...part.identityFindings);
     target.effectiveAccess.push(...part.effectiveAccess);
+    const vulnFindings = (_a5 = part.vulnFindings) != null ? _a5 : [];
+    if (vulnFindings.length) {
+      if (!target.vulnFindings) target.vulnFindings = [];
+      target.vulnFindings.push(...vulnFindings);
+    }
   }
   function partIsEmpty(part) {
-    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length && !part.dataFindings.length && !part.frameworks.length && !part.posture.length && !part.frameworkPolicies.length && !part.configRules.length && !part.identityFindings.length && !part.effectiveAccess.length;
+    var _a5;
+    return !part.nodes.length && !part.edges.length && !part.issues.length && !part.findings.length && !part.dataFindings.length && !part.frameworks.length && !part.posture.length && !part.frameworkPolicies.length && !part.configRules.length && !part.identityFindings.length && !part.effectiveAccess.length && !((_a5 = part.vulnFindings) != null ? _a5 : []).length;
   }
   function normalizeInventoryPage(rows) {
     const part = emptyPart();
@@ -3466,7 +3716,7 @@ var Server = (() => {
     if (!Array.isArray(raw)) return [];
     return raw.map((t) => t && typeof t === "object" ? str3(t["url"]) : void 0).filter((u) => Boolean(u));
   }
-  function normalizeIssuesPage(rows) {
+  function normalizeIssuesPage(rows, categoryId) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     const part = emptyPart();
     for (const raw of rows) {
@@ -3503,6 +3753,12 @@ var Server = (() => {
         region: str3(snap["region"]),
         account: str3(snap["subscriptionName"]),
         projects,
+        // The same projects, kept as OBJECTS as well as names. The names are what the facets
+        // and the asset table read; the ids are the only thing that can answer "is this issue
+        // inside VALUE-CHAIN", because a name is not unique across the tenant and carries no
+        // ancestry. Written from the same `projectsOf` extraction, never a second one, so the
+        // two fields can never come to disagree about which projects this row is in.
+        projectRefs: projectObjs,
         frameworks: group == null ? void 0 : group.frameworks,
         createdAt: str3(raw["createdAt"]),
         dueAt: str3(raw["dueAt"]),
@@ -3519,7 +3775,10 @@ var Server = (() => {
         ignoreNote: ignoreRationale(raw["notes"]),
         ignoreExpiredAt: str3(raw["rejectionExpiredAt"]),
         aiVerdict: aiAnalysis && typeof aiAnalysis === "object" ? str3(aiAnalysis["verdict"]) : void 0,
-        aiRecommendedSeverity: aiAnalysis && typeof aiAnalysis === "object" ? str3(aiAnalysis["recommendedSeverity"]) : void 0
+        aiRecommendedSeverity: aiAnalysis && typeof aiAnalysis === "object" ? str3(aiAnalysis["recommendedSeverity"]) : void 0,
+        // The scope stamp. Always set, never optional-on-absence like the fields below: a row
+        // with no category is a row that cannot say which question it answers.
+        categories: [categoryId && categoryId.trim() ? categoryId.trim() : RISK_CATEGORY_ID]
       };
       if (environments && environments.length) issue2.environments = environments;
       if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
@@ -4020,6 +4279,76 @@ var Server = (() => {
       syncedAt: doc.syncedAt
     };
   }
+  function relatedIssueIdsOf(raw) {
+    const out = [];
+    const push = (v) => {
+      if (!v || typeof v !== "object") return;
+      const id = str3(v["id"]);
+      if (id && out.indexOf(id) === -1) out.push(id);
+    };
+    for (const key of ["relatedIssues", "relatedIssue"]) {
+      const v = raw[key];
+      if (!v) continue;
+      if (Array.isArray(v)) {
+        for (const item of v) push(item);
+        continue;
+      }
+      if (typeof v !== "object") continue;
+      const nodes = v["nodes"];
+      if (Array.isArray(nodes)) {
+        for (const item of nodes) push(item);
+        continue;
+      }
+      push(v);
+    }
+    return out;
+  }
+  function vulnerableAssetOf(raw, out) {
+    const asset = raw["vulnerableAsset"];
+    if (!asset || typeof asset !== "object") return;
+    const rec4 = asset;
+    const id = str3(rec4["id"]);
+    if (!id) return;
+    out.assetId = id;
+    const type = str3(rec4["type"]);
+    if (type) out.assetType = type;
+    const name = str3(rec4["name"]);
+    if (name) out.assetName = name;
+  }
+  function normalizeVulnFindingsPage(rows) {
+    const part = emptyPart();
+    const out = [];
+    for (const raw of rows) {
+      if (!raw || typeof raw !== "object") continue;
+      const id = str3(raw["id"]);
+      if (!id) continue;
+      const finding = {
+        id,
+        hasKev: triBool2(raw["hasCisaKevExploit"]),
+        hasExploit: triBool2(raw["hasExploit"]),
+        epss: triNum(raw["epssProbability"]),
+        issueIds: relatedIssueIdsOf(raw)
+      };
+      const name = str3(raw["name"]);
+      if (name) finding.name = name;
+      const status = str3(raw["status"]);
+      if (status) finding.status = status;
+      const severity = str3(raw["severity"]);
+      if (severity) finding.severity = severity;
+      const percentile = triNum(raw["epssPercentile"]);
+      if (percentile !== null) finding.epssPercentile = percentile;
+      const epssSeverity = str3(raw["epssSeverity"]);
+      if (epssSeverity) finding.epssSeverity = epssSeverity;
+      const firstDetectedAt = str3(raw["firstDetectedAt"]);
+      if (firstDetectedAt) finding.firstDetectedAt = firstDetectedAt;
+      const resolvedAt = str3(raw["resolvedAt"]);
+      if (resolvedAt) finding.resolvedAt = resolvedAt;
+      vulnerableAssetOf(raw, finding);
+      out.push(finding);
+    }
+    part.vulnFindings = out;
+    return part;
+  }
   function normalizeConfigRulesPage(rows) {
     var _a5;
     const part = emptyPart();
@@ -4186,8 +4515,16 @@ var Server = (() => {
     }
     return part;
   }
+  function unionCategories(a, b) {
+    var _a5, _b;
+    const out = [];
+    for (const id of [...(_a5 = a.categories) != null ? _a5 : [], ...(_b = b.categories) != null ? _b : []]) {
+      if (id && out.indexOf(id) === -1) out.push(id);
+    }
+    return out.sort();
+  }
   function mergeParts(parts, syncedAt) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     const nodes = /* @__PURE__ */ new Map();
     const edges2 = /* @__PURE__ */ new Map();
     const issues2 = /* @__PURE__ */ new Map();
@@ -4199,6 +4536,7 @@ var Server = (() => {
     const configRules = /* @__PURE__ */ new Map();
     const identityFindings = /* @__PURE__ */ new Map();
     const effectiveAccess = /* @__PURE__ */ new Map();
+    const vulnFindings = /* @__PURE__ */ new Map();
     for (const part of parts) {
       for (const node2 of part.nodes) {
         const prev = nodes.get(node2.id);
@@ -4215,7 +4553,10 @@ var Server = (() => {
         nodes.set(node2.id, merged);
       }
       for (const edge2 of part.edges) edges2.set(edge2.id, edge2);
-      for (const issue2 of part.issues) issues2.set(issue2.id, issue2);
+      for (const issue2 of part.issues) {
+        const prev = issues2.get(issue2.id);
+        issues2.set(issue2.id, prev ? { ...issue2, categories: unionCategories(prev, issue2) } : issue2);
+      }
       for (const finding of (_a5 = part.findings) != null ? _a5 : []) findings.set(finding.id, finding);
       for (const df of (_b = part.dataFindings) != null ? _b : []) dataFindings.set(df.id, df);
       for (const f of (_c = part.frameworks) != null ? _c : []) frameworks.set(f.id, f);
@@ -4236,6 +4577,7 @@ var Server = (() => {
       for (const e of (_j = part.effectiveAccess) != null ? _j : []) {
         effectiveAccess.set(`${e.identityId}|${e.resourceId}`, e);
       }
+      for (const v of (_k = part.vulnFindings) != null ? _k : []) vulnFindings.set(v.id, v);
     }
     return {
       doc: { nodes: [...nodes.values()], edges: [...edges2.values()], syncedAt },
@@ -4249,7 +4591,8 @@ var Server = (() => {
       frameworkPolicies: [...frameworkPolicies.values()],
       configRules: [...configRules.values()],
       identityFindings: [...identityFindings.values()],
-      effectiveAccess: [...effectiveAccess.values()]
+      effectiveAccess: [...effectiveAccess.values()],
+      vulnFindings: [...vulnFindings.values()]
     };
   }
 
@@ -5261,6 +5604,70 @@ var Server = (() => {
       return { ...issue2, attributedAssetIds: [], attributionHop: "none" };
     });
   }
+  var ADJACENCY_EDGE_TYPES = [
+    "RUNS_AS",
+    "HOSTED_ON",
+    "ALLOWS_ACCESS_TO",
+    "CAN_INVOKE",
+    "BOUND_TO",
+    "SERVES",
+    "USES_TOOL",
+    "INVOKES_TOOL",
+    "USES_MODEL",
+    "USES_DATASET",
+    "PRODUCES",
+    "READS_DATA_FROM",
+    "STORES_DATA_IN"
+  ];
+  function withAiAdjacency(doc, issues2) {
+    const kindById = /* @__PURE__ */ new Map();
+    for (const n of doc.nodes) kindById.set(n.id, n.kind);
+    const isAi = (id) => id !== void 0 && AI_ASSET_KINDS.includes(kindById.get(id));
+    const viaRank = new Map(ADJACENCY_EDGE_TYPES.map((t, i) => [t, i]));
+    const near = /* @__PURE__ */ new Map();
+    let edgesKnown = 0;
+    for (const e of doc.edges) {
+      if (!viaRank.has(e.type)) continue;
+      edgesKnown += 1;
+      if (e.negated) continue;
+      if (isAi(e.dst)) pushInto(near, e.src, { id: e.dst, type: e.type });
+      if (isAi(e.src)) pushInto(near, e.dst, { id: e.src, type: e.type });
+    }
+    const census = { DIRECT: 0, ADJACENT: 0, UNLINKED: 0, edgesKnown };
+    const out = issues2.map((issue2) => {
+      var _a5;
+      if (isAi(issue2.assetId)) {
+        census.DIRECT += 1;
+        return {
+          ...issue2,
+          aiAdjacency: "DIRECT",
+          adjacencyVia: void 0,
+          adjacentAssetIds: []
+        };
+      }
+      const hops = ((_a5 = near.get(issue2.assetId)) != null ? _a5 : []).filter((h) => h.id !== issue2.assetId);
+      if (hops.length) {
+        census.ADJACENT += 1;
+        const ids = [...new Set(hops.map((h) => h.id))].sort();
+        let via = hops[0].type;
+        for (const h of hops) if (viaRank.get(h.type) < viaRank.get(via)) via = h.type;
+        return {
+          ...issue2,
+          aiAdjacency: "ADJACENT",
+          adjacencyVia: via,
+          adjacentAssetIds: ids
+        };
+      }
+      census.UNLINKED += 1;
+      return {
+        ...issue2,
+        aiAdjacency: "UNLINKED",
+        adjacencyVia: void 0,
+        adjacentAssetIds: []
+      };
+    });
+    return { issues: out, census };
+  }
   function issuesByAssetFor(open, mode) {
     var _a5;
     if (mode === "direct") return groupBy(open, (i) => i.assetId);
@@ -5874,13 +6281,19 @@ var Server = (() => {
           options: ORDER_DIRECTIONS
         }
       ],
-      // Deliberately NOT offering filterBy.frameworkCategory. Every figure this app
-      // publishes — the issue count, AARS pillar A, the Toxic Combinations page, the tab
-      // literally called ai_issues — is scoped to wct-id-1998 and labelled AI. Nothing in
-      // the response says "this is an AI issue"; the category filter IS the claim. Widen it
-      // and "AI issues" silently means "all issues", with no field to catch it. Same reason
-      // AGENTIC_IDENTITIES locks its purpose filter.
-      locked: "The AI risk category (wct-id-1998) is fixed: it is what makes these issues AI issues, so widening it would relabel the whole register rather than extend it."
+      // STILL NOT offering filterBy.frameworkCategory, and the reason has moved rather than
+      // gone away. Every figure this app publishes — the issue count, AARS pillar A, the Toxic
+      // Combinations page, the tab literally called ai_issues — counts what this filter
+      // returned, and nothing in the response says which category a row matched. The register
+      // CAN now be widened, but only through the `issue_categories` Setting, which generates
+      // one ISSUES_CAT_<id> step per category so each row is stamped with the category that
+      // fetched it and each sync records the scope it applied.
+      //
+      // As a per-step variable it could not be either of those things: cleanStepVars would let
+      // a hand-edited cell change WHICH POPULATION every published figure counts, with no
+      // stamp on the rows and nothing in sync_history saying the scope moved. A knob that
+      // silently redefines the denominator is not a knob.
+      locked: "This step collects the AI risk category (wct-id-1998) and its category filter is not editable here: widening it would change what every published figure counts, with nothing on the row to say so. Choose categories in Settings (issue_categories) instead \u2014 each one gets its own step, and each row is stamped with the category it was collected under."
     },
     {
       stepId: "AI_ASSET_PROPERTIES",
@@ -5890,6 +6303,26 @@ var Server = (() => {
       // lose their publisher while others keep theirs, which looks like missing data rather
       // than a setting. Widen it and the bag arrives for resources this app does not model.
       locked: "This step mirrors the AI inventory's own type list \u2014 it exists to add two fields to assets already collected, so filtering it separately could only make the two disagree about which assets exist."
+    },
+    {
+      stepId: "VULN_FINDINGS",
+      fields: [],
+      // LOCKED, and for a reason none of the other locks state: this filter is not a scope
+      // knob, it is the CLAIM ITSELF.
+      //
+      // Nothing on a vulnerability finding says it is exploitation evidence for this register.
+      // What makes it so is that it names an issue in one of the selected categories — the
+      // filter is the entire assertion, and the row it produces is folded onto that issue and
+      // read as "this issue is exploited". Widen it and the register asserts exploitation for
+      // issues it does not hold; drop `hasRelatedIssue` and the same document answers 5,173,698
+      // rows in project scope (AARS_LIVE_MEASUREMENTS.md §6.4), which is not a bigger version of
+      // this step but a different product with no page and no storage budget behind it.
+      //
+      // The category list is not editable here either, and for the reason ISSUES_TOXIC's lock
+      // gives one entry up: it must stay the SAME list the issue steps use, or a finding joins
+      // an issue the register never collected and the axis quietly thins out. Settings
+      // (issue_categories) moves both together; a per-step cell could move only one.
+      locked: "This step's filter is the claim itself: a vulnerability finding counts as exploitation evidence only because it names an issue in the collected categories. Widening it would assert exploitation for issues this register does not hold, and dropping the related-issue filter turns one query into five million rows. The categories follow Settings (issue_categories), so this step and the issue steps can never read different registers."
     },
     {
       stepId: "CONFIG_FINDINGS",
@@ -5941,7 +6374,14 @@ var Server = (() => {
     {
       stepId: "CONFIG_RULES",
       fields: [],
-      locked: "This step takes no variables at all: it walks Wiz's whole rule catalogue unfiltered, deliberately \u2014 the filter input's type is unverified here, and naming an input type wrong fails the document while sending none cannot."
+      // It DOES take a filter now — `hasFindings: true`, which cuts 3,905 catalogue rows to
+      // 1,401 against the reference tenant. The old reason given here was that the filter
+      // input's type was unverified; phase0 sent CloudConfigurationRuleFilters against this
+      // tenant on 2026-08-23 and it answered (AARS_LIVE_MEASUREMENTS.md §6.10). Still not
+      // editable: the catalogue is a JOIN TARGET for issues and findings already stored, so
+      // narrowing it further is not a preference, it is a way to make a stored row's rule
+      // gloss disappear.
+      locked: "This step's one filter (rules that have findings) is not editable: the rule catalogue is what glosses the rule ids stored issues and findings already point at, so narrowing it further would blank references the ledger still holds."
     },
     {
       stepId: "IDENTITY_HYGIENE",
@@ -6008,6 +6448,17 @@ var Server = (() => {
       // what is collected is not worth the machinery.
       fields: [],
       locked: "This step's only filter picks whether disabled frameworks appear in the Settings picker. It does not decide what posture is collected \u2014 the framework selection does \u2014 so there is nothing here worth tuning per tenant."
+    },
+    {
+      // Matches every generated category step (ISSUES_CAT_wct-id-3, …) so the family shares
+      // one lock reason instead of falling through to the generic "no spec" text. Same shape
+      // as the posture family just below, and locked for the same kind of reason: the id is
+      // not a filter to tune, it is what the step's rows ARE — every row it returns is stamped
+      // with the category in its own name.
+      stepId: "ISSUES_CAT_",
+      prefix: true,
+      fields: [],
+      locked: "This step takes no editable variable: its category is not a filter to tune \u2014 it is what the step's rows are, and every row it collects is stamped with it. Choose categories in Settings (issue_categories) instead."
     },
     {
       // Matches every generated posture step (COMPLIANCE_POSTURE_wf-id-275, …) so the family
@@ -6228,8 +6679,22 @@ var Server = (() => {
   var DEMO_UNIT = { id: "proj-demo-business-unit", name: "DEMO-BUSINESS-UNIT" };
   var DEMO_SUPPORT = { id: "proj-cs-demo-platform", name: "CS-DEMO-PLATFORM" };
   var SUPPORT_GROUP_OVER = ["PROJECT-DELTA", "PROJECT-ETA"];
+  function projectRefsFor(names, businessImpact) {
+    const list2 = names != null ? names : [];
+    if (!list2.length) return [];
+    return [
+      { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
+      ...list2.some((name) => SUPPORT_GROUP_OVER.indexOf(name) >= 0) ? [{ id: DEMO_SUPPORT.id, name: DEMO_SUPPORT.name, isFolder: true }] : [],
+      ...list2.map((name) => ({
+        id: `proj-${name.toLowerCase()}`,
+        name,
+        isFolder: false,
+        ...businessImpact ? { businessImpact } : {}
+      }))
+    ];
+  }
   function node(seed) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a5, _b, _c, _d, _e, _f;
     return {
       id: seed.id,
       kind: seed.kind,
@@ -6281,16 +6746,7 @@ var Server = (() => {
       // register only, so "select the unit", "select the support group" and "select a project"
       // are three visibly different selections rather than two. See its own comment for why it
       // is a folder and still not a business unit.
-      projects: ((_g = seed.projects) != null ? _g : []).length ? [
-        { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
-        ...((_h = seed.projects) != null ? _h : []).some((name) => SUPPORT_GROUP_OVER.indexOf(name) >= 0) ? [{ id: DEMO_SUPPORT.id, name: DEMO_SUPPORT.name, isFolder: true }] : [],
-        ...((_i = seed.projects) != null ? _i : []).map((name) => ({
-          id: `proj-${name.toLowerCase()}`,
-          name,
-          isFolder: false,
-          ...seed.businessImpact ? { businessImpact: seed.businessImpact } : {}
-        }))
-      ] : [],
+      projects: projectRefsFor(seed.projects, seed.businessImpact),
       technologyCategories: seed.techCats,
       identityPurpose: seed.identityPurpose,
       issueAnalytics: seed.issueAnalytics,
@@ -6744,6 +7200,16 @@ var Server = (() => {
       region: seed.region,
       account: seed.account,
       projects: seed.projects,
+      // The same projects as objects, built by the SAME recipe the assets use, so an issue and
+      // the asset it hangs off can never claim different project ids. A live sync writes this
+      // on every row (syncNormalize.normalizeIssuesPage), so the seed does too — an empty array
+      // where a seed names no project, which is what a sync reports when Wiz attributed the
+      // issue to nothing, and NOT the absent value that means "written before the column".
+      //
+      // No `businessImpact` on these entries, deliberately: `IssueSeed.businessImpact` is the
+      // issue's own worst-of roll-up, and spreading a worst-of back onto each project would
+      // invent a per-project tier from a figure that already threw the per-project split away.
+      projectRefs: projectRefsFor(seed.projects),
       frameworks: seed.frameworks,
       justification: seed.justification,
       createdAt: seed.createdAt,
@@ -6757,7 +7223,13 @@ var Server = (() => {
       ignoreNote: seed.ignoreNote,
       ignoreExpiredAt: seed.ignoreExpiredAt,
       aiVerdict: seed.aiVerdict,
-      aiRecommendedSeverity: seed.aiRecommendedSeverity
+      aiRecommendedSeverity: seed.aiRecommendedSeverity,
+      // The register's scope stamp, exactly as a live sync at the default scope would write
+      // it. Not a seed knob: the sample landscape stands in for a sync, and a sync that wrote
+      // rows with no stamp beside a commit record naming a scope would have the tab and the
+      // history row telling two stories about one fact. One category, because that is the
+      // default and the default is what everything pinned about this landscape is true of.
+      categories: [RISK_CATEGORY_ID]
     };
     if ((_c = seed.environments) == null ? void 0 : _c.length) row.environments = seed.environments;
     if ((_d = seed.ticketUrls) == null ? void 0 : _d.length) row.ticketUrls = seed.ticketUrls;
@@ -7713,6 +8185,24 @@ var Server = (() => {
   ];
 
   // src/domain/rankStats.ts
+  function kendallTauB(a, b) {
+    if (a.length !== b.length) {
+      throw new Error(`kendallTauB: length mismatch (${a.length} vs ${b.length})`);
+    }
+    const n = a.length;
+    let concordantMinusDiscordant = 0;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        concordantMinusDiscordant += Math.sign(a[i] - a[j]) * Math.sign(b[i] - b[j]);
+      }
+    }
+    const n0 = n * (n - 1) / 2;
+    const n1 = tiedPairCount(a);
+    const n2 = tiedPairCount(b);
+    const denom = (n0 - n1) * (n0 - n2);
+    if (denom <= 0) return 0;
+    return concordantMinusDiscordant / Math.sqrt(denom);
+  }
   function tiedPairCount(values) {
     var _a5;
     const counts = /* @__PURE__ */ new Map();
@@ -7738,6 +8228,31 @@ var Server = (() => {
       entropy += -p * Math.log(p);
     }
     return Math.exp(entropy);
+  }
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return function next() {
+      a = a + 1831565813 | 0;
+      let t = Math.imul(a ^ a >>> 15, 1 | a);
+      t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t;
+      return ((t ^ t >>> 14) >>> 0) / 4294967296;
+    };
+  }
+  function bootstrapCI(values, stat, samples, seed) {
+    const n = values.length;
+    const rng = mulberry32(seed);
+    const stats = [];
+    for (let s = 0; s < samples; s++) {
+      const resample = new Array(n);
+      for (let i = 0; i < n; i++) {
+        resample[i] = values[Math.floor(rng() * n)];
+      }
+      stats.push(stat(resample));
+    }
+    return {
+      lo: quantile(stats, 0.025),
+      hi: quantile(stats, 0.975)
+    };
   }
 
   // src/domain/aarsRule.ts
@@ -8334,6 +8849,312 @@ var Server = (() => {
     return withoutCeiling(a) === withoutCeiling(b);
   }
 
+  // src/domain/rank.ts
+  var TERM_ORDER = ["rule", "time", "exploitation", "adjacency"];
+  var DEFAULT_RANK_RULE = {
+    ruleWeights: [],
+    defaultRuleWeight: 0.5,
+    overdueDayBuckets: [0, 30, 90, 180, 365],
+    ageDayBuckets: [30, 90, 180, 365, 540],
+    timeSource: "dueAtOnly",
+    exploitationWeights: { kev: 1, exploit: 0.7, epss: 0.6, none: 0.2 },
+    epssThreshold: 0.1,
+    adjacencyWeights: { DIRECT: 1, ADJACENT: 0.7, UNLINKED: 0.4 },
+    shares: { rule: 0.5, time: 0.5, exploitation: 0, adjacency: 0 },
+    timeShare: 0.5
+  };
+  var RANK_PRESET_V2 = {
+    ...DEFAULT_RANK_RULE,
+    timeSource: "dueAtElseAge",
+    shares: { rule: 0.25, time: 0.3, exploitation: 0.3, adjacency: 0.15 },
+    timeShare: 0.3
+  };
+  var DAY_MS = 864e5;
+  function rankKeyOf(row) {
+    var _a5, _b;
+    return String((_b = (_a5 = row.ruleId) != null ? _a5 : row.ruleShortId) != null ? _b : "").trim();
+  }
+  function weightFor(key, rule) {
+    var _a5, _b;
+    for (const row of (_a5 = rule.ruleWeights) != null ? _a5 : []) {
+      if (row && String((_b = row.ruleId) != null ? _b : "").trim() === key) return clamp01(row.weight);
+    }
+    return clamp01(rule.defaultRuleWeight);
+  }
+  function clamp01(v) {
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n)) return 0;
+    return n < 0 ? 0 : n > 1 ? 1 : n;
+  }
+  function num01(v, fallback) {
+    if (v === void 0 || v === null || v === "") return fallback;
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n)) return fallback;
+    return n < 0 ? 0 : n > 1 ? 1 : n;
+  }
+  function objOf(v) {
+    return v && typeof v === "object" && !Array.isArray(v) ? v : {};
+  }
+  function cleanBuckets(raw, fallback) {
+    const arr = Array.isArray(raw) ? raw.map(Number).filter((n) => Number.isFinite(n) && n >= 0) : [];
+    const out = Array.from(new Set(arr)).sort((a, b) => a - b);
+    return out.length ? out : [...fallback];
+  }
+  function sharesOf(rule) {
+    var _a5;
+    const raw = rule == null ? void 0 : rule.shares;
+    if (raw && typeof raw === "object") {
+      return {
+        rule: num01(raw.rule, DEFAULT_RANK_RULE.shares.rule),
+        time: num01(raw.time, DEFAULT_RANK_RULE.shares.time),
+        exploitation: num01(raw.exploitation, DEFAULT_RANK_RULE.shares.exploitation),
+        adjacency: num01(raw.adjacency, DEFAULT_RANK_RULE.shares.adjacency)
+      };
+    }
+    const time = clamp01((_a5 = rule == null ? void 0 : rule.timeShare) != null ? _a5 : DEFAULT_RANK_RULE.timeShare);
+    return { rule: 1 - time, time, exploitation: 0, adjacency: 0 };
+  }
+  function overdueOf(row, rule, nowIso2) {
+    var _a5;
+    const due = row.dueAt ? Date.parse(row.dueAt) : NaN;
+    const now = Date.parse(nowIso2);
+    if (!Number.isFinite(due) || !Number.isFinite(now)) {
+      return { days: null, bucket: null, component: null };
+    }
+    const days = (now - due) / DAY_MS;
+    const buckets = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
+    const steps = buckets.length + 1;
+    if (days <= 0) return { days, bucket: -1, component: 0 };
+    let idx = 0;
+    for (let i = 0; i < buckets.length; i++) if (days > buckets[i]) idx = i + 1;
+    return { days, bucket: idx - 1, component: idx / (steps - 1) };
+  }
+  function ladderOf(days, buckets) {
+    const steps = buckets.length;
+    let idx = 0;
+    for (let i = 0; i < steps; i++) if (days > buckets[i]) idx = i + 1;
+    return { idx, steps, component: steps > 0 ? idx / steps : 0 };
+  }
+  var round = (n) => Math.round(n);
+  var num = (n) => String(Number(n.toFixed(3)));
+  function timeOf(row, rule, nowIso2) {
+    var _a5, _b;
+    const now = Date.parse(nowIso2);
+    const created = row.createdAt ? Date.parse(row.createdAt) : NaN;
+    const ageDays = Number.isFinite(created) && Number.isFinite(now) ? (now - created) / DAY_MS : null;
+    const od = overdueOf(row, rule, nowIso2);
+    if (od.component !== null) {
+      const buckets2 = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
+      const days = od.days;
+      const reason = days <= 0 ? "not yet due" : `overdue ${round(days)}d (bucket ${od.bucket + 1} of ${buckets2.length})`;
+      return { days, bucket: od.bucket, component: od.component, ageDays, basis: "dueAt", reason };
+    }
+    const source = (rule == null ? void 0 : rule.timeSource) === "dueAtElseAge" ? "dueAtElseAge" : "dueAtOnly";
+    if (source !== "dueAtElseAge" || ageDays === null) {
+      return { days: null, bucket: null, component: null, ageDays, basis: null, reason: "" };
+    }
+    const buckets = (_b = rule.ageDayBuckets) != null ? _b : DEFAULT_RANK_RULE.ageDayBuckets;
+    const rung = ladderOf(ageDays, buckets);
+    return {
+      days: null,
+      bucket: null,
+      component: rung.component,
+      ageDays,
+      basis: "createdAt",
+      reason: `age ${round(ageDays)}d, no deadline set (bucket ${rung.idx} of ${rung.steps})`
+    };
+  }
+  function foldedFrom(count2) {
+    const n = typeof count2 === "number" && Number.isFinite(count2) ? Math.max(0, Math.round(count2)) : null;
+    if (n === null) return "";
+    return ` on ${n} linked finding${n === 1 ? "" : "s"}`;
+  }
+  function exploitationOf(row, rule) {
+    var _a5, _b;
+    const weights = (_a5 = rule == null ? void 0 : rule.exploitationWeights) != null ? _a5 : DEFAULT_RANK_RULE.exploitationWeights;
+    const tier = String((_b = row.exploitationTier) != null ? _b : "").trim().toLowerCase();
+    const from = foldedFrom(row.exploitationFindingCount);
+    const peak = typeof row.epssPeak === "number" && Number.isFinite(row.epssPeak) ? row.epssPeak : null;
+    const threshold = num01(rule == null ? void 0 : rule.epssThreshold, DEFAULT_RANK_RULE.epssThreshold);
+    if (tier === "kev") return { component: clamp01(weights.kev), reason: `KEV${from || " on a linked finding"}` };
+    if (tier === "exploit") return { component: clamp01(weights.exploit), reason: "exploit available, no KEV" };
+    if (tier === "epss") {
+      if (peak !== null && peak >= threshold) {
+        return { component: clamp01(weights.epss), reason: `EPSS ${num(peak)} \u2265 ${num(threshold)}` };
+      }
+      const seen = peak === null ? "EPSS not captured" : `EPSS ${num(peak)} < ${num(threshold)}`;
+      return { component: clamp01(weights.none), reason: `${seen}, no exploit observed` };
+    }
+    if (tier === "none") {
+      return { component: clamp01(weights.none), reason: `no exploit observed${from}` };
+    }
+    return { component: null, reason: "" };
+  }
+  function adjacencyOf(row, rule) {
+    var _a5, _b, _c;
+    const weights = (_a5 = rule == null ? void 0 : rule.adjacencyWeights) != null ? _a5 : DEFAULT_RANK_RULE.adjacencyWeights;
+    const value = String((_b = row.aiAdjacency) != null ? _b : "").trim().toUpperCase();
+    const via = String((_c = row.adjacencyVia) != null ? _c : "").trim();
+    if (value === "DIRECT") return { component: clamp01(weights.DIRECT), reason: "on an AI asset" };
+    if (value === "ADJACENT") {
+      return {
+        component: clamp01(weights.ADJACENT),
+        reason: via ? `adjacent to an AI asset via ${via}` : "adjacent to an AI asset"
+      };
+    }
+    if (value === "UNLINKED") {
+      return { component: clamp01(weights.UNLINKED), reason: "no known link to an AI asset" };
+    }
+    return { component: null, reason: "" };
+  }
+  function rankOne(row, rule, nowIso2) {
+    const ruleComponent = weightFor(rankKeyOf(row), rule);
+    const time = timeOf(row, rule, nowIso2);
+    const exploitation = exploitationOf(row, rule);
+    const adjacency2 = adjacencyOf(row, rule);
+    const shares = sharesOf(rule);
+    const key = rankKeyOf(row);
+    const terms = {
+      rule: {
+        component: ruleComponent,
+        share: shares.rule,
+        reason: `rule ${key || "unattributed"} weight ${ruleComponent.toFixed(2)}`
+      },
+      time: { component: time.component, share: shares.time, reason: time.reason },
+      exploitation: { ...exploitation, share: shares.exploitation },
+      adjacency: { ...adjacency2, share: shares.adjacency }
+    };
+    let numerator = 0;
+    let denominator = 0;
+    let only = null;
+    const measuredTerms = [];
+    const reasons = [];
+    for (const name of TERM_ORDER) {
+      const term = terms[name];
+      if (term.component === null || term.share <= 0) continue;
+      numerator += term.share * term.component;
+      denominator += term.share;
+      only = measuredTerms.length === 0 ? term.component : null;
+      measuredTerms.push(name);
+      reasons.push(term.reason);
+    }
+    return {
+      // Nothing read at all — every share zeroed, or every term unmeasured — still ranks by the
+      // one thing that is never null, rather than by a manufactured 0.
+      score: only !== null ? only : denominator > 0 ? numerator / denominator : ruleComponent,
+      ruleComponent,
+      timeComponent: time.component,
+      overdueDays: time.days,
+      bucket: time.bucket,
+      ageDays: time.ageDays,
+      timeBasis: time.basis,
+      exploitationComponent: exploitation.component,
+      adjacencyComponent: adjacency2.component,
+      measuredTerms,
+      reasons
+    };
+  }
+  function rankSignature(rule) {
+    const r = rule != null ? rule : DEFAULT_RANK_RULE;
+    const shares = sharesOf(r);
+    const read = TERM_ORDER.filter((t) => shares[t] > 0);
+    const source = r.timeSource === "dueAtElseAge" ? "dueAtElseAge" : "dueAtOnly";
+    const age = cleanBuckets(r.ageDayBuckets, DEFAULT_RANK_RULE.ageDayBuckets);
+    const overdue = cleanBuckets(r.overdueDayBuckets, DEFAULT_RANK_RULE.overdueDayBuckets);
+    return [
+      "rank",
+      `time=${source}`,
+      `age=${age.join(",")}`,
+      `overdue=${overdue.join(",")}`,
+      `epss=${num(num01(r.epssThreshold, DEFAULT_RANK_RULE.epssThreshold))}`,
+      `terms=${read.join(",")}`
+    ].join("|");
+  }
+  function cleanRankRule(v) {
+    var _a5, _b;
+    const raw = v != null ? v : {};
+    const d = DEFAULT_RANK_RULE;
+    const rawShares = raw.shares && typeof raw.shares === "object" ? objOf(raw.shares) : null;
+    const legacyTime = clamp01((_a5 = raw.timeShare) != null ? _a5 : d.timeShare);
+    const shares = rawShares ? {
+      rule: num01(rawShares["rule"], d.shares.rule),
+      time: num01(rawShares["time"], d.shares.time),
+      exploitation: num01(rawShares["exploitation"], d.shares.exploitation),
+      adjacency: num01(rawShares["adjacency"], d.shares.adjacency)
+    } : { rule: 1 - legacyTime, time: legacyTime, exploitation: 0, adjacency: 0 };
+    const ew = objOf(raw.exploitationWeights);
+    const aw = objOf(raw.adjacencyWeights);
+    return {
+      ruleWeights: (Array.isArray(raw.ruleWeights) ? raw.ruleWeights : []).filter((r) => Boolean(r) && typeof r.ruleId === "string" && r.ruleId.trim() !== "").map((r) => ({ ruleId: r.ruleId.trim(), weight: clamp01(r.weight) })),
+      defaultRuleWeight: clamp01((_b = raw.defaultRuleWeight) != null ? _b : d.defaultRuleWeight),
+      overdueDayBuckets: cleanBuckets(raw.overdueDayBuckets, d.overdueDayBuckets),
+      ageDayBuckets: cleanBuckets(raw.ageDayBuckets, d.ageDayBuckets),
+      // The SPEC value on anything unreadable, never the newer one: a rule that cannot say which
+      // clock it meant gets the clock every stored score was computed against.
+      timeSource: raw.timeSource === "dueAtElseAge" ? "dueAtElseAge" : "dueAtOnly",
+      exploitationWeights: {
+        kev: num01(ew["kev"], d.exploitationWeights.kev),
+        exploit: num01(ew["exploit"], d.exploitationWeights.exploit),
+        epss: num01(ew["epss"], d.exploitationWeights.epss),
+        none: num01(ew["none"], d.exploitationWeights.none)
+      },
+      epssThreshold: num01(raw.epssThreshold, d.epssThreshold),
+      adjacencyWeights: {
+        DIRECT: num01(aw["DIRECT"], d.adjacencyWeights.DIRECT),
+        ADJACENT: num01(aw["ADJACENT"], d.adjacencyWeights.ADJACENT),
+        UNLINKED: num01(aw["UNLINKED"], d.adjacencyWeights.UNLINKED)
+      },
+      shares,
+      // Held equal to `shares.time`, in both directions. Two fields naming one fact is how the
+      // two of them drift, and a v1 reader still reaches for this one.
+      timeShare: shares.time
+    };
+  }
+  var MATURITY_WEIGHT = {
+    REALIZED: 1,
+    DEMONSTRATED: 0.8,
+    FEASIBLE: 0.6
+  };
+  function rankRuleFromExploitation(rows, base = DEFAULT_RANK_RULE) {
+    var _a5, _b;
+    const weights = [];
+    for (const row of rows != null ? rows : []) {
+      const ruleId = String((_a5 = row == null ? void 0 : row.ruleId) != null ? _a5 : "").trim();
+      if (!ruleId) continue;
+      const weight = MATURITY_WEIGHT[String((_b = row == null ? void 0 : row.maturity) != null ? _b : "").toUpperCase()];
+      if (weight === void 0) continue;
+      weights.push({ ruleId, weight });
+    }
+    return { ...base, ruleWeights: weights };
+  }
+
+  // src/domain/registerScope.ts
+  var CANDIDATE_CATEGORIES = [
+    { id: RISK_CATEGORY_ID, name: "AI Security" },
+    { id: "wct-id-3", name: "Vulnerability Assessment" },
+    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats" },
+    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security" },
+    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management" },
+    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management" }
+  ];
+  var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
+  function cleanCategoryIds(v) {
+    if (!Array.isArray(v)) return DEFAULT_CATEGORY_IDS.slice();
+    const seen = {};
+    const out = [];
+    for (const raw of v) {
+      if (typeof raw !== "string") continue;
+      const id = raw.trim();
+      if (!id || seen[id]) continue;
+      seen[id] = true;
+      out.push(id);
+    }
+    return out.length ? out : DEFAULT_CATEGORY_IDS.slice();
+  }
+  function registerScopeSignature(ids) {
+    return cleanCategoryIds(ids.slice()).slice().sort().join("|");
+  }
+
   // src/domain/settingsLogic.ts
   function clampDepth(v) {
     return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
@@ -8479,6 +9300,39 @@ var Server = (() => {
       posture_computed_version: Number.isFinite(v) && v > 0 ? Math.round(v) : 0
     };
   }
+  function getRankRule(settings) {
+    const raw = settings["rank_rule"];
+    if (!raw || typeof raw !== "object") {
+      return { version: 0, rule: cleanRankRule(DEFAULT_RANK_RULE) };
+    }
+    const stored = raw;
+    const version = Number(stored["version"]);
+    return {
+      version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+      // cleanRankRule on every read IS the migration mechanism — see getProblemRule's
+      // identical comment for why. It matters more here than there: a rule persisted before
+      // the four-term blend carries `timeShare` and no `shares`, and cleanRankRule is what
+      // reads it as the two-term case so it scores identically rather than reading three
+      // absent shares as zeroes.
+      rule: cleanRankRule(stored["rule"])
+    };
+  }
+  function withRankRule(settings, rule) {
+    const current = getRankRule(settings);
+    return {
+      ...settings,
+      rank_rule: {
+        version: current.version + 1,
+        rule: cleanRankRule(rule)
+      }
+    };
+  }
+  function getRankLeadsSort(settings) {
+    return settings["rank_leads_sort"] === true;
+  }
+  function withRankLeadsSort(settings, on) {
+    return { ...settings, rank_leads_sort: on === true };
+  }
   function getSyncDerivationVersion(settings) {
     const v = Number(settings["last_sync_derivation_version"]);
     return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
@@ -8609,6 +9463,28 @@ var Server = (() => {
     const seen = {};
     const deduped = list2.filter((id) => seen[id] ? false : seen[id] = true);
     return { ...settings, selected_frameworks: deduped };
+  }
+  function getIssueCategories(settings) {
+    const raw = settings["issue_categories"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return DEFAULT_CATEGORY_IDS.slice();
+    }
+    return cleanCategoryIds(raw["ids"]);
+  }
+  function getIssueCategoriesVersion(settings) {
+    const raw = settings["issue_categories"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return 0;
+    const v = Number(raw["version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withIssueCategories(settings, ids) {
+    return {
+      ...settings,
+      issue_categories: {
+        version: getIssueCategoriesVersion(settings) + 1,
+        ids: cleanCategoryIds(ids)
+      }
+    };
   }
   function withScanVars(settings, stepId, vars) {
     const current = getScanVars(settings);
@@ -8747,6 +9623,16 @@ var Server = (() => {
     saveSettings(next);
     return stored;
   }
+  var getRankRule2 = () => getRankRule(loadSettings());
+  function setRankRule(rule) {
+    saveSettings(withRankRule(loadSettings(), rule));
+    return getRankRule2();
+  }
+  var getRankLeadsSort2 = () => getRankLeadsSort(loadSettings());
+  function setRankLeadsSort(on) {
+    saveSettings(withRankLeadsSort(loadSettings(), on));
+    return getRankLeadsSort2();
+  }
   var getSkippedSteps2 = () => getSkippedSteps(loadSettings());
   function setSkippedSteps(steps) {
     const settings = loadSettings();
@@ -8794,6 +9680,11 @@ var Server = (() => {
   function setSelectedFrameworks(ids) {
     saveSettings(withSelectedFrameworks(loadSettings(), ids));
     return getSelectedFrameworks2();
+  }
+  var getIssueCategories2 = () => getIssueCategories(loadSettings());
+  function setIssueCategories(ids) {
+    saveSettings(withIssueCategories(loadSettings(), ids));
+    return getIssueCategories2();
   }
   var getFiveRsPins2 = () => getFiveRsPins(loadSettings());
   function setFiveRsPins(pins) {
@@ -8845,6 +9736,100 @@ var Server = (() => {
   }
   function setConfigRulesSyncedAt(at) {
     saveSettings(withConfigRulesSyncedAt(loadSettings(), at));
+  }
+
+  // src/domain/exploitation.ts
+  var EPSS_TIER_THRESHOLD = 0.1;
+  var SAMPLE_FINDING_IDS_MAX = 5;
+  function finite(v) {
+    return typeof v === "number" && isFinite(v) ? v : null;
+  }
+  function tierOf(hasKev, hasExploit, epss, threshold = EPSS_TIER_THRESHOLD) {
+    if (hasKev === true) return "kev";
+    if (hasExploit === true) return "exploit";
+    const p = finite(epss);
+    if (p !== null && p >= threshold) return "epss";
+    if (hasKev === null && hasExploit === null && p === null) return "unknown";
+    return "none";
+  }
+  function mergeFlag(a, b) {
+    if (a === true || b === true) return true;
+    if (a === false || b === false) return false;
+    return null;
+  }
+  function mergeEpss(a, b) {
+    const x = finite(a);
+    const y = finite(b);
+    if (x === null) return y;
+    if (y === null) return x;
+    return x > y ? x : y;
+  }
+  function mergeExploitation(a, b, threshold = EPSS_TIER_THRESHOLD) {
+    const hasKev = mergeFlag(a.hasKev, b.hasKev);
+    const hasExploit = mergeFlag(a.hasExploit, b.hasExploit);
+    const epssPeak = mergeEpss(a.epssPeak, b.epssPeak);
+    const ids = [];
+    for (const id of [...a.sampleFindingIds, ...b.sampleFindingIds]) {
+      if (id && ids.indexOf(id) === -1) ids.push(id);
+    }
+    ids.sort();
+    return {
+      issueId: a.issueId,
+      tier: tierOf(hasKev, hasExploit, epssPeak, threshold),
+      hasKev,
+      hasExploit,
+      epssPeak,
+      findingCount: a.findingCount + b.findingCount,
+      sampleFindingIds: ids.slice(0, SAMPLE_FINDING_IDS_MAX),
+      // Earliest-wins, and a real min rather than a first-wins guard: a resumed sync can deliver
+      // an earlier hop's part after a later one.
+      observedAt: a.observedAt <= b.observedAt ? a.observedAt : b.observedAt
+    };
+  }
+  function foldExploitation(findings, knownIssueIds, observedAt, threshold = EPSS_TIER_THRESHOLD) {
+    var _a5;
+    const byIssue = /* @__PURE__ */ new Map();
+    let unjoined = 0;
+    let droppedNotInRegister = 0;
+    for (const f of findings != null ? findings : []) {
+      const ids = ((_a5 = f.issueIds) != null ? _a5 : []).filter((id) => !!id);
+      if (!ids.length) {
+        unjoined += 1;
+        continue;
+      }
+      const known = ids.filter((id) => knownIssueIds.has(id));
+      if (!known.length) {
+        droppedNotInRegister += 1;
+        continue;
+      }
+      for (const issueId of known) {
+        const reading = {
+          issueId,
+          tier: tierOf(f.hasKev, f.hasExploit, f.epss, threshold),
+          hasKev: f.hasKev,
+          hasExploit: f.hasExploit,
+          epssPeak: finite(f.epss),
+          findingCount: 1,
+          sampleFindingIds: f.id ? [f.id] : [],
+          observedAt
+        };
+        const prev = byIssue.get(issueId);
+        byIssue.set(issueId, prev ? mergeExploitation(prev, reading, threshold) : reading);
+      }
+    }
+    const rows = [...byIssue.values()].sort((a, b) => a.issueId < b.issueId ? -1 : a.issueId > b.issueId ? 1 : 0);
+    return { rows, unjoined, droppedNotInRegister };
+  }
+  function censusExploitation(rows) {
+    const out = { kev: 0, exploit: 0, epss: 0, none: 0, unknown: 0 };
+    for (const r of rows != null ? rows : []) {
+      if (r.tier === "kev" || r.tier === "exploit" || r.tier === "epss" || r.tier === "none") {
+        out[r.tier] += 1;
+      } else {
+        out.unknown += 1;
+      }
+    }
+    return out;
   }
 
   // src/domain/compliancePosture.ts
@@ -9231,6 +10216,107 @@ var Server = (() => {
     return failing.size;
   }
 
+  // src/domain/issueLedger.ts
+  function byIssueId(a, b) {
+    return a.issueId < b.issueId ? -1 : a.issueId > b.issueId ? 1 : 0;
+  }
+  function unionCategories2(prev, next) {
+    const out = prev.slice();
+    for (const c of next) if (c && out.indexOf(c) < 0) out.push(c);
+    return out;
+  }
+  function freezeInputs(row, issue2) {
+    var _a5, _b, _c;
+    if (issue2.aiAdjacency === void 0) delete row.aiAdjacency;
+    else row.aiAdjacency = issue2.aiAdjacency;
+    if (issue2.exploitationTier === void 0) {
+      delete row.exploitationTier;
+      delete row.epssPeak;
+    } else {
+      row.exploitationTier = issue2.exploitationTier;
+      row.epssPeak = (_a5 = issue2.epssPeak) != null ? _a5 : null;
+    }
+    row.ruleId = issue2.ruleId;
+    row.createdAt = (_b = issue2.createdAt) != null ? _b : null;
+    row.dueAt = (_c = issue2.dueAt) != null ? _c : null;
+    row.lastStatus = issue2.status;
+  }
+  function reconcileIssueLedger(prev, current, syncId, syncTs, scopeSignature, prevScopeSignature) {
+    var _a5, _b, _c, _d;
+    const deltas = {
+      new: 0,
+      resolved: 0,
+      reopened: 0,
+      carried: 0,
+      skippedNarrowedScope: 0
+    };
+    const byId = {};
+    const order = [];
+    for (const row of prev) {
+      if (!row.issueId || byId[row.issueId]) continue;
+      byId[row.issueId] = { ...row, categories: row.categories.slice() };
+      order.push(row.issueId);
+    }
+    const seen = {};
+    for (const issue2 of current) {
+      if (!issue2.id) continue;
+      const first = !seen[issue2.id];
+      seen[issue2.id] = true;
+      const existing = byId[issue2.id];
+      if (!existing) {
+        const row = {
+          issueId: issue2.id,
+          firstSeenSync: syncId,
+          firstSeenAt: syncTs,
+          lastSeenSync: syncId,
+          lastSeenAt: syncTs,
+          disappearedAt: null,
+          resolutionSrc: null,
+          lastStatus: issue2.status,
+          categories: unionCategories2([], (_a5 = issue2.categories) != null ? _a5 : []),
+          ruleId: issue2.ruleId,
+          createdAt: (_b = issue2.createdAt) != null ? _b : null,
+          dueAt: (_c = issue2.dueAt) != null ? _c : null,
+          registerScope: scopeSignature,
+          episode: 1
+        };
+        freezeInputs(row, issue2);
+        byId[issue2.id] = row;
+        order.push(issue2.id);
+        if (first) deltas.new += 1;
+        continue;
+      }
+      if (existing.disappearedAt !== null) {
+        existing.episode += 1;
+        existing.disappearedAt = null;
+        existing.resolutionSrc = "reopened";
+        if (first) deltas.reopened += 1;
+      }
+      existing.lastSeenSync = syncId;
+      existing.lastSeenAt = syncTs;
+      existing.categories = unionCategories2(existing.categories, (_d = issue2.categories) != null ? _d : []);
+      existing.registerScope = scopeSignature;
+      freezeInputs(existing, issue2);
+    }
+    const scopeCovers = prevScopeSignature !== null && prevScopeSignature === scopeSignature;
+    for (const id of order) {
+      if (seen[id]) continue;
+      const row = byId[id];
+      if (row.disappearedAt !== null) {
+        deltas.carried += 1;
+        continue;
+      }
+      if (!scopeCovers) {
+        deltas.skippedNarrowedScope += 1;
+        continue;
+      }
+      row.disappearedAt = syncTs;
+      row.resolutionSrc = "disappeared";
+      deltas.resolved += 1;
+    }
+    return { rows: order.map((id) => byId[id]).sort(byIssueId), deltas };
+  }
+
   // src/domain/aarsTrend.ts
   var PROJECT_TOTALS_COLUMN = "project_totals_json";
   var PROJECT_TOTALS_MAX_CHARS = 45e3;
@@ -9287,6 +10373,92 @@ var Server = (() => {
     }
     return counts;
   }
+  function countsFromObject(parsed, keys, absentKeyIsNull = false) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const counts = {};
+    for (const k of keys) {
+      if (absentKeyIsNull && !Object.prototype.hasOwnProperty.call(raw, k)) {
+        counts[k] = null;
+        continue;
+      }
+      const n = Number(raw[k]);
+      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    }
+    return counts;
+  }
+  function parseCounts(v, keys, absentKeyIsNull = false) {
+    if (typeof v !== "string" || !v) return null;
+    try {
+      return countsFromObject(JSON.parse(v), keys, absentKeyIsNull);
+    } catch {
+      return null;
+    }
+  }
+  function parseAnnotations(v, keys) {
+    const out = {};
+    let raw = {};
+    if (typeof v === "string" && v) {
+      try {
+        const parsed = JSON.parse(v);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          raw = parsed;
+        }
+      } catch {
+        raw = {};
+      }
+    }
+    for (const k of keys) {
+      const n = Number(raw[k]);
+      out[k] = Object.prototype.hasOwnProperty.call(raw, k) && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+    }
+    return out;
+  }
+  function parseProjectCounts(v, projectId, spec) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const entry = parsed[projectId];
+    if (!entry || typeof entry !== "object") return null;
+    return countsFromObject(
+      entry[spec.projectKey],
+      spec.keys,
+      spec.absentKeyIsNull
+    );
+  }
+  function readTrend(rows, spec, limit, projectId) {
+    var _a5;
+    const points = [];
+    if (!spec.keys.length) return points;
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys, spec.absentKeyIsNull);
+      if (!counts) continue;
+      if (spec.keys.every((k) => counts[k] === null)) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const v = Number(r[spec.versionColumn]);
+      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+      const point = { at, counts, ruleVersion };
+      if (spec.annotationKeys && spec.annotationKeys.length) {
+        point.annotations = parseAnnotations(r[spec.countsColumn], spec.annotationKeys);
+      }
+      points.push(point);
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
+  function sparseTrendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
   var COUNT_KEYS = ["issues", "findings", "postureFails"];
   function cellCount2(v) {
     if (v === null || v === void 0 || v === "") return null;
@@ -9339,6 +10511,160 @@ var Server = (() => {
     }
     points.sort(cmpBy((p) => p.at));
     return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  var ADJACENCY_KEYS = ["DIRECT", "ADJACENT", "UNLINKED"];
+  var ADJACENCY_SPEC = {
+    keys: ADJACENCY_KEYS,
+    countsColumn: "adjacency_json",
+    versionColumn: "derivation_version",
+    projectKey: "adjacency",
+    annotationKeys: ["edgesKnown"]
+  };
+  function adjacencyTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, ADJACENCY_SPEC, limit, projectId);
+  }
+  var EXPLOITATION_KEYS = ["kev", "exploit", "epss", "none", "unknown"];
+  var EXPLOITATION_SPEC = {
+    keys: EXPLOITATION_KEYS,
+    countsColumn: "exploitation_json",
+    versionColumn: "derivation_version",
+    projectKey: "exploitation",
+    annotationKeys: ["findings", "unjoined", "droppedNotInRegister"]
+  };
+  function exploitationTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, EXPLOITATION_SPEC, limit, projectId);
+  }
+  var CATEGORY_COUNTS_COLUMN = "category_counts_json";
+  var CATEGORY_SPEC = {
+    keys: [],
+    countsColumn: CATEGORY_COUNTS_COLUMN,
+    versionColumn: "derivation_version",
+    projectKey: "categories",
+    absentKeyIsNull: true
+  };
+  function categorySpecFor(categoryIds) {
+    return { ...CATEGORY_SPEC, keys: [...categoryIds] };
+  }
+  function categoryTrendFromHistory(rows, categoryIds, limit = 90) {
+    return sparseTrendFromHistory(rows, categorySpecFor(categoryIds), limit);
+  }
+  function countIssueCategories(issues2) {
+    var _a5, _b;
+    const counts = {};
+    for (const issue2 of issues2) {
+      const seen = [];
+      for (const c of (_a5 = issue2.categories) != null ? _a5 : []) {
+        if (!c || seen.indexOf(c) >= 0) continue;
+        seen.push(c);
+        counts[c] = ((_b = counts[c]) != null ? _b : 0) + 1;
+      }
+    }
+    return counts;
+  }
+  var LEDGER_KEYS = ["new", "resolved", "reopened"];
+  var LEDGER_SPEC = {
+    keys: LEDGER_KEYS,
+    countsColumn: "ledger_json",
+    versionColumn: "derivation_version",
+    projectKey: "ledger"
+  };
+  function ledgerTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, LEDGER_SPEC, limit, projectId);
+  }
+  var NET_CAPACITY_BAND_PCT = 2;
+  var MIN_COMPARABLE_SYNCS = 2;
+  function verdictOf(netPct) {
+    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
+    return netPct > 0 ? "gaining" : "falling-behind";
+  }
+  function capacityFromLedgerDeltas(rows, limit = 90) {
+    var _a5, _b, _c;
+    const raw = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = parseCounts(r["ledger_json"], [
+        "new",
+        "resolved",
+        "reopened",
+        "carried",
+        "skippedNarrowedScope"
+      ]);
+      if (!counts) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const c = counts;
+      const n = (k) => {
+        var _a6;
+        return Number((_a6 = c[k]) != null ? _a6 : 0);
+      };
+      raw.push({
+        syncId: String((_b = r["sync_id"]) != null ? _b : ""),
+        at,
+        // "" is UNKNOWN, never "the same scope as the row beside it" — see case 2 above.
+        scope: String((_c = r["register_scope"]) != null ? _c : ""),
+        opened: n("new") + n("reopened"),
+        closed: n("resolved"),
+        openAtStart: n("carried") + n("resolved"),
+        skipped: n("skippedNarrowedScope")
+      });
+    }
+    raw.sort(cmpBy((p) => p.at));
+    const points = [];
+    let comparableCount = 0;
+    const rates = [];
+    const netPcts = [];
+    for (let i = 0; i < raw.length; i++) {
+      const cur = raw[i];
+      const prev = i > 0 ? raw[i - 1] : null;
+      const comparable = Boolean(
+        prev && cur.skipped === 0 && cur.scope !== "" && prev.scope !== "" && cur.scope === prev.scope
+      );
+      const netPct = cur.openAtStart > 0 ? (cur.closed - cur.opened) / cur.openAtStart * 100 : null;
+      if (comparable) {
+        comparableCount += 1;
+        if (cur.openAtStart > 0) {
+          rates.push(cur.closed / cur.openAtStart * 100);
+          netPcts.push(netPct != null ? netPct : 0);
+        }
+      }
+      points.push({
+        syncId: cur.syncId,
+        at: cur.at,
+        opened: cur.opened,
+        closed: cur.closed,
+        net: cur.closed - cur.opened,
+        comparable,
+        verdict: comparable ? verdictOf(netPct) : null
+      });
+    }
+    const enough = rates.length >= MIN_COMPARABLE_SYNCS;
+    const mean2 = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
+    const trimmed = limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+    return {
+      points: trimmed,
+      overall: {
+        mmcr: enough ? mean2(rates) : null,
+        verdict: enough ? verdictOf(mean2(netPcts)) : null,
+        syncs: points.length,
+        comparable: comparableCount
+      }
+    };
+  }
+  function labelCategories(ids) {
+    return ids.map((id) => {
+      const known = CANDIDATE_CATEGORIES.filter((c) => c.id === id)[0];
+      return { id, name: known ? known.name : id };
+    });
+  }
+  function postureTrendFromHistory(rows, categoryIds, limit = 90) {
+    return {
+      adjacency: adjacencyTrendFromHistory(rows, limit),
+      exploitation: exploitationTrendFromHistory(rows, limit),
+      categories: labelCategories(categoryIds),
+      categoryPoints: categoryTrendFromHistory(rows, categoryIds, limit),
+      ledger: ledgerTrendFromHistory(rows, limit),
+      capacity: capacityFromLedgerDeltas(rows, limit)
+    };
   }
 
   // src/domain/prunePlan.ts
@@ -9618,7 +10944,7 @@ var Server = (() => {
     return e;
   }
   function issueToRow(i) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G;
     return {
       id: i.id,
       rule_id: i.ruleId,
@@ -9666,11 +10992,36 @@ var Server = (() => {
       // a structure here. Empty string when attribution found nothing, which rowToIssue reads
       // back as an empty ARRAY rather than as absent — "we looked and found none".
       attributed_asset_ids: ((_A = i.attributedAssetIds) != null ? _A : []).join(","),
-      attribution_hop: (_B = i.attributionHop) != null ? _B : null
+      attribution_hop: (_B = i.attributionHop) != null ? _B : null,
+      // The register's scope stamp. Comma-joined like the two above; empty only for a row
+      // this app built before the stamp existed, which rowToIssue reads back as the AI
+      // category — the only scope any of those syncs ran. See domain/registerScope.ts.
+      categories: ((_C = i.categories) != null ? _C : []).join(","),
+      // The issue's own project attribution, as objects — `projects_json` above holds the
+      // NAMES and keeps doing so. `null` for undefined rather than `"[]"`, because the two say
+      // different things: absent is "this row predates the column, its refs are unknown",
+      // `[]` is a sync reporting that Wiz attributed the issue to no project at all. The
+      // project view reads the difference (api.ts `viewIssues`).
+      project_refs_json: i.projectRefs ? JSON.stringify(i.projectRefs) : null,
+      // Where the row sits relative to the AI estate. `?? null`, never a default: an empty
+      // `ai_adjacency` cell means no adjacency pass ran, and writing "UNLINKED" for it would
+      // turn "nobody looked" into a measurement — the same absent-is-never-zero failure the
+      // flags themselves keep. The id list is comma-joined, matching `attributed_asset_ids`.
+      ai_adjacency: (_D = i.aiAdjacency) != null ? _D : null,
+      adjacency_via: (_E = i.adjacencyVia) != null ? _E : null,
+      adjacent_asset_ids: ((_F = i.adjacentAssetIds) != null ? _F : []).join(","),
+      // The exploitation reading. `?? null` on all three, never a default: an empty
+      // `exploitation_tier` means no evidence pass ran over this row, and writing "none" for it
+      // would turn "nobody looked" into "we looked and found nothing" — the measurement the
+      // ranker prices differently. `epss_peak` is null rather than 0 for the same reason: 0 is a
+      // computed EPSS probability, blank is the absence of one.
+      exploitation_tier: (_G = i.exploitationTier) != null ? _G : null,
+      epss_peak: i.epssPeak === null || i.epssPeak === void 0 ? null : i.epssPeak,
+      exploitation_findings: i.exploitationFindingCount === void 0 ? null : i.exploitationFindingCount
     };
   }
   function rowToIssue(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L, _M;
     const issue2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       ruleId: String((_b = r["rule_id"]) != null ? _b : ""),
@@ -9707,17 +11058,40 @@ var Server = (() => {
       aiVerdict: (_B = r["ai_verdict"]) != null ? _B : void 0,
       aiRecommendedSeverity: (_C = r["ai_recommended_severity"]) != null ? _C : void 0
     };
-    const environments = String((_D = r["environments"]) != null ? _D : "").split(",").filter(Boolean);
+    const categories = String((_D = r["categories"]) != null ? _D : "").split(",").filter(Boolean);
+    issue2.categories = categories.length ? categories : [RISK_CATEGORY_ID];
+    const projectRefs = parseJson(r["project_refs_json"], null);
+    if (projectRefs) issue2.projectRefs = projectRefs;
+    const environments = String((_E = r["environments"]) != null ? _E : "").split(",").filter(Boolean);
     if (environments.length) issue2.environments = environments;
-    const ticketUrls = String((_E = r["ticket_urls"]) != null ? _E : "").split(",").filter(Boolean);
+    const ticketUrls = String((_F = r["ticket_urls"]) != null ? _F : "").split(",").filter(Boolean);
     if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
     if (parseBool(r["validated_exploitable"])) issue2.validatedAsExploitable = true;
-    const attributionHop = (_F = r["attribution_hop"]) != null ? _F : null;
+    const attributionHop = (_G = r["attribution_hop"]) != null ? _G : null;
     if (attributionHop === "direct" || attributionHop === "RUNS_AS" || attributionHop === "none") {
       issue2.attributionHop = attributionHop;
-      issue2.attributedAssetIds = String((_G = r["attributed_asset_ids"]) != null ? _G : "").split(",").filter(Boolean);
+      issue2.attributedAssetIds = String((_H = r["attributed_asset_ids"]) != null ? _H : "").split(",").filter(Boolean);
     }
-    const problemOutcome = (_H = r["problem_outcome"]) != null ? _H : null;
+    const adjacency2 = (_I = r["ai_adjacency"]) != null ? _I : null;
+    if (adjacency2 === "DIRECT" || adjacency2 === "ADJACENT" || adjacency2 === "UNLINKED") {
+      issue2.aiAdjacency = adjacency2;
+      issue2.adjacentAssetIds = String((_J = r["adjacent_asset_ids"]) != null ? _J : "").split(",").filter(Boolean);
+      const via = String((_K = r["adjacency_via"]) != null ? _K : "");
+      if (via) issue2.adjacencyVia = via;
+    }
+    const tier = String((_L = r["exploitation_tier"]) != null ? _L : "");
+    if (tier) {
+      issue2.exploitationTier = tier;
+      const peak = r["epss_peak"];
+      issue2.epssPeak = peak === null || peak === void 0 || peak === "" ? null : Number(peak);
+      if (issue2.epssPeak !== null && !isFinite(issue2.epssPeak)) issue2.epssPeak = null;
+      const folded = r["exploitation_findings"];
+      if (folded !== null && folded !== void 0 && folded !== "") {
+        const n = Number(folded);
+        if (isFinite(n)) issue2.exploitationFindingCount = n;
+      }
+    }
+    const problemOutcome = (_M = r["problem_outcome"]) != null ? _M : null;
     if (problemOutcome) issue2.problemOutcome = problemOutcome;
     const problemInput = parseJson(r["problem_input_json"], null);
     if (problemInput) issue2.problemInput = problemInput;
@@ -9920,6 +11294,103 @@ var Server = (() => {
       hygiene: String((_m = r["hygiene"]) != null ? _m : "MFA") === "DORMANT" ? "DORMANT" : "MFA"
     };
   }
+  function exploitationToRow(e) {
+    var _a5;
+    return {
+      issue_id: e.issueId,
+      tier: e.tier,
+      has_kev: triCell(e.hasKev),
+      has_exploit: triCell(e.hasExploit),
+      epss_peak: e.epssPeak === null || e.epssPeak === void 0 ? null : e.epssPeak,
+      finding_count: e.findingCount,
+      // Comma-joined, matching `attributed_asset_ids` and `adjacent_asset_ids`; the `_json`
+      // suffix stays reserved for structures. Bounded at the fold, not here.
+      sample_finding_ids: ((_a5 = e.sampleFindingIds) != null ? _a5 : []).slice(0, SAMPLE_FINDING_IDS_MAX).join(","),
+      observed_at: e.observedAt
+    };
+  }
+  function issueLedgerToRow(l) {
+    var _a5, _b, _c;
+    return {
+      issue_id: l.issueId,
+      first_seen_sync: l.firstSeenSync,
+      first_seen_at: l.firstSeenAt,
+      last_seen_sync: l.lastSeenSync,
+      last_seen_at: l.lastSeenAt,
+      // NULL while the row is present. When set it is the timestamp of the sync that first
+      // failed to see it — an upper bound, and `resolution_src` beside it is what says so.
+      disappeared_at: l.disappearedAt,
+      resolution_src: l.resolutionSrc,
+      last_status: l.lastStatus,
+      // Comma-joined, matching `categories` on ai_issues; the `_json` suffix stays reserved
+      // for structures.
+      categories: ((_a5 = l.categories) != null ? _a5 : []).join(","),
+      rule_id: l.ruleId,
+      created_at: l.createdAt,
+      due_at: l.dueAt,
+      // `?? null`, never a default, for the reason ai_issues states at length: an empty cell
+      // here means the fold did not reach this row on the sync that last saw it, and writing
+      // "UNLINKED" or "none" would turn "nobody looked" into a measurement.
+      ai_adjacency: (_b = l.aiAdjacency) != null ? _b : null,
+      exploitation_tier: (_c = l.exploitationTier) != null ? _c : null,
+      epss_peak: l.epssPeak === null || l.epssPeak === void 0 ? null : l.epssPeak,
+      register_scope: l.registerScope,
+      episode: l.episode
+    };
+  }
+  function rowToIssueLedger(r) {
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o;
+    const row = {
+      issueId: String((_a5 = r["issue_id"]) != null ? _a5 : ""),
+      firstSeenSync: String((_b = r["first_seen_sync"]) != null ? _b : ""),
+      firstSeenAt: String((_c = r["first_seen_at"]) != null ? _c : ""),
+      lastSeenSync: String((_d = r["last_seen_sync"]) != null ? _d : ""),
+      lastSeenAt: String((_e = r["last_seen_at"]) != null ? _e : ""),
+      disappearedAt: (_f = r["disappeared_at"]) != null ? _f : null,
+      // Narrowed, because these two strings are the PROVENANCE of the date beside them: an
+      // unrecognised value must not be able to reach a surface that renders it as a claim.
+      resolutionSrc: r["resolution_src"] === "disappeared" || r["resolution_src"] === "reopened" ? r["resolution_src"] : null,
+      lastStatus: String((_g = r["last_status"]) != null ? _g : ""),
+      categories: String((_h = r["categories"]) != null ? _h : "").split(",").filter(Boolean),
+      ruleId: String((_i = r["rule_id"]) != null ? _i : ""),
+      createdAt: (_j = r["created_at"]) != null ? _j : null,
+      dueAt: (_k = r["due_at"]) != null ? _k : null,
+      registerScope: String((_l = r["register_scope"]) != null ? _l : ""),
+      // 1, not 0: a stored row has been present at least once by definition, and a 0 here would
+      // read as "never seen" on a tab whose every row is a sighting.
+      episode: Number((_m = r["episode"]) != null ? _m : 1) || 1
+    };
+    const adjacency2 = (_n = r["ai_adjacency"]) != null ? _n : null;
+    if (adjacency2 === "DIRECT" || adjacency2 === "ADJACENT" || adjacency2 === "UNLINKED") {
+      row.aiAdjacency = adjacency2;
+    }
+    const tier = String((_o = r["exploitation_tier"]) != null ? _o : "");
+    if (tier) {
+      row.exploitationTier = tier;
+      const peak = r["epss_peak"];
+      const parsed = peak === null || peak === void 0 || peak === "" ? null : Number(peak);
+      row.epssPeak = parsed !== null && isFinite(parsed) ? parsed : null;
+    }
+    return row;
+  }
+  function loadIssueLedger() {
+    return readAll(TABS.issueLedger).map(rowToIssueLedger).filter((l) => !!l.issueId);
+  }
+  function withExploitation(issues2, rows) {
+    if (!rows.length) return issues2;
+    const byIssue = /* @__PURE__ */ new Map();
+    for (const r of rows) byIssue.set(r.issueId, r);
+    return issues2.map((issue2) => {
+      const e = byIssue.get(issue2.id);
+      if (!e) return issue2;
+      return {
+        ...issue2,
+        exploitationTier: e.tier,
+        epssPeak: e.epssPeak,
+        exploitationFindingCount: e.findingCount
+      };
+    });
+  }
   function cellPct(v) {
     if (v === "" || v === null || v === void 0) return null;
     const n = Number(v);
@@ -9949,11 +11420,11 @@ var Server = (() => {
   }
   function rowToPosture(r) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
-    const num = (v) => {
+    const num2 = (v) => {
       const n = Number(v != null ? v : 0);
       return isFinite(n) ? n : 0;
     };
-    const optNum = (v) => v === "" || v === null || v === void 0 ? void 0 : num(v);
+    const optNum = (v) => v === "" || v === null || v === void 0 ? void 0 : num2(v);
     return {
       frameworkId: String((_a5 = r["framework_id"]) != null ? _a5 : ""),
       level: String((_b = r["level"]) != null ? _b : "subcategory"),
@@ -9963,8 +11434,8 @@ var Server = (() => {
       title: String((_f = r["title"]) != null ? _f : ""),
       description: String((_g = r["description"]) != null ? _g : "") || void 0,
       posturePct: cellPct(r["posture_pct"]),
-      passCount: num(r["pass_count"]),
-      failCount: num(r["fail_count"]),
+      passCount: num2(r["pass_count"]),
+      failCount: num2(r["fail_count"]),
       passSubCategoryCount: optNum(r["pass_subcategory_count"]),
       failSubCategoryCount: optNum(r["fail_subcategory_count"]),
       emptyPostureReason: String((_h = r["empty_posture_reason"]) != null ? _h : "") || null,
@@ -9999,7 +11470,7 @@ var Server = (() => {
   }
   function rowToFrameworkPolicy(r) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
-    const num = (v) => {
+    const num2 = (v) => {
       const n = Number(v != null ? v : 0);
       return isFinite(n) ? n : 0;
     };
@@ -10015,10 +11486,10 @@ var Server = (() => {
       severity: String((_h = r["severity"]) != null ? _h : "UNKNOWN"),
       enabled: optBool(r["enabled"]),
       builtin: optBool(r["builtin"]),
-      passCount: num(r["pass_count"]),
-      failCount: num(r["fail_count"]),
-      assessedCount: num(r["assessed_count"]),
-      rejectedCount: num(r["rejected_count"]),
+      passCount: num2(r["pass_count"]),
+      failCount: num2(r["fail_count"]),
+      assessedCount: num2(r["assessed_count"]),
+      rejectedCount: num2(r["rejected_count"]),
       noResourceToAssess: r["no_resource_to_assess"] === true || r["no_resource_to_assess"] === "TRUE" || r["no_resource_to_assess"] === "true",
       targetNativeType: String((_i = r["target_native_type"]) != null ? _i : "") || void 0,
       subjectEntityType: String((_j = r["subject_entity_type"]) != null ? _j : "") || void 0,
@@ -10027,7 +11498,7 @@ var Server = (() => {
     };
   }
   function persistSync(rawDoc, issues2, hints, meta, now, findings = [], dataFindings = [], frameworks = [], posture = [], frameworkPolicies = [], extras = {}) {
-    var _a5, _b, _c, _d;
+    var _a5, _b, _c, _d, _e;
     const { version: ruleVersion, rule } = getAarsRule2();
     const counted = withDataFindingCounts(rawDoc, dataFindings);
     const exposed = withExposureEvidence(counted);
@@ -10036,11 +11507,15 @@ var Server = (() => {
       effectiveAccess: (_b = extras.effectiveAccess) != null ? _b : []
     });
     const attributedIssues = withIssueAttribution(reachable2, issues2);
-    const enriched = enrichGraphDoc(reachable2, attributedIssues, hints, rule);
+    const { issues: placedIssues, census: adjacencyCensus } = withAiAdjacency(reachable2, attributedIssues);
+    const vulnFindings = extras.vulnFindings;
+    const exploitation = vulnFindings ? foldExploitation(vulnFindings, new Set(placedIssues.map((i) => i.id)), nowIso(now)) : null;
+    const exploitedIssues = exploitation ? withExploitation(placedIssues, exploitation.rows) : placedIssues;
+    const enriched = enrichGraphDoc(reachable2, exploitedIssues, hints, rule);
     const { version: problemRuleVersion, rule: problemRule } = getProblemRule2();
     const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
       enriched,
-      attributedIssues,
+      exploitedIssues,
       findings,
       problemRule,
       problemRuleVersion
@@ -10066,11 +11541,31 @@ var Server = (() => {
     const configRules = (_c = extras.configRules) != null ? _c : [];
     if (configRules.length) overwrite(TABS.configRules, configRules.map(configRuleToRow));
     overwrite(TABS.identityFindings, ((_d = extras.identityFindings) != null ? _d : []).map(identityFindingToRow));
+    if (exploitation) {
+      overwrite(TABS.issueExploitation, exploitation.rows.map(exploitationToRow));
+    }
+    const finishedAt = nowIso(now);
+    const registerScope = registerScopeSignature(getIssueCategories2());
+    const prevCommitted = latestSync();
+    const ledger = reconcileIssueLedger(
+      loadIssueLedger(),
+      decidedIssues,
+      meta.syncId,
+      finishedAt,
+      registerScope,
+      // The scope the LAST COMMITTED sync applied — read off the stored row, never off today's
+      // settings. Null when nothing has committed yet or the row predates the column, and null
+      // is UNKNOWN: `reconcileIssueLedger` refuses to resolve by absence against it, because a
+      // ledger that cannot prove the previous scan looked for a row must not date its departure.
+      prevCommitted ? (_e = prevCommitted["register_scope"]) != null ? _e : null : null
+    );
+    overwrite(TABS.issueLedger, ledger.rows.map(issueLedgerToRow));
     const snapshotRef = writeGraphSnapshot(postured);
+    const openIssuesThisSync = decidedIssues.filter(isUnresolvedIssue);
     appendRows(TABS.syncHistory, [{
       sync_id: meta.syncId,
       started_at: meta.startedAt,
-      finished_at: nowIso(now),
+      finished_at: finishedAt,
       status: "SUCCESS",
       mode: meta.mode,
       node_count: postured.nodes.length,
@@ -10109,7 +11604,7 @@ var Server = (() => {
         // control" on one chart. The outcome series is unaffected: a row that fails either
         // gate carries no verdict to count.
         countProjectTotals(postured.nodes, [
-          ...decidedIssues.filter(isUnresolvedIssue),
+          ...openIssuesThisSync,
           ...decidedFindings.filter(isOpenGap)
         ])
       ),
@@ -10151,7 +11646,51 @@ var Server = (() => {
       // stored facts changed MEANING, which Recompute cannot repair. Recorded per sync so the
       // trend can mark the break rather than let a legitimate collapse in the tiered population
       // read as risk improving.
-      derivation_version: DERIVATION_VERSION
+      derivation_version: DERIVATION_VERSION,
+      // The category scope this sync APPLIED — read off the same list syncSteps built its
+      // battery from, never off the settings at read time. A widened setting and an unsynced
+      // ledger disagree until the next sync, and bootstrap says so rather than letting a
+      // total counted under one scope be compared with one counted under another.
+      register_scope: registerScope,
+      // Where this sync's issues sat relative to the AI estate, WITH the edge count that makes
+      // the three figures readable — see AdjacencyCensus.edgesKnown. Mirrors aars_severity_json
+      // and problem_outcome_json above: the snapshot this row points at is overwritten by the
+      // next sync, so this is the only record the trend can ever read it from.
+      adjacency_json: JSON.stringify(adjacencyCensus),
+      // The exploitation census, and NULL when no pass ran — the same "we never asked" that
+      // `posture_fail_count` above already refuses to write as a zero. The two unusable counts
+      // travel inside: `unjoined` is the join field being wrong (the query asked for
+      // `hasRelatedIssue: true`, so a row with no issue id is a fact about the SELECTION), and
+      // `droppedNotInRegister` is the finding filter and the issue filter having drifted apart.
+      // Either one rising is how this axis fails, and neither is visible from the tiers alone.
+      // What the lifecycle ledger DID on this sync — the five transition counts. Never null:
+      // unlike the exploitation census above, the reconcile is not an optional step and always
+      // ran, so a sync that moved nothing writes five zeroes and means it. `skippedNarrowedScope`
+      // above zero is the one to read first: it says the category scope moved and that this sync
+      // deliberately resolved nothing by absence.
+      ledger_json: JSON.stringify(ledger.deltas),
+      // OPEN ISSUES PER CATEGORY, over the same gated population `project_totals_json` counts
+      // above — `isUnresolvedIssue`, the app's one definition of an open issue — so the scope
+      // series and the scoped series cannot be counting different things. Not `issues.length`'s
+      // population: that is the raw collection, and a resolved row in it is not an open issue
+      // under any category.
+      //
+      // Counted from the row's OWN stamps (`IssueRow.categories`), never from the settings, for
+      // the same reason `register_scope` is stamped rather than read back: an issue matched by
+      // two selected categories is counted under both, and one collected under a scope that has
+      // since changed keeps the categories it was actually fetched under.
+      category_counts_json: JSON.stringify(countIssueCategories(openIssuesThisSync)),
+      // Issues this sync read a KEV tier on, and NULL when no evidence pass ran — the same
+      // guard `exploitation_json` below takes, from the same fold, over the same open
+      // population. Reading it as 0 on a refused query would put "nothing is on the KEV
+      // catalogue" on a chart for a sync that never asked.
+      kev_linked_count: exploitation ? openIssuesThisSync.filter((i) => i.exploitationTier === "kev").length : null,
+      exploitation_json: exploitation ? JSON.stringify({
+        ...censusExploitation(exploitation.rows),
+        unjoined: exploitation.unjoined,
+        droppedNotInRegister: exploitation.droppedNotInRegister,
+        findings: (vulnFindings != null ? vulnFindings : []).length
+      }) : null
     }]);
     setScoredRuleVersion(ruleVersion);
     setDecidedRuleVersion(problemRuleVersion);
@@ -10660,6 +12199,8 @@ var Server = (() => {
     getProblemRule: () => getProblemRule3,
     getProblems: () => getProblems,
     getQueryVocabulary: () => getQueryVocabulary,
+    getRankEval: () => getRankEval,
+    getRankRule: () => getRankRule3,
     getScanQueries: () => getScanQueries,
     getScanStepDetail: () => getScanStepDetail,
     getSettings: () => getSettings,
@@ -10684,6 +12225,7 @@ var Server = (() => {
     setAarsRule: () => setAarsRule2,
     setPostureRule: () => setPostureRule2,
     setProblemRule: () => setProblemRule2,
+    setRankRule: () => setRankRule2,
     setScanVars: () => setScanVars2,
     setSelectedFrameworks: () => setSelectedFrameworks2,
     setSettings: () => setSettings,
@@ -10882,6 +12424,23 @@ var Server = (() => {
 
   // src/domain/problems.ts
   var PROBLEMS_CLIENT_ALL_MAX = 1e3;
+  var EXPLOITATION_TIERS = ["kev", "exploit", "epss", "none", "unknown"];
+  var AI_ADJACENCIES = ["DIRECT", "ADJACENT", "UNLINKED"];
+  function rankInputsOf(row) {
+    var _a5, _b, _c;
+    const tier = String((_a5 = row.exploitationTier) != null ? _a5 : "").trim().toLowerCase();
+    const adjacency2 = String((_b = row.aiAdjacency) != null ? _b : "").trim().toUpperCase();
+    const peak = typeof row.epssPeak === "number" && Number.isFinite(row.epssPeak) ? row.epssPeak : void 0;
+    const count2 = typeof row.exploitationFindingCount === "number" && Number.isFinite(row.exploitationFindingCount) ? row.exploitationFindingCount : void 0;
+    const via = String((_c = row.adjacencyVia) != null ? _c : "").trim();
+    return {
+      exploitationTier: EXPLOITATION_TIERS.indexOf(tier) >= 0 ? tier : void 0,
+      epssPeak: peak,
+      exploitationFindingCount: count2,
+      aiAdjacency: AI_ADJACENCIES.indexOf(adjacency2) >= 0 ? adjacency2 : void 0,
+      adjacencyVia: via || void 0
+    };
+  }
   function issueToProblemRow(issue2, node2) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     return {
@@ -10905,7 +12464,8 @@ var Server = (() => {
       iac: false,
       ignored: false,
       firstSeenAt: issue2.createdAt,
-      ruleRemediation: issue2.resolutionRecommendation
+      ruleRemediation: issue2.resolutionRecommendation,
+      ...rankInputsOf(issue2)
     };
   }
   function findingToProblemRow(finding, node2) {
@@ -10933,7 +12493,11 @@ var Server = (() => {
       iac: ((_i = finding.iacFindingIds) != null ? _i : []).length > 0,
       ignored: ((_j = finding.ignoreRuleIds) != null ? _j : []).length > 0,
       firstSeenAt: finding.firstSeenAt,
-      ruleRemediation: finding.remediationInstructions
+      ruleRemediation: finding.remediationInstructions,
+      // The same read as the issue arm, against a row type that carries none of these fields
+      // today. Deliberate: the fold is upstream of this projection and may reach findings
+      // later, and an arm that silently could not see them would be the harder bug of the two.
+      ...rankInputsOf(finding)
     };
   }
   function buildProblemRows(issues2, findings, assetsById) {
@@ -10947,6 +12511,42 @@ var Server = (() => {
       rows.push(findingToProblemRow(finding, assetsById.get(finding.resourceId)));
     }
     return rows;
+  }
+  function withRankScores(rows, rule, nowIso2) {
+    return rows.map((row) => {
+      var _a5;
+      const result = rankOne(
+        {
+          id: row.id,
+          ruleId: row.ruleId,
+          ruleShortId: row.ruleShortId,
+          dueAt: (_a5 = row.dueAt) != null ? _a5 : void 0,
+          // THE BIRTH DATE, AND IT IS `firstSeenAt` ON BOTH ARMS. `FindingRow` carries no
+          // `createdAt` field at all — `findingToProblemRow` maps its `firstSeenAt` into this
+          // one, and `issueToProblemRow` maps the issue's own `createdAt` into the same place.
+          // One field, one meaning: when this row started being true. Read only by
+          // `timeSource: "dueAtElseAge"`, and only where there is no deadline.
+          createdAt: row.firstSeenAt,
+          exploitationTier: row.exploitationTier,
+          epssPeak: row.epssPeak,
+          exploitationFindingCount: row.exploitationFindingCount,
+          aiAdjacency: row.aiAdjacency,
+          adjacencyVia: row.adjacencyVia
+        },
+        rule,
+        nowIso2
+      );
+      return {
+        ...row,
+        rankScore: result.score,
+        rankTimed: result.timeComponent !== null,
+        rankTimeBasis: result.timeBasis,
+        rankReasons: result.reasons,
+        rankMeasured: result.measuredTerms,
+        rankExploitation: result.exploitationComponent,
+        rankAdjacency: result.adjacencyComponent
+      };
+    });
   }
   function slaRank(dueAt) {
     const t = Date.parse(dueAt || "");
@@ -10970,8 +12570,443 @@ var Server = (() => {
     }
     return a.id.localeCompare(b.id);
   }
-  function rankProblems(rows) {
-    return [...rows].sort(compareProblems);
+  function compareProblemsBy(leadWithRank) {
+    if (!leadWithRank) return compareProblems;
+    return (a, b) => {
+      const ra = typeof a.rankScore === "number" && Number.isFinite(a.rankScore) ? a.rankScore : null;
+      const rb = typeof b.rankScore === "number" && Number.isFinite(b.rankScore) ? b.rankScore : null;
+      if (ra === null && rb !== null) return 1;
+      if (rb === null && ra !== null) return -1;
+      if (ra !== null && rb !== null && ra !== rb) return rb - ra;
+      return compareProblems(a, b);
+    };
+  }
+  function rankProblems(rows, leadWithRank = false) {
+    return [...rows].sort(compareProblemsBy(leadWithRank));
+  }
+
+  // src/domain/rankEval.ts
+  var DAY_MS2 = 864e5;
+  var RANDOM_DRAWS = 20;
+  var BOOTSTRAP_SAMPLES = 200;
+  var MIN_SYNCS_FOR_CI = 3;
+  var DEFAULT_EVAL_SEED = 1234567;
+  var NO_RATE = { point: null, lo: null, hi: null };
+  function frac(num2, den) {
+    return den > 0 ? num2 / den : null;
+  }
+  function emptyMatrix() {
+    return {
+      tp: 0,
+      fp: 0,
+      fn: 0,
+      tn: 0,
+      unknownHigh: 0,
+      unknownLow: 0,
+      labelled: 0,
+      unknown: 0,
+      total: 0,
+      resolved: 0,
+      open: 0,
+      atRisk: 0,
+      notAtRisk: 0,
+      coverage: NO_RATE,
+      efficiency: NO_RATE,
+      prevalence: null,
+      labelCoverage: null
+    };
+  }
+  function finalize(m) {
+    m.labelled = m.tp + m.fp + m.fn + m.tn;
+    m.unknown = m.unknownHigh + m.unknownLow;
+    m.total = m.labelled + m.unknown;
+    m.resolved = m.tp + m.fp;
+    m.open = m.fn + m.tn;
+    m.atRisk = m.tp + m.fn;
+    m.notAtRisk = m.fp + m.tn;
+    m.coverage = {
+      point: frac(m.tp, m.tp + m.fn),
+      lo: frac(m.tp, m.tp + m.fn + m.unknownHigh),
+      hi: frac(m.tp + m.unknownHigh, m.tp + m.unknownHigh + m.fn)
+    };
+    m.efficiency = {
+      point: frac(m.tp, m.tp + m.fp),
+      lo: frac(m.tp, m.tp + m.fp + m.unknownLow),
+      hi: frac(m.tp + m.unknownHigh, m.tp + m.unknownHigh + m.fp)
+    };
+    m.prevalence = frac(m.atRisk, m.labelled);
+    m.labelCoverage = frac(m.labelled, m.total);
+    return m;
+  }
+  var SEVERITY_ONLY_NOTE = "Not measured: the lifecycle ledger freezes the rank inputs only, and Wiz's severity is not one of them. Ranking by severity would need a ledger column that does not exist yet.";
+  function ms(iso) {
+    if (!iso) return null;
+    const n = Date.parse(String(iso));
+    return Number.isFinite(n) ? n : null;
+  }
+  function rankInputOf(row) {
+    var _a5;
+    const out = { id: row.issueId, ruleId: row.ruleId };
+    if (row.dueAt) out.dueAt = row.dueAt;
+    if (row.createdAt) out.createdAt = row.createdAt;
+    if (row.aiAdjacency !== void 0) out.aiAdjacency = row.aiAdjacency;
+    if (row.exploitationTier !== void 0) {
+      out.exploitationTier = row.exploitationTier;
+      out.epssPeak = (_a5 = row.epssPeak) != null ? _a5 : null;
+    }
+    return out;
+  }
+  var UNDATED_SCORE = Number.MIN_SAFE_INTEGER;
+  function candidateScorer(rule) {
+    return (rows, atIso) => rows.map((r) => rankOne(rankInputOf(r), rule, atIso).score);
+  }
+  var dueAtScorer = (rows) => rows.map((r) => {
+    const due = ms(r.dueAt);
+    return due === null ? UNDATED_SCORE : -due;
+  });
+  function randomScorer(seed, draw) {
+    return (rows, _atIso, pointIndex) => {
+      const rng = mulberry32(seed + draw * 1000003 + pointIndex * 10007);
+      return rows.map(() => rng());
+    };
+  }
+  function orderOf(rows, scores) {
+    const idx = rows.map((_, i) => i);
+    idx.sort((a, b) => {
+      const d = scores[b] - scores[a];
+      if (d !== 0) return d < 0 ? -1 : 1;
+      const ia = rows[a].issueId;
+      const ib = rows[b].issueId;
+      return ia < ib ? -1 : ia > ib ? 1 : 0;
+    });
+    return idx;
+  }
+  function cleanKs(raw) {
+    const out = [];
+    for (const k of raw != null ? raw : []) {
+      const n = Math.floor(Number(k));
+      if (Number.isFinite(n) && n > 0 && out.indexOf(n) < 0) out.push(n);
+    }
+    return out.sort((a, b) => a - b);
+  }
+  function comparableWindows(syncs, ledger, horizonDays) {
+    var _a5, _b, _c, _d;
+    const ordered = (syncs != null ? syncs : []).filter((s) => s && s.syncId && ms(s.finishedAt) !== null).slice().sort((a, b) => ms(a.finishedAt) - ms(b.finishedAt));
+    const coverEnd = {};
+    for (const s of ordered) {
+      const scope = String((_a5 = s.registerScope) != null ? _a5 : "");
+      if (!scope) continue;
+      const at = ms(s.finishedAt);
+      if (coverEnd[scope] === void 0 || at > coverEnd[scope]) coverEnd[scope] = at;
+    }
+    const windows = [];
+    let scopeChanges = 0;
+    let unknownScopePairs = 0;
+    for (let i = 0; i < ordered.length - 1; i++) {
+      const sync = ordered[i];
+      const next = ordered[i + 1];
+      const scope = String((_b = sync.registerScope) != null ? _b : "");
+      const nextScope = String((_c = next.registerScope) != null ? _c : "");
+      if (!scope || !nextScope) {
+        unknownScopePairs += 1;
+        continue;
+      }
+      if (scope !== nextScope) {
+        scopeChanges += 1;
+        continue;
+      }
+      const atMs = ms(sync.finishedAt);
+      const horizonEndMs = atMs + horizonDays * DAY_MS2;
+      const covered = (_d = coverEnd[scope]) != null ? _d : null;
+      const rows = [];
+      const labels = [];
+      for (const row of ledger) {
+        const first = ms(row.firstSeenAt);
+        if (first === null || first > atMs) continue;
+        const gone = ms(row.disappearedAt);
+        if (gone !== null && gone <= atMs) continue;
+        rows.push(row);
+        if (gone !== null && gone <= horizonEndMs) labels.push("resolved");
+        else if (covered !== null && covered >= horizonEndMs) labels.push("open");
+        else labels.push("unknown");
+      }
+      windows.push({ sync, nextSyncId: next.syncId, atMs, horizonEndMs, rows, labels });
+    }
+    return { windows, scopeChanges, unknownScopePairs, ordered };
+  }
+  function pointFor(window, pointIndex, scorer, ks, prev) {
+    var _a5;
+    const { rows, labels } = window;
+    const scores = scorer(rows, window.sync.finishedAt, pointIndex);
+    const order = orderOf(rows, scores);
+    const counts = { resolved: 0, open: 0, unknown: 0 };
+    for (const l of labels) counts[l] += 1;
+    const precisionAtK = [];
+    let kAtRisk = null;
+    for (const k of ks) {
+      if (k > rows.length) {
+        precisionAtK.push({
+          k,
+          precision: null,
+          resolvedInTopK: 0,
+          labelledInTopK: 0,
+          unknownInTopK: 0,
+          applicable: false
+        });
+        continue;
+      }
+      kAtRisk = k;
+      let resolvedInTopK = 0;
+      let labelledInTopK = 0;
+      let unknownInTopK = 0;
+      for (let i = 0; i < k; i++) {
+        const label = labels[order[i]];
+        if (label === "unknown") unknownInTopK += 1;
+        else {
+          labelledInTopK += 1;
+          if (label === "resolved") resolvedInTopK += 1;
+        }
+      }
+      precisionAtK.push({
+        k,
+        precision: labelledInTopK > 0 ? resolvedInTopK / labelledInTopK : null,
+        resolvedInTopK,
+        labelledInTopK,
+        unknownInTopK,
+        applicable: true
+      });
+    }
+    const matrix = emptyMatrix();
+    if (kAtRisk !== null) {
+      const inTopK = new Array(rows.length).fill(false);
+      for (let i = 0; i < kAtRisk; i++) inTopK[order[i]] = true;
+      for (let i = 0; i < rows.length; i++) {
+        const label = labels[i];
+        if (label === "unknown") {
+          if (inTopK[i]) matrix.unknownHigh += 1;
+          else matrix.unknownLow += 1;
+        } else if (label === "resolved") {
+          if (inTopK[i]) matrix.tp += 1;
+          else matrix.fp += 1;
+        } else if (inTopK[i]) matrix.fn += 1;
+        else matrix.tn += 1;
+      }
+    }
+    finalize(matrix);
+    const byId = {};
+    for (let i = 0; i < rows.length; i++) byId[rows[i].issueId] = scores[i];
+    let tau = null;
+    let tauCommonIds = 0;
+    if (prev) {
+      const a = [];
+      const b = [];
+      for (const id of Object.keys(byId)) {
+        const before = prev.scores[id];
+        if (before === void 0) continue;
+        a.push(before);
+        b.push(byId[id]);
+      }
+      tauCommonIds = a.length;
+      if (a.length >= 2) tau = kendallTauB(a, b);
+    }
+    return {
+      point: {
+        syncId: window.sync.syncId,
+        at: window.sync.finishedAt,
+        horizonEndsAt: new Date(window.horizonEndMs).toISOString(),
+        nextSyncId: window.nextSyncId,
+        registerScope: String((_a5 = window.sync.registerScope) != null ? _a5 : ""),
+        population: rows.length,
+        labelled: counts.resolved + counts.open,
+        unknown: counts.unknown,
+        resolved: counts.resolved,
+        open: counts.open,
+        precisionAtK,
+        kAtRisk,
+        matrix,
+        tieRate: tieRate(scores.slice()),
+        effectiveCardinality: effectiveCardinality(scores.slice()),
+        tau,
+        tauCommonIds
+      },
+      scores: byId
+    };
+  }
+  function meanOf(values) {
+    const kept = values.filter((v) => v !== null && Number.isFinite(v));
+    return kept.length ? mean(kept) : null;
+  }
+  function basisFrom(key, label, note, points, ks, seed) {
+    const pooled = emptyMatrix();
+    for (const p of points) {
+      pooled.tp += p.matrix.tp;
+      pooled.fp += p.matrix.fp;
+      pooled.fn += p.matrix.fn;
+      pooled.tn += p.matrix.tn;
+      pooled.unknownHigh += p.matrix.unknownHigh;
+      pooled.unknownLow += p.matrix.unknownLow;
+    }
+    finalize(pooled);
+    const meanPrecisionAtK = ks.map((k) => {
+      const values = [];
+      for (const p of points) {
+        const cut = p.precisionAtK.find((c) => c.k === k);
+        if (cut && cut.precision !== null) values.push(cut.precision);
+      }
+      const ci = values.length >= MIN_SYNCS_FOR_CI ? bootstrapCI(values, (sample) => {
+        var _a5;
+        return (_a5 = mean(sample)) != null ? _a5 : 0;
+      }, BOOTSTRAP_SAMPLES, seed) : null;
+      return { k, mean: values.length ? mean(values) : null, n: values.length, ci };
+    });
+    return {
+      key,
+      label,
+      note,
+      points,
+      meanPrecisionAtK,
+      matrix: pooled,
+      meanTieRate: meanOf(points.map((p) => p.tieRate)),
+      meanEffectiveCardinality: meanOf(points.map((p) => p.effectiveCardinality)),
+      meanTau: meanOf(points.map((p) => p.tau)),
+      tauN: points.filter((p) => p.tau !== null).length
+    };
+  }
+  function pointsFor(windows, scorer, ks) {
+    const points = [];
+    let prev = null;
+    for (let i = 0; i < windows.length; i++) {
+      const { point, scores } = pointFor(windows[i], i, scorer, ks, prev);
+      points.push(point);
+      prev = { scores };
+    }
+    return points;
+  }
+  function averagePoints(perDraw) {
+    var _a5;
+    const first = (_a5 = perDraw[0]) != null ? _a5 : [];
+    return first.map((base, i) => {
+      const draws = perDraw.map((points) => points[i]);
+      const matrix = emptyMatrix();
+      matrix.tp = mean(draws.map((d) => d.matrix.tp));
+      matrix.fp = mean(draws.map((d) => d.matrix.fp));
+      matrix.fn = mean(draws.map((d) => d.matrix.fn));
+      matrix.tn = mean(draws.map((d) => d.matrix.tn));
+      matrix.unknownHigh = mean(draws.map((d) => d.matrix.unknownHigh));
+      matrix.unknownLow = mean(draws.map((d) => d.matrix.unknownLow));
+      finalize(matrix);
+      return {
+        ...base,
+        matrix,
+        precisionAtK: base.precisionAtK.map((cut, ci) => ({
+          k: cut.k,
+          applicable: cut.applicable,
+          precision: meanOf(draws.map((d) => d.precisionAtK[ci].precision)),
+          resolvedInTopK: mean(draws.map((d) => d.precisionAtK[ci].resolvedInTopK)),
+          labelledInTopK: mean(draws.map((d) => d.precisionAtK[ci].labelledInTopK)),
+          unknownInTopK: mean(draws.map((d) => d.precisionAtK[ci].unknownInTopK))
+        })),
+        tieRate: mean(draws.map((d) => d.tieRate)),
+        effectiveCardinality: mean(draws.map((d) => d.effectiveCardinality)),
+        tau: meanOf(draws.map((d) => d.tau))
+      };
+    });
+  }
+  function evaluateRank(input) {
+    var _a5, _b, _c;
+    const ledger = ((_a5 = input == null ? void 0 : input.ledger) != null ? _a5 : []).filter((r) => r && r.issueId);
+    const horizonDays = Number.isFinite(input == null ? void 0 : input.horizonDays) && input.horizonDays > 0 ? input.horizonDays : 30;
+    const ks = cleanKs(input == null ? void 0 : input.ks);
+    const seed = Number.isFinite(input == null ? void 0 : input.seed) ? Number(input.seed) : DEFAULT_EVAL_SEED;
+    const rule = (_b = input == null ? void 0 : input.rule) != null ? _b : DEFAULT_RANK_RULE;
+    const { windows, scopeChanges, unknownScopePairs, ordered } = comparableWindows((_c = input == null ? void 0 : input.syncs) != null ? _c : [], ledger, horizonDays);
+    const evaluated = {};
+    let labelledRows = 0;
+    let evaluatedRows = 0;
+    for (const w of windows) {
+      for (let i = 0; i < w.rows.length; i++) {
+        const id = w.rows[i].issueId;
+        const wasLabelled = evaluated[id];
+        if (wasLabelled === void 0) {
+          evaluatedRows += 1;
+          evaluated[id] = w.labels[i] !== "unknown";
+          if (evaluated[id]) labelledRows += 1;
+        } else if (!wasLabelled && w.labels[i] !== "unknown") {
+          evaluated[id] = true;
+          labelledRows += 1;
+        }
+      }
+    }
+    const lastSync = ordered.length ? ordered[ordered.length - 1] : null;
+    const base = {
+      computed: false,
+      waitingFor: null,
+      horizonDays,
+      ks,
+      seed,
+      syncsAvailable: ordered.length,
+      comparablePairs: windows.length,
+      scopeChanges,
+      unknownScopePairs,
+      totalRows: ledger.length,
+      evaluatedRows,
+      labelledRows,
+      unknownRows: evaluatedRows - labelledRows,
+      lastSyncAt: lastSync ? lastSync.finishedAt : null,
+      candidate: null,
+      baselines: { rankV1: null, dueAtOnly: null, random: null, severityOnly: null },
+      severityOnlyNote: SEVERITY_ONLY_NOTE
+    };
+    if (windows.length < 1) {
+      base.waitingFor = ordered.length < 2 ? `A label needs two committed syncs under one register scope; ${ordered.length} recorded so far.` : `No two consecutive syncs applied the same register scope, so nothing is comparable \u2014 ${scopeChanges} scope change(s) and ${unknownScopePairs} pair(s) with an unrecorded scope.`;
+      return base;
+    }
+    if (labelledRows < 1) {
+      base.waitingFor = `No row's outcome is known yet: the ${horizonDays}-day horizon on every comparable sync ends after the last sync that could have seen a row leave.`;
+      return base;
+    }
+    if (!ks.length) {
+      base.waitingFor = "No cut of the queue was asked for, so there is nothing to score at.";
+      return base;
+    }
+    const randomDraws = [];
+    for (let d = 0; d < RANDOM_DRAWS; d++) {
+      randomDraws.push(pointsFor(windows, randomScorer(seed, d), ks));
+    }
+    base.computed = true;
+    base.candidate = basisFrom(
+      "candidate",
+      "Candidate rule",
+      "The rule the register ranks by now.",
+      pointsFor(windows, candidateScorer(rule), ks),
+      ks,
+      seed
+    );
+    base.baselines.rankV1 = basisFrom(
+      "rankV1",
+      "Rank v1",
+      "The shipped default: the operator's rule weight and the overdue clock, half each.",
+      pointsFor(windows, candidateScorer(DEFAULT_RANK_RULE), ks),
+      ks,
+      seed
+    );
+    base.baselines.dueAtOnly = basisFrom(
+      "dueAtOnly",
+      "Due date only",
+      "Soonest deadline first, undated rows last.",
+      pointsFor(windows, dueAtScorer, ks),
+      ks,
+      seed
+    );
+    base.baselines.random = basisFrom(
+      "random",
+      "Random",
+      `Mean of ${RANDOM_DRAWS} seeded draws, re-drawn at every sync.`,
+      averagePoints(randomDraws),
+      ks,
+      seed
+    );
+    return base;
   }
 
   // src/domain/actions.ts
@@ -14173,7 +16208,7 @@ var Server = (() => {
 
   // src/domain/comboDigest.ts
   var DUE_SOON_DAYS = 7;
-  var DAY_MS = 864e5;
+  var DAY_MS3 = 864e5;
   var carriesCondition = conditionState;
   function mixOf(issues2, field) {
     return countBySeverity2(issues2.map((i) => ({ severity: i[field] })));
@@ -14181,7 +16216,7 @@ var Server = (() => {
   function daysUntil(dueAt, nowMs) {
     const t = Date.parse(dueAt || "");
     if (Number.isNaN(t)) return null;
-    return Math.round((t - nowMs) / DAY_MS);
+    return Math.round((t - nowMs) / DAY_MS3);
   }
   function slaTally(issues2, nowMs) {
     const out = { pastDue: 0, dueSoon: 0, noDueDate: 0 };
@@ -14511,15 +16546,23 @@ var Server = (() => {
     graphDocMemo2 = { view, raw, doc };
     return doc;
   }
+  function selfScopeProject() {
+    if (getDomainView2()) return "";
+    return getProjectView2();
+  }
   function viewIssues() {
     const ids = viewAssetIds();
     const all = loadIssues();
-    return ids ? all.filter((i) => ids.has(i.assetId)) : all;
+    if (!ids) return all;
+    const project = selfScopeProject();
+    return all.filter((i) => ids.has(i.assetId) || inProject(i.projectRefs, project));
   }
   function viewFindings() {
     const ids = viewAssetIds();
     const all = loadFindings();
-    return ids ? all.filter((f) => ids.has(f.resourceId)) : all;
+    if (!ids) return all;
+    const project = selfScopeProject();
+    return all.filter((f) => ids.has(f.resourceId) || inProject(f.projects, project));
   }
   function run(fn) {
     try {
@@ -14539,6 +16582,14 @@ var Server = (() => {
   }
   function openIssues() {
     return viewIssues().filter(isUnresolvedIssue);
+  }
+  function registerScopeNotice(latest) {
+    var _a5;
+    const persisted = latest ? String((_a5 = latest["register_scope"]) != null ? _a5 : "") : "";
+    if (!persisted) return null;
+    const current = registerScopeSignature(getIssueCategories2());
+    if (persisted === current) return null;
+    return { kind: "registerScope", persisted, current, remedy: "sync" };
   }
   function bootstrap(_p) {
     return run(() => {
@@ -14638,6 +16689,16 @@ var Server = (() => {
         // from the condition that raises it.
         remedy: "sync"
       },
+      // A THIRD kind, and the same argument one axis over. `derivation` says the stored facts
+      // were READ differently; this says a different POPULATION was asked for. The ledger holds
+      // whatever categories the last sync applied, the settings hold what the next one will,
+      // and between the two every issue figure on every page is counted under the old scope
+      // while the Settings page shows the new one. Only a sync closes that.
+      //
+      // Null — no notice at all — when they agree, when nothing has ever been synced (an
+      // unmeasured register is not a register with a scope problem), and when the history row
+      // predates the column: an absent stamp is unknown, never "a different scope".
+      registerScope: registerScopeNotice(latest),
       latestSync: latest,
       // This block is dereferenced in exactly ONE place in the client — helpContent's
       // "severity" lexicon entry — and it reads `openIssues` alone. `aiAssets`, `totalAssets`
@@ -15217,6 +17278,7 @@ var Server = (() => {
       // Recorded per sync, so the window is short at first and cannot be backfilled — and
       // per SERIES, since the three counts entered the ledger on three different days.
       countTrend: trend,
+      postureTrend: postureTrendFromHistory(history, getIssueCategories2()),
       trendScope: {
         projectId: projectView,
         domainId: getDomainView2(),
@@ -15250,6 +17312,7 @@ var Server = (() => {
         kpis: model.kpis,
         severityCounts: model.severityCounts,
         countTrend: model.countTrend,
+        postureTrend: model.postureTrend,
         trendScope: model.trendScope,
         countDeltas: countDeltas(model.countTrend, model.kpis),
         reach: model.reach,
@@ -15763,17 +17826,26 @@ var Server = (() => {
       return { digest: (_a5 = cachedCombos()["digest"]) != null ? _a5 : null };
     });
   }
+  function effectiveRankRule(stored) {
+    const base = stored != null ? stored : getRankRule2().rule;
+    return rankRuleFromExploitation(getProblemRule2().rule.exploitationByRuleId, base);
+  }
   function problemsModel() {
     var _a5, _b;
     const assetsById = new Map(viewAssets().map((a) => [a.id, a]));
-    const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
+    const rule = effectiveRankRule();
+    const leadsSort = getRankLeadsSort2();
+    const rows = rankProblems(
+      withRankScores(buildProblemRows(viewIssues(), viewFindings(), assetsById), rule, nowIso()),
+      leadsSort
+    );
     const severityCounts = {};
     for (const sev of SEVERITY_ORDER) severityCounts[sev] = 0;
     for (const r of rows) {
       const sev = String((_a5 = r.severity) != null ? _a5 : "");
       if (sev) severityCounts[sev] = ((_b = severityCounts[sev]) != null ? _b : 0) + 1;
     }
-    return { rows, severityCounts };
+    return { rows, severityCounts, rankSignature: rankSignature(rule), rankLeadsSort: leadsSort };
   }
   function publicNode(n) {
     const out = {};
@@ -15820,7 +17892,27 @@ var Server = (() => {
       ruleRemediation: r.ruleRemediation,
       businessImpact: r.businessImpact,
       iac: r.iac,
-      ignored: r.ignored
+      ignored: r.ignored,
+      // ---- WP6: the rank model's published readings.
+      //
+      // ON THE ALLOW-LIST DELIBERATELY, and it is worth saying why this is not the thing
+      // `VERDICT_ROW_KEYS` above exists to stop. The three confined verdicts are per-asset and
+      // per-problem CLAIMS produced by models that measured 100% of one landscape into one band
+      // (ai/AARS_SCORING_ASSESSMENT.md §3); the rank is an ORDER over one queue, computed from
+      // the operator's own judgement table and a clock, and it ships with the clauses that
+      // produced it. A number a reader cannot interrogate is the failure mode; `rankReasons` is
+      // the answer to that, so it travels with the score rather than behind a second call.
+      //
+      // `rankExploitation` / `rankAdjacency` ride along even at share 0, where the score did
+      // not use them — rank.ts's own header: a reading the score did not use is still a
+      // reading, and the harness needs it to decide whether the share should move.
+      rankScore: r.rankScore,
+      rankTimed: r.rankTimed,
+      rankTimeBasis: r.rankTimeBasis,
+      rankReasons: r.rankReasons,
+      rankMeasured: r.rankMeasured,
+      rankExploitation: r.rankExploitation,
+      rankAdjacency: r.rankAdjacency
     };
   }
   function getProblems(p) {
@@ -15839,7 +17931,16 @@ var Server = (() => {
         // The union invariant's left-hand side — every unresolved issue and every open
         // finding, regardless of the outcome filter or the mode below.
         total: model.rows.length,
-        severityCounts: model.severityCounts
+        severityCounts: model.severityCounts,
+        // WHICH ORDER THIS PAYLOAD IS IN, said rather than left to be inferred. The rows are
+        // sorted server-side and a page that re-sorted them would be a second ranking
+        // authority, so the page has no way of its own to tell the severity-led order from the
+        // rank-led one — two orders that agree on plenty of rows and differ on the interesting
+        // ones, which is the shape of a difference nobody notices. The signature names the
+        // DERIVATION knobs the scores were computed against (rank.rankSignature), so a stored
+        // score and a stored rule can be compared instead of assumed to match.
+        rankSignature: model.rankSignature,
+        rankLeadsSort: model.rankLeadsSort
       };
       if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
         return {
@@ -16018,7 +18119,21 @@ var Server = (() => {
       hasCredentials: hasWizCredentials(),
       // The operator's overrides on the 5Rs scope. Only the pins: the derived default is
       // computed in getCompliance, where the trees and findings it needs already are.
-      fiveRsPins: getFiveRsPins2()
+      fiveRsPins: getFiveRsPins2(),
+      // WHICH RISK CATEGORIES THE ISSUE REGISTER COLLECTS, and the candidates offered. The
+      // candidate list travels with the selection because a bare id is unreadable — the
+      // measured names live in domain/registerScope.ts and a second copy in the client would
+      // be a second place for them to drift.
+      issueCategories: getIssueCategories2(),
+      candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({ id: c.id, name: c.name })),
+      // The minimal model's knobs and whether it leads the Priorities order. The two presets
+      // travel WITH them for the same reason the candidate list above travels with its
+      // selection: a client that hand-copied `DEFAULT_RANK_RULE` or `RANK_PRESET_V2` would be
+      // a second copy of the shipped defaults, and the failure of a second copy is that it
+      // stops matching without saying so. The editor offers what the server actually holds.
+      rankRule: getRankRule2().rule,
+      rankLeadsSort: getRankLeadsSort2(),
+      rankPresets: { v1: DEFAULT_RANK_RULE, v2: RANK_PRESET_V2 }
     }));
   }
   function setSettings(p) {
@@ -16039,6 +18154,13 @@ var Server = (() => {
           )
         );
       }
+      if (params["issueCategories"] !== void 0) {
+        setIssueCategories(params["issueCategories"]);
+      }
+      if (params["rankRule"] !== void 0) setRankRule(params["rankRule"]);
+      if (params["rankLeadsSort"] !== void 0) {
+        setRankLeadsSort(params["rankLeadsSort"]);
+      }
       return {
         defaultDepth: getDefaultDepth2(),
         maxNodes: getMaxNodes2(),
@@ -16047,7 +18169,16 @@ var Server = (() => {
         autoExpand: getAutoExpand2(),
         projectView: getProjectView2(),
         domainView: getDomainView2(),
-        fiveRsPins: getFiveRsPins2()
+        fiveRsPins: getFiveRsPins2(),
+        // Echoed like the rest, so the Settings page repaints the STORED list rather than
+        // the one it asked for.
+        issueCategories: getIssueCategories2(),
+        // Echoed for the same reason, and it matters more here: `cleanRankRule` can return a
+        // rule that is not the one the caller sent (a share out of range, a v1 blob read as
+        // the two-term case), so a page that repainted its own request would show knobs the
+        // register is not ranking by.
+        rankRule: getRankRule2().rule,
+        rankLeadsSort: getRankLeadsSort2()
       };
     });
   }
@@ -16390,6 +18521,75 @@ var Server = (() => {
       return postureRuleState();
     });
   }
+  function rankRuleState() {
+    const stored = getRankRule2();
+    const effective = effectiveRankRule(stored.rule);
+    return {
+      version: stored.version,
+      rule: stored.rule,
+      effectiveRule: effective,
+      signature: rankSignature(effective),
+      leadsSort: getRankLeadsSort2(),
+      // Shipped here as well as on `getSettings`, so the editor and the Settings tab read one
+      // source. A preset copied into a client is a second copy of a shipped default, and the
+      // failure of a second copy is that it stops matching without saying so.
+      presets: { v1: DEFAULT_RANK_RULE, v2: RANK_PRESET_V2 }
+    };
+  }
+  function getRankRule3(_p) {
+    return run(() => rankRuleState());
+  }
+  function setRankRule2(p) {
+    return mutate(() => {
+      const params = p != null ? p : {};
+      if (params["rule"] !== void 0) setRankRule(cleanRankRule(params["rule"]));
+      if (params["leadsSort"] !== void 0) setRankLeadsSort(params["leadsSort"]);
+      return rankRuleState();
+    });
+  }
+  var RANK_EVAL_HORIZON_DAYS = 30;
+  var RANK_EVAL_KS = [10, 25, 50, 100];
+  var RANK_EVAL_MAX_SYNCS = 25;
+  function getRankEval(args) {
+    return run(() => {
+      const params = args != null ? args : {};
+      const horizonDays = clampInt(params["horizonDays"], RANK_EVAL_HORIZON_DAYS, 1, 365);
+      const rawKs = Array.isArray(params["ks"]) ? params["ks"] : RANK_EVAL_KS;
+      const ks = rawKs.map((k) => clampInt(k, 0, 0, 1e4)).filter((k) => k > 0);
+      const preset = params["preset"] === "v1" || params["preset"] === "v2" ? String(params["preset"]) : "stored";
+      const rule = preset === "v1" ? DEFAULT_RANK_RULE : preset === "v2" ? RANK_PRESET_V2 : effectiveRankRule();
+      const history = syncHistory();
+      const considered = history.slice(-RANK_EVAL_MAX_SYNCS).map((r) => {
+        var _a5, _b;
+        return {
+          syncId: String((_a5 = r["sync_id"]) != null ? _a5 : ""),
+          finishedAt: String(r["finished_at"] || r["started_at"] || ""),
+          registerScope: String((_b = r["register_scope"]) != null ? _b : "")
+        };
+      });
+      const report = evaluateRank({
+        ledger: loadIssueLedger(),
+        syncs: considered,
+        rule,
+        horizonDays,
+        ks
+      });
+      const lastMs = report.lastSyncAt ? Date.parse(report.lastSyncAt) : NaN;
+      const asOf = nowIso();
+      const daysSinceLastSync = Number.isFinite(lastMs) ? (Date.parse(asOf) - lastMs) / 864e5 : null;
+      return {
+        preset,
+        // What the CANDIDATE was ranked by, so a figure read off this panel can be compared
+        // against the rule that is stored now — the job `rankSignature` exists for.
+        signature: rankSignature(rule),
+        asOf,
+        daysSinceLastSync,
+        historyRows: history.length,
+        syncsConsidered: considered.length,
+        ...report
+      };
+    });
+  }
   function decidedForPostureDiscrimination(nodes) {
     var _a5;
     const out = [];
@@ -16558,15 +18758,15 @@ var Server = (() => {
       }
     }
     const swept = skipped ? -1 : sweepReadModels();
-    const ms = Date.now() - t0;
+    const ms2 = Date.now() - t0;
     if (skipped) {
       console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);
     } else {
       console.log(
-        `Cache warm: ${warmed} entries in ${ms}ms` + (failed ? `, ${failed} failed` : "") + (swept > 0 ? `, swept ${swept} stale durable file(s)` : "")
+        `Cache warm: ${warmed} entries in ${ms2}ms` + (failed ? `, ${failed} failed` : "") + (swept > 0 ? `, swept ${swept} stale durable file(s)` : "")
       );
     }
-    return { warmed, skipped, failed, ms, swept };
+    return { warmed, skipped, failed, ms: ms2, swept };
   }
   function warmReadModelsScheduled() {
     const job = activeJob();
@@ -16588,6 +18788,7 @@ var Server = (() => {
   function syncSteps(aiTypes) {
     const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
     const frameworkIds = getSelectedFrameworks2(() => loadFrameworks());
+    const categoryIds = getIssueCategories2();
     const overrides = getScanVars2();
     const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
     const selectedFrameworks = () => frameworkIds;
@@ -16628,6 +18829,74 @@ var Server = (() => {
         normalize: normalizeIssuesPage,
         optional: true
       },
+      // The rest of the selected risk categories — ONE STEP PER CATEGORY, generated the way
+      // the posture steps below are, so the budget/resume machinery needs no special case.
+      //
+      // WHY NOT ONE STEP WITH SIX IDS IN ITS FILTER. Nothing in an issue says which category
+      // matched it (AARS_LIVE_MEASUREMENTS.md §6.8: `Issue` has 51 fields and not one names a
+      // category), so a filter naming six categories returns rows that cannot be stamped —
+      // and the stamp is the only thing standing between "the AI register" and "every issue
+      // in the project" once the list is widened. One step per category means the step's own
+      // id says what its rows are, and its normalizer writes that onto every row it returns.
+      //
+      // ISSUES_TOXIC keeps its id and its own default category rather than being folded into
+      // this family: it is the step every stored override, every scan-area assertion and the
+      // whole toxic-combinations area is keyed on, and renaming it would silently orphan them.
+      ...categoryIds.filter((id) => id !== RISK_CATEGORY_ID).map((categoryId) => ({
+        id: `ISSUES_CAT_${categoryId}`,
+        area: "toxic",
+        writes: ["ai_issues", "ai_assets"],
+        run: "connection",
+        connectionField: "issuesV2",
+        query: Q_ISSUES,
+        // No `vars()` indirection, exactly as the posture family has none: these steps are
+        // LOCKED, overrides are stored per step id, so a shared "ISSUES_CAT_" key would be
+        // an override slot nothing could ever write to.
+        extraVariables: aiIssuesVariables(projectScope(), [categoryId]),
+        // The stamp. Closed over the category this step was generated for, the way the
+        // per-rule steps closed over their group — it is the one place the fact survives.
+        normalize: (rows) => normalizeIssuesPage(rows, categoryId),
+        optional: true
+      })),
+      // Exploitation evidence for the issues the steps above collected — `vulnerabilityFindings`
+      // filtered to the SAME category list, through `hasRelatedIssue`.
+      //
+      // THE FILTER IS THE CLAIM. There is nothing on a vulnerability finding that says it is
+      // exploitation evidence for this register; what makes it so is that it names an issue in
+      // one of the selected categories. Sent unfiltered, the same root answers 5,173,698 rows in
+      // project scope (AARS_LIVE_MEASUREMENTS.md §6.4) — not a bigger version of this step but a
+      // different product, and one nothing here is built to store. Narrowed, it is 7,368 at ~15
+      // pages, 99.8% of every related-issue finding in scope.
+      //
+      // ONE STEP, NOT ONE PER CATEGORY, and the asymmetry with the family above it is deliberate.
+      // The issue steps are split because an issue carries no category and an unstamped row is
+      // what turns "AI issues" into "issues". A finding is not stored under a category at all: it
+      // is folded onto the ISSUE it names, and that issue already carries the stamp. Splitting
+      // this would fetch the same finding once per category of the issue it joins.
+      //
+      // OPTIONAL, and that is load-bearing rather than cautious: the related-issue selection in
+      // Q_VULN_FINDINGS is UNVERIFIED until `phase0.mjs --stage=k` runs, so a wrong field name is
+      // an HTTP 400 on the whole document. Optional makes that LOUD — the step lands in
+      // `skippedSteps` with Wiz's own message, which names the field — and leaves
+      // `ai_issue_exploitation` and the three issue columns untouched rather than writing an
+      // empty axis over a good one.
+      //
+      // No `vars()` indirection, exactly like the ISSUES_CAT family: the step is LOCKED
+      // (scanVars.ts), so an override slot would be one nothing could ever write to.
+      {
+        id: "VULN_FINDINGS",
+        area: "toxic",
+        writes: ["ai_issue_exploitation", "ai_issues"],
+        run: "connection",
+        connectionField: "vulnerabilityFindings",
+        query: Q_VULN_FINDINGS,
+        extraVariables: aiVulnFindingsVariables(projectScope(), categoryIds),
+        normalize: normalizeVulnFindingsPage,
+        optional: true,
+        // Eleven flat scalars, one `{id}` list and a union read for three fields — narrow by the
+        // standard `pageSize` sets, and ~15 pages at 500 against ~74 at the default.
+        pageSize: PAGE_SIZE_WIDE
+      },
       // Real compliance findings (configurationFindings) — feeds AARS pillar B.
       {
         id: "CONFIG_FINDINGS",
@@ -16657,6 +18926,12 @@ var Server = (() => {
         run: "connection",
         connectionField: "cloudConfigurationRules",
         query: Q_CONFIG_RULES,
+        // `hasFindings: true` — 3,905 rules down to 1,401, measured against this tenant
+        // (AARS_LIVE_MEASUREMENTS.md §6.10), where `project` is completely inert. It narrows
+        // the FETCH only: the catalogue is a join target, so syncStore writes this tab only
+        // when the step returned rows and a rule that stops having findings keeps the entry a
+        // stored issue still references. See aiConfigRulesVariables.
+        extraVariables: aiConfigRulesVariables(),
         normalize: normalizeConfigRulesPage,
         optional: true,
         // The big one: ~3,858 rules is 39 pages at PAGE_SIZE and 8 at PAGE_SIZE_WIDE, and
@@ -17028,6 +19303,12 @@ var Server = (() => {
       case "FRAMEWORKS_LIST":
         return aiSecurityFrameworksVariables();
       default:
+        if (stepId.indexOf("ISSUES_CAT_") === 0) {
+          return aiIssuesVariables(
+            projectScope(),
+            [stepId.slice("ISSUES_CAT_".length)]
+          );
+        }
         if (stepId.indexOf("COMPLIANCE_POSTURE_") === 0) {
           return {
             ...aiCompliancePostureVariables(projectScope()),
@@ -17094,10 +19375,10 @@ var Server = (() => {
   }
   function seedTrendHistory(endIso) {
     if (dataRowCount(TABS.syncHistory) > 0) return;
-    const DAY_MS2 = 864e5;
+    const DAY_MS4 = 864e5;
     const end = new Date(endIso).getTime();
     appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
-      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS2).toISOString();
+      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS4).toISOString();
       return {
         sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
         started_at: at,
@@ -17158,8 +19439,8 @@ var Server = (() => {
     if (!v || typeof v !== "object" || Array.isArray(v)) return {};
     const out = {};
     for (const [k, n] of Object.entries(v)) {
-      const num = Number(n);
-      if (Number.isFinite(num)) out[k] = num;
+      const num2 = Number(n);
+      if (Number.isFinite(num2)) out[k] = num2;
     }
     return out;
   }
@@ -17352,6 +19633,9 @@ var Server = (() => {
         });
         return;
       }
+      const vulnRefused = params.skippedSteps.indexOf("VULN_FINDINGS") >= 0;
+      const vulnRan = Object.prototype.hasOwnProperty.call(params.stepRows, "VULN_FINDINGS");
+      const vulnEvidence = vulnRan && !vulnRefused ? merged.vulnFindings : void 0;
       updateJob(job.job_id, { phase: "PERSISTING" });
       const hints = buildAarsHintsFromFindings(findings, doc, issues2, aarsRule);
       const persist = () => {
@@ -17374,7 +19658,23 @@ var Server = (() => {
           {
             configRules: merged.configRules,
             identityFindings: merged.identityFindings,
-            effectiveAccess: merged.effectiveAccess
+            effectiveAccess: merged.effectiveAccess,
+            // PASSED ONLY WHEN THE STEP ACTUALLY RAN, and this is the whole optional-step
+            // contract rather than a nicety. `merged.vulnFindings` is `[]` both when the tenant
+            // refused the query and when it answered with nothing, and `persistSync` reads `[]`
+            // as a MEASUREMENT: it overwrites `ai_issue_exploitation` and writes a five-zero
+            // census. Handing it the refusal in that shape would erase a good exploitation
+            // register on the first sync a tenant rejected one document — the same class as the
+            // empty page a sync must never be able to read as a remediation.
+            //
+            // Two conditions, because each catches a refusal the other cannot. `skippedSteps`
+            // names a step the tenant rejected, whether on page one or on page three — and a
+            // page-three refusal leaves REAL ROWS behind, so an unguarded read would publish a
+            // population truncated at whatever page the walk died on. `stepRows` catches the
+            // other direction: a battery that never ran the step at all records no entry, and a
+            // step that was never asked has no more measured an empty register than one that was
+            // refused.
+            vulnFindings: vulnEvidence
           }
         );
         setSkippedSteps(params.skippedSteps);

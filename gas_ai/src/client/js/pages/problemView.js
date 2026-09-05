@@ -135,13 +135,19 @@ export const PROBLEM_COMPARATORS = {
   kind: (a, b) => String(a.kind || "").localeCompare(String(b.kind || "")),
   severity: (a, b) => sevIndex(a.severity) - sevIndex(b.severity),
   due: (a, b) => dueRank(a) - dueRank(b),
-  // The ranking's third level, offered as a column so a reader can see the order they were
-  // given. Oldest first, undated last — the same rule compareProblems applies.
   // The minimal model's order. The number is computed SERVER-SIDE and arrives on the row —
   // this only reads it, which is the distinction actionView.js's header insists on. An
-  // unscored row sorts last rather than as zero. The column is not surfaced while the
-  // scoring models sit behind the experimental gate; the comparator stays because the model
-  // it reads is still computed and still pinned by test/rank.test.ts.
+  // unscored row sorts last rather than as zero.
+  //
+  // THE COLUMN IS SURFACED NOW, and this comment used to say it was not — "not surfaced
+  // while the scoring models sit behind the experimental gate". That reasoning was about
+  // the three DERIVED VERDICTS (the AARS band, the posture tier, the ACT/ATTEND outcome),
+  // which measured a whole landscape into one band and are confined to the workbench by
+  // test/verdictIsolation.test.ts. The rank is not one of them: it is an order over one
+  // queue, computed from the operator's own judgement table and a clock, and it ships with
+  // the clauses that produced it (`rankReasons`) so the number can be interrogated rather
+  // than taken. Whether it LEADS the register's order is a separate question, and its
+  // answer is the `rank_leads_sort` setting, off by default.
   rank: (a, b) => rankValue(b) - rankValue(a),
   firstSeen: (a, b) => {
     const x = String((a && a.firstSeenAt) || "");
@@ -182,4 +188,68 @@ export function sortProblems(rows, key, dir) {
     return String(a.assetName || "").localeCompare(String(b.assetName || ""))
       || String(a.id || "").localeCompare(String(b.id || ""));
   });
+}
+
+// ----------------------------------------------------------------------- the rank cell
+
+/** The disclosure's label, in one place: the page draws it and the test asserts it. */
+export const RANK_REASON_LABEL = "Why this rank";
+
+/**
+ * The rank cell as data — the number, and whether the clock behind it was measured.
+ *
+ * TWO DP RATHER THAN THE RAW FLOAT. The score is a blend of four 0..1 readings and lands on
+ * long tails (`0.6000000000000001` is an ordinary value of it); printing that would offer a
+ * precision the model does not have and make two equal rows look different. Two places is
+ * more than the ladders can distinguish and enough to read an order by.
+ *
+ * `untimed` is NOT a formatting flag. `rankTimed === false` means the clock term was
+ * UNMEASURED and dropped from both halves of the blend, so the score beside it was computed
+ * from fewer terms than the rule asked for — a different claim about a similar-looking
+ * number, which is exactly the pair a surface has to keep apart. It carries a WORD (`note`),
+ * never a tint or a glyph alone: severity and status never carry meaning by colour alone
+ * here, and neither does this.
+ *
+ * A row the server never scored reads `—` rather than `0.00`: an unscored row has not scored
+ * zero, and the comparator already sorts it last for the same reason.
+ */
+export function rankCellModel(row) {
+  const r = row || {};
+  const scored = typeof r.rankScore === "number" && isFinite(r.rankScore);
+  const untimed = scored && r.rankTimed === false;
+  return {
+    scored,
+    score: scored ? r.rankScore.toFixed(2) : "—",
+    untimed,
+    // The basis is named where there is one, because "overdue by 40 days" and "born 40 days
+    // ago with no deadline set" are both a measured clock and are not the same reading.
+    basis: scored && r.rankTimed !== false ? String(r.rankTimeBasis || "") : "",
+    note: untimed ? "no deadline on this row, so the clock term was not read" : "",
+  };
+}
+
+/**
+ * The clauses behind the score, as plain lines. One per term that ENTERED the blend, in the
+ * model's own order — `rank.ts` emits `reasons` and `measuredTerms` the same length and the
+ * same order, and this reads the first without re-deriving it.
+ *
+ * Empty for a row that was never scored, and empty is not a failure to explain: there is
+ * nothing to explain about a number that was never computed. The page draws no disclosure
+ * at all in that case rather than an empty one.
+ */
+export function rankReasonLines(row) {
+  const list = (row && row.rankReasons) || [];
+  return list.map((line) => String(line || "")).filter(Boolean);
+}
+
+/**
+ * Which column the table shows as its active sort when the reader has chosen none.
+ *
+ * "No sort selected" means "trust the order the server sent" (this file's own header), and
+ * the server now sends one of TWO orders. Naming the rank column when it led is the header
+ * saying which — a reader who cannot tell a severity-led order from a rank-led one is being
+ * asked to trust an order they cannot name. `""` keeps today's unmarked header exactly.
+ */
+export function defaultProblemSort(rankLeadsSort) {
+  return rankLeadsSort === true ? "rank" : "";
 }

@@ -237,13 +237,14 @@ else {
 
 // ------------------------------------------- 2b. which project filter each root accepts
 //
-// FIVE SPELLINGS, and choosing the wrong one is a silent zero rather than an error. This app
+// SIX SPELLINGS, and choosing the wrong one is a silent zero rather than an error. This app
 // already sends `filterBy.project` (issuesV2), `filterBy.resource.projectId`
 // (configurationFindings), `filterBy.projectId` (cloudResourcesV2), the scalar
 // `graphSearch(projectId:)` argument, and `analyticsSelection.projectId` — wizQueriesAi.ts
-// names all five itself. The sibling gas/ tool sends `projectIdV2: {equals:[id]}`, but on
-// `vulnerabilityFindings`, which is a different filter type; brick's own test records that
-// "the two filter types spell it differently".
+// names all five itself. The sixth is `filterBy.projectIdV2: {equals:[id]}` on
+// `vulnerabilityFindings` (VULN_FINDINGS) — the spelling the sibling gas/ tool has always sent
+// on that root, and the one §6.8 confirmed is the only one it accepts. brick's own test already
+// recorded that "the two filter types spell it differently"; this app now sends both.
 //
 // So the question is asked per root rather than carried across from a connection that is not
 // this one. `expected` is what this app sends TODAY, so a mismatch is either a latent bug or
@@ -257,6 +258,8 @@ const FILTER_TYPES = [
   // `Field "sourceRuleId" is not defined by type "CloudResourceRelatedIssueFilters"`, and
   // the answer to a name the tenant does not have is to ask which names it does.
   ["CloudResourceRelatedIssueFilters", "sourceRuleId", "ISSUES_<ruleId> — four steps, rejected every sync"],
+  // The sixth spelling, and the only one this root accepts (AARS_LIVE_MEASUREMENTS.md §6.8).
+  ["VulnerabilityFindingFilters", "projectIdV2", "VULN_FINDINGS"],
 ];
 if (!DRY_RUN) {
   console.log("\n=== which project filter each root accepts ===");
@@ -683,6 +686,126 @@ if (DIAGNOSE) {
       console.log(label + `${conn.totalCount ?? "?"} rows` +
         (declared ? "   (collected)" : "   (NOT in NODE_KINDS — would be dropped)"));
     }
+  }
+
+  // --------------------------------------------------- the three-zero-row isolation ladder
+  //
+  // HOST_EXPOSURE, ENDPOINT_EXPOSURE and IDENTITY_ACCESS report `ok, 0 rows` tenant-wide, and
+  // "accepted but empty" has more than one cause. Each rung below changes exactly ONE thing
+  // from the step's own variables (rung 1, byte-identical to what syncJobs.ts sends) — the
+  // project scope, `quick`, the traversal itself, and for Q_AI_EXPOSURE which document reuses
+  // HOST_EXPOSURE/ENDPOINT_EXPOSURE's own `@include` flags one at a time. Nothing below rung 1
+  // is what the battery sends; that is the same discipline the EXPERIMENTS above already use.
+  //
+  // "rows" is what graphSearch handed back. "nodes"/"edges" is what the STEP'S OWN normalizer
+  // (syncNormalize.ts, called in-process, exactly as the traversal table at the top of this
+  // file does) makes of those rows — never a second, hand-rolled reading of them. A rung with
+  // rows but 0 nodes is the LINEAGE bisection shape (AARS_LIVE_MEASUREMENTS.md §5.2): the
+  // traversal reached something and the normalizer dropped it, which is a different defect
+  // from a traversal that reached nothing, and the "refusal" column is what tells the two
+  // apart from a rung the tenant rejected outright.
+  //
+  // The @include names mirror EXPOSURE_FETCH_FLAGS in wizQueriesAi.ts, which is not exported
+  // (it is a private const beside Q_AI_EXPOSURE) — named again here rather than imported.
+  const EXPOSURE_FLAG_NAMES = [
+    "fetchTotalCount", "fetchPublicExposurePaths", "fetchInternalExposurePaths",
+    "fetchIssueAnalytics", "fetchThreatAnalytics", "fetchLateralMovement",
+    "fetchCodeSource", "fetchKubernetes", "fetchCost",
+  ];
+  const ALL_EXPOSURE_FLAGS_OFF = Object.fromEntries(EXPOSURE_FLAG_NAMES.map((f) => [f, false]));
+
+  /** One rung: send `variables` against `doc`, run `normalize` over whatever rows come back. */
+  async function runLadderRung(doc, variables, normalize) {
+    const r = await post(doc, variables);
+    if (!r.ok) return { ok: false, error: r.error };
+    const conn = r.data?.graphSearch ?? {};
+    const rows = conn.nodes ?? [];
+    let norm = { nodes: 0, edges: 0 };
+    let normError = null;
+    try {
+      const part = normalize(rows);
+      norm = { nodes: part.nodes.length, edges: part.edges.length };
+    } catch (e) { normError = String(e && e.message ? e.message : e); }
+    return { ok: true, rows: rows.length, norm, normError };
+  }
+
+  function printLadder(stepId, rungs) {
+    console.log(`\n--- ${stepId} ---`);
+    const w = Math.max(...rungs.map((r) => r.label.length));
+    console.log(`  ${"variant".padEnd(w)} | rows | nodes | edges | refusal`);
+    for (const { label, result: out } of rungs) {
+      const l = label.padEnd(w);
+      if (!out.ok) {
+        console.log(`  ${l} | -    | -     | -     | ${out.error}`);
+        continue;
+      }
+      let note = "";
+      if (out.normError) note = `NORMALIZER THREW: ${out.normError}`;
+      else if (out.rows > 0 && out.norm.nodes === 0) note = "rows returned, normalizer produced 0 nodes";
+      console.log(
+        `  ${l} | ${String(out.rows).padEnd(4)} | ${String(out.norm.nodes).padEnd(5)} | ` +
+        `${String(out.norm.edges).padEnd(5)} | ${note}`,
+      );
+    }
+  }
+
+  /** Rungs 1-4, identical in shape for HOST_EXPOSURE, ENDPOINT_EXPOSURE and IDENTITY_ACCESS. */
+  function baseRungs(base) {
+    return [
+      { label: "1 own variables (project-scoped, as sent)", vars: { quick: true, first: FIRST, after: null, ...base } },
+      { label: "2 project scope removed", vars: { quick: true, first: FIRST, after: null, ...base, projectId: null } },
+      { label: "3 quick: false", vars: { quick: false, first: FIRST, after: null, ...base } },
+      {
+        label: "4 root type only, relationship legs dropped",
+        vars: {
+          quick: true, first: FIRST, after: null, ...base,
+          query: app.toGraphEntityQuery({ type: [...T2] }),
+        },
+      },
+    ];
+  }
+
+  console.log("\n=== isolation ladder: HOST_EXPOSURE / ENDPOINT_EXPOSURE / IDENTITY_ACCESS ===");
+
+  {
+    const base = app.hostExposureVariables(T2, scope);
+    const rungs = [
+      ...baseRungs(base),
+      ...EXPOSURE_FLAG_NAMES.map((f) => ({
+        label: `5 @include ${f} alone`,
+        vars: {
+          quick: true, first: FIRST, after: null, ...base,
+          ...ALL_EXPOSURE_FLAGS_OFF, [f]: true,
+        },
+      })),
+    ];
+    for (const rung of rungs) rung.result = await runLadderRung(app.Q_AI_EXPOSURE, rung.vars, app.normalizeHostExposurePage);
+    printLadder("HOST_EXPOSURE", rungs);
+  }
+
+  {
+    const base = app.endpointExposureVariables(T2, scope);
+    const rungs = [
+      ...baseRungs(base),
+      ...EXPOSURE_FLAG_NAMES.map((f) => ({
+        label: `5 @include ${f} alone`,
+        vars: {
+          quick: true, first: FIRST, after: null, ...base,
+          ...ALL_EXPOSURE_FLAGS_OFF, [f]: true,
+        },
+      })),
+    ];
+    for (const rung of rungs) rung.result = await runLadderRung(app.Q_AI_EXPOSURE, rung.vars, app.normalizeEndpointExposurePage);
+    printLadder("ENDPOINT_EXPOSURE", rungs);
+  }
+
+  {
+    // No rung 5: Q_IDENTITY_ACCESS carries no @include gates — it is graphSearchVarQuery(),
+    // the same plain document every non-exposure step uses.
+    const base = app.identityAccessVariables(T2, scope);
+    const rungs = baseRungs(base);
+    for (const rung of rungs) rung.result = await runLadderRung(app.Q_IDENTITY_ACCESS, rung.vars, app.normalizeIdentityAccessPage);
+    printLadder("IDENTITY_ACCESS", rungs);
   }
 }
 

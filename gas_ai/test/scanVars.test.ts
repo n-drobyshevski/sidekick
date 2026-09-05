@@ -49,12 +49,20 @@ describe("containment — an override moves only what its spec offers", () => {
     expect(readPath(clean, "quick")).toBeUndefined();
   });
 
-  it("cannot widen the AI risk category — the filter that makes these AI issues", () => {
-    // frameworkCategory is deliberately absent from the ISSUES_TOXIC spec: nothing in the
-    // response says "this is an AI issue", so the category filter IS the claim, and
-    // widening it would relabel the whole register rather than extend it. cleanStepVars
-    // drops any path the spec does not name, and effectiveStepVars overlays BY PATH, so
-    // the builder's value survives whatever is stored. Asserted rather than trusted.
+  it("cannot widen the AI risk category from a STEP VARIABLE — it is a Setting now", () => {
+    // frameworkCategory is still deliberately absent from the ISSUES_TOXIC spec, and
+    // cleanStepVars still drops it: nothing in the response says which category matched a
+    // row, so this filter decides WHICH POPULATION every published figure counts.
+    //
+    // THE FALSIFIED CLAIM, named because this assertion changed. The lock used to read "the
+    // AI risk category (wct-id-1998) is fixed … widening it would relabel the whole register
+    // rather than extend it", and the second half of that is no longer true: the register CAN
+    // be widened, through the versioned `issue_categories` Setting, which generates one
+    // ISSUES_CAT_<id> step per category so every row is stamped with the category that
+    // fetched it and every sync records the scope it applied (registerScope.ts). What stayed
+    // true is the reason it is not a VarField: cleanStepVars would let a hand-edited cell
+    // move the population with no stamp on the rows and nothing in sync_history saying so.
+    // So the lock text now has to name both the category and where the choice actually lives.
     const stored = { filterBy: { frameworkCategory: ["wct-id-9999"] } };
     expect(readPath(cleanStepVars(ISS, stored) ?? {}, "filterBy.frameworkCategory"))
       .toBeUndefined();
@@ -64,7 +72,23 @@ describe("containment — an override moves only what its spec offers", () => {
       stored,
     );
     expect(readPath(effective, "filterBy.frameworkCategory")).toEqual([RISK_CATEGORY_ID]);
-    expect(varSpecFor(ISS)?.locked).toContain("wct-id-1998");
+    const locked = varSpecFor(ISS)?.locked ?? "";
+    expect(locked).toContain("wct-id-1998");
+    // It has to NAME the setting, or the lock says "not here" without saying where.
+    expect(locked).toContain("issue_categories");
+  });
+
+  it("locks the generated category family the way it locks the posture family", () => {
+    // ISSUES_CAT_<id> steps carry their category in their own id and stamp it onto every row
+    // they return. An editable filter there would make a step whose name says one category
+    // report another — the same argument the posture family's lock makes about frameworks.
+    const spec = varSpecFor("ISSUES_CAT_wct-id-3");
+    expect(spec?.stepId).toBe("ISSUES_CAT_");
+    expect(spec?.fields).toEqual([]);
+    expect(spec?.locked).toContain("issue_categories");
+    expect(isEditableStep("ISSUES_CAT_wct-id-3")).toBe(false);
+    expect(cleanStepVars("ISSUES_CAT_wct-id-3", { filterBy: { frameworkCategory: ["x"] } }))
+      .toBeNull();
   });
 
   it("offers the issue-type filter as an optional narrowing knob", () => {

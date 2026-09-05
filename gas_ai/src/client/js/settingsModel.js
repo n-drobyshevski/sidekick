@@ -13,6 +13,13 @@
 /** The tabs, in order. `key` is what rides in the hash (`#/settings?tab=compliance`). */
 export const SETTINGS_TABS = [
   { key: "graph", label: "Graph" },
+  // Neither Graph (traversal defaults) nor Compliance (the 5Rs framework) is "which risk
+  // categories the issue register collects" — that scope decision feeds every issue-shaped
+  // figure the app publishes (Priorities, AARS, Toxic Combinations), and the ranking that
+  // orders those same rows belongs beside it rather than on a page that edits neither. A
+  // fifth tab earns its keep here for the reason the others do not: nothing else already
+  // owns this question.
+  { key: "register", label: "Register" },
   { key: "compliance", label: "Compliance" },
   { key: "access", label: "Access" },
   { key: "system", label: "System" },
@@ -37,6 +44,13 @@ export const SETTING_FIELDS = {
   defaultDepth: { tab: "graph", label: "default depth" },
   maxNodes: { tab: "graph", label: "node budget" },
   autoExpand: { tab: "graph", label: "agent auto-expand" },
+  // Both scope the same register: which categories it collects, and how the rows it collects
+  // are ordered. Sent and diffed as whole objects, the same discipline `fiveRsPins` already
+  // takes below — a delta of a category list or a rank rule is not a smaller edit, it is a
+  // different shape the server would have to reconstruct.
+  issueCategories: { tab: "register", label: "register categories" },
+  rankRule: { tab: "register", label: "priorities ranking" },
+  rankLeadsSort: { tab: "register", label: "rank leads sort" },
   fiveRsPins: { tab: "compliance", label: "5Rs scope" },
 };
 
@@ -63,6 +77,16 @@ function pinsOf(v) {
 }
 
 /**
+ * Deep-clone a nested settings blob rather than aliasing the payload — the same discipline
+ * `pinsOf` takes above, generalised past the two named arrays a pin object carries. `rankRule`
+ * is a plain-data tree (numbers, strings, and objects/arrays of those), so a structural clone
+ * is exact; nothing on it is a function or a Date.
+ */
+function cloneOf(v) {
+  return v && typeof v === "object" ? JSON.parse(JSON.stringify(v)) : {};
+}
+
+/**
  * Lift the api_getSettings payload into a flat draft over exactly SETTING_KEYS. Arrays and the
  * pin object are copied, not aliased, so editing the draft can never mutate the payload the
  * rest of the page is still reading.
@@ -79,6 +103,15 @@ export function settingsDraft(settings) {
     maxNodes: Number(s.maxNodes),
     autoExpand: s.autoExpand !== false,
     fiveRsPins: pinsOf(s.fiveRsPins),
+    // Copied, not aliased, for the same reason as fiveRsPins: category toggles mutate the
+    // draft array in place (via categoryDraftPatch's caller) and must never reach back into
+    // the payload the rest of the page is still reading.
+    issueCategories: Array.isArray(s.issueCategories) ? [...s.issueCategories] : [],
+    rankRule: cloneOf(s.rankRule),
+    // Off by default — matches the server's own default (settingsStore.getRankLeadsSort) —
+    // rather than duplicating that default as a literal here: an absent flag reads as "not
+    // yet turned on," which is what `false` already means.
+    rankLeadsSort: s.rankLeadsSort === true,
   };
 }
 
@@ -197,4 +230,85 @@ export function draftWarnings(saved, draft, scope) {
     });
   }
   return out;
+}
+
+// --------------------------------------------------------------- register scope + rank draft
+//
+// Three DOM-free helpers behind the Register tab's checkboxes and number inputs. None of them
+// knows a category name, a preset's numbers, or which id is the mandatory one — those all
+// travel on the api_getSettings payload (`candidateCategories`, `rankPresets`) and the page
+// hands the live values in, so this file duplicates no constant the server already owns.
+
+/**
+ * Toggle one candidate category id in the draft list, order preserved.
+ *
+ * `requiredId` is the category the register cannot function without — in practice
+ * `candidateCategories[0].id`, the AI category, but nothing here hardcodes which one that is.
+ * Unchecking it is silently ignored rather than refused: a checkbox that snaps back needs no
+ * error dialog to explain itself. It is also force-included if a stale or hand-edited draft
+ * somehow arrived without it, so the invariant holds regardless of how the draft was built.
+ */
+export function categoryDraftPatch(categories, id, checked, requiredId) {
+  const list = [...(categories || [])];
+  const has = list.indexOf(id) >= 0;
+  if (checked && !has) list.push(id);
+  if (!checked && id !== requiredId) {
+    const i = list.indexOf(id);
+    if (i >= 0) list.splice(i, 1);
+  }
+  if (requiredId && list.indexOf(requiredId) < 0) list.unshift(requiredId);
+  return list;
+}
+
+/** The nested tables one rank-rule edit is allowed to merge into rather than replace. */
+const RANK_NESTED_KEYS = ["shares", "exploitationWeights", "adjacencyWeights"];
+
+/**
+ * Apply one field edit to a rank-rule draft, returning a NEW object rather than mutating the
+ * one handed in — the page reassigns `draft.rankRule` to the result, the same pattern
+ * `draft.fiveRsPins` already uses when a whole sub-object is replaced.
+ *
+ * A key in `RANK_NESTED_KEYS` merges one level deep, so `rankDraftPatch(rule, { shares: {
+ * time: 0.4 } })` moves the clock's share without disturbing `shares.rule`,
+ * `shares.exploitation` or `shares.adjacency` — the four share inputs, and the two weight
+ * tables, each edit one leaf at a time. Every other key (`epssThreshold`, `timeSource`, …)
+ * replaces outright, because there is nothing under it to preserve.
+ */
+export function rankDraftPatch(rankRule, patch) {
+  const base = rankRule || {};
+  const out = { ...base };
+  const p = patch || {};
+  for (const key of Object.keys(p)) {
+    const v = p[key];
+    if (RANK_NESTED_KEYS.indexOf(key) >= 0 && v && typeof v === "object" && !Array.isArray(v)) {
+      out[key] = { ...(base[key] || {}), ...v };
+    } else {
+      out[key] = v;
+    }
+  }
+  return out;
+}
+
+/**
+ * Load a preset (`rankPresets.v1` / `.v2`, exactly as api_getSettings ships them) into the
+ * draft. A deep clone: the presets are the server's own `DEFAULT_RANK_RULE` /
+ * `RANK_PRESET_V2` objects, live in the closure the page holds for its whole visit, and must
+ * never be mutated by the field edits that follow a preset load.
+ */
+export function rankDraftFromPreset(preset) {
+  return cloneOf(preset);
+}
+
+/**
+ * The four shares' sum, for the live read-out beside them. They need not add to 1 — `rank.ts`
+ * renormalises the blend over whichever terms are actually measured on a given row — so this
+ * is an orientation figure ("where do the four knobs sit relative to one whole"), not a
+ * constraint the page enforces or refuses to save on.
+ */
+export function rankShareTotal(shares) {
+  const s = shares || {};
+  return ["rule", "time", "exploitation", "adjacency"].reduce((sum, k) => {
+    const v = Number(s[k]);
+    return sum + (Number.isFinite(v) ? v : 0);
+  }, 0);
 }

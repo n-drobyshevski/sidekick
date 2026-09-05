@@ -18,6 +18,7 @@ import {
   withOpenCounts,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
+  withAiAdjacency,
   withIssueAttribution,
   withPostureTiers,
   withProblemVerdicts,
@@ -27,9 +28,13 @@ import {
 import { withDataFindingCounts } from "../domain/syncNormalize";
 import { domainTagKey } from "./props";
 import type {
-  ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode,
-  GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
+  ConfigRuleRow, DataFindingRow, ExploitationTier, FindingRow, FrameworkPolicyRow, FrameworkRow,
+  GEdge, GNode, GraphDoc, IdentityFindingRow, IssueRow, NodeKind, NormalizedVulnFinding,
+  PostureRow,
 } from "../domain/graphTypes";
+import {
+  censusExploitation, foldExploitation, SAMPLE_FINDING_IDS_MAX, type ExploitationRow,
+} from "../domain/exploitation";
 import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, derivationSignature, type AarsBands, type AarsRule } from "../domain/aars";
@@ -47,11 +52,15 @@ import {
   type ProblemVerdictInput,
 } from "../domain/problem";
 import { vectorSignature, type ProblemRule } from "../domain/problemRule";
+import { reconcileIssueLedger, type IssueLedgerRow } from "../domain/issueLedger";
 import { censusPostureTiers, countPostureTiers, type Tier as PostureTier } from "../domain/posture";
 import type { PostureRule } from "../domain/postureRule";
-import { OTHER_GROUP_ID } from "../domain/toxicCombos";
+import { registerScopeSignature } from "../domain/registerScope";
+import { OTHER_GROUP_ID, RISK_CATEGORY_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
-import { countAarsSeverities, countProjectTotals, encodeProjectTotals } from "../domain/aarsTrend";
+import {
+  countAarsSeverities, countIssueCategories, countProjectTotals, encodeProjectTotals,
+} from "../domain/aarsTrend";
 import { inProject, planPrune, type PruneCensus } from "../domain/prunePlan";
 import { nowIso, type Rec } from "../domain/util";
 import { readGraphSnapshot, trashGraphSnapshot, writeGraphSnapshot, trashReadModels } from "./archiveStore";
@@ -387,6 +396,32 @@ export function issueToRow(i: IssueRow): Rec {
     // back as an empty ARRAY rather than as absent — "we looked and found none".
     attributed_asset_ids: (i.attributedAssetIds ?? []).join(","),
     attribution_hop: i.attributionHop ?? null,
+    // The register's scope stamp. Comma-joined like the two above; empty only for a row
+    // this app built before the stamp existed, which rowToIssue reads back as the AI
+    // category — the only scope any of those syncs ran. See domain/registerScope.ts.
+    categories: (i.categories ?? []).join(","),
+    // The issue's own project attribution, as objects — `projects_json` above holds the
+    // NAMES and keeps doing so. `null` for undefined rather than `"[]"`, because the two say
+    // different things: absent is "this row predates the column, its refs are unknown",
+    // `[]` is a sync reporting that Wiz attributed the issue to no project at all. The
+    // project view reads the difference (api.ts `viewIssues`).
+    project_refs_json: i.projectRefs ? JSON.stringify(i.projectRefs) : null,
+    // Where the row sits relative to the AI estate. `?? null`, never a default: an empty
+    // `ai_adjacency` cell means no adjacency pass ran, and writing "UNLINKED" for it would
+    // turn "nobody looked" into a measurement — the same absent-is-never-zero failure the
+    // flags themselves keep. The id list is comma-joined, matching `attributed_asset_ids`.
+    ai_adjacency: i.aiAdjacency ?? null,
+    adjacency_via: i.adjacencyVia ?? null,
+    adjacent_asset_ids: (i.adjacentAssetIds ?? []).join(","),
+    // The exploitation reading. `?? null` on all three, never a default: an empty
+    // `exploitation_tier` means no evidence pass ran over this row, and writing "none" for it
+    // would turn "nobody looked" into "we looked and found nothing" — the measurement the
+    // ranker prices differently. `epss_peak` is null rather than 0 for the same reason: 0 is a
+    // computed EPSS probability, blank is the absence of one.
+    exploitation_tier: i.exploitationTier ?? null,
+    epss_peak: i.epssPeak === null || i.epssPeak === undefined ? null : i.epssPeak,
+    exploitation_findings:
+      i.exploitationFindingCount === undefined ? null : i.exploitationFindingCount,
   };
 }
 
@@ -428,6 +463,19 @@ export function rowToIssue(r: Rec): IssueRow {
     aiRecommendedSeverity:
       ((r["ai_recommended_severity"] as string | null) ?? undefined) as Severity | undefined,
   };
+  // The scope stamp, defaulted rather than left absent: a row from a tab that predates the
+  // column was collected under the AI category and nothing else, so reading it as "unknown"
+  // would drop it out of every scoped rollup. This is the one place a missing column reads
+  // as a value, and it does so because there is exactly one value it can have.
+  const categories = String(r["categories"] ?? "").split(",").filter(Boolean);
+  issue.categories = categories.length ? categories : [RISK_CATEGORY_ID];
+  // The project refs. Deliberately NOT defaulted, and the opposite decision to `categories`
+  // directly above: there is no single value a missing cell could have here. An empty cell
+  // means the column did not exist when this row was written, so its refs are UNKNOWN —
+  // reading that as `[]` would state that Wiz attributed the issue to no project, and the
+  // project view would then exclude it on the strength of a measurement nobody took.
+  const projectRefs = parseJson<IssueRow["projectRefs"] | null>(r["project_refs_json"], null);
+  if (projectRefs) issue.projectRefs = projectRefs;
   // Set only when non-empty, so a round trip preserves "not captured" as undefined
   // rather than promoting it to an empty array or a false.
   const environments = String(r["environments"] ?? "").split(",").filter(Boolean);
@@ -444,6 +492,40 @@ export function rowToIssue(r: Rec): IssueRow {
   if (attributionHop === "direct" || attributionHop === "RUNS_AS" || attributionHop === "none") {
     issue.attributionHop = attributionHop;
     issue.attributedAssetIds = String(r["attributed_asset_ids"] ?? "").split(",").filter(Boolean);
+  }
+  // Adjacency, read the same way and for the same reason: the STATE is what says the pass
+  // ran, so an unrecognised or empty cell leaves all three fields undefined rather than
+  // reading as UNLINKED — `rank.adjacencyOf` prices absent as null and UNLINKED mid-scale,
+  // so the difference is a score, not a nicety. The id list is empty on DIRECT and UNLINKED
+  // by construction, which round-trips as "" and back to [].
+  const adjacency = (r["ai_adjacency"] as string | null) ?? null;
+  if (adjacency === "DIRECT" || adjacency === "ADJACENT" || adjacency === "UNLINKED") {
+    issue.aiAdjacency = adjacency;
+    issue.adjacentAssetIds = String(r["adjacent_asset_ids"] ?? "").split(",").filter(Boolean);
+    const via = String(r["adjacency_via"] ?? "");
+    if (via) issue.adjacencyVia = via;
+  }
+  // Exploitation, read the same way and for the same reason: the TIER is what says the fold
+  // ran, so an empty or unrecognised cell leaves all three fields undefined rather than
+  // reading as "none". `rank.exploitationOf` drops an absent tier out of the blend and scores
+  // "none", which is the whole distance between "we never asked" and "nothing is exploited".
+  //
+  // An unknown tier string is kept rather than dropped: a ledger written by a NEWER version
+  // must round-trip, and `rank` already lower-cases and compares rather than switching on a
+  // closed union.
+  const tier = String(r["exploitation_tier"] ?? "");
+  if (tier) {
+    issue.exploitationTier = tier as ExploitationTier;
+    // Read INSIDE the tier guard, so a peak can never arrive without the reading it belongs to.
+    // Empty is unmeasured; `0` is a measured probability and must survive as 0.
+    const peak = r["epss_peak"];
+    issue.epssPeak = peak === null || peak === undefined || peak === "" ? null : Number(peak);
+    if (issue.epssPeak !== null && !isFinite(issue.epssPeak)) issue.epssPeak = null;
+    const folded = r["exploitation_findings"];
+    if (folded !== null && folded !== undefined && folded !== "") {
+      const n = Number(folded);
+      if (isFinite(n)) issue.exploitationFindingCount = n;
+    }
   }
   // Phase 4: absent reads as undefined, never a default — a row this app synced before the
   // verdict existed (or a resolved issue that never got one) must not read as decided.
@@ -702,6 +784,165 @@ export function rowToIdentityFinding(r: Rec): IdentityFindingRow {
 }
 
 /**
+ * One folded exploitation reading → an `ai_issue_exploitation` row.
+ *
+ * `triCell` on the two flags rather than `boolCell`, and it is the whole point of the tab: the
+ * cell has to be able to say "Wiz never evaluated this" in a column whose other two values are
+ * true and false. `epss_peak` is null rather than 0 for the same reason one column over — 0 is
+ * a computed probability, blank is the absence of one.
+ */
+export function exploitationToRow(e: ExploitationRow): Rec {
+  return {
+    issue_id: e.issueId,
+    tier: e.tier,
+    has_kev: triCell(e.hasKev),
+    has_exploit: triCell(e.hasExploit),
+    epss_peak: e.epssPeak === null || e.epssPeak === undefined ? null : e.epssPeak,
+    finding_count: e.findingCount,
+    // Comma-joined, matching `attributed_asset_ids` and `adjacent_asset_ids`; the `_json`
+    // suffix stays reserved for structures. Bounded at the fold, not here.
+    sample_finding_ids: (e.sampleFindingIds ?? []).slice(0, SAMPLE_FINDING_IDS_MAX).join(","),
+    observed_at: e.observedAt,
+  };
+}
+
+export function rowToExploitation(r: Rec): ExploitationRow {
+  const peak = r["epss_peak"];
+  const parsedPeak = peak === null || peak === undefined || peak === "" ? null : Number(peak);
+  const count = Number(r["finding_count"] ?? 0);
+  return {
+    issueId: String(r["issue_id"] ?? ""),
+    // Not narrowed to the union: a ledger written by a newer version carrying a sixth tier must
+    // round-trip rather than be silently rewritten to one this version happens to know.
+    tier: String(r["tier"] ?? "unknown") as ExploitationTier,
+    hasKev: parseTri(r["has_kev"]),
+    hasExploit: parseTri(r["has_exploit"]),
+    epssPeak: parsedPeak !== null && isFinite(parsedPeak) ? parsedPeak : null,
+    findingCount: isFinite(count) ? count : 0,
+    sampleFindingIds: String(r["sample_finding_ids"] ?? "").split(",").filter(Boolean),
+    observedAt: String(r["observed_at"] ?? ""),
+  };
+}
+
+/** The stored exploitation evidence, one row per issue. Empty when no pass has ever run. */
+export function loadExploitation(): ExploitationRow[] {
+  return readAll(TABS.issueExploitation).map(rowToExploitation).filter((e) => !!e.issueId);
+}
+
+// ------------------------------------------------------------- the lifecycle ledger
+
+export function issueLedgerToRow(l: IssueLedgerRow): Rec {
+  return {
+    issue_id: l.issueId,
+    first_seen_sync: l.firstSeenSync,
+    first_seen_at: l.firstSeenAt,
+    last_seen_sync: l.lastSeenSync,
+    last_seen_at: l.lastSeenAt,
+    // NULL while the row is present. When set it is the timestamp of the sync that first
+    // failed to see it — an upper bound, and `resolution_src` beside it is what says so.
+    disappeared_at: l.disappearedAt,
+    resolution_src: l.resolutionSrc,
+    last_status: l.lastStatus,
+    // Comma-joined, matching `categories` on ai_issues; the `_json` suffix stays reserved
+    // for structures.
+    categories: (l.categories ?? []).join(","),
+    rule_id: l.ruleId,
+    created_at: l.createdAt,
+    due_at: l.dueAt,
+    // `?? null`, never a default, for the reason ai_issues states at length: an empty cell
+    // here means the fold did not reach this row on the sync that last saw it, and writing
+    // "UNLINKED" or "none" would turn "nobody looked" into a measurement.
+    ai_adjacency: l.aiAdjacency ?? null,
+    exploitation_tier: l.exploitationTier ?? null,
+    epss_peak: l.epssPeak === null || l.epssPeak === undefined ? null : l.epssPeak,
+    register_scope: l.registerScope,
+    episode: l.episode,
+  };
+}
+
+export function rowToIssueLedger(r: Rec): IssueLedgerRow {
+  const row: IssueLedgerRow = {
+    issueId: String(r["issue_id"] ?? ""),
+    firstSeenSync: String(r["first_seen_sync"] ?? ""),
+    firstSeenAt: String(r["first_seen_at"] ?? ""),
+    lastSeenSync: String(r["last_seen_sync"] ?? ""),
+    lastSeenAt: String(r["last_seen_at"] ?? ""),
+    disappearedAt: (r["disappeared_at"] as string | null) ?? null,
+    // Narrowed, because these two strings are the PROVENANCE of the date beside them: an
+    // unrecognised value must not be able to reach a surface that renders it as a claim.
+    resolutionSrc:
+      r["resolution_src"] === "disappeared" || r["resolution_src"] === "reopened"
+        ? (r["resolution_src"] as "disappeared" | "reopened")
+        : null,
+    lastStatus: String(r["last_status"] ?? ""),
+    categories: String(r["categories"] ?? "").split(",").filter(Boolean),
+    ruleId: String(r["rule_id"] ?? ""),
+    createdAt: (r["created_at"] as string | null) ?? null,
+    dueAt: (r["due_at"] as string | null) ?? null,
+    registerScope: String(r["register_scope"] ?? ""),
+    // 1, not 0: a stored row has been present at least once by definition, and a 0 here would
+    // read as "never seen" on a tab whose every row is a sighting.
+    episode: Number(r["episode"] ?? 1) || 1,
+  };
+  const adjacency = (r["ai_adjacency"] as string | null) ?? null;
+  if (adjacency === "DIRECT" || adjacency === "ADJACENT" || adjacency === "UNLINKED") {
+    row.aiAdjacency = adjacency;
+  }
+  // Read inside the TIER guard, exactly as `rowToIssue` does: the tier is what says the fold
+  // ran, so an empty peak beside a present tier is "no probability captured" (null) while an
+  // empty peak with no tier is "no fold" (absent). An unknown tier string is kept rather than
+  // dropped — a ledger written by a newer version must round-trip.
+  const tier = String(r["exploitation_tier"] ?? "");
+  if (tier) {
+    row.exploitationTier = tier as ExploitationTier;
+    const peak = r["epss_peak"];
+    const parsed = peak === null || peak === undefined || peak === "" ? null : Number(peak);
+    row.epssPeak = parsed !== null && isFinite(parsed) ? parsed : null;
+  }
+  return row;
+}
+
+/**
+ * The lifecycle ledger, every row it has ever held.
+ *
+ * NOT memoized, unlike the read models below. The one caller inside a write is `persistSync`,
+ * which must see the tab as it stands rather than as some earlier read in the same execution
+ * left it — a stale ledger there would be reconciled against and written back, silently
+ * dropping whatever the missed read held.
+ */
+export function loadIssueLedger(): IssueLedgerRow[] {
+  return readAll(TABS.issueLedger).map(rowToIssueLedger).filter((l) => !!l.issueId);
+}
+
+/**
+ * Stamp the folded reading onto the issues themselves, so the ranker reads one row rather than
+ * performing a join it has no index for.
+ *
+ * ONLY the issues the fold reached are stamped. An issue with no exploitation evidence keeps
+ * all three fields ABSENT, which is the same shape a register that never ran the step carries —
+ * and that is deliberate rather than sloppy: `rank.exploitationOf` drops an absent tier out of
+ * the blend, so an issue nothing exploited is scored on the terms that WERE measured instead of
+ * being credited with a "none" the fold never wrote for it. The tab beside it is where "this
+ * issue was looked at and joined nothing" would have to be recorded, and no finding produces
+ * such a row: a fold only ever sees findings that exist.
+ */
+function withExploitation(issues: IssueRow[], rows: readonly ExploitationRow[]): IssueRow[] {
+  if (!rows.length) return issues;
+  const byIssue = new Map<string, ExploitationRow>();
+  for (const r of rows) byIssue.set(r.issueId, r);
+  return issues.map((issue) => {
+    const e = byIssue.get(issue.id);
+    if (!e) return issue;
+    return {
+      ...issue,
+      exploitationTier: e.tier,
+      epssPeak: e.epssPeak,
+      exploitationFindingCount: e.findingCount,
+    };
+  });
+}
+
+/**
  * A posture cell's percentage, round-tripped through a Sheets cell.
  *
  * The empty string is null, NOT zero. A blank cell means Wiz sent no posture — the
@@ -854,6 +1095,17 @@ export function persistSync(
     configRules?: ConfigRuleRow[];
     identityFindings?: IdentityFindingRow[];
     effectiveAccess?: EffectiveAccessRow[];
+    /**
+     * The exploitation observations this sync READ — absent when the pass did not run.
+     *
+     * ABSENT AND EMPTY ARE DIFFERENT ARGUMENTS and the whole optional-step contract rests on
+     * the difference. `undefined` means VULN_FINDINGS was refused (or this caller has no such
+     * step): the tab is left untouched, the issue columns stay absent, and `exploitation_json`
+     * is null. `[]` means the step ran and matched nothing, which is a measurement: the tab is
+     * overwritten empty and the census records five zeroes. A refusal that arrived as `[]`
+     * would erase a good register on a tenant that rejected one query.
+     */
+    vulnFindings?: NormalizedVulnFinding[];
   } = {},
 ): GraphDoc {
   const { version: ruleVersion, rule } = settingsStore.getAarsRule();
@@ -887,7 +1139,43 @@ export function persistSync(
   // flips the knob has no attribution on its ledger to flip TO, and would need a full re-sync
   // to get one — so the evidence is collected always and priced on request.
   const attributedIssues = withIssueAttribution(reachable, issues);
-  const enriched = enrichGraphDoc(reachable, attributedIssues, hints, rule);
+  // Adjacency BESIDE attribution, against the same `reachable` doc, and for the same reason
+  // it runs unconditionally: the fold only RECORDS where a row sits relative to the estate.
+  // Whether anything is scored from that is the rank rule's decision, and its adjacency share
+  // is 0 by default — so a tenant that later flips the knob must already have the evidence on
+  // its ledger rather than needing a full re-sync to get some. The two folds are independent:
+  // attribution answers which AI asset an issue DESCRIBES over one edge type, this answers
+  // whether the row is anywhere near the estate over twelve, and a row can be ADJACENT while
+  // attributed to nothing.
+  const { issues: placedIssues, census: adjacencyCensus } =
+    withAiAdjacency(reachable, attributedIssues);
+  // Exploitation BESIDE adjacency, and gated where the other two folds are not.
+  //
+  // The gate is the difference in KIND, not in taste. Attribution and adjacency are derived
+  // from the sync's OWN graph — they can always run, and running them costs nothing but the
+  // walk. This one is derived from an OPTIONAL STEP's rows, so "no rows" has two readings and
+  // only one of them is a measurement (see `extras.vulnFindings`). An ungated fold would give
+  // both readings the same answer and write a five-zero census over a register whose evidence
+  // query the tenant refused — the identical failure `stepRows` was added to make impossible
+  // for the traversals.
+  //
+  // `knownIssueIds` is THIS sync's register, not the ledger's: evidence for an issue this scan
+  // did not collect is unreachable from every page, and `foldExploitation` counts those rather
+  // than storing them.
+  const vulnFindings = extras.vulnFindings;
+  const exploitation = vulnFindings
+    ? foldExploitation(vulnFindings, new Set(placedIssues.map((i) => i.id)), nowIso(now))
+    : null;
+  // Stamped from THIS sync's fold and from nothing else. On a refusal the issue rows are
+  // rewritten with all three columns ABSENT while the tab below keeps the last measured
+  // evidence, and the asymmetry is deliberate: the tab is dated evidence (`observed_at` says
+  // when it was seen), the columns are this sync's READING. Restamping them from stored rows
+  // would date a reading to a scan that never looked, which is the one thing a register whose
+  // whole subject is provenance must not do.
+  const exploitedIssues = exploitation
+    ? withExploitation(placedIssues, exploitation.rows)
+    : placedIssues;
+  const enriched = enrichGraphDoc(reachable, exploitedIssues, hints, rule);
 
   // The problem/decision-vector verdict, BESIDE the AARS enrichment above, never inside
   // it — see withProblemVerdicts's own comment for why the two must stay independently
@@ -898,7 +1186,7 @@ export function persistSync(
   const { version: problemRuleVersion, rule: problemRule } = settingsStore.getProblemRule();
   const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
     enriched,
-    attributedIssues,
+    exploitedIssues,
     findings,
     problemRule,
     problemRuleVersion,
@@ -962,14 +1250,68 @@ export function persistSync(
   // has no open identity-hygiene findings — and a register still saying three people lack MFA
   // after they have all fixed it is worse than an empty one.
   overwrite(TABS.identityFindings, (extras.identityFindings ?? []).map(identityFindingToRow));
+  // GUARDED ON THE NULL, NOT ON EMPTINESS — the distinction the two comments above are between.
+  // `exploitation === null` is the step not having run, and blanking a good tab on the strength
+  // of a refused query is the failure mode; `exploitation.rows === []` is the step having run
+  // and joined nothing, and there the wipe is correct for exactly the reason the identity
+  // findings above are unguarded — a register still claiming a KEV after every one was fixed is
+  // worse than an empty one.
+  if (exploitation) {
+    overwrite(TABS.issueExploitation, exploitation.rows.map(exploitationToRow));
+  }
+
+  // ONE instant and ONE scope signature for this commit, read once and used by both the
+  // ledger below and the history row under it. Two calls could only ever differ, and a
+  // ledger dating a departure a millisecond off the sync that noticed it is a discrepancy
+  // nobody would ever find a cause for.
+  const finishedAt = nowIso(now);
+  const registerScope = registerScopeSignature(settingsStore.getIssueCategories());
+
+  // THE LIFECYCLE LEDGER — after every evidence tab, before the commit record.
+  //
+  // The position is the guard. A sync that dies anywhere above this leaves no ledger write at
+  // all, and one that dies between here and the history append leaves a ledger whose last
+  // sighting names a sync that never committed — recoverable, because the next sync's
+  // `prevScopeSignature` still comes off the last COMMITTED row and its own reconcile
+  // re-sights everything present. Writing it after the history row would invert that: a
+  // committed sync with no ledger movement, which the next disappearance pass would read as
+  // an entire register going absent at once.
+  //
+  // A FULL REWRITE, and NOT an `overwrite` of evidence. The grid written here is the stored
+  // ledger reconciled with this sync's register — its own prior content plus one sync's
+  // worth of transitions — never a projection of `ai_issues`. That is the whole difference
+  // between this tab and every other one above.
+  //
+  // `finishedAt` is shared with the commit record below on purpose: the date a row is
+  // "gone by" and the date the sync that noticed it finished must be the same instant, or
+  // a lifecycle figure and the trend it sits under disagree by a few milliseconds forever.
+  const prevCommitted = latestSync();
+  const ledger = reconcileIssueLedger(
+    loadIssueLedger(),
+    decidedIssues,
+    meta.syncId,
+    finishedAt,
+    registerScope,
+    // The scope the LAST COMMITTED sync applied — read off the stored row, never off today's
+    // settings. Null when nothing has committed yet or the row predates the column, and null
+    // is UNKNOWN: `reconcileIssueLedger` refuses to resolve by absence against it, because a
+    // ledger that cannot prove the previous scan looked for a row must not date its departure.
+    prevCommitted ? ((prevCommitted["register_scope"] as string | null) ?? null) : null,
+  );
+  overwrite(TABS.issueLedger, ledger.rows.map(issueLedgerToRow));
 
   const snapshotRef = writeGraphSnapshot(postured);
+
+  // The open population this sync committed, named once. Three columns on the history row
+  // count it — the per-project blob, the category counts and the KEV count — and computing
+  // the gate three times is three chances for two of them to drift apart.
+  const openIssuesThisSync = decidedIssues.filter(isUnresolvedIssue);
 
   // Commit record LAST.
   appendRows(TABS.syncHistory, [{
     sync_id: meta.syncId,
     started_at: meta.startedAt,
-    finished_at: nowIso(now),
+    finished_at: finishedAt,
     status: "SUCCESS",
     mode: meta.mode,
     node_count: postured.nodes.length,
@@ -1008,7 +1350,7 @@ export function persistSync(
       // control" on one chart. The outcome series is unaffected: a row that fails either
       // gate carries no verdict to count.
       countProjectTotals(postured.nodes, [
-        ...decidedIssues.filter(isUnresolvedIssue),
+        ...openIssuesThisSync,
         ...decidedFindings.filter(isOpenGap),
       ]),
     ),
@@ -1053,6 +1395,54 @@ export function persistSync(
     // trend can mark the break rather than let a legitimate collapse in the tiered population
     // read as risk improving.
     derivation_version: DERIVATION_VERSION,
+    // The category scope this sync APPLIED — read off the same list syncSteps built its
+    // battery from, never off the settings at read time. A widened setting and an unsynced
+    // ledger disagree until the next sync, and bootstrap says so rather than letting a
+    // total counted under one scope be compared with one counted under another.
+    register_scope: registerScope,
+    // Where this sync's issues sat relative to the AI estate, WITH the edge count that makes
+    // the three figures readable — see AdjacencyCensus.edgesKnown. Mirrors aars_severity_json
+    // and problem_outcome_json above: the snapshot this row points at is overwritten by the
+    // next sync, so this is the only record the trend can ever read it from.
+    adjacency_json: JSON.stringify(adjacencyCensus),
+    // The exploitation census, and NULL when no pass ran — the same "we never asked" that
+    // `posture_fail_count` above already refuses to write as a zero. The two unusable counts
+    // travel inside: `unjoined` is the join field being wrong (the query asked for
+    // `hasRelatedIssue: true`, so a row with no issue id is a fact about the SELECTION), and
+    // `droppedNotInRegister` is the finding filter and the issue filter having drifted apart.
+    // Either one rising is how this axis fails, and neither is visible from the tiers alone.
+    // What the lifecycle ledger DID on this sync — the five transition counts. Never null:
+    // unlike the exploitation census above, the reconcile is not an optional step and always
+    // ran, so a sync that moved nothing writes five zeroes and means it. `skippedNarrowedScope`
+    // above zero is the one to read first: it says the category scope moved and that this sync
+    // deliberately resolved nothing by absence.
+    ledger_json: JSON.stringify(ledger.deltas),
+    // OPEN ISSUES PER CATEGORY, over the same gated population `project_totals_json` counts
+    // above — `isUnresolvedIssue`, the app's one definition of an open issue — so the scope
+    // series and the scoped series cannot be counting different things. Not `issues.length`'s
+    // population: that is the raw collection, and a resolved row in it is not an open issue
+    // under any category.
+    //
+    // Counted from the row's OWN stamps (`IssueRow.categories`), never from the settings, for
+    // the same reason `register_scope` is stamped rather than read back: an issue matched by
+    // two selected categories is counted under both, and one collected under a scope that has
+    // since changed keeps the categories it was actually fetched under.
+    category_counts_json: JSON.stringify(countIssueCategories(openIssuesThisSync)),
+    // Issues this sync read a KEV tier on, and NULL when no evidence pass ran — the same
+    // guard `exploitation_json` below takes, from the same fold, over the same open
+    // population. Reading it as 0 on a refused query would put "nothing is on the KEV
+    // catalogue" on a chart for a sync that never asked.
+    kev_linked_count: exploitation
+      ? openIssuesThisSync.filter((i) => i.exploitationTier === "kev").length
+      : null,
+    exploitation_json: exploitation
+      ? JSON.stringify({
+        ...censusExploitation(exploitation.rows),
+        unjoined: exploitation.unjoined,
+        droppedNotInRegister: exploitation.droppedNotInRegister,
+        findings: (vulnFindings ?? []).length,
+      })
+      : null,
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
   settingsStore.setDecidedRuleVersion(problemRuleVersion);

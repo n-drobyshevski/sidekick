@@ -24,6 +24,13 @@ quietly.*
 | `12f6bae` | Tri-state at the boundary; measurability; posture scope split; `DERIVATION_VERSION`; posture trend series; `RUNS_AS` attribution |
 | `5bbdf25` | `quick: false` on graphSearch — quick mode cannot paginate |
 | _(unversioned)_ | `gas_ai/phase0.mjs` — the read-only widening measurement behind §6 |
+| `35ce6e3` | The issue register widens by a settings-driven category list, every row stamped with the category that fetched it — at the default (`[wct-id-1998]`) the battery is byte-identical to before |
+| `7bf525e` | Widened issues survive a project view (own `project_refs_json`, not just their asset's); every issue/finding stamped DIRECT/ADJACENT/UNLINKED to the AI estate — ADJACENT read **0** on the sample landscape until `CAN_INVOKE` (Bedrock's `ALLOWS_ACCESS_TO`) joined the adjacency edge list |
+| `c19d599` | Rank v2 reads exploitation, adjacency and age as three new blend terms — `DEFAULT_RANK_RULE`'s vector is pinned byte-identical to v1 (12-row fixture), the new shares ship at 0 |
+| `8e03583` | Exploitation evidence reaches an issue through its linked findings; the rank reaches the Priorities page behind `rank_leads_sort` (default false, order byte-identical) — the join selection `relatedIssues{ id }` is UNVERIFIED, see §6.11 |
+| `9636d29` | `ai_issue_ledger` dates a resolution by disappearance and is forward-only — it refuses to resolve anything when this sync's `register_scope` differs from the last COMMITTED one, so a widening never reads as a remediation wave |
+| `af83545` | `probe.mjs --diagnose` runs an isolation ladder over the three zero-row exposure steps (§4 row C) — project scope off, quick false, root-only, each `@include` flag alone, one rung at a time |
+| `1dfe3ab` | `phase0.mjs --stage=k` introspects the finding→issue join before rank's exploitation term is allowed to build on it — see §6.11 |
 
 `npm run check` green at both: **104 files, 2815 tests**. Branch
 `claude/gas-ai-posture-tree-view`; §6 was measured from `claude/gas-ai-risk-model-rebuild`.
@@ -134,7 +141,7 @@ attribution      direct 22 · RUNS_AS 7 · none 70
 |---|---|---|
 | A | **RESOLVED 2026-08-23. There is no loss — the premise was wrong, and so was the first correction to it.** Persisted `ai_edges` after a live sync holds 68 rows: RUNS_AS 40 · BOUND_TO 12 · ALLOWS_ACCESS_TO 11 · **PRODUCES 3 · READS_DATA_FROM 1 · STORES_DATA_IN 1**. LINEAGE contributes **5 edges and all 5 persist**, matching the probe exactly at the sync's own page size. The cause is the tenant, not the code: at `--first=250` the slot fill is `0:250, 1:3, 2:1, 4:1` — **585 of 590 rows are a bare root with every optional leg null**, so this estate records almost no AI lineage. `edge_count` 167 = 68 asset edges + 99 `HAS_ISSUE`; the "167 before and after" reading was a **5-edge delta mistaken for none**. The arity guard never discarded anything — arity passes, the legs are simply absent. Two corrections worth keeping: the original entry read 5 edges as 0, and the 2026-08-23 note that "the premise does not survive" over-corrected, because getGraph returns a depth-limited projection (61 of 167) rather than the register. Read `ai_edges` directly, never getGraph, to count edges. | live sync 2026-08-22T232628Z; `probe.mjs --first=250` |
 | B | **RESOLVED BY DELETION, 2026-08-23 — the four steps are gone.** They were repaired first (three wrong names in one filter: `sourceRuleId` → `sourceRule`, `equals` → `containsAny`, and `status` is not a field on `CloudResourceRelatedIssueFilters` at all), and the repair immediately exposed a second defect the failure had been hiding: **the steps carried no `projectScope()`**, unlike all 32 other uses in `syncJobs`, and `Q_RULE_ASSETS` had no `project` in its `filterBy`. So they collected **tenant-wide into a project-scoped register** — 797 rows and 617 assets where the scope holds 99 issues, taking `issue_count` to 806 and `node_count` to 1757. Scoping would have fixed the count but not the principle: `normalizeRuleAssetsPage` synthesised one issue row per ASSET from `cloudResourcesV2`, with a fabricated `live-` id, and `reconcileIssues` dropped such a row only where a real issuesV2 row already covered it — so every synthetic row that survived was by construction one Wiz did not return. **`ai_issues` is meant to be exactly what Wiz returned**, so the whole path was removed: the four steps, `Q_RULE_ASSETS`, `normalizeRuleAssetsPage`, and `reconcileIssues` (now a no-op, since nothing mints a `live-` id). Nothing regressed — the steps had contributed zero rows for their entire existence. Verified on a live sync: **`issue_count` 806 → 99**, exactly `ISSUES_TOXIC`; `node_count` 1757 → 1062; `edge_count` unchanged at 167 with lineage intact; `api_calls` 73 → 68; `skippedSteps` empty. `test/stepPageSize.test.ts` now pins their **absence** so a re-introduction fails there first. | live sync 2026-08-23, 68 API calls |
-| C | **`HOST_EXPOSURE`, `ENDPOINT_EXPOSURE`, `IDENTITY_ACCESS` return 0 rows.** This is why 16 hosted agents have null internet exposure and why `withheld` is 306. | `stepRows` = 0 |
+| C | **`HOST_EXPOSURE`, `ENDPOINT_EXPOSURE`, `IDENTITY_ACCESS` return 0 rows.** This is why 16 hosted agents have null internet exposure and why `withheld` is 306. `--diagnose` now runs the isolation ladder over these three steps — project scope off, quick false, root-only, each `@include` flag alone — one rung at a time, so an accepted-but-empty result can be told apart from a rejected one. Command: `cd gas_ai && node probe.mjs --diagnose`. Result pending. | `stepRows` = 0 |
 | D | **The rule-id census counts issues only, but `exploitationByRuleId` prices findings too.** `exploitationOfFinding` matches the same operator table on `finding.ruleShortId` (`problem.ts`), while `problemCensus` is issue-shaped by design. So the picker added 2026-08-23 shows a rule id's issue reach and never its finding reach, on the largest step in the sync. Understates, never overstates — naming a rule id can only match more than the hint claims — so it is safe, not urgent. The honest fix is its own change: it must not make `CensusEntry.issues` untrue. | `stepRows.CONFIG_FINDINGS = 3639`; `problem.ts:exploitationOfFinding` |
 
 Per-step rows, last sync: `CONFIG_RULES` 3905 · `CONFIG_FINDINGS` 3639 · `AI_ASSET_PROPERTIES`
@@ -257,6 +264,22 @@ source**, not by re-measuring the tenant — no figure in §1–§4 moved.
    A one-axis lattice is not a lattice.
    *Also still true:* `detailSheets.js:322` labels `technologyCategories` as "Technology", which is
    the category list under the name of the field that will now never exist.
+
+7. **AI adjacency's edge list was net-incomplete for this tenant — `CAN_INVOKE` was missing.**
+   *FOUND AND FIXED (`7bf525e`).* The first cut of `withAiAdjacency` read **ADJACENT 0** on the
+   sample landscape: every one of the eight UNLINKED rows was an `ACCESS_ROLE` node one
+   `CAN_INVOKE` edge from a model — Bedrock's spelling of `ALLOWS_ACCESS_TO`, the same edge
+   `wc-id-2742` is about. `CAN_INVOKE` is in the adjacency edge list now and pinned.
+   **`BUILT_FROM` is pinned OUT, deliberately, pending its own measurement** — it was never
+   observed to be the cause of a wrongly-UNLINKED row the way `CAN_INVOKE` was, so adding it now
+   would be a guess dressed as a fix. No live figure moved: `ai_edges` on this tenant still holds
+   no `CAN_INVOKE` row, so the correction is provable only once a sync has one.
+
+8. **The persisted rank reasons grow the archive** (`8e03583`). `RankResult` now carries one
+   reason clause per measured term, and every problem row's archive entry grows by roughly
+   **230 bytes** to hold them. At a 1,000-row tenant that is on the order of **230 KB of
+   archived reasons per sync** — not a defect (nothing here compacts old archives), but a growth
+   rate worth having on record before it is someone's surprise.
 
 **Explicitly not doing:** the AIVSS formula (a mean over a 10-element vector of which 9 are
 unmeasured — `posture.ts`'s header rules this out); any age term inside AARS; parsing `notes`
@@ -475,6 +498,81 @@ vanish from a register that still references it historically. Narrow the *fetch*
 
 ---
 
+### 6.11 The finding→issue join — status UNMEASURED
+
+§6.4 counts **7,368** vulnerability findings related to a candidate-category issue (99.8% of
+the 7,381 related to any issue at all) — but that count is a `hasRelatedIssue` FILTER, not a
+selection. No stage before this one ever asked the field itself for its issue ids, so its real
+name, whether it is a bare list, a connection, or a single object, and how many of the ids it
+returns actually land in the widened issue register are all still unmeasured. `Q_VULN_FINDINGS`
+selects `relatedIssues{ id }` today — UNVERIFIED, chosen because every multi-valued field on
+`VulnerabilityFinding` in the tenant's console capture is a bare list. The normalizer accepts
+all three shapes and both plausible field names, so a wrong guess here costs a retry, not a
+silent defect — which is exactly why this stage exists: to find out whether a retry is needed
+at all.
+
+Command: `cd gas_ai && node phase0.mjs --stage=k`. What `stageK` in `phase0-report.json` must
+show before `Q_VULN_FINDINGS`'s selection is treated as PROVEN rather than guessed:
+
+- `relatedIssueField` — the field's real name and `cardinality` (`list` / `connection` /
+  `single` / `scalar`), from introspecting `VulnerabilityFinding` directly rather than assuming
+  the console capture's shape generalises.
+- `share` — what fraction of the sampled KEV ∧ `hasRelatedIssue` findings' related-issue ids
+  resolve into the six-category candidate issue set (`resolvedIntoCandidate` /
+  `distinctRelatedIssues`), with `resolvedIntoAiOnly` (the `wct-id-1998`-only set) reported
+  beside it for comparison.
+- `vulnerableAssetFragment` — the literal inline-fragment text built per member of the
+  `VulnerableAsset` union, so the query this stage sends is provably the same shape
+  `Q_VULN_FINDINGS` sends rather than a hand-typed approximation of it.
+- `nullCensus` — `hasExploit` / `hasCisaKevExploit` / `epssProbability` censused as null vs
+  falsy vs truthy over the sample, because a finding's own signals can be absent independently
+  of whether its related-issue link resolves into the register.
+
+**The gate.** Below 50% of sampled related-issue ids resolving into the candidate set,
+exploitation stays UNMEASURED rather than attributed through a join this stage could not
+confirm, and rank v2's blend keeps to three terms (rule, time, adjacency) until it clears it.
+The normalizer's tolerance for all three shapes means a wrong guess moves only this document,
+never a shipped defect — `phase0 --stage=k` is what turns "the normalizer did not throw" into
+"this is the join Wiz actually returns."
+
+**Status: UNMEASURED. Result pending.**
+
+### 6.12 Rank evaluation — status NOT YET POSSIBLE
+
+The rank blend (`rank.ts`; CLAUDE.md's gas_ai scoring conventions) has never been evaluated
+against the order it would replace, because evaluating a queue's order needs a labelled
+outcome — was the row that ranked worst actually the row remediated first — and this register
+had no such label until the ledger (`9636d29`).
+
+**Two syncs, under one stable scope.** `ai_issue_ledger` dates a resolution by disappearance
+only when a sync's own `register_scope` matches the last COMMITTED scope; a scope change
+(§6.9's widening included) makes the guard refuse to resolve anything by disappearance rather
+than resolve every row against a register that was asked a different question. So the FIRST
+sync under a widened scope dates nothing at all — it is the baseline the SECOND sync against
+that same scope is measured from — and no rank evaluation is possible until that second sync
+exists.
+
+**Every label is disappearance, and that is a softer clock than it looks.**
+`resolution_src: "disappeared"` means the row was gone at the next sync that looked — an UPPER
+BOUND on the remediation date whose error is the sync interval, softer than a Wiz `resolvedAt`
+this register does not have. Any MTTR or survival curve computed from these labels inherits
+that error and has to say so beside the number, the way `gas_devsecops`'s SAST clock already
+does for the same reason.
+
+**Baselines are reported beside every number, never in place of one.** A rank is measured
+against what it beats, not in isolation: random order, `dueAt`-only ordering (v1's single
+knob), rank v1, and — while it is still carried on the row — severity-only ordering.
+
+**`RANK_PRESET_V2`'s shares are a starting prior, not a target.**
+`{rule .25, time .30, exploitation .30, adjacency .15}` encodes one guess — that the two
+graph-fed terms together should not outweigh the two already measured to separate 6.53 between
+them (§3) — and nothing more. They move on this section's own numbers once it has any, never
+on taste.
+
+**Status: NOT YET POSSIBLE.**
+
+---
+
 ## 7. How to reproduce
 
 **Read-only probe** — sends the app's own query constants, writes only
@@ -500,6 +598,7 @@ node phase0.mjs --stage=r2   # distinct resources
 node phase0.mjs --stage=cf   # config findings under the candidate categories
 node phase0.mjs --stage=sc   # scope audit: how much catalogue the project touches
 node phase0.mjs --stage=sc2  # what scoping the two catalogue steps yields
+node phase0.mjs --stage=k    # the finding→issue join: field, cardinality, resolution share (§6.11)
 ```
 
 **A full live sync in Node.** The dev harness normally runs in a browser tab, because

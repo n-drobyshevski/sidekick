@@ -4,15 +4,29 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  ADJACENCY_KEYS,
+  CATEGORY_SPEC,
   COUNT_KEYS,
+  LEDGER_KEYS,
+  MIN_COMPARABLE_SYNCS,
+  NET_CAPACITY_BAND_PCT,
   TREND_SEVERITIES,
   aarsTrendFromHistory,
+  adjacencyTrendFromHistory,
+  capacityFromLedgerDeltas,
+  categorySpecFor,
+  categoryTrendFromHistory,
   countAarsSeverities,
+  countIssueCategories,
   countProjectTotals,
   countTrendFromHistory,
+  exploitationTrendFromHistory,
+  labelCategories,
+  ledgerTrendFromHistory,
   problemTrendFromHistory,
   ruleChangePoints,
 } from "../src/domain/aarsTrend";
+import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 import { AARS_SEVERITY_ORDER } from "../src/domain/config";
 import { OUTCOME_VALUES } from "../src/domain/problem";
 import type { Rec } from "../src/domain/util";
@@ -309,5 +323,343 @@ describe("the count trend agrees with the KPIs beside it", () => {
     } finally {
       teardownServer();
     }
+  });
+});
+
+// ------------------------------------------------------------------ the posture series
+//
+// Four more specs on the same `trendFromHistory` machinery. Not a repeat of every case the
+// AARS block above already pins — that is the fork the generalisation exists to prevent —
+// but each one is held to the rule the whole file is about: a sync recorded before the
+// column existed is SKIPPED, never plotted as zero.
+
+describe("the posture specs skip a sync recorded before their column existed", () => {
+  const pre = (at: string): Rec => row({ finished_at: at });
+
+  it("adjacency: a pre-column row is absent, not an all-UNLINKED register", () => {
+    const points = adjacencyTrendFromHistory([
+      pre("2026-06-20T05:00:00Z"),
+      row({
+        finished_at: "2026-06-21T05:00:00Z",
+        adjacency_json: counts({ DIRECT: 4, ADJACENT: 2, UNLINKED: 26, edgesKnown: 68 }),
+      }),
+    ]);
+    expect(points).toHaveLength(1);
+    expect(points[0].counts).toEqual({ DIRECT: 4, ADJACENT: 2, UNLINKED: 26 });
+  });
+
+  it("exploitation: a sync whose evidence pass did not run plots nothing", () => {
+    // `exploitation_json` is null on a refused VULN_FINDINGS step. Five zeroes there would
+    // say the register holds nothing exploitable; it says nobody asked.
+    const points = exploitationTrendFromHistory([
+      row({ finished_at: "2026-06-20T05:00:00Z", exploitation_json: null }),
+      row({
+        finished_at: "2026-06-21T05:00:00Z",
+        exploitation_json: counts({ kev: 1, exploit: 0, epss: 2, none: 20, unknown: 9 }),
+      }),
+    ]);
+    expect(points).toHaveLength(1);
+    expect(points[0].counts).toEqual({ kev: 1, exploit: 0, epss: 2, none: 20, unknown: 9 });
+  });
+
+  it("ledger: three transitions, and `carried` / `skippedNarrowedScope` are not series", () => {
+    const points = ledgerTrendFromHistory([
+      pre("2026-06-20T05:00:00Z"),
+      row({
+        finished_at: "2026-06-21T05:00:00Z",
+        ledger_json: counts({
+          new: 3, resolved: 2, reopened: 1, carried: 40, skippedNarrowedScope: 7,
+        }),
+      }),
+    ]);
+    expect(points).toHaveLength(1);
+    // The two omitted keys are a deliberate exclusion, not an oversight: neither is a
+    // movement in the open population, and `skippedNarrowedScope` decides comparability
+    // instead (capacityFromLedgerDeltas).
+    expect(points[0].counts).toEqual({ new: 3, resolved: 2, reopened: 1 });
+    expect(Object.keys(points[0].counts).sort()).toEqual([...LEDGER_KEYS].sort());
+  });
+
+  it("category: a pre-column row is absent for every category at once", () => {
+    const points = categoryTrendFromHistory([
+      pre("2026-06-20T05:00:00Z"),
+      row({
+        finished_at: "2026-06-21T05:00:00Z",
+        category_counts_json: counts({ "wct-id-1998": 99, "wct-id-3": 677 }),
+      }),
+    ], ["wct-id-1998", "wct-id-3"]);
+    expect(points).toHaveLength(1);
+    expect(points[0].counts).toEqual({ "wct-id-1998": 99, "wct-id-3": 677 });
+  });
+});
+
+describe("the adjacency annotation — the denominator rides beside the counts", () => {
+  it("carries edgesKnown as an annotation and never as a fourth series", () => {
+    // 68 asset edges on the reference tenant is why: an UNLINKED count with no edge count
+    // beside it reads as "unrelated" when it means "not traversed". A fourth LINE would put
+    // a count of edges on an axis counting issues, which is the other way to lose it.
+    const [p] = adjacencyTrendFromHistory([
+      row({ adjacency_json: counts({ DIRECT: 4, ADJACENT: 2, UNLINKED: 26, edgesKnown: 68 }) }),
+    ]);
+    expect(p.annotations).toEqual({ edgesKnown: 68 });
+    expect(Object.keys(p.counts).sort()).toEqual([...ADJACENCY_KEYS].sort());
+    expect(Object.keys(p.counts)).not.toContain("edgesKnown");
+  });
+
+  it("reads an absent edgesKnown as NULL, not as zero edges known", () => {
+    const [p] = adjacencyTrendFromHistory([
+      row({ adjacency_json: counts({ DIRECT: 1, ADJACENT: 0, UNLINKED: 3 }) }),
+    ]);
+    expect(p.annotations).toEqual({ edgesKnown: null });
+    // The counts are still a measurement — only the denominator is missing.
+    expect(p.counts).toEqual({ DIRECT: 1, ADJACENT: 0, UNLINKED: 3 });
+  });
+
+  it("keeps a MEASURED zero denominator, which is a different claim", () => {
+    // A register whose graph holds no adjacency edges at all: the walk ran and had nothing
+    // to walk. That is a finding, and it must not read like a row that never recorded one.
+    const [p] = adjacencyTrendFromHistory([
+      row({ adjacency_json: counts({ DIRECT: 0, ADJACENT: 0, UNLINKED: 30, edgesKnown: 0 }) }),
+    ]);
+    expect(p.annotations).toEqual({ edgesKnown: 0 });
+  });
+
+  it("gives the exploitation series its own three, and the two older specs none at all", () => {
+    const [x] = exploitationTrendFromHistory([
+      row({
+        exploitation_json: counts({
+          kev: 1, exploit: 0, epss: 2, none: 20, unknown: 9,
+          findings: 412, unjoined: 3, droppedNotInRegister: 11,
+        }),
+      }),
+    ]);
+    expect(x.annotations).toEqual({ findings: 412, unjoined: 3, droppedNotInRegister: 11 });
+    // The two specs that predate annotations produce a point with no such key — the same
+    // object they produced before this existed.
+    const [a] = aarsTrendFromHistory([row({ aars_severity_json: counts({ HIGH: 1 }) })]);
+    expect("annotations" in a).toBe(false);
+    const [o] = problemTrendFromHistory([row({ problem_outcome_json: counts({ ACT: 1 }) })]);
+    expect("annotations" in o).toBe(false);
+  });
+});
+
+describe("the category series — a vocabulary decided at render time", () => {
+  const cat = (o: Record<string, number>, at = "2026-06-20T05:00:00Z"): Rec =>
+    row({ finished_at: at, category_counts_json: counts(o) });
+
+  it("follows the list it is given, in that order, and ignores the rest of the cell", () => {
+    // A category the register has stopped collecting is still in old rows. It is not drawn,
+    // because the chart's vocabulary is the scope the register holds NOW.
+    const points = categoryTrendFromHistory(
+      [cat({ "wct-id-1998": 99, "wct-id-3": 677, "dropped-id": 5 })],
+      ["wct-id-3", "wct-id-1998"],
+    );
+    expect(Object.keys(points[0].counts)).toEqual(["wct-id-3", "wct-id-1998"]);
+    expect(points[0].counts).toEqual({ "wct-id-3": 677, "wct-id-1998": 99 });
+  });
+
+  it("reads a key the row never counted as NULL, never as zero", () => {
+    // THE CASE THE SPARSE POINT EXISTS FOR. The second category was selected after this sync
+    // ran, so that sync never collected it. Zero would say it looked and found none — and the
+    // line would start at the bottom of the chart and climb, describing a category that grew
+    // from nothing on the day it was switched on.
+    const points = categoryTrendFromHistory(
+      [cat({ "wct-id-1998": 99 }), cat({ "wct-id-1998": 97, "wct-id-3": 677 }, "2026-06-21T05:00:00Z")],
+      ["wct-id-1998", "wct-id-3"],
+    );
+    expect(points.map((p) => p.counts["wct-id-3"])).toEqual([null, 677]);
+    expect(points.map((p) => p.counts["wct-id-1998"])).toEqual([99, 97]);
+  });
+
+  it("keeps a measured zero, which IS a reading", () => {
+    // The key is present and reads 0: this sync asked that category and got no open issues.
+    const [p] = categoryTrendFromHistory([cat({ "wct-id-1998": 0 })], ["wct-id-1998"]);
+    expect(p.counts["wct-id-1998"]).toBe(0);
+  });
+
+  it("skips a row that counted none of today's categories at all", () => {
+    // Every key null is the same absence one grain up: there is nothing on this point to
+    // draw, and a column of gaps under a legend is not a measurement.
+    expect(categoryTrendFromHistory([cat({ "old-id": 4 })], ["wct-id-1998"])).toHaveLength(0);
+  });
+
+  it("charts nothing at all when the vocabulary is empty", () => {
+    // Not one point per sync with no series on it, which would draw an empty chart with a
+    // sync count under it — "measured, and there is nothing" instead of "nothing was asked".
+    expect(categoryTrendFromHistory([cat({ "wct-id-1998": 4 })], [])).toEqual([]);
+    expect(CATEGORY_SPEC.keys).toEqual([]);
+    expect(categorySpecFor(["a", "b"]).keys).toEqual(["a", "b"]);
+  });
+
+  it("labels a known category by name and an unknown one by its own id", () => {
+    // CANDIDATE_CATEGORIES is a candidate list, not a permitted set: a tenant may scope the
+    // register to an id this build has never heard of, and that line still has to be findable.
+    const labels = labelCategories([RISK_CATEGORY_ID, "8ee0e63e-not-a-known-id"]);
+    expect(labels[0].name).toBe("AI Security");
+    expect(labels[1]).toEqual({ id: "8ee0e63e-not-a-known-id", name: "8ee0e63e-not-a-known-id" });
+  });
+});
+
+// The capacity readout: the ledger's own transition counts as a remediation programme
+// figure. The verdict shape is ported from gas/'s capacityByMonth — three words and a named
+// dead band — and everything about WHICH syncs count is this register's own, because here
+// the sync is the interval.
+describe("capacityFromLedgerDeltas", () => {
+  const SCOPE_A = "wct-id-1998";
+  const SCOPE_B = "wct-id-1998|wct-id-3";
+  const deltas = (o: Partial<Record<string, number>>) => JSON.stringify({
+    new: 0, resolved: 0, reopened: 0, carried: 0, skippedNarrowedScope: 0, ...o,
+  });
+  /** One committed sync: day of June, scope, and its five transition counts. */
+  const sync = (day: number, scope: string, d: Partial<Record<string, number>>): Rec => row({
+    sync_id: `sync-${day}`,
+    finished_at: `2026-06-${String(day).padStart(2, "0")}T05:00:00Z`,
+    register_scope: scope,
+    ledger_json: deltas(d),
+  });
+
+  it("publishes nothing off one sync — and the first sync is never comparable", () => {
+    // Its `new` is the entire register arriving at once, and there is no previous row to
+    // compare its scope against. Unknown is not "the same scope", which is the rule
+    // reconcileIssueLedger already follows when no previous committed scope exists.
+    const cap = capacityFromLedgerDeltas([sync(20, SCOPE_A, { new: 10 })]);
+    expect(cap.points).toHaveLength(1);
+    expect(cap.points[0].comparable).toBe(false);
+    expect(cap.points[0].verdict).toBeNull();
+    expect(cap.overall).toEqual({ mmcr: null, verdict: null, syncs: 1, comparable: 0 });
+  });
+
+  it("needs two COMPARABLE syncs, which takes three rows", () => {
+    const rows = [
+      sync(20, SCOPE_A, { new: 10 }),
+      sync(21, SCOPE_A, { new: 2, resolved: 3, carried: 7 }),
+      sync(22, SCOPE_A, { new: 3, resolved: 3, carried: 6 }),
+    ];
+    const cap = capacityFromLedgerDeltas(rows);
+    expect(cap.points.map((p) => p.comparable)).toEqual([false, true, true]);
+    // openAtStart = carried + resolved: 10, then 9. Close rates 30% and 33.33%.
+    expect(cap.overall.mmcr).toBeCloseTo((30 + (3 / 9) * 100) / 2, 10);
+    expect(cap.overall.syncs).toBe(3);
+    expect(cap.overall.comparable).toBe(2);
+    // Net +1 on ten open (10%) then 0 on nine: mean +5%, past the 2% band.
+    expect(cap.overall.verdict).toBe("gaining");
+    expect(cap.points[1]).toEqual({
+      syncId: "sync-21", at: "2026-06-21T05:00:00Z",
+      opened: 2, closed: 3, net: 1, comparable: true, verdict: "gaining",
+    });
+  });
+
+  it("counts a REOPEN as work arriving, so the accounting identity holds", () => {
+    // openAtEnd = openAtStart + opened - closed = (carried + resolved) + (new + reopened) -
+    // resolved = carried + new + reopened, which is the population the sync ends with. A
+    // reopened row re-enters the open register exactly as a new one does.
+    const cap = capacityFromLedgerDeltas([
+      sync(20, SCOPE_A, { new: 10 }),
+      sync(21, SCOPE_A, { new: 1, reopened: 2, resolved: 4, carried: 6 }),
+    ]);
+    expect(cap.points[1].opened).toBe(3);
+    expect(cap.points[1].closed).toBe(4);
+    expect(cap.points[1].net).toBe(1);
+  });
+
+  it("excludes a sync that skipped disappearance-resolution, and counts the exclusion", () => {
+    // skippedNarrowedScope > 0 means this sync deliberately resolved nothing by absence, so
+    // its `closed` is understated by an amount nobody can recover. Still plotted — it
+    // happened — but out of the mean, and its own verdict withheld rather than published
+    // with a known direction of error.
+    const cap = capacityFromLedgerDeltas([
+      sync(20, SCOPE_A, { new: 10 }),
+      sync(21, SCOPE_A, { new: 2, resolved: 3, carried: 7 }),
+      sync(22, SCOPE_A, { new: 2, resolved: 0, carried: 9, skippedNarrowedScope: 40 }),
+      sync(23, SCOPE_A, { new: 1, resolved: 2, carried: 8 }),
+    ]);
+    expect(cap.points.map((p) => p.comparable)).toEqual([false, true, false, true]);
+    expect(cap.points[2].verdict).toBeNull();
+    expect(cap.overall.syncs).toBe(4);
+    expect(cap.overall.comparable).toBe(2);
+  });
+
+  it("excludes a sync whose register_scope moved, in either direction", () => {
+    // A count taken over six categories is not comparable with one taken over one. The
+    // WIDENING sync is the incomparable one; the sync after it, back on a stable scope, is
+    // comparable again.
+    const cap = capacityFromLedgerDeltas([
+      sync(20, SCOPE_A, { new: 10 }),
+      sync(21, SCOPE_A, { new: 2, resolved: 3, carried: 7 }),
+      sync(22, SCOPE_B, { new: 90, resolved: 1, carried: 8 }),
+      sync(23, SCOPE_B, { new: 4, resolved: 5, carried: 90 }),
+    ]);
+    expect(cap.points.map((p) => p.comparable)).toEqual([false, true, false, true]);
+    expect(cap.overall.comparable).toBe(2);
+    // And a row written before `register_scope` existed is UNKNOWN, not "the same scope".
+    const legacy = capacityFromLedgerDeltas([
+      sync(20, "", { new: 10 }),
+      sync(21, "", { new: 2, resolved: 3, carried: 7 }),
+      sync(22, "", { new: 2, resolved: 3, carried: 6 }),
+    ]);
+    expect(legacy.points.map((p) => p.comparable)).toEqual([false, false, false]);
+    expect(legacy.overall).toEqual({ mmcr: null, verdict: null, syncs: 3, comparable: 0 });
+  });
+
+  it("puts the verdict bands at exactly ±2% of the open population", () => {
+    // NET_CAPACITY_BAND_PCT, ported with its provenance: P2P v3 Fig. 22 splits firms without
+    // a sharp cut, and a one-issue swing must not flip a verdict. On 100 open, net +2 is
+    // still keeping up and net +3 is gaining.
+    expect(NET_CAPACITY_BAND_PCT).toBe(2);
+    const at = (d: Partial<Record<string, number>>) => capacityFromLedgerDeltas([
+      sync(20, SCOPE_A, { new: 100 }),
+      sync(21, SCOPE_A, d),
+    ]).points[1].verdict;
+    expect(at({ closed: 0, resolved: 4, new: 2, carried: 96 })).toBe("keeping-up");   // +2%
+    expect(at({ resolved: 5, new: 2, carried: 95 })).toBe("gaining");                 // +3%
+    expect(at({ resolved: 2, new: 4, carried: 98 })).toBe("keeping-up");              // -2%
+    expect(at({ resolved: 2, new: 5, carried: 98 })).toBe("falling-behind");          // -3%
+  });
+
+  it("skips a sync recorded before the ledger existed, rather than reading five zeroes", () => {
+    const cap = capacityFromLedgerDeltas([
+      row({ finished_at: "2026-06-19T05:00:00Z", register_scope: SCOPE_A }),
+      sync(20, SCOPE_A, { new: 10 }),
+    ]);
+    expect(cap.points.map((p) => p.syncId)).toEqual(["sync-20"]);
+    expect(cap.overall.syncs).toBe(1);
+  });
+
+  it("reads a sync with nothing open at its start without inventing a rate", () => {
+    // A register that has just been reset: openAtStart is 0, so there is no denominator and
+    // no close rate. The point is still plotted and still comparable — the sync happened —
+    // it simply contributes nothing to the mean.
+    const cap = capacityFromLedgerDeltas([
+      sync(20, SCOPE_A, {}),
+      sync(21, SCOPE_A, { new: 5 }),
+      sync(22, SCOPE_A, { new: 1, resolved: 2, carried: 3 }),
+    ]);
+    expect(cap.points[1].verdict).toBe("keeping-up");
+    expect(cap.overall.comparable).toBe(2);
+    // TWO comparable syncs and only ONE rate, which is what the mean is entitled to count.
+    // The first cut of this gate read `comparable >= 2 && rates.length > 0` and published a
+    // mean of that single observation; this case is what failed it.
+    expect(cap.overall.mmcr).toBeNull();
+    expect(MIN_COMPARABLE_SYNCS).toBe(2);
+  });
+});
+
+describe("countIssueCategories", () => {
+  it("counts a row once under EVERY category it carries", () => {
+    // An issue matched by two selected categories arrives twice from the API and merges to
+    // one row carrying both stamps, so it is counted under both. These counts deliberately
+    // do not sum to the register total — an issue sits in roughly five categories on the
+    // reference tenant — and a reader adding them up is measuring the overlap.
+    const counted = countIssueCategories([
+      { categories: ["wct-id-1998", "wct-id-3"] },
+      { categories: ["wct-id-3"] },
+    ]);
+    expect(counted).toEqual({ "wct-id-1998": 1, "wct-id-3": 2 });
+  });
+
+  it("counts a doubled stamp once, and a row with no stamp not at all", () => {
+    expect(countIssueCategories([{ categories: ["wct-id-3", "wct-id-3", ""] }]))
+      .toEqual({ "wct-id-3": 1 });
+    expect(countIssueCategories([{}, { categories: [] }])).toEqual({});
   });
 });

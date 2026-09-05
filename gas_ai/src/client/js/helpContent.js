@@ -762,6 +762,50 @@ export const ENTRIES = [
     },
   },
 
+  {
+    id: "rank-terms",
+    term: "Priorities rank terms",
+    aka: "rule · clock · exploitation · adjacency",
+    family: "score",
+    blurb:
+      "The four readings the Priorities rank score blends, each edited on Settings' " +
+      "Register tab and each optional. RULE: the operator's own judgement that a source " +
+      "rule matters this much, unset by default. CLOCK: due-date urgency, or — once a " +
+      "preset turns on the fallback — a row's age when it carries no due date. " +
+      "EXPLOITATION: a ladder folded up from an issue's linked findings — on the CISA KEV " +
+      "catalog, an exploit exists, EPSS clears a threshold, or none observed — where " +
+      "'none' reads mid-low rather than zero, because an observed absence is still a " +
+      "measurement. ADJACENCY: how close the row sits to the AI estate, direct, adjacent, " +
+      "or UNLINKED — read as 'no known link', never 'unrelated', because attribution " +
+      "edges are sparse and an unlinked row is mostly a statement about how far the " +
+      "attribution pass has reached, not a claim the row has nothing to do with AI. A " +
+      "term nobody could measure on a given row LEAVES THE BLEND rather than scoring " +
+      "zero, so a sparsely-attributed row is never sunk to the floor for lacking a " +
+      "reading the register never took. The shipped weights and every preset are a " +
+      "starting point for an evaluation harness to move, not a final answer.",
+    drawnOn: ["settings"],
+    mark: () => el("span", { class: "pill neutral" }, "4 terms"),
+    link: { label: "Open Settings → Register", route: "settings", params: { tab: "register" } },
+  },
+  {
+    id: "rank-leads-sort",
+    term: "Rank leads the Priorities order",
+    aka: "rank_leads_sort",
+    family: "score",
+    blurb:
+      "Off by default: the Priorities page orders worst-first by Wiz severity, then due " +
+      "date, then age, then id, the order it has always used — the iron rule applies " +
+      "here too, so a model's own number does not lead the register until an evaluation " +
+      "harness's own figures say it should. On: the blended rank score (see the rank " +
+      "terms it reads) leads instead, worst first, with a row the model could not score " +
+      "sorting last and falling through to the same four levels beneath it, so nothing in " +
+      "the queue is ever dropped for lacking a rank. The toggle lives on Settings' " +
+      "Register tab beside the terms it would put in charge.",
+    drawnOn: ["settings"],
+    mark: () => el("span", { class: "pill neutral" }, "off by default"),
+    link: { label: "Open Settings → Register", route: "settings", params: { tab: "register" } },
+  },
+
   // ---------------------------------------------------------------------- severity
   {
     id: "severity",
@@ -909,6 +953,27 @@ export const ENTRIES = [
         params: {},
       };
     },
+  },
+
+  {
+    id: "register-scope",
+    term: "Register scope",
+    aka: "which Wiz risk categories the issue register collects",
+    family: "coverage",
+    blurb:
+      "Which Wiz risk categories the issue register collects, chosen on Settings' Register " +
+      "tab. One category is mandatory and cannot be unchecked — it is what makes this an " +
+      "AI register at all — and every other candidate category is opt-in. Every " +
+      "issue-shaped figure this app publishes (Priorities, AARS pillar A, Toxic " +
+      "Combinations, the register itself) counts only the rows one frameworkCategory " +
+      "filter returned, and nothing on an issue records which category fetched it, so a " +
+      "row is only ever counted under the categories a sync had selected AT THE TIME IT " +
+      "RAN. Widening the scope changes what every one of those figures counts, not how " +
+      "many rows it holds — and the stored register keeps counting the OLD categories " +
+      "until the next sync applies the new one.",
+    drawnOn: ["settings"],
+    mark: () => statusPill("neutral", "Scope"),
+    link: { label: "Open Settings → Register", route: "settings", params: { tab: "register" } },
   },
 
   // --------------------------------------------------------------- framework vocabularies

@@ -7,6 +7,8 @@ import { cleanAarsRule } from "./aarsRule";
 import type { ScopePins } from "./complianceScope";
 import { cleanProblemRule, DEFAULT_PROBLEM_RULE, type ProblemRule } from "./problemRule";
 import { cleanPostureRule, DEFAULT_POSTURE_RULE, type PostureRule } from "./postureRule";
+import { cleanRankRule, DEFAULT_RANK_RULE, type RankRule } from "./rank";
+import { cleanCategoryIds, DEFAULT_CATEGORY_IDS } from "./registerScope";
 import { cleanStepVars } from "./scanVars";
 import {
   DEPTH_DEFAULT,
@@ -313,6 +315,76 @@ export function withComputedPostureVersion(settings: Rec, version: unknown): Rec
   };
 }
 
+// ------------------------------------------------------------------------- rank rule
+//
+// `rank_rule` is a FOURTH, SEPARATE settings key, for the three reasons `problem_rule`'s own
+// header gives and one this model adds. The added one: THERE IS NO SCORED-VERSION COUNTER
+// BESIDE IT, and there must not be. The other three rules price something the sync PERSISTS
+// — an AARS score, a problem verdict, a posture tier — so each needs a marker saying which
+// generation of the rule the stored column was written under. A rank score is computed per
+// request from rows that are already in hand (`withRankScores`, problems.ts) and is never
+// written to a tab, so nothing can be stale: an edit takes effect on the next paint. A
+// counter here would be a staleness question about a value that cannot go stale, and the
+// first reader to compare it against something would get a wrong answer.
+//
+// The version is still stored, for the reason `issue_categories` states: a stored generation
+// is what makes a disagreement reportable rather than silent, and `rankSignature` names the
+// DERIVATION knobs so a published score can say what it was computed against.
+
+export interface StoredRankRule {
+  version: number;
+  rule: RankRule;
+}
+
+/** Version 0 = never edited, i.e. the model is exactly `DEFAULT_RANK_RULE`. */
+export function getRankRule(settings: Rec): StoredRankRule {
+  const raw = settings["rank_rule"];
+  if (!raw || typeof raw !== "object") {
+    return { version: 0, rule: cleanRankRule(DEFAULT_RANK_RULE) };
+  }
+  const stored = raw as Rec;
+  const version = Number(stored["version"]);
+  return {
+    version: Number.isFinite(version) && version > 0 ? Math.round(version) : 0,
+    // cleanRankRule on every read IS the migration mechanism — see getProblemRule's
+    // identical comment for why. It matters more here than there: a rule persisted before
+    // the four-term blend carries `timeShare` and no `shares`, and cleanRankRule is what
+    // reads it as the two-term case so it scores identically rather than reading three
+    // absent shares as zeroes.
+    rule: cleanRankRule(stored["rule"] as Partial<RankRule>),
+  };
+}
+
+/** Store a rule and bump its generation. PATCH-safe: it touches no other key. */
+export function withRankRule(settings: Rec, rule: unknown): Rec {
+  const current = getRankRule(settings);
+  return {
+    ...settings,
+    rank_rule: {
+      version: current.version + 1,
+      rule: cleanRankRule(rule as Partial<RankRule>),
+    },
+  };
+}
+
+/**
+ * Whether the Priorities register leads its order with the rank score rather than with
+ * Wiz's severity.
+ *
+ * FALSE BY DEFAULT, and the default is the iron rule rather than a preference: reordering
+ * the register by this app's own number is a tuning change, so it ships as a knob that does
+ * not move and the evaluation harness's figures are what should move it. `=== true` rather
+ * than truthiness, for the reason `withAutoExpand` spells out one section up — an absent or
+ * unreadable stored value has to read as off, in every direction.
+ */
+export function getRankLeadsSort(settings: Rec): boolean {
+  return settings["rank_leads_sort"] === true;
+}
+
+export function withRankLeadsSort(settings: Rec, on: unknown): Rec {
+  return { ...settings, rank_leads_sort: on === true };
+}
+
 /**
  * The DERIVATION generation the persisted facts were collected under — not a rule version.
  *
@@ -602,6 +674,57 @@ export function withSelectedFrameworks(settings: Rec, ids: unknown): Rec {
   const seen: Record<string, true> = {};
   const deduped = list.filter((id) => (seen[id] ? false : (seen[id] = true)));
   return { ...settings, selected_frameworks: deduped };
+}
+
+// ------------------------------------------------------- the issue register's own scope
+
+/** A stored `issue_categories` value: the ids, and the generation they were saved under. */
+export interface StoredIssueCategories {
+  version: number;
+  ids: string[];
+}
+
+/**
+ * WHICH RISK CATEGORIES THE ISSUE REGISTER COLLECTS.
+ *
+ * A SETTING, and deliberately NOT a `VarField` on the ISSUES_TOXIC step beside `status` and
+ * `type`. Those knobs narrow a population the register has already claimed; this one decides
+ * WHICH POPULATION every published figure counts, and `cleanStepVars` would let a
+ * hand-edited settings cell move it with nothing recording that it moved. It is versioned
+ * for the same reason `aars_rule` is: the ids a sync APPLIED are stamped on its history row
+ * (`sync_history.register_scope`), and a stored list that has since changed is a real,
+ * reportable disagreement rather than a silent one.
+ *
+ * Unlike `selected_frameworks` one section up there is NO "explicitly chose none" state to
+ * preserve: an empty category filter is not an empty register, it is an UNFILTERED one — the
+ * whole project instead of one category — so `cleanCategoryIds` folds empty back to the
+ * default. See registerScope.ts.
+ */
+export function getIssueCategories(settings: Rec): string[] {
+  const raw = settings["issue_categories"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return DEFAULT_CATEGORY_IDS.slice();
+  }
+  return cleanCategoryIds((raw as Rec)["ids"]);
+}
+
+/** The generation of the stored list; 0 when nothing has ever been chosen. */
+export function getIssueCategoriesVersion(settings: Rec): number {
+  const raw = settings["issue_categories"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return 0;
+  const v = Number((raw as Rec)["version"]);
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+}
+
+/** Store a category list and bump its generation. PATCH-safe: it touches no other key. */
+export function withIssueCategories(settings: Rec, ids: unknown): Rec {
+  return {
+    ...settings,
+    issue_categories: {
+      version: getIssueCategoriesVersion(settings) + 1,
+      ids: cleanCategoryIds(ids),
+    },
+  };
 }
 
 export function withScanVars(settings: Rec, stepId: string, vars: unknown): Rec {

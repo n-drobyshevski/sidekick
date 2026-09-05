@@ -21,7 +21,7 @@ import { bootstrap, navigate, setParams, swrCall } from "../store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
 import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
 import {
-  absent, FINDINGS_SCORE_LABEL, ordinal,
+  absent,
   clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,
   outcomeLabel, pager, plural, sectionLabel, select, statRow,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,

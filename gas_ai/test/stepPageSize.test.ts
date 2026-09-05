@@ -30,6 +30,7 @@ interface Step {
   id: string;
   pageSize: number;
   document: string;
+  optional: boolean;
 }
 
 let steps: Step[];
@@ -83,12 +84,31 @@ describe("per-step page size", () => {
     expect(steps.filter((s) => /^ISSUES_w[ct]-id-/.test(s.id))).toEqual([]);
   });
 
+  it("generates no category step at the default scope — one category, one step", () => {
+    // ISSUES_TOXIC keeps its id and the AI category, so a deployment that has never touched
+    // the setting runs exactly the battery it ran before the setting existed.
+    expect(steps.filter((s) => s.id.indexOf("ISSUES_CAT_") === 0)).toEqual([]);
+    expect(byId("ISSUES_TOXIC").pageSize).toBe(PAGE_SIZE);
+  });
+
   it("leaves the two widest documents on the small page", () => {
     // Q_CONFIG_FINDINGS carries unbounded `opaPolicy` Rego; Q_AI_EXPOSURE spreads three
     // ten-wide nested sub-connections per entity. These are the timeout candidates.
     expect(byId("CONFIG_FINDINGS").pageSize).toBe(PAGE_SIZE);
     expect(byId("HOST_EXPOSURE").pageSize).toBe(PAGE_SIZE);
     expect(byId("ENDPOINT_EXPOSURE").pageSize).toBe(PAGE_SIZE);
+  });
+
+  it("puts the exploitation evidence on the wide page, and keeps it OPTIONAL", () => {
+    // ~15 pages at 500 against ~74 at the default (AARS_LIVE_MEASUREMENTS.md §6.4: 7,368 rows
+    // behind the narrow filter), on eleven flat scalars, an `{id}` list and a union read for
+    // three fields — narrow by the same standard CONFIG_RULES is judged against.
+    expect(byId("VULN_FINDINGS").pageSize).toBe(PAGE_SIZE_WIDE);
+    // Optional is load-bearing on THIS step rather than merely conventional: its related-issue
+    // selection is a guess until `phase0.mjs --stage=k` runs, so a wrong field name is an HTTP
+    // 400 on the whole document. Optional turns that into a recorded skip carrying Wiz's own
+    // message — which names the field — instead of a failed sync.
+    expect(byId("VULN_FINDINGS").optional).toBe(true);
   });
 
   it("puts the graphSearch traversals in the middle, not on either extreme", () => {
@@ -242,3 +262,30 @@ describe("a skip keeps the tenant's own reason, not just the step id", () => {
 function readSource(rel: string): string {
   return readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", rel), "utf8");
 }
+
+describe("the category family — one step per selected risk category", () => {
+  // Its own boot: the battery is built from the stored settings, so this is the only way to
+  // ask what a widened register would run. See registerScope.ts for why the list is a
+  // Setting and not a per-step variable.
+  it("adds a step per category beyond the default, each with a page size", async () => {
+    const server = await bootServer();
+    server.setup();
+    server.api.setSettings({ issueCategories: ["wct-id-1998", "wct-id-3"] });
+    const widened = server.jobs.describeSyncSteps() as unknown as Step[];
+
+    const generated = widened.filter((s) => s.id.indexOf("ISSUES_CAT_") === 0);
+    expect(generated.map((s) => s.id)).toEqual(["ISSUES_CAT_wct-id-3"]);
+    // Same contract as every other step: it reports the `first` it will actually send.
+    expect([PAGE_SIZE, PAGE_SIZE_TRAVERSAL, PAGE_SIZE_WIDE]).toContain(generated[0].pageSize);
+    // The default category keeps its own step under its own id — nothing is renamed, so
+    // stored overrides and the toxic area's assertions still find it.
+    expect(widened.some((s) => s.id === "ISSUES_TOXIC")).toBe(true);
+    expect(widened.some((s) => s.id === "ISSUES_CAT_wct-id-1998")).toBe(false);
+
+    // The F4 guard above is about the DELETED per-rule reconstruction steps
+    // (ISSUES_wc-id-2742), which synthesised issue rows from the inventory API. Widening the
+    // category list must not resurrect that family — different prefix, different meaning.
+    expect(widened.filter((s) => /^ISSUES_w[ct]-id-/.test(s.id))).toEqual([]);
+    teardownServer();
+  });
+});

@@ -356,3 +356,42 @@ exports[`query documents > Q_PRINCIPALS is unchanged 1`] = `
 }
 "
 `;
+
+exports[`query documents > Q_VULN_FINDINGS is unchanged 1`] = `
+"query SidekickAiVulnFindings($first: Int, $after: String, $filterBy: VulnerabilityFindingFilters) {
+  vulnerabilityFindings(first: $first, after: $after, filterBy: $filterBy) {
+    totalCount
+    pageInfo { hasNextPage endCursor }
+    nodes {
+      id
+      name
+      status
+      severity
+      hasExploit
+      hasCisaKevExploit
+      epssProbability
+      epssPercentile
+      epssSeverity
+      firstDetectedAt
+      resolvedAt
+      relatedIssues { id }
+      vulnerableAsset {
+        ... on VulnerableAssetBase { id type name }
+        ... on VulnerableAssetVirtualMachine { id type name }
+        ... on VulnerableAssetServerless { id type name }
+        ... on VulnerableAssetContainerImage { id type name }
+        ... on VulnerableAssetContainer { id type name }
+        ... on VulnerableAssetRepositoryBranch { id type name }
+        ... on VulnerableAssetIde { id type name }
+        ... on VulnerableAssetEndpoint { id type name }
+        ... on VulnerableAssetPaaSResource { id type name }
+        ... on VulnerableAssetVirtualMachineImage { id type name }
+        ... on VulnerableAssetCommon { id type name }
+        ... on VulnerableAssetDevice { id type name }
+        ... on VulnerableAssetNetworkAddress { __typename }
+      }
+    }
+  }
+}
+"
+`;

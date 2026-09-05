@@ -22,6 +22,8 @@ export const TABS = {
   frameworkPolicies: "ai_framework_policies",
   configRules: "ai_config_rules",
   identityFindings: "ai_identity_findings",
+  issueExploitation: "ai_issue_exploitation",
+  issueLedger: "ai_issue_ledger",
   syncHistory: "sync_history",
   settings: "settings",
   jobs: "jobs",
@@ -106,6 +108,49 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // entity Wiz raised the issue on so the drill-down still matches the console — see
     // IssueRow.attributedAssetIds for the measurement that made this necessary.
     "attributed_asset_ids", "attribution_hop",
+    // WHICH RISK CATEGORIES THIS ROW WAS COLLECTED UNDER. Appended, same no-migration
+    // contract as every block above — and declared here rather than only written, because
+    // writeGrid projects a row onto the DECLARED headers and silently discards the rest: an
+    // undeclared column is written every sync and read back as a default, forever.
+    //
+    // Comma-joined, matching `environments` and `attributed_asset_ids`; the `_json` suffix
+    // is reserved for structures. A row written before this column reads back as the AI
+    // category, which is the only scope those syncs ever ran.
+    "categories",
+    // THE ISSUE'S OWN PROJECT ATTRIBUTION, as objects. Appended, same no-migration contract —
+    // and declared here for the same `writeGrid` reason the block above states.
+    //
+    // `projects_json` beside it holds NAMES and must keep doing so (the facets and the asset
+    // table read them); this holds `{id, name, isFolder, businessImpact}`, because only the
+    // id can decide project membership — a name is not unique across the tenant and carries
+    // no ancestry. The project view needs that: an issue raised on a VM or an identity has no
+    // asset row to hang off, so scoping by the asset alone made every one of them vanish.
+    //
+    // An EMPTY CELL reads back as undefined, never as an empty array. A row written before
+    // this column has unknown refs; a live sync writing `[]` is saying Wiz attributed the
+    // issue to nothing. The project view must be able to tell those apart.
+    "project_refs_json",
+    // WHERE THE ROW SITS RELATIVE TO THE AI ESTATE — DIRECT / ADJACENT / UNLINKED, the edge
+    // type the hop came through, and the AI assets it reached. Appended, same no-migration
+    // contract, and declared here for the same `writeGrid` reason the two blocks above state:
+    // an undeclared column is projected away on every write and read back as a default.
+    //
+    // The ids are comma-joined, matching `attributed_asset_ids` and `environments`; the
+    // `_json` suffix stays reserved for structures. An empty `ai_adjacency` cell reads back as
+    // UNDEFINED and never as "UNLINKED" — no pass ran over that row, which is a different
+    // claim from having looked and found no link, and the ranker prices the two differently.
+    "ai_adjacency", "adjacency_via", "adjacent_asset_ids",
+    // THE EXPLOITATION READING, folded from the vulnerability findings that name this issue
+    // (ai_issue_exploitation holds the evidence). Appended, same no-migration contract, and
+    // declared here for the same `writeGrid` reason the three blocks above state.
+    //
+    // ALL THREE EMPTY IS THE FOURTH STATE and the one that matters: no evidence pass ran over
+    // this row — VULN_FINDINGS was refused, or the row predates the step. `rank.exploitationOf`
+    // prices an absent tier as null (the term leaves the blend) and `"none"` as a measurement
+    // that scores, so a reader defaulting the blank to "none" would score every register that
+    // never ran the step as one where nothing is exploited. `epss_peak` is empty rather than 0
+    // for the same reason one column over: 0 is a computed EPSS, blank is no EPSS.
+    "exploitation_tier", "epss_peak", "exploitation_findings",
   ],
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
@@ -201,6 +246,56 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "id", "resource_id", "resource_name", "rule_id", "rule_short_id", "rule_name",
     "severity", "status", "result", "first_seen_at", "analyzed_at", "remediation", "hygiene",
   ],
+  // Exploitation evidence, one row per ISSUE rather than per finding. The findings themselves
+  // are not stored: 7,368 of them fold to at most a few thousand rows here, they describe assets
+  // `ai_assets` does not hold (AARS_LIVE_MEASUREMENTS.md §6.4), and the OS-vulnerability register
+  // already owns that population. This tab is the fold and its audit trail.
+  //
+  // `has_kev` / `has_exploit` / `epss_peak` are TRI-STATE and an empty cell means UNMEASURED —
+  // Wiz answers null for a signal it never evaluated. The reader must not read a blank as false
+  // or as zero; `tier: "unknown"` is what an all-null row says out loud.
+  //
+  // The three derived columns also ride on `ai_issues` (`exploitation_tier`, `epss_peak`,
+  // `exploitation_findings`) so the ranker needs no join. Two homes for one fact, the same split
+  // `projects_json` / `project_refs_json` already carries: this tab is the evidence, those
+  // columns are the reading, and only this one can say WHICH findings it was folded from.
+  [TABS.issueExploitation]: [
+    "issue_id", "tier", "has_kev", "has_exploit", "epss_peak",
+    "finding_count", "sample_finding_ids", "observed_at",
+  ],
+  // THE ISSUE LIFECYCLE LEDGER — the one tab here that is never a snapshot.
+  //
+  // Every other data tab above is rewritten wholesale from what the last sync saw, which is
+  // correct for a register that describes today and useless for one that has to say when a
+  // row LEFT. `ai_issues` is filtered to OPEN/IN_PROGRESS, so a remediated issue simply
+  // vanishes from it on the next sync with nothing recording that it was ever there.
+  //
+  // "Never overwritten" is a claim about the CONTENT, not about the write call: `syncStore`
+  // reconciles the stored rows with this sync's register and writes the whole reconciled grid
+  // back, which is a full rewrite of the ledger FROM ITS OWN PRIOR CONTENT and never a
+  // replacement of it by the current snapshot. Nothing may write this tab from `ai_issues`
+  // alone — that is exactly the erasure the tab exists to prevent.
+  //
+  // `disappeared_at` IS NOT A RESOLUTION DATE. It is the timestamp of the sync that first
+  // failed to see the row: an upper bound whose error is the sync interval. `resolution_src`
+  // carries the provenance in the same row so a surface cannot render the date without the
+  // word that qualifies it — "gone by", never "resolved". See domain/issueLedger.ts.
+  //
+  // `register_scope` is the scope the sync that last SAW the row applied; `categories` is the
+  // union of every category that has ever matched it. Two different facts — which questions
+  // were asked, and which ones answered — and only the first can explain an absence.
+  //
+  // Comma-joined for `categories`, matching `environments` and `attributed_asset_ids` on
+  // ai_issues; the `_json` suffix stays reserved for structures. An empty `exploitation_tier`
+  // or `ai_adjacency` cell reads back as UNDEFINED and never as "none"/"UNLINKED": the fold
+  // did not reach the row on the sync that last saw it, which the ranker prices differently
+  // from a measurement.
+  [TABS.issueLedger]: [
+    "issue_id", "first_seen_sync", "first_seen_at", "last_seen_sync", "last_seen_at",
+    "disappeared_at", "resolution_src", "last_status", "categories", "rule_id",
+    "created_at", "due_at", "ai_adjacency", "exploitation_tier", "epss_peak",
+    "register_scope", "episode",
+  ],
   [TABS.syncHistory]: [
     "sync_id", "started_at", "finished_at", "status", "mode",
     "node_count", "edge_count", "issue_count", "api_calls", "snapshot_ref", "error",
@@ -233,6 +328,71 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // what a stored fact MEANS, which only a full sync can repair. The trend marks the break
     // here so a step is never read as movement.
     "derivation_version",
+    // THE SCOPE THIS SYNC APPLIED — the sorted category signature, not the one settings hold
+    // now. The two differ across a settings change, and a total counted under six categories
+    // is not comparable with one counted under one; stamping today's list onto yesterday's
+    // row would erase exactly the discontinuity the trend has to mark. Same argument as
+    // `derivation_version` above it, one axis over: that records what a fact MEANS, this
+    // records which population was asked. Empty on a row written before the column, which
+    // reads as "unknown" and never as "a different scope".
+    "register_scope",
+    // THE ADJACENCY CENSUS THIS SYNC MEASURED — `{DIRECT, ADJACENT, UNLINKED, edgesKnown}`,
+    // mirroring `aars_severity_json` and `problem_outcome_json` one row up. Appended, same
+    // no-migration contract; absent on a row written before the column, which reads as "no
+    // adjacency pass" and never as an all-UNLINKED register.
+    //
+    // `edgesKnown` travels INSIDE the object rather than as its own column because the three
+    // counts are unreadable without it: 68 asset edges on the reference tenant means UNLINKED
+    // is mostly "not traversed". Splitting them into two columns is how a later reader ends up
+    // plotting the counts alone.
+    "adjacency_json",
+    // THE EXPLOITATION CENSUS THIS SYNC MEASURED — the five tiers, plus the two counts that say
+    // what the fold could NOT use (`unjoined`, `droppedNotInRegister`) and the number of findings
+    // it read. Appended, same no-migration contract.
+    //
+    // NULL, NOT A ZEROED CENSUS, when no evidence pass ran. VULN_FINDINGS is optional; a tenant
+    // that refuses it has no reading here, and "no issue carries exploitation evidence" is a very
+    // different claim from "we never asked". The two counts travel INSIDE the object for the
+    // reason `edgesKnown` does one row up: the tier counts are unreadable without them, and split
+    // into their own columns a later reader plots the tiers alone.
+    "exploitation_json",
+    // WHAT THE LIFECYCLE LEDGER DID ON THIS SYNC — `{new, resolved, reopened, carried,
+    // skippedNarrowedScope}` (domain/issueLedger.IssueLedgerDeltas). Appended, same
+    // no-migration contract as every column above.
+    //
+    // TRANSITION COUNTS, not a census of the tab: a row present on both syncs is counted by
+    // none of the five, so these numbers do not sum to the ledger's size and a reader must not
+    // try to make them. `skippedNarrowedScope` is the one to watch — a non-zero there says the
+    // category scope moved and that this sync deliberately resolved nothing by absence, which
+    // is what keeps a re-scoping from being read as a remediation programme.
+    //
+    // Rides here rather than on its own tab because it is one object per sync, exactly like
+    // `adjacency_json` and `exploitation_json` above it, and because `bootstrap.latestSync`
+    // ships the whole history row — so the client gets it with no new endpoint.
+    "ledger_json",
+    // OPEN ISSUES PER RISK CATEGORY at this sync — `{[categoryId]: openIssues}`, counted once
+    // per category a row carries. The scope-over-time series: `register_scope` beside it says
+    // WHICH questions this sync asked, and this says what each one answered.
+    //
+    // THE COUNTS DO NOT SUM TO `issue_count`, and that is a property of the register rather
+    // than a defect: an issue sits in roughly five categories on the reference tenant
+    // (AARS_LIVE_MEASUREMENTS.md §6.1), arrives once per selected category it matches, and is
+    // counted under each. A reader adding them up is measuring the overlap, not the register.
+    //
+    // A KEY ABSENT FROM THE OBJECT IS NOT A ZERO. A sync run under a narrower scope never
+    // collected the categories it was not asked for, so it has no number for them — the
+    // trend plots the gap (aarsTrend.ts CATEGORY_SPEC, `absentKeyIsNull`) rather than drawing
+    // a category that sat at zero until the day it was selected.
+    "category_counts_json",
+    // Issues carrying a KEV-tier exploitation reading at this sync — the one exploitation
+    // figure that earns a scalar column of its own, because it is the tier every surface
+    // leads with.
+    //
+    // NULL, NOT ZERO, when no evidence pass ran, exactly as `exploitation_json` beside it is
+    // null: VULN_FINDINGS is optional, and "no issue is on the KEV catalogue" is a very
+    // different claim from "we never asked". Derived from the same fold that writes that
+    // census, so the two can never disagree about one sync.
+    "kev_linked_count",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

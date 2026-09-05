@@ -35,10 +35,11 @@ import {
   type HygieneKind,
   type IdentityFindingRow,
   type IssueRow,
+  type NormalizedVulnFinding,
   type PolicyKind,
   type PostureRow,
 } from "./graphTypes";
-import { classifyIssue, OTHER_GROUP_ID, type ComboGroup } from "./toxicCombos";
+import { classifyIssue, OTHER_GROUP_ID, RISK_CATEGORY_ID, type ComboGroup } from "./toxicCombos";
 import { clean, type Rec } from "./util";
 
 function str(v: unknown): string | undefined {
@@ -52,6 +53,21 @@ function bool(v: unknown): boolean {
 
 function triBool(v: unknown): boolean | null {
   return v === true ? true : v === false ? false : null;
+}
+
+/**
+ * A number, or `null` for a value Wiz never supplied — the numeric half of `triBool`, ported
+ * from `gas_devsecops/src/domain/normalize.ts` for the same reason it exists there.
+ *
+ * `0` IS A VALUE. An EPSS probability of zero is a score that was computed; an absent one is a
+ * score that was not. `clean` already answers null for "" and null, so the only thing left to
+ * refuse is a non-finite parse.
+ */
+function triNum(v: unknown): number | null {
+  const c = clean(v);
+  if (c === null) return null;
+  const n = Number(c);
+  return isFinite(n) ? n : null;
 }
 
 /**
@@ -230,6 +246,15 @@ export interface NormalizedPart {
   identityFindings: IdentityFindingRow[];
   /** Effective-permission entries: who can reach an AI asset's data (EFFECTIVE_ACCESS). */
   effectiveAccess: EffectiveAccessRow[];
+  /**
+   * Exploitation evidence from `vulnerabilityFindings` (VULN_FINDINGS), before the fold.
+   *
+   * OPTIONAL, unlike every arm above it, and deliberately: a part spilled to Drive by a hop of
+   * an OLDER build carries no such key, and a resumed sync reads those parts back as JSON. An
+   * arm that a revived part cannot have must be readable as absent rather than as `[]` — see
+   * every `?? []` at the read sites below.
+   */
+  vulnFindings?: NormalizedVulnFinding[];
 }
 
 export function emptyPart(): NormalizedPart {
@@ -237,6 +262,7 @@ export function emptyPart(): NormalizedPart {
     nodes: [], edges: [], issues: [], findings: [], dataFindings: [],
     frameworks: [], posture: [], frameworkPolicies: [],
     configRules: [], identityFindings: [], effectiveAccess: [],
+    vulnFindings: [],
   };
 }
 
@@ -262,6 +288,13 @@ export function appendPart(target: NormalizedPart, part: NormalizedPart): void {
   target.configRules.push(...part.configRules);
   target.identityFindings.push(...part.identityFindings);
   target.effectiveAccess.push(...part.effectiveAccess);
+  // Guarded on BOTH sides, for the reason the field is optional: a revived part may carry no
+  // arm to read, and a hand-built target may have none to push into.
+  const vulnFindings = part.vulnFindings ?? [];
+  if (vulnFindings.length) {
+    if (!target.vulnFindings) target.vulnFindings = [];
+    target.vulnFindings.push(...vulnFindings);
+  }
 }
 
 /** True when a part carries nothing at all — on ANY arm. */
@@ -270,7 +303,8 @@ export function partIsEmpty(part: NormalizedPart): boolean {
     !part.nodes.length && !part.edges.length && !part.issues.length &&
     !part.findings.length && !part.dataFindings.length &&
     !part.frameworks.length && !part.posture.length && !part.frameworkPolicies.length &&
-    !part.configRules.length && !part.identityFindings.length && !part.effectiveAccess.length
+    !part.configRules.length && !part.identityFindings.length && !part.effectiveAccess.length &&
+    !(part.vulnFindings ?? []).length
   );
 }
 
@@ -396,7 +430,14 @@ function ticketUrlsOf(raw: unknown): string[] {
  * not "" — the filter collects the whole AI category, so unrecognised rules are real
  * register rows rather than noise, and comboSummary gives them their own bucket.
  */
-export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
+/**
+ * @param categoryId The risk category this page was FETCHED under, stamped onto every row.
+ *   Omitted means the AI category — what this register collected before the category list
+ *   was a setting, and what every existing caller and fixture means. The response carries
+ *   no category of its own (`Issue` has 51 fields and not one names one), so this argument
+ *   is the only place the fact can come from. See domain/registerScope.ts.
+ */
+export function normalizeIssuesPage(rows: Rec[], categoryId?: string): NormalizedPart {
   const part = emptyPart();
   for (const raw of rows) {
     const issueId = str(raw["id"]);
@@ -449,6 +490,12 @@ export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
       region: str(snap!["region"]),
       account: str(snap!["subscriptionName"]),
       projects,
+      // The same projects, kept as OBJECTS as well as names. The names are what the facets
+      // and the asset table read; the ids are the only thing that can answer "is this issue
+      // inside VALUE-CHAIN", because a name is not unique across the tenant and carries no
+      // ancestry. Written from the same `projectsOf` extraction, never a second one, so the
+      // two fields can never come to disagree about which projects this row is in.
+      projectRefs: projectObjs,
       frameworks: group?.frameworks,
       createdAt: str(raw["createdAt"]),
       dueAt: str(raw["dueAt"]),
@@ -473,6 +520,9 @@ export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
         aiAnalysis && typeof aiAnalysis === "object"
           ? (str(aiAnalysis["recommendedSeverity"]) as Severity | undefined)
           : undefined,
+      // The scope stamp. Always set, never optional-on-absence like the fields below: a row
+      // with no category is a row that cannot say which question it answers.
+      categories: [categoryId && categoryId.trim() ? categoryId.trim() : RISK_CATEGORY_ID],
     };
     // Only set the array/boolean fields when the response actually carried them, so an
     // absent field stays undefined ("not captured") rather than becoming [] or false.
@@ -1310,6 +1360,127 @@ export function withDataFindingCounts(doc: GraphDoc, rows: DataFindingRow[]): Gr
   };
 }
 
+// --------------------------------------------- vulnerabilityFindings (exploitation evidence)
+
+/**
+ * The issue ids a vulnerability finding names — TOLERANT OF ALL THREE SHAPES the join field
+ * could take, because which one this tenant serves is not yet known.
+ *
+ * `phase0.mjs --stage=k` is what settles it: it introspects `VulnerabilityFinding`, decides
+ * LIST vs connection vs single object from the schema, and prints the selection that works. It
+ * has not been run, so `Q_VULN_FINDINGS` selects the most likely shape and NAMES that as an
+ * assumption — and this reader is written so that only the DOCUMENT has to change when the
+ * answer arrives, never the fold, the store or the ranker.
+ *
+ *   `relatedIssue { id }`          a single object
+ *   `relatedIssues { id }`         a bare list — every multi-valued object field on this type
+ *                                  in the tenant's own console document is one
+ *   `relatedIssues { nodes {id} }` a connection, the shape every paginated ROOT here uses
+ *
+ * AN EMPTY ANSWER IS NEVER SILENT. The query filters on `hasRelatedIssue: true`, so a row that
+ * yields no id has not told us the estate is unattributed — it has told us the SELECTION is
+ * wrong, or the field is spelled differently. `foldExploitation` counts those as `unjoined` and
+ * the sync writes the count to `sync_history`, because a zero that cannot say whether it looked
+ * is the one number this repo refuses to publish.
+ */
+export function relatedIssueIdsOf(raw: Rec): string[] {
+  const out: string[] = [];
+  const push = (v: unknown): void => {
+    if (!v || typeof v !== "object") return;
+    const id = str((v as Rec)["id"]);
+    if (id && out.indexOf(id) === -1) out.push(id);
+  };
+  // Both spellings are read, not just the one the document happens to select: the field name
+  // is exactly as unverified as its shape, and reading a key the document does not ask for
+  // costs nothing while missing one costs the whole axis.
+  for (const key of ["relatedIssues", "relatedIssue"]) {
+    const v = raw[key];
+    if (!v) continue;
+    if (Array.isArray(v)) {
+      for (const item of v) push(item);
+      continue;
+    }
+    if (typeof v !== "object") continue;
+    const nodes = (v as Rec)["nodes"];
+    if (Array.isArray(nodes)) {
+      for (const item of nodes) push(item);
+      continue;
+    }
+    push(v);
+  }
+  return out;
+}
+
+/**
+ * The `vulnerableAsset` union, read back. Only members carrying an `id` join anything; the
+ * id-less one (`VulnerableAssetNetworkAddress`, selected as `__typename`) leaves the three
+ * fields ABSENT rather than blank, because "this finding is on an address" and "this finding
+ * is on nothing" are not the same row.
+ */
+function vulnerableAssetOf(raw: Rec, out: NormalizedVulnFinding): void {
+  const asset = raw["vulnerableAsset"];
+  if (!asset || typeof asset !== "object") return;
+  const rec = asset as Rec;
+  const id = str(rec["id"]);
+  if (!id) return;
+  out.assetId = id;
+  const type = str(rec["type"]);
+  if (type) out.assetType = type;
+  const name = str(rec["name"]);
+  if (name) out.assetName = name;
+}
+
+/**
+ * A `vulnerabilityFindings` page → the raw exploitation observations, and nothing else.
+ *
+ * NO NODES AND NO ISSUES. The 7,368 rows this step fetches describe assets `ai_assets` does not
+ * hold (§6.4: KEV findings sit on VMs and container images) and issues `ai_issues` already
+ * holds; writing either from here would widen the register through a side door that no page
+ * shows and no scope stamp covers. What survives is the fold onto the issue.
+ *
+ * THE THREE SIGNALS STAY TRI-STATE. `triBool` and `triNum` are the only readers used for them,
+ * so a flag Wiz never evaluated reaches the ledger as `null` — collapsing it to `false` here
+ * would make an unassessed finding indistinguishable from a clean one, three layers before
+ * anything could notice.
+ *
+ * A row with no `id` is DROPPED rather than folded under an empty key: the id is what
+ * `mergeParts` de-dupes on, and one un-keyed row would swallow every other un-keyed row.
+ */
+export function normalizeVulnFindingsPage(rows: Rec[]): NormalizedPart {
+  const part = emptyPart();
+  const out: NormalizedVulnFinding[] = [];
+  for (const raw of rows) {
+    if (!raw || typeof raw !== "object") continue;
+    const id = str(raw["id"]);
+    if (!id) continue;
+    const finding: NormalizedVulnFinding = {
+      id,
+      hasKev: triBool(raw["hasCisaKevExploit"]),
+      hasExploit: triBool(raw["hasExploit"]),
+      epss: triNum(raw["epssProbability"]),
+      issueIds: relatedIssueIdsOf(raw),
+    };
+    const name = str(raw["name"]);
+    if (name) finding.name = name;
+    const status = str(raw["status"]);
+    if (status) finding.status = status;
+    const severity = str(raw["severity"]);
+    if (severity) finding.severity = severity;
+    const percentile = triNum(raw["epssPercentile"]);
+    if (percentile !== null) finding.epssPercentile = percentile;
+    const epssSeverity = str(raw["epssSeverity"]);
+    if (epssSeverity) finding.epssSeverity = epssSeverity;
+    const firstDetectedAt = str(raw["firstDetectedAt"]);
+    if (firstDetectedAt) finding.firstDetectedAt = firstDetectedAt;
+    const resolvedAt = str(raw["resolvedAt"]);
+    if (resolvedAt) finding.resolvedAt = resolvedAt;
+    vulnerableAssetOf(raw, finding);
+    out.push(finding);
+  }
+  part.vulnFindings = out;
+  return part;
+}
+
 // ------------------------------------------------------- rule catalogue + identity hygiene
 
 /** cloudConfigurationRules page → catalogue rows. Reference data; no nodes, no findings. */
@@ -1590,6 +1761,20 @@ export function normalizeIdentityAccessPage(rows: Rec[]): NormalizedPart {
   return part;
 }
 
+/**
+ * Every category two readings of one issue were collected under, sorted and deduped.
+ *
+ * Sorted so the merged value does not depend on which page arrived first — the stamp is
+ * compared between syncs, and a set that reorders itself would read as a change.
+ */
+function unionCategories(a: IssueRow, b: IssueRow): string[] {
+  const out: string[] = [];
+  for (const id of [...(a.categories ?? []), ...(b.categories ?? [])]) {
+    if (id && out.indexOf(id) === -1) out.push(id);
+  }
+  return out.sort();
+}
+
 /** Merge battery parts: last-write-wins per node id, but sticky flags never unset. */
 export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
   doc: GraphDoc;
@@ -1602,6 +1787,7 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
   configRules: ConfigRuleRow[];
   identityFindings: IdentityFindingRow[];
   effectiveAccess: EffectiveAccessRow[];
+  vulnFindings: NormalizedVulnFinding[];
 } {
   const nodes = new Map<string, GNode>();
   const edges = new Map<string, GEdge>();
@@ -1620,6 +1806,10 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
   // Keyed by the PAIR, not by an id — an effective-access entry has none, and (identity,
   // resource) is what it asserts. A tenant returning the same pair on two pages is one fact.
   const effectiveAccess = new Map<string, EffectiveAccessRow>();
+  // Keyed by the FINDING id, which is what makes the fold downstream safe to sum: a finding
+  // that arrives on two pages is one observation, and `mergeExploitation` adds `findingCount`
+  // rather than maxing it. De-duping here is where that guarantee is actually made.
+  const vulnFindings = new Map<string, NormalizedVulnFinding>();
   for (const part of parts) {
     for (const node of part.nodes) {
       const prev = nodes.get(node.id);
@@ -1638,7 +1828,21 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
       nodes.set(node.id, merged);
     }
     for (const edge of part.edges) edges.set(edge.id, edge);
-    for (const issue of part.issues) issues.set(issue.id, issue);
+    for (const issue of part.issues) {
+      const prev = issues.get(issue.id);
+      // LAST PART WINS, field for field — unchanged, and deliberately so: a later page or a
+      // later step carries the same issue's own fields and there is no reason to prefer the
+      // earlier reading of any of them.
+      //
+      // ONE EXCEPTION, and it is the whole reason this is no longer a bare `set`. The
+      // category stamp is not a property of the issue, it is a property of the STEP that
+      // fetched it: one issue can sit in several selected categories and arrive once per
+      // category, and taking the last stamp would leave the register asserting that an
+      // issue matched exactly one of them. Union, sorted and deduped, so the merged row
+      // states every category it was actually collected under and the order pages arrived
+      // in cannot change what it says.
+      issues.set(issue.id, prev ? { ...issue, categories: unionCategories(prev, issue) } : issue);
+    }
     for (const finding of part.findings ?? []) findings.set(finding.id, finding);
     for (const df of part.dataFindings ?? []) dataFindings.set(df.id, df);
     for (const f of part.frameworks ?? []) frameworks.set(f.id, f);
@@ -1659,6 +1863,7 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
     for (const e of part.effectiveAccess ?? []) {
       effectiveAccess.set(`${e.identityId}|${e.resourceId}`, e);
     }
+    for (const v of part.vulnFindings ?? []) vulnFindings.set(v.id, v);
   }
   return {
     doc: { nodes: [...nodes.values()], edges: [...edges.values()], syncedAt },
@@ -1673,6 +1878,7 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
     configRules: [...configRules.values()],
     identityFindings: [...identityFindings.values()],
     effectiveAccess: [...effectiveAccess.values()],
+    vulnFindings: [...vulnFindings.values()],
   };
 }
 

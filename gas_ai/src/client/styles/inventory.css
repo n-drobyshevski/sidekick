@@ -131,3 +131,41 @@
    which file is imported first. components.css states the same trap for the prune census, and
    this rule was inert until it was written out this way. */
 table.data td.inv-name-col { max-width: 380px; }
+
+/* ---------------------------------------------------- posture over time (History region)
+
+   Four cards under one heading: three trends and a readout. Two-up on a wide pane and one-up
+   below 900px, because a 200px chart in a half-width column stops being readable before the
+   pane does — `auto-fit` with a 340px floor makes the browser decide that rather than a
+   breakpoint guessing at it. */
+.posture-trend-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: var(--space-3);
+}
+
+/* THE VERDICT IS A WORD. The dot repeats it and never carries it: three states told apart by
+   hue alone would be unreadable in greyscale and to a dichromat, and this is the one figure
+   on the card a reader takes away. Sized and spaced like .rail-status-dot for the same reason
+   — one dot vocabulary in the app. */
+.cap-verdict { display: flex; align-items: center; gap: var(--space-2); margin: 0 0 var(--space-2); }
+.cap-verdict-word { font-size: var(--fs-lead); font-weight: 650; }
+.cap-dot {
+  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
+  background: var(--text-3);
+}
+.cap-dot--gaining { background: var(--ok); }
+.cap-dot--keeping-up { background: var(--text-3); }
+.cap-dot--falling-behind { background: var(--bad); }
+
+/* The per-sync flow, small and tabular. Its own class rather than `table.data`: that carries
+   the register's row height, hover and 320px cell clamp, none of which a six-row readout in a
+   card wants. */
+.cap-table { width: 100%; border-collapse: collapse; margin: var(--space-2) 0 var(--space-3); }
+.cap-table th, .cap-table td {
+  padding: 4px 6px; text-align: left; font-size: var(--fs-label);
+  border-bottom: 1px solid var(--hairline);
+}
+.cap-table th {
+  font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3);
+}
+.cap-table td.num, .cap-table th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.cap-table tr:last-child td { border-bottom: 0; }
