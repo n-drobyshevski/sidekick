@@ -12,15 +12,20 @@
 // fetched" look identical on screen and call for opposite reactions, so the control simply
 // cannot express the second one.
 //
+// REDUCED, NOT DELETED. `projectScopeControl` — the combobox, the caption, the `.scoped`
+// class — is `gas_shared/ui/scopeControl.js` now, and the assembly around it is
+// `gas_shared/ui/scopeModel.js`; both were three near-identical copies across the three
+// sidekicks. What stays is the half that is genuinely this register's: the two dimensions it
+// offers, the tenant naming convention it reads them through, and the three scope NOTES
+// (`registerWideNote`, `scopeNote`, `trendScopeView`) that say which figures refuse to follow
+// the switcher — a question no sibling asks in the same words.
+//
 // Split in two on purpose, the way syncProgress.js is: `projectScopeView` decides what the
 // control CLAIMS — the label, the caption, whether the stored scope has gone stale — and is
-// DOM-free so those claims can be tested. `projectScopeControl` only assembles them.
+// DOM-free so those claims can be tested. The control only assembles them.
 
 import { el } from "../../../../../gas_shared/ui/dom.js";
-import { filterCombobox } from "../../../../../gas_shared/ui/combobox.js";
-import { uiIcon } from "../../../../../gas_shared/ui/uiIcons.js";
-
-import { tipAnchor } from "../../../../../gas_shared/ui/tip.js";
+import { scopeView } from "../../../../../gas_shared/ui/scopeModel.js";
 const nf = new Intl.NumberFormat();
 
 function assetCount(n) {
@@ -149,157 +154,173 @@ export function domainScopeOptions(list) {
 }
 
 /**
- * Everything the control asserts, from the bootstrap payload alone.
+ * What the two dimensions need from the payload, derived once.
  *
- * @param {object|null} bootstrapData
- * @returns {{show: boolean, current: string, label: string, caption: string,
- *            stale: boolean, options: object[], pinned: object[]}}
+ * THE DOMAIN GROUP IS ABSENT, NOT EMPTY, WHEN NOTHING IS TAGGED. `AI_ASSET_PROPERTIES` is an
+ * optional sync step that swallows an HTTP 400, so a tenant that rejects it has no domain data
+ * at all — and a "Domains" heading over nothing would say that nobody owns anything, which is
+ * a claim about the tenant rather than about what we managed to ask.
  */
-export function projectScopeView(bootstrapData) {
+function facts(bootstrapData) {
   const opts = (bootstrapData && bootstrapData.filterOptions) || {};
-  const list = opts.projectList || [];
-  const domains = opts.domainList || [];
   const scope = (bootstrapData && bootstrapData.scope) || null;
-
-  // Nothing synced, or boot failed: no control at all. An empty picker is a promise the
-  // register cannot keep, and the rail's sync zone already says why it is empty.
-  if (!scope || !list.length) {
-    return {
-      show: false, current: "", label: "", caption: "", stale: false, options: [], pinned: [],
-    };
-  }
-
-  const cover = scope.domainCoverage || null;
-  const tagged = cover ? cover.tagged : 0;
-  const untagged = cover ? Math.max(0, cover.total - cover.tagged) : 0;
-  // THE GROUP IS ABSENT, NOT EMPTY, WHEN NOTHING IS TAGGED. `AI_ASSET_PROPERTIES` is an
-  // optional sync step that swallows an HTTP 400, so a tenant that rejects it has no domain
-  // data at all — and a "Domains" heading over nothing would say that nobody owns anything,
-  // which is a claim about the tenant rather than about what we managed to ask.
-  const domainRows = tagged > 0 ? domainScopeOptions(domains) : [];
-
-  const domainView = scope.domainView || "";
-  const projectView = scope.projectView || "";
-  const chosenDomain = domainView
-    ? domains.filter((d) => d.name === domainView)[0] || null : null;
-  const chosen = projectView ? list.find((p) => p.id === projectView) || null : null;
-  // A stored view whose project or domain fell out of the register after a re-sync scoped
-  // elsewhere — or, for a domain, after the tag key changed under it.
-  const stale = Boolean(domainView ? !chosenDomain : projectView && !chosen);
-
-  const label = domainView
-    ? (chosenDomain ? chosenDomain.name : "a domain this register does not hold")
-    : !projectView ? "everything synced"
-      : chosen ? chosen.name : "a project this register does not hold";
-
+  const cover = (scope && scope.domainCoverage) || null;
   return {
-    show: true,
-    // Prefixed for domains so a project whose id is `SAP` and the domain `SAP` can never be
-    // one row. The control strips it again on pick; the server keys its caches the same way.
-    current: domainView ? `d:${domainView}` : projectView,
-    kind: domainView ? "domain" : projectView ? "project" : "",
-    label,
-    // The denominator travels with the number: "826" alone cannot tell a small unit from a
-    // small register, and those call for opposite reactions.
-    //
-    // A DOMAIN CARRIES A SECOND FIGURE, and leaving it off would be the more comfortable lie.
-    // Only some resources are tagged — 15 of 36 in the seeded landscape — so "36 of 87" under
-    // a domain silently attributes the other 51 to some other domain, when the truth is that
-    // nobody said. The count says which.
-    caption: stale ? `Not in this register — showing 0 of ${nf.format(scope.register)}`
-      : domainView
-        ? `${nf.format(scope.shown)} of ${nf.format(scope.register)} assets · `
-          + `${nf.format(untagged)} carry no domain`
-        : !projectView ? `${assetCount(scope.register)} synced`
-          : `${nf.format(scope.shown)} of ${nf.format(scope.register)} assets`,
-    stale,
-    options: [...scopeOptions(list), ...domainRows],
+    scope,
+    list: opts.projectList || [],
+    domains: opts.domainList || [],
+    tagged: cover ? cover.tagged : 0,
+    untagged: cover ? Math.max(0, cover.total - cover.tagged) : 0,
+  };
+}
+
+/**
+ * The two dimensions, as `gas_shared/ui/scopeModel.js` takes them.
+ *
+ * THE PROJECT IS THE BARE KIND AND THE DOMAIN CARRIES `d:`, exactly as before the move. One of
+ * them has to — a project whose id is `SAP` and a domain named `SAP` would otherwise be one row
+ * and one value — and which one is bare is not a free choice: `settingsStore.projectView` holds
+ * an unprefixed id and the server keys its caches the same way, so flipping it would invalidate
+ * a persisted scope for nothing a reader can see.
+ *
+ * `scopeOptions` and `domainScopeOptions` above are untouched, `value` field and all, because
+ * both are exported and tested directly; the one-line map to the model's `id` happens here.
+ */
+export function scopeKinds(bootstrapData) {
+  const f = facts(bootstrapData);
+  return [
+    {
+      key: "project",
+      prefix: "",
+      icon: "folder",
+      options: () => scopeOptions(f.list).map((o) => ({ ...o, id: o.value })),
+      label: (opt, d, ctx) => (ctx.stale
+        ? "a project this register does not hold"
+        : (opt ? opt.label : ctx.id)),
+      caption: (opt, d, ctx) => projectCaption(d, ctx.stale),
+      // THE EXACT ARGUMENT `api_setSettings` HAS ALWAYS TAKEN for this kind. ONE FIELD, NEVER
+      // BOTH: `settingsLogic`'s withProjectView / withDomainView clear each other server-side,
+      // so sending both would leave which one survived to the order the setter ran them in.
+      payload: (id) => ({ projectView: id }),
+    },
+    {
+      key: "domain",
+      prefix: "d",
+      icon: "tag",
+      options: () => (f.tagged > 0
+        ? domainScopeOptions(f.domains).map((o) => ({ ...o, id: o.value.slice(2) }))
+        : []),
+      label: (opt, d, ctx) => (ctx.stale
+        ? "a domain this register does not hold"
+        : (opt ? opt.label : ctx.id)),
+      caption: (opt, d, ctx) => domainCaption(d, ctx.stale),
+      payload: (id) => ({ domainView: id }),
+    },
+  ];
+}
+
+/** The denominator travels with the number: "826" alone cannot tell a small unit from a small
+ *  register, and those call for opposite reactions. */
+function projectCaption(bootstrapData, stale) {
+  const f = facts(bootstrapData);
+  const register = f.scope ? f.scope.register : 0;
+  if (stale) return "Not in this register — showing 0 of " + nf.format(register);
+  return nf.format(f.scope.shown) + " of " + nf.format(register) + " assets";
+}
+
+/**
+ * A DOMAIN CARRIES A SECOND FIGURE, and leaving it off would be the more comfortable lie.
+ * Only some resources are tagged — 15 of 36 in the seeded landscape — so "36 of 87" under a
+ * domain silently attributes the other 51 to some other domain, when the truth is that nobody
+ * said. The count says which.
+ */
+function domainCaption(bootstrapData, stale) {
+  const f = facts(bootstrapData);
+  const register = f.scope ? f.scope.register : 0;
+  if (stale) return "Not in this register — showing 0 of " + nf.format(register);
+  return nf.format(f.scope.shown) + " of " + nf.format(register) + " assets · "
+    + nf.format(f.untagged) + " carry no domain";
+}
+
+/**
+ * The parts of the control that are not a dimension.
+ *
+ * `show` is this register's own answer to "is there anything to slice by". Nothing synced, or
+ * boot failed: no control at all. AN EMPTY PICKER IS A PROMISE THE REGISTER CANNOT KEEP, and
+ * the rail's sync zone already says why it is empty.
+ */
+export function scopeChrome(bootstrapData) {
+  const f = facts(bootstrapData);
+  const register = f.scope ? f.scope.register : 0;
+  return {
+    show: Boolean(f.scope && f.list.length),
+    label: "everything synced",
+    caption: () => assetCount(register) + " synced",
     // "Everything synced", not "All projects" and no longer "All synced projects": the row
     // means "no scope", and once the scope can be a domain, naming the reset after one of the
     // two kinds describes half of what it clears. The care in the original wording is kept
     // where it was load-bearing — the register holds what the last sync was scoped to fetch,
     // so "synced" stays and "all" never stands alone.
-    pinned: [{
-      value: "", label: "Everything synced", hint: assetCount(scope.register), icon: "folders",
-    }],
+    reset: {
+      label: "Everything synced",
+      hint: () => assetCount(register),
+      icon: "folders",
+    },
+    // The reset row's value is "", which parses to the BARE kind — the project — so this is
+    // the same `{projectView: ""}` the deleted control sent, and `withProjectView` clears the
+    // domain along with it.
+    resetPayload: () => ({ projectView: "" }),
+    defaultLabel: "All synced projects",
+    // Without this the trigger prints the raw id, which reads as corruption rather than as a
+    // scope that no longer matches what was fetched.
+    fallbackLabel: "Project not in this register",
+    searchPlaceholder: "Search projects and domains…",
+    // WHAT THE PANEL HAS TO SAY THAT ITS ROWS CANNOT. Every row is a project name; none of
+    // them can tell you that choosing one re-scopes every figure in the app, or that a few
+    // figures refuse to be scoped and say so where they are drawn (registerWideNote, below, is
+    // that promise kept). A consequence this large should not have to be discovered by trying
+    // it.
+    header: {
+      title: "Scope",
+      // Names both kinds, because both are in the list below it and they are not the same
+      // question: a project is a thing Wiz nests resources in, a domain is a tag someone wrote
+      // on them, and the seeded landscape puts four domains inside one project to make sure
+      // neither reads as the other.
+      note: "Every page answers for the project or domain you pick. Figures that cannot be "
+        + "scoped say so where they are drawn.",
+    },
   };
 }
 
 /**
- * @param {object|null} bootstrapData  the bootstrap payload, or null when boot failed
- * @param {(pick: {kind: string, value: string}) => void} onPick  the chosen scope; a project
- *   id or a domain name, either of them "" for the whole register
- * @returns {HTMLElement|null}  null when there is nothing truthful to offer
+ * Everything the control asserts, from the bootstrap payload alone. The same
+ * `{show, current, kind, label, caption, stale, options, pinned}` shape as before the move to
+ * the shared model, so test/projectScopeView.test.js holds it — including every option value,
+ * `d:`-prefixed domains and bare project ids alike.
+ *
+ * @param {object|null} bootstrapData
  */
-export function projectScopeControl(bootstrapData, onPick) {
-  const v = projectScopeView(bootstrapData);
-  if (!v.show) return null;
-
-  const combo = filterCombobox({
-    value: v.current,
-    options: v.options,
-    pinnedRows: v.pinned,
-    defaultLabel: "All synced projects",
-    // Without this the trigger prints the raw id, which reads as corruption rather than as
-    // a scope that no longer matches what was fetched.
-    fallbackLabel: "Project not in this register",
-    // Carries the CURRENT selection, not just the control's name. The header is rebuilt
-    // wholesale on every refresh() and picking triggers one, so this is re-stamped with
-    // each change.
-    ariaLabel: `Scope: ${v.label}`,
-    searchPlaceholder: "Search projects and domains…",
-    // WHAT THE PANEL HAS TO SAY THAT ITS ROWS CANNOT. Every row is a project name; none of
-    // them can tell you that choosing one re-scopes every figure in the app, or that a few
-    // figures refuse to be scoped and say so where they are drawn (registerWideNote, below,
-    // is that promise kept). A consequence this large should not have to be discovered by
-    // trying it.
-    header: {
-      title: "Scope",
-      // Names both kinds, because both are in the list below it and they are not the same
-      // question: a project is a thing Wiz nests resources in, a domain is a tag someone
-      // wrote on them, and the seeded landscape puts four domains inside one project to make
-      // sure neither reads as the other.
-      note: "Every page answers for the project or domain you pick. Figures that cannot be "
-        + "scoped say so where they are drawn.",
-    },
-    // The scope persists server-side and outlives the session, so which row is in force is a
-    // standing fact about the app rather than a highlight in an open menu — worth a mark of
-    // its own rather than weight and colour alone.
-    checkSelected: true,
-    // The popover is portaled to <body>, so this class is the only way to reach inside it.
-    popClass: "combobox-pop--scope",
-    // Decoration inside the trigger, the way the reference screen marks its project picker.
-    // The trigger's accessible name is the ariaLabel above, so this adds no second reading.
-    leading: el("span", { class: "scope-combo-icon", "aria-hidden": "true" },
-      uiIcon(v.kind === "domain" ? "tag" : v.current ? "folder" : "folders", 14)),
-    // The prefix is the control's, not the caller's: onPick takes the two kinds apart so the
-    // shell can send each to its own setter, which is where "one at a time" is enforced.
-    onChange: (v) => (String(v || "").startsWith("d:")
-      ? onPick({ kind: "domain", value: String(v).slice(2) })
-      : onPick({ kind: "project", value: v || "" })),
+export function projectScopeView(bootstrapData) {
+  const scope = (bootstrapData && bootstrapData.scope) || null;
+  const domainView = (scope && scope.domainView) || "";
+  const projectView = (scope && scope.projectView) || "";
+  const view = scopeView({
+    kinds: scopeKinds(bootstrapData),
+    data: bootstrapData,
+    // ONE AT A TIME, and the domain wins the read because it is the narrower claim. A payload
+    // carrying both is a defect server-side (withProjectView / withDomainView clear each
+    // other), and intersecting them here would hide it rather than surface it.
+    active: domainView
+      ? { kind: "domain", id: domainView }
+      : { kind: "project", id: projectView },
+    chrome: scopeChrome(bootstrapData),
   });
-  combo.classList.add("scope-combo");
-  // A NARROWED REGISTER IS A STATE, and this is the one state in the app that silently
-  // re-reads every number on every page. DESIGN.md spends colour on "a severity level, an SLA
-  // breach, a state change"; this is the third. Unscoped it stays the neutral field it has
-  // always been, because "showing everything" is the resting state and a permanently lit
-  // control signals nothing. The colour is never alone either way — the trigger names the
-  // project, and the caption beside it carries the count.
-  if (v.current) combo.classList.add("scoped");
-  // Read on hover: the header is narrow enough to ellipsise a long project name, and the
-  // caption beside it answers a different question. Not a native title — a tap reaches none
-  // of those, which is the whole reason el() bans the attribute.
-  tipAnchor(combo, "Scope: " + v.label);
-
-  return el("div", { class: "scope-switch" },
-    combo,
-    el("div", {
-      class: `scope-caption${v.stale ? " stale" : ""}`,
-      // The caption answers the control above it, so it should be heard on selection
-      // rather than only on a deliberate re-read of the region.
-      "aria-live": "polite",
-    }, v.caption),
-  );
+  if (!view.show) {
+    return {
+      show: false, current: "", label: "", caption: "", stale: false, options: [], pinned: [],
+    };
+  }
+  return { ...view, current: view.active };
 }
 
 /**

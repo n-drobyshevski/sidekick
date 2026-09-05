@@ -18,7 +18,9 @@ import {
   clear, closeTip, el, fmtDateTime, progressBar, runPageTeardown, statusPill, tipAnchor,
 } from "./ui.js";
 import { brandMark } from "../../../../gas_shared/ui/brandMark.js";
-import { projectScopeControl } from "./ui/projectScope.js";
+import { projectScopeView, scopeChrome, scopeKinds } from "./ui/projectScope.js";
+import { scopeControl } from "../../../../gas_shared/ui/scopeControl.js";
+import { scopePayload } from "../../../../gas_shared/ui/scopeModel.js";
 import { toast } from "./ui.js";
 import { renderGraphPage } from "./pages/graph.js";
 import { renderInventory } from "./pages/inventory.js";
@@ -368,7 +370,17 @@ function renderAppbar(appbar, data) {
   // Null when there is no register to slice — including the boot-failure path, where offering
   // a picker over data we could not fetch would be a control with nothing behind it. The rule
   // goes with it: a separator with one side missing separates nothing.
-  const scopeSwitch = projectScopeControl(data, pickProjectScope);
+  // The control is `gas_shared/ui/scopeControl.js`; `ui/projectScope.js` says what this
+  // register's two dimensions are. `scopePayload` turns the picked option value straight into
+  // the `api_setSettings` argument — `{projectView}` or `{domainView}` — so the prefix stays
+  // the control's own and nothing below the seam learned a new encoding.
+  const kinds = scopeKinds(data);
+  const chrome = scopeChrome(data);
+  const scopeSwitch = scopeControl(
+    projectScopeView(data),
+    { ...chrome, kinds },
+    (value) => pickProjectScope(scopePayload(kinds, chrome, value)),
+  );
   if (scopeSwitch) {
     appbar.append(el("span", { class: "appbar-sep", "aria-hidden": "true" }), scopeSwitch);
   }
@@ -587,9 +599,13 @@ async function pickProjectScope(pick) {
     // ONE FIELD, NEVER BOTH. The two settings clear each other server-side (settingsLogic's
     // withProjectView / withDomainView), so sending both would leave which one survived to
     // the order the setter happened to run them in.
-    await call("api_setSettings", pick.kind === "domain"
-      ? { domainView: pick.value }
-      : { projectView: pick.value });
+    //
+    // `pick` IS THAT OBJECT ALREADY, built by the chosen kind's own `payload(id)` in
+    // ui/projectScope.js rather than composed here from a `{kind, value}` pair — which is what
+    // makes "one field" structural: there is no branch left that could emit two.
+    // The registerScopeContract block in test/shared.test.js pins both objects against what
+    // the deleted control produced.
+    await call("api_setSettings", pick);
     await refresh();
   } catch (e) {
     toast(`Couldn't change project scope: ${e.message || e}`);

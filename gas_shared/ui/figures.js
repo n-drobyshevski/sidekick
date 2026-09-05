@@ -46,6 +46,29 @@ import { el } from "./dom.js";
 import { pluralize } from "./format.js";
 
 /**
+ * The em dash these formatters print, AS A STRING — the one spelling, exported.
+ *
+ * There are now two ways to say "we were never told" and they are not interchangeable:
+ * `absent()` (ui/cells.js) is a MUTED NODE, and it is the right answer everywhere a DOM node
+ * can go, because the grey is what stops an absence reading in the same ink as a measured
+ * value. This is the other case — a canvas tooltip, a chart axis tick, an `aria-label`
+ * fragment, a `textContent` assignment, a Map key — where a node renders as
+ * `[object HTMLSpanElement]` or breaks the key. `gas/src/client/js/charts.js`'s
+ * `fmtDuration` and `TIER_GLYPHS.none` are the canvas half; `pages/mttr.js`'s
+ * `fmtKmMedian` is the sentence half, and it already keeps a Node twin beside it.
+ *
+ * Exported so those call sites stop spelling a bare "—" of their own: the character is
+ * written six ways across these three apps, and a hyphen or an en dash slipping into one of
+ * them is invisible in review and obvious on screen.
+ *
+ * The formatters below keep returning THIS rather than a node, deliberately — a formatter
+ * that returned DOM could not be interpolated into a sentence. `dataTable` is where the two
+ * meet: it promotes exactly this string to `absent()` when a cell returns it, so a table
+ * gets the muted dash without every column having to ask (see ui/data.js).
+ */
+export const absentText = "—";
+
+/**
  * A number from an untrusted payload, with a stated fallback — and NEVER a silent zero.
  *
  * `Number(null)`, `Number(undefined)`, `Number("")`, `Number([])` and `Number(false)` are all
@@ -71,7 +94,7 @@ export function num(v, fallback = null) {
 /** A count, grouped for reading. Null (never measured) prints as an em dash, never a `0`. */
 export function fmtCount(v) {
   const n = num(v);
-  return n === null ? "—" : n.toLocaleString();
+  return n === null ? absentText : n.toLocaleString();
 }
 
 /**
@@ -84,14 +107,14 @@ export function fmtCount(v) {
  */
 export function pct1(v) {
   const n = num(v);
-  return n === null ? "—" : `${n.toFixed(1)}%`;
+  return n === null ? absentText : `${n.toFixed(1)}%`;
 }
 
 /** Days, or the em dash — one decimal, unit letter. See the module header for how this
  *  differs from `fmtDays` and why both exist. */
 export function days1(v) {
   const n = num(v);
-  return n === null ? "—" : `${n.toFixed(1)} d`;
+  return n === null ? absentText : `${n.toFixed(1)} d`;
 }
 
 /**
@@ -117,7 +140,7 @@ export function boundedDays(value, lowerBound) {
   if (median !== null) return { text: days1(median), bounded: false };
   const bound = num(lowerBound);
   if (bound !== null) return { text: `≥ ${days1(bound)}`, bounded: true };
-  return { text: "—", bounded: false };
+  return { text: absentText, bounded: false };
 }
 
 /**
@@ -126,7 +149,7 @@ export function boundedDays(value, lowerBound) {
  */
 export function fmtDays(days) {
   const n = num(days);
-  if (n === null) return "—";
+  if (n === null) return absentText;
   const rounded = n < 10 ? Math.round(n * 10) / 10 : Math.round(n);
   return `${rounded} ${pluralize(rounded, "day")}`;
 }

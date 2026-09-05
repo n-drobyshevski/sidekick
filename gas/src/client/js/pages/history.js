@@ -7,8 +7,8 @@ import { call } from "../../../../../gas_shared/api.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, confirmDialog, el, emptyState, fmtDateTime, fmtSpan, heroStat, kpiCard, num,
-  pageHeader, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
+  absent, clear, confirmDialog, dataTable, el, emptyState, fmtDateTime, fmtSpan, heroStat,
+  kpiCard, num, pageHeader, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
 } from "../ui.js";
 
 // The rows-per-page the table OPENS on. It is no longer the only size available: the footer
@@ -200,29 +200,80 @@ export async function renderHistory(main, _params, ctx) {
         draw();
       });
 
-      const sortBtn = el("button", {
-        class: "th-sort", type: "button",
-        "aria-label": `Sort by time, currently ${sortDir === "desc" ? "newest first" : "oldest first"}`,
-        onclick: () => { sortDir = sortDir === "desc" ? "asc" : "desc"; draw(); },
-      }, "When ", el("span", { "aria-hidden": "true" }, sortDir === "desc" ? "▼" : "▲"));
+      // `dataTable` NOW, AND TWO SHARED ADDITIONS ARE WHAT MADE IT POSSIBLE. This block was
+      // the last hand-built `<table class="data">` in the three apps, and the comment that
+      // stood here named the exact blocker: the sticky heading that actually works in this app
+      // is pinned by `.history-table th` — a class on the TABLE element — and `dataTable`
+      // hardcoded `class: "data"` there, able to class only the `.table-wrap` it returns. Its
+      // own `stickyHeader` is a different treatment (gated at 1100px, offset by
+      // `--sticky-inset`), so taking it would have un-pinned a heading that works. `dataTable`
+      // takes `tableClassName` now, and both CSS rules — `.history-table th` and
+      // `.history-table-wrap` — are unchanged and still the ones that match.
+      //
+      // THE SECOND ADDITION IS `cellClass`, AND THIS TABLE IS WHY IT IS SEPARATE FROM
+      // `col.className`. A column class lands on the header AND the cells; the six numeric
+      // columns here want `num` on the cells only, because `table.data th.num` right-aligns a
+      // heading and this table's headings are not right-aligned. Expressing it as a column
+      // class would have moved eight header labels. `cellClass` says what THIS VALUE is, where
+      // `className` says what the COLUMN is, and only one of the two is true here.
+      //
+      // WHAT THE COMPONENT ADDS, beyond deleting forty lines: `aria-sort` on the active header
+      // (this had none — the direction rode inside the button's aria-label, which a screen
+      // reader reads as part of the column NAME), and the sort glyph in its own
+      // `.th-sort-glyph` span rather than concatenated into the button's text.
+      const NUM_CELLS = new Set(["when", "total", "new", "resolved", "reopened"]);
+      const columns = [
+        { key: "select", label: selectAll, cell: (s) => selectCell(s) },
+        {
+          key: "when",
+          label: "When",
+          sortable: true,
+          cell: (s) => {
+            const when = el("span", {}, fmtDateTime(s.ts));
+            if (s.scan_id !== newestId) return when;
+            return el("span", {}, when,
+              el("span", { class: "domain-chip", style: "margin-left:8px" }, "Latest"));
+          },
+        },
+        { key: "mode", label: "Mode", cell: (s) => modeCell(s.mode) },
+        { key: "shape", label: "Shape", cell: (s) => shapeLabel(s.shape) },
+        { key: "total", label: "Findings", cell: (s) => s.total.toLocaleString() },
+        { key: "new", label: "+New", cell: (s) => deltaCell(s.new_count, { sign: "+" }) },
+        {
+          key: "resolved",
+          label: "−Resolved",
+          cell: (s) => deltaCell(s.resolved_count, { good: true, sign: "−" }),
+        },
+        {
+          key: "reopened",
+          label: "Reopened",
+          cell: (s) => deltaCell(s.reopened_count, { sign: "+" }),
+        },
+        {
+          key: "scope",
+          label: "Scope",
+          cell: (s) => (s.severities ? JSON.parse(s.severities).join(", ") : "all"),
+        },
+        // The sentence used to ride on a `title` attribute, which el() now throws on: a native
+        // tooltip cannot be reached by keyboard and does not exist on touch, so the one
+        // explanation of why a row's checkbox is disabled was unreadable for anyone not
+        // hovering a mouse. tipAnchor puts it in the app's own hover card; the pill is not a
+        // control, so it takes the anchor form rather than becoming a second tab stop inside a
+        // row that already has one.
+        {
+          key: "status",
+          label: "Status",
+          cell: (s) => (s.sealed
+            ? tipAnchor(
+              el("span", { class: "pill neutral",
+                "aria-label": "Sealed — part of the compacted baseline; can't be deleted." },
+                "Sealed"),
+              () => ["Sealed scans are part of the compacted baseline and can't be deleted."])
+            : ""),
+        },
+      ];
 
-      // STILL HAND-BUILT, and the reason is the `history-table` class on the <table> itself.
-      // This is the one sticky table heading in the app that actually works: pages.css pins
-      // it with `.history-table th { position: sticky; top: 53px }` and takes the wrap out of
-      // its own scroll context above 801px, which is why the declaration the base sheet
-      // dropped survives here. `dataTable` can only class the `.table-wrap` it returns — it
-      // hardcodes `class: "data"` on the table — and its own `stickyHeader` is a different
-      // treatment (gated at 1100px, offset by `--sticky-inset`). Converting would therefore
-      // un-pin a heading that works, silently, for a component that cannot express it.
-      const table = el("table", { class: "data history-table" },
-        el("thead", {}, el("tr", {},
-          el("th", { scope: "col" }, selectAll),
-          el("th", { scope: "col" }, sortBtn),
-          ...["Mode", "Shape", "Findings", "+New", "−Resolved", "Reopened", "Scope", "Status"]
-            .map((h) => el("th", { scope: "col" }, h)))),
-      );
-      const tbody = el("tbody", {});
-      for (const s of slice) {
+      function selectCell(s) {
         const cb = el("input", {
           type: "checkbox",
           "aria-label": `Select scan ${fmtDateTime(s.ts)}`,
@@ -239,37 +290,20 @@ export async function renderHistory(main, _params, ctx) {
           selectAll.checked = !!all;
           selectAll.indeterminate = !all && rest.some((x) => selected.has(x.scan_id));
         });
-        const whenCell = el("td", { class: "num" }, fmtDateTime(s.ts));
-        if (s.scan_id === newestId) {
-          whenCell.append(el("span", { class: "domain-chip", style: "margin-left:8px" }, "Latest"));
-        }
-        tbody.append(el("tr", {},
-          el("td", {}, cb),
-          whenCell,
-          el("td", {}, modeCell(s.mode)),
-          el("td", {}, shapeLabel(s.shape)),
-          el("td", { class: "num" }, s.total.toLocaleString()),
-          el("td", { class: "num" }, deltaCell(s.new_count, { sign: "+" })),
-          el("td", { class: "num" }, deltaCell(s.resolved_count, { good: true, sign: "−" })),
-          el("td", { class: "num" }, deltaCell(s.reopened_count, { sign: "+" })),
-          el("td", {}, s.severities ? JSON.parse(s.severities).join(", ") : "all"),
-          // The sentence used to ride on a `title` attribute, which el() now throws on: a
-          // native tooltip cannot be reached by keyboard and does not exist on touch, so the
-          // one explanation of why a row's checkbox is disabled was unreadable for anyone not
-          // hovering a mouse. tipAnchor puts it in the app's own hover card; the pill is not a
-          // control, so it takes the anchor form rather than becoming a second tab stop inside
-          // a row that already has one.
-          el("td", {}, s.sealed
-            ? tipAnchor(
-              el("span", { class: "pill neutral",
-                "aria-label": "Sealed — part of the compacted baseline; can't be deleted." },
-                "Sealed"),
-              () => ["Sealed scans are part of the compacted baseline and can't be deleted."])
-            : ""),
-        ));
+        return cb;
       }
-      table.append(tbody);
-      clear(tableHost).append(el("div", { class: "table-wrap history-table-wrap" }, table));
+
+      clear(tableHost).append(dataTable({
+        columns,
+        rows: slice,
+        // ONE SORTABLE COLUMN, so the active key is always this one; the direction is the
+        // state. `dataTable` puts it on the <th> as `aria-sort` and draws the glyph itself.
+        sort: { key: "when", descending: sortDir === "desc" },
+        onSort: () => { sortDir = sortDir === "desc" ? "asc" : "desc"; draw(); },
+        tableClassName: "history-table",
+        className: "history-table-wrap",
+        cellClass: (row, col) => (NUM_CELLS.has(col.key) ? "num" : ""),
+      }));
       // `tableFooter`, not the bare `pager` this used to call, and it fixes two things. The
       // pager alone printed the row count unpluralised, so a ledger holding one scan read
       // "1 rows"; and there was no way to see more than 25 scans at a time on a page whose

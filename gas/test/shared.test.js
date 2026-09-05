@@ -24,10 +24,13 @@ import { SEVERITY_COLORS, SLA_TARGETS } from "../src/domain/config";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
+import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
+import { scopeChrome, scopeKinds } from "../src/client/js/scopeKinds.js";
+import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 const base = { describe, it, expect, appRoot: APP_ROOT, app: "os" };
@@ -96,17 +99,16 @@ registerParityContract({
   // in/out proportion with arbitrary tones (splitBar), and a Google Sheet's ten-million-cell
   // ceiling (usageMeter).
   //
-  // `combobox.js` IS THE ONE FORK, and it is on this list under protest rather than on its
-  // merits. gas_shared/ui/combobox.js resolves an option row's glyph by NAME through
-  // gas_shared/ui/uiIcons.js, and two of the four names scopeSwitch.js supplies — `users`
-  // and `noTag` — are not in that set; `uiIcon()` falls back to a single dot for an unknown
-  // name, silently, so the swap would quietly blank the glyph on every support-group row and
-  // both no-domain rows. Adding those two entries to gas_shared/ui/uiIcons.js is the whole
-  // fix and is outside what P4 was allowed to change there. When it lands, delete
-  // src/client/js/ui/combobox.js and this line with it.
+  // `combobox.js` HAS LEFT THIS LIST, and it was the only entry that was ever on it under
+  // protest. gas_shared/ui/combobox.js resolves an option row's glyph by NAME through
+  // gas_shared/ui/uiIcons.js, and two of the four names the scope switcher supplies — `users`
+  // and `noTag` — were not in that set; `uiIcon()` falls back to a single dot for an unknown
+  // name, silently, so the swap would have blanked the glyph on every support-group row and
+  // both no-domain rows with nothing failing. Both glyphs are in the shared set now and an
+  // unknown name is reported rather than swallowed, so the fork is deleted and the shared
+  // control is what this app draws.
   localUiModules: [
-    "changeChip.js", "combobox.js", "nvd.js", "scopeBar.js", "span.js", "splitBar.js",
-    "usageMeter.js",
+    "changeChip.js", "nvd.js", "scopeBar.js", "span.js", "splitBar.js", "usageMeter.js",
   ],
   sheetOrder: SHEET_ORDER,
 });
@@ -142,15 +144,29 @@ registerEmptyStateContract({
   // The two pages that render section-by-section behind a guard(), because they are the
   // ones a single failing section must not blank.
   guardedRoutes: ["executive", "program"],
-  // EMPTY, AND NOT BECAUSE THE PAGES DO NOT SAY IT. The contract's first-run half asserts
-  // the page source matches /latestSync/ — the field name gas_devsecops's bootstrap payload
-  // uses. This register's payload has always called it `latestScan`, and the two pages that
-  // gate on it (data, attribution) read that. Passing them here would fail on a field NAME
-  // rather than on a missing notice, and renaming a payload field to satisfy a regex, or
-  // aliasing one in the page to be matched by it, would be gaming the test. The shared fix
-  // is one line — take the field name as a ctx argument, or match /latest(Scan|Sync)/ — and
-  // it belongs in gas_shared/test/contracts/emptyStates.js, which P4 may not edit.
-  firstRunRoutes: [],
+  // THE FIELD NAME IS AN ARGUMENT NOW, so this list is no longer empty.
+  //
+  // It was `[]`, and the comment here was explicit that the pages DO say the ledger has not
+  // been read — `data` and `attribution` both gate on it — and that the contract could not see
+  // it because it hard-coded `/latestSync/`, the name gas_devsecops's payload uses. This
+  // register's has always called it `latestScan`. The two ways to make the old contract pass
+  // were both gaming it: rename a payload field to satisfy a regex, or alias one inside the
+  // page to be matched by it. The third way is the one taken — `ctx.syncField`, defaulting to
+  // `latestSync` so the two siblings are unchanged — and with it the contract's first-run half
+  // runs on three apps instead of two. THAT IS THE MEASUREMENT: these two routes now pass a
+  // check that was previously vacuous here, and a perturbation confirms it bites (passing
+  // "latestSync" fails both routes).
+  syncField: "latestScan",
+  //
+  // ONE ROUTE, NOT TWO, AND THAT IS A SECOND FINDING. The old comment named `data` and
+  // `attribution` as "the two pages that gate on it", and both do gate on `latestScan` — but
+  // neither reached for `firstRunNotice` at all; each had hand-rolled its own words. Only
+  // `attribution`'s was a PAGE-LEVEL first-run state, so only it is converted. `data`'s two
+  // are section notes inside Report and Export ("No scan saved yet — run a scan to generate a
+  // report"), which name the specific thing that section cannot do; replacing them with one
+  // page-wide notice would say less, in a bigger box, twice. Registering `data` here to make
+  // the list look symmetrical would be the tail wagging the page.
+  firstRunRoutes: ["attribution"],
 });
 
 // =========================================================================================
@@ -259,4 +275,39 @@ describe("os: the stylesheet index imports the shared sheets in cascade order", 
     const local = imports.filter((p) => p.startsWith("./"));
     expect(local).toEqual(["./styles/tokens.css", "./styles/pages.css"]);
   });
+});
+
+// =========================================================================================
+//  The scope seam: what this register slices by, and what a pick puts on the wire
+// =========================================================================================
+//
+// THE PAYLOAD TABLE IS WRITTEN DOWN FROM THE DELETED IMPLEMENTATION, which is the only way it
+// can be a check rather than a restatement. `scopeSwitch.js`'s `onPick` handed app.js
+// `{kind: "domain"|"supportGroup", value}`; `pickScope` then set one module variable, cleared
+// the other, and `activeScope()` returned `{domain, supportGroup}` — the object every page's
+// RPC takes. That object is what the kinds' own `payload(id)` now builds directly, and these
+// three rows are it.
+registerScopeContract({
+  ...base,
+  model: SCOPE_MODEL,
+  scopeKinds,
+  scopeChrome,
+  data: {
+    scopeCounts: {
+      register: 161,
+      domains: { CROSS: 40, Payments: 30 },
+      supportGroups: { "CS-CORE": 31 },
+      unassigned: 12,
+      noSupportGroup: 104,
+      notAttributable: 0,
+      unassignedBase: 0,
+    },
+    domainNames: ["CROSS", "Payments"],
+    filterOptions: { supportGroups: ["CS-CORE"] },
+  },
+  payloads: [
+    { kind: "domain", id: "CROSS", payload: { domain: "CROSS", supportGroup: "" } },
+    { kind: "supportGroup", id: "CS-CORE", payload: { domain: "", supportGroup: "CS-CORE" } },
+  ],
+  resetPayload: { domain: "", supportGroup: "" },
 });

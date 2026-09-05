@@ -24,14 +24,19 @@
 //     the rows nobody could place to whichever project is in view, when the truth is that some
 //     of the other M-N carry no project at all.
 //
+// REDUCED, NOT DELETED. `projectScopeControl` — the combobox, the caption, the `.scoped`
+// class — is `gas_shared/ui/scopeControl.js` now, and the assembly that turned a payload into
+// `{show, label, caption, options, pinned}` is `gas_shared/ui/scopeModel.js`. Both were three
+// copies of each other across the three sidekicks. What stays here is the half that never
+// generalised and that the parity contract already allowed this app to keep: the register's
+// own vocabulary, which reads `src/domain/projectScope.ts` and means nothing in a sibling
+// with no repositories.
+//
 // Split in two on purpose, the way syncProgress.js is: `projectScopeView` decides what the
 // control CLAIMS — the label, the caption, whether the stored scope has gone stale — and is
-// DOM-free so those claims can be tested. `projectScopeControl` only assembles them.
+// DOM-free so those claims can be tested. The control only assembles them.
 
-import { el } from "../../../../../gas_shared/ui/dom.js";
-import { filterCombobox } from "../../../../../gas_shared/ui/combobox.js";
-import { uiIcon } from "../../../../../gas_shared/ui/uiIcons.js";
-import { tipAnchor } from "../../../../../gas_shared/ui/tip.js";
+import { scopeView } from "../../../../../gas_shared/ui/scopeModel.js";
 
 const nf = new Intl.NumberFormat();
 
@@ -138,86 +143,89 @@ export function scopeOptions(list) {
 }
 
 /**
- * Everything the control asserts, from the bootstrap payload alone.
+ * The one dimension this register has, as `gas_shared/ui/scopeModel.js` takes it.
  *
- * @param {object|null} bootstrapData
- * @returns {{show: boolean, current: string, label: string, caption: string,
- *            stale: boolean, options: object[], pinned: object[]}}
+ * BARE, NOT PREFIXED, and that is what keeps a stored scope working across this change:
+ * `settingsStore.projectView` holds a slug, the control emitted a slug, and the shared model
+ * allows exactly one kind per register to carry no prefix. A single-kind app is that case by
+ * definition — there is no second dimension for a slug to collide with.
+ *
+ * `scopeOptions` above is left exactly as it was, `value` field and all, because it is
+ * exported and tested directly; the mapping to the model's `id` happens here, in one line,
+ * rather than by rewriting a builder and its test to say the same thing differently.
  */
-export function projectScopeView(bootstrapData) {
-  const opts = (bootstrapData && bootstrapData.filterOptions) || {};
+export function scopeKinds(data) {
+  const opts = (data && data.filterOptions) || {};
   const list = opts.projectList || [];
-  const scope = (bootstrapData && bootstrapData.scope) || null;
+  return [{
+    key: "project",
+    prefix: "",
+    // One folder for a chosen project; the reset row's two-folder mark is the chrome's.
+    icon: "folder",
+    options: () => scopeOptions(list).map((o) => ({ ...o, id: o.value })),
+    label: (opt, d, ctx) => (ctx.stale
+      ? "a project this register does not hold"
+      : (opt ? opt.label : ctx.id)),
+    caption: (opt, d, ctx) => projectCaption(d, ctx.stale, opt),
+    // THE EXACT ARGUMENT `api_setProjectView` HAS ALWAYS TAKEN. Pinned against the deleted
+    // implementation by the registerScopeContract block in test/shared.test.js.
+    payload: (id) => ({ projectView: id }),
+  }];
+}
 
-  // Nothing synced, or boot failed: no control at all. An empty picker is a promise the
-  // register cannot keep.
-  if (!scope || !list.length) {
-    return {
-      show: false, current: "", label: "", caption: "", stale: false, options: [], pinned: [],
-    };
-  }
-
-  const projectView = scope.projectView || "";
-  const chosen = projectView ? list.find((p) => p.slug === projectView) || null : null;
-  // A stored view naming a project that fell out of the register after a re-sync scoped
-  // elsewhere, or that never existed.
-  const stale = Boolean(projectView && !chosen);
-
-  const label = !projectView ? "everything synced"
-    : chosen ? chosen.name : "a project this register does not hold";
-
-  const unattributed = Number(scope.unattributed) || 0;
-  // Only stated when it is non-zero, and only alongside a count it actually qualifies — a
-  // register with nothing unattributed has nothing here to say. See the module header: this
-  // is what replaces gas_ai's domain-coverage clause for the same reason it existed there.
-  const unattributedClause = unattributed > 0
-    ? ` · ${nf.format(unattributed)} have no project`
-    : "";
-
-  return {
-    show: true,
-    current: projectView,
-    label,
-    // The denominator travels with the number: "12" alone cannot tell a small unit from a
-    // small register, and those call for opposite reactions.
-    caption: stale
-      ? `Not in this register — showing 0 of ${nf.format(scope.register)}`
-      : !projectView
-        ? `${findingCount(scope.register)} synced${unattributedClause}`
-        : `${nf.format(scope.shown)} of ${nf.format(scope.register)} findings${unattributedClause}`,
-    stale,
-    // Every real project stays on offer even when the stored scope is stale, so the state is
-    // escapable rather than a dead end the reader can only clear by editing settings by hand.
-    options: scopeOptions(list),
-    // "Everything synced", not "All projects": the register holds what the last sync was
-    // scoped to fetch, and this row means "no view scope", not "every project that exists".
-    pinned: [{
-      value: "", label: "Everything synced", hint: findingCount(scope.register), icon: "folders",
-    }],
-  };
+function findingFacts(data) {
+  const scope = (data && data.scope) || null;
+  const register = scope ? Number(scope.register) || 0 : 0;
+  const shown = scope ? Number(scope.shown) || 0 : 0;
+  const unattributed = scope ? Number(scope.unattributed) || 0 : 0;
+  return { scope, register, shown, unattributed };
 }
 
 /**
- * @param {object|null} bootstrapData  the bootstrap payload, or null when boot failed
- * @param {(slug: string) => void} onPick  the chosen project slug, "" for the whole register
- * @returns {HTMLElement|null}  null when there is nothing truthful to offer
+ * The denominator travels with the number: "12" alone cannot tell a small unit from a small
+ * register, and those call for opposite reactions.
+ *
+ * The unattributed clause is only stated when it is non-zero, and only alongside a count it
+ * actually qualifies — a register with nothing unattributed has nothing here to say. See the
+ * module header: this is what replaces gas_ai's domain-coverage clause for the same reason it
+ * existed there.
  */
-export function projectScopeControl(bootstrapData, onPick) {
-  const v = projectScopeView(bootstrapData);
-  if (!v.show) return null;
+function projectCaption(data, stale, opt) {
+  const f = findingFacts(data);
+  const clause = f.unattributed > 0
+    ? ` · ${nf.format(f.unattributed)} have no project`
+    : "";
+  if (stale) return `Not in this register — showing 0 of ${nf.format(f.register)}`;
+  if (!opt) return `${findingCount(f.register)} synced${clause}`;
+  return `${nf.format(f.shown)} of ${nf.format(f.register)} findings${clause}`;
+}
 
-  const combo = filterCombobox({
-    value: v.current,
-    options: v.options,
-    pinnedRows: v.pinned,
+/**
+ * The parts of the control that are not the dimension.
+ *
+ * `show` is this register's own answer to "is there anything to slice by". Nothing synced, or
+ * boot failed: no control at all. AN EMPTY PICKER IS A PROMISE THE REGISTER CANNOT KEEP.
+ */
+export function scopeChrome(data) {
+  const f = findingFacts(data);
+  const opts = (data && data.filterOptions) || {};
+  const list = opts.projectList || [];
+  return {
+    show: Boolean(f.scope && list.length),
+    label: "everything synced",
+    caption: (d) => projectCaption(d, false, null),
+    // "Everything synced", not "All projects": the register holds what the last sync was
+    // scoped to fetch, and this row means "no view scope", not "every project that exists".
+    reset: {
+      label: "Everything synced",
+      hint: () => findingCount(f.register),
+      icon: "folders",
+    },
+    resetPayload: () => ({ projectView: "" }),
     defaultLabel: "Everything synced",
     // Without this the trigger prints the raw slug, which reads as corruption rather than as
     // a scope that no longer matches what was fetched.
     fallbackLabel: "Project not in this register",
-    // Carries the CURRENT selection, not just the control's name. The header is rebuilt
-    // wholesale on every refresh() and picking triggers one, so this is re-stamped with
-    // each change.
-    ariaLabel: `Scope: ${v.label}`,
     searchPlaceholder: "Search projects…",
     // WHAT THE PANEL HAS TO SAY THAT ITS ROWS CANNOT. Every row is a project name; none of
     // them can tell you that choosing one re-scopes every figure in the app, or that a few
@@ -228,37 +236,31 @@ export function projectScopeControl(bootstrapData, onPick) {
       note: "Every page answers for the project you pick. Figures that cannot be scoped say "
         + "so where they are drawn.",
     },
-    // The scope persists server-side and outlives the session, so which row is in force is a
-    // standing fact about the app rather than a highlight in an open menu — worth a mark of
-    // its own rather than weight and colour alone.
-    checkSelected: true,
-    // The popover is portaled to <body>, so this class is the only way to reach inside it.
-    popClass: "combobox-pop--scope",
-    // Decoration inside the trigger. The trigger's accessible name is the ariaLabel above, so
-    // this adds no second reading.
-    leading: el("span", { class: "scope-combo-icon", "aria-hidden": "true" },
-      uiIcon(v.current ? "folder" : "folders", 14)),
-    onChange: (val) => onPick(val || ""),
-  });
-  combo.classList.add("scope-combo");
-  // A NARROWED REGISTER IS A STATE, and this is the one state in the app that silently
-  // re-reads every number on every page. Unscoped it stays the neutral field it has always
-  // been, because "showing everything" is the resting state and a permanently lit control
-  // signals nothing. The colour is never alone either way — the trigger names the project, and
-  // the caption beside it carries the count.
-  if (v.current) combo.classList.add("scoped");
-  // Read on hover: the header is narrow enough to ellipsise a long project name, and the
-  // caption beside it answers a different question. Not a native title — a tap reaches none
-  // of those, which is the whole reason el() bans the attribute.
-  tipAnchor(combo, "Scope: " + v.label);
+  };
+}
 
-  return el("div", { class: "scope-switch" },
-    combo,
-    el("div", {
-      class: `scope-caption${v.stale ? " stale" : ""}`,
-      // The caption answers the control above it, so it should be heard on selection
-      // rather than only on a deliberate re-read of the region.
-      "aria-live": "polite",
-    }, v.caption),
-  );
+/**
+ * Everything the control asserts, from the bootstrap payload alone. The same
+ * `{show, current, label, caption, stale, options, pinned}` shape as before the move to the
+ * shared model, so test/projectScopeView.test.js holds it unchanged — including every option
+ * `value`, which is still the bare slug.
+ *
+ * @param {object|null} bootstrapData
+ */
+export function projectScopeView(bootstrapData) {
+  const view = scopeView({
+    kinds: scopeKinds(bootstrapData),
+    data: bootstrapData,
+    active: {
+      kind: "project",
+      id: (bootstrapData && bootstrapData.scope && bootstrapData.scope.projectView) || "",
+    },
+    chrome: scopeChrome(bootstrapData),
+  });
+  if (!view.show) {
+    return {
+      show: false, current: "", label: "", caption: "", stale: false, options: [], pinned: [],
+    };
+  }
+  return { ...view, current: view.active };
 }

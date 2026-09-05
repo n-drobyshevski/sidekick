@@ -15,6 +15,29 @@ let _comboboxSeq = 0;
 const COMBOBOX_MATCH_CAP = 100;
 const COMBOBOX_DEBOUNCE_MS = 120;
 
+/**
+ * The one open popover, so a NAVIGATION WITH NO CLICK BEHIND IT can dismiss it.
+ *
+ * Ported from gas's fork (`gas/src/client/js/ui/combobox.js`, now deleted) rather than
+ * dropped with it — it is the one thing that fork had and this file did not. `popoverDismiss`
+ * covers every real navigation, because clicking a nav link IS a document click. What it does
+ * not cover is a route change with no click: a hashchange typed into the address bar, the
+ * back button, a programmatic `location.hash =`. On the merged z scale the popover sits ABOVE
+ * the route overlay (`--z-popover` 52 against the veil's 20), so what was left behind was not
+ * a rendering artifact but a live panel floating over a page the register had already moved
+ * on from — offering a scope for content no longer on screen. Measured in the dev harness:
+ * open the header scope switcher, set `location.hash`, and the panel was still in the DOM.
+ *
+ * ONE INSTANCE, because only one of these can be open at a time: opening any combobox closes
+ * every other through `popoverDismiss`'s own document listener.
+ */
+let _openCombobox = null;
+
+/** Dismiss the open combobox popover, if there is one. Called from an app's `route()`. */
+export function closeCombobox() {
+  if (_openCombobox) _openCombobox();
+}
+
 function comboNormalize(list) {
   return (list || []).map((o) => (typeof o === "string"
     ? { value: o, label: o, hint: "", group: "", icon: "" }
@@ -162,6 +185,12 @@ export function filterCombobox({
     }
     const text = labelFor(current);
     triggerText.textContent = text;
+    // A CONTROL HOLDING A VALUE IS IN A STATE, and it says so in its own chrome rather than
+    // only in the text it happens to print. The second half of gas's fork, ported with the
+    // first: `.combobox-trigger.active` is an accent border in that app's sheet, and inert in
+    // the other two, which style the scope trigger through `.scope-combo.scoped` instead.
+    // Both are additive — a list whose sheet names neither renders exactly as before.
+    trigger.classList.toggle("active", !!current);
     // Only when the label was actually clipped: a project called "prod" needs no card.
     truncTip(triggerText, text);
   }
@@ -418,11 +447,16 @@ export function filterCombobox({
     if (editable) editInput.focus();
     else if (searchEl) searchEl.focus();
     else listEl.focus();
+    _openCombobox = close;
   }
 
   function close() {
     if (!open) return;
     open = false;
+    // Only if it is still OURS. Opening a second combobox closes this one through the
+    // document listener and then claims the slot; clearing unconditionally here would drop
+    // the new one's handle and leave IT unreachable from `closeCombobox()`.
+    if (_openCombobox === close) _openCombobox = null;
     onSearchInput.cancel();
     onTypeInput.cancel();
     (editable ? editInput : trigger).setAttribute("aria-expanded", "false");

@@ -35,6 +35,9 @@ import { registerEmptyStateContract } from "../../gas_shared/test/contracts/empt
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
+import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
+import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
+import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
@@ -133,4 +136,34 @@ describe("devsecops: the accent this register chose", () => {
     expect(ratio("#171717", A)).toBeGreaterThanOrEqual(4.5);
     expect(ratio("#ffffff", A)).toBeLessThan(3);
   });
+});
+
+// =========================================================================================
+//  The scope seam: what this register slices by, and what a pick puts on the wire
+// =========================================================================================
+//
+// THE PAYLOAD TABLE IS WRITTEN DOWN FROM THE DELETED IMPLEMENTATION. `projectScopeControl`'s
+// `onChange` handed app.js a bare slug and `pickProjectScope` passed it to
+// `call("api_setProjectView", { projectView: slug })`. That object is what the one kind's
+// `payload(id)` builds now, and `renderAppbar` unwraps `.projectView` from it so
+// `pickProjectScope`'s own signature — and its two tests — did not change.
+//
+// ONE KIND, SO IT IS THE BARE ONE. There is no second dimension for a slug to collide with,
+// and `settingsStore.projectView` holds an unprefixed slug, so a stored scope survives the
+// move to the shared model untouched.
+registerScopeContract({
+  ...base,
+  model: SCOPE_MODEL,
+  scopeKinds,
+  scopeChrome,
+  data: {
+    filterOptions: {
+      projectList: [{ slug: "value-chain", name: "VALUE-CHAIN", findings: 826, isFolder: false }],
+    },
+    scope: { register: 1204, shown: 826, projectView: "", unattributed: 17 },
+  },
+  payloads: [
+    { kind: "project", id: "value-chain", payload: { projectView: "value-chain" } },
+  ],
+  resetPayload: { projectView: "" },
 });

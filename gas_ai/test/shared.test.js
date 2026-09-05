@@ -56,6 +56,9 @@ import { registerEmptyStateContract } from "../../gas_shared/test/contracts/empt
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
+import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
+import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
+import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
@@ -209,4 +212,39 @@ describe("ai: the accent this register chose", () => {
       expect(ratio(tokenValue("accent-text"), ground), name).toBeGreaterThanOrEqual(4.5);
     }
   });
+});
+
+// =========================================================================================
+//  The scope seam: what this register slices by, and what a pick puts on the wire
+// =========================================================================================
+//
+// THE PAYLOAD TABLE IS WRITTEN DOWN FROM THE DELETED IMPLEMENTATION. `projectScopeControl`'s
+// `onChange` split the `d:` prefix off and handed app.js `{kind, value}`; `pickProjectScope`
+// then chose between `{domainView}` and `{projectView}` for `api_setSettings`. Those two
+// objects are what the kinds' own `payload(id)` builds directly now, and the reset's
+// `{projectView: ""}` is the third — the reset row's value is "", which parses to the BARE
+// kind (the project), exactly as the old `startsWith("d:")` test did.
+registerScopeContract({
+  ...base,
+  model: SCOPE_MODEL,
+  scopeKinds,
+  scopeChrome,
+  data: {
+    filterOptions: {
+      projectList: [{ id: "p1", name: "VALUE-CHAIN", assets: 826, isFolder: false }],
+      domainList: [{ name: "Payments", assets: 36 }],
+    },
+    scope: {
+      register: 1204,
+      shown: 826,
+      projectView: "",
+      domainView: "",
+      domainCoverage: { total: 87, tagged: 36 },
+    },
+  },
+  payloads: [
+    { kind: "project", id: "p1", payload: { projectView: "p1" } },
+    { kind: "domain", id: "Payments", payload: { domainView: "Payments" } },
+  ],
+  resetPayload: { projectView: "" },
 });
