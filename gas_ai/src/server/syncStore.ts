@@ -49,7 +49,8 @@ import {
 import { vectorSignature, type ProblemRule } from "../domain/problemRule";
 import { censusPostureTiers, countPostureTiers, type Tier as PostureTier } from "../domain/posture";
 import type { PostureRule } from "../domain/postureRule";
-import { OTHER_GROUP_ID } from "../domain/toxicCombos";
+import { registerScopeSignature } from "../domain/registerScope";
+import { OTHER_GROUP_ID, RISK_CATEGORY_ID } from "../domain/toxicCombos";
 import type { Severity } from "../domain/config";
 import { countAarsSeverities, countProjectTotals, encodeProjectTotals } from "../domain/aarsTrend";
 import { inProject, planPrune, type PruneCensus } from "../domain/prunePlan";
@@ -387,6 +388,10 @@ export function issueToRow(i: IssueRow): Rec {
     // back as an empty ARRAY rather than as absent — "we looked and found none".
     attributed_asset_ids: (i.attributedAssetIds ?? []).join(","),
     attribution_hop: i.attributionHop ?? null,
+    // The register's scope stamp. Comma-joined like the two above; empty only for a row
+    // this app built before the stamp existed, which rowToIssue reads back as the AI
+    // category — the only scope any of those syncs ran. See domain/registerScope.ts.
+    categories: (i.categories ?? []).join(","),
   };
 }
 
@@ -428,6 +433,12 @@ export function rowToIssue(r: Rec): IssueRow {
     aiRecommendedSeverity:
       ((r["ai_recommended_severity"] as string | null) ?? undefined) as Severity | undefined,
   };
+  // The scope stamp, defaulted rather than left absent: a row from a tab that predates the
+  // column was collected under the AI category and nothing else, so reading it as "unknown"
+  // would drop it out of every scoped rollup. This is the one place a missing column reads
+  // as a value, and it does so because there is exactly one value it can have.
+  const categories = String(r["categories"] ?? "").split(",").filter(Boolean);
+  issue.categories = categories.length ? categories : [RISK_CATEGORY_ID];
   // Set only when non-empty, so a round trip preserves "not captured" as undefined
   // rather than promoting it to an empty array or a false.
   const environments = String(r["environments"] ?? "").split(",").filter(Boolean);
@@ -1053,6 +1064,11 @@ export function persistSync(
     // trend can mark the break rather than let a legitimate collapse in the tiered population
     // read as risk improving.
     derivation_version: DERIVATION_VERSION,
+    // The category scope this sync APPLIED — read off the same list syncSteps built its
+    // battery from, never off the settings at read time. A widened setting and an unsynced
+    // ledger disagree until the next sync, and bootstrap says so rather than letting a
+    // total counted under one scope be compared with one counted under another.
+    register_scope: registerScopeSignature(settingsStore.getIssueCategories()),
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
   settingsStore.setDecidedRuleVersion(problemRuleVersion);

@@ -37,6 +37,7 @@ import {
 } from "../domain/syncNormalize";
 import { buildAarsHintsFromFindings } from "../domain/graphEnrich";
 import { resolveHygieneRules } from "../domain/identityHygiene";
+import { RISK_CATEGORY_ID } from "../domain/toxicCombos";
 import { changedPaths, effectiveStepVars, isEditableStep } from "../domain/scanVars";
 import { nowIso, type Rec } from "../domain/util";
 import { readGzJsonFile, syncFolder, writeGzJson, writeSyncPage } from "./archiveStore";
@@ -72,6 +73,7 @@ import {
   aiInventoryVariables,
   aiPropertiesVariables,
   aiIssuesVariables,
+  aiConfigRulesVariables,
   aiPrincipalsVariables,
   aiIdentityHygieneVariables,
   effectiveAccessVariables,
@@ -184,6 +186,10 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
   // tenant whose framework ids differ from the shipped defaults still collects the right
   // three on its second sync rather than never.
   const frameworkIds = settingsStore.getSelectedFrameworks(() => loadFrameworks());
+  // Which risk categories the issue register collects. Read once, for the same reason the
+  // framework selection is, and in the STORED ORDER: the step list has to be deterministic
+  // or a resumed hop would meet a different battery than the one it left.
+  const categoryIds = settingsStore.getIssueCategories();
   // Stored per-step overrides, laid over each builder's variables by path. Read once so a
   // battery of twelve steps costs one settings read, not twelve.
   const overrides = settingsStore.getScanVars();
@@ -234,6 +240,37 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       normalize: normalizeIssuesPage,
       optional: true,
     },
+    // The rest of the selected risk categories — ONE STEP PER CATEGORY, generated the way
+    // the posture steps below are, so the budget/resume machinery needs no special case.
+    //
+    // WHY NOT ONE STEP WITH SIX IDS IN ITS FILTER. Nothing in an issue says which category
+    // matched it (AARS_LIVE_MEASUREMENTS.md §6.8: `Issue` has 51 fields and not one names a
+    // category), so a filter naming six categories returns rows that cannot be stamped —
+    // and the stamp is the only thing standing between "the AI register" and "every issue
+    // in the project" once the list is widened. One step per category means the step's own
+    // id says what its rows are, and its normalizer writes that onto every row it returns.
+    //
+    // ISSUES_TOXIC keeps its id and its own default category rather than being folded into
+    // this family: it is the step every stored override, every scan-area assertion and the
+    // whole toxic-combinations area is keyed on, and renaming it would silently orphan them.
+    ...categoryIds
+      .filter((id) => id !== RISK_CATEGORY_ID)
+      .map((categoryId): SyncStepDef => ({
+        id: `ISSUES_CAT_${categoryId}`,
+        area: "toxic",
+        writes: ["ai_issues", "ai_assets"],
+        run: "connection",
+        connectionField: "issuesV2",
+        query: Q_ISSUES,
+        // No `vars()` indirection, exactly as the posture family has none: these steps are
+        // LOCKED, overrides are stored per step id, so a shared "ISSUES_CAT_" key would be
+        // an override slot nothing could ever write to.
+        extraVariables: aiIssuesVariables(projectScope(), [categoryId]) as Rec,
+        // The stamp. Closed over the category this step was generated for, the way the
+        // per-rule steps closed over their group — it is the one place the fact survives.
+        normalize: (rows: Rec[]) => normalizeIssuesPage(rows, categoryId),
+        optional: true,
+      })),
     // Real compliance findings (configurationFindings) — feeds AARS pillar B.
     {
       id: "CONFIG_FINDINGS",
@@ -263,6 +300,12 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
       run: "connection" as const,
       connectionField: "cloudConfigurationRules",
       query: Q_CONFIG_RULES,
+      // `hasFindings: true` — 3,905 rules down to 1,401, measured against this tenant
+      // (AARS_LIVE_MEASUREMENTS.md §6.10), where `project` is completely inert. It narrows
+      // the FETCH only: the catalogue is a join target, so syncStore writes this tab only
+      // when the step returned rows and a rule that stops having findings keeps the entry a
+      // stored issue still references. See aiConfigRulesVariables.
+      extraVariables: aiConfigRulesVariables() as Rec,
       normalize: normalizeConfigRulesPage,
       optional: true,
       // The big one: ~3,858 rules is 39 pages at PAGE_SIZE and 8 at PAGE_SIZE_WIDE, and
@@ -655,6 +698,15 @@ function defaultStepVariables(stepId: string, withOverride: Rec, aiTypes?: reado
       // Every posture step shares one variable spec but carries its own framework id, so
       // the default has to keep that id — resetting a step must not point it at a
       // different framework than the one its own id says it queried.
+      // One category per step, and the id carries it — same shape as the posture family
+      // below, and the same reason: resetting a step must not point it at a different
+      // population than the one its own id says it collected.
+      if (stepId.indexOf("ISSUES_CAT_") === 0) {
+        return aiIssuesVariables(
+          projectScope(),
+          [stepId.slice("ISSUES_CAT_".length)],
+        ) as unknown as Rec;
+      }
       if (stepId.indexOf("COMPLIANCE_POSTURE_") === 0) {
         return {
           ...(aiCompliancePostureVariables(projectScope()) as unknown as Rec),

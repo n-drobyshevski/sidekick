@@ -466,7 +466,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a575fcadee40" : "dev";
+  var BUILD_ID = true ? "d730ce583f81" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -974,7 +974,16 @@ var Server = (() => {
       // entity Wiz raised the issue on so the drill-down still matches the console — see
       // IssueRow.attributedAssetIds for the measurement that made this necessary.
       "attributed_asset_ids",
-      "attribution_hop"
+      "attribution_hop",
+      // WHICH RISK CATEGORIES THIS ROW WAS COLLECTED UNDER. Appended, same no-migration
+      // contract as every block above — and declared here rather than only written, because
+      // writeGrid projects a row onto the DECLARED headers and silently discards the rest: an
+      // undeclared column is written every sync and read back as a default, forever.
+      //
+      // Comma-joined, matching `environments` and `attributed_asset_ids`; the `_json` suffix
+      // is reserved for structures. A row written before this column reads back as the AI
+      // category, which is the only scope those syncs ever ran.
+      "categories"
     ],
     [TABS.findings]: [
       "id",
@@ -1177,7 +1186,15 @@ var Server = (() => {
       // rule version moves when an operator edits a model; this moves when a code change alters
       // what a stored fact MEANS, which only a full sync can repair. The trend marks the break
       // here so a step is never read as movement.
-      "derivation_version"
+      "derivation_version",
+      // THE SCOPE THIS SYNC APPLIED — the sorted category signature, not the one settings hold
+      // now. The two differ across a settings change, and a total counted under six categories
+      // is not comparable with one counted under one; stamping today's list onto yesterday's
+      // row would erase exactly the discontinuity the trend has to mark. Same argument as
+      // `derivation_version` above it, one axis over: that records what a fact MEANS, this
+      // records which population was asked. Empty on a row written before the column, which
+      // reads as "unknown" and never as "a different scope".
+      "register_scope"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -2879,10 +2896,16 @@ var Server = (() => {
     };
   }
   var Q_ISSUES = "query SidekickAiIssues($first: Int, $after: String, $filterBy: IssueFilters, $orderBy: IssueOrder) {\n  issuesV2(first: $first, after: $after, filterBy: $filterBy, orderBy: $orderBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      type\n      severity\n      status\n      createdAt\n      updatedAt\n      dueAt\n      resolvedAt\n      resolutionReason\n      resolutionNote\n      rejectionExpiredAt\n      validatedAsExploitable\n      environments\n      assignee { id name primaryEmail }\n      resolvedBy { user { id name email } serviceAccount { id name type } }\n      notes { id text }\n      serviceTickets { id externalId name url }\n      applicationServices { id displayName }\n      aiRemediationAnalysis { verdict recommendedSeverity }\n      projects { id name slug riskProfile { businessImpact } }\n      entitySnapshot {\n        id\n        type\n        status\n        name\n        cloudPlatform\n        region\n        subscriptionName\n        subscriptionId\n        subscriptionExternalId\n        nativeType\n        externalId\n        tags\n        kubernetesClusterName\n        kubernetesNamespaceName\n        resourceGroupId\n      }\n      sourceRules {\n        ... on Control {\n          id\n          name\n          description\n          severity\n          risks\n          threats\n          resolutionRecommendation\n        }\n        ... on CloudConfigurationRule {\n          id\n          name\n          description\n          risks\n          threats\n          control { resolutionRecommendation severity }\n        }\n        ... on CloudEventRule {\n          id\n          name\n          description\n          risks\n          threats\n        }\n      }\n    }\n  }\n}\n";
-  function aiIssuesVariables(scope) {
+  function aiIssuesVariables(scope, categoryIds) {
     const filterBy = {
       status: ["OPEN", "IN_PROGRESS"],
-      frameworkCategory: [RISK_CATEGORY_ID]
+      // ONE STEP PER CATEGORY, so this is a one-element list on every step the battery runs —
+      // never the whole selection at once. The response says nothing about which category a
+      // row matched (Issue has no category field), so a filter naming six of them returns rows
+      // that cannot be stamped, and an unstamped row is what turns "AI issues" into "issues"
+      // with nothing on the page to catch it. Absent means the default, which is what this
+      // register collected before the list was a setting.
+      frameworkCategory: categoryIds && categoryIds.length ? [...categoryIds] : [RISK_CATEGORY_ID]
     };
     if (scope && scope.length) filterBy["project"] = scope;
     return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
@@ -2913,7 +2936,10 @@ var Server = (() => {
     if (project) filterBy["project"] = project;
     return { filterBy, orderBy: { field: "RELATED_ISSUE_SEVERITY", direction: "DESC" } };
   }
-  var Q_CONFIG_RULES = "query SidekickAiConfigRules($first: Int, $after: String) {\n  cloudConfigurationRules(first: $first, after: $after) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      shortId\n      subjectEntityType\n      externalReferences { id name }\n    }\n  }\n}\n";
+  var Q_CONFIG_RULES = "query SidekickAiConfigRules($first: Int, $after: String, $filterBy: CloudConfigurationRuleFilters) {\n  cloudConfigurationRules(first: $first, after: $after, filterBy: $filterBy) {\n    totalCount\n    pageInfo { hasNextPage endCursor }\n    nodes {\n      id\n      name\n      shortId\n      subjectEntityType\n      externalReferences { id name }\n    }\n  }\n}\n";
+  function aiConfigRulesVariables() {
+    return { filterBy: { hasFindings: true } };
+  }
   function aiIdentityHygieneVariables(ruleIds, scope) {
     const filterBy = {
       status: ["OPEN"],
@@ -3466,7 +3492,7 @@ var Server = (() => {
     if (!Array.isArray(raw)) return [];
     return raw.map((t) => t && typeof t === "object" ? str3(t["url"]) : void 0).filter((u) => Boolean(u));
   }
-  function normalizeIssuesPage(rows) {
+  function normalizeIssuesPage(rows, categoryId) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
     const part = emptyPart();
     for (const raw of rows) {
@@ -3519,7 +3545,10 @@ var Server = (() => {
         ignoreNote: ignoreRationale(raw["notes"]),
         ignoreExpiredAt: str3(raw["rejectionExpiredAt"]),
         aiVerdict: aiAnalysis && typeof aiAnalysis === "object" ? str3(aiAnalysis["verdict"]) : void 0,
-        aiRecommendedSeverity: aiAnalysis && typeof aiAnalysis === "object" ? str3(aiAnalysis["recommendedSeverity"]) : void 0
+        aiRecommendedSeverity: aiAnalysis && typeof aiAnalysis === "object" ? str3(aiAnalysis["recommendedSeverity"]) : void 0,
+        // The scope stamp. Always set, never optional-on-absence like the fields below: a row
+        // with no category is a row that cannot say which question it answers.
+        categories: [categoryId && categoryId.trim() ? categoryId.trim() : RISK_CATEGORY_ID]
       };
       if (environments && environments.length) issue2.environments = environments;
       if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
@@ -4186,6 +4215,14 @@ var Server = (() => {
     }
     return part;
   }
+  function unionCategories(a, b) {
+    var _a5, _b;
+    const out = [];
+    for (const id of [...(_a5 = a.categories) != null ? _a5 : [], ...(_b = b.categories) != null ? _b : []]) {
+      if (id && out.indexOf(id) === -1) out.push(id);
+    }
+    return out.sort();
+  }
   function mergeParts(parts, syncedAt) {
     var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const nodes = /* @__PURE__ */ new Map();
@@ -4215,7 +4252,10 @@ var Server = (() => {
         nodes.set(node2.id, merged);
       }
       for (const edge2 of part.edges) edges2.set(edge2.id, edge2);
-      for (const issue2 of part.issues) issues2.set(issue2.id, issue2);
+      for (const issue2 of part.issues) {
+        const prev = issues2.get(issue2.id);
+        issues2.set(issue2.id, prev ? { ...issue2, categories: unionCategories(prev, issue2) } : issue2);
+      }
       for (const finding of (_a5 = part.findings) != null ? _a5 : []) findings.set(finding.id, finding);
       for (const df of (_b = part.dataFindings) != null ? _b : []) dataFindings.set(df.id, df);
       for (const f of (_c = part.frameworks) != null ? _c : []) frameworks.set(f.id, f);
@@ -5874,13 +5914,19 @@ var Server = (() => {
           options: ORDER_DIRECTIONS
         }
       ],
-      // Deliberately NOT offering filterBy.frameworkCategory. Every figure this app
-      // publishes — the issue count, AARS pillar A, the Toxic Combinations page, the tab
-      // literally called ai_issues — is scoped to wct-id-1998 and labelled AI. Nothing in
-      // the response says "this is an AI issue"; the category filter IS the claim. Widen it
-      // and "AI issues" silently means "all issues", with no field to catch it. Same reason
-      // AGENTIC_IDENTITIES locks its purpose filter.
-      locked: "The AI risk category (wct-id-1998) is fixed: it is what makes these issues AI issues, so widening it would relabel the whole register rather than extend it."
+      // STILL NOT offering filterBy.frameworkCategory, and the reason has moved rather than
+      // gone away. Every figure this app publishes — the issue count, AARS pillar A, the Toxic
+      // Combinations page, the tab literally called ai_issues — counts what this filter
+      // returned, and nothing in the response says which category a row matched. The register
+      // CAN now be widened, but only through the `issue_categories` Setting, which generates
+      // one ISSUES_CAT_<id> step per category so each row is stamped with the category that
+      // fetched it and each sync records the scope it applied.
+      //
+      // As a per-step variable it could not be either of those things: cleanStepVars would let
+      // a hand-edited cell change WHICH POPULATION every published figure counts, with no
+      // stamp on the rows and nothing in sync_history saying the scope moved. A knob that
+      // silently redefines the denominator is not a knob.
+      locked: "This step collects the AI risk category (wct-id-1998) and its category filter is not editable here: widening it would change what every published figure counts, with nothing on the row to say so. Choose categories in Settings (issue_categories) instead \u2014 each one gets its own step, and each row is stamped with the category it was collected under."
     },
     {
       stepId: "AI_ASSET_PROPERTIES",
@@ -5941,7 +5987,14 @@ var Server = (() => {
     {
       stepId: "CONFIG_RULES",
       fields: [],
-      locked: "This step takes no variables at all: it walks Wiz's whole rule catalogue unfiltered, deliberately \u2014 the filter input's type is unverified here, and naming an input type wrong fails the document while sending none cannot."
+      // It DOES take a filter now — `hasFindings: true`, which cuts 3,905 catalogue rows to
+      // 1,401 against the reference tenant. The old reason given here was that the filter
+      // input's type was unverified; phase0 sent CloudConfigurationRuleFilters against this
+      // tenant on 2026-08-23 and it answered (AARS_LIVE_MEASUREMENTS.md §6.10). Still not
+      // editable: the catalogue is a JOIN TARGET for issues and findings already stored, so
+      // narrowing it further is not a preference, it is a way to make a stored row's rule
+      // gloss disappear.
+      locked: "This step's one filter (rules that have findings) is not editable: the rule catalogue is what glosses the rule ids stored issues and findings already point at, so narrowing it further would blank references the ledger still holds."
     },
     {
       stepId: "IDENTITY_HYGIENE",
@@ -6008,6 +6061,17 @@ var Server = (() => {
       // what is collected is not worth the machinery.
       fields: [],
       locked: "This step's only filter picks whether disabled frameworks appear in the Settings picker. It does not decide what posture is collected \u2014 the framework selection does \u2014 so there is nothing here worth tuning per tenant."
+    },
+    {
+      // Matches every generated category step (ISSUES_CAT_wct-id-3, …) so the family shares
+      // one lock reason instead of falling through to the generic "no spec" text. Same shape
+      // as the posture family just below, and locked for the same kind of reason: the id is
+      // not a filter to tune, it is what the step's rows ARE — every row it returns is stamped
+      // with the category in its own name.
+      stepId: "ISSUES_CAT_",
+      prefix: true,
+      fields: [],
+      locked: "This step takes no editable variable: its category is not a filter to tune \u2014 it is what the step's rows are, and every row it collects is stamped with it. Choose categories in Settings (issue_categories) instead."
     },
     {
       // Matches every generated posture step (COMPLIANCE_POSTURE_wf-id-275, …) so the family
@@ -6757,7 +6821,13 @@ var Server = (() => {
       ignoreNote: seed.ignoreNote,
       ignoreExpiredAt: seed.ignoreExpiredAt,
       aiVerdict: seed.aiVerdict,
-      aiRecommendedSeverity: seed.aiRecommendedSeverity
+      aiRecommendedSeverity: seed.aiRecommendedSeverity,
+      // The register's scope stamp, exactly as a live sync at the default scope would write
+      // it. Not a seed knob: the sample landscape stands in for a sync, and a sync that wrote
+      // rows with no stamp beside a commit record naming a scope would have the tab and the
+      // history row telling two stories about one fact. One category, because that is the
+      // default and the default is what everything pinned about this landscape is true of.
+      categories: [RISK_CATEGORY_ID]
     };
     if ((_c = seed.environments) == null ? void 0 : _c.length) row.environments = seed.environments;
     if ((_d = seed.ticketUrls) == null ? void 0 : _d.length) row.ticketUrls = seed.ticketUrls;
@@ -8334,6 +8404,33 @@ var Server = (() => {
     return withoutCeiling(a) === withoutCeiling(b);
   }
 
+  // src/domain/registerScope.ts
+  var CANDIDATE_CATEGORIES = [
+    { id: RISK_CATEGORY_ID, name: "AI Security" },
+    { id: "wct-id-3", name: "Vulnerability Assessment" },
+    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats" },
+    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security" },
+    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management" },
+    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management" }
+  ];
+  var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
+  function cleanCategoryIds(v) {
+    if (!Array.isArray(v)) return DEFAULT_CATEGORY_IDS.slice();
+    const seen = {};
+    const out = [];
+    for (const raw of v) {
+      if (typeof raw !== "string") continue;
+      const id = raw.trim();
+      if (!id || seen[id]) continue;
+      seen[id] = true;
+      out.push(id);
+    }
+    return out.length ? out : DEFAULT_CATEGORY_IDS.slice();
+  }
+  function registerScopeSignature(ids) {
+    return cleanCategoryIds(ids.slice()).slice().sort().join("|");
+  }
+
   // src/domain/settingsLogic.ts
   function clampDepth(v) {
     return clampInt(v, DEPTH_DEFAULT, DEPTH_MIN, DEPTH_MAX);
@@ -8610,6 +8707,28 @@ var Server = (() => {
     const deduped = list2.filter((id) => seen[id] ? false : seen[id] = true);
     return { ...settings, selected_frameworks: deduped };
   }
+  function getIssueCategories(settings) {
+    const raw = settings["issue_categories"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      return DEFAULT_CATEGORY_IDS.slice();
+    }
+    return cleanCategoryIds(raw["ids"]);
+  }
+  function getIssueCategoriesVersion(settings) {
+    const raw = settings["issue_categories"];
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return 0;
+    const v = Number(raw["version"]);
+    return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+  }
+  function withIssueCategories(settings, ids) {
+    return {
+      ...settings,
+      issue_categories: {
+        version: getIssueCategoriesVersion(settings) + 1,
+        ids: cleanCategoryIds(ids)
+      }
+    };
+  }
   function withScanVars(settings, stepId, vars) {
     const current = getScanVars(settings);
     const clean2 = cleanStepVars(stepId, vars);
@@ -8794,6 +8913,11 @@ var Server = (() => {
   function setSelectedFrameworks(ids) {
     saveSettings(withSelectedFrameworks(loadSettings(), ids));
     return getSelectedFrameworks2();
+  }
+  var getIssueCategories2 = () => getIssueCategories(loadSettings());
+  function setIssueCategories(ids) {
+    saveSettings(withIssueCategories(loadSettings(), ids));
+    return getIssueCategories2();
   }
   var getFiveRsPins2 = () => getFiveRsPins(loadSettings());
   function setFiveRsPins(pins) {
@@ -9618,7 +9742,7 @@ var Server = (() => {
     return e;
   }
   function issueToRow(i) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C;
     return {
       id: i.id,
       rule_id: i.ruleId,
@@ -9666,11 +9790,15 @@ var Server = (() => {
       // a structure here. Empty string when attribution found nothing, which rowToIssue reads
       // back as an empty ARRAY rather than as absent — "we looked and found none".
       attributed_asset_ids: ((_A = i.attributedAssetIds) != null ? _A : []).join(","),
-      attribution_hop: (_B = i.attributionHop) != null ? _B : null
+      attribution_hop: (_B = i.attributionHop) != null ? _B : null,
+      // The register's scope stamp. Comma-joined like the two above; empty only for a row
+      // this app built before the stamp existed, which rowToIssue reads back as the AI
+      // category — the only scope any of those syncs ran. See domain/registerScope.ts.
+      categories: ((_C = i.categories) != null ? _C : []).join(",")
     };
   }
   function rowToIssue(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I;
     const issue2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       ruleId: String((_b = r["rule_id"]) != null ? _b : ""),
@@ -9707,17 +9835,19 @@ var Server = (() => {
       aiVerdict: (_B = r["ai_verdict"]) != null ? _B : void 0,
       aiRecommendedSeverity: (_C = r["ai_recommended_severity"]) != null ? _C : void 0
     };
-    const environments = String((_D = r["environments"]) != null ? _D : "").split(",").filter(Boolean);
+    const categories = String((_D = r["categories"]) != null ? _D : "").split(",").filter(Boolean);
+    issue2.categories = categories.length ? categories : [RISK_CATEGORY_ID];
+    const environments = String((_E = r["environments"]) != null ? _E : "").split(",").filter(Boolean);
     if (environments.length) issue2.environments = environments;
-    const ticketUrls = String((_E = r["ticket_urls"]) != null ? _E : "").split(",").filter(Boolean);
+    const ticketUrls = String((_F = r["ticket_urls"]) != null ? _F : "").split(",").filter(Boolean);
     if (ticketUrls.length) issue2.ticketUrls = ticketUrls;
     if (parseBool(r["validated_exploitable"])) issue2.validatedAsExploitable = true;
-    const attributionHop = (_F = r["attribution_hop"]) != null ? _F : null;
+    const attributionHop = (_G = r["attribution_hop"]) != null ? _G : null;
     if (attributionHop === "direct" || attributionHop === "RUNS_AS" || attributionHop === "none") {
       issue2.attributionHop = attributionHop;
-      issue2.attributedAssetIds = String((_G = r["attributed_asset_ids"]) != null ? _G : "").split(",").filter(Boolean);
+      issue2.attributedAssetIds = String((_H = r["attributed_asset_ids"]) != null ? _H : "").split(",").filter(Boolean);
     }
-    const problemOutcome = (_H = r["problem_outcome"]) != null ? _H : null;
+    const problemOutcome = (_I = r["problem_outcome"]) != null ? _I : null;
     if (problemOutcome) issue2.problemOutcome = problemOutcome;
     const problemInput = parseJson(r["problem_input_json"], null);
     if (problemInput) issue2.problemInput = problemInput;
@@ -10151,7 +10281,12 @@ var Server = (() => {
       // stored facts changed MEANING, which Recompute cannot repair. Recorded per sync so the
       // trend can mark the break rather than let a legitimate collapse in the tiered population
       // read as risk improving.
-      derivation_version: DERIVATION_VERSION
+      derivation_version: DERIVATION_VERSION,
+      // The category scope this sync APPLIED — read off the same list syncSteps built its
+      // battery from, never off the settings at read time. A widened setting and an unsynced
+      // ledger disagree until the next sync, and bootstrap says so rather than letting a
+      // total counted under one scope be compared with one counted under another.
+      register_scope: registerScopeSignature(getIssueCategories2())
     }]);
     setScoredRuleVersion(ruleVersion);
     setDecidedRuleVersion(problemRuleVersion);
@@ -10879,6 +11014,26 @@ var Server = (() => {
       pageCount
     };
   }
+
+  // src/domain/rank.ts
+  var DEFAULT_RANK_RULE = {
+    ruleWeights: [],
+    defaultRuleWeight: 0.5,
+    overdueDayBuckets: [0, 30, 90, 180, 365],
+    ageDayBuckets: [30, 90, 180, 365, 540],
+    timeSource: "dueAtOnly",
+    exploitationWeights: { kev: 1, exploit: 0.7, epss: 0.6, none: 0.2 },
+    epssThreshold: 0.1,
+    adjacencyWeights: { DIRECT: 1, ADJACENT: 0.7, UNLINKED: 0.4 },
+    shares: { rule: 0.5, time: 0.5, exploitation: 0, adjacency: 0 },
+    timeShare: 0.5
+  };
+  var RANK_PRESET_V2 = {
+    ...DEFAULT_RANK_RULE,
+    timeSource: "dueAtElseAge",
+    shares: { rule: 0.25, time: 0.3, exploitation: 0.3, adjacency: 0.15 },
+    timeShare: 0.3
+  };
 
   // src/domain/problems.ts
   var PROBLEMS_CLIENT_ALL_MAX = 1e3;
@@ -14540,6 +14695,14 @@ var Server = (() => {
   function openIssues() {
     return viewIssues().filter(isUnresolvedIssue);
   }
+  function registerScopeNotice(latest) {
+    var _a5;
+    const persisted = latest ? String((_a5 = latest["register_scope"]) != null ? _a5 : "") : "";
+    if (!persisted) return null;
+    const current = registerScopeSignature(getIssueCategories2());
+    if (persisted === current) return null;
+    return { kind: "registerScope", persisted, current, remedy: "sync" };
+  }
   function bootstrap(_p) {
     return run(() => {
       var _a5;
@@ -14638,6 +14801,16 @@ var Server = (() => {
         // from the condition that raises it.
         remedy: "sync"
       },
+      // A THIRD kind, and the same argument one axis over. `derivation` says the stored facts
+      // were READ differently; this says a different POPULATION was asked for. The ledger holds
+      // whatever categories the last sync applied, the settings hold what the next one will,
+      // and between the two every issue figure on every page is counted under the old scope
+      // while the Settings page shows the new one. Only a sync closes that.
+      //
+      // Null — no notice at all — when they agree, when nothing has ever been synced (an
+      // unmeasured register is not a register with a scope problem), and when the history row
+      // predates the column: an absent stamp is unknown, never "a different scope".
+      registerScope: registerScopeNotice(latest),
       latestSync: latest,
       // This block is dereferenced in exactly ONE place in the client — helpContent's
       // "severity" lexicon entry — and it reads `openIssues` alone. `aiAssets`, `totalAssets`
@@ -16018,7 +16191,13 @@ var Server = (() => {
       hasCredentials: hasWizCredentials(),
       // The operator's overrides on the 5Rs scope. Only the pins: the derived default is
       // computed in getCompliance, where the trees and findings it needs already are.
-      fiveRsPins: getFiveRsPins2()
+      fiveRsPins: getFiveRsPins2(),
+      // WHICH RISK CATEGORIES THE ISSUE REGISTER COLLECTS, and the candidates offered. The
+      // candidate list travels with the selection because a bare id is unreadable — the
+      // measured names live in domain/registerScope.ts and a second copy in the client would
+      // be a second place for them to drift.
+      issueCategories: getIssueCategories2(),
+      candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({ id: c.id, name: c.name }))
     }));
   }
   function setSettings(p) {
@@ -16039,6 +16218,9 @@ var Server = (() => {
           )
         );
       }
+      if (params["issueCategories"] !== void 0) {
+        setIssueCategories(params["issueCategories"]);
+      }
       return {
         defaultDepth: getDefaultDepth2(),
         maxNodes: getMaxNodes2(),
@@ -16047,7 +16229,10 @@ var Server = (() => {
         autoExpand: getAutoExpand2(),
         projectView: getProjectView2(),
         domainView: getDomainView2(),
-        fiveRsPins: getFiveRsPins2()
+        fiveRsPins: getFiveRsPins2(),
+        // Echoed like the rest, so the Settings page repaints the STORED list rather than
+        // the one it asked for.
+        issueCategories: getIssueCategories2()
       };
     });
   }
@@ -16588,6 +16773,7 @@ var Server = (() => {
   function syncSteps(aiTypes) {
     const types = aiTypes != null ? aiTypes : resolveAiResourceTypes().types;
     const frameworkIds = getSelectedFrameworks2(() => loadFrameworks());
+    const categoryIds = getIssueCategories2();
     const overrides = getScanVars2();
     const vars = (stepId, base) => effectiveStepVars(stepId, base, overrides[stepId]);
     const selectedFrameworks = () => frameworkIds;
@@ -16628,6 +16814,35 @@ var Server = (() => {
         normalize: normalizeIssuesPage,
         optional: true
       },
+      // The rest of the selected risk categories — ONE STEP PER CATEGORY, generated the way
+      // the posture steps below are, so the budget/resume machinery needs no special case.
+      //
+      // WHY NOT ONE STEP WITH SIX IDS IN ITS FILTER. Nothing in an issue says which category
+      // matched it (AARS_LIVE_MEASUREMENTS.md §6.8: `Issue` has 51 fields and not one names a
+      // category), so a filter naming six categories returns rows that cannot be stamped —
+      // and the stamp is the only thing standing between "the AI register" and "every issue
+      // in the project" once the list is widened. One step per category means the step's own
+      // id says what its rows are, and its normalizer writes that onto every row it returns.
+      //
+      // ISSUES_TOXIC keeps its id and its own default category rather than being folded into
+      // this family: it is the step every stored override, every scan-area assertion and the
+      // whole toxic-combinations area is keyed on, and renaming it would silently orphan them.
+      ...categoryIds.filter((id) => id !== RISK_CATEGORY_ID).map((categoryId) => ({
+        id: `ISSUES_CAT_${categoryId}`,
+        area: "toxic",
+        writes: ["ai_issues", "ai_assets"],
+        run: "connection",
+        connectionField: "issuesV2",
+        query: Q_ISSUES,
+        // No `vars()` indirection, exactly as the posture family has none: these steps are
+        // LOCKED, overrides are stored per step id, so a shared "ISSUES_CAT_" key would be
+        // an override slot nothing could ever write to.
+        extraVariables: aiIssuesVariables(projectScope(), [categoryId]),
+        // The stamp. Closed over the category this step was generated for, the way the
+        // per-rule steps closed over their group — it is the one place the fact survives.
+        normalize: (rows) => normalizeIssuesPage(rows, categoryId),
+        optional: true
+      })),
       // Real compliance findings (configurationFindings) — feeds AARS pillar B.
       {
         id: "CONFIG_FINDINGS",
@@ -16657,6 +16872,12 @@ var Server = (() => {
         run: "connection",
         connectionField: "cloudConfigurationRules",
         query: Q_CONFIG_RULES,
+        // `hasFindings: true` — 3,905 rules down to 1,401, measured against this tenant
+        // (AARS_LIVE_MEASUREMENTS.md §6.10), where `project` is completely inert. It narrows
+        // the FETCH only: the catalogue is a join target, so syncStore writes this tab only
+        // when the step returned rows and a rule that stops having findings keeps the entry a
+        // stored issue still references. See aiConfigRulesVariables.
+        extraVariables: aiConfigRulesVariables(),
         normalize: normalizeConfigRulesPage,
         optional: true,
         // The big one: ~3,858 rules is 39 pages at PAGE_SIZE and 8 at PAGE_SIZE_WIDE, and
@@ -17028,6 +17249,12 @@ var Server = (() => {
       case "FRAMEWORKS_LIST":
         return aiSecurityFrameworksVariables();
       default:
+        if (stepId.indexOf("ISSUES_CAT_") === 0) {
+          return aiIssuesVariables(
+            projectScope(),
+            [stepId.slice("ISSUES_CAT_".length)]
+          );
+        }
         if (stepId.indexOf("COMPLIANCE_POSTURE_") === 0) {
           return {
             ...aiCompliancePostureVariables(projectScope()),

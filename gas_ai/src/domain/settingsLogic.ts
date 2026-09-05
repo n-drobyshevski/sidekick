@@ -7,6 +7,7 @@ import { cleanAarsRule } from "./aarsRule";
 import type { ScopePins } from "./complianceScope";
 import { cleanProblemRule, DEFAULT_PROBLEM_RULE, type ProblemRule } from "./problemRule";
 import { cleanPostureRule, DEFAULT_POSTURE_RULE, type PostureRule } from "./postureRule";
+import { cleanCategoryIds, DEFAULT_CATEGORY_IDS } from "./registerScope";
 import { cleanStepVars } from "./scanVars";
 import {
   DEPTH_DEFAULT,
@@ -602,6 +603,57 @@ export function withSelectedFrameworks(settings: Rec, ids: unknown): Rec {
   const seen: Record<string, true> = {};
   const deduped = list.filter((id) => (seen[id] ? false : (seen[id] = true)));
   return { ...settings, selected_frameworks: deduped };
+}
+
+// ------------------------------------------------------- the issue register's own scope
+
+/** A stored `issue_categories` value: the ids, and the generation they were saved under. */
+export interface StoredIssueCategories {
+  version: number;
+  ids: string[];
+}
+
+/**
+ * WHICH RISK CATEGORIES THE ISSUE REGISTER COLLECTS.
+ *
+ * A SETTING, and deliberately NOT a `VarField` on the ISSUES_TOXIC step beside `status` and
+ * `type`. Those knobs narrow a population the register has already claimed; this one decides
+ * WHICH POPULATION every published figure counts, and `cleanStepVars` would let a
+ * hand-edited settings cell move it with nothing recording that it moved. It is versioned
+ * for the same reason `aars_rule` is: the ids a sync APPLIED are stamped on its history row
+ * (`sync_history.register_scope`), and a stored list that has since changed is a real,
+ * reportable disagreement rather than a silent one.
+ *
+ * Unlike `selected_frameworks` one section up there is NO "explicitly chose none" state to
+ * preserve: an empty category filter is not an empty register, it is an UNFILTERED one — the
+ * whole project instead of one category — so `cleanCategoryIds` folds empty back to the
+ * default. See registerScope.ts.
+ */
+export function getIssueCategories(settings: Rec): string[] {
+  const raw = settings["issue_categories"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return DEFAULT_CATEGORY_IDS.slice();
+  }
+  return cleanCategoryIds((raw as Rec)["ids"]);
+}
+
+/** The generation of the stored list; 0 when nothing has ever been chosen. */
+export function getIssueCategoriesVersion(settings: Rec): number {
+  const raw = settings["issue_categories"];
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return 0;
+  const v = Number((raw as Rec)["version"]);
+  return Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+}
+
+/** Store a category list and bump its generation. PATCH-safe: it touches no other key. */
+export function withIssueCategories(settings: Rec, ids: unknown): Rec {
+  return {
+    ...settings,
+    issue_categories: {
+      version: getIssueCategoriesVersion(settings) + 1,
+      ids: cleanCategoryIds(ids),
+    },
+  };
 }
 
 export function withScanVars(settings: Rec, stepId: string, vars: unknown): Rec {

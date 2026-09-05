@@ -795,10 +795,21 @@ export const Q_ISSUES =
  * (see comboSummary), which is exactly the right home for one. Narrowing is available as
  * an editable step variable for an operator who wants it; it is not the default.
  */
-export function aiIssuesVariables(scope: string[] | null): { filterBy: unknown; orderBy: unknown } {
+export function aiIssuesVariables(
+  scope: string[] | null,
+  categoryIds?: readonly string[],
+): { filterBy: unknown; orderBy: unknown } {
   const filterBy: Record<string, unknown> = {
     status: ["OPEN", "IN_PROGRESS"],
-    frameworkCategory: [RISK_CATEGORY_ID],
+    // ONE STEP PER CATEGORY, so this is a one-element list on every step the battery runs —
+    // never the whole selection at once. The response says nothing about which category a
+    // row matched (Issue has no category field), so a filter naming six of them returns rows
+    // that cannot be stamped, and an unstamped row is what turns "AI issues" into "issues"
+    // with nothing on the page to catch it. Absent means the default, which is what this
+    // register collected before the list was a setting.
+    frameworkCategory: categoryIds && categoryIds.length
+      ? [...categoryIds]
+      : [RISK_CATEGORY_ID],
   };
   if (scope && scope.length) filterBy["project"] = scope;
   return { filterBy, orderBy: { field: "SEVERITY_EXPLOITABLE", direction: "DESC" } };
@@ -1020,10 +1031,18 @@ export function aiPrincipalsVariables(
  * (exemples/ai_config_rules_response.js): id, name, shortId, subjectEntityType and
  * externalReferences, and nothing else.
  *
- * NO `filterBy`, deliberately. The filter input's type name is unverified, and naming an
- * input type wrong is a validation error that takes the whole document down — whereas sending
- * no filter cannot be. The capture looks unfiltered anyway (it carries Tencent, Synapse and
- * Dockerfile-lint rules beside the AI ones), so this is what produced it.
+ * IT TAKES A `filterBy` NOW, and this paragraph used to say it could not. The claim was that
+ * `CloudConfigurationRuleFilters` was an unverified type name and that naming an input type
+ * wrong takes the whole document down while sending no filter cannot. The first half was
+ * falsified on 2026-08-23: phase0 sent that exact type against this tenant and it answered
+ * (AARS_LIVE_MEASUREMENTS.md §6.10). The second half is still true, which is why the step
+ * stays optional — a tenant that refuses the input skips the step rather than failing a sync.
+ *
+ * The capture this document was transcribed from IS unfiltered (it carries Tencent, Synapse
+ * and Dockerfile-lint rules beside the AI ones), and that is exactly the waste: 3,905
+ * definitions collected to reference 112 under the candidate category set — 97.1% dead
+ * weight, at 8 pages of PAGE_SIZE_WIDE. See aiConfigRulesVariables for what narrows it and
+ * what deliberately does not.
  *
  * It is REFERENCE DATA and the sync treats it as such: ~3,858 rules is ~39 pages at PAGE_SIZE,
  * against a battery that is otherwise ~10–20 calls. The step is gated on a 30-day freshness
@@ -1031,8 +1050,8 @@ export function aiPrincipalsVariables(
  * the landscape moves.
  */
 export const Q_CONFIG_RULES =
-  "query SidekickAiConfigRules($first: Int, $after: String) {\n" +
-  "  cloudConfigurationRules(first: $first, after: $after) {\n" +
+  "query SidekickAiConfigRules($first: Int, $after: String, $filterBy: CloudConfigurationRuleFilters) {\n" +
+  "  cloudConfigurationRules(first: $first, after: $after, filterBy: $filterBy) {\n" +
   "    totalCount\n" +
   "    pageInfo { hasNextPage endCursor }\n" +
   "    nodes {\n" +
@@ -1044,6 +1063,27 @@ export const Q_CONFIG_RULES =
   "    }\n" +
   "  }\n" +
   "}\n";
+
+/**
+ * The $filterBy for the rule catalogue: rules that have findings somewhere in this tenant.
+ *
+ * MEASURED, not assumed (AARS_LIVE_MEASUREMENTS.md §6.10). Against the reference tenant:
+ * no filter 3,905 rules; `project` alone 3,905 — completely inert, which is why it is NOT
+ * here despite every other step carrying projectScope(); `hasFindings: true` 1,401; and
+ * `project` + `hasFindings` 583. The 583 agrees exactly with the 583 distinct rules counted
+ * independently from the findings side, which is the check worth having.
+ *
+ * `hasFindings` alone, and no category filter either. This catalogue is a JOIN TARGET — it
+ * is what glosses an opaque `SUB-082` in the AARS cascade and what the identity-hygiene
+ * matchers resolve against — so a rule that stops having findings must not vanish from a
+ * register that still references it historically. Narrowing the FETCH is a real reduction;
+ * narrowing it to the categories the issue register happens to collect today would make the
+ * catalogue follow a setting, and the rows already stored are kept either way (syncStore
+ * writes this tab only when the step returned something).
+ */
+export function aiConfigRulesVariables(): { filterBy: unknown } {
+  return { filterBy: { hasFindings: true } };
+}
 
 /**
  * The $filterBy for the identity-hygiene findings step: the MFA and dormancy rules resolved

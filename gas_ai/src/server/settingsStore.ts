@@ -263,6 +263,32 @@ export function setSelectedFrameworks(ids: unknown): string[] {
 }
 
 /**
+ * Which risk categories the issue register collects, cleaned — defaulting to the AI
+ * category alone, which is what this register collected before the list was a setting.
+ *
+ * No catalogue thunk, unlike getSelectedFrameworks above: a framework id is version-scoped
+ * and has to be re-resolved by name against what the tenant carries, while a category id is
+ * the filter value itself and the six candidates are recorded with the measurement that
+ * chose them (registerScope.ts). There is nothing to resolve it against and nothing that
+ * would make resolving it more honest.
+ */
+export const getIssueCategories = (): string[] => logic.getIssueCategories(loadSettings());
+
+/** The generation of the stored list — 0 until something is chosen. */
+export const getIssueCategoriesVersion = (): number =>
+  logic.getIssueCategoriesVersion(loadSettings());
+
+/**
+ * Choose the categories. A PATCH — `withIssueCategories` rewrites one key of the loaded
+ * settings and returns the rest untouched, so two tabs of one Settings form saving a minute
+ * apart do not revert each other.
+ */
+export function setIssueCategories(ids: unknown): string[] {
+  saveSettings(logic.withIssueCategories(loadSettings(), ids));
+  return getIssueCategories();
+}
+
+/**
  * The operator's overrides on which 5Rs rules this app looks at.
  *
  * Only the pins are stored, never the resolved selection: the default is DERIVED from the

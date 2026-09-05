@@ -38,7 +38,7 @@ import {
   type PolicyKind,
   type PostureRow,
 } from "./graphTypes";
-import { classifyIssue, OTHER_GROUP_ID, type ComboGroup } from "./toxicCombos";
+import { classifyIssue, OTHER_GROUP_ID, RISK_CATEGORY_ID, type ComboGroup } from "./toxicCombos";
 import { clean, type Rec } from "./util";
 
 function str(v: unknown): string | undefined {
@@ -396,7 +396,14 @@ function ticketUrlsOf(raw: unknown): string[] {
  * not "" — the filter collects the whole AI category, so unrecognised rules are real
  * register rows rather than noise, and comboSummary gives them their own bucket.
  */
-export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
+/**
+ * @param categoryId The risk category this page was FETCHED under, stamped onto every row.
+ *   Omitted means the AI category — what this register collected before the category list
+ *   was a setting, and what every existing caller and fixture means. The response carries
+ *   no category of its own (`Issue` has 51 fields and not one names one), so this argument
+ *   is the only place the fact can come from. See domain/registerScope.ts.
+ */
+export function normalizeIssuesPage(rows: Rec[], categoryId?: string): NormalizedPart {
   const part = emptyPart();
   for (const raw of rows) {
     const issueId = str(raw["id"]);
@@ -473,6 +480,9 @@ export function normalizeIssuesPage(rows: Rec[]): NormalizedPart {
         aiAnalysis && typeof aiAnalysis === "object"
           ? (str(aiAnalysis["recommendedSeverity"]) as Severity | undefined)
           : undefined,
+      // The scope stamp. Always set, never optional-on-absence like the fields below: a row
+      // with no category is a row that cannot say which question it answers.
+      categories: [categoryId && categoryId.trim() ? categoryId.trim() : RISK_CATEGORY_ID],
     };
     // Only set the array/boolean fields when the response actually carried them, so an
     // absent field stays undefined ("not captured") rather than becoming [] or false.
@@ -1590,6 +1600,20 @@ export function normalizeIdentityAccessPage(rows: Rec[]): NormalizedPart {
   return part;
 }
 
+/**
+ * Every category two readings of one issue were collected under, sorted and deduped.
+ *
+ * Sorted so the merged value does not depend on which page arrived first — the stamp is
+ * compared between syncs, and a set that reorders itself would read as a change.
+ */
+function unionCategories(a: IssueRow, b: IssueRow): string[] {
+  const out: string[] = [];
+  for (const id of [...(a.categories ?? []), ...(b.categories ?? [])]) {
+    if (id && out.indexOf(id) === -1) out.push(id);
+  }
+  return out.sort();
+}
+
 /** Merge battery parts: last-write-wins per node id, but sticky flags never unset. */
 export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
   doc: GraphDoc;
@@ -1638,7 +1662,21 @@ export function mergeParts(parts: NormalizedPart[], syncedAt: string): {
       nodes.set(node.id, merged);
     }
     for (const edge of part.edges) edges.set(edge.id, edge);
-    for (const issue of part.issues) issues.set(issue.id, issue);
+    for (const issue of part.issues) {
+      const prev = issues.get(issue.id);
+      // LAST PART WINS, field for field — unchanged, and deliberately so: a later page or a
+      // later step carries the same issue's own fields and there is no reason to prefer the
+      // earlier reading of any of them.
+      //
+      // ONE EXCEPTION, and it is the whole reason this is no longer a bare `set`. The
+      // category stamp is not a property of the issue, it is a property of the STEP that
+      // fetched it: one issue can sit in several selected categories and arrive once per
+      // category, and taking the last stamp would leave the register asserting that an
+      // issue matched exactly one of them. Union, sorted and deduped, so the merged row
+      // states every category it was actually collected under and the order pages arrived
+      // in cannot change what it says.
+      issues.set(issue.id, prev ? { ...issue, categories: unionCategories(prev, issue) } : issue);
+    }
     for (const finding of part.findings ?? []) findings.set(finding.id, finding);
     for (const df of part.dataFindings ?? []) dataFindings.set(df.id, df);
     for (const f of part.frameworks ?? []) frameworks.set(f.id, f);

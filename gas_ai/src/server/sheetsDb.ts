@@ -106,6 +106,15 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // entity Wiz raised the issue on so the drill-down still matches the console — see
     // IssueRow.attributedAssetIds for the measurement that made this necessary.
     "attributed_asset_ids", "attribution_hop",
+    // WHICH RISK CATEGORIES THIS ROW WAS COLLECTED UNDER. Appended, same no-migration
+    // contract as every block above — and declared here rather than only written, because
+    // writeGrid projects a row onto the DECLARED headers and silently discards the rest: an
+    // undeclared column is written every sync and read back as a default, forever.
+    //
+    // Comma-joined, matching `environments` and `attributed_asset_ids`; the `_json` suffix
+    // is reserved for structures. A row written before this column reads back as the AI
+    // category, which is the only scope those syncs ever ran.
+    "categories",
   ],
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
@@ -233,6 +242,14 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // what a stored fact MEANS, which only a full sync can repair. The trend marks the break
     // here so a step is never read as movement.
     "derivation_version",
+    // THE SCOPE THIS SYNC APPLIED — the sorted category signature, not the one settings hold
+    // now. The two differ across a settings change, and a total counted under six categories
+    // is not comparable with one counted under one; stamping today's list onto yesterday's
+    // row would erase exactly the discontinuity the trend has to mark. Same argument as
+    // `derivation_version` above it, one axis over: that records what a fact MEANS, this
+    // records which population was asked. Empty on a row written before the column, which
+    // reads as "unknown" and never as "a different scope".
+    "register_scope",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

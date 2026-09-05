@@ -239,6 +239,22 @@ describe("Q_ISSUES + aiIssuesVariables", () => {
     const v = aiIssuesVariables(["proj-1"]) as { filterBy: Record<string, unknown> };
     expect(v.filterBy["project"]).toEqual(["proj-1"]);
   });
+
+  it("takes ONE category per call, and defaults to the AI one", () => {
+    // The register runs one step per selected category so every row can be stamped with the
+    // category that fetched it — nothing in the response says which one matched. The
+    // document is untouched: the category is a variable, which is why widening the register
+    // needs no new query. See domain/registerScope.ts.
+    const widened = aiIssuesVariables(null, ["wct-id-3"]) as {
+      filterBy: Record<string, unknown>;
+    };
+    expect(widened.filterBy["frameworkCategory"]).toEqual(["wct-id-3"]);
+    // Absent or empty is the default, which is what every existing caller sends.
+    for (const arg of [undefined, []]) {
+      const v = aiIssuesVariables(null, arg) as { filterBy: Record<string, unknown> };
+      expect(v.filterBy["frameworkCategory"]).toEqual([RISK_CATEGORY_ID]);
+    }
+  });
 });
 
 describe("Q_CONFIG_FINDINGS + aiConfigFindingsVariables", () => {

@@ -124,6 +124,7 @@ import {
 } from "../domain/complianceOverview";
 import { dropUnselected, scopeFiveRs, withCountsFrom } from "../domain/complianceScope";
 import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
+import { CANDIDATE_CATEGORIES, registerScopeSignature } from "../domain/registerScope";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
@@ -364,6 +365,25 @@ function openIssues(): IssueRow[] {
 
 // ------------------------------------------------------------------------ bootstrap
 
+/**
+ * The scope-drift notice, or null when there is nothing to say.
+ *
+ * Compared as SIGNATURES rather than as lists, so reordering the same categories is not a
+ * change — the order decides which step runs first and nothing else, and a notice that fired
+ * on a reorder would train an operator to ignore it. Both sides travel with the notice
+ * because "the register moved" is useless without saying from what to what.
+ *
+ * Not an `export`: every exported function in this file needs a matching GAS delegator in
+ * dist/entry.js, and this is a detail of bootstrap, not an endpoint.
+ */
+function registerScopeNotice(latest: Rec | null): Rec | null {
+  const persisted = latest ? String(latest["register_scope"] ?? "") : "";
+  if (!persisted) return null;
+  const current = registerScopeSignature(settingsStore.getIssueCategories());
+  if (persisted === current) return null;
+  return { kind: "registerScope", persisted, current, remedy: "sync" };
+}
+
 export function bootstrap(_p?: unknown): ApiResult {
   return run(() => ({
     ...(durablyCached("bootstrapCore", null, bootstrapCore) as Rec),
@@ -461,6 +481,16 @@ function bootstrapCore(): Rec {
       // from the condition that raises it.
       remedy: "sync",
     },
+    // A THIRD kind, and the same argument one axis over. `derivation` says the stored facts
+    // were READ differently; this says a different POPULATION was asked for. The ledger holds
+    // whatever categories the last sync applied, the settings hold what the next one will,
+    // and between the two every issue figure on every page is counted under the old scope
+    // while the Settings page shows the new one. Only a sync closes that.
+    //
+    // Null — no notice at all — when they agree, when nothing has ever been synced (an
+    // unmeasured register is not a register with a scope problem), and when the history row
+    // predates the column: an absent stamp is unknown, never "a different scope".
+    registerScope: registerScopeNotice(latest),
     latestSync: latest,
     // This block is dereferenced in exactly ONE place in the client — helpContent's
     // "severity" lexicon entry — and it reads `openIssues` alone. `aiAssets`, `totalAssets`
@@ -2771,6 +2801,12 @@ export function getSettings(_p?: unknown): ApiResult {
     // The operator's overrides on the 5Rs scope. Only the pins: the derived default is
     // computed in getCompliance, where the trees and findings it needs already are.
     fiveRsPins: settingsStore.getFiveRsPins(),
+    // WHICH RISK CATEGORIES THE ISSUE REGISTER COLLECTS, and the candidates offered. The
+    // candidate list travels with the selection because a bare id is unreadable — the
+    // measured names live in domain/registerScope.ts and a second copy in the client would
+    // be a second place for them to drift.
+    issueCategories: settingsStore.getIssueCategories(),
+    candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({ id: c.id, name: c.name })),
   }));
 }
 
@@ -2803,6 +2839,14 @@ export function setSettings(p?: unknown): ApiResult {
         ),
       );
     }
+    // WHICH POPULATION EVERY PUBLISHED ISSUE FIGURE COUNTS. Not validated against the
+    // candidate list: `securityCategories` returns 500+ rows on this tenant including
+    // UUID-keyed custom ones, so a whitelist would lock an operator out of their own
+    // register. `cleanCategoryIds` folds an empty list back to the default, because an empty
+    // category filter is not an empty register — it is an UNFILTERED one.
+    if (params["issueCategories"] !== undefined) {
+      settingsStore.setIssueCategories(params["issueCategories"]);
+    }
     return {
       defaultDepth: settingsStore.getDefaultDepth(),
       maxNodes: settingsStore.getMaxNodes(),
@@ -2812,6 +2856,9 @@ export function setSettings(p?: unknown): ApiResult {
       projectView: settingsStore.getProjectView(),
       domainView: settingsStore.getDomainView(),
       fiveRsPins: settingsStore.getFiveRsPins(),
+      // Echoed like the rest, so the Settings page repaints the STORED list rather than
+      // the one it asked for.
+      issueCategories: settingsStore.getIssueCategories(),
     };
   });
 }

@@ -18,7 +18,7 @@ import {
   withDataFindingCounts,
   worstBusinessImpact,
 } from "../src/domain/syncNormalize";
-import { COMBO_GROUPS, OTHER_GROUP_ID } from "../src/domain/toxicCombos";
+import { COMBO_GROUPS, OTHER_GROUP_ID, RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 import type { IssueRow } from "../src/domain/graphTypes";
 
 const AGENT_RAW = {
@@ -400,6 +400,47 @@ describe("mergeParts", () => {
     const b = normalizeConfigFindingsPage([CONFIG_FINDING_RAW]);
     const { findings } = mergeParts([a, b], "2026-06-28T06:00:00Z");
     expect(findings).toHaveLength(1);
+  });
+
+  it("unions the CATEGORY STAMPS of one issue collected under two categories", () => {
+    // The register runs one step per selected category, so an issue sitting in two of them
+    // arrives twice — once per step, each stamped by the step that fetched it. Taking the
+    // last stamp would leave the row asserting it matched exactly one, which is the claim
+    // the whole stamp exists to prevent (Issue carries no category field of its own).
+    const ai = normalizeIssuesPage([issueRaw("iss-two-cats")], "wct-id-1998");
+    const identity = normalizeIssuesPage([issueRaw("iss-two-cats")], "wct-id-3");
+    const { issues } = mergeParts([ai, identity], "2026-06-28T06:00:00Z");
+    expect(issues).toHaveLength(1);
+    expect(issues[0].categories).toEqual(["wct-id-1998", "wct-id-3"]);
+    // Sorted, so the merged value does not depend on which page arrived first.
+    const { issues: reversed } = mergeParts([identity, ai], "2026-06-28T06:00:00Z");
+    expect(reversed[0].categories).toEqual(["wct-id-1998", "wct-id-3"]);
+  });
+
+  it("still takes the LAST part's value for every other field", () => {
+    // The union above is the ONE exception to last-wins, and it has to stay one: a later
+    // page carries the same issue's own fields and there is no reason to prefer an earlier
+    // reading of any of them.
+    const first = normalizeIssuesPage(
+      [{ ...issueRaw("iss-two-cats"), status: "OPEN", assignee: { name: "First" } }],
+      "wct-id-1998",
+    );
+    const second = normalizeIssuesPage(
+      [{ ...issueRaw("iss-two-cats"), status: "IN_PROGRESS", assignee: { name: "Second" } }],
+      "wct-id-3",
+    );
+    const { issues } = mergeParts([first, second], "2026-06-28T06:00:00Z");
+    expect(issues[0].status).toBe("IN_PROGRESS");
+    expect(issues[0].assignee).toBe("Second");
+    expect(issues[0].categories).toEqual(["wct-id-1998", "wct-id-3"]);
+  });
+
+  it("stamps the AI category when no category is named — every existing caller", () => {
+    const { issues } = mergeParts(
+      [normalizeIssuesPage([issueRaw("iss-default")])],
+      "2026-06-28T06:00:00Z",
+    );
+    expect(issues[0].categories).toEqual([RISK_CATEGORY_ID]);
   });
 });
 

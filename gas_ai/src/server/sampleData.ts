@@ -20,7 +20,7 @@ import type {
   GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
 } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
-import { classifyIssue, OTHER_GROUP_ID } from "../domain/toxicCombos";
+import { classifyIssue, OTHER_GROUP_ID, RISK_CATEGORY_ID } from "../domain/toxicCombos";
 
 const T0 = "2026-04-02T08:00:00Z"; // firstSeen for long-lived assets
 const T1 = "2026-06-28T05:00:00Z"; // lastSeen (the seed "sync" horizon)
@@ -661,6 +661,12 @@ function issue(seed: IssueSeed): IssueRow {
     ignoreExpiredAt: seed.ignoreExpiredAt,
     aiVerdict: seed.aiVerdict,
     aiRecommendedSeverity: seed.aiRecommendedSeverity,
+    // The register's scope stamp, exactly as a live sync at the default scope would write
+    // it. Not a seed knob: the sample landscape stands in for a sync, and a sync that wrote
+    // rows with no stamp beside a commit record naming a scope would have the tab and the
+    // history row telling two stories about one fact. One category, because that is the
+    // default and the default is what everything pinned about this landscape is true of.
+    categories: [RISK_CATEGORY_ID],
   };
   if (seed.environments?.length) row.environments = seed.environments;
   if (seed.ticketUrls?.length) row.ticketUrls = seed.ticketUrls;

@@ -668,6 +668,19 @@ export interface IssueRow {
    */
   attributionHop?: "direct" | "RUNS_AS" | "none";
   assetName: string;
+  /**
+   * The risk categories this issue was FETCHED under — the register's own scope stamp.
+   *
+   * Wiz says nothing about it: `Issue` carries 51 fields and not one names a category, so
+   * the only record of which question a row answers is which step asked it (see
+   * domain/registerScope.ts). Widening the category list without this field would turn
+   * "AI issues" into "issues" with no field able to catch it.
+   *
+   * More than one entry when an issue sits in several selected categories: it arrives once
+   * per category and mergeParts unions the stamps. Absent only on a row written before the
+   * column existed, which reads back as the AI category — the only scope those syncs ran.
+   */
+  categories?: string[];
   region?: string;
   account?: string;
   projects?: string[];
