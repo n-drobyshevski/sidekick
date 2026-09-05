@@ -1517,7 +1517,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   "getStorageStats": {
     "data": {
       "archiveBytes": 0,
-      "cellCount": 40700,
+      "cellCount": 41100,
       "rows": {
         "assets": 0,
         "dataFindings": 0,
@@ -2138,6 +2138,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
     "latestSync": {
       "aars_rule_version": 0,
       "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
+      "adjacency_json": "{"DIRECT":24,"ADJACENT":8,"UNLINKED":0,"edgesKnown":79}",
       "api_calls": 0,
       "derivation_version": 2,
       "edge_count": 118,
@@ -3060,7 +3061,9 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
     "issues": [
       {
         "account": "gcp-account-05",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "aiRecommendedSeverity": undefined,
         "aiVerdict": undefined,
         "assetId": "agent-h-chatbot",
@@ -3099,6 +3102,33 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-cs-demo-platform",
+            "isFolder": true,
+            "name": "CS-DEMO-PLATFORM",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-delta",
+            "isFolder": false,
+            "name": "PROJECT-DELTA",
+          },
+          {
+            "id": "proj-project-epsilon",
+            "isFolder": false,
+            "name": "PROJECT-EPSILON",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-DELTA",
@@ -3118,7 +3148,9 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
       },
       {
         "account": "gcp-account-05",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "aiRecommendedSeverity": undefined,
         "aiVerdict": undefined,
         "assetId": "agent-h-chatbot",
@@ -3157,6 +3189,33 @@ exports[`read endpoints > getAssetDetail answers the same shape 1`] = `
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-cs-demo-platform",
+            "isFolder": true,
+            "name": "CS-DEMO-PLATFORM",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-delta",
+            "isFolder": false,
+            "name": "PROJECT-DELTA",
+          },
+          {
+            "id": "proj-project-epsilon",
+            "isFolder": false,
+            "name": "PROJECT-EPSILON",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-DELTA",
@@ -11350,7 +11409,9 @@ exports[`read endpoints > getIssueDetail answers the same shape 1`] = `
     },
     "issue": {
       "account": "gcp-account-05",
+      "adjacentAssetIds": [],
       "adjustedSeverity": "HIGH",
+      "aiAdjacency": "DIRECT",
       "aiRecommendedSeverity": undefined,
       "aiVerdict": undefined,
       "assetId": "agent-h-chatbot",
@@ -11389,6 +11450,33 @@ exports[`read endpoints > getIssueDetail answers the same shape 1`] = `
       "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
       "nativeSeverity": "MEDIUM",
       "problemRuleVersion": 0,
+      "projectRefs": [
+        {
+          "id": "proj-demo-business-unit",
+          "isFolder": true,
+          "name": "DEMO-BUSINESS-UNIT",
+        },
+        {
+          "id": "proj-cs-demo-platform",
+          "isFolder": true,
+          "name": "CS-DEMO-PLATFORM",
+        },
+        {
+          "id": "proj-project-alpha",
+          "isFolder": false,
+          "name": "PROJECT-ALPHA",
+        },
+        {
+          "id": "proj-project-delta",
+          "isFolder": false,
+          "name": "PROJECT-DELTA",
+        },
+        {
+          "id": "proj-project-epsilon",
+          "isFolder": false,
+          "name": "PROJECT-EPSILON",
+        },
+      ],
       "projects": [
         "PROJECT-ALPHA",
         "PROJECT-DELTA",
@@ -11417,7 +11505,12 @@ exports[`read endpoints > getIssues answers the same shape 1`] = `
     "rows": [
       {
         "account": "aws-account-prod-01",
+        "adjacencyVia": "CAN_INVOKE",
+        "adjacentAssetIds": [
+          "model-bedrock-claude",
+        ],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "ADJACENT",
         "assetId": "role-finance-admin-01",
         "assetName": "AWSReservedSSO_FinanceAdmin_01",
         "attributedAssetIds": [],
@@ -11456,6 +11549,18 @@ Ignored until: Feb 1, 2026",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -11466,7 +11571,12 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "aws-account-prod-01",
+        "adjacencyVia": "CAN_INVOKE",
+        "adjacentAssetIds": [
+          "model-bedrock-claude",
+        ],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "ADJACENT",
         "aiRecommendedSeverity": "MEDIUM",
         "aiVerdict": "REMEDIATE",
         "assetId": "role-finance-admin-02",
@@ -11503,6 +11613,18 @@ Ignored until: Feb 1, 2026",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -11516,7 +11638,12 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "aws-account-prod-01",
+        "adjacencyVia": "CAN_INVOKE",
+        "adjacentAssetIds": [
+          "model-bedrock-claude",
+        ],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "ADJACENT",
         "assetId": "role-finance-admin-03",
         "assetName": "AWSReservedSSO_FinanceAdmin_03",
         "attributedAssetIds": [],
@@ -11550,6 +11677,18 @@ Ignored until: Feb 1, 2026",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -11560,7 +11699,12 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "aws-account-prod-01",
+        "adjacencyVia": "CAN_INVOKE",
+        "adjacentAssetIds": [
+          "model-bedrock-claude",
+        ],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "ADJACENT",
         "assetId": "role-finance-admin-04",
         "assetName": "AWSReservedSSO_FinanceAdmin_04",
         "attributedAssetIds": [],
@@ -11594,6 +11738,18 @@ Ignored until: Feb 1, 2026",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -11604,7 +11760,12 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "aws-account-prod-01",
+        "adjacencyVia": "CAN_INVOKE",
+        "adjacentAssetIds": [
+          "model-bedrock-claude",
+        ],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "ADJACENT",
         "assetId": "role-finance-admin-05",
         "assetName": "AWSReservedSSO_FinanceAdmin_05",
         "attributedAssetIds": [],
@@ -11638,6 +11799,18 @@ Ignored until: Feb 1, 2026",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -11648,7 +11821,12 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "aws-account-prod-01",
+        "adjacencyVia": "CAN_INVOKE",
+        "adjacentAssetIds": [
+          "model-bedrock-claude",
+        ],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "ADJACENT",
         "assetId": "role-finance-admin-06",
         "assetName": "AWSReservedSSO_FinanceAdmin_06",
         "attributedAssetIds": [],
@@ -11682,6 +11860,18 @@ Ignored until: Feb 1, 2026",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -11692,7 +11882,12 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "aws-account-prod-01",
+        "adjacencyVia": "CAN_INVOKE",
+        "adjacentAssetIds": [
+          "model-bedrock-claude",
+        ],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "ADJACENT",
         "assetId": "role-finance-admin-07",
         "assetName": "AWSReservedSSO_FinanceAdmin_07",
         "attributedAssetIds": [],
@@ -11726,6 +11921,18 @@ Ignored until: Feb 1, 2026",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -11736,7 +11943,12 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "aws-account-prod-01",
+        "adjacencyVia": "CAN_INVOKE",
+        "adjacentAssetIds": [
+          "model-bedrock-claude",
+        ],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "ADJACENT",
         "assetId": "role-finance-admin-08",
         "assetName": "AWSReservedSSO_FinanceAdmin_08",
         "attributedAssetIds": [],
@@ -11770,6 +11982,18 @@ Ignored until: Feb 1, 2026",
         "justification": "No content filtering, data protection, or compliance enforcement on AI model calls.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -11780,7 +12004,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-01",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-a",
         "assetName": "Agent-A",
         "attributedAssetIds": [
@@ -11814,6 +12040,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Prompt injection reaches PII and credentials; 5Rs gap confirms data is not restricted.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -11826,7 +12069,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-01",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-b",
         "assetName": "Agent-B",
         "attributedAssetIds": [
@@ -11860,6 +12105,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Over-privileged IAM on a customer-facing managed agent.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -11872,7 +12134,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-01",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-autogen",
         "assetName": "AGENT_AUTOGEN_DO_NOT_DELETE",
         "attributedAssetIds": [
@@ -11906,6 +12170,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -11918,7 +12199,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-01",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-autogen",
         "assetName": "AGENT_AUTOGEN_DO_NOT_DELETE",
         "attributedAssetIds": [
@@ -11952,6 +12235,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -11964,7 +12264,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-01",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-autogen",
         "assetName": "AGENT_AUTOGEN_DO_NOT_DELETE",
         "attributedAssetIds": [
@@ -11998,6 +12300,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -12010,7 +12329,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-01",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-autogen",
         "assetName": "AGENT_AUTOGEN_DO_NOT_DELETE",
         "attributedAssetIds": [
@@ -12044,6 +12365,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Auto-generated agent — likely forgotten, still over-privileged.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -12056,7 +12394,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-02",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-d-test",
         "assetName": "dev-agent-D-test",
         "attributedAssetIds": [
@@ -12090,6 +12430,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Dev/test agent with prod-level IAM — violates least privilege.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -12102,7 +12459,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-02",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-d",
         "assetName": "dev-agent-D",
         "attributedAssetIds": [
@@ -12136,6 +12495,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Dev agent with excessive IAM — training-data exposure risk.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -12148,7 +12524,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-03",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-e",
         "assetName": "Agent-E",
         "attributedAssetIds": [
@@ -12182,6 +12560,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Innovation agent with sensitive data access and no guardrail.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-gamma",
+            "isFolder": false,
+            "name": "PROJECT-GAMMA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-GAMMA",
@@ -12193,7 +12588,9 @@ Ignored until: Feb 1, 2026",
         "status": "OPEN",
       },
       {
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-f",
         "assetName": "agent-F",
         "attributedAssetIds": [
@@ -12227,6 +12624,18 @@ Ignored until: Feb 1, 2026",
         "justification": "Pricing agent with financial data access — high business impact.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -12237,7 +12646,9 @@ Ignored until: Feb 1, 2026",
         "status": "OPEN",
       },
       {
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-f-preprod",
         "assetName": "agent-F-preprod",
         "attributedAssetIds": [
@@ -12271,6 +12682,18 @@ Ignored until: Feb 1, 2026",
         "justification": "Pre-prod pricing agent — same risk as prod.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
         ],
@@ -12281,7 +12704,9 @@ Ignored until: Feb 1, 2026",
         "status": "OPEN",
       },
       {
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-g",
         "assetName": "Agent-G",
         "attributedAssetIds": [
@@ -12315,6 +12740,28 @@ Ignored until: Feb 1, 2026",
         "justification": "Business-partner data agent — PII and partner-data exposure risk.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-cs-demo-platform",
+            "isFolder": true,
+            "name": "CS-DEMO-PLATFORM",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-eta",
+            "isFolder": false,
+            "name": "PROJECT-ETA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-ETA",
@@ -12326,7 +12773,9 @@ Ignored until: Feb 1, 2026",
         "status": "OPEN",
       },
       {
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-g",
         "assetName": "Agent-G",
         "attributedAssetIds": [
@@ -12360,6 +12809,28 @@ Ignored until: Feb 1, 2026",
         "justification": "Business-partner data agent — PII and partner-data exposure risk.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-cs-demo-platform",
+            "isFolder": true,
+            "name": "CS-DEMO-PLATFORM",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-eta",
+            "isFolder": false,
+            "name": "PROJECT-ETA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-ETA",
@@ -12372,7 +12843,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-04",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-i",
         "assetName": "agent-I",
         "attributedAssetIds": [
@@ -12404,6 +12877,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-zeta",
+            "isFolder": false,
+            "name": "PROJECT-ZETA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-ZETA",
@@ -12415,7 +12905,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-04",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-i",
         "assetName": "agent-I",
         "attributedAssetIds": [
@@ -12447,6 +12939,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-zeta",
+            "isFolder": false,
+            "name": "PROJECT-ZETA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-ZETA",
@@ -12458,7 +12967,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-04",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-i",
         "assetName": "agent-I",
         "attributedAssetIds": [
@@ -12490,6 +13001,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-zeta",
+            "isFolder": false,
+            "name": "PROJECT-ZETA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-ZETA",
@@ -12501,7 +13029,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-04",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-i",
         "assetName": "agent-I",
         "attributedAssetIds": [
@@ -12533,6 +13063,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Inactive agents still holding sensitive data access — lateral-movement risk via compromised compute.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-zeta",
+            "isFolder": false,
+            "name": "PROJECT-ZETA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-ZETA",
@@ -12544,7 +13091,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-05",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-h-chatbot",
         "assetName": "agent-H-chatbot",
         "attributedAssetIds": [
@@ -12576,6 +13125,33 @@ Ignored until: Feb 1, 2026",
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-cs-demo-platform",
+            "isFolder": true,
+            "name": "CS-DEMO-PLATFORM",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-delta",
+            "isFolder": false,
+            "name": "PROJECT-DELTA",
+          },
+          {
+            "id": "proj-project-epsilon",
+            "isFolder": false,
+            "name": "PROJECT-EPSILON",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-DELTA",
@@ -12588,7 +13164,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-05",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "HIGH",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-h-chatbot",
         "assetName": "agent-H-chatbot",
         "attributedAssetIds": [
@@ -12620,6 +13198,33 @@ Ignored until: Feb 1, 2026",
         "justification": "Chatbot agent on serverless with excessive IAM — user-facing attack surface.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-cs-demo-platform",
+            "isFolder": true,
+            "name": "CS-DEMO-PLATFORM",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-delta",
+            "isFolder": false,
+            "name": "PROJECT-DELTA",
+          },
+          {
+            "id": "proj-project-epsilon",
+            "isFolder": false,
+            "name": "PROJECT-EPSILON",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-DELTA",
@@ -12632,7 +13237,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-07",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "MEDIUM",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-j",
         "assetName": "agent-J",
         "attributedAssetIds": [
@@ -12658,6 +13265,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Latent privileges — a compromised agent inherits every permission of its execution identity.",
         "nativeSeverity": "LOW",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -12669,7 +13293,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-07",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "MEDIUM",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-k",
         "assetName": "agent-K",
         "attributedAssetIds": [
@@ -12695,6 +13321,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Latent privileges — a compromised agent inherits every permission of its execution identity.",
         "nativeSeverity": "LOW",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-beta",
+            "isFolder": false,
+            "name": "PROJECT-BETA",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+        ],
         "projects": [
           "PROJECT-BETA",
           "PROJECT-ALPHA",
@@ -12706,7 +13349,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-03",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "LOW",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-e",
         "assetName": "Agent-E",
         "attributedAssetIds": [
@@ -12729,6 +13374,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Model invocations are not logged, so misuse leaves no trail to investigate.",
         "nativeSeverity": "LOW",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-gamma",
+            "isFolder": false,
+            "name": "PROJECT-GAMMA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-GAMMA",
@@ -12741,7 +13403,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-03",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "MEDIUM",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-e",
         "assetName": "Agent-E",
         "attributedAssetIds": [
@@ -12764,6 +13428,23 @@ Ignored until: Feb 1, 2026",
         "justification": "Training data is readable to anyone who reaches the bucket.",
         "nativeSeverity": "MEDIUM",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-gamma",
+            "isFolder": false,
+            "name": "PROJECT-GAMMA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-GAMMA",
@@ -12776,7 +13457,9 @@ Ignored until: Feb 1, 2026",
       },
       {
         "account": "gcp-account-03",
+        "adjacentAssetIds": [],
         "adjustedSeverity": "LOW",
+        "aiAdjacency": "DIRECT",
         "assetId": "agent-e",
         "assetName": "Agent-E",
         "attributedAssetIds": [
@@ -12799,6 +13482,23 @@ Ignored until: Feb 1, 2026",
         "justification": "A long-lived static key on an AI workload widens the window for credential theft.",
         "nativeSeverity": "LOW",
         "problemRuleVersion": 0,
+        "projectRefs": [
+          {
+            "id": "proj-demo-business-unit",
+            "isFolder": true,
+            "name": "DEMO-BUSINESS-UNIT",
+          },
+          {
+            "id": "proj-project-alpha",
+            "isFolder": false,
+            "name": "PROJECT-ALPHA",
+          },
+          {
+            "id": "proj-project-gamma",
+            "isFolder": false,
+            "name": "PROJECT-GAMMA",
+          },
+        ],
         "projects": [
           "PROJECT-ALPHA",
           "PROJECT-GAMMA",
@@ -15345,8 +16045,8 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 277429,
-    "cellCount": 40700,
+    "archiveBytes": 286675,
+    "cellCount": 41100,
     "rows": {
       "assets": 87,
       "dataFindings": 6,
@@ -15366,6 +16066,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": 0,
         "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
+        "adjacency_json": "{"DIRECT":24,"ADJACENT":8,"UNLINKED":0,"edgesKnown":79}",
         "api_calls": 0,
         "derivation_version": 2,
         "edge_count": 118,
@@ -15390,6 +16091,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
+        "adjacency_json": null,
         "api_calls": 0,
         "derivation_version": null,
         "edge_count": null,
@@ -15414,6 +16116,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
+        "adjacency_json": null,
         "api_calls": 0,
         "derivation_version": null,
         "edge_count": null,
@@ -15438,6 +16141,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":3,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
+        "adjacency_json": null,
         "api_calls": 0,
         "derivation_version": null,
         "edge_count": null,
@@ -15462,6 +16166,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":3,"HIGH":16,"MEDIUM":0,"LOW":3,"INFO":8}",
+        "adjacency_json": null,
         "api_calls": 0,
         "derivation_version": null,
         "edge_count": null,
@@ -15486,6 +16191,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":4,"HIGH":16,"MEDIUM":0,"LOW":3,"INFO":9}",
+        "adjacency_json": null,
         "api_calls": 0,
         "derivation_version": null,
         "edge_count": null,
@@ -15510,6 +16216,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":4,"HIGH":15,"MEDIUM":0,"LOW":3,"INFO":9}",
+        "adjacency_json": null,
         "api_calls": 0,
         "derivation_version": null,
         "edge_count": null,
@@ -15534,6 +16241,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":5,"HIGH":13,"MEDIUM":0,"LOW":2,"INFO":10}",
+        "adjacency_json": null,
         "api_calls": 0,
         "derivation_version": null,
         "edge_count": null,
@@ -15558,6 +16266,7 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":5,"HIGH":12,"MEDIUM":0,"LOW":2,"INFO":11}",
+        "adjacency_json": null,
         "api_calls": 0,
         "derivation_version": null,
         "edge_count": null,
@@ -22414,7 +23123,10 @@ result = "fail" {
   },
   "ai_issues": {
     "account": "aws-account-prod-01",
+    "adjacency_via": "CAN_INVOKE",
+    "adjacent_asset_ids": "model-bedrock-claude",
     "adjusted_severity": "HIGH",
+    "ai_adjacency": "ADJACENT",
     "ai_recommended_severity": null,
     "ai_verdict": null,
     "asset_id": "role-finance-admin-01",
@@ -22442,6 +23154,7 @@ Ignored until: Feb 1, 2026",
     "problem_input_json": "{"vector":{"exploitation":"UNKNOWN","impact":"PARTIAL","exposure":"CONTROLLED","mission":"MEDIUM"},"unknowns":["exploitation"],"evidenced":false,"exploitationSource":"none","derivedUnder":"exploitationByRuleId:|remediateVerdicts:REMEDIATE|totalImpactGroups:gcp-hosted-privileged|missingMission:MEDIUM|attributionJoin:direct"}",
     "problem_outcome": "TRACK",
     "problem_rule_version": 0,
+    "project_refs_json": "[{"id":"proj-demo-business-unit","name":"DEMO-BUSINESS-UNIT","isFolder":true},{"id":"proj-project-alpha","name":"PROJECT-ALPHA","isFolder":false}]",
     "projects_json": "["PROJECT-ALPHA"]",
     "region": null,
     "remediation": null,
@@ -22466,6 +23179,7 @@ Ignored until: Feb 1, 2026",
   "sync_history": {
     "aars_rule_version": null,
     "aars_severity_json": "{"CRITICAL":5,"HIGH":12,"MEDIUM":0,"LOW":2,"INFO":11}",
+    "adjacency_json": null,
     "api_calls": 0,
     "derivation_version": null,
     "edge_count": null,

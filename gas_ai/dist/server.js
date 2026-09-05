@@ -466,7 +466,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "d730ce583f81" : "dev";
+  var BUILD_ID = true ? "48a093fd7807" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -983,7 +983,32 @@ var Server = (() => {
       // Comma-joined, matching `environments` and `attributed_asset_ids`; the `_json` suffix
       // is reserved for structures. A row written before this column reads back as the AI
       // category, which is the only scope those syncs ever ran.
-      "categories"
+      "categories",
+      // THE ISSUE'S OWN PROJECT ATTRIBUTION, as objects. Appended, same no-migration contract —
+      // and declared here for the same `writeGrid` reason the block above states.
+      //
+      // `projects_json` beside it holds NAMES and must keep doing so (the facets and the asset
+      // table read them); this holds `{id, name, isFolder, businessImpact}`, because only the
+      // id can decide project membership — a name is not unique across the tenant and carries
+      // no ancestry. The project view needs that: an issue raised on a VM or an identity has no
+      // asset row to hang off, so scoping by the asset alone made every one of them vanish.
+      //
+      // An EMPTY CELL reads back as undefined, never as an empty array. A row written before
+      // this column has unknown refs; a live sync writing `[]` is saying Wiz attributed the
+      // issue to nothing. The project view must be able to tell those apart.
+      "project_refs_json",
+      // WHERE THE ROW SITS RELATIVE TO THE AI ESTATE — DIRECT / ADJACENT / UNLINKED, the edge
+      // type the hop came through, and the AI assets it reached. Appended, same no-migration
+      // contract, and declared here for the same `writeGrid` reason the two blocks above state:
+      // an undeclared column is projected away on every write and read back as a default.
+      //
+      // The ids are comma-joined, matching `attributed_asset_ids` and `environments`; the
+      // `_json` suffix stays reserved for structures. An empty `ai_adjacency` cell reads back as
+      // UNDEFINED and never as "UNLINKED" — no pass ran over that row, which is a different
+      // claim from having looked and found no link, and the ranker prices the two differently.
+      "ai_adjacency",
+      "adjacency_via",
+      "adjacent_asset_ids"
     ],
     [TABS.findings]: [
       "id",
@@ -1194,7 +1219,17 @@ var Server = (() => {
       // `derivation_version` above it, one axis over: that records what a fact MEANS, this
       // records which population was asked. Empty on a row written before the column, which
       // reads as "unknown" and never as "a different scope".
-      "register_scope"
+      "register_scope",
+      // THE ADJACENCY CENSUS THIS SYNC MEASURED — `{DIRECT, ADJACENT, UNLINKED, edgesKnown}`,
+      // mirroring `aars_severity_json` and `problem_outcome_json` one row up. Appended, same
+      // no-migration contract; absent on a row written before the column, which reads as "no
+      // adjacency pass" and never as an all-UNLINKED register.
+      //
+      // `edgesKnown` travels INSIDE the object rather than as its own column because the three
+      // counts are unreadable without it: 68 asset edges on the reference tenant means UNLINKED
+      // is mostly "not traversed". Splitting them into two columns is how a later reader ends up
+      // plotting the counts alone.
+      "adjacency_json"
     ],
     [TABS.settings]: ["key", "value_json"],
     [TABS.jobs]: [
@@ -3529,6 +3564,12 @@ var Server = (() => {
         region: str3(snap["region"]),
         account: str3(snap["subscriptionName"]),
         projects,
+        // The same projects, kept as OBJECTS as well as names. The names are what the facets
+        // and the asset table read; the ids are the only thing that can answer "is this issue
+        // inside VALUE-CHAIN", because a name is not unique across the tenant and carries no
+        // ancestry. Written from the same `projectsOf` extraction, never a second one, so the
+        // two fields can never come to disagree about which projects this row is in.
+        projectRefs: projectObjs,
         frameworks: group == null ? void 0 : group.frameworks,
         createdAt: str3(raw["createdAt"]),
         dueAt: str3(raw["dueAt"]),
@@ -5301,6 +5342,70 @@ var Server = (() => {
       return { ...issue2, attributedAssetIds: [], attributionHop: "none" };
     });
   }
+  var ADJACENCY_EDGE_TYPES = [
+    "RUNS_AS",
+    "HOSTED_ON",
+    "ALLOWS_ACCESS_TO",
+    "CAN_INVOKE",
+    "BOUND_TO",
+    "SERVES",
+    "USES_TOOL",
+    "INVOKES_TOOL",
+    "USES_MODEL",
+    "USES_DATASET",
+    "PRODUCES",
+    "READS_DATA_FROM",
+    "STORES_DATA_IN"
+  ];
+  function withAiAdjacency(doc, issues2) {
+    const kindById = /* @__PURE__ */ new Map();
+    for (const n of doc.nodes) kindById.set(n.id, n.kind);
+    const isAi = (id) => id !== void 0 && AI_ASSET_KINDS.includes(kindById.get(id));
+    const viaRank = new Map(ADJACENCY_EDGE_TYPES.map((t, i) => [t, i]));
+    const near = /* @__PURE__ */ new Map();
+    let edgesKnown = 0;
+    for (const e of doc.edges) {
+      if (!viaRank.has(e.type)) continue;
+      edgesKnown += 1;
+      if (e.negated) continue;
+      if (isAi(e.dst)) pushInto(near, e.src, { id: e.dst, type: e.type });
+      if (isAi(e.src)) pushInto(near, e.dst, { id: e.src, type: e.type });
+    }
+    const census = { DIRECT: 0, ADJACENT: 0, UNLINKED: 0, edgesKnown };
+    const out = issues2.map((issue2) => {
+      var _a5;
+      if (isAi(issue2.assetId)) {
+        census.DIRECT += 1;
+        return {
+          ...issue2,
+          aiAdjacency: "DIRECT",
+          adjacencyVia: void 0,
+          adjacentAssetIds: []
+        };
+      }
+      const hops = ((_a5 = near.get(issue2.assetId)) != null ? _a5 : []).filter((h) => h.id !== issue2.assetId);
+      if (hops.length) {
+        census.ADJACENT += 1;
+        const ids = [...new Set(hops.map((h) => h.id))].sort();
+        let via = hops[0].type;
+        for (const h of hops) if (viaRank.get(h.type) < viaRank.get(via)) via = h.type;
+        return {
+          ...issue2,
+          aiAdjacency: "ADJACENT",
+          adjacencyVia: via,
+          adjacentAssetIds: ids
+        };
+      }
+      census.UNLINKED += 1;
+      return {
+        ...issue2,
+        aiAdjacency: "UNLINKED",
+        adjacencyVia: void 0,
+        adjacentAssetIds: []
+      };
+    });
+    return { issues: out, census };
+  }
   function issuesByAssetFor(open, mode) {
     var _a5;
     if (mode === "direct") return groupBy(open, (i) => i.assetId);
@@ -6292,8 +6397,22 @@ var Server = (() => {
   var DEMO_UNIT = { id: "proj-demo-business-unit", name: "DEMO-BUSINESS-UNIT" };
   var DEMO_SUPPORT = { id: "proj-cs-demo-platform", name: "CS-DEMO-PLATFORM" };
   var SUPPORT_GROUP_OVER = ["PROJECT-DELTA", "PROJECT-ETA"];
+  function projectRefsFor(names, businessImpact) {
+    const list2 = names != null ? names : [];
+    if (!list2.length) return [];
+    return [
+      { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
+      ...list2.some((name) => SUPPORT_GROUP_OVER.indexOf(name) >= 0) ? [{ id: DEMO_SUPPORT.id, name: DEMO_SUPPORT.name, isFolder: true }] : [],
+      ...list2.map((name) => ({
+        id: `proj-${name.toLowerCase()}`,
+        name,
+        isFolder: false,
+        ...businessImpact ? { businessImpact } : {}
+      }))
+    ];
+  }
   function node(seed) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a5, _b, _c, _d, _e, _f;
     return {
       id: seed.id,
       kind: seed.kind,
@@ -6345,16 +6464,7 @@ var Server = (() => {
       // register only, so "select the unit", "select the support group" and "select a project"
       // are three visibly different selections rather than two. See its own comment for why it
       // is a folder and still not a business unit.
-      projects: ((_g = seed.projects) != null ? _g : []).length ? [
-        { id: DEMO_UNIT.id, name: DEMO_UNIT.name, isFolder: true },
-        ...((_h = seed.projects) != null ? _h : []).some((name) => SUPPORT_GROUP_OVER.indexOf(name) >= 0) ? [{ id: DEMO_SUPPORT.id, name: DEMO_SUPPORT.name, isFolder: true }] : [],
-        ...((_i = seed.projects) != null ? _i : []).map((name) => ({
-          id: `proj-${name.toLowerCase()}`,
-          name,
-          isFolder: false,
-          ...seed.businessImpact ? { businessImpact: seed.businessImpact } : {}
-        }))
-      ] : [],
+      projects: projectRefsFor(seed.projects, seed.businessImpact),
       technologyCategories: seed.techCats,
       identityPurpose: seed.identityPurpose,
       issueAnalytics: seed.issueAnalytics,
@@ -6808,6 +6918,16 @@ var Server = (() => {
       region: seed.region,
       account: seed.account,
       projects: seed.projects,
+      // The same projects as objects, built by the SAME recipe the assets use, so an issue and
+      // the asset it hangs off can never claim different project ids. A live sync writes this
+      // on every row (syncNormalize.normalizeIssuesPage), so the seed does too — an empty array
+      // where a seed names no project, which is what a sync reports when Wiz attributed the
+      // issue to nothing, and NOT the absent value that means "written before the column".
+      //
+      // No `businessImpact` on these entries, deliberately: `IssueSeed.businessImpact` is the
+      // issue's own worst-of roll-up, and spreading a worst-of back onto each project would
+      // invent a per-project tier from a figure that already threw the per-project split away.
+      projectRefs: projectRefsFor(seed.projects),
       frameworks: seed.frameworks,
       justification: seed.justification,
       createdAt: seed.createdAt,
@@ -9742,7 +9862,7 @@ var Server = (() => {
     return e;
   }
   function issueToRow(i) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F;
     return {
       id: i.id,
       rule_id: i.ruleId,
@@ -9794,11 +9914,24 @@ var Server = (() => {
       // The register's scope stamp. Comma-joined like the two above; empty only for a row
       // this app built before the stamp existed, which rowToIssue reads back as the AI
       // category — the only scope any of those syncs ran. See domain/registerScope.ts.
-      categories: ((_C = i.categories) != null ? _C : []).join(",")
+      categories: ((_C = i.categories) != null ? _C : []).join(","),
+      // The issue's own project attribution, as objects — `projects_json` above holds the
+      // NAMES and keeps doing so. `null` for undefined rather than `"[]"`, because the two say
+      // different things: absent is "this row predates the column, its refs are unknown",
+      // `[]` is a sync reporting that Wiz attributed the issue to no project at all. The
+      // project view reads the difference (api.ts `viewIssues`).
+      project_refs_json: i.projectRefs ? JSON.stringify(i.projectRefs) : null,
+      // Where the row sits relative to the AI estate. `?? null`, never a default: an empty
+      // `ai_adjacency` cell means no adjacency pass ran, and writing "UNLINKED" for it would
+      // turn "nobody looked" into a measurement — the same absent-is-never-zero failure the
+      // flags themselves keep. The id list is comma-joined, matching `attributed_asset_ids`.
+      ai_adjacency: (_D = i.aiAdjacency) != null ? _D : null,
+      adjacency_via: (_E = i.adjacencyVia) != null ? _E : null,
+      adjacent_asset_ids: ((_F = i.adjacentAssetIds) != null ? _F : []).join(",")
     };
   }
   function rowToIssue(r) {
-    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I;
+    var _a5, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C, _D, _E, _F, _G, _H, _I, _J, _K, _L;
     const issue2 = {
       id: String((_a5 = r["id"]) != null ? _a5 : ""),
       ruleId: String((_b = r["rule_id"]) != null ? _b : ""),
@@ -9837,6 +9970,8 @@ var Server = (() => {
     };
     const categories = String((_D = r["categories"]) != null ? _D : "").split(",").filter(Boolean);
     issue2.categories = categories.length ? categories : [RISK_CATEGORY_ID];
+    const projectRefs = parseJson(r["project_refs_json"], null);
+    if (projectRefs) issue2.projectRefs = projectRefs;
     const environments = String((_E = r["environments"]) != null ? _E : "").split(",").filter(Boolean);
     if (environments.length) issue2.environments = environments;
     const ticketUrls = String((_F = r["ticket_urls"]) != null ? _F : "").split(",").filter(Boolean);
@@ -9847,7 +9982,14 @@ var Server = (() => {
       issue2.attributionHop = attributionHop;
       issue2.attributedAssetIds = String((_H = r["attributed_asset_ids"]) != null ? _H : "").split(",").filter(Boolean);
     }
-    const problemOutcome = (_I = r["problem_outcome"]) != null ? _I : null;
+    const adjacency2 = (_I = r["ai_adjacency"]) != null ? _I : null;
+    if (adjacency2 === "DIRECT" || adjacency2 === "ADJACENT" || adjacency2 === "UNLINKED") {
+      issue2.aiAdjacency = adjacency2;
+      issue2.adjacentAssetIds = String((_J = r["adjacent_asset_ids"]) != null ? _J : "").split(",").filter(Boolean);
+      const via = String((_K = r["adjacency_via"]) != null ? _K : "");
+      if (via) issue2.adjacencyVia = via;
+    }
+    const problemOutcome = (_L = r["problem_outcome"]) != null ? _L : null;
     if (problemOutcome) issue2.problemOutcome = problemOutcome;
     const problemInput = parseJson(r["problem_input_json"], null);
     if (problemInput) issue2.problemInput = problemInput;
@@ -10166,11 +10308,12 @@ var Server = (() => {
       effectiveAccess: (_b = extras.effectiveAccess) != null ? _b : []
     });
     const attributedIssues = withIssueAttribution(reachable2, issues2);
-    const enriched = enrichGraphDoc(reachable2, attributedIssues, hints, rule);
+    const { issues: placedIssues, census: adjacencyCensus } = withAiAdjacency(reachable2, attributedIssues);
+    const enriched = enrichGraphDoc(reachable2, placedIssues, hints, rule);
     const { version: problemRuleVersion, rule: problemRule } = getProblemRule2();
     const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
       enriched,
-      attributedIssues,
+      placedIssues,
       findings,
       problemRule,
       problemRuleVersion
@@ -10286,7 +10429,12 @@ var Server = (() => {
       // battery from, never off the settings at read time. A widened setting and an unsynced
       // ledger disagree until the next sync, and bootstrap says so rather than letting a
       // total counted under one scope be compared with one counted under another.
-      register_scope: registerScopeSignature(getIssueCategories2())
+      register_scope: registerScopeSignature(getIssueCategories2()),
+      // Where this sync's issues sat relative to the AI estate, WITH the edge count that makes
+      // the three figures readable — see AdjacencyCensus.edgesKnown. Mirrors aars_severity_json
+      // and problem_outcome_json above: the snapshot this row points at is overwritten by the
+      // next sync, so this is the only record the trend can ever read it from.
+      adjacency_json: JSON.stringify(adjacencyCensus)
     }]);
     setScoredRuleVersion(ruleVersion);
     setDecidedRuleVersion(problemRuleVersion);
@@ -14666,15 +14814,23 @@ var Server = (() => {
     graphDocMemo2 = { view, raw, doc };
     return doc;
   }
+  function selfScopeProject() {
+    if (getDomainView2()) return "";
+    return getProjectView2();
+  }
   function viewIssues() {
     const ids = viewAssetIds();
     const all = loadIssues();
-    return ids ? all.filter((i) => ids.has(i.assetId)) : all;
+    if (!ids) return all;
+    const project = selfScopeProject();
+    return all.filter((i) => ids.has(i.assetId) || inProject(i.projectRefs, project));
   }
   function viewFindings() {
     const ids = viewAssetIds();
     const all = loadFindings();
-    return ids ? all.filter((f) => ids.has(f.resourceId)) : all;
+    if (!ids) return all;
+    const project = selfScopeProject();
+    return all.filter((f) => ids.has(f.resourceId) || inProject(f.projects, project));
   }
   function run(fn) {
     try {

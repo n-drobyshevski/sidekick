@@ -73,6 +73,52 @@ describe("ai_issues.categories — the scope stamp survives the sheet", () => {
   });
 });
 
+/**
+ * The issue's OWN project attribution, through the sheet and back.
+ *
+ * Same whole-row discipline as the block above, for the same `writeGrid` reason — and one
+ * decision of its own that a field-list test would never reach: an empty cell reads back as
+ * UNDEFINED, not as an empty array. The project view (api.ts `viewIssues`) treats an empty
+ * array as "Wiz attributed this issue to nothing" and undefined as "nobody has looked", so
+ * collapsing the two would decide a row's project membership on a measurement never taken.
+ */
+describe("ai_issues.project_refs_json — the refs survive the sheet", () => {
+  const REFS = [
+    { id: "proj-demo-business-unit", name: "DEMO-BUSINESS-UNIT", isFolder: true },
+    { id: "proj-project-alpha", name: "PROJECT-ALPHA", isFolder: false, businessImpact: "LBI" },
+  ];
+
+  it("declares the column and round-trips the WHOLE row", () => {
+    expect(TAB_HEADERS[TABS.issues]).toContain("project_refs_json");
+    const row = issueToRow(issue({ projects: ["DEMO-BUSINESS-UNIT", "PROJECT-ALPHA"], projectRefs: REFS }));
+    const back = issueToRow(rowToIssue(throughSheet(row)));
+    expect(back).toEqual(row);
+    // The whole ref, not just the id: `isFolder` is tri-state and `businessImpact` is what
+    // the worst-of roll-ups read, so a reader that kept only id and name would lose both
+    // silently. Every key the writer put in comes back.
+    expect(rowToIssue(throughSheet(row)).projectRefs).toEqual(REFS);
+    // And the NAME list beside it is untouched — two fields for one fact, and the facets
+    // and the asset table still read the names.
+    expect(rowToIssue(throughSheet(row)).projects).toEqual(["DEMO-BUSINESS-UNIT", "PROJECT-ALPHA"]);
+  });
+
+  it("reads an absent cell as unknown, and an empty one as measured-and-none", () => {
+    // The column does not exist on a tab that predates it, so readAll never emits the key.
+    const legacy = {
+      id: "iss-legacy", rule_id: "r", rule_name: "r", combo_group: "other",
+      native_severity: "LOW", adjusted_severity: "LOW", status: "OPEN",
+      asset_id: "n1", asset_name: "n1",
+    };
+    expect(rowToIssue(legacy).projectRefs).toBeUndefined();
+    // A live sync that found no project writes `[]`, and `[]` must survive as `[]` — it is
+    // the register saying it looked. `inProject` answers false for both, but only one of
+    // them is a fact.
+    const measured = issueToRow(issue({ projectRefs: [] }));
+    expect(measured["project_refs_json"]).toBe("[]");
+    expect(rowToIssue(throughSheet(measured)).projectRefs).toEqual([]);
+  });
+});
+
 describe("sync_history.register_scope — a scan records the gate it APPLIED", () => {
   it("is declared, and a committed sync stamps it", async () => {
     expect(TAB_HEADERS[TABS.syncHistory]).toContain("register_scope");
@@ -131,6 +177,94 @@ describe("sync_history.register_scope — a scan records the gate it APPLIED", (
     server.api.setSettings({ issueCategories: [RISK_CATEGORY_ID] });
     const settled = server.api.bootstrap({}) as { data: { registerScope: unknown } };
     expect(settled.data.registerScope).toBeNull();
+    teardownServer();
+  });
+});
+
+describe("ai_issues adjacency — the three columns survive the sheet", () => {
+  // Same whole-row discipline as the block at the top of this file, and for the same
+  // `writeGrid` reason: the projection onto DECLARED headers is silent, so a field list a
+  // test happened to think of passes against exactly the shape that is being dropped. The
+  // "declares every column the writer emits" case above already walks every key `issueToRow`
+  // emits, so these three are covered by it the moment the writer learns them; what is left
+  // to pin here is the one thing a key walk cannot see — that an ABSENT cell reads back as
+  // undefined rather than as UNLINKED.
+
+  it("round-trips an ADJACENT row whole", () => {
+    const row = issueToRow(issue({
+      aiAdjacency: "ADJACENT",
+      adjacencyVia: "RUNS_AS",
+      adjacentAssetIds: ["agent-a", "agent-b"],
+    }));
+    expect(row["ai_adjacency"]).toBe("ADJACENT");
+    expect(row["adjacent_asset_ids"]).toBe("agent-a,agent-b");
+    const back = issueToRow(rowToIssue(throughSheet(row)));
+    expect(back).toEqual(row);
+    const parsed = rowToIssue(throughSheet(row));
+    expect(parsed.adjacentAssetIds).toEqual(["agent-a", "agent-b"]);
+    expect(parsed.adjacencyVia).toBe("RUNS_AS");
+  });
+
+  it("round-trips DIRECT and UNLINKED, whose id list is empty by construction", () => {
+    for (const state of ["DIRECT", "UNLINKED"] as const) {
+      const row = issueToRow(issue({ aiAdjacency: state, adjacentAssetIds: [] }));
+      const back = issueToRow(rowToIssue(throughSheet(row)));
+      expect([state, back]).toEqual([state, row]);
+      // The STATE is what says the pass ran; the empty list is "we looked and found none".
+      expect(rowToIssue(throughSheet(row)).aiAdjacency).toBe(state);
+      expect(rowToIssue(throughSheet(row)).adjacentAssetIds).toEqual([]);
+      expect(rowToIssue(throughSheet(row)).adjacencyVia).toBeUndefined();
+    }
+  });
+
+  it("reads an absent cell as UNDEFINED, never as UNLINKED", () => {
+    // A row written before the column existed had no adjacency pass run over it. Reading that
+    // as UNLINKED would turn "nobody looked" into a measurement, and the ranker prices the two
+    // differently — absent is a null component, UNLINKED is mid-scale (rank.adjacencyOf).
+    const legacy = {
+      id: "iss-legacy", rule_id: "r", rule_name: "r", combo_group: "other",
+      native_severity: "LOW", adjusted_severity: "LOW", status: "OPEN",
+      asset_id: "n1", asset_name: "n1",
+    };
+    const parsed = rowToIssue(legacy);
+    expect(parsed.aiAdjacency).toBeUndefined();
+    expect(parsed.adjacentAssetIds).toBeUndefined();
+    expect(parsed.adjacencyVia).toBeUndefined();
+    // And an empty cell — the column exists, the row was written before the fold ran — reads
+    // the same way, because the state is the only thing that can say the pass happened.
+    expect(rowToIssue({ ...legacy, ai_adjacency: null }).aiAdjacency).toBeUndefined();
+  });
+});
+
+describe("sync_history.adjacency_json — the census and its denominator", () => {
+  it("is declared, and a committed sync stamps a census with edgesKnown in it", async () => {
+    expect(TAB_HEADERS[TABS.syncHistory]).toContain("adjacency_json");
+
+    const server = await bootServer();
+    server.setup();
+    expect((server.api.runSync({}) as { ok: boolean }).ok).toBe(true);
+
+    const store = await import("../src/server/syncStore");
+    const history = store.syncHistory();
+    const latest = history[history.length - 1];
+    const census = JSON.parse(String(latest["adjacency_json"])) as Record<string, number>;
+    // The denominator travels WITH the counts. 68 asset edges on the reference tenant is why:
+    // an UNLINKED count without the edge count beside it reads as "unrelated" when it means
+    // "not traversed" (AARS_LIVE_MEASUREMENTS.md §4 row A).
+    expect(Object.keys(census).sort()).toEqual(
+      ["ADJACENT", "DIRECT", "UNLINKED", "edgesKnown"],
+    );
+    expect(census["DIRECT"]! + census["ADJACENT"]! + census["UNLINKED"]!)
+      .toBe(Number(latest["issue_count"]));
+
+    // And the ledger agrees with its own commit record: every persisted issue carries a state,
+    // and the states count out to the census the history row published.
+    const persisted = store.loadIssues();
+    const counted = { DIRECT: 0, ADJACENT: 0, UNLINKED: 0 } as Record<string, number>;
+    for (const row of persisted) counted[String(row.aiAdjacency)] = (counted[String(row.aiAdjacency)] ?? 0) + 1;
+    expect(counted).toEqual({
+      DIRECT: census["DIRECT"], ADJACENT: census["ADJACENT"], UNLINKED: census["UNLINKED"],
+    });
     teardownServer();
   });
 });

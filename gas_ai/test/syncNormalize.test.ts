@@ -573,6 +573,37 @@ describe("normalizeIssuesPage (issuesV2)", () => {
     expect(normalizeIssuesPage([raw]).issues[0].businessImpact).toBe("HBI");
   });
 
+  it("keeps the project OBJECTS beside the names, because only the id can scope a row", () => {
+    // Names are what the facets and the asset table read; ids are what the project switcher
+    // keys on, and a name is neither unique across the tenant nor carrying any ancestry. The
+    // register needs both on an issue: its entity may be a VM or an identity that never
+    // becomes an asset row, in which case the row's OWN refs are the only thing that can put
+    // it inside a project view (api.ts `viewIssues`).
+    const raw = issueRaw("iss-refs");
+    raw["projects"] = [
+      { id: "p-unit", name: "VALUE-CHAIN", isFolder: true },
+      { id: "p-leaf", name: "PROJECT-ALPHA", riskProfile: { businessImpact: "LBI" } },
+    ];
+    const issue = normalizeIssuesPage([raw]).issues[0];
+    expect(issue.projects).toEqual(["VALUE-CHAIN", "PROJECT-ALPHA"]);
+    // The same extraction, never a second one — so the two fields cannot come to disagree
+    // about which projects the row is in. isFolder stays tri-state: `undefined` on the leaf
+    // because the response did not say, not `false`.
+    expect(issue.projectRefs).toEqual([
+      { id: "p-unit", name: "VALUE-CHAIN", isFolder: true, businessImpact: undefined },
+      { id: "p-leaf", name: "PROJECT-ALPHA", isFolder: undefined, businessImpact: "LBI" },
+    ]);
+  });
+
+  it("says it looked when the response names no project at all", () => {
+    // An empty ARRAY, not an absent field. A sync that read the row and found no attribution
+    // is a measurement; absent means the column predates the row and nothing was measured,
+    // and syncStore keeps that apart on the way back out.
+    const raw = issueRaw("iss-no-proj");
+    delete raw["projects"];
+    expect(normalizeIssuesPage([raw]).issues[0].projectRefs).toEqual([]);
+  });
+
   it("buckets an unmodelled source rule into Other, carrying Wiz severity untouched", () => {
     // The filter collects the whole AI risk category, so a rule outside the four patterns
     // is a real register row — not noise to drop.

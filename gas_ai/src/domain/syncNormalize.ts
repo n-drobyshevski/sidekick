@@ -456,6 +456,12 @@ export function normalizeIssuesPage(rows: Rec[], categoryId?: string): Normalize
       region: str(snap!["region"]),
       account: str(snap!["subscriptionName"]),
       projects,
+      // The same projects, kept as OBJECTS as well as names. The names are what the facets
+      // and the asset table read; the ids are the only thing that can answer "is this issue
+      // inside VALUE-CHAIN", because a name is not unique across the tenant and carries no
+      // ancestry. Written from the same `projectsOf` extraction, never a second one, so the
+      // two fields can never come to disagree about which projects this row is in.
+      projectRefs: projectObjs,
       frameworks: group?.frameworks,
       createdAt: str(raw["createdAt"]),
       dueAt: str(raw["dueAt"]),

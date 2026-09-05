@@ -329,16 +329,60 @@ function viewGraphDoc(): GraphDoc | null {
   return doc;
 }
 
+/**
+ * The project a row may claim membership of ON ITS OWN, or "" when the row's own attribution
+ * must not be consulted.
+ *
+ * Empty for a DOMAIN view, which is not a lapse. A domain is the value of a resource's
+ * `Wiz/Domain` TAG: it lives on the asset and nowhere else, so a row's project refs cannot
+ * answer whether it is in one. Under a domain view these two populations keep exactly the
+ * behaviour they had — the asset link, and nothing beside it.
+ */
+function selfScopeProject(): string {
+  if (settingsStore.getDomainView()) return "";
+  return settingsStore.getProjectView();
+}
+
+/**
+ * Issues in view: the ones hanging off an asset in view, OR attributed to the project itself.
+ *
+ * THE SECOND CLAUSE IS A CORRECTNESS FIX, not a widening for its own sake. The register's
+ * issue population is no longer only AI-kinded entities: an issue raised on a VM, a
+ * container or an identity has a `kindFromWizType` that this app refuses, so NO asset row is
+ * written for it — and scoping by the asset alone therefore removed every one of those rows
+ * from every project view, with nothing on screen saying so. A filtered list that looks
+ * complete is the worst shape this can take.
+ *
+ * `inProject` from domain/prunePlan.ts rather than a second `p.id === view` written here.
+ * Its own comment gives the reason and it applies with more force now there are two callers
+ * on the read path: two spellings of "does this belong to that project" are two answers, and
+ * the first symptom is a list disagreeing with the count beside it.
+ *
+ * An issue whose `projectRefs` are ABSENT keeps exactly today's behaviour — asset membership
+ * decides it. Absent means the row was written before the column existed, so its attribution
+ * is unknown, and `inProject(undefined, …)` is false rather than a guess.
+ */
 function viewIssues(): IssueRow[] {
   const ids = viewAssetIds();
   const all = syncStore.loadIssues();
-  return ids ? all.filter((i) => ids.has(i.assetId)) : all;
+  if (!ids) return all;
+  const project = selfScopeProject();
+  return all.filter((i) => ids.has(i.assetId) || inProject(i.projectRefs, project));
 }
 
+/**
+ * Findings in view, on the same rule and for the same reason — a configuration finding is
+ * evaluated against a REGION or a RAW_ACCESS_POLICY as readily as against an AI asset, and
+ * those resource types are not in the graph either (`FindingRow.resourceType` says so in as
+ * many words). `FindingRow.projects` has carried the refs as objects since the tab existed,
+ * so this needed no new column.
+ */
 function viewFindings(): FindingRow[] {
   const ids = viewAssetIds();
   const all = syncStore.loadFindings();
-  return ids ? all.filter((f) => ids.has(f.resourceId)) : all;
+  if (!ids) return all;
+  const project = selfScopeProject();
+  return all.filter((f) => ids.has(f.resourceId) || inProject(f.projects, project));
 }
 
 function run<T>(fn: () => T): ApiResult<T> {

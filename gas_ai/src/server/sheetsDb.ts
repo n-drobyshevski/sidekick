@@ -115,6 +115,29 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // is reserved for structures. A row written before this column reads back as the AI
     // category, which is the only scope those syncs ever ran.
     "categories",
+    // THE ISSUE'S OWN PROJECT ATTRIBUTION, as objects. Appended, same no-migration contract —
+    // and declared here for the same `writeGrid` reason the block above states.
+    //
+    // `projects_json` beside it holds NAMES and must keep doing so (the facets and the asset
+    // table read them); this holds `{id, name, isFolder, businessImpact}`, because only the
+    // id can decide project membership — a name is not unique across the tenant and carries
+    // no ancestry. The project view needs that: an issue raised on a VM or an identity has no
+    // asset row to hang off, so scoping by the asset alone made every one of them vanish.
+    //
+    // An EMPTY CELL reads back as undefined, never as an empty array. A row written before
+    // this column has unknown refs; a live sync writing `[]` is saying Wiz attributed the
+    // issue to nothing. The project view must be able to tell those apart.
+    "project_refs_json",
+    // WHERE THE ROW SITS RELATIVE TO THE AI ESTATE — DIRECT / ADJACENT / UNLINKED, the edge
+    // type the hop came through, and the AI assets it reached. Appended, same no-migration
+    // contract, and declared here for the same `writeGrid` reason the two blocks above state:
+    // an undeclared column is projected away on every write and read back as a default.
+    //
+    // The ids are comma-joined, matching `attributed_asset_ids` and `environments`; the
+    // `_json` suffix stays reserved for structures. An empty `ai_adjacency` cell reads back as
+    // UNDEFINED and never as "UNLINKED" — no pass ran over that row, which is a different
+    // claim from having looked and found no link, and the ranker prices the two differently.
+    "ai_adjacency", "adjacency_via", "adjacent_asset_ids",
   ],
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
@@ -250,6 +273,16 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // records which population was asked. Empty on a row written before the column, which
     // reads as "unknown" and never as "a different scope".
     "register_scope",
+    // THE ADJACENCY CENSUS THIS SYNC MEASURED — `{DIRECT, ADJACENT, UNLINKED, edgesKnown}`,
+    // mirroring `aars_severity_json` and `problem_outcome_json` one row up. Appended, same
+    // no-migration contract; absent on a row written before the column, which reads as "no
+    // adjacency pass" and never as an all-UNLINKED register.
+    //
+    // `edgesKnown` travels INSIDE the object rather than as its own column because the three
+    // counts are unreadable without it: 68 asset edges on the reference tenant means UNLINKED
+    // is mostly "not traversed". Splitting them into two columns is how a later reader ends up
+    // plotting the counts alone.
+    "adjacency_json",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

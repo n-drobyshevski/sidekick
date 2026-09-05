@@ -18,6 +18,7 @@ import {
   withOpenCounts,
   withInternetExposureNodes,
   withMissingGuardrailNodes,
+  withAiAdjacency,
   withIssueAttribution,
   withPostureTiers,
   withProblemVerdicts,
@@ -392,6 +393,19 @@ export function issueToRow(i: IssueRow): Rec {
     // this app built before the stamp existed, which rowToIssue reads back as the AI
     // category — the only scope any of those syncs ran. See domain/registerScope.ts.
     categories: (i.categories ?? []).join(","),
+    // The issue's own project attribution, as objects — `projects_json` above holds the
+    // NAMES and keeps doing so. `null` for undefined rather than `"[]"`, because the two say
+    // different things: absent is "this row predates the column, its refs are unknown",
+    // `[]` is a sync reporting that Wiz attributed the issue to no project at all. The
+    // project view reads the difference (api.ts `viewIssues`).
+    project_refs_json: i.projectRefs ? JSON.stringify(i.projectRefs) : null,
+    // Where the row sits relative to the AI estate. `?? null`, never a default: an empty
+    // `ai_adjacency` cell means no adjacency pass ran, and writing "UNLINKED" for it would
+    // turn "nobody looked" into a measurement — the same absent-is-never-zero failure the
+    // flags themselves keep. The id list is comma-joined, matching `attributed_asset_ids`.
+    ai_adjacency: i.aiAdjacency ?? null,
+    adjacency_via: i.adjacencyVia ?? null,
+    adjacent_asset_ids: (i.adjacentAssetIds ?? []).join(","),
   };
 }
 
@@ -439,6 +453,13 @@ export function rowToIssue(r: Rec): IssueRow {
   // as a value, and it does so because there is exactly one value it can have.
   const categories = String(r["categories"] ?? "").split(",").filter(Boolean);
   issue.categories = categories.length ? categories : [RISK_CATEGORY_ID];
+  // The project refs. Deliberately NOT defaulted, and the opposite decision to `categories`
+  // directly above: there is no single value a missing cell could have here. An empty cell
+  // means the column did not exist when this row was written, so its refs are UNKNOWN —
+  // reading that as `[]` would state that Wiz attributed the issue to no project, and the
+  // project view would then exclude it on the strength of a measurement nobody took.
+  const projectRefs = parseJson<IssueRow["projectRefs"] | null>(r["project_refs_json"], null);
+  if (projectRefs) issue.projectRefs = projectRefs;
   // Set only when non-empty, so a round trip preserves "not captured" as undefined
   // rather than promoting it to an empty array or a false.
   const environments = String(r["environments"] ?? "").split(",").filter(Boolean);
@@ -455,6 +476,18 @@ export function rowToIssue(r: Rec): IssueRow {
   if (attributionHop === "direct" || attributionHop === "RUNS_AS" || attributionHop === "none") {
     issue.attributionHop = attributionHop;
     issue.attributedAssetIds = String(r["attributed_asset_ids"] ?? "").split(",").filter(Boolean);
+  }
+  // Adjacency, read the same way and for the same reason: the STATE is what says the pass
+  // ran, so an unrecognised or empty cell leaves all three fields undefined rather than
+  // reading as UNLINKED — `rank.adjacencyOf` prices absent as null and UNLINKED mid-scale,
+  // so the difference is a score, not a nicety. The id list is empty on DIRECT and UNLINKED
+  // by construction, which round-trips as "" and back to [].
+  const adjacency = (r["ai_adjacency"] as string | null) ?? null;
+  if (adjacency === "DIRECT" || adjacency === "ADJACENT" || adjacency === "UNLINKED") {
+    issue.aiAdjacency = adjacency;
+    issue.adjacentAssetIds = String(r["adjacent_asset_ids"] ?? "").split(",").filter(Boolean);
+    const via = String(r["adjacency_via"] ?? "");
+    if (via) issue.adjacencyVia = via;
   }
   // Phase 4: absent reads as undefined, never a default — a row this app synced before the
   // verdict existed (or a resolved issue that never got one) must not read as decided.
@@ -898,7 +931,17 @@ export function persistSync(
   // flips the knob has no attribution on its ledger to flip TO, and would need a full re-sync
   // to get one — so the evidence is collected always and priced on request.
   const attributedIssues = withIssueAttribution(reachable, issues);
-  const enriched = enrichGraphDoc(reachable, attributedIssues, hints, rule);
+  // Adjacency BESIDE attribution, against the same `reachable` doc, and for the same reason
+  // it runs unconditionally: the fold only RECORDS where a row sits relative to the estate.
+  // Whether anything is scored from that is the rank rule's decision, and its adjacency share
+  // is 0 by default — so a tenant that later flips the knob must already have the evidence on
+  // its ledger rather than needing a full re-sync to get some. The two folds are independent:
+  // attribution answers which AI asset an issue DESCRIBES over one edge type, this answers
+  // whether the row is anywhere near the estate over twelve, and a row can be ADJACENT while
+  // attributed to nothing.
+  const { issues: placedIssues, census: adjacencyCensus } =
+    withAiAdjacency(reachable, attributedIssues);
+  const enriched = enrichGraphDoc(reachable, placedIssues, hints, rule);
 
   // The problem/decision-vector verdict, BESIDE the AARS enrichment above, never inside
   // it — see withProblemVerdicts's own comment for why the two must stay independently
@@ -909,7 +952,7 @@ export function persistSync(
   const { version: problemRuleVersion, rule: problemRule } = settingsStore.getProblemRule();
   const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
     enriched,
-    attributedIssues,
+    placedIssues,
     findings,
     problemRule,
     problemRuleVersion,
@@ -1069,6 +1112,11 @@ export function persistSync(
     // ledger disagree until the next sync, and bootstrap says so rather than letting a
     // total counted under one scope be compared with one counted under another.
     register_scope: registerScopeSignature(settingsStore.getIssueCategories()),
+    // Where this sync's issues sat relative to the AI estate, WITH the edge count that makes
+    // the three figures readable — see AdjacencyCensus.edgesKnown. Mirrors aars_severity_json
+    // and problem_outcome_json above: the snapshot this row points at is overwritten by the
+    // next sync, so this is the only record the trend can ever read it from.
+    adjacency_json: JSON.stringify(adjacencyCensus),
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
   settingsStore.setDecidedRuleVersion(problemRuleVersion);
