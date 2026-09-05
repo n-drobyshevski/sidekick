@@ -54,6 +54,7 @@ import {
 } from "../../gas_shared/test/contracts/tokens.js";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
+import { registerPageHeaderContract } from "../../gas_shared/test/contracts/pageHeader.js";
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
 import { registerDiagnosticsContract } from "../../gas_shared/test/contracts/diagnostics.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
@@ -144,6 +145,16 @@ registerNavGroupContract({
 });
 
 registerBrandMarkContract({ ...base, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN });
+
+// ONE h1 PER PAGE, AND ONLY A fullBleed ROUTE MAY WRITE ITS OWN. This register is the only
+// one the rule bites in today: `graph` and `aars` render `h1.workbench-title` inside a
+// `.workbench-bar` — a full-width toolbar carrying search, tabs and actions beside the title
+// — and both are exactly the routes PAGES declares `fullBleed: true`. The other three that
+// used to hand-roll a title (`problems`, `combos`, `config`) now call
+// `pageHeader({ hero: heroStat("Risk", <title>, <sub>) })` like `compliance` does, so the
+// exception is no longer a judgement recorded in prose. No skipReason: every route here has
+// a module at pages/<route>.js and the sweep runs.
+registerPageHeaderContract(base);
 
 registerParityContract({
   ...base,

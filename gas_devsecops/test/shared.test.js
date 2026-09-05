@@ -33,6 +33,7 @@ import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
+import { registerPageHeaderContract } from "../../gas_shared/test/contracts/pageHeader.js";
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
 import { registerDiagnosticsContract } from "../../gas_shared/test/contracts/diagnostics.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
@@ -88,6 +89,11 @@ registerNavGroupContract({
 });
 
 registerBrandMarkContract({ ...base, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN });
+
+// ONE h1 PER PAGE, AND ONLY A fullBleed ROUTE MAY WRITE ITS OWN — see gas_ai's registration
+// for the rule and gas's for why an app with neither half populated still runs it rather
+// than skipping. Both halves are empty here too.
+registerPageHeaderContract(base);
 
 registerParityContract({
   ...base,

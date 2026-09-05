@@ -34,6 +34,11 @@ export function parsePages(appSrc) {
       // ctx.frontDoorIsFirst: false can assert the manifest's front door is actually reachable
       // rather than only present in the table.
       experimental: /experimental:\s*true/.test(m[2]),
+      // Whether this route owns the whole content pane (no main padding, no max-width).
+      // Read here rather than by a second parser because `test/contracts/pageHeader.js`
+      // turns it into a rule: a full-bleed route is the ONLY kind allowed to render its own
+      // `<h1>` instead of the shared pageHeader's. One PAGES parser, two contracts.
+      fullBleed: /fullBleed:\s*true/.test(m[2]),
     });
   }
   return out;

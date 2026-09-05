@@ -347,9 +347,17 @@ export function filterChipRow({
  * change is a no-op for every `.kpi-label` that is still a div (the KPI tiles) and makes this
  * one render exactly as it did.
  *
- * `opts.heading` is the opt-out, and three routes need it: gas_ai's `problems`, `combos` and
- * `config` already own a page-level `h1` above their header, so the default would give them
- * two. They pass `{ heading: "div" }` and keep the h1 they have.
+ * `opts.heading` is the opt-out, and it is for a SECOND heroStat on a page that already has
+ * one. gas_ai's `problems`, `combos` and `config` each draw a `pageHeader` hero at the top
+ * (that is their h1) and a second one further down carrying a figure; the second passes
+ * `{ heading: "div" }` so the page keeps exactly one h1. This used to read that those three
+ * "own a page-level h1 above their header" — they did, as bare `el("h1", …)`, until F3
+ * converted all three onto this component. The opt-out survives the conversion because the
+ * reason for it did: two heroes, one heading.
+ *
+ * `test/contracts/pageHeader.js` is the rule that keeps the FIRST hero from regressing back
+ * into a hand-rolled title: a route may render its own `el("h1")` only if its PAGES entry
+ * declares `fullBleed: true`.
  */
 export function heroStat(label, value, sub, help, opts) {
   const heading = (opts && opts.heading) || "h1";

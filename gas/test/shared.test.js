@@ -30,6 +30,7 @@ import { SEVERITY_COLORS, SLA_TARGETS } from "../src/domain/config";
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
+import { registerPageHeaderContract } from "../../gas_shared/test/contracts/pageHeader.js";
 import { registerDiagnosticsContract } from "../../gas_shared/test/contracts/diagnostics.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
 import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
@@ -221,6 +222,14 @@ registerNavGroupContract({
 registerBrandMarkContract({
   ...base, beforeAll, afterAll, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN,
 });
+
+// ONE h1 PER PAGE, AND ONLY A fullBleed ROUTE MAY WRITE ITS OWN — the same rule the sibling
+// registers run, derived from THIS app's PAGES rather than from a list. Both halves are
+// empty here (no route declares fullBleed, no page renders its own h1: every one of the nine
+// takes its heading from `pageHeader`/`heroStat`), which is not a reason to skip it — it is
+// what keeps that true. A hand-rolled title landing in any of them fails here rather than
+// being noticed a wave later, the way gas_ai's five were.
+registerPageHeaderContract(base);
 
 // =========================================================================================
 //  This app's brand, pinned by value

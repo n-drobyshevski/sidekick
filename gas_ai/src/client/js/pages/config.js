@@ -63,12 +63,18 @@ export async function renderConfigFindings(main, params, ctx) {
     page: Math.max(0, Number(params.page) || 0),
   };
 
-  main.append(
-    el("h1", {}, "Cloud Configuration"),
-    el("p", { class: "page-sub" },
+  // `pageHeader`/`heroStat`, not a bare `el("h1", ...)` — see `pages/compliance.js`'s own
+  // note for the reasoning. "Risk" (this route's PAGES lane) is the kicker and the page's
+  // `<h1>`; "Cloud Configuration" is the hero VALUE. The `heroStat` further down keeps
+  // `{ heading: "div" }`: the page owns one h1 and it is now this one.
+  main.append(pageHeader({
+    hero: heroStat(
+      "Risk",
+      "Cloud Configuration",
       "Wiz configuration findings for the AI security framework — what is failing, " +
-      "grouped by the control that failed."),
-  );
+      "grouped by the control that failed.",
+    ),
+  }));
 
   const headHost = el("div", {});
   const bodyHost = el("div", {});
