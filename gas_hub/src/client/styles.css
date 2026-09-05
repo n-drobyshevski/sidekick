@@ -1,0 +1,30 @@
+/* Wiz Sidekick — the hub's own visual system, over the shared design tokens. Graphite
+   accent: the hub belongs to no register, and graphite is already every sibling's primary-
+   button colour (gas_shared/styles/base.css), so it reads as "the app before the app" rather
+   than borrowing one register's brand. Light theme only, same as every sidekick.
+
+   This file is an index, and MOST OF WHAT IT INDEXES IS NOT THIS APP'S. Eight of the ten
+   sheets below live in gas_shared/styles/ — one copy for four surfaces instead of four that
+   drift. Only two are local: styles/tokens.css (the brand, nothing else) and
+   styles/pages.css (the tile grid and the settings tail no sibling has).
+
+   esbuild inlines the whole closure back into one <style> partial at build time
+   (esbuild.config.mjs, `bundle: true`), and it resolves a relative @import that leaves the
+   package root exactly like any other relative path.
+
+   ORDER IS THE CASCADE — these are contiguous slices and must stay in this sequence. Tokens
+   first (shared base, then the brand that overrides nothing but adds the accent), overrides
+   (reduced motion, phone layout) last. help.css is DROPPED: this app has no help route, and
+   importing a sheet only to dress a page that does not exist would ship dead CSS with nothing
+   to point back at it. */
+
+@import "../../../gas_shared/styles/tokens.base.css";
+@import "./styles/tokens.css";
+@import "../../../gas_shared/styles/base.css";
+@import "../../../gas_shared/styles/components.css";
+@import "../../../gas_shared/styles/tables.css";
+@import "../../../gas_shared/styles/sheet.css";
+@import "../../../gas_shared/styles/feedback.css";
+@import "../../../gas_shared/styles/settings.css";
+@import "./styles/pages.css";
+@import "../../../gas_shared/styles/overrides.css";

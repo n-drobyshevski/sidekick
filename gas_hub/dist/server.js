@@ -324,7 +324,7 @@ var Server = (() => {
   });
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "b35b0d0d0899" : "dev";
+  var BUILD_ID = true ? "a6f415dc9623" : "dev";
 
   // src/server/urls.ts
   var TILE_ORDER = ["os", "ai", "devsecops"];
