@@ -78,10 +78,14 @@ const common = {
 
   /**
    * `threads` over v4's `forks` default, for two reasons. It is the faster pool on a suite
-   * this size, and forked child processes get a smaller call stack: `util.test.ts` spreads
-   * 200_000 arguments into `minIso` on purpose — that is the whole point of the test — and
-   * it overflows under `forks` while passing under `threads`. The pool is load-bearing, not
-   * a preference.
+   * this size, and forked child processes get a smaller call stack than worker threads do —
+   * `util.test.ts`'s `maxNum`/`minNum`/`pushAll` guards spread millions of arguments on
+   * purpose (that is the whole point of the test; see its own header comment for the
+   * measured boundary and the margin chosen above it) and some stress cases in
+   * `remediation.test.ts` reach the same helpers at register scale. The pool is load-bearing,
+   * not a preference. (This comment previously named `minIso` and 200_000 — neither is
+   * accurate: `minIso` folds rather than spreads and carries no such test, and the guard's N
+   * was raised past 200_000 once 200_000 was measured not to overflow even under `threads`.)
    */
   pool: "threads" as const,
 

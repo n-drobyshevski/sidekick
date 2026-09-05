@@ -2,29 +2,53 @@
 //
 // `Math.max(...arr)` and `target.push(...items)` make every element a CALL ARGUMENT, so both
 // throw RangeError once the array is large. `maxNum`, `minNum` and `pushAll` exist solely to
-// fold instead of spread, and each carries a comment in util.ts saying so — but until now not
-// one of them had a test. The only thing standing behind all three was
-// `remediation.test.ts`'s 200k-row Kaplan-Meier run, which reaches `maxNum` through a
-// three-second estimator, and `transform.test.ts`'s merge, which reaches `pushAll` through
-// `mergeNodes`.
+// fold instead of spread, and each carries a comment in util.ts saying so.
 //
-// Guarding them here instead is the same assertion for a thousandth of the cost: these are
-// plain number arrays, so the arithmetic is milliseconds and what is left is exactly the
-// question — does the helper spread. The integration tests keep their own role, which is to
-// catch a spread written INLINE somewhere on those paths, where no helper would be involved.
+// THIS FILE USED TO ALSO FIRE ON NOTHING, at N=200_000. That N was measured correctly (main
+// thread, node 22/x64: Math.max(...) throws at 125,276, push(...) at 125,269) but against the
+// wrong runtime: vitest.config.ts's `pool: "threads"` runs every test in a real worker_thread,
+// and a worker's default V8 stack tolerates a far larger argument spread than the main
+// thread's. Reintroducing the literal spread and rerunning THIS file at the old N=200_000
+// produced a clean pass — no RangeError, no timeout — because 200,000 never got close to the
+// limit in the pool these tests actually execute in. `remediation.test.ts`'s two N=200,000
+// end-to-end cases have the same property; see the comments there.
 //
-// N IS NOT TUNED TO THIS MACHINE. Measured on node 22 / x64, `Math.max(...)` takes 125,275
-// elements and throws at 125,276; `push(...)` breaks at 125,269. That ceiling is a function of
-// the available stack, so it moves with the engine and the environment — a smaller stack lowers
-// it, a larger one raises it. 200k is the margin both existing regression tests already chose,
-// and picking anything nearer the measured number would be calibrating to one machine and
-// risking a test that silently stops testing on another.
+// RE-MEASURED IN THIS SUITE'S OWN POOL, not a standalone script (a standalone script is how
+// the 125,275 main-thread figure above was obtained the first time, and it answers a question
+// about a runtime these tests don't run in). A temporary vitest test, deleted after use, ran a
+// bare `Math.max(...new Array(n).fill(1))` and `target.push(...arr)` inside `pool: "threads"`
+// at candidate sizes, then binary-searched the exact edge:
+//
+//   clean:   100_000 / 200_000 / 400_000 / 490_000
+//   throws:  500_000 / 510_000 / 600_000 / 700_000 / 1_000_000
+//   exact boundary: 498_320 clean, 498_321 throws (RangeError)
+//
+// Identical under `isolate:false` (the default `pure` project) and `isolate:true`
+// (`GAS_TEST_FULL_ISOLATION=1`), and identical in `gas_devsecops`'s copy of this same probe —
+// same engine, same pool, same number.
+//
+// N = 2_000_000 below, roughly 4x that measured boundary. A 20% margin is not defensible: V8's
+// stack tolerance is a function of the engine, the OS and the call site's own stack depth, not
+// a fixed constant, and this repo's own history already produced one ~4x swing on exactly this
+// number — main thread (125,275) to worker thread (498,320) is itself a factor of ~3.98. Sizing
+// the margin to survive a second swing of the same magnitude, rather than to just clear the one
+// measurement in hand, is the point; a number nearer 498,320 would calibrate to today's engine
+// and risk silently testing nothing on the next one. The cost of the extra margin is real but
+// small: measured directly, the two large-array cases below run in ~360ms and ~500ms (mostly
+// building the 2,000,000-element input array — the fold/loop itself is a small fraction of
+// that) — not the 13-29s `remediation.test.ts`'s end-to-end cases take (see their comments),
+// because these are plain number arrays.
+//
+// The integration tests (`remediation.test.ts`'s two 200k-row cases, `transform.test.ts`'s
+// large-delta case) keep their place: they cover the estimator and the merge end-to-end at
+// register scale, which this file does not, and a spread written INLINE on either path (rather
+// than through these helpers) would only be caught there.
 
 import { describe, expect, it } from "vitest";
 
 import { maxNum, minNum, pushAll } from "../src/domain/util";
 
-const N = 200_000;
+const N = 2_000_000;
 
 describe("maxNum / minNum — fold, never spread", () => {
   it("survive an array well past the argument limit", () => {

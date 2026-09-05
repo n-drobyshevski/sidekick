@@ -65,9 +65,16 @@ import { brickFixture, expectParity } from "./helpers";
  * machine moved and the change did not. Raising the budget here is therefore not papering over
  * a regression; it is removing a hang-catcher from two tests that are legitimately slow.
  *
- * N MUST NOT SHRINK TO MAKE THIS FAST — see the note above the first test. N=200,000 IS the
- * claim being made (it must sit past the engine's argument-spread limit on any machine), so
- * trading it for wall time would leave the test passing while testing nothing.
+ * N MUST NOT SHRINK TO MAKE THIS FAST — see the note above the first test. This comment used
+ * to add "N=200,000 IS the claim being made (it must sit past the engine's argument-spread
+ * limit on any machine)" as the reason; that reason was false, measured directly: under this
+ * suite's own `pool: "threads"`, a bare argument spread returns cleanly through 490,000
+ * elements and only throws from 498,321 on, so 200,000 sits well UNDER the limit here, not
+ * past it (see `test/util.test.ts`'s header for the full measurement, and that file for the
+ * guard that now actually sits past the limit, at N=2,000,000). The real reason N must not
+ * shrink is simpler and still holds: N=200,000 IS the register-scale claim these two tests
+ * make about `kaplanMeier` itself, and shrinking the register shrinks that claim, not just
+ * the runtime.
  */
 const STRESS_TIMEOUT_MS = 120_000;
 
@@ -262,16 +269,31 @@ describe("kaplanMeier", () => {
   // and higher where it is larger. Tuning N toward that number would calibrate the test to one
   // machine and risk it silently ceasing to test anything on another.
   //
-  // For fast feedback this is no longer the only guard: `test/util.test.ts` asserts the same
-  // regression directly against `maxNum` / `minNum` / `pushAll` in ~15ms. What THIS test adds,
-  // and why it stays, is coverage of a spread written inline somewhere on the estimator's own
-  // path, where no helper would be involved to catch it.
-  it("large risk set does not overflow the call stack (regression: Math.max(...times) spread)", () => {
+  // NOT A SPREAD-REGRESSION GUARD, despite the name this test used to carry ("large risk set
+  // does not overflow the call stack (regression: Math.max(...times) spread)"). That name was
+  // false under this suite's own pool: `vitest.config.ts` runs every test in a real
+  // worker_thread, whose default V8 stack tolerates a far larger argument spread than the main
+  // thread's — measured directly (a temporary vitest test, in-pool, deleted after use): a bare
+  // `Math.max(...arr)` / `push(...arr)` returns cleanly through 490,000 elements and only
+  // throws from 498,321 on. 200,000 never gets close. Verified: reverting `maxNum` to
+  // `Math.max(...times)` and rerunning this test at N=200_000 (as-is) produces a clean pass,
+  // no overflow and no timeout.
+  //
+  // `test/util.test.ts` is the guard that actually bites: `maxNum`/`minNum`/`pushAll` are
+  // exercised directly at N=2,000,000 — comfortably past the measured boundary — in under a
+  // second total, with the full measurement and margin reasoning in its header comment. THIS
+  // test keeps a different, real claim: kaplanMeier stays correct and fast at register scale
+  // (200k rows, one observation per finding). If util.test.ts's fast guard is ever deleted,
+  // that is the coverage this test's name used to promise but cannot deliver at this N, and it
+  // would need restoring before relying on this one in its place.
+  it("large risk set completes at register scale without timing out (spread regression is guarded directly in util.test.ts)", () => {
     // The risk set holds one observation per finding, so a real register is tens of thousands
     // of entries. Spreading it into Math.max/Math.min ("Math.max(...times)") overflows the call
-    // stack once the array is large — the crash that took down the Executive view (which asks
-    // for every severity, maximizing the set). 200k rows is well past that spread limit; maxNum
-    // must fold it with a two-arg reduce instead. Guards against reintroducing the spread.
+    // stack once the array is large enough — the crash that took down the Executive view (which
+    // asks for every severity, maximizing the set) — which is why `maxNum` folds instead. That
+    // specific regression is what `test/util.test.ts` guards directly and fast; this test's own
+    // job is the broader end-to-end claim that the estimator is correct and performant at
+    // register scale.
     const N = 200_000;
     const rows: RemediationRow[] = [];
     for (let i = 0; i < N; i++) rows.push(res((i % 500) + 1));
@@ -892,7 +914,13 @@ describe("latencyView / latencySegments", () => {
     expect(km.censored).toBe(seg.censored + seg.closedBeforeFix);
   });
 
-  it("register-sized population survives the projection and the estimator", () => {
+  // NOT A SPREAD-REGRESSION GUARD, same reason as the "large risk set" test above: this also
+  // runs its rows through `kaplanMeier` -> `maxNum`, but at N=200_000, under the pool this
+  // suite actually runs in, that spread never gets near the measured boundary (clean to
+  // 490,000, RangeError only from 498,321 — see `test/util.test.ts`'s header). The name below
+  // states the claim this test actually holds. `test/util.test.ts` is the fast, direct guard
+  // against the spread itself, at N=2,000,000.
+  it("register-sized population survives the projection and the estimator (not a spread-regression guard — see util.test.ts)", () => {
     const N = 200_000;
     const base = Date.parse("2026-07-01T00:00:00Z");
     // 500 distinct fix dates, precomputed: toISOString() per row would dominate the test.
