@@ -356,6 +356,27 @@ def test_the_scope_guard_survives_a_round_trip_through_the_scan_log(spark, table
     assert run_pipeline.parse_severities(stored["s2"]) == ["CRITICAL", "HIGH"]
 
 
+def test_the_scans_row_carries_the_gate_this_scope_resolved(spark, tables, monkeypatch):
+    """`resolve_severities(scope)` is not a display value: it is what the scan log records.
+
+    ``main`` resolves the gate once and hands the same list to the fetch and to ``record_scan``,
+    so with no ``--severities`` the ``severities`` column holds this scope's own default. The
+    disappearance guard reads that string back on the next scan, which is why "whose default"
+    is a question about remediation figures rather than about volume.
+    """
+    from config import default_fetch_severities
+
+    monkeypatch.delenv("SEVERITIES", raising=False)
+    resolved = run_pipeline.resolve_severities("sca", argv=[])
+    assert resolved == list(default_fetch_severities("sca"))
+
+    run_scan(spark, tables, [node("f-1")], "s1", TS["s1"], severities=resolved)
+
+    stored = spark.table(tables.scans).first()["severities"]
+    assert stored == "CRITICAL,HIGH"
+    assert run_pipeline.parse_severities(stored) == resolved
+
+
 def test_unscoped_scans_are_stored_as_null():
     """NULL means "asked for everything", which is what lets absence mean something.
 

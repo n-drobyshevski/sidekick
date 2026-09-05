@@ -26,13 +26,13 @@ import requests
 import dbx
 from config import (
     API_SEVERITY_VALUES,
-    DEFAULT_FETCH_SEVERITIES,
     DEFAULT_SCOPE,
     FETCH_ASSET_FIELDS,
     OBJECT_FILTERS,
     SCOPE_ASSET_MEMBERS,
     SCOPES,
     SOURCES,
+    default_fetch_severities,
 )
 
 # Wiz's shared auth endpoint. Tenants on a dedicated region override it via a job parameter.
@@ -459,7 +459,7 @@ def _shape_base(scope: str, filter_by: Dict[str, Any]) -> Dict[str, Any]:
 
 def build_filter(
     scope: str = DEFAULT_SCOPE,
-    severities: Sequence[str] = DEFAULT_FETCH_SEVERITIES,
+    severities: Optional[Sequence[str]] = None,
     project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The GraphQL ``filterBy`` for a scope.
@@ -476,6 +476,11 @@ def build_filter(
     """
     if scope not in SCOPES:
         raise RuntimeError(f"unknown scope {scope!r} -- expected one of {sorted(SCOPES)}")
+    # None means "whatever this scope pulls by default", and the default is a property of the
+    # POPULATION -- so it can only be read once the scope is known, which is why it is resolved
+    # here rather than in the signature. See config.default_fetch_severities.
+    if severities is None:
+        severities = default_fetch_severities(scope)
     filter_by: Dict[str, Any] = _shape_base(scope, copy.deepcopy(SCOPES[scope]))
     source = SOURCES[scope]
 
@@ -517,7 +522,7 @@ def fetch_findings(
     token: str,
     *,
     scope: str = DEFAULT_SCOPE,
-    severities: Sequence[str] = DEFAULT_FETCH_SEVERITIES,
+    severities: Optional[Sequence[str]] = None,
     project_id: Optional[str] = None,
     page_size: int = DEFAULT_PAGE_SIZE,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
@@ -537,6 +542,10 @@ def fetch_findings(
     ``ledger.observed``'s first-wins de-duplication -- so fetching pages concurrently would not
     merely be hard, it would change which duplicate wins.
     """
+    # `build_filter` resolves a None gate to this scope's default; reading it back keeps the
+    # node-side `_severity_gate` below applying the same list the API was asked for.
+    if severities is None:
+        severities = default_fetch_severities(scope)
     filter_by = build_filter(scope, severities, project_id)
     query = query_for(scope)
     source = SOURCES[scope]

@@ -137,6 +137,48 @@ def test_scope_defaults_to_sca_and_rejects_unknown_values(monkeypatch):
             run_pipeline.resolve_scope(argv=[f"--scope={wrong}"])
 
 
+def test_both_scopes_default_to_the_same_gate_and_the_shape_says_they_need_not(monkeypatch):
+    """The severity default is keyed by scope, and today both keys agree.
+
+    This moves no number. Both registers here carry CVE-ish findings whose severities mean the
+    same thing, so both pull CRITICAL,HIGH and every published figure is byte-identical to what
+    a single tuple produced. What the shape buys is the next scope: it has to state its own
+    gate rather than inherit a volume control chosen for a different population.
+
+    The sibling register is the evidence that the inheritance is not hypothetical.
+    `gas_devsecops` gave `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted
+    `PASSWORD` 209 -> 0 and `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and
+    shipped a secrets register with no passwords in it. Nothing errored; the gate was simply
+    the right answer to a question nobody had asked about that population.
+    """
+    from config import DEFAULT_FETCH_SEVERITIES, default_fetch_severities
+
+    monkeypatch.delenv("SEVERITIES", raising=False)
+    monkeypatch.setattr(dbx, "widget", lambda name: "")
+
+    # Equality, today, and stated rather than derived so a drift has to be deliberate.
+    assert default_fetch_severities("sca") == ("CRITICAL", "HIGH")
+    assert default_fetch_severities("sast") == default_fetch_severities("sca")
+
+    # Keyed per scope, with an entry for every scope: a missing key is refused, not quietly
+    # served from another population's gate.
+    assert set(DEFAULT_FETCH_SEVERITIES) == set(SCOPES)
+    with pytest.raises(RuntimeError, match="unknown scope"):
+        default_fetch_severities("secrets")
+
+    # And genuinely independent -- the half a single tuple could not express. Widening one
+    # scope's gate leaves the other exactly where it was.
+    monkeypatch.setitem(DEFAULT_FETCH_SEVERITIES, "sast", ("CRITICAL", "HIGH", "MEDIUM"))
+    assert run_pipeline.resolve_severities("sast", argv=[]) == ["CRITICAL", "HIGH", "MEDIUM"]
+    assert run_pipeline.resolve_severities("sca", argv=[]) == ["CRITICAL", "HIGH"]
+    # It is a default, so an explicit `--severities` still outranks it on either scope.
+    assert run_pipeline.resolve_severities("sast", argv=["--severities=critical"]) == ["CRITICAL"]
+
+    # The API filter reads the same source, so the gate a scope pulls is the gate on the wire.
+    monkeypatch.setitem(DEFAULT_FETCH_SEVERITIES, "sca", ("CRITICAL",))
+    assert build_filter("sca")["severity"] == ["CRITICAL"]
+
+
 def test_existing_schema_is_not_recreated():
     """A service principal in a shared catalog usually has CREATE TABLE on one schema and no
     CREATE SCHEMA on the catalog, so an unconditional CREATE would fail on a writable schema."""

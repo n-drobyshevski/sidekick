@@ -19,6 +19,7 @@ exists only here, because no other surface measures a register without a CVE in 
 """
 
 from dataclasses import dataclass
+from typing import Dict, Tuple
 
 # ---- Deployment version ----
 # The runtime modules are pasted into a flat Workspace folder by hand, one file at a time, and
@@ -77,8 +78,37 @@ API_SEVERITY_VALUES = {
     "INFO": "INFORMATIONAL",
 }
 
-# What a scan pulls when nothing else is asked for.
-DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")
+# What a scan pulls when nothing else is asked for, KEYED BY SCOPE -- and today both keys say
+# the same thing, deliberately.
+#
+# A single list is a volume control that every future population inherits without anybody
+# choosing it for them, and the sibling register made exactly that mistake in production:
+# `gas_devsecops` gave `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted
+# `PASSWORD` 209 -> 0 and `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and
+# published a secrets register with no passwords in it. Nothing was wrong with the number; it
+# was the right answer to a question nobody had asked about that population.
+#
+# Both scopes here are CVE-bearing volume registers whose severities mean the same thing, so
+# they agree, and this changes no figure today. What it changes is what happens next: a third
+# scope has to state its own gate rather than inherit one. See `default_fetch_severities`.
+DEFAULT_FETCH_SEVERITIES: Dict[str, Tuple[str, ...]] = {
+    "sca": ("CRITICAL", "HIGH"),
+    "sast": ("CRITICAL", "HIGH"),
+}
+
+
+def default_fetch_severities(scope: str) -> Tuple[str, ...]:
+    """The severity gate ``scope`` pulls when the run asks for nothing else.
+
+    Refuses an unknown scope rather than falling back to another population's gate: a silent
+    fallback is how the inherited default gets inherited again.
+    """
+    try:
+        return DEFAULT_FETCH_SEVERITIES[scope]
+    except KeyError:
+        raise RuntimeError(
+            f"unknown scope {scope!r} -- expected one of {sorted(DEFAULT_FETCH_SEVERITIES)}"
+        ) from None
 
 # ---- Scopes: which population of findings a run measures ----
 # The scope drives BOTH the API filter and the table names, from one parameter, so a table can

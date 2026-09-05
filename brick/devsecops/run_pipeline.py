@@ -67,7 +67,7 @@ try:
     import ledger as ledger_mod
     import metrics
     from config import (
-        DEFAULT_FETCH_SEVERITIES,
+        default_fetch_severities,
         rule_for_scope,
         DEFAULT_SCOPE,
         DISAPPEARANCE_MODES,
@@ -741,7 +741,7 @@ def ingest_to_bronze(
     # already the vulnerability population. Sharing the name silently overwrote the population
     # with the secret-scope string.
     secret_scope = param("secret_scope") or None
-    severities = list(severities) if severities else list(DEFAULT_FETCH_SEVERITIES)
+    severities = list(severities) if severities else list(default_fetch_severities(scope))
 
     # Bronze's only creation site. It has to exist before the first batch lands, because a
     # clustering spec can only be declared at creation and an append cannot add one -- and it
@@ -1252,9 +1252,15 @@ def resolve_disappearance(argv: Optional[list] = None) -> str:
     return mode
 
 
-def resolve_severities(argv: Optional[list] = None) -> list:
-    """The severity scope of this run. Drives the API filter AND the disappearance guard."""
-    requested = param("severities", argv=argv) or ",".join(DEFAULT_FETCH_SEVERITIES)
+def resolve_severities(scope: str, argv: Optional[list] = None) -> list:
+    """The severity scope of this run. Drives the API filter AND the disappearance guard.
+
+    ``scope`` is required rather than defaulted because the default gate is a property of the
+    population being measured, not of the product: a severity list that is a volume control on
+    one register can be a deletion on another. It is also the list stamped on the ``scans`` row,
+    so what the disappearance guard later believes a scan covered is decided right here.
+    """
+    requested = param("severities", argv=argv) or ",".join(default_fetch_severities(scope))
     return [s.strip().upper() for s in requested.split(",") if s.strip()]
 
 
@@ -1467,7 +1473,7 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     namespace = "" if (data_path or csv_register) else resolve_namespace()
     tables = resolve_tables(namespace, scope, data_path=data_path)
     disappearance = resolve_disappearance()
-    severities = resolve_severities()
+    severities = resolve_severities(scope)
 
     spark = get_spark()
     ensure_schema(spark, namespace)

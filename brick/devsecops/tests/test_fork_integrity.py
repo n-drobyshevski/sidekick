@@ -165,14 +165,32 @@ def test_the_project_filter_shape_matches_upstream():
     their_config = upstream("config")
     theirs.SCOPES = their_config.SCOPES
     theirs.DEFAULT_SCOPE = their_config.DEFAULT_SCOPE
+    # The severity gate is the third constant that crosses, and it is the one that goes wrong
+    # QUIETLY -- so it is passed at the call rather than left to the leak. Upstream's
+    # `build_filter` defaults it to a flat `("CRITICAL", "HIGH")`; this fork's config answers
+    # `from config import DEFAULT_FETCH_SEVERITIES` with a dict keyed by scope, so brick's code
+    # iterates its KEYS and builds `severity: ["SCA", "SAST"]` -- measured here, not supposed,
+    # and raising nothing. Rebinding the module attribute does NOT reach it either: a default
+    # argument is captured in `__defaults__` at `def` time, which is the difference between this
+    # constant and the two above.
+    their_severities = their_config.DEFAULT_FETCH_SEVERITIES
 
     assert ours.build_filter("sca", project_id="p")["projectIdV2"] == (
-        theirs.build_filter("os", project_id="p")["projectIdV2"]
+        theirs.build_filter("os", their_severities, project_id="p")["projectIdV2"]
     ) == {"equals": ["p"]}
     # And the asymmetry upstream never has to know about: the SAST type spells it `projectId`
     # and takes it bare, which is why the shape is data here and a literal there.
     assert ours.build_filter("sast", project_id="p")["projectId"] == ["p"]
     assert config.OBJECT_FILTERS["sca"] == ("projectIdV2",)
+    # Each register's gate reaches its own `build_filter`. Pinned as a KIND rather than as an
+    # equality -- the values agree today, and the point of keying this fork's default by scope
+    # is that they need not.
+    assert theirs.build_filter("os", their_severities)["severity"] == ["CRITICAL", "HIGH"]
+    assert ours.build_filter("sca")["severity"] == list(config.default_fetch_severities("sca"))
+    # The leak itself, stated: brick's own default, read through this fork's config, is not a
+    # severity list at all. Nothing upstream can be changed from here, so the call sites above
+    # state the gate instead.
+    assert theirs.build_filter("os")["severity"] == ["SCA", "SAST"]
 
 
 def test_this_fork_measures_code_and_refuses_to_pretend_otherwise():
