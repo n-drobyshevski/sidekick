@@ -582,6 +582,56 @@ def test_a_sast_node_with_no_created_at_still_lands(spark):
     assert touched.where(F.col("first_seen") != F.lit(SCAN_TS).cast("timestamp")).count() == 0
 
 
+# ------------------------------------------------------- static analysis has no vendor
+
+
+def test_static_analysis_is_never_awaiting_a_vendor_fix(spark, monkeypatch):
+    """The scope guard on the actionable clock, and the mutation that prices it.
+
+    "Open, with no fix available" is true of every SAST finding that has ever existed and
+    always will be: nobody vendors a fix for code you wrote yourself. So ``sast`` is absent
+    from ``config.HAS_VENDOR_FIX``, the whole actionable clock is NULL for its rows, and
+    ``awaiting_vendor_fix`` is False rather than True-forever.
+
+    Without that guard every open SAST row drops out of ``mttr_actionable_days`` and
+    ``actionable_age_days`` while staying in every open and exposure count -- so the two
+    halves of a page disagree by exactly this population, and the difference reads as broken
+    arithmetic rather than as the category error it is. The sibling register measured the same
+    shape on live data: 2,085 rows (127 SAST + 1,958 secrets) awaiting a vendor permanently.
+    The number below is this fork's committed capture, run through the real ledger.
+    """
+    import ledger as ledger_mod
+    from config import HAS_VENDOR_FIX, scope_has_vendor_fix
+
+    assert not scope_has_vendor_fix("sast")
+
+    silver = metrics.silver_findings(bronze(spark, sast_nodes(), "sast"), "sast")
+    rows = ledger_mod.reconcile(
+        ledger_mod.empty_ledger(spark),
+        ledger_mod.observed(silver),
+        scan_id="scan-1",
+        scan_ts=SCAN_TS,
+        scope="sast",
+    ).select(*ledger_mod.LEDGER_SCHEMA.fieldNames()).cache()
+
+    frame = ledger_mod.lifecycle_frame(rows, SCAN_TS).cache()
+    open_rows = frame.filter("is_open").count()
+    assert open_rows == 40, "the committed sast capture, one open lifecycle per node"
+    # No vendor, so no clock at all -- and, the load-bearing half, nothing waiting on one.
+    assert frame.filter(F.col("fix_available_at").isNotNull()).count() == 0
+    assert frame.filter(F.col("actionable_from").isNotNull()).count() == 0
+    assert frame.filter("awaiting_vendor_fix").count() == 0
+
+    # The mutation: put `sast` back in the vendor set, which is the guard removed.
+    monkeypatch.setattr(ledger_mod, "HAS_VENDOR_FIX", HAS_VENDOR_FIX | {"sast"})
+    flipped = ledger_mod.lifecycle_frame(rows, SCAN_TS).filter("awaiting_vendor_fix").count()
+    assert flipped == open_rows, (
+        f"{flipped} of {open_rows} open SAST findings sit awaiting a vendor fix forever "
+        "with the scope guard removed -- out of every actionable clock, still in every "
+        "exposure count, and waiting on a vendor that does not exist"
+    )
+
+
 def test_each_scope_queries_its_own_connection():
     assert "vulnerabilityFindings(" in ingest.query_for("sca")
     assert "sastFindings(" in ingest.query_for("sast")

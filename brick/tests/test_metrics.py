@@ -28,7 +28,7 @@ REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
 import metrics  # noqa: E402
-from config import DEFAULT_RISK_RULE, RiskRule  # noqa: E402
+from config import DEFAULT_RISK_RULE, OVERALL, RiskRule  # noqa: E402
 from ingest import extract_nodes  # noqa: E402
 
 SCAN_ID = "test-scan"
@@ -464,6 +464,81 @@ def test_resolved_status_without_timestamp_is_remediated_but_has_no_mttr(spark):
     high = rows_by_severity(metrics.mttr_by_severity(df))["HIGH"]
     assert high["resolved"] == 0
     assert high["mttr_median"] is None
+
+
+# ----------------------------------------------------------- the actionable aggregate
+
+
+def actionable_frame(spark, rows):
+    """A minimal lifecycle-shaped frame: the three columns the second clock aggregates.
+
+    Built directly rather than through ``lifecycle_frame`` because what is under test here is
+    the aggregate, not the derivation -- that is pinned in ``test_ledger.py`` against the real
+    reconciler.
+    """
+    return spark.createDataFrame(
+        rows,
+        "severity STRING, mttr_actionable_days DOUBLE, actionable_age_days DOUBLE, "
+        "awaiting_vendor_fix BOOLEAN",
+    )
+
+
+def test_the_actionable_clock_takes_the_same_kind_of_median_its_neighbour_does(spark):
+    """``F.percentile``, never ``percentile_approx``, so the two clocks cannot report two
+    different kinds of median for the same severity on the same row of the same table."""
+    rows = [
+        ("CRITICAL", 10.0, None, False),
+        ("CRITICAL", 20.0, None, False),
+        ("CRITICAL", 30.0, None, False),
+        ("HIGH", None, 40.0, True),
+    ]
+    got = rows_by_severity(metrics.actionable_mttr_by_severity(actionable_frame(spark, rows)))
+
+    assert got["CRITICAL"]["mttr_actionable_median"] == pytest.approx(20.0)
+    assert got["CRITICAL"]["mttr_actionable_mean"] == pytest.approx(20.0)
+    # count() ignores NULLs, so this is the population the second clock could price at all.
+    assert got["CRITICAL"]["actionable_resolved"] == 3
+    assert got["HIGH"]["actionable_resolved"] == 0
+    assert got["HIGH"]["awaiting_vendor_fix_count"] == 1
+    assert got["HIGH"]["actionable_age_p90"] == pytest.approx(40.0)
+
+    # OVERALL is its own pass over every row, the same convention `mttr_by_severity` uses --
+    # not a mean of the per-severity answers, which would weight a severity of one like a
+    # severity of a thousand.
+    assert got[OVERALL]["actionable_resolved"] == 3
+    assert got[OVERALL]["mttr_actionable_median"] == pytest.approx(20.0)
+    assert got[OVERALL]["awaiting_vendor_fix_count"] == 1
+
+
+def test_the_actionable_sla_is_inclusive_and_read_from_the_severity(spark):
+    """CRITICAL's target is 7 days, and resolved ON the target day counts as met -- the same
+    rule ``_mttr_aggs`` applies to the exposure clock, so the two percentages are comparable."""
+    rows = [("CRITICAL", 7.0, None, False), ("CRITICAL", 7.5, None, False)]
+    got = rows_by_severity(metrics.actionable_mttr_by_severity(actionable_frame(spark, rows)))
+
+    assert got["CRITICAL"]["actionable_sla_compliant"] == 1
+    assert got["CRITICAL"]["actionable_sla_pct"] == pytest.approx(50.0)
+    # A rate over an empty population is unknown, not 0%.
+    empty = rows_by_severity(
+        metrics.actionable_mttr_by_severity(actionable_frame(spark, [("HIGH", None, 3.0, False)]))
+    )
+    assert empty["HIGH"]["actionable_sla_pct"] is None
+
+
+def test_the_actionable_aggregate_cannot_be_run_over_a_snapshot(spark):
+    """Why this is a second function rather than a wider ``mttr_by_severity``.
+
+    ``run_pipeline.build_metrics`` calls that one TWICE -- over the ledger lifecycles and over
+    the silver snapshot, so the two can be published side by side as ``snap_*``. Silver is one
+    scan's payload and has no ``fix_observed_at``, no ``actionable_from`` and no
+    ``awaiting_vendor_fix``; it cannot have them, because they are cross-scan facts. Widening
+    the shared function would fail on the snapshot half, and the natural repair -- a coalesce,
+    or a column-existence check -- would publish a single-scan figure under the same name as a
+    whole-ledger one.
+    """
+    with pytest.raises(Exception) as exc:
+        metrics.actionable_mttr_by_severity(silver(spark, [node()])).collect()
+    assert "mttr_actionable_days" in str(exc.value)
 
 
 # ----------------------------------------------------------------- resolution sources

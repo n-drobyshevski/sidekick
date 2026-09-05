@@ -204,6 +204,86 @@ if SAST_FETCH_RESOLVED:
 # this pipeline without choosing a scope should get the defensible half.
 DEFAULT_SCOPE = "sca"
 
+# ---- The second clock: when could a team actually have acted? ----
+# The SLA/MTTR clock a team can be held to starts when a fix becomes AVAILABLE, not when the
+# finding was detected. A row still waiting on a vendor is not late. `ledger.lifecycle_frame`
+# derives `fix_available_at` / `actionable_from` / `mttr_actionable_days` /
+# `actionable_age_days` / `awaiting_vendor_fix` from the `fix_date` / `fix_observed_at` the
+# ledger has been capturing since the schema was first laid out -- captured precisely so this
+# could be derived later, because a fix date nobody recorded at the time cannot be recovered
+# afterwards. Reference: gas/src/domain/ledgerCore.ts::baseRows, and the scope guard below is
+# gas_devsecops/src/domain/ledgerCore.ts's.
+#
+# Two questions decide the derivation, and they are DIFFERENT questions:
+
+#: Scopes where a vendor fix is a thing that can exist at all.
+#:
+#: SCA ONLY, AND THAT GUARD IS THE LOAD-BEARING PART OF THIS WHOLE FILE ENTRY. A dependency
+#: has a maintainer who ships the fixed version; a weakness in first-party code does not. The
+#: definition "open with no fix available" is therefore true of EVERY SAST finding, forever.
+#: Without the guard every open SAST row would read as awaiting a vendor: out of every
+#: actionable clock, still in every exposure count, so the two halves of a page disagree and
+#: the gap looks like broken arithmetic rather than the category error it is. The sibling
+#: register measured the cost on live data -- 2,085 rows (127 SAST + 1,958 secrets) sitting in
+#: that state permanently -- and `tests/test_ledger.py` prices it here as a mutation.
+#:
+#: `brick/config.py` says {"os", "all"}. Deliberately NOT one of
+#: `tests/test_fork_integrity.py`'s shared constants: the two registers measure different
+#: populations and are SUPPOSED to differ here. What that file pins instead is the asymmetry
+#: itself -- "sast" not in this set, "sca" in it.
+HAS_VENDOR_FIX = frozenset({"sca"})
+
+#: Scopes whose API filter pins `hasFix: true`, DERIVED from `SCOPES` rather than listed.
+#:
+#: This is the second question, and it changes what a blank fix clock means. Where the filter
+#: pins `hasFix`, every row in the register had a vendor fix AT THE MOMENT IT WAS INGESTED --
+#: that is what the filter asked for. So a row with no `fix_date` and no `fix_observed_at` is
+#: not a row awaiting a vendor: the fix is older than our first sighting of it, and
+#: `fix_available_at` falls back to `first_seen`. Same argument `gas`'s REMEDIATION_ROLLOUT_ISO
+#: makes for its pre-rollout rows, and it is a construction rather than a guess.
+#:
+#: Stated exactly, because the bound is one-sided: the filter proves a fix existed by the scan
+#: that ingested the row, not necessarily by `firstDetectedAt`, so `first_seen` can sit before
+#: the fix actually shipped. That is the HARSH direction -- the actionable clock degrades to
+#: the exposure clock for those rows and never flatters the team with a later start it cannot
+#: evidence. `fix_observed_at` is preferred over it wherever it exists, for the same reason in
+#: reverse: it is a moment a fix was SEEN.
+#:
+#: `sca` pins it through `_BASE`; `sast` does not use `_BASE` at all, which is the same reason
+#: it is absent from `HAS_VENDOR_FIX` arriving by a different route.
+#:
+#: Derived, not hardcoded, because dropping `hasFix` from the filter is a population change
+#: owed a measured round of its own, recorded in the sibling's `gas_devsecops/src/sync.ts`:
+#: with `hasFix` pinned, a WITHDRAWN fix reads as a remediation, because the finding leaves
+#: the filtered population and leaving the population is what disappearance-resolution means.
+#: When somebody drops it, this set empties itself, the fallback stops firing and
+#: `awaiting_vendor_fix` starts reporting real rows -- instead of the code silently going on
+#: claiming a fix existed for findings nobody filtered for one.
+SCOPES_PINNING_HAS_FIX = frozenset(
+    scope for scope, spec in SCOPES.items() if spec.get("hasFix") is True
+)
+
+
+def scope_has_vendor_fix(scope: str) -> bool:
+    """Whether ``scope``'s findings have a vendor who ships the fix.
+
+    False -- which is to say ``sast`` -- means the actionable clock does not apply to the scope
+    at all: no ``fix_available_at``, no ``mttr_actionable_days``, and, the half that matters,
+    ``awaiting_vendor_fix`` is False rather than True-forever.
+    """
+    return scope in HAS_VENDOR_FIX
+
+
+def scope_pins_has_fix(scope: str) -> bool:
+    """Whether ``scope``'s API filter pins ``hasFix: true``.
+
+    True means a blank fix clock is evidence of an OLD fix rather than of a MISSING one, so
+    ``fix_available_at`` falls back to ``first_seen``. Read from ``SCOPES`` at runtime so the
+    claim cannot outlive the filter that justifies it.
+    """
+    return scope in SCOPES_PINNING_HAS_FIX
+
+
 # ---- Sources: which API connection a scope reads ----
 # A scope has always chosen a `filterBy`. Two of them now also choose a GraphQL connection and
 # therefore a node shape, so that choice is named rather than left implicit in an `if`.
@@ -623,11 +703,12 @@ LEDGER_COLUMNS = [
     "reopened_count",
     "first_scan_id",
     "last_scan_id",
-    # Vendor-fix capture. Nothing in v2 reads these yet -- the actionable clock
-    # (mttr_actionable_days, awaiting_vendor_fix) is gas/src/domain/ledgerCore.ts::baseRows'
-    # job and is out of scope here. They are captured anyway because they cannot be
-    # recovered later: a finding resolved by disappearance is gone from the API entirely,
-    # so a signal not written down at observation time is lost for good. Cheap now,
+    # Vendor-fix capture, and the inputs to the actionable clock: `ledger.lifecycle_frame`
+    # derives fix_available_at / mttr_actionable_days / awaiting_vendor_fix from these two.
+    # They were written to every row for a whole version before anything read them, because
+    # they cannot be recovered later: a finding resolved by disappearance is gone from the
+    # API entirely, so a signal not written down at observation time is lost for good, and a
+    # fix date backfilled afterwards would be a number nobody measured. Cheap now,
     # impossible afterwards.
     "fix_date",
     "fix_observed_at",

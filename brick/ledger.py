@@ -58,9 +58,11 @@ from pyspark.sql.types import (
 
 from config import (
     DISAPPEARANCE_RESOLUTION,
+    HAS_VENDOR_FIX,
     LEDGER_COLUMNS,
     RESOLUTION_API,
     RESOLUTION_DISAPPEARED,
+    SCOPES_PINNING_HAS_FIX,
     STATUS_OPEN,
     STATUS_RESOLVED,
 )
@@ -564,6 +566,26 @@ def empty_ledger(spark: SparkSession) -> DataFrame:
 # ------------------------------------------------------------------------- metric contract
 
 
+def _scope_in(scopes) -> Column:
+    """A per-ROW scope predicate over ``config``'s scope sets, never NULL.
+
+    Per row rather than per call, and that is a decision rather than a convenience.
+    ``run_pipeline.build_metrics`` hands ``lifecycle_frame`` the whole ledger table without
+    narrowing it, and every ledger row already carries the ``scope`` column that exists
+    precisely so a row stays self-describing after a UNION. Reading the column keeps the answer
+    right for a frame holding more than one population -- which is what a UNIONed read of two
+    registers would be -- and it cannot be passed a scope that disagrees with the rows it is
+    applied to.
+
+    ``isin`` returns NULL for a NULL scope, so it is coalesced: ``awaiting_vendor_fix`` is a
+    published boolean, and a NULL there would read as "not awaiting" in some SQL and as
+    "unknown" in the rest.
+    """
+    if not scopes:
+        return F.lit(False)
+    return F.coalesce(F.col("scope").isin(*sorted(scopes)), F.lit(False))
+
+
 def lifecycle_frame(ledger: DataFrame, now_ts: str) -> DataFrame:
     """Project the ledger into the column contract ``metrics.py`` already consumes.
 
@@ -583,12 +605,56 @@ def lifecycle_frame(ledger: DataFrame, now_ts: str) -> DataFrame:
     construction: the ledger never records a resolution without a date. The snapshot path cannot
     promise that (a finding can be status-RESOLVED with no timestamp), which is one more way the
     two disagree in v1's favour.
+
+    Five more columns carry the **actionable clock**: ``fix_available_at``,
+    ``actionable_from``, ``mttr_actionable_days``, ``actionable_age_days`` and
+    ``awaiting_vendor_fix``. ``mttr_days`` above answers "how long did this finding live";
+    these answer "how long could anybody have done something about it", which is the question
+    an SLA is actually about. The two differ by however long the register waited on a vendor,
+    and they are published side by side rather than one replacing the other -- the gap is the
+    part of the exposure the remediation programme never owned. ``config.HAS_VENDOR_FIX`` and
+    ``config.SCOPES_PINNING_HAS_FIX`` hold the reasoning; the derivation is below.
     """
     now = F.lit(now_ts).cast("timestamp")
     mttr_days = (
         F.unix_timestamp("resolved_at") - F.unix_timestamp("first_seen")
     ) / SECONDS_PER_DAY
     age_days = (F.unix_timestamp(now) - F.unix_timestamp(F.col("first_seen"))) / SECONDS_PER_DAY
+
+    # ---- the second clock ----------------------------------------------------------------
+    # Which scopes these two predicates cover, and why they are two rather than one, is
+    # written down in `config.HAS_VENDOR_FIX` / `config.SCOPES_PINNING_HAS_FIX`.
+    vendor = _scope_in(HAS_VENDOR_FIX)
+    # A blank fix clock inside a `hasFix`-pinned population is evidence of an OLD fix, not of
+    # a missing one: the filter would not have returned the row otherwise. It is a
+    # construction rather than a guess, and one-sided -- see config.SCOPES_PINNING_HAS_FIX --
+    # so it lands on the harsh side: the actionable clock collapses onto the exposure clock
+    # for these rows instead of inventing a later start nothing can evidence.
+    pinned_fix = F.when(_scope_in(SCOPES_PINNING_HAS_FIX), F.col("first_seen"))
+    # `fix_observed_at` is the fallback and not an equal: it is the scan that first SAW a fix
+    # exist, which is an upper bound on when the fix appeared. Preferring `fix_date` and
+    # falling back to it keeps the actionable clock conservative -- it never credits a team
+    # with time it did not have.
+    fix_available_at = F.when(
+        vendor, F.coalesce(F.col("fix_date"), F.col("fix_observed_at"), pinned_fix)
+    )
+    # The clamp, and it is the whole reason this is `greatest` and not a coalesce: a fix that
+    # shipped before we ever saw the finding does not start the clock in the past. `greatest`
+    # ignores NULLs, so a row with no `first_seen` starts at the fix.
+    actionable_from = F.when(
+        fix_available_at.isNotNull(), F.greatest(F.col("first_seen"), fix_available_at)
+    )
+    mttr_actionable_days = (
+        F.unix_timestamp("resolved_at") - F.unix_timestamp(actionable_from)
+    ) / SECONDS_PER_DAY
+    actionable_age_days = (
+        F.unix_timestamp(now) - F.unix_timestamp(actionable_from)
+    ) / SECONDS_PER_DAY
+    # Open, in a scope that HAS a vendor, with no fix available yet. All three conjuncts are
+    # load-bearing; dropping the middle one is the mutation `tests/test_ledger.py` prices.
+    awaiting_vendor_fix = F.coalesce(
+        (F.col("status") == STATUS_OPEN) & vendor & fix_available_at.isNull(), F.lit(False)
+    )
 
     return ledger.select(
         F.col("vuln_key"),
@@ -617,4 +683,9 @@ def lifecycle_frame(ledger: DataFrame, now_ts: str) -> DataFrame:
         F.col("epss"),
         mttr_days.alias("mttr_days"),
         F.when(F.col("resolved_at").isNull(), age_days).alias("age_days"),
+        fix_available_at.alias("fix_available_at"),
+        actionable_from.alias("actionable_from"),
+        mttr_actionable_days.alias("mttr_actionable_days"),
+        F.when(F.col("resolved_at").isNull(), actionable_age_days).alias("actionable_age_days"),
+        awaiting_vendor_fix.alias("awaiting_vendor_fix"),
     )

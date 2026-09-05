@@ -193,6 +193,49 @@ def test_the_project_filter_shape_matches_upstream():
     assert theirs.build_filter("os")["severity"] == ["SCA", "SAST"]
 
 
+def test_the_vendor_fix_scopes_differ_and_that_asymmetry_is_the_point():
+    """``HAS_VENDOR_FIX`` is deliberately NOT one of the shared constants above.
+
+    The two registers measure different populations, and this is the one place where the
+    difference is a fact about the world rather than about a filter: an OS package and a
+    library both have a maintainer who ships the fixed version; a weakness in first-party code
+    does not. So the asymmetry itself is what gets pinned, in both directions -- ``sast`` out,
+    ``sca`` in -- because either half alone would pass against a set that had drifted into the
+    other's answer.
+
+    Adding this name to ``test_shared_constants_match_upstream`` would fail immediately and
+    correctly. What would NOT fail, and is why this test exists, is somebody widening it here
+    to "match upstream": that puts every open SAST finding on a vendor watchlist forever
+    (priced in ``tests/test_devsecops.py``) while looking like a consistency fix.
+    """
+    theirs = upstream("config")
+    assert config.HAS_VENDOR_FIX == frozenset({"sca"})
+    assert "sast" not in config.HAS_VENDOR_FIX
+    assert "sca" in config.HAS_VENDOR_FIX
+    assert theirs.HAS_VENDOR_FIX == frozenset({"os", "all"})
+    assert config.HAS_VENDOR_FIX != theirs.HAS_VENDOR_FIX
+    # Every scope one of them names is a scope that fork actually has.
+    assert config.HAS_VENDOR_FIX <= set(config.SCOPES)
+    assert theirs.HAS_VENDOR_FIX <= set(theirs.SCOPES)
+
+
+def test_the_has_fix_pin_is_read_from_the_filter_in_both_forks():
+    """The second half of the actionable clock, and it is derived rather than declared.
+
+    Both forks pin ``hasFix: true`` through ``_BASE`` today, which is what lets a blank fix
+    clock date from ``first_seen``. Neither fork may hardcode that: dropping ``hasFix`` from a
+    scope has to take the claim with it, or the code goes on asserting a fix existed for
+    findings nobody filtered for one.
+    """
+    for module, scopes in ((config, ("sca",)), (upstream("config"), ("os", "all"))):
+        derived = frozenset(s for s, f in module.SCOPES.items() if f.get("hasFix") is True)
+        assert module.SCOPES_PINNING_HAS_FIX == derived
+        for scope in scopes:
+            assert module.scope_pins_has_fix(scope)
+    # `sast` does not use `_BASE` at all, which is the same conclusion by a different route.
+    assert not config.scope_pins_has_fix("sast")
+
+
 def test_this_fork_measures_code_and_refuses_to_pretend_otherwise():
     """`os` and `all` are brick's scopes. Accepting either here would write `wiz_os_*` tables
     full of code findings, which is a naming lie rather than an error anybody would notice."""

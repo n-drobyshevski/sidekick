@@ -963,6 +963,13 @@ def build_metrics(
         scan_id, scan_ts, scope,
     )
     mttr = mttr.join(metrics.resolution_sources(lifecycles), "severity", "left")
+    # The second clock, joined in beside the first rather than replacing it. Both frames group
+    # the same lifecycles by the same key and both emit an OVERALL row, so this is a left join
+    # onto an identical severity set: it can neither drop a row nor duplicate one, and
+    # `test_panels.py` asserts exactly that against the real register rather than leaving it
+    # as a claim. `write_append` passes mergeSchema, so an existing `metrics_mttr`
+    # gains the columns on the next scan instead of refusing the write.
+    mttr = mttr.join(metrics.actionable_mttr_by_severity(lifecycles), "severity", "left")
     mttr = publish(mttr, tables.mttr)
 
     program = metrics.with_scan_columns(

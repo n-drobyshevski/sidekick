@@ -867,9 +867,10 @@ def test_a_scan_carrying_no_signals_does_not_witness_anything(spark):
 
 # ------------------------------------------------------------------ the vendor-fix clock
 #
-# Nothing in v2 reads these columns yet -- the actionable clock is out of scope. They are
-# captured because they cannot be recovered afterwards: once a finding disappears from the
-# API, a fix signal nobody wrote down is gone for good.
+# ``lifecycle_frame`` reads these two columns now -- see "the actionable clock" below. They
+# were captured long before anything read them, because they cannot be recovered afterwards:
+# once a finding disappears from the API, a fix signal nobody wrote down is gone for good, and
+# a fix date backfilled later would be a number nobody measured.
 
 
 def test_the_fix_clock_is_sticky_first_wins(spark):
@@ -918,6 +919,137 @@ def test_the_fix_clock_resets_on_reopen(spark):
     row = by_key(state)["id:f-1"]
     assert row["reopened_count"] == 1
     assert row["fix_date"] is None and row["fix_observed_at"] is None
+
+
+# ------------------------------------------------------------------ the actionable clock
+#
+# The second clock. ``mttr_days`` answers "how long did this finding live"; these answer "how
+# long could anybody have done something about it", which is what an SLA is actually asking.
+# `config.HAS_VENDOR_FIX` decides which scopes the question applies to at all, and
+# `config.SCOPES_PINNING_HAS_FIX` decides what an empty fix clock means inside one.
+# Reference: gas/src/domain/ledgerCore.ts::baseRows.
+
+
+def test_the_actionable_clock_starts_at_the_fix_not_at_detection(spark):
+    """The headline: 37 days of exposure, 27 of them anybody's to act on.
+
+    The gap is the ten days the register spent waiting on a vendor, and publishing both is the
+    point -- a team held to the first number is being charged for time it did not have.
+    """
+    fixed = node(fixDate="2026-04-11T00:00:00Z", fixedVersion="1.2.3")
+    state, _ = apply(spark, ledger.empty_ledger(spark), [fixed], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = apply(spark, state, [], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
+
+    row = ledger.lifecycle_frame(state, TS_2).collect()[0]
+    assert row["fix_available_at"].strftime("%Y-%m-%d") == "2026-04-11"
+    assert row["actionable_from"].strftime("%Y-%m-%d") == "2026-04-11"
+    # first_seen 2026-04-01, resolved by disappearance at 2026-05-08.
+    assert row["mttr_days"] == pytest.approx(37.0)
+    assert row["mttr_actionable_days"] == pytest.approx(27.0)
+    assert row["awaiting_vendor_fix"] is False
+
+
+def test_the_actionable_clock_never_starts_before_detection(spark):
+    """A fix that shipped before we ever saw the finding does not start the clock in the past.
+
+    Without the clamp this row would report an actionable MTTR of 68 days against 37 days of
+    exposure -- a remediation time longer than the finding's whole life, which is not a number
+    that can be defended in either direction.
+    """
+    fixed = node(fixDate="2026-03-01T00:00:00Z", fixedVersion="1.2.3")
+    state, _ = apply(spark, ledger.empty_ledger(spark), [fixed], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = apply(spark, state, [], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
+
+    row = ledger.lifecycle_frame(state, TS_2).collect()[0]
+    assert row["fix_available_at"].strftime("%Y-%m-%d") == "2026-03-01"
+    assert row["actionable_from"].strftime("%Y-%m-%d") == "2026-04-01"  # first_seen, clamped
+    assert row["mttr_actionable_days"] == pytest.approx(37.0)
+    assert row["mttr_actionable_days"] == pytest.approx(row["mttr_days"])
+
+
+def test_fix_observed_at_is_the_conservative_fallback(spark):
+    """A ``fixedVersion`` with no ``fixDate``: the clock starts when the fix was SEEN.
+
+    ``fix_observed_at`` is the scan that first noticed a fix existed, so it is an upper bound
+    on when the fix appeared. Starting there never asserts that a fix existed at a moment
+    nothing evidences -- it credits the team with none of the time before we looked. The
+    register is open here, so it is the open-age half of the clock that shows it: 37 days of
+    exposure, 7 of them actionable.
+    """
+    state, _ = apply(spark, ledger.empty_ledger(spark), [node(fixedVersion="1.2.3")],
+                     scan_id=SCAN_1, scan_ts=TS_1)
+
+    row = ledger.lifecycle_frame(state, TS_2).collect()[0]
+    assert row["fix_date"] is None
+    assert row["fix_available_at"].strftime("%Y-%m-%dT%H:%M:%SZ") == TS_1
+    assert row["age_days"] == pytest.approx(37.0)
+    assert row["actionable_age_days"] == pytest.approx(7.0)
+    assert row["mttr_actionable_days"] is None  # still open
+    assert row["awaiting_vendor_fix"] is False
+
+
+def test_a_has_fix_scope_dates_a_blank_fix_clock_from_first_seen(first_scan):
+    """THE FINDING that separates this port from the implementation it is ported from.
+
+    ``config._BASE`` pins ``hasFix: true`` and the ``sca`` scope spreads it (``sast`` does not
+    use ``_BASE`` at all), so every row in this register had a vendor fix AT THE MOMENT IT WAS
+    INGESTED -- that is what the filter asked for. ``gas``'s ``baseRows`` reads a row like this
+    one, whose fix clock is empty because Wiz returned no fix detail, as "no fix available"
+    and marks it awaiting a vendor: inside a population DEFINED by having one. The same
+    category error CLAUDE.md records for SAST, arriving by a different route.
+
+    So the empty clock dates from ``first_seen`` and the row is not awaiting anything. The
+    bound is one-sided -- the filter proves a fix existed by the scan that ingested the row,
+    not necessarily by ``firstDetectedAt`` -- which puts it on the harsh side: the actionable
+    clock collapses onto the exposure clock rather than inventing a later start.
+    """
+    state, _ = first_scan
+    row = ledger.lifecycle_frame(state, TS_2).collect()[0]
+
+    assert row["fix_date"] is None and row["fix_observed_at"] is None
+    assert row["fix_available_at"] == row["first_detected_at"]
+    assert row["actionable_from"] == row["first_detected_at"]
+    assert row["actionable_age_days"] == pytest.approx(row["age_days"])
+    assert row["awaiting_vendor_fix"] is False
+
+    # And it is read out of the filter at runtime rather than asserted here, so dropping
+    # `hasFix` from `SCOPES` takes the claim with it.
+    from config import scope_has_vendor_fix, scope_pins_has_fix
+
+    assert scope_pins_has_fix("sca") and scope_has_vendor_fix("sca")
+
+
+def test_dropping_the_has_fix_fallback_puts_the_whole_register_on_a_vendor_watchlist(
+    spark, monkeypatch
+):
+    """The mutation, and the cost of getting the finding above wrong.
+
+    With the fallback removed -- the literal port of ``gas``'s ``baseRows`` -- every open row
+    whose fix clock is empty reads as awaiting a vendor: out of ``mttr_actionable_days``, out
+    of ``actionable_age_days``, still in every open and exposure count, so the two halves of a
+    page disagree by exactly this population and the gap reads as broken arithmetic.
+
+    Priced on a synthetic register rather than on the committed capture, and deliberately so:
+    all four nodes in ``os_vulns_response_exemple.json`` carry a fix signal, so the fallback
+    never fires there and a fixture-derived number would be a reassuring zero. What the number
+    below prices is the RULE -- every row with no fix detail, whatever the tenant's share of
+    those turns out to be.
+    """
+    nodes = [node(id=f"f-{i}", fixDate=None, fixedVersion=None) for i in range(5)]
+    state, _ = apply(spark, ledger.empty_ledger(spark), nodes, scan_id=SCAN_1, scan_ts=TS_1)
+    state = state.cache()
+
+    guarded = ledger.lifecycle_frame(state, TS_2)
+    assert guarded.filter("awaiting_vendor_fix").count() == 0
+
+    monkeypatch.setattr(ledger, "SCOPES_PINNING_HAS_FIX", frozenset())
+    flipped = ledger.lifecycle_frame(state, TS_2).filter("awaiting_vendor_fix").count()
+    open_rows = guarded.filter("is_open").count()
+    assert flipped == open_rows == 5, (
+        f"{flipped} of {open_rows} open rows flip to awaiting_vendor_fix when the "
+        "hasFix fallback is dropped -- every finding the API returned no fix detail for, "
+        "inside a population the filter guarantees has a fix"
+    )
 
 
 # ------------------------------------------------------------------ the metric contract
