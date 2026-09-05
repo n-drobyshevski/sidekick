@@ -15,7 +15,7 @@ import {
   assetSections, configFindingSections, issueSections, recordCursor,
 } from "./sheetSections.js";
 import {
-  clear, codeBlock, copyButton, el, emptyState, errorState, fmtDate,
+  absent, absentText, clear, codeBlock, copyButton, el, emptyState, errorState, fmtDate,
   fmtDateTime,
   openSheet, plural, sevBadge, sheetRow,
   sheetSection, skeleton, statusPill, uiIcon,
@@ -103,8 +103,14 @@ export function dueChip(dueAt) {
   ), due);
 }
 
+// The one promotion `dataTable` already does for a cell — `.kv dd` sets no colour of its own
+// (sheet.css), so a caller that fell back to a hand-typed dash (Status/Result below, when the
+// finding predates the field) rendered it in the same ink as a real value. `dd === absentText`
+// catches that fallback whether it arrived as the imported constant or as a literal "—" —
+// they are the same primitive — and leaves every other caller (`kindLabel(...)`,
+// `yesNoUnknown(...)`, a plain fact string) untouched.
 function kvRow(dt, dd) {
-  return [el("dt", {}, dt), el("dd", {}, dd)];
+  return [el("dt", {}, dt), el("dd", {}, dd === absentText ? absent() : dd)];
 }
 
 /** A fact worth a row. Six em dashes in a column is noise the eye has to filter. */

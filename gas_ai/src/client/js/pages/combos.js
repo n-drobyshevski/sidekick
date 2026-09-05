@@ -23,7 +23,7 @@ import { kindIconSvg, kindLabel, categoryOf } from "../../../../../gas_shared/ic
 import {
   absent, FINDINGS_SCORE_LABEL, ordinal,
   clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,
-  outcomeLabel, pager, plural, sectionLabel, select, statRow,
+  outcomeLabel, plural, sectionLabel, select, statRow, tableFooter,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
   togglePills,
 } from "../ui.js";
@@ -669,10 +669,15 @@ export async function renderCombos(main, params) {
     mount.append(
       issueFilterBar(group, mount, rows, options, filtered.length, rows.length),
       issueTable(mount, group, slice),
-      pager(view.page, pageCount, sorted.length, (next) => {
-        view.page = next;
-        persist();
-        renderIssues(group, mount, rows);
+      tableFooter({
+        page: view.page,
+        pageCount,
+        total: sorted.length,
+        onPage: (next) => {
+          view.page = next;
+          persist();
+          renderIssues(group, mount, rows);
+        },
       }),
     );
   }

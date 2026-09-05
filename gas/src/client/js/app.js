@@ -18,7 +18,7 @@ import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
 import { scopeChrome, scopeKinds, scopeSwitchView } from "./scopeKinds.js";
 import {
-  bookTip, clear, el, fmtDateTime, scopeControl, scopePayload, statusPill, tip, tipAnchor,
+  bookTip, clear, el, scopeControl, scopePayload, statusPill, syncCaption, tip, tipAnchor,
   toast,
 } from "./ui.js";
 import { LANE_ICONS, ROUTE_ICONS, RUN_ICON } from "./routeIcons.js";
@@ -46,9 +46,17 @@ import { findEntry } from "./helpContent.js";
 // it can only happen after this line.
 const MANIFEST = {
   productName: "Wiz Sidekick OS",
-  // What the boot splash says it is opening. It reaches the STATIC first paint too:
-  // gas_shared/shell/renderIndex.js substitutes it into the shared index template at build
-  // time, so the splash cannot say one thing before the bundle loads and another after.
+  // What the boot splash says it is opening. "ledger", not "register": devsecops already
+  // owns that noun for a shape this app doesn't have — three independent finding populations
+  // sitting side by side. This app's front door is the single deduplicated structure every
+  // scan writes into and every lifecycle reads out of, and it has always called itself that:
+  // the "Reset ledger" control, the "Ledger spreadsheet" card, and TABLE_NAMES's own "ledger"
+  // tab (migrationImport.js) all name the same object the splash is about to open. Two
+  // registers sharing "register" would flatten a real difference — one dedup ledger here,
+  // three independent registers there — so the words staying apart is right, not an accident.
+  // It reaches the STATIC first paint too: gas_shared/shell/renderIndex.js substitutes it into
+  // the shared index template at build time, so the splash cannot say one thing before the
+  // bundle loads and another after.
   openingNoun: "ledger",
   // Trailing dot included. Two sidekicks served from the same origin must not share a key.
   storagePrefix: "sidekickos.",
@@ -328,17 +336,15 @@ function renderScanZone(data) {
       // answer for an anchor that cannot host a wrapper.
       credDot,
     );
-    if (data.latestScan) {
-      const age = Math.floor((Date.now() - Date.parse(data.latestScan.ts)) / 86400000);
-      zone.append(
-        el("div", { class: "scan-caption" },
-          `Last scan ${fmtDateTime(data.latestScan.ts)}` +
-            (age >= 2 ? ` — ${age} days ago` : ""),
-        ),
-      );
-    } else {
-      zone.append(el("div", { class: "scan-caption" }, "No scan saved yet."));
-    }
+    // `syncCaption` (gas_shared/ui/feedback.js), unified across all three apps: "Last <noun>
+    // <datetime> · <relativeAge>" once a scan is saved, "No <noun>s yet." before the first
+    // one. It used to be a bare Math.floor day count gated at `age >= 2` — a scan an hour old
+    // showed no age at all, and this app's own Scan History page had finer just-now/min/hour
+    // granularity that this caption never got. `sync.noun` in this app's MANIFEST ("scan") is
+    // what turns the shared sentence's default "sync"/"syncs" into "scan"/"scans" here.
+    zone.append(
+      el("div", { class: "scan-caption" }, syncCaption(data.latestScan && data.latestScan.ts)),
+    );
     // Seed the card immediately from the bootstrap job, then keep it live — this is
     // what makes progress survive a page reload mid-scan.
     if (data.activeJob) {

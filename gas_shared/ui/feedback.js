@@ -5,6 +5,8 @@
 
 import { appConfig } from "../appConfig.js";
 import { el } from "./dom.js";
+import { relativeAge } from "./figures.js";
+import { fmtDateTime } from "./format.js";
 
 export function toast(message, kind) {
   let host = document.getElementById("toasts");
@@ -189,4 +191,40 @@ export function firstRunNotice({ synced, hint }) {
     hint,
     { variant: "notice" },
   );
+}
+
+/**
+ * The sync-zone freshness line, unified across all three apps: `Last <noun> <datetime> ·
+ * <relativeAge>` once something has been saved, `No <noun>s yet.` before the first one.
+ *
+ * P8 replaces three shapes of this sentence that had drifted: gas's rail said "Last scan
+ * <datetime>" and appended " — N days ago" only once N reached 2, so a scan an hour old
+ * showed no age at all; gas_ai's rail had the same day-only gate under a different em dash;
+ * gas_devsecops's rail showed the datetime with no relative age at all. One call, one
+ * separator ("·", not "—", so it reads as one fact in two parts rather than a correction),
+ * and `relativeAge` (this module's sibling) supplies the full just-now/min/hour/day
+ * granularity gas's OWN Scan History page already had, so nothing lost precision to gain
+ * consistency.
+ *
+ * THE NOUN IS THE MANIFEST'S, for the same reason `firstRunNotice`'s is, two functions up:
+ * this app's front door may be a scan rather than a sync, and the caption sits right beside
+ * the Run button that says so. `sync.noun` is read here rather than threaded through as a
+ * parameter, because every call site already reads it (directly or via `firstRunNotice`) and
+ * a second spelling of the same manifest lookup is exactly the drift this function exists to
+ * end.
+ *
+ * TAKES THE PLAIN TIMESTAMP, not the record it came from. The three apps disagree on the
+ * field name (`latestSync.finished_at` in one, `latestSync.ts` / `latestScan.ts` in the other
+ * two) — a disagreement CLAUDE.md's DevSecOps section calls out by name for a different pair
+ * of fields ("the same field name carries different kinds"). Keeping that extraction in each
+ * app's own `railFooter` and handing this function one value means the shared half never has
+ * to learn a fourth shape, and a future field rename stays a one-line change in the app that
+ * made it.
+ *
+ * READ INSIDE THE FUNCTION, never at module top level — appConfig.js's rule 2.
+ */
+export function syncCaption(ts) {
+  const noun = (appConfig().sync || {}).noun || "sync";
+  if (!ts) return `No ${noun}s yet.`;
+  return `Last ${noun} ${fmtDateTime(ts)} · ${relativeAge(ts)}`;
 }

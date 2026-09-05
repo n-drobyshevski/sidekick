@@ -195,9 +195,11 @@ function renderHeadline(host, data) {
 
   const hero = el("div", {},
     el("div", { class: "label" }, tip("Compliance posture", heroWhy)),
+    // `.comp-hero-value` sets no colour (the scored case is meant to read at hero weight), so
+    // the unscored case needs `absent()` rather than a dash that inherits the same ink.
     scored
       ? el("div", { class: "comp-hero-value num" }, `${kpis.averagePosture}%`)
-      : el("div", { class: "comp-hero-value" }, "—"),
+      : el("div", { class: "comp-hero-value" }, absent()),
     scored
       ? el("div", { class: "comp-hero-meter" }, heroMeter)
       : null,

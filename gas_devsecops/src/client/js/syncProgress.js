@@ -28,7 +28,7 @@
 // total of their own either) — the scope walk and the live row count are what say the sync is
 // moving, and neither one fabricates a precision the payload cannot support.
 
-import { clear, el, openSheet, progressBar, tipAnchor } from "./ui.js";
+import { absent, clear, el, openSheet, progressBar, tipAnchor } from "./ui.js";
 
 /** Mirrors `SCOPES` in src/domain/config.ts — the fixed walk order. Duplicated rather than
  *  imported: no client module reaches into src/domain (it is server-only domain logic; the
@@ -364,7 +364,9 @@ export function openSyncDetails(job, opts = {}) {
         el("dt", {}, "Rows"),
         el("dd", {}, `${v.findingsSoFar.toLocaleString()}` +
           (v.scopeTotal ? ` (~${v.scopeTotal.toLocaleString()} in the current register)` : "")),
-        el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || "—"),
+        // `.scan-detail-grid dd` sets no colour, so a missing elapsed reading needs `absent()`
+        // rather than a dash that would read in the same ink as "Status"/"Rows" beside it.
+        el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || absent()),
       ),
       v.error ? el("div", { class: "scan-detail-error" }, v.error) : null,
       actions,

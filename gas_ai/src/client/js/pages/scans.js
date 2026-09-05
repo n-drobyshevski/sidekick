@@ -35,7 +35,7 @@ import {
 import { svgEl } from "../../../../../gas_shared/icons.js";
 import { openAreaSheet } from "./scanSheet.js";
 import {
-  clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
+  absent, clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
   appendAll, heroStat, pageHeader,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
 } from "../ui.js";
@@ -343,8 +343,11 @@ export async function renderScans(main, params, ctx) {
       return el("div", { class: "reach-stage" },
         el("div", { class: "reach-stage-label" }, s.label),
         el("div", { class: "reach-stage-figure" },
+          // `.reach-stage-count` sets `color: var(--ink)` — full weight, on purpose, for a
+          // real covered/total figure — so the missing case needs `absent()` rather than a
+          // dash that would inherit the same ink.
           el("span", { class: "reach-stage-count num" },
-            known ? s.covered + " of " + s.total : "—"),
+            known ? s.covered + " of " + s.total : absent()),
           known
             ? meter(pct, {
               decorative: true, className: "meter--flex",

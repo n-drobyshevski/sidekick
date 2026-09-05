@@ -19,7 +19,9 @@ import { call } from "../../../../gas_shared/api.js";
 import { swrCall } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { openSyncDetails, renderSyncCard, shouldContinuePolling } from "./syncProgress.js";
-import { clear, confirmDialog, el, fmtDateTime, statusPill, tipAnchor, toast } from "./ui.js";
+import {
+  clear, confirmDialog, el, statusPill, syncCaption, tipAnchor, toast,
+} from "./ui.js";
 import { projectScopeView, scopeChrome, scopeKinds } from "./ui/projectScope.js";
 import { scopeControl } from "../../../../gas_shared/ui/scopeControl.js";
 import { scopePayload } from "../../../../gas_shared/ui/scopeModel.js";
@@ -214,13 +216,13 @@ function renderSyncZone(data) {
       class: `rail-status-dot ${hasCreds ? "ok" : "neutral"}`,
       "aria-hidden": "true",
     }), hasCreds ? "Credentials loaded" : "No Wiz credentials configured"),
+    // `syncCaption` (gas_shared/ui/feedback.js), unified across all three apps: "Last <noun>
+    // <datetime> · <relativeAge>" once a sync is saved, "No <noun>s yet." before the first
+    // one — this rail used to show the datetime with no relative age at all. `ts`, not
+    // `finished_at`: the field is named for the `scans` column it is read from, and the old
+    // name existed on neither side of the wire.
     el("div", { class: "scan-caption" },
-      data && data.latestSync
-        // `ts`, not `finished_at`: the field is named for the `scans` column it is read from,
-        // and the old name existed on neither side of the wire. "sync", not "scan", because
-        // one run writes a row per register and the rail must not name one of them.
-        ? `Last sync ${fmtDateTime(data.latestSync.ts)}`
-        : "No syncs yet."),
+      syncCaption(data && data.latestSync && data.latestSync.ts)),
   );
   // A rail rebuild (boot, refresh, or an experimental-flag flip) throws away the old
   // syncCardHost/syncButtonsRow nodes; if a sync is live, repaint the poller's last-known job

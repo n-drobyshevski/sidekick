@@ -40,6 +40,9 @@ import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js"
 import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
 import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
+import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
+import { relativeAge } from "../../gas_shared/ui/figures.js";
+import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 const base = { describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, app: "devsecops" };
@@ -183,3 +186,10 @@ registerDiagnosticsContract({
   // `neutral` is drawn `bad`. The shared section refuses to default the tone for that reason.
   credentialsTone: "bad",
 });
+
+// =========================================================================================
+//  The one clock-relative label — the rail's syncCaption() calls this; this app's rail
+//  footer had no relative age at all before P8.
+// =========================================================================================
+registerRelativeAgeContract({ ...base, relativeAge });
+registerSyncCaptionContract(base);

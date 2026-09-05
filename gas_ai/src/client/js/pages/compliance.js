@@ -58,8 +58,8 @@
 
 import { setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, dataTable, el, emptyState, errorState, filterCombobox, meter, plural,
-  sectionLabel, segmented, sevBadge, skeletonStack, statRow,
+  absent, clear, dataTable, el, emptyState, errorState, filterCombobox, heroStat, meter,
+  pageHeader, plural, sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
   checksCell, extChip, fiveRsDerived, postureCell, postureScopeNote, STATES, STATE_ORDER,
@@ -101,13 +101,20 @@ export async function renderCompliance(main, params, ctx) {
     expanded: new Set(String(params.open || "").split(",").filter(Boolean)),
   };
 
-  main.append(
-    el("h1", {}, "Compliance Posture"),
-    // Nine words. The three grains it used to enumerate (category, subcategory, policy) are
-    // the page's own structure, and the reader meets all three by scrolling.
-    el("p", { class: "page-sub" },
-      "How this landscape scores against the frameworks Wiz tracks."),
-  );
+  // `pageHeader`/`heroStat`, not a bare `el("h1", ...)` — this page was the one route left
+  // rendering its own title beside the shared component every other hero-style page in this
+  // app now uses. "Assurance" (this route's own PAGES lane, app.js) is the kicker/h1, the way
+  // "Data" is on `pages/data.js`'s hero; "Compliance Posture" is the hero VALUE — a title
+  // string, not a number, which `heroStat` already carries fine for that page.
+  main.append(pageHeader({
+    hero: heroStat(
+      "Assurance",
+      "Compliance Posture",
+      // Nine words. The three grains it used to enumerate (category, subcategory, policy)
+      // are the page's own structure, and the reader meets all three by scrolling.
+      "How this landscape scores against the frameworks Wiz tracks.",
+    ),
+  }));
 
   const host = el("div", {});
   main.append(host);
@@ -322,9 +329,11 @@ export async function renderCompliance(main, params, ctx) {
 
     const hero = el("div", {},
       el("div", { class: "label" }, "Compliance posture"),
+      // `.comp-hero-value` sets no colour (the scored case is meant to read at hero weight),
+      // so the unscored case needs `absent()` rather than a dash that inherits the same ink.
       scored
         ? el("div", { class: "comp-hero-value num" }, `${heroPct}%`)
-        : el("div", { class: "comp-hero-value" }, "—"),
+        : el("div", { class: "comp-hero-value" }, absent()),
       scored
         ? el("div", { class: "comp-hero-meter" }, heroMeter)
         : null,

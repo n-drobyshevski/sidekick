@@ -61,6 +61,9 @@ import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js"
 import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
 import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
+import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
+import { relativeAge } from "../../gas_shared/ui/figures.js";
+import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 
@@ -275,3 +278,10 @@ registerDiagnosticsContract({
   // Dry-run against the bundled sample data is a legitimate way to run this workbook.
   credentialsTone: "neutral",
 });
+
+// =========================================================================================
+//  The one clock-relative label — the rail's syncCaption() calls this; P8 promoted it out of
+//  a coarse (days-only, gated at age >= 2) inline calculation this app's rail footer had.
+// =========================================================================================
+registerRelativeAgeContract({ ...base, relativeAge });
+registerSyncCaptionContract(base);

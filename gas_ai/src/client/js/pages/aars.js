@@ -27,6 +27,7 @@ import {
   axisSegments,
   claimOffsets,
   diagRow,
+  absent,
   claimRail,
   clear,
   closeActiveSheet,
@@ -2130,7 +2131,7 @@ export async function renderAarsRules(main, _params, ctx) {
             "span",
             { class: "impact-row__delta" },
             delta === 0
-              ? el("span", { class: "muted" }, "—")
+              ? absent()
               : el(
                   "span",
                   { class: delta > 0 ? "delta-up" : "delta-down" },
@@ -3276,7 +3277,7 @@ export async function renderAarsRules(main, _params, ctx) {
             el(
               "span", { class: "impact-row__delta" },
               delta === 0
-                ? el("span", { class: "muted" }, "—")
+                ? absent()
                 : el(
                   "span", { class: delta > 0 ? "delta-up" : "delta-down" },
                   (delta > 0 ? "+" : "") + String(delta)),
@@ -4139,7 +4140,7 @@ export async function renderAarsRules(main, _params, ctx) {
             el(
               "span", { class: "impact-row__delta" },
               delta === 0
-                ? el("span", { class: "muted" }, "—")
+                ? absent()
                 : el(
                   "span", { class: delta > 0 ? "delta-up" : "delta-down" },
                   (delta > 0 ? "+" : "") + String(delta)),

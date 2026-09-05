@@ -26,8 +26,8 @@
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, dataTable, days1, el, emptyState, errorState, fmtCount, fmtDate, fmtDateTime,
-  fmtDays, heroStat, kpiCard, num, pageHeader, pluralize, sectionLabel, sevBadge,
+  absent, absentText, clear, dataTable, days1, el, emptyState, errorState, fmtCount, fmtDate,
+  fmtDateTime, fmtDays, heroStat, kpiCard, num, pageHeader, pluralize, sectionLabel, sevBadge,
   skeleton, statRow, statusPill,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
@@ -790,9 +790,14 @@ export async function renderExecutive(host, params, _ctx) {
             el("a", {
               class: "linklike fixnext-repo",
               href: it.href,
+              // `it.repoText` stays a STRING (the aria-label above interpolates it into a
+              // sentence, where a Node would render "[object HTMLSpanElement]") — but
+              // `.fixnext-repo` sets `font-weight: 600` and no colour, so the visible text
+              // needs the same promotion `dataTable` gives a cell: `absent()` when the repo
+              // itself is unresolvable, never a bold black dash.
               "aria-label": it.tierLabel + " — " + it.repoText + ", " + it.countText
                 + ", " + it.oldestText + ". " + it.linkLabel,
-            }, it.repoText)),
+            }, it.repoText === absentText ? absent() : it.repoText)),
           el("div", { class: "fixnext-meta small muted" },
             it.scopeLabel + " · " + it.countText + " · " + it.oldestText
             + " · " + (it.ownerProject === null
