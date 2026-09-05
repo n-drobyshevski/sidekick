@@ -281,10 +281,16 @@ def test_a_shipped_notebook_executes_top_to_bottom(notebook_lake, ipythondir, mo
     )
 
 
-def test_measure_mttr_sla_notebook_also_runs(notebook_lake, ipythondir, monkeypatch):
-    """Not required by the plan -- measured and reported. ``01_mttr_sla.ipynb`` is the one
-    notebook with a ``%sql`` cell over ``v_mttr``, so a clean run here is also a second,
-    independent confirmation that the transformer's rewrite is valid Python and valid SQL."""
+def test_the_mttr_sla_notebook_runs_and_its_sql_cell_reads_the_actionable_clock(notebook_lake, ipythondir, monkeypatch):
+    """``01_mttr_sla.ipynb`` is the one notebook with a ``%sql`` cell over ``v_mttr``, so a clean
+    run is also a second, independent confirmation that the transformer's rewrite is valid
+    Python and valid SQL -- and, since that cell reads the actionable-clock columns, that the
+    clock reaches the published gold table.
+
+    This was written to *skip* on failure, because when it was written the notebook genuinely
+    did not run: its boot cell read ``panels.GROUP_DIMENSIONS`` above the import that binds
+    ``panels``. That is fixed, the run is clean, and a test that skips on failure is a place for
+    the fix to rot silently -- so it asserts now."""
     nbformat = pytest.importorskip("nbformat")
     nbclient_module = pytest.importorskip("nbclient")
 
@@ -303,10 +309,13 @@ def test_measure_mttr_sla_notebook_also_runs(notebook_lake, ipythondir, monkeypa
         timeout=600,
         resources={"metadata": {"path": str(notebook_path.parent)}},
     )
-    try:
-        client.execute()
-    except Exception as exc:  # noqa: BLE001 -- informational measurement, not a gate
-        pytest.skip(f"01_mttr_sla.ipynb did NOT run cleanly (measured, not required): {exc}")
+    client.execute()
+
+    code_cells = [c for c in nb.cells if c.get("cell_type") == "code"]
+    for cell in code_cells:
+        for output in cell.get("outputs", []):
+            assert output.get("output_type") != "error", output
+    assert any(cell.get("outputs") for cell in code_cells)
 
 
 # --------------------------------------------------------------- duckdb reads the clustered lake
