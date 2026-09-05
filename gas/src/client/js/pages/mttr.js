@@ -6,8 +6,8 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import {
-  absent, changeChip, clear, dataTable, el, emptyState, errorState, fmtSpan, heroStat, openSheet,
-  pageHeader, scopeBar, sectionLabel, sevBadge, skeleton, tip,
+  absent, changeChip, clear, dataTable, el, emptyState, errorState, fmtSpan, glossaryTip,
+  heroStat, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge, skeleton, tip,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -199,9 +199,13 @@ function latencyLine(vendor, disclosure) {
       "vendor fix\" setting hides elsewhere on this page: they are exactly this metric's " +
       "censored population, so hiding them here would bias it toward zero.",
   ];
+  // `tip(..., { term })` rather than `glossaryTip`: three of the five lines above are THIS
+  // scan's own population counts, which no glossary entry can carry. So the card keeps its
+  // sharper words and `term` only adds the route to the general definition.
   return tip(
     [el("div", { class: "hero-src" }, `Wait for a vendor fix \u2014 ${parts.join(" \u00b7 ")}`)],
     detail,
+    { term: "vendor-fix-wait" },
   );
 }
 
@@ -626,7 +630,11 @@ export async function renderMttr(main, _params, ctx) {
         `Naive: median of closed findings only per ${dim.noun}, per scan — the biased comparison KM `
           + "corrects for, kept only to compare.",
       ];
-      const lineTitle = el("h3", {}, tip(`MTTR by ${dim.noun}`, lineHelp));
+      // The lines name the ACTIVE dimension ("MTTR by domain"), which is the state of a
+      // control rather than part of the definition -- so they stay, and `term` adds the
+      // route to the dimension-neutral entry.
+      const lineTitle = el("h3", {},
+        tip(`MTTR by ${dim.noun}`, lineHelp, { term: "mttr-by-dimension" }));
       const lineHead = lineToggle ? el("div", { class: "chart-head" }, lineTitle, lineToggle) : lineTitle;
 
       // Unified by-domain panel: "Contribution to MTTR" (signed impact) and "Median MTTR by …" (rate)
@@ -679,8 +687,10 @@ export async function renderMttr(main, _params, ctx) {
         swapBtn.title = nextLabel;
         clear(lensTitleHost).append(
           view === "impact"
-            ? tip(`${dim.Noun} contribution to MTTR`, impactHelp)
-            : tip(`Median MTTR by ${dim.noun}`, medianHelp));
+            ? tip(`${dim.Noun} contribution to MTTR`, impactHelp,
+              { term: "mttr-contribution" })
+            : tip(`Median MTTR by ${dim.noun}`, medianHelp,
+              { term: "median-mttr-by-dimension" }));
         const [hideCanvas, hideMsg] = view === "impact" ? [medianCanvas, medianMsg] : [impactCanvas, impactMsg];
         loadCharts().then((charts) => charts.destroyChart(hideCanvas)).catch(() => {});
         hideCanvas.style.display = "none";
@@ -993,22 +1003,18 @@ export async function renderMttr(main, _params, ctx) {
     // (now a mini above), never a KM series, so there's nothing to diff against.
     // The single hero value (DESIGN.md: at most one per page). The mean (KM · RMST) is no
     // longer a second headline stat — it survives as a marker on the survival curve below,
-    // pointed to from the last helpTip line, so no methodology is lost.
-    const metric = tip(
+    // pointed to from the glossary entry's last line, so no methodology is lost.
+    //
+    // THE SAME DEFINITION pages/executive.js's hero carries, and the two used to be two
+    // hand-kept copies that had already drifted a word apart. One entry, both call sites:
+    // helpContent.js's `km-median`, which folds in the two lines only this copy had (the
+    // disappears-between-scans rule and the RMST marker on the curve below).
+    const metric = glossaryTip(
       [
         el("div", { class: "label" }, "Median MTTR (Kaplan–Meier)" + (domain ? ` — ${domain}` : "")),
         el("div", { class: "hero-value num" }, kmMedianCell(km)),
       ],
-      [
-        "Kaplan–Meier median days from first detection to remediation. Still-open findings " +
-          "count as censored observations instead of being ignored, so a wave of fresh open " +
-          "findings can't bias this down.",
-        "\"> X d\" means the curve never dropped to 50% within the observed window — over " +
-          "half of tracked findings are still open, so the true median is at least that " +
-          "many days out.",
-        "A vuln that disappears between scans counts as resolved.",
-        "Mean remediation time (KM · RMST) is marked on the survival curve below.",
-      ]
+      "km-median",
     );
     // Secondary metric beside the hero — the naive median (closed findings only), the biased
     // comparison the KM headline corrects for. Deliberately a step below the 2rem hero value
@@ -1019,16 +1025,12 @@ export async function renderMttr(main, _params, ctx) {
       && km?.naiveMedian !== null && km?.naiveMedian !== undefined
       ? changeChip(km.naiveMedian, prev.median_days, { fmt: fmtSpan })
       : null;
-    const naiveStat = tip(
+    const naiveStat = glossaryTip(
       [
         el("div", { class: "label" }, "Median (naive, closed)"),
         el("div", { class: "kpi-value num" }, fmtSpan(km?.naiveMedian), naiveChip),
       ],
-      [
-        "Median days from first detection to remediation, counting closed findings only — no " +
-          "censoring. A wave of fresh open findings biases this down, which is exactly what " +
-          "the Kaplan–Meier headline corrects for.",
-      ]
+      "naive-median",
     );
     // Awaiting-vendor-fix moves off its own tile onto the source line — the honest-state
     // context stays legible without spending a KPI slot. Dropped when the vendor-fix filter

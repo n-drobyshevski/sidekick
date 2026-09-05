@@ -24,8 +24,9 @@ import {
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, dataTable, el, emptyState, errorState, fmtDate, heroStat, kpiCard, nvdUrl,
-  openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter, tip, tipAnchor,
+  absent, clear, dataTable, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
+  kpiCard, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter, tip,
+  tipAnchor, tipLabel,
 } from "../ui.js";
 
 // Rows per page in the "Oldest open findings" panel's pagination. The server ships
@@ -352,11 +353,9 @@ export async function renderOverview(main, params, ctx) {
   function renderFunnel(insights) {
     const f = insights.funnel;
     insightsHost.append(el("h2", { class: "section-label" },
-      tip("Triage funnel",
-        ["Open findings only. Each step is a strict subset of the one above it, so the "
-          + "counts narrow rather than overlapping.",
-         "Exploit intelligence comes from the durable ledger; internet exposure comes from "
-          + "the current scan and cannot be replayed over history."])));
+      // The book already says it, so say it once: glossaryTip shows the entry's first
+      // two lines and Enter opens the whole thing on the key sheet.
+      glossaryTip("Triage funnel", "triage-funnel")));
     const steps = el("div", { class: "funnel" });
     steps.append(funnelStep({
       label: "Open", value: f.open, prev: null, open: f.open,
@@ -403,10 +402,16 @@ export async function renderOverview(main, params, ctx) {
     const prev = trend.length >= 2 ? trend[trend.length - 2].byGroup : null;
     insightsHost.append(el("div", { class: "section-head" },
       el("h2", { class: "section-label" },
-        tip("Risk tiers",
-          [insights.riskRule ? `High risk is ${insights.riskRule.sentence}.` : "",
-           "A finding takes its strongest signal, so the tiers partition the backlog "
-           + "rather than overlapping."].filter(Boolean))),
+        // THE FIRST LINE WAS THE ACTIVE RULE'S OWN SENTENCE — a state of a setting rather
+        // than a definition — so it stays in place and `term` adds the route to the general
+        // entry beside it. Routed through `tipLabel` rather than `tip` because when there is
+        // no rule to state there is no line either, and `tip(label, [], { term })` would
+        // build a trigger whose card never opens (scheduleOpen bails on an empty lines
+        // array) while Enter still navigated. tipLabel is the one place that decides between
+        // the three help shapes, and `{ term }` alone is its glossary-only case.
+        tipLabel("Risk tiers", insights.riskRule
+          ? { lines: [`High risk is ${insights.riskRule.sentence}.`], term: "risk-tiers" }
+          : { term: "risk-tiers" })),
     ));
     const card = el("div", { class: "stat-card" });
     for (const tier of TIER_ORDER) {

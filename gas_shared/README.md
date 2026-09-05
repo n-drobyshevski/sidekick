@@ -15,9 +15,9 @@ read the tree as `"type": "module"`.
 | `api.js` | the `google.script.run` bridge and the `{ok,data}` envelope |
 | `store.js` | the bootstrap cache, the SWR RPC cache and hash routing |
 | `icons.js` | node-kind SVG (512 lines; only `ui/nodeCell.js` and `ui/uiIcons.js` reach it) |
-| `ui/` | 29 component modules plus `index.js`, the one import surface |
+| `ui/` | 29 component modules plus `index.js`, the one import surface, and `helpPage.js` |
 | `styles/` | nine stylesheets: `tokens.base.css` first, `overrides.css` last |
-| `test/contracts/` | seven spec factories the apps register from their own test files |
+| `test/contracts/` | eight spec factories the apps register from their own test files |
 | `test/testConfig.js` | a manifest fixture, for tests that reach a module reading one |
 
 ## What does NOT live here
@@ -29,9 +29,34 @@ read the tree as `"type": "module"`.
 - **The shell.** `app.js`, `navModel.js`, `navFlyout.js`, `routeIcons.js`, `helpContent.js`
   and the pages are still per-app. Some of that is genuinely per-app; some is a later
   package's job.
-- **Page-shaped CSS.** `styles/help.css` is the one exception, and it earns it: every
-  sidekick has the same key-sheet page, and what differs between them is the vocabulary in
-  the list, which is data.
+- **The vocabulary.** `helpContent.js` is each register's own book — which words it defines is
+  the part that is genuinely per-app. Only the SHAPE of a definition is shared (`{ id, term,
+  lines[] }`, kebab-case ids), so a `glossaryTip` behaves the same in all three.
+- **Page-shaped CSS**, with one exception: `styles/help.css`, which dresses the shared key
+  sheet below. This bullet used to claim that sheet is "the shape every sidekick's key sheet
+  has"; it is not, and was not when it was written — see the exception below. It is the shape
+  TWO of the three have.
+
+## The one page that IS shared, and the one that is not
+
+`ui/helpPage.js` is the key sheet — a search field over one flat, alphabetical list of
+`helpContent.js` entries, a `?term=` deep link, `/` to focus the search and Escape to clear it,
+and a pure `helpModel(entries, query, term)` behind all of it. `gas/` and `gas_devsecops/` both
+render it; each app's `pages/help.js` is four lines that hand over its own `allEntries()`, and
+`styles/help.css` dresses it. `test/contracts/help.js` holds the behaviour, registered by both.
+
+**`gas_ai/` keeps a bespoke lexicon page, and that is a decision rather than an unfinished
+migration.** Its page is a four-column grid with an index rail (`aria-current` lands on the RAIL
+item, not the entry), six family headings its book carries a `family` field for, live per-entry
+counts resolved from bootstrap/KPI/digest payloads, `mark()` functions that render the real
+component beside each definition, and a fixed 640x126 anatomy SVG with six callout buttons. It
+already opts out of `styles/help.css` for a stated reason: `.help-entry` is a card there and a
+grid row here, `.help-entry-term` a lead line there and a 14px term here.
+
+Bending the shared module to fit it would take a `groupBy`, a per-entry render slot, a count
+resolver and a diagram slot — four options with exactly one consumer each — which costs the
+shared page the readability it was extracted for. The reason is written down in two places on
+purpose: here, and at the top of `gas_ai/src/client/js/pages/help.js`. Do not "fix" it.
 
 ## The seam
 
