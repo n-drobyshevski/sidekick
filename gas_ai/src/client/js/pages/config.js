@@ -211,7 +211,9 @@ export async function renderConfigFindings(main, params, ctx) {
     }
     headHost.append(pageHeader({
       hero: heroStat("Failing controls", String(totals.gaps ?? 0),
-        plural(totals.controls ?? 0, "distinct control")),
+        plural(totals.controls ?? 0, "distinct control"),
+        // The route's <h1> is "Cloud Configuration", rendered above this header.
+        null, { heading: "div" }),
       aside: strip,
       stats: headerStats,
     }));

@@ -15,9 +15,9 @@ read the tree as `"type": "module"`.
 | `api.js` | the `google.script.run` bridge and the `{ok,data}` envelope |
 | `store.js` | the bootstrap cache, the SWR RPC cache and hash routing |
 | `icons.js` | node-kind SVG (512 lines; only `ui/nodeCell.js` and `ui/uiIcons.js` reach it) |
-| `ui/` | 27 component modules plus `index.js`, the one import surface |
+| `ui/` | 29 component modules plus `index.js`, the one import surface |
 | `styles/` | nine stylesheets: `tokens.base.css` first, `overrides.css` last |
-| `test/contracts/` | six spec factories the apps register from their own test files |
+| `test/contracts/` | seven spec factories the apps register from their own test files |
 | `test/testConfig.js` | a manifest fixture, for tests that reach a module reading one |
 
 ## What does NOT live here
@@ -60,9 +60,50 @@ use them; `ui/tip.js` calls `findHelpEntry` when it resolves a term.
 manifest is a wiring defect that cannot be defaulted, because a default would silently give
 one app another app's front door.
 
-`AppManifest`'s JSDoc typedef also reserves `PAGES`, `LANE_ICONS`, `ROUTE_ICONS`,
-`scopeKinds`, `sync` and `experimental`. Those are declared so the shape is one document
-rather than a scatter of additions; nothing here consumes them yet.
+`AppManifest`'s JSDoc typedef also reserves `PAGES`, `LANE_ICONS` and `ROUTE_ICONS`; nothing
+here consumes those yet. **`sync` is live**: `ui/feedback.js`'s `firstRunNotice` reads
+`sync.noun` (and `sync.unit`) inside the function, so the one line every empty page owes its
+reader names the control that app actually has. It used to be hard-coded to "sync", which sent
+a `gas` reader looking for a button that app does not have — its endpoint is `api_runScan` and
+its rail says "Run scan". Two registers take the default; gas declares `{ noun: "scan" }`.
+
+`scopeKinds` is live too, and it is the app's rather than the manifest's: each app exports its
+own `scopeKinds(data)` / `scopeChrome(data)` pair and hands them to the shared control (see
+below).
+
+## The scope seam
+
+`ui/scopeModel.js` (DOM-free) and `ui/scopeControl.js` (the appbar combobox) are ONE control
+for all three registers. They replace `gas/src/client/js/scopeSwitch.js` (363 lines, deleted),
+and the control halves of `gas_ai`'s and `gas_devsecops`'s `ui/projectScope.js` (427 and 264,
+reduced). The three had grown the same thing independently and agreed by copying.
+
+What the apps keep is their **vocabulary**, as data — a `scopeKinds` array:
+
+```js
+{ key: "supportGroup", prefix: "sg", icon: "users",
+  options: (data) => [{ id, label, hint, group, icon }],
+  label:   (opt, data, ctx) => "…",   // ctx = { stale, id }
+  caption: (opt, data, ctx) => "…",
+  payload: (id) => ({ domain: "", supportGroup: id }) }
+```
+
+Three rules the shape encodes:
+
+- **`payload(id)` is how each app keeps its EXISTING server contract.** gas emits
+  `{domain, supportGroup}` (what `activeScope()` always handed every page); gas_ai
+  `{projectView}` / `{domainView}` for `api_setSettings`; devsecops `{projectView}` for
+  `api_setProjectView`. `test/contracts/scope.js` pins every one of those objects against what
+  the deleted implementation produced — the one assertion in that file that could not be
+  derived from the code. It was perturbed in all three apps (a key renamed) and fails.
+- **At most one kind may be BARE** (`prefix: ""`). All three apps already left their first
+  dimension unprefixed and prefixed the rest (`sg:`, `d:`), so keeping that asymmetry is what
+  lets a stored scope survive the move byte for byte. Two bare kinds is a silent collision and
+  `scopeModel.js` throws on it.
+- **No group headings are synthesised.** A kind's own `options()` rows carry their `group`,
+  because the grouping a reader sees is not the kind — gas_ai and devsecops both split ONE kind
+  across "Business units" / "Support groups" / "Projects". A kind-level heading layered on top
+  would give a single-kind app a heading it does not have.
 
 ## The five-token accent contract
 
@@ -156,10 +197,11 @@ registerTokenContract({ describe, it, expect, appRoot: new URL("../", import.met
 | contract | what it holds |
 |---|---|
 | `tokens.js` | the severity palette, the five-token accent split, no `--accent` as ink, the graphite primary button, `charts.js`'s `ACCENT`, no hex literal outside the two token files |
-| `emptyStates.js` | a failure is never dressed as an absence; every page below the front door says where its figures came from |
+| `emptyStates.js` | a failure is never dressed as an absence; every page below the front door says where its figures came from. `ctx.syncField` names the bootstrap field a first-run page gates on (`latestSync` by default, `latestScan` in gas) — hard-coding it had silently excused gas from this whole half |
 | `navGroups.js` | `PAGES` is the only IA list — lane contiguity, two pages per labelled lane, one mark per lane and route, the manifest's front door |
 | `brandMark.js` | the static splash SVG is the module's geometry, and the splash copy is the manifest's |
 | `parity.js` | nothing shared has been forked back into an app; the stylesheet index is in cascade order |
+| `scope.js` | the kinds an app declares, the value encoding, and the exact object a pick puts on the wire |
 | `zscale.js` | every app layer is a `--z-*` token |
 
 `gas_devsecops/test/shared.test.js` is the worked example.

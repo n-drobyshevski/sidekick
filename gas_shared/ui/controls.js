@@ -303,10 +303,36 @@ export function filterChipRow({
  * Wiz Scans, AI Inventory, Help and Compliance had each hand-rolled this block before it had
  * a name (.cov-hero, .inv-hero, .help-hero, the .comp-header hero). This is that block, so
  * the next page does not make a fifth.
+ *
+ * THE LABEL IS THE PAGE'S `<h1>`, and until this package no page in gas or gas_devsecops had
+ * one at all. Measured: 24 of the three apps' 30 routes rendered this block and NO heading
+ * element — `pageHeader` is a `div`, `heroStat` was three more, and the first heading a
+ * screen reader met was the rail's `h2` or a section's `h3`. WCAG 2.1's heading-order
+ * requirement is not the whole of it: `ui/sheet.js:230` already reaches for
+ * `document.querySelector("h1")` and found nothing in two of the three apps. gas's own
+ * `pages/mttr.js:1312` carries a comment working AROUND the gap ("so the page has no h1 → h3
+ * heading skip"), which is the shape of a defect being routed around rather than fixed.
+ *
+ * WHY THE LABEL AND NOT THE VALUE. The value is a MEASUREMENT — `String(total)`,
+ * `view.coverage.text`, a half-life — and a number is not a page name. The label is the only
+ * slot in this block that is a name. It also means no page markup and no page copy changes,
+ * which is what keeps this a heading-level fix rather than a redesign.
+ *
+ * AND NO PIXEL MOVES. `styles/base.css` gives a bare `h1` the `--fs-display` step at 600 with
+ * a bottom margin; `.kpi-label` beats it on font-size, weight, letter-spacing, transform and
+ * colour by specificity, and the two properties it did NOT name — `line-height` and `margin`
+ * — are now written into it explicitly at the values a `div` already inherited. So the rule
+ * change is a no-op for every `.kpi-label` that is still a div (the KPI tiles) and makes this
+ * one render exactly as it did.
+ *
+ * `opts.heading` is the opt-out, and three routes need it: gas_ai's `problems`, `combos` and
+ * `config` already own a page-level `h1` above their header, so the default would give them
+ * two. They pass `{ heading: "div" }` and keep the h1 they have.
  */
-export function heroStat(label, value, sub, help) {
+export function heroStat(label, value, sub, help, opts) {
+  const heading = (opts && opts.heading) || "h1";
   return el("div", { class: "page-hero" },
-    el("div", { class: "kpi-label" }, tipLabel(label, help)),
+    el(heading, { class: "kpi-label" }, tipLabel(label, help)),
     el("div", { class: "hero-value num" }, value),
     sub ? el("div", { class: "page-hero-sub" }, sub) : null,
   );

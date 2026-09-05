@@ -3,6 +3,7 @@
 // The help tip that used to live here is now ui/tip.js: it outgrew this file the moment it
 // stopped being a bubble parked inside its trigger.
 
+import { appConfig } from "../appConfig.js";
 import { el } from "./dom.js";
 
 export function toast(message, kind) {
@@ -160,12 +161,31 @@ export function emptyState(message, hint, opts) {
  * `synced` distinguishes two genuinely different states. No sync at all is a first run. A
  * sync that ran and saved nothing is a MEASUREMENT — the tenant answered and had nothing to
  * report — and saying "no sync has run yet" there would be false.
+ *
+ * THE NOUN IS THE MANIFEST'S, AND THAT IS NOT A STYLE POINT. This sentence was hard-coded
+ * to "sync", which is what two of the three registers call the thing that fills them. gas
+ * does not: its endpoint is `api_runScan`, its bootstrap field is `latestScan`, and the
+ * button in its rail says "Run scan". A shared notice telling a gas reader that "no sync has
+ * run yet" names a control that app does not have — the reader is being sent to look for
+ * something that is not there, which is worse than the generic wording it replaced.
+ * `sync.noun` is the manifest field `appConfig.js` already reserved; the two registers that
+ * say "sync" get it by default and gas declares "scan".
+ *
+ * READ INSIDE THE FUNCTION, never at module top level — appConfig.js's rule 2. A top-level
+ * read runs during import, which under esbuild happens before `app.js`'s own body, and would
+ * throw on a correctly-wired app.
+ *
+ * `unit` is the same argument for the thing being counted: gas measures findings on a host,
+ * gas_ai assets in a graph. Defaulted, so no existing caller changes.
  */
 export function firstRunNotice({ synced, hint }) {
+  const sync = appConfig().sync || {};
+  const noun = sync.noun || "sync";
+  const unit = sync.unit || "findings";
   return emptyState(
     synced
-      ? "The last sync saved no findings, so there is nothing here to measure yet."
-      : "No sync has run yet, so nothing on this page has been measured.",
+      ? `The last ${noun} saved no ${unit}, so there is nothing here to measure yet.`
+      : `No ${noun} has run yet, so nothing on this page has been measured.`,
     hint,
     { variant: "notice" },
   );

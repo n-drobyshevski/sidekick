@@ -3,6 +3,8 @@
 import { clear, el } from "./dom.js";
 import { PAGE_SIZES, cellClassName, pageForSize } from "./tableModel.js";
 import { pluralize } from "./format.js";
+import { absent } from "./cells.js";
+import { absentText } from "./figures.js";
 import { tip, tipLabel, tipLines, truncTip } from "./tip.js";
 
 /**
@@ -124,6 +126,21 @@ export function dataTable(spec) {
     // page's, and is why each register asks for it rather than inheriting it. Take it where
     // the row count is unbounded; leave it where the table is bounded by construction.
     stickyHeader = false,
+    // A class on the `<table>` ITSELF, beside `data`. Distinct from `className`, which lands
+    // on the `.table-wrap` — and the distinction is the whole reason this exists. gas's scan
+    // history was the last hand-rolled `<table class="data history-table">` in these three
+    // apps, and it stayed hand-rolled through P4 because its sticky heading and its column
+    // widths are keyed off a class on the table element: `stickyHeader` above gives it the
+    // wrap it needs, and a wrap class cannot reach `table.data` without a descendant selector
+    // the page's sheet does not have. Opt-in and additive: a caller that omits it renders a
+    // `<table class="data">`, byte-identically to before.
+    tableClassName = "",
+    // (row, col) => string. A class on ONE CELL, where `col.className` is a class on the
+    // whole column — the two answer different questions and a table needs both. A column
+    // class says what the column IS (`num`, a group boundary); a cell class says what THIS
+    // value turned out to be (a breached SLA, a row that fell out of scope). Returning
+    // nothing leaves the cell exactly as `cellClassName(col)` made it.
+    cellClass = null,
   } = spec;
 
   const headCells = new Map();
@@ -190,7 +207,32 @@ export function dataTable(spec) {
         // reads in full instead of behind a truncTip. Per-column rather than a table-wide
         // reset: the Findings count beside it still wants its single line. cellClassName
         // (ui/tableModel.js) is the DOM-free half of this, tested directly there.
-        const td = el("td", { class: cellClassName(col) }, col.cell(row));
+        // ONE PLACE WHERE A DASH BECOMES A MUTED DASH, rather than ninety-one.
+        //
+        // `absent()` (ui/cells.js) is the register saying "we were never told", and MUTED IS
+        // THE WHOLE POINT — a dash in the same ink as a measured value has quietly asserted a
+        // measurement. But the figure formatters cannot return it: `fmtCount`, `pct1`,
+        // `days1`, `fmtDays`, `boundedDays().text` and gas's `fmtSpan` are also interpolated
+        // into sentences, canvas tooltips and aria-labels, where a Node renders as
+        // "[object HTMLSpanElement]". So they return the STRING (`absentText`), and every
+        // column that used one rendered a black dash.
+        //
+        // Measured across the three apps' client source: 47 `cell:` functions returned a
+        // formatter whose absent case is that string, and a further ~20 returned the literal
+        // themselves. Converting them one by one is 67 edits that the 68th column silently
+        // opts out of. Promoting the string HERE is one edit that no column can forget, and it
+        // is safe precisely because it is scoped to a table cell — the sentence and canvas
+        // call sites never come through this function.
+        //
+        // Exact-match on the whole cell value, never a substring: "3.2 days — estimated" is a
+        // measurement with a dash in it, and only a cell whose ENTIRE content is the dash is
+        // an absence. A cell that already returns `absent()` hands back a Node and is
+        // untouched.
+        const value = col.cell(row);
+        const td = el("td", { class: cellClassName(col) }, value === absentText ? absent() : value);
+        // `col.className` is what the COLUMN is; this is what this VALUE turned out to be.
+        const extraCell = cellClass ? cellClass(row, col) : "";
+        if (extraCell) td.classList.add(...String(extraCell).split(/\s+/).filter(Boolean));
         const text = td.textContent;
         if (!col.wrap && text && text.length > 12) truncTip(td, text);
         return td;
@@ -254,7 +296,7 @@ export function dataTable(spec) {
     class: "table-wrap" + (panel ? " table-wrap--panel" : "")
       + (stickyHeader ? " table-wrap--sticky" : "") + (className ? " " + className : ""),
   },
-    el("table", { class: "data" },
+    el("table", { class: "data" + (tableClassName ? " " + tableClassName : "") },
       el("thead", {}, ...(groupRow ? [groupRow, headRow] : [headRow])),
       tbody));
   wrap.setRows = paintRows;

@@ -21,6 +21,17 @@ import { UI_ICON_NAMES } from "../../gas_shared/ui/uiIcons.js";
 
 const SRC = readFileSync(new URL("../src/client/js/ui/projectScope.js", import.meta.url), "utf8");
 const APP_SRC = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
+// THE CONTROL MOVED AND THE CLAIMS DID NOT. `projectScopeControl` was this app's copy of a
+// combobox all three sidekicks had grown independently; it is `gas_shared/ui/scopeControl.js`
+// now. The four assertions below are unchanged, word for word — only the file they read is
+// different, which is the measurement that the move took the behaviour with it rather than
+// dropping it. They are also the reason the block stays HERE rather than becoming a shared
+// contract: this app is the one whose appbar must not move a pixel, so it is the one that
+// should fail if the shared control stops marking a scoped trigger or stops announcing its
+// caption.
+const CONTROL_SRC = readFileSync(
+  new URL("../../gas_shared/ui/scopeControl.js", import.meta.url), "utf8",
+);
 const UI_SRC = readFileSync(new URL("../src/client/js/ui.js", import.meta.url), "utf8");
 const SHARED_UI_SRC = readFileSync(
   new URL("../../gas_shared/ui/index.js", import.meta.url), "utf8",
@@ -351,31 +362,56 @@ describe("projectScopeView: staleness — every project stays on offer, the stat
 //  The DOM half — source-text assertions (no jsdom in this suite)
 // =========================================================================================
 
-describe("projectScopeControl wiring, read as source", () => {
+describe("the shared scope control's wiring, read as source", () => {
   it("returns null rather than an element when the view says show:false", () => {
-    expect(SRC).toMatch(/if \(!v\.show\) return null;/);
+    expect(CONTROL_SRC).toMatch(/if \(!view \|\| !view\.show\) return null;/);
   });
 
   it("marks the trigger .scoped only while a project is actually selected", () => {
-    expect(SRC).toMatch(/if \(v\.current\) combo\.classList\.add\("scoped"\);/);
+    expect(CONTROL_SRC).toMatch(/if \(view\.scoped\) combo\.classList\.add\("scoped"\);/);
   });
 
   it("uses checkSelected and the scope popover class, not colour/weight alone", () => {
-    expect(SRC).toMatch(/checkSelected:\s*true/);
-    expect(SRC).toMatch(/popClass:\s*"combobox-pop--scope"/);
+    expect(CONTROL_SRC).toMatch(/checkSelected:\s*true/);
+    expect(CONTROL_SRC).toMatch(/"combobox-pop--scope"/);
   });
 
   it("the caption is announced (aria-live) rather than silent on change", () => {
-    expect(SRC).toMatch(/"aria-live":\s*"polite"/);
+    expect(CONTROL_SRC).toMatch(/"aria-live": "polite"/);
+  });
+
+  it("draws the same markup this app drew before the move — wrapper, combo, caption", () => {
+    // NOT A RESTATEMENT OF THE FOUR ABOVE. Those say the control still makes each claim; this
+    // says the NODES are the ones this app's stylesheet is written against. `.scope-switch`
+    // wrapping `.scope-combo` over `.scope-caption` is what `styles/base.css` selects on, and
+    // a control that satisfied every claim above while renaming one of these three classes
+    // would render unstyled with nothing failing.
+    expect(CONTROL_SRC).toMatch(/class: "scope-switch"/);
+    expect(CONTROL_SRC).toMatch(/combo\.classList\.add\("scope-combo"\)/);
+    expect(CONTROL_SRC).toMatch(/"scope-caption"/);
   });
 });
 
 describe("app.js: the header mounts the scope control and owns the pick round-trip", () => {
-  it("imports projectScopeControl and mounts it in renderAppbar", () => {
-    expect(APP_SRC).toMatch(/import \{ projectScopeControl \} from ".\/ui\/projectScope\.js";/);
+  // WAS "imports projectScopeControl". That function no longer exists: the control is
+  // gas_shared/ui/scopeControl.js, and what this app supplies is the DATA it draws — the one
+  // kind (`scopeKinds`), the chrome around it, and the view it asserts. The claim is the same
+  // one, restated against the seam it now crosses: the header must mount the shared control,
+  // built from THIS register's kinds, and hand the pick back through `pickProjectScope`.
+  it("mounts the shared scope control in renderAppbar, built from this app's kinds", () => {
+    expect(APP_SRC).toMatch(/import \{ scopeControl \} from "[./]*gas_shared\/ui\/scopeControl\.js";/);
+    expect(APP_SRC).toMatch(
+      /import \{ projectScopeView, scopeChrome, scopeKinds \} from ".\/ui\/projectScope\.js";/,
+    );
     const fn = APP_SRC.slice(APP_SRC.indexOf("function renderAppbar"));
     const body = fn.slice(0, fn.indexOf("\n}\n"));
-    expect(body).toMatch(/projectScopeControl\(data, pickProjectScope\)/);
+    expect(body).toMatch(/scopeControl\(/);
+    expect(body).toMatch(/projectScopeView\(data\)/);
+    expect(body).toMatch(/scopeKinds\(data\)/);
+    // THE PICK STILL ARRIVES AS A SLUG. `scopePayload` rebuilds the `{projectView}` object
+    // this app's server contract has always taken, and the appbar unwraps it — so
+    // `pickProjectScope` below is unchanged and its two tests still hold it.
+    expect(body).toMatch(/pickProjectScope\(scopePayload\(kinds, chrome, value\)\.projectView\)/);
   });
 
   it("pickProjectScope calls api_setProjectView, then refresh() — nothing else, and stores "

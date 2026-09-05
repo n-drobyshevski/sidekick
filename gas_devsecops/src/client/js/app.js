@@ -26,7 +26,9 @@ import {
   tipAnchor,
 } from "./ui.js";
 import { brandMark } from "../../../../gas_shared/ui/brandMark.js";
-import { projectScopeControl } from "./ui/projectScope.js";
+import { projectScopeView, scopeChrome, scopeKinds } from "./ui/projectScope.js";
+import { scopeControl } from "../../../../gas_shared/ui/scopeControl.js";
+import { scopePayload } from "../../../../gas_shared/ui/scopeModel.js";
 import { toast } from "./ui.js";
 import { renderExecutive } from "./pages/executive.js";
 import { renderMttr } from "./pages/mttr.js";
@@ -367,7 +369,18 @@ function renderAppbar(appbar, data) {
   // `null` (boot failed) or an empty `filterOptions.projectList` (nothing synced yet) both
   // resolve to `show: false` inside projectScopeView — see that module for why an empty
   // picker is a promise the register cannot keep.
-  const scope = projectScopeControl(data, pickProjectScope);
+  //
+  // The control is `gas_shared/ui/scopeControl.js`; `ui/projectScope.js` says what this
+  // register's one dimension is. `scopePayload` turns the picked option value back into the
+  // `{projectView}` object `api_setProjectView` has always taken, so nothing below the seam
+  // learned a new encoding.
+  const kinds = scopeKinds(data);
+  const chrome = scopeChrome(data);
+  const scope = scopeControl(
+    projectScopeView(data),
+    { ...chrome, kinds },
+    (value) => pickProjectScope(scopePayload(kinds, chrome, value).projectView),
+  );
   if (scope) appbar.append(scope);
 }
 

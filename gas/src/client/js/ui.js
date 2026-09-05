@@ -21,22 +21,22 @@
 //                  severities and only severities.
 //   usageMeter.js  the Google Sheet's ten-million-cell ceiling — a fact about this app's
 //                  store, which no sibling has.
-//   combobox.js    NOT ONE OF THE ABOVE. It is a genuine fork, blocked on two glyphs the
-//                  shared icon set does not hold; the file's header names the exact
-//                  gas_shared change that retires it. On the parity allow-list under protest.
+// `combobox.js` IS GONE, AND THE TWO GLYPHS ARE WHY IT COULD BE. It was a genuine fork,
+// blocked on `users` and `noTag` — two names `scopeSwitch.js` supplied that the shared icon
+// set did not hold, where `uiIcon()` falls back to a 1px dot SILENTLY. Both are in
+// `gas_shared/ui/uiIcons.js` now, an unknown name is loud rather than silent, and the one
+// feature the fork had that the shared file did not — `closeCombobox()`, a global "dismiss
+// whatever is open" for a hashchange with no click behind it — was ported INTO shared rather
+// than kept here. `filterCombobox` and `closeCombobox` now come through the star below, and
+// the explicit re-export that used to shadow them is deleted with the file.
 //
 // Every call site keeps importing from "../ui.js"; esbuild flattens the re-export chain at
 // build time, so the extra hop costs nothing at runtime. test/shared.test.js's parity
 // contract holds `src/client/js/ui/` to exactly the list above.
-//
-// `filterCombobox` is deliberately re-exported AFTER the star: an explicit export shadows the
-// same name coming through `export *`, which is what keeps the local one in force until the
-// glyphs land.
 
 export * from "../../../../gas_shared/ui/index.js";
 
 export { changeChip } from "./ui/changeChip.js";
-export { closeCombobox, filterCombobox } from "./ui/combobox.js";
 export { nvdUrl } from "./ui/nvd.js";
 export { scopeBar } from "./ui/scopeBar.js";
 export { fmtSpan } from "./ui/span.js";

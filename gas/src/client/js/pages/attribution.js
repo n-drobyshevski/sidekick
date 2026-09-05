@@ -16,8 +16,8 @@
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  absent, clear, dataTable, el, emptyState, fmtDate, heroStat, kpiCard, pageHeader,
-  settingsPanel, statusPill, tableFooter, tip,
+  absent, clear, dataTable, el, emptyState, firstRunNotice, fmtDate, heroStat, kpiCard,
+  pageHeader, settingsPanel, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -86,10 +86,19 @@ export async function renderAttribution(main, params, ctx) {
   }));
 
   if (!boot.latestScan) {
-    main.append(emptyState(
-      "No scan saved yet.",
-      "Use “Run scan” in the sidebar to take the first measurement.",
-    ));
+    // THE SHARED FIRST-RUN NOTICE, not a hand-rolled emptyState — and the difference is not
+    // cosmetic. `emptyState` says "this section is empty", which is a state the register can be
+    // in at any time; `firstRunNotice` says "nothing has been READ yet", which is a statement
+    // about the ledger and is what a page of dashes actually owes its reader. It also carries
+    // `variant: "notice"`, so the two states do not draw as the same dashed box.
+    //
+    // It says "scan", not "sync", because the manifest now carries the noun (`MANIFEST.sync`
+    // in app.js). Until this package the shared component hard-coded "sync", which named a
+    // control this app does not have — which is why this page could not use it.
+    main.append(firstRunNotice({
+      synced: false,
+      hint: "Use “Run scan” in the sidebar to take the first measurement.",
+    }));
     return;
   }
 

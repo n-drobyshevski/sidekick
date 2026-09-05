@@ -257,7 +257,10 @@ export async function renderProblems(main, params) {
     // anti-references reject, and it left the two modes of one page looking like two
     // different pages. Each level keeps the tip it already carried.
     return pageHeader({
-      hero: heroStat("Open problems", String(total), "issues ∪ findings, the whole union"),
+      hero: heroStat("Open problems", String(total), "issues ∪ findings, the whole union",
+        // This page already owns the route's <h1> ("Priorities", above the header), so the
+        // hero label stays a div. Two h1s is the defect the shared default fixes, inverted.
+        null, { heading: "div" }),
       stats,
     });
   }
@@ -550,7 +553,8 @@ export async function renderProblems(main, params) {
     // The count is the hero, the curve is what qualifies it, the other two are the strip:
     // three levels of emphasis instead of four blocks saying one thing.
     return pageHeader({
-      hero: heroStat("Open problems", String(problems), "issues ∪ findings, the whole union"),
+      hero: heroStat("Open problems", String(problems), "issues ∪ findings, the whole union",
+        null, { heading: "div" }),
       aside,
       stats: [
         statRow("Collapse to", String(actions), "distinct remediation actions"),

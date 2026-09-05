@@ -207,7 +207,9 @@ export async function renderCombos(main, params) {
     }
     if (totals.inProgress) openParts.push(totals.inProgress + " in progress");
     return pageHeader({
-      hero: heroStat("Open issues", String(totals.totalOpen), openParts.join(" · ")),
+      hero: heroStat("Open issues", String(totals.totalOpen), openParts.join(" · "),
+        // The route's <h1> is "Toxic Combinations", rendered above this header.
+        null, { heading: "div" }),
       stats: [
       statRow("Assets affected", String(totals.assetsAffected),
         "distinct across every pattern"),

@@ -89,9 +89,22 @@ const EMPTY_STATE_WITH_FAILURE = /\bemptyState\(\s*"Couldn't /;
  * @param {string[]} ctx.guardedRoutes     routes with a per-section guard() that must reach
  *                                         for errorState
  * @param {string[]} ctx.firstRunRoutes    routes that must carry firstRunNotice()
+ * @param {string}   [ctx.syncField]       the bootstrap field a first-run page gates on.
+ *   Defaults to `"latestSync"`, which is what two of the three registers call it; gas passes
+ *   `"latestScan"`.
+ *
+ *   HARD-CODING THIS COST gas ITS WHOLE FIRST-RUN HALF. The field name was written into the
+ *   regex, so `firstRunRoutes` had to be `[]` in `gas/test/shared.test.js` — not because that
+ *   register's pages fail to say the ledger has never been read (`data` and `attribution`
+ *   both do), but because they say it about a field spelled `latestScan`. The comment left
+ *   there is explicit that the alternatives were worse: renaming a payload field to satisfy a
+ *   regex, or aliasing one inside the page to be matched by it, is gaming the test. Taking
+ *   the name as an argument is the fix it names, and gas's two routes are registered now — so
+ *   this contract's second half runs on three apps instead of two.
  */
 export function registerEmptyStateContract(ctx) {
   const { describe, it, expect, app, routes } = ctx;
+  const syncField = ctx.syncField || "latestSync";
   const pagesDir = resolve(fileURLToPath(ctx.appRoot), "src/client/js/pages");
   const CODE = Object.fromEntries(
     routes.map((r) => [r, code(readFileSync(resolve(pagesDir, r + ".js"), "utf8"))]),
@@ -135,14 +148,22 @@ export function registerEmptyStateContract(ctx) {
       }
     });
 
-    it("is decided by the ledger and the sync, never by a null bootstrap alone", () => {
-      // Each page gates on `latestSync`, which is `bootstrap()`'s own honest signal — and
+    it("is decided by the ledger and the " + syncField + ", never by a null bootstrap alone", () => {
+      // Each page gates on the bootstrap's own honest "has anything been read" signal — and
       // each AWAITS it rather than reading the cache, which can be null before the shell
-      // resolves.
+      // resolves. The FIELD NAME is the app's: two registers spell it `latestSync`, gas
+      // spells it `latestScan`, and hard-coding one of the two is what silently excused the
+      // other from this half of the contract.
+      // `"\\b"`, not `"\b"`. In a JS string literal `\b` is the BACKSPACE character, so the
+      // first draft of this line built /latestScan/ and matched nothing — it
+      // failed on gas_devsecops, whose pages do read `latestSync`, which is how it was caught
+      // rather than by the app it was written for.
+      const field = new RegExp("\\b" + syncField + "\\b");
       for (const route of ctx.firstRunRoutes) {
         expect(CODE[route], "pages/" + route + ".js reads a cache that may not be populated yet")
           .toMatch(/await bootstrap\(\)/);
-        expect(CODE[route]).toMatch(/latestSync/);
+        expect(CODE[route], "pages/" + route + ".js never reads " + syncField)
+          .toMatch(field);
       }
     });
   });

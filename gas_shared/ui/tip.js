@@ -487,7 +487,55 @@ export function truncTip(node, fullText) {
  * edge of the security graph.
  */
 export function tipAnchor(node, getCopy) {
-  return anchorTip(node, getCopy);
+  return anchorTip(disabledWrap(node), getCopy);
+}
+
+/** Form controls that can be `disabled`, and therefore go dead to the reveal path. */
+const DISABLEABLE = { BUTTON: 1, INPUT: 1, SELECT: 1, TEXTAREA: 1, FIELDSET: 1, OPTGROUP: 1 };
+
+/**
+ * A DISABLED CONTROL CANNOT ANCHOR ITS OWN REASON, and that is exactly when it has one.
+ *
+ * The whole reveal path is delegation: five listeners on `document`, resolved with
+ * `target.closest("[data-tip]")`. A disabled form control dispatches no pointer events and is
+ * out of the tab order, so the hit test lands on its PARENT — whose `closest()` walks upward
+ * and never sees the disabled child. `data-tip` on the control itself is therefore inert, and
+ * inert in silence: the attribute is set, the copy is registered, and nothing ever opens.
+ *
+ * That is not a hypothetical. Three call sites in these apps had written the wrapper by hand
+ * (`gas_devsecops/app.js`'s Run-sync button, both syncProgress Stop buttons, three "Add rule"
+ * buttons in gas_ai) and named it a browser fact in their comments; three others in gas had
+ * anchored straight onto the dead control and said so in a comment admitting the card was
+ * "best-effort" — which is a way of writing down that it does not work. The wrapper was a
+ * convention six callers had to know, and the two that did not know it shipped a reason
+ * nobody could read.
+ *
+ * So the helper does it. A `span.tip-disabled-wrap` (`styles/components.css`:
+ * `display: inline-flex`, chosen so it takes the control's own box and changes no layout) is
+ * the anchor, and the control sits inside it. `inline-flex` matters: a plain inline span
+ * around a button introduces a baseline gap, and this must be a no-op for the six callers
+ * that already wrote the wrapper themselves — for them this function finds a wrapper already
+ * in place and does nothing.
+ *
+ * TWO CALL SHAPES, BOTH COVERED. A caller that USES the return value
+ * (`actions.append(tipAnchor(el("button", { disabled: true }, …), copy))`) gets the wrapper.
+ * A caller that discards it and appends the control itself is only reachable if the control
+ * is already in the document, and then the wrapper is spliced in around it. What neither
+ * shape covers is a control disabled AFTER the anchor is attached — `miniBtn.disabled =
+ * !onDetails` in all three progress modules — because there is nothing to observe at anchor
+ * time; those keep their reason unreadable while disabled and readable while enabled, which
+ * is at least the honest half.
+ */
+function disabledWrap(node) {
+  if (!node || node.nodeType !== 1) return node;
+  if (DISABLEABLE[node.tagName] !== 1 || node.disabled !== true) return node;
+  const parent = node.parentNode;
+  // Already wrapped by hand: six call sites predate this and must stay byte-identical.
+  if (parent && parent.classList && parent.classList.contains("tip-disabled-wrap")) return parent;
+  const wrap = el("span", { class: "tip-disabled-wrap" });
+  if (parent) parent.replaceChild(wrap, node);
+  wrap.append(node);
+  return wrap;
 }
 
 /**

@@ -140,6 +140,26 @@ const PATHS = {
     "M4.5 3.5 V2.8 a0.8 0.8 0 0 1 0.8 -0.8 h2.4 l1.1 1.4 H13.5",
     "M1.5 13 V5.4 a0.9 0.9 0 0 1 0.9 -0.9 h3 l1.3 1.6 h5.4 a0.9 0.9 0 0 1 0.9 0.9 V13 a0.9 0.9 0 0 1 -0.9 0.9 H2.4 A0.9 0.9 0 0 1 1.5 13 z",
   ],
+  // The same label struck through: the rows that are the ABSENCE of a domain rather than a
+  // domain — gas's `Unassigned` and `Not attributable`. Built from the `tag` mark above
+  // rather than as a separate glyph, because that IS the relationship: same dimension, no
+  // value. The strike is a second SHAPE rather than a colour, so it survives a greyscale
+  // render and a colour-blind reader. NOT `not` (a circle with a slash), which is a
+  // prohibition rather than an absence.
+  noTag: [
+    "M8.3 2.2 H12.9 a0.9 0.9 0 0 1 0.9 0.9 V7.7 L7.7 13.8 a0.9 0.9 0 0 1 -1.3 0 L2.2 9.6 "
+      + "a0.9 0.9 0 0 1 0 -1.3 z",
+    "M2.6 2.6 L13.4 13.4",
+  ],
+  // Two figures for a support group: the dimension is a TEAM, not a filter and not a
+  // container, and the difference matters on a list where the kinds sit under separate
+  // headings. NOT `group` (two nested squares — a graph grouping) and not `folders`.
+  users: [
+    "M10.6 13.6 v-1.1 a3 3 0 0 0 -3 -3 H4.9 a3 3 0 0 0 -3 3 v1.1",
+    "M6.25 3.4 a2.6 2.6 0 1 0 0 5.2 a2.6 2.6 0 0 0 0 -5.2",
+    "M14.1 13.6 v-1.1 a3 3 0 0 0 -2.25 -2.9",
+    "M10.6 3.6 a2.6 2.6 0 0 1 0 4.8",
+  ],
   // The graph's title-row actions. `doc` heads "New search" — a fresh sheet of paper, the
   // thing the button hands you; `bookmark` heads the saved-queries menu, because what that
   // control keeps is a place to come back to rather than a file.
@@ -153,18 +173,50 @@ const PATHS = {
   undock: ["M13.5 8 H6.2", "M9 5.2 L6.2 8 L9 10.8", "M3 3 V13"],
 };
 
-// Same fallback posture as kindIcon(): an unknown name reads as "more" rather than throwing.
-// Deliberate — a typo must not blank a page — and precisely why a typo is otherwise invisible.
-// `UI_ICON_NAMES` is what test/icons.test.js holds every `uiIcon("…")` in the client against,
-// so a name nothing draws fails the build instead of rendering an empty square.
+// Same fallback posture as kindIcon(): an unknown name reads as a dot rather than throwing.
+// A typo must not blank a page — but SILENCE IS WHAT MADE IT INVISIBLE, and it cost a
+// package. `gas/src/client/js/ui/combobox.js` existed as a fork for one whole pass for
+// exactly this reason: swapping it for the shared control would have drawn a 1px dot on
+// every support-group row and both no-domain rows, because `users` and `noTag` were not in
+// this set, and NOTHING would have failed. That is the shape CLAUDE.md calls "a zero has to
+// prove it looked": the failure that announces itself was already guarded, the one that does
+// not was not.
+//
+// So the fallback still renders — a page keeps its layout — and it now says so THREE ways
+// that cost nothing when there is no typo:
+//   * `console.error`, ONCE PER NAME. Once, because this is called on every repaint of a
+//     list and a per-row log would bury the first one under three hundred copies.
+//   * `data-ui-icon-missing="<name>"` on the <svg>, so a DOM sweep in the dev harness or a
+//     browser probe can find it without reading the console.
+//   * `missingUiIcons()`, so a test can assert an app drew no fallback at all.
 const FALLBACK = ["M8 8 h0.01"];
+
+/** Names asked for and not held, in first-ask order. Test-readable; see `missingUiIcons`. */
+const MISSING = new Set();
 
 /** Every glyph this set draws. */
 export const UI_ICON_NAMES = Object.keys(PATHS);
 
+/**
+ * Every name `uiIcon()` has been asked for and could not draw, this session.
+ *
+ * A GUARD THAT FIRES ON NOTHING IS A FINDING, so this is the half a test can hold: an app
+ * whose client is exercised end to end should finish with this empty, and a name that
+ * appears here names the exact glyph to add to PATHS above.
+ */
+export function missingUiIcons() {
+  return [...MISSING];
+}
+
+/** Forget what has been reported — for a test that asserts the warning fires exactly once. */
+export function resetMissingUiIcons() {
+  MISSING.clear();
+}
+
 /** A standalone 16x16 stroke <svg> for UI chrome (buttons, actions) — decorative only;
  * the caller supplies the accessible name (button aria-label/title), not this icon. */
 export function uiIcon(name, size = 16) {
+  const known = Object.prototype.hasOwnProperty.call(PATHS, name);
   const svg = svgEl("svg", {
     viewBox: "0 0 16 16",
     width: size,
@@ -176,8 +228,18 @@ export function uiIcon(name, size = 16) {
     "stroke-width": "1.5",
     "stroke-linecap": "round",
     "stroke-linejoin": "round",
+    // Absent on every glyph this set actually holds, so the rendered markup of a correct
+    // call is byte-identical to what it was before this guard existed.
+    "data-ui-icon-missing": known ? null : String(name),
   });
-  const paths = PATHS[name] || FALLBACK;
+  if (!known && !MISSING.has(name)) {
+    MISSING.add(name);
+    console.error(
+      "gas_shared/ui/uiIcons.js: no glyph named " + JSON.stringify(name)
+      + " — drawing the fallback dot. Add it to PATHS, or fix the caller.",
+    );
+  }
+  const paths = known ? PATHS[name] : FALLBACK;
   for (const d of paths) svg.append(svgEl("path", { d }));
   return svg;
 }

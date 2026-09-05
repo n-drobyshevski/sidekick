@@ -26,6 +26,9 @@
 //   sheet.js      the drill-down overlay and its section+row vocabulary
 //   recordCursor.js  the sheet's DOM-free geometry: stepping a record list, clamping a width
 //   combobox.js   the searchable portaled listbox
+//   scopeModel.js which slice of the register every page is showing — the DOM-free half:
+//                 the kinds an app declares, the value encoding, and the wire payload
+//   scopeControl.js and the appbar control that draws it
 //   tokenList.js  a rule field holding a LIST of opaque strings: chips + that listbox
 //   code.js       a monospace block, and copying out of a sandboxed iframe
 //   uiIcons.js    chrome glyphs (close, chevrons, grip) — ../icons.js does node kinds
@@ -42,7 +45,7 @@
 
 export { appendAll, clear, downloadText, el, motionOk, registerWideNote } from "./dom.js";
 export {
-  boundedDays, days1, denomNote, fmtCount, fmtDays, num, pct1,
+  absentText, boundedDays, days1, denomNote, fmtCount, fmtDays, num, pct1,
 } from "./figures.js";
 export {
   DISPLAY_TZ, dueRank, fmtDate, fmtDateTime, plural, pluralize, sevRank,
@@ -73,12 +76,12 @@ export {
   closeActiveSheet, openSheet, sectionLabel, sheetRow, sheetSection,
 } from "./sheet.js";
 export { clampSheetWidth, recordCursor } from "./recordCursor.js";
-export { filterCombobox } from "./combobox.js";
+export { closeCombobox, filterCombobox } from "./combobox.js";
 export { tokenList } from "./tokenList.js";
 export { openPopover, popoverDismiss, positionPopover } from "./popover.js";
 export { portalsOpen } from "./portals.js";
 export { codeBlock, copyButton, copyText } from "./code.js";
-export { uiIcon } from "./uiIcons.js";
+export { UI_ICON_NAMES, missingUiIcons, resetMissingUiIcons, uiIcon } from "./uiIcons.js";
 export { brandMark } from "./brandMark.js";
 export { pointRail, railScale } from "./rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./timing.js";
@@ -87,3 +90,5 @@ export { rowDrag, ruleGrip } from "./rowReorder.js";
 export {
   disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList,
 } from "./settings.js";
+export { encodeScope, parseScope, scopePayload, scopeView } from "./scopeModel.js";
+export { scopeControl, scopeSwitch } from "./scopeControl.js";

@@ -16,13 +16,13 @@ import {
 import { itemForRoute, railItems } from "./navModel.js";
 import { LANE_ICONS, ROUTE_ICONS, RUN_ICON } from "./routeIcons.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
-import { scopeSwitchControl } from "./scopeSwitch.js";
+import { scopeChrome, scopeKinds, scopeSwitchView } from "./scopeKinds.js";
 import {
   bootstrap, buildHash, defaultRoute, invalidateBootstrap, invalidateRpcCache, parseHash,
 } from "../../../../gas_shared/store.js";
 import {
   clear, closeCombobox, closeTip, el, errorState, fmtDateTime, progressBar, runPageTeardown,
-  statusPill, tip, tipAnchor, toast,
+  scopeControl, scopePayload, statusPill, tip, tipAnchor, toast,
 } from "./ui.js";
 import { renderExecutive } from "./pages/executive.js";
 import { renderOverview } from "./pages/overview.js";
@@ -64,6 +64,12 @@ const MANIFEST = {
   // documented degrade path (`glossaryTipLines(null)` is null). gas_shared/test/testConfig.js
   // ships the same shape for the same reason.
   findHelpEntry: () => null,
+  // WHAT FILLS THIS REGISTER IS A SCAN, NOT A SYNC, and the shared first-run notice used to
+  // say otherwise. `firstRunNotice` (gas_shared/ui/feedback.js) hard-coded "No sync has run
+  // yet"; this app's endpoint is `api_runScan`, its bootstrap field is `latestScan` and the
+  // button in its rail says "Run scan", so that sentence sent a reader looking for a control
+  // this app does not have. The two siblings keep the default.
+  sync: { noun: "scan", unit: "findings" },
 };
 configureApp(MANIFEST);
 
@@ -171,14 +177,17 @@ function syncScanZoneFiltering() {
  * accent need re-deriving. `renderAppbar` does that by rebuilding from the same payload rather
  * than patching, which is what keeps the caption and the trigger from ever disagreeing.
  */
-function pickScope(pick) {
-  // Set one, clear the other. Written as a clear-then-set rather than two branches so the
-  // "one at a time" rule is structural: there is no path through this function that leaves
-  // both of them non-empty.
-  activeDomain = "";
-  activeSupportGroup = "";
-  if (pick.kind === "supportGroup") activeSupportGroup = pick.value || "";
-  else activeDomain = pick.value || "";
+function pickScope(payload) {
+  // THE SHAPE OF `payload` IS THE OLD `activeScope()` OBJECT, byte for byte — `{domain,
+  // supportGroup}` with exactly one of them non-empty. It is built by the kind's own
+  // `payload(id)` in scopeKinds.js rather than reconstructed here from a `{kind, value}` pair,
+  // which is what makes "one at a time" structural: there is no branch in this function that
+  // could leave both set, because it does not compose the object at all.
+  // The registerScopeContract block in test/shared.test.js pins every one of those objects
+  // against what the deleted scopeSwitch.js produced for the same pick.
+  const pick = payload || { domain: "", supportGroup: "" };
+  activeDomain = pick.domain || "";
+  activeSupportGroup = pick.supportGroup || "";
   renderAppbar(appbarEl, bootData);
   syncScanZoneFiltering();
   route();
@@ -388,7 +397,18 @@ function renderAppbar(appbar, data) {
   // Null when there is no register to slice — including the boot-failure path, where offering
   // a picker over data we could not fetch would be a control with nothing behind it. The rule
   // goes with it: a separator with one side missing separates nothing.
-  const scopeSwitch = scopeSwitchControl(data, activeScope(), pickScope);
+  // ONE CONTROL, THREE REGISTERS. `scopeControl` (gas_shared/ui/scopeControl.js) draws it and
+  // `scopeKinds.js` says what this register's two dimensions are; the appbar only decides
+  // where it goes. Null when there is no register to slice — including the boot-failure path,
+  // where offering a picker over data we could not fetch would be a control with nothing
+  // behind it. The rule goes with it: a separator with one side missing separates nothing.
+  const kinds = scopeKinds(data);
+  const chrome = scopeChrome(data);
+  const scopeSwitch = scopeControl(
+    scopeSwitchView(data, activeScope()),
+    { ...chrome, kinds },
+    (value) => pickScope(scopePayload(kinds, chrome, value)),
+  );
   if (scopeSwitch) {
     appbar.append(el("span", { class: "appbar-sep", "aria-hidden": "true" }), scopeSwitch);
   }

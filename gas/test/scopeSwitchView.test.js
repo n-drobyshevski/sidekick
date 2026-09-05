@@ -1,9 +1,16 @@
 // What the header's scope switcher CLAIMS: its label, its caption, and whether the scope in
 // force still exists.
 //
-// Plain .js for the reason navGroups.test.js writes out. scopeSwitch.js is split so this file
+// Plain .js for the reason navGroups.test.js writes out. scopeKinds.js is split so this file
 // can exist — `scopeSwitchView` is DOM-free, and every honesty rule the control carries is a
 // return value here rather than a pixel.
+//
+// THE MODULE MOVED AND NOT ONE ASSERTION DID. `scopeSwitch.js` became `scopeKinds.js` when the
+// control and the assembly went to gas_shared (`ui/scopeControl.js`, `ui/scopeModel.js`); what
+// is left here is this register's own vocabulary, and every claim below is about that. The
+// option VALUES are byte-identical across the move — the domain is still the bare kind, the
+// support group still carries `sg:` — which is the measurement that says the refactor changed
+// no behaviour, not just that it compiled.
 //
 // The failure mode this guards is not a crash. It is a caption that reads "31 findings" and
 // leaves a reader unable to tell a small support group from a small register, or one that
@@ -23,7 +30,7 @@ import {
   domainScopeOptions,
   scopeSwitchView,
   supportScopeOptions,
-} from "../src/client/js/scopeSwitch.js";
+} from "../src/client/js/scopeKinds.js";
 import { UI_ICON_NAMES } from "../src/client/js/uiIcons.js";
 
 /**
@@ -294,7 +301,17 @@ describe("the caption", () => {
   it("carries the denominator and the ungrouped tail under a support group", () => {
     const v = scopeSwitchView(boot(), { supportGroup: "CS-CORE" });
     expect(v.caption).toBe("31 of 161 findings · 104 carry no support group");
-    expect(v.kind).toBe("support");
+    // WAS `"support"`, AND THE CHANGE IS THE POINT. The deleted scopeSwitch.js spelled this
+    // ONE dimension three ways: the view said `kind: "support"` (so `SCOPE_KIND_ICON` could
+    // look up its glyph), `onPick` said `kind: "supportGroup"` (the field app.js sets), and the
+    // option value said `sg:`. Two of the three were internal aliases nothing outside the file
+    // could reconcile — a caller reading `view.kind` and writing it back was simply wrong.
+    // gas_shared/ui/scopeModel.js gives a kind ONE key and hangs the glyph off the kind itself,
+    // so the lookup table and its third spelling are gone. This is the wire name, which is the
+    // one that was already load-bearing.
+    expect(v.kind).toBe("supportGroup");
+    // Unchanged, and that is the measurement: the encoded value a stored scope is written in
+    // survived the move to the shared model byte for byte.
     expect(v.current).toBe(SUPPORT_GROUP_PREFIX + "CS-CORE");
   });
 
