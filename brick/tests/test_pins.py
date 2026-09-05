@@ -1,0 +1,75 @@
+"""The requirements pin and the jar pin have to name the same Delta release.
+
+An unpinned ``pyspark>=3.5`` resolves to pyspark 4.x today (PyPI has no 3.5-only floor), and
+4.x mismatches the ``io.delta:delta-spark_2.12:3.3.2`` jar coordinate hardcoded as
+``DELTA_PACKAGE`` in ``conftest.py`` -- delta-spark 3.3.x declares ``pyspark>=3.5.3,<3.6``. The
+failure that produces is not a pip error: it installs cleanly and then dies building the
+``SparkSession``, so the fix belongs in the requirements file, not in a version check at import
+time. This test pins the fix rather than the failure: the ``delta-spark`` floor in
+``requirements.txt`` must equal the jar version in ``conftest.py``, and ``pyspark`` must carry
+an upper bound below 3.6 so a future ``pip install`` cannot silently drift back onto 4.x.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+
+import pytest
+
+BRICK_DIR = Path(__file__).resolve().parents[1]
+
+
+def _delta_package_version(conftest_path: Path) -> str:
+    text = conftest_path.read_text()
+    match = re.search(r'DELTA_PACKAGE\s*=\s*"io\.delta:delta-spark_2\.12:([\d.]+)"', text)
+    assert match, f"DELTA_PACKAGE not found in {conftest_path}"
+    return match.group(1)
+
+
+def _requirement_bounds(requirements_path: Path, package: str) -> str:
+    """Return the raw version-specifier tail of ``package``'s line, e.g. '>=3.3.2,<3.4'."""
+    text = requirements_path.read_text()
+    match = re.search(rf"^{re.escape(package)}\s*((?:[<>=!~][^\s#]*)(?:,[^\s#]*)*)", text, re.M)
+    assert match, f"{package} requirement not found in {requirements_path}"
+    return match.group(1)
+
+
+@pytest.mark.parametrize(
+    "requirements_name, conftest_name",
+    [
+        ("requirements.txt", "tests/conftest.py"),
+        ("devsecops/requirements.txt", "devsecops/tests/conftest.py"),
+    ],
+)
+def test_delta_spark_floor_matches_the_pinned_jar(requirements_name, conftest_name):
+    requirements_path = BRICK_DIR / requirements_name
+    conftest_path = BRICK_DIR / conftest_name
+
+    jar_version = _delta_package_version(conftest_path)
+    bounds = _requirement_bounds(requirements_path, "delta-spark")
+    lower_match = re.search(r">=\s*([\d.]+)", bounds)
+    assert lower_match, f"delta-spark has no lower bound in {requirements_path}: {bounds!r}"
+    assert lower_match.group(1) == jar_version, (
+        f"{requirements_path} pins delta-spark>={lower_match.group(1)} but "
+        f"{conftest_path} pins the jar at {jar_version} -- they must name the same release."
+    )
+
+
+@pytest.mark.parametrize(
+    "requirements_name",
+    ["requirements.txt", "devsecops/requirements.txt"],
+)
+def test_pyspark_is_upper_bounded_below_3_6(requirements_name):
+    requirements_path = BRICK_DIR / requirements_name
+    bounds = _requirement_bounds(requirements_path, "pyspark")
+    upper_match = re.search(r"<\s*([\d.]+)", bounds)
+    assert upper_match, (
+        f"{requirements_path} pins pyspark{bounds!r} with no upper bound -- an unpinned "
+        "pyspark>=3.5 resolves to pyspark 4.x today, which mismatches the delta-spark 3.3.x "
+        "jar pinned in conftest.py (delta-spark 3.3.x declares pyspark>=3.5.3,<3.6)."
+    )
+    assert upper_match.group(1) == "3.6", (
+        f"{requirements_path} bounds pyspark below {upper_match.group(1)}, expected <3.6 to "
+        "match what delta-spark 3.3.x actually declares."
+    )

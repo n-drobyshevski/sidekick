@@ -40,6 +40,18 @@ sys.path.insert(0, str(BRICK_DIR))
 # cluster's Delta comes from DBR, where single-column CLUSTER BY is the documented shape.
 DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.2"
 
+# Spark 3.5's own docs claim only Java 8/11/17 -- Java 21 support is advertised starting at
+# Spark 4.0. Measured here on OpenJDK 21.0.10: session start, a Delta write/read, and OPTIMIZE
+# on a single-column CLUSTER BY table (the exact path this suite depends on, see the comment
+# above) all ran clean, no reflective-access stack trace, no added flags. The full suite ran on
+# it too -- 568/569 passed (one pre-existing failure in test_csvstore.py, unrelated to the JVM:
+# a Delta v2-catalog "does not support truncate in batch mode" error that `import_bundle.py`
+# already documents and works around elsewhere; csvstore.py just doesn't use that workaround
+# yet). So this fixture does not gate the JVM version -- a guard here would block a setup that
+# measurably works. If a future JDK does break this, the fix is JAVA_HOME pointed at a Java
+# 8/11/17 install, not a silent hang: Spark on an unsupported JVM fails loudly at session
+# construction.
+
 # Spark's 1g default is not enough for this suite. In local mode the driver JVM is also the
 # executor, so one heap carries the catalog, the Delta log state of every table the run has
 # created, and the aggregation buffers -- and the gold frames are wide: the confusion matrix,
