@@ -52,6 +52,7 @@ import {
   type ProblemVerdictInput,
 } from "../domain/problem";
 import { vectorSignature, type ProblemRule } from "../domain/problemRule";
+import { reconcileIssueLedger, type IssueLedgerRow } from "../domain/issueLedger";
 import { censusPostureTiers, countPostureTiers, type Tier as PostureTier } from "../domain/posture";
 import type { PostureRule } from "../domain/postureRule";
 import { registerScopeSignature } from "../domain/registerScope";
@@ -826,6 +827,91 @@ export function loadExploitation(): ExploitationRow[] {
   return readAll(TABS.issueExploitation).map(rowToExploitation).filter((e) => !!e.issueId);
 }
 
+// ------------------------------------------------------------- the lifecycle ledger
+
+export function issueLedgerToRow(l: IssueLedgerRow): Rec {
+  return {
+    issue_id: l.issueId,
+    first_seen_sync: l.firstSeenSync,
+    first_seen_at: l.firstSeenAt,
+    last_seen_sync: l.lastSeenSync,
+    last_seen_at: l.lastSeenAt,
+    // NULL while the row is present. When set it is the timestamp of the sync that first
+    // failed to see it — an upper bound, and `resolution_src` beside it is what says so.
+    disappeared_at: l.disappearedAt,
+    resolution_src: l.resolutionSrc,
+    last_status: l.lastStatus,
+    // Comma-joined, matching `categories` on ai_issues; the `_json` suffix stays reserved
+    // for structures.
+    categories: (l.categories ?? []).join(","),
+    rule_id: l.ruleId,
+    created_at: l.createdAt,
+    due_at: l.dueAt,
+    // `?? null`, never a default, for the reason ai_issues states at length: an empty cell
+    // here means the fold did not reach this row on the sync that last saw it, and writing
+    // "UNLINKED" or "none" would turn "nobody looked" into a measurement.
+    ai_adjacency: l.aiAdjacency ?? null,
+    exploitation_tier: l.exploitationTier ?? null,
+    epss_peak: l.epssPeak === null || l.epssPeak === undefined ? null : l.epssPeak,
+    register_scope: l.registerScope,
+    episode: l.episode,
+  };
+}
+
+export function rowToIssueLedger(r: Rec): IssueLedgerRow {
+  const row: IssueLedgerRow = {
+    issueId: String(r["issue_id"] ?? ""),
+    firstSeenSync: String(r["first_seen_sync"] ?? ""),
+    firstSeenAt: String(r["first_seen_at"] ?? ""),
+    lastSeenSync: String(r["last_seen_sync"] ?? ""),
+    lastSeenAt: String(r["last_seen_at"] ?? ""),
+    disappearedAt: (r["disappeared_at"] as string | null) ?? null,
+    // Narrowed, because these two strings are the PROVENANCE of the date beside them: an
+    // unrecognised value must not be able to reach a surface that renders it as a claim.
+    resolutionSrc:
+      r["resolution_src"] === "disappeared" || r["resolution_src"] === "reopened"
+        ? (r["resolution_src"] as "disappeared" | "reopened")
+        : null,
+    lastStatus: String(r["last_status"] ?? ""),
+    categories: String(r["categories"] ?? "").split(",").filter(Boolean),
+    ruleId: String(r["rule_id"] ?? ""),
+    createdAt: (r["created_at"] as string | null) ?? null,
+    dueAt: (r["due_at"] as string | null) ?? null,
+    registerScope: String(r["register_scope"] ?? ""),
+    // 1, not 0: a stored row has been present at least once by definition, and a 0 here would
+    // read as "never seen" on a tab whose every row is a sighting.
+    episode: Number(r["episode"] ?? 1) || 1,
+  };
+  const adjacency = (r["ai_adjacency"] as string | null) ?? null;
+  if (adjacency === "DIRECT" || adjacency === "ADJACENT" || adjacency === "UNLINKED") {
+    row.aiAdjacency = adjacency;
+  }
+  // Read inside the TIER guard, exactly as `rowToIssue` does: the tier is what says the fold
+  // ran, so an empty peak beside a present tier is "no probability captured" (null) while an
+  // empty peak with no tier is "no fold" (absent). An unknown tier string is kept rather than
+  // dropped — a ledger written by a newer version must round-trip.
+  const tier = String(r["exploitation_tier"] ?? "");
+  if (tier) {
+    row.exploitationTier = tier as ExploitationTier;
+    const peak = r["epss_peak"];
+    const parsed = peak === null || peak === undefined || peak === "" ? null : Number(peak);
+    row.epssPeak = parsed !== null && isFinite(parsed) ? parsed : null;
+  }
+  return row;
+}
+
+/**
+ * The lifecycle ledger, every row it has ever held.
+ *
+ * NOT memoized, unlike the read models below. The one caller inside a write is `persistSync`,
+ * which must see the tab as it stands rather than as some earlier read in the same execution
+ * left it — a stale ledger there would be reconciled against and written back, silently
+ * dropping whatever the missed read held.
+ */
+export function loadIssueLedger(): IssueLedgerRow[] {
+  return readAll(TABS.issueLedger).map(rowToIssueLedger).filter((l) => !!l.issueId);
+}
+
 /**
  * Stamp the folded reading onto the issues themselves, so the ranker reads one row rather than
  * performing a join it has no index for.
@@ -1172,13 +1258,53 @@ export function persistSync(
     overwrite(TABS.issueExploitation, exploitation.rows.map(exploitationToRow));
   }
 
+  // ONE instant and ONE scope signature for this commit, read once and used by both the
+  // ledger below and the history row under it. Two calls could only ever differ, and a
+  // ledger dating a departure a millisecond off the sync that noticed it is a discrepancy
+  // nobody would ever find a cause for.
+  const finishedAt = nowIso(now);
+  const registerScope = registerScopeSignature(settingsStore.getIssueCategories());
+
+  // THE LIFECYCLE LEDGER — after every evidence tab, before the commit record.
+  //
+  // The position is the guard. A sync that dies anywhere above this leaves no ledger write at
+  // all, and one that dies between here and the history append leaves a ledger whose last
+  // sighting names a sync that never committed — recoverable, because the next sync's
+  // `prevScopeSignature` still comes off the last COMMITTED row and its own reconcile
+  // re-sights everything present. Writing it after the history row would invert that: a
+  // committed sync with no ledger movement, which the next disappearance pass would read as
+  // an entire register going absent at once.
+  //
+  // A FULL REWRITE, and NOT an `overwrite` of evidence. The grid written here is the stored
+  // ledger reconciled with this sync's register — its own prior content plus one sync's
+  // worth of transitions — never a projection of `ai_issues`. That is the whole difference
+  // between this tab and every other one above.
+  //
+  // `finishedAt` is shared with the commit record below on purpose: the date a row is
+  // "gone by" and the date the sync that noticed it finished must be the same instant, or
+  // a lifecycle figure and the trend it sits under disagree by a few milliseconds forever.
+  const prevCommitted = latestSync();
+  const ledger = reconcileIssueLedger(
+    loadIssueLedger(),
+    decidedIssues,
+    meta.syncId,
+    finishedAt,
+    registerScope,
+    // The scope the LAST COMMITTED sync applied — read off the stored row, never off today's
+    // settings. Null when nothing has committed yet or the row predates the column, and null
+    // is UNKNOWN: `reconcileIssueLedger` refuses to resolve by absence against it, because a
+    // ledger that cannot prove the previous scan looked for a row must not date its departure.
+    prevCommitted ? ((prevCommitted["register_scope"] as string | null) ?? null) : null,
+  );
+  overwrite(TABS.issueLedger, ledger.rows.map(issueLedgerToRow));
+
   const snapshotRef = writeGraphSnapshot(postured);
 
   // Commit record LAST.
   appendRows(TABS.syncHistory, [{
     sync_id: meta.syncId,
     started_at: meta.startedAt,
-    finished_at: nowIso(now),
+    finished_at: finishedAt,
     status: "SUCCESS",
     mode: meta.mode,
     node_count: postured.nodes.length,
@@ -1266,7 +1392,7 @@ export function persistSync(
     // battery from, never off the settings at read time. A widened setting and an unsynced
     // ledger disagree until the next sync, and bootstrap says so rather than letting a
     // total counted under one scope be compared with one counted under another.
-    register_scope: registerScopeSignature(settingsStore.getIssueCategories()),
+    register_scope: registerScope,
     // Where this sync's issues sat relative to the AI estate, WITH the edge count that makes
     // the three figures readable — see AdjacencyCensus.edgesKnown. Mirrors aars_severity_json
     // and problem_outcome_json above: the snapshot this row points at is overwritten by the
@@ -1278,6 +1404,12 @@ export function persistSync(
     // `hasRelatedIssue: true`, so a row with no issue id is a fact about the SELECTION), and
     // `droppedNotInRegister` is the finding filter and the issue filter having drifted apart.
     // Either one rising is how this axis fails, and neither is visible from the tiers alone.
+    // What the lifecycle ledger DID on this sync — the five transition counts. Never null:
+    // unlike the exploitation census above, the reconcile is not an optional step and always
+    // ran, so a sync that moved nothing writes five zeroes and means it. `skippedNarrowedScope`
+    // above zero is the one to read first: it says the category scope moved and that this sync
+    // deliberately resolved nothing by absence.
+    ledger_json: JSON.stringify(ledger.deltas),
     exploitation_json: exploitation
       ? JSON.stringify({
         ...censusExploitation(exploitation.rows),

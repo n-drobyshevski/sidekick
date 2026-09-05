@@ -23,6 +23,7 @@ export const TABS = {
   configRules: "ai_config_rules",
   identityFindings: "ai_identity_findings",
   issueExploitation: "ai_issue_exploitation",
+  issueLedger: "ai_issue_ledger",
   syncHistory: "sync_history",
   settings: "settings",
   jobs: "jobs",
@@ -262,6 +263,39 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "issue_id", "tier", "has_kev", "has_exploit", "epss_peak",
     "finding_count", "sample_finding_ids", "observed_at",
   ],
+  // THE ISSUE LIFECYCLE LEDGER — the one tab here that is never a snapshot.
+  //
+  // Every other data tab above is rewritten wholesale from what the last sync saw, which is
+  // correct for a register that describes today and useless for one that has to say when a
+  // row LEFT. `ai_issues` is filtered to OPEN/IN_PROGRESS, so a remediated issue simply
+  // vanishes from it on the next sync with nothing recording that it was ever there.
+  //
+  // "Never overwritten" is a claim about the CONTENT, not about the write call: `syncStore`
+  // reconciles the stored rows with this sync's register and writes the whole reconciled grid
+  // back, which is a full rewrite of the ledger FROM ITS OWN PRIOR CONTENT and never a
+  // replacement of it by the current snapshot. Nothing may write this tab from `ai_issues`
+  // alone — that is exactly the erasure the tab exists to prevent.
+  //
+  // `disappeared_at` IS NOT A RESOLUTION DATE. It is the timestamp of the sync that first
+  // failed to see the row: an upper bound whose error is the sync interval. `resolution_src`
+  // carries the provenance in the same row so a surface cannot render the date without the
+  // word that qualifies it — "gone by", never "resolved". See domain/issueLedger.ts.
+  //
+  // `register_scope` is the scope the sync that last SAW the row applied; `categories` is the
+  // union of every category that has ever matched it. Two different facts — which questions
+  // were asked, and which ones answered — and only the first can explain an absence.
+  //
+  // Comma-joined for `categories`, matching `environments` and `attributed_asset_ids` on
+  // ai_issues; the `_json` suffix stays reserved for structures. An empty `exploitation_tier`
+  // or `ai_adjacency` cell reads back as UNDEFINED and never as "none"/"UNLINKED": the fold
+  // did not reach the row on the sync that last saw it, which the ranker prices differently
+  // from a measurement.
+  [TABS.issueLedger]: [
+    "issue_id", "first_seen_sync", "first_seen_at", "last_seen_sync", "last_seen_at",
+    "disappeared_at", "resolution_src", "last_status", "categories", "rule_id",
+    "created_at", "due_at", "ai_adjacency", "exploitation_tier", "epss_peak",
+    "register_scope", "episode",
+  ],
   [TABS.syncHistory]: [
     "sync_id", "started_at", "finished_at", "status", "mode",
     "node_count", "edge_count", "issue_count", "api_calls", "snapshot_ref", "error",
@@ -322,6 +356,20 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // reason `edgesKnown` does one row up: the tier counts are unreadable without them, and split
     // into their own columns a later reader plots the tiers alone.
     "exploitation_json",
+    // WHAT THE LIFECYCLE LEDGER DID ON THIS SYNC — `{new, resolved, reopened, carried,
+    // skippedNarrowedScope}` (domain/issueLedger.IssueLedgerDeltas). Appended, same
+    // no-migration contract as every column above.
+    //
+    // TRANSITION COUNTS, not a census of the tab: a row present on both syncs is counted by
+    // none of the five, so these numbers do not sum to the ledger's size and a reader must not
+    // try to make them. `skippedNarrowedScope` is the one to watch — a non-zero there says the
+    // category scope moved and that this sync deliberately resolved nothing by absence, which
+    // is what keeps a re-scoping from being read as a remediation programme.
+    //
+    // Rides here rather than on its own tab because it is one object per sync, exactly like
+    // `adjacency_json` and `exploitation_json` above it, and because `bootstrap.latestSync`
+    // ships the whole history row — so the client gets it with no new endpoint.
+    "ledger_json",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [
