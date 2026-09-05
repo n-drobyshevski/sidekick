@@ -145,6 +145,31 @@ export const STEP_VAR_SPECS: StepVarSpec[] = [
       "disagree about which assets exist.",
   },
   {
+    stepId: "VULN_FINDINGS",
+    fields: [],
+    // LOCKED, and for a reason none of the other locks state: this filter is not a scope
+    // knob, it is the CLAIM ITSELF.
+    //
+    // Nothing on a vulnerability finding says it is exploitation evidence for this register.
+    // What makes it so is that it names an issue in one of the selected categories — the
+    // filter is the entire assertion, and the row it produces is folded onto that issue and
+    // read as "this issue is exploited". Widen it and the register asserts exploitation for
+    // issues it does not hold; drop `hasRelatedIssue` and the same document answers 5,173,698
+    // rows in project scope (AARS_LIVE_MEASUREMENTS.md §6.4), which is not a bigger version of
+    // this step but a different product with no page and no storage budget behind it.
+    //
+    // The category list is not editable here either, and for the reason ISSUES_TOXIC's lock
+    // gives one entry up: it must stay the SAME list the issue steps use, or a finding joins
+    // an issue the register never collected and the axis quietly thins out. Settings
+    // (issue_categories) moves both together; a per-step cell could move only one.
+    locked: "This step's filter is the claim itself: a vulnerability finding counts as " +
+      "exploitation evidence only because it names an issue in the collected categories. " +
+      "Widening it would assert exploitation for issues this register does not hold, and " +
+      "dropping the related-issue filter turns one query into five million rows. The " +
+      "categories follow Settings (issue_categories), so this step and the issue steps can " +
+      "never read different registers.",
+  },
+  {
     stepId: "CONFIG_FINDINGS",
     fields: [
       {

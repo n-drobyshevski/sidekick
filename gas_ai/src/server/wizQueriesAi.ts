@@ -906,6 +906,151 @@ export function aiConfigFindingsVariables(
   return { filterBy, orderBy: { field: "SEVERITY", direction: "DESC" } };
 }
 
+// ------------------------------------------- vulnerabilityFindings (exploitation evidence)
+
+/**
+ * The `vulnerableAsset` union, one inline fragment per member.
+ *
+ * `vulnerableAsset { id }` IS REJECTED — the field is a union of 16 types with no shared
+ * interface to select through (AARS_LIVE_MEASUREMENTS.md §6.8), so every member has to be
+ * named. The member list is COPIED from the sibling OS-vulns tool's console-captured document
+ * (`gas/src/server/wizQuery.ts`), not guessed: that query has run against this tenant since it
+ * shipped, and a member name this gateway does not have fails the WHOLE document rather than
+ * the one fragment.
+ *
+ * Thirteen of the sixteen, therefore, and the three the sibling does not fragment stay out for
+ * the same reason. `VulnerableAssetNetworkAddress` is the odd one: it carries no `id`, `type`
+ * or `name` at all — the sibling selects an address off it — so it takes `__typename`, which
+ * is the same answer phase0's own fragment builder reaches for an id-less member. A row on one
+ * of those joins no asset, which the normalizer records as an absent asset rather than as a
+ * blank one.
+ */
+const VULNERABLE_ASSET_MEMBERS = [
+  "VulnerableAssetBase",
+  "VulnerableAssetVirtualMachine",
+  "VulnerableAssetServerless",
+  "VulnerableAssetContainerImage",
+  "VulnerableAssetContainer",
+  "VulnerableAssetRepositoryBranch",
+  "VulnerableAssetIde",
+  "VulnerableAssetEndpoint",
+  "VulnerableAssetPaaSResource",
+  "VulnerableAssetVirtualMachineImage",
+  "VulnerableAssetCommon",
+  "VulnerableAssetDevice",
+];
+
+const VULNERABLE_ASSET_SELECTION =
+  "      vulnerableAsset {\n" +
+  VULNERABLE_ASSET_MEMBERS.map((m) => `        ... on ${m} { id type name }\n`).join("") +
+  "        ... on VulnerableAssetNetworkAddress { __typename }\n" +
+  "      }\n";
+
+/**
+ * THE JOIN FIELD IS UNVERIFIED — pinned by `phase0.mjs --stage=k`.
+ *
+ * Stage K exists to answer exactly this: it introspects every `/issue/i` field on
+ * `VulnerabilityFinding`, decides LIST vs connection vs single object from the schema, and
+ * prints the selection that works. It has NOT been run. So this is the most likely shape from
+ * the evidence in this repo, and it is named as an assumption rather than as a fact:
+ *
+ *   - `relatedIssues { id }`, a BARE LIST. Every multi-valued object field on this type in the
+ *     tenant's own console document (`gas/src/server/wizQuery.ts`) is a bare list and not one
+ *     is a connection — `postureIssues { id name type … }`, `sourceMappedCodeFindings { id }`,
+ *     `projects { id name … }`, `ignoreRules { id }`. Connections in this schema are ROOTS.
+ *   - PLURAL, because `relatedIssueAnalytics` returns an `issueCount`: a finding can relate to
+ *     several issues, so a singular `relatedIssue { id }` would be the surprising shape.
+ *
+ * The two alternatives, so the next reader does not have to re-derive them: `relatedIssue { id }`
+ * if the field is singular, `relatedIssues { nodes { id } }` if it is a connection after all.
+ * Getting it wrong is an HTTP 400 on the whole document, which is why VULN_FINDINGS is an
+ * OPTIONAL step: the sync records the refusal with Wiz's own message — which names the field —
+ * and leaves `ai_issue_exploitation` untouched rather than writing an empty register over it.
+ * The normalizer's `relatedIssueIdsOf` reads all three shapes, so only the document has to
+ * change when stage K answers.
+ */
+export const RELATED_ISSUE_SELECTION = "      relatedIssues { id }\n";
+
+/**
+ * Exploitation evidence for issues already in the register — NEVER the whole vulnerability
+ * estate.
+ *
+ * The magnitude is the point (AARS_LIVE_MEASUREMENTS.md §6.4). `vulnerabilityFindings` in
+ * project scope holds **5,173,698** open rows; filtered to `hasRelatedIssue` AND a related
+ * issue in the selected categories it holds **7,368** — 99.8% of every related-issue finding
+ * in scope, at ~15 pages. The unfiltered root is not a bigger version of this query, it is a
+ * different product; `aiVulnFindingsVariables` is what keeps the two apart.
+ *
+ * The asset join is deliberately NOT how this reaches the register. KEV findings sit on
+ * `VIRTUAL_MACHINE` (79 of 100 sampled) and `CONTAINER_IMAGE` (21), which `ai_assets` does not
+ * hold, so the direct asset join measured ~0%: attribution runs THROUGH the issue.
+ *
+ * `resolvedAt` and `status` are selected on a query filtered to OPEN because the fold stores
+ * what it read — a row that answers OPEN and carries a `resolvedAt` is a fact about the
+ * tenant, and dropping the columns would leave nothing able to notice it.
+ */
+export const Q_VULN_FINDINGS =
+  "query SidekickAiVulnFindings($first: Int, $after: String, $filterBy: VulnerabilityFindingFilters) {\n" +
+  "  vulnerabilityFindings(first: $first, after: $after, filterBy: $filterBy) {\n" +
+  "    totalCount\n" +
+  "    pageInfo { hasNextPage endCursor }\n" +
+  "    nodes {\n" +
+  "      id\n" +
+  "      name\n" +
+  "      status\n" +
+  "      severity\n" +
+  "      hasExploit\n" +
+  "      hasCisaKevExploit\n" +
+  "      epssProbability\n" +
+  "      epssPercentile\n" +
+  "      epssSeverity\n" +
+  "      firstDetectedAt\n" +
+  "      resolvedAt\n" +
+  RELATED_ISSUE_SELECTION +
+  VULNERABLE_ASSET_SELECTION +
+  "    }\n" +
+  "  }\n" +
+  "}\n";
+
+/**
+ * The $filterBy for Q_VULN_FINDINGS — the narrow one, and the spelling is transcribed from
+ * the phase0 stage that actually counted rows with it (`phase0.mjs`, stage J), never inferred:
+ *
+ *   - `relatedIssueFrameworkCategory: { equalsAny: [...] }` — a TOP-LEVEL key on
+ *     `VulnerabilityFindingFilters`, and `equalsAny` rather than `equals`
+ *     (`RelatedIssueFrameworkCategoryFilter`, §6.8).
+ *   - `projectIdV2: { equals: [...] }` — the SIXTH project-filter spelling this app sends, and
+ *     the only one this root accepts. The five others are tabulated in `probe.mjs`; sending
+ *     one of them here is a validation error, and sending none is 5.17M rows.
+ *
+ * ONE STEP FOR ALL CATEGORIES, unlike the issue register's one step per category — and for the
+ * reason that made THAT split necessary. An issue carries no category, so a six-category issue
+ * query returns rows that cannot be stamped; a vulnerability finding is not stamped with a
+ * category either, but it is not stored under one: it is folded onto the ISSUE it names, and
+ * the issue already carries the stamp. Splitting this by category would fetch the same finding
+ * once per category of the issue it joins, for a stamp that is already recorded elsewhere.
+ *
+ * The category list is the SAME list the issue steps use, and that is load-bearing: a finding
+ * whose issue is not in the register is dropped and COUNTED (`droppedNotInRegister`), so the
+ * two filters drifting apart shows up as a drop count rather than as silence.
+ */
+export function aiVulnFindingsVariables(
+  scope: string[] | null,
+  categoryIds?: readonly string[],
+): { filterBy: unknown } {
+  const filterBy: Record<string, unknown> = {
+    // OPEN only. `IN_PROGRESS` is an ISSUE state; this root's statuses are the finding's own,
+    // and the funnel §6.4 counted was OPEN.
+    status: ["OPEN"],
+    hasRelatedIssue: true,
+    relatedIssueFrameworkCategory: {
+      equalsAny: categoryIds && categoryIds.length ? [...categoryIds] : [RISK_CATEGORY_ID],
+    },
+  };
+  if (scope && scope.length) filterBy["projectIdV2"] = { equals: [...scope] };
+  return { filterBy };
+}
+
 // ----------------------------------------------------- AI asset properties (provenance)
 
 /**

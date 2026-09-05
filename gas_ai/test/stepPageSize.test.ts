@@ -30,6 +30,7 @@ interface Step {
   id: string;
   pageSize: number;
   document: string;
+  optional: boolean;
 }
 
 let steps: Step[];
@@ -96,6 +97,18 @@ describe("per-step page size", () => {
     expect(byId("CONFIG_FINDINGS").pageSize).toBe(PAGE_SIZE);
     expect(byId("HOST_EXPOSURE").pageSize).toBe(PAGE_SIZE);
     expect(byId("ENDPOINT_EXPOSURE").pageSize).toBe(PAGE_SIZE);
+  });
+
+  it("puts the exploitation evidence on the wide page, and keeps it OPTIONAL", () => {
+    // ~15 pages at 500 against ~74 at the default (AARS_LIVE_MEASUREMENTS.md §6.4: 7,368 rows
+    // behind the narrow filter), on eleven flat scalars, an `{id}` list and a union read for
+    // three fields — narrow by the same standard CONFIG_RULES is judged against.
+    expect(byId("VULN_FINDINGS").pageSize).toBe(PAGE_SIZE_WIDE);
+    // Optional is load-bearing on THIS step rather than merely conventional: its related-issue
+    // selection is a guess until `phase0.mjs --stage=k` runs, so a wrong field name is an HTTP
+    // 400 on the whole document. Optional turns that into a recorded skip carrying Wiz's own
+    // message — which names the field — instead of a failed sync.
+    expect(byId("VULN_FINDINGS").optional).toBe(true);
   });
 
   it("puts the graphSearch traversals in the middle, not on either extreme", () => {

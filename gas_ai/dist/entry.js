@@ -159,6 +159,8 @@ function api_getPostureRule(p) { return timedApi_("getPostureRule", p); }
 function api_setPostureRule(p) { return timedApi_("setPostureRule", p); }
 function api_previewPostureRule(p) { return timedApi_("previewPostureRule", p); }
 function api_recomputePostures(p) { return timedApi_("recomputePostures", p); }
+function api_getRankRule(p) { return timedApi_("getRankRule", p); }
+function api_setRankRule(p) { return timedApi_("setRankRule", p); }
 function api_resetData(p) { return timedApi_("resetData", p); }
 function api_previewPrune(p) { return timedApi_("previewPrune", p); }
 function api_pruneToProject(p) { return timedApi_("pruneToProject", p); }

@@ -67,9 +67,17 @@ import {
   buildProblemRows,
   PROBLEMS_CLIENT_ALL_MAX,
   rankProblems,
+  withRankScores,
   type ProblemRow,
 } from "../domain/problems";
-import { rankRuleFromExploitation } from "../domain/rank";
+import {
+  cleanRankRule,
+  DEFAULT_RANK_RULE,
+  RANK_PRESET_V2,
+  rankRuleFromExploitation,
+  rankSignature,
+  type RankRule,
+} from "../domain/rank";
 import {
   concentrationRatio,
   coverCurve,
@@ -2402,10 +2410,30 @@ export function getCombosDigest(_p?: unknown): ApiResult {
 // -------------------------------------------------------------------------- problems
 
 interface ProblemsModel {
-  /** Ranked once, by `compareProblems` — never re-sorted per request. */
+  /** Ranked once, by `compareProblemsBy(rankLeadsSort)` — never re-sorted per request. */
   rows: ProblemRow[];
   /** Problems by Wiz severity, the register's own filter dimension. */
   severityCounts: Record<string, number>;
+  /** What the scores on those rows were computed AGAINST — `rank.rankSignature`. */
+  rankSignature: string;
+  /** Whether the order above leads with the rank score or with Wiz's severity. */
+  rankLeadsSort: boolean;
+}
+
+/**
+ * The rule the register actually ranks by: the operator's stored knobs, with the rule
+ * weights read off the judgement table they already keep.
+ *
+ * `rankRuleFromExploitation` spreads its `base`, so every knob the stored rule carries —
+ * the shares, the two ladders, the timeSource — flows through and only `ruleWeights` is
+ * replaced. That is the point rank.ts's own header argues: `ProblemRule.exploitationByRuleId`
+ * is already a per-rule operator judgement keyed on the same rule id, already persisted and
+ * already edited through a picker backed by the rule-id census, so a second per-rule table
+ * beside it would ask an operator to say the same thing twice and then drift.
+ */
+function effectiveRankRule(stored?: RankRule): RankRule {
+  const base = stored ?? settingsStore.getRankRule().rule;
+  return rankRuleFromExploitation(settingsStore.getProblemRule().rule.exploitationByRuleId, base);
 }
 
 /**
@@ -2420,14 +2448,23 @@ function problemsModel(): ProblemsModel {
   // Populations and join scoped together. Handing `buildProblemRows` the whole register
   // against a filtered `assetsById` would keep every row and merely un-enrich the ones out
   // of view — rows missing their posture tier rather than rows correctly absent.
-  const rows = rankProblems(buildProblemRows(viewIssues(), viewFindings(), assetsById));
+  // Scored BEFORE the sort, and the sort is told whether to lead with the score. At the
+  // shipped default (`rank_leads_sort` false) `compareProblemsBy(false)` IS `compareProblems`,
+  // so this line's order is byte-identical to what it was and the scores ride along as extra
+  // columns — which is exactly the proof the iron rule asks for.
+  const rule = effectiveRankRule();
+  const leadsSort = settingsStore.getRankLeadsSort();
+  const rows = rankProblems(
+    withRankScores(buildProblemRows(viewIssues(), viewFindings(), assetsById), rule, nowIso()),
+    leadsSort,
+  );
   const severityCounts: Record<string, number> = {};
   for (const sev of SEVERITY_ORDER) severityCounts[sev] = 0;
   for (const r of rows) {
     const sev = String(r.severity ?? "");
     if (sev) severityCounts[sev] = (severityCounts[sev] ?? 0) + 1;
   }
-  return { rows, severityCounts };
+  return { rows, severityCounts, rankSignature: rankSignature(rule), rankLeadsSort: leadsSort };
 }
 
 /**
@@ -2511,6 +2548,26 @@ function publicProblemRow(r: ProblemRow): Rec {
     businessImpact: r.businessImpact,
     iac: r.iac,
     ignored: r.ignored,
+    // ---- WP6: the rank model's published readings.
+    //
+    // ON THE ALLOW-LIST DELIBERATELY, and it is worth saying why this is not the thing
+    // `VERDICT_ROW_KEYS` above exists to stop. The three confined verdicts are per-asset and
+    // per-problem CLAIMS produced by models that measured 100% of one landscape into one band
+    // (ai/AARS_SCORING_ASSESSMENT.md §3); the rank is an ORDER over one queue, computed from
+    // the operator's own judgement table and a clock, and it ships with the clauses that
+    // produced it. A number a reader cannot interrogate is the failure mode; `rankReasons` is
+    // the answer to that, so it travels with the score rather than behind a second call.
+    //
+    // `rankExploitation` / `rankAdjacency` ride along even at share 0, where the score did
+    // not use them — rank.ts's own header: a reading the score did not use is still a
+    // reading, and the harness needs it to decide whether the share should move.
+    rankScore: r.rankScore,
+    rankTimed: r.rankTimed,
+    rankTimeBasis: r.rankTimeBasis,
+    rankReasons: r.rankReasons,
+    rankMeasured: r.rankMeasured,
+    rankExploitation: r.rankExploitation,
+    rankAdjacency: r.rankAdjacency,
   };
 }
 
@@ -2548,6 +2605,15 @@ export function getProblems(p?: unknown): ApiResult {
       // finding, regardless of the outcome filter or the mode below.
       total: model.rows.length,
       severityCounts: model.severityCounts,
+      // WHICH ORDER THIS PAYLOAD IS IN, said rather than left to be inferred. The rows are
+      // sorted server-side and a page that re-sorted them would be a second ranking
+      // authority, so the page has no way of its own to tell the severity-led order from the
+      // rank-led one — two orders that agree on plenty of rows and differ on the interesting
+      // ones, which is the shape of a difference nobody notices. The signature names the
+      // DERIVATION knobs the scores were computed against (rank.rankSignature), so a stored
+      // score and a stored rule can be compared instead of assumed to match.
+      rankSignature: model.rankSignature,
+      rankLeadsSort: model.rankLeadsSort,
     };
 
     if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
@@ -2851,6 +2917,14 @@ export function getSettings(_p?: unknown): ApiResult {
     // be a second place for them to drift.
     issueCategories: settingsStore.getIssueCategories(),
     candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({ id: c.id, name: c.name })),
+    // The minimal model's knobs and whether it leads the Priorities order. The two presets
+    // travel WITH them for the same reason the candidate list above travels with its
+    // selection: a client that hand-copied `DEFAULT_RANK_RULE` or `RANK_PRESET_V2` would be
+    // a second copy of the shipped defaults, and the failure of a second copy is that it
+    // stops matching without saying so. The editor offers what the server actually holds.
+    rankRule: settingsStore.getRankRule().rule,
+    rankLeadsSort: settingsStore.getRankLeadsSort(),
+    rankPresets: { v1: DEFAULT_RANK_RULE, v2: RANK_PRESET_V2 },
   }));
 }
 
@@ -2891,6 +2965,15 @@ export function setSettings(p?: unknown): ApiResult {
     if (params["issueCategories"] !== undefined) {
       settingsStore.setIssueCategories(params["issueCategories"]);
     }
+    // Cleaned rather than validated: `cleanRankRule` clamps every knob into range and reads a
+    // pre-v2 rule as the two-term case, so a hand-edited or older blob degrades to a rule
+    // that scores rather than to a refused save. Same latitude the two above take.
+    if (params["rankRule"] !== undefined) settingsStore.setRankRule(params["rankRule"]);
+    // `!== undefined`, not truthiness — `false` is the DEFAULT here, so the truthy form would
+    // make the one value an operator most needs to send impossible to send.
+    if (params["rankLeadsSort"] !== undefined) {
+      settingsStore.setRankLeadsSort(params["rankLeadsSort"]);
+    }
     return {
       defaultDepth: settingsStore.getDefaultDepth(),
       maxNodes: settingsStore.getMaxNodes(),
@@ -2903,6 +2986,12 @@ export function setSettings(p?: unknown): ApiResult {
       // Echoed like the rest, so the Settings page repaints the STORED list rather than
       // the one it asked for.
       issueCategories: settingsStore.getIssueCategories(),
+      // Echoed for the same reason, and it matters more here: `cleanRankRule` can return a
+      // rule that is not the one the caller sent (a share out of range, a v1 blob read as
+      // the two-term case), so a page that repainted its own request would show knobs the
+      // register is not ranking by.
+      rankRule: settingsStore.getRankRule().rule,
+      rankLeadsSort: settingsStore.getRankLeadsSort(),
     };
   });
 }
@@ -3401,6 +3490,72 @@ export function setPostureRule(p?: unknown): ApiResult {
     if (errors.length) throw new Error(errors.join(" "));
     settingsStore.setPostureRule(proposed);
     return postureRuleState();
+  });
+}
+
+// ---------------------------------------------------------------------------- rank rule
+//
+// A FOURTH rule editor's endpoints, mirroring the three above — and shorter than any of
+// them, in one specific way that is the model rather than an omission. The other three carry
+// a `stale` flag, because each prices a column the sync PERSISTS and an edit can strand it.
+// A rank score is computed per request over rows already in hand and written to no tab, so
+// there is nothing an edit can strand: the answer is "it is current", always, and publishing
+// a flag that is a constant would be a readout that says nothing while looking like a check.
+//
+// What replaces it is `signature`. `rankSignature` names the DERIVATION knobs — which bucket
+// a row lands in, which clock is read, which terms are read at all — so a score published
+// beside a signature can be compared against the rule that is stored now. That is the same
+// job `problemRule.vectorSignature` does, and the same failure both exist to stop: a knob
+// that changes WHICH READING a row gets, with a stored input reused across the flip, so the
+// knob appears to do nothing.
+
+/**
+ * The {version, rule, effectiveRule, signature, leadsSort, presets} shape both endpoints
+ * share, for the reason `problemRuleState()` is factored out rather than duplicated.
+ *
+ * `effectiveRule` is the honest half: `rule` is what an operator typed, and `effectiveRule`
+ * is what the register ACTUALLY ranks by once the rule weights are read off the exploitation
+ * judgement table. Showing only the first would put an editor in front of a rule whose
+ * `ruleWeights: []` is never the list the ranker used.
+ */
+function rankRuleState(): Rec {
+  const stored = settingsStore.getRankRule();
+  const effective = effectiveRankRule(stored.rule);
+  return {
+    version: stored.version,
+    rule: stored.rule,
+    effectiveRule: effective,
+    signature: rankSignature(effective),
+    leadsSort: settingsStore.getRankLeadsSort(),
+    // Shipped here as well as on `getSettings`, so the editor and the Settings tab read one
+    // source. A preset copied into a client is a second copy of a shipped default, and the
+    // failure of a second copy is that it stops matching without saying so.
+    presets: { v1: DEFAULT_RANK_RULE, v2: RANK_PRESET_V2 },
+  };
+}
+
+export function getRankRule(_p?: unknown): ApiResult {
+  return run(() => rankRuleState());
+}
+
+/**
+ * Save the rank rule. NO VALIDATION PASS, unlike `setProblemRule` / `setPostureRule`, and
+ * that asymmetry is deliberate: those two edit a rule LIST where a row can shadow another
+ * or reach nothing, which is a structural mistake worth refusing. Every knob here is a
+ * number in a range or a name from a closed set, and `cleanRankRule` clamps rather than
+ * rejects — a rule that cannot say which clock it meant gets the clock every published score
+ * was computed against, which is a repair, not an error.
+ *
+ * `leadsSort` is accepted here as well as on `setSettings` so the editor that moves the
+ * shares can put the model in front of the order it proposes in one call. Absent leaves it
+ * exactly as it was — this is a PATCH, like everything else that writes settings.
+ */
+export function setRankRule(p?: unknown): ApiResult {
+  return mutate(() => {
+    const params = (p ?? {}) as Rec;
+    if (params["rule"] !== undefined) settingsStore.setRankRule(cleanRankRule(params["rule"]));
+    if (params["leadsSort"] !== undefined) settingsStore.setRankLeadsSort(params["leadsSort"]);
+    return rankRuleState();
   });
 }
 

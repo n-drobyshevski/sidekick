@@ -25,8 +25,8 @@ import type { Rec } from "./util";
  * `UNLINKED` says we looked; absent says we did not, and `adjacencyOf` already returns a
  * `null` component for it rather than the mid-scale UNLINKED weight.
  */
-import type { AiAdjacency } from "./rank";
-export type { AiAdjacency };
+import type { AiAdjacency, ExploitationTier } from "./rank";
+export type { AiAdjacency, ExploitationTier };
 
 /**
  * Position on the severity scale, LOWER = WORSE, with anything unrecognised sorting last.
@@ -709,6 +709,27 @@ export interface IssueRow {
    * one edge away" throughout rather than meaning two different things by state.
    */
   adjacentAssetIds?: string[];
+  /**
+   * The exploitation evidence folded onto this issue from the vulnerability findings that
+   * NAME it (`domain/exploitation.ts`), and the three fields `rank.RankInput` already reads
+   * under exactly these names — the vocabulary is matched deliberately so the ranker needs no
+   * join and no translation layer between the ledger and the model.
+   *
+   * ALL THREE ABSENT IS A FOURTH STATE, and the load-bearing one: no evidence pass ran over
+   * this register at all (VULN_FINDINGS refused, or a row synced before the step existed).
+   * `rank.exploitationOf` prices an absent tier as `null` — the term drops out of the blend —
+   * where `"none"` is a measurement that scores. A row that WAS looked at and joined no
+   * exploited finding carries `tier: "none"`; one that joined a finding whose three signals
+   * were all null carries `"unknown"`. Absent, none and unknown are three different claims
+   * and nothing here may collapse them.
+   *
+   * `epssPeak` is the HIGHEST EPSS seen across the folded findings, never a mean: the question
+   * the register answers is whether anything under this issue should have been prioritised.
+   */
+  exploitationTier?: ExploitationTier;
+  epssPeak?: number | null;
+  /** How many findings the tier was folded from — the reasons text, and the audit trail. */
+  exploitationFindingCount?: number;
   assetName: string;
   /**
    * The risk categories this issue was FETCHED under — the register's own scope stamp.
@@ -1118,4 +1139,46 @@ export function domainCatalogue(assets: readonly GNode[]): DomainCatalogueEntry[
     else byName.set(name, { name, assets: 1 });
   }
   return [...byName.values()].sort((x, y) => x.name.localeCompare(y.name));
+}
+
+/**
+ * One `vulnerabilityFindings` row, normalized — the raw exploitation observation before it is
+ * folded onto an issue (`domain/exploitation.ts`).
+ *
+ * NOT A LEDGER ROW. Nothing writes these to a tab: 7,368 of them fold into at most a few
+ * thousand `ExploitationRow`s, and the finding itself belongs to the OS-vulnerability register
+ * that already owns that population. What survives the sync is the fold.
+ *
+ * THE THREE SIGNALS ARE TRI-STATE and stay that way from here to the sheet. Wiz answers `null`
+ * for a flag it never evaluated, and collapsing that to `false` is what makes an unassessed
+ * finding read as a clean one — the same failure `measurability.ts` exists to prevent one
+ * register over. `triBool` / `triNum` in the normalizer are the only things allowed to produce
+ * these values.
+ */
+export interface NormalizedVulnFinding {
+  id: string;
+  name?: string;
+  status?: string;
+  severity?: string;
+  /** `null` = Wiz never evaluated it. Never `false` by default. */
+  hasKev: boolean | null;
+  /** `null` = Wiz never evaluated it. Never `false` by default. */
+  hasExploit: boolean | null;
+  /** `null` = no EPSS score was captured. Never `0` by default. */
+  epss: number | null;
+  epssPercentile?: number | null;
+  epssSeverity?: string;
+  firstDetectedAt?: string;
+  resolvedAt?: string;
+  /**
+   * The issues this finding names, from whichever shape the tenant's schema uses — see
+   * `relatedIssueIdsOf`. EMPTY is a real reading and is counted (`unjoined`): the filter asked
+   * for `hasRelatedIssue: true`, so a row arriving with no id is the join field being absent
+   * or differently shaped, which is a finding about the query rather than about the estate.
+   */
+  issueIds: string[];
+  /** The vulnerable asset, when the union member carried an id. Absent is not empty. */
+  assetId?: string;
+  assetType?: string;
+  assetName?: string;
 }

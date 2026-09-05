@@ -28,9 +28,13 @@ import {
 import { withDataFindingCounts } from "../domain/syncNormalize";
 import { domainTagKey } from "./props";
 import type {
-  ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode,
-  GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
+  ConfigRuleRow, DataFindingRow, ExploitationTier, FindingRow, FrameworkPolicyRow, FrameworkRow,
+  GEdge, GNode, GraphDoc, IdentityFindingRow, IssueRow, NodeKind, NormalizedVulnFinding,
+  PostureRow,
 } from "../domain/graphTypes";
+import {
+  censusExploitation, foldExploitation, SAMPLE_FINDING_IDS_MAX, type ExploitationRow,
+} from "../domain/exploitation";
 import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import { edgeId } from "../domain/graphTypes";
 import { aarsSeverity, derivationSignature, type AarsBands, type AarsRule } from "../domain/aars";
@@ -406,6 +410,15 @@ export function issueToRow(i: IssueRow): Rec {
     ai_adjacency: i.aiAdjacency ?? null,
     adjacency_via: i.adjacencyVia ?? null,
     adjacent_asset_ids: (i.adjacentAssetIds ?? []).join(","),
+    // The exploitation reading. `?? null` on all three, never a default: an empty
+    // `exploitation_tier` means no evidence pass ran over this row, and writing "none" for it
+    // would turn "nobody looked" into "we looked and found nothing" — the measurement the
+    // ranker prices differently. `epss_peak` is null rather than 0 for the same reason: 0 is a
+    // computed EPSS probability, blank is the absence of one.
+    exploitation_tier: i.exploitationTier ?? null,
+    epss_peak: i.epssPeak === null || i.epssPeak === undefined ? null : i.epssPeak,
+    exploitation_findings:
+      i.exploitationFindingCount === undefined ? null : i.exploitationFindingCount,
   };
 }
 
@@ -488,6 +501,28 @@ export function rowToIssue(r: Rec): IssueRow {
     issue.adjacentAssetIds = String(r["adjacent_asset_ids"] ?? "").split(",").filter(Boolean);
     const via = String(r["adjacency_via"] ?? "");
     if (via) issue.adjacencyVia = via;
+  }
+  // Exploitation, read the same way and for the same reason: the TIER is what says the fold
+  // ran, so an empty or unrecognised cell leaves all three fields undefined rather than
+  // reading as "none". `rank.exploitationOf` drops an absent tier out of the blend and scores
+  // "none", which is the whole distance between "we never asked" and "nothing is exploited".
+  //
+  // An unknown tier string is kept rather than dropped: a ledger written by a NEWER version
+  // must round-trip, and `rank` already lower-cases and compares rather than switching on a
+  // closed union.
+  const tier = String(r["exploitation_tier"] ?? "");
+  if (tier) {
+    issue.exploitationTier = tier as ExploitationTier;
+    // Read INSIDE the tier guard, so a peak can never arrive without the reading it belongs to.
+    // Empty is unmeasured; `0` is a measured probability and must survive as 0.
+    const peak = r["epss_peak"];
+    issue.epssPeak = peak === null || peak === undefined || peak === "" ? null : Number(peak);
+    if (issue.epssPeak !== null && !isFinite(issue.epssPeak)) issue.epssPeak = null;
+    const folded = r["exploitation_findings"];
+    if (folded !== null && folded !== undefined && folded !== "") {
+      const n = Number(folded);
+      if (isFinite(n)) issue.exploitationFindingCount = n;
+    }
   }
   // Phase 4: absent reads as undefined, never a default — a row this app synced before the
   // verdict existed (or a resolved issue that never got one) must not read as decided.
@@ -746,6 +781,80 @@ export function rowToIdentityFinding(r: Rec): IdentityFindingRow {
 }
 
 /**
+ * One folded exploitation reading → an `ai_issue_exploitation` row.
+ *
+ * `triCell` on the two flags rather than `boolCell`, and it is the whole point of the tab: the
+ * cell has to be able to say "Wiz never evaluated this" in a column whose other two values are
+ * true and false. `epss_peak` is null rather than 0 for the same reason one column over — 0 is
+ * a computed probability, blank is the absence of one.
+ */
+export function exploitationToRow(e: ExploitationRow): Rec {
+  return {
+    issue_id: e.issueId,
+    tier: e.tier,
+    has_kev: triCell(e.hasKev),
+    has_exploit: triCell(e.hasExploit),
+    epss_peak: e.epssPeak === null || e.epssPeak === undefined ? null : e.epssPeak,
+    finding_count: e.findingCount,
+    // Comma-joined, matching `attributed_asset_ids` and `adjacent_asset_ids`; the `_json`
+    // suffix stays reserved for structures. Bounded at the fold, not here.
+    sample_finding_ids: (e.sampleFindingIds ?? []).slice(0, SAMPLE_FINDING_IDS_MAX).join(","),
+    observed_at: e.observedAt,
+  };
+}
+
+export function rowToExploitation(r: Rec): ExploitationRow {
+  const peak = r["epss_peak"];
+  const parsedPeak = peak === null || peak === undefined || peak === "" ? null : Number(peak);
+  const count = Number(r["finding_count"] ?? 0);
+  return {
+    issueId: String(r["issue_id"] ?? ""),
+    // Not narrowed to the union: a ledger written by a newer version carrying a sixth tier must
+    // round-trip rather than be silently rewritten to one this version happens to know.
+    tier: String(r["tier"] ?? "unknown") as ExploitationTier,
+    hasKev: parseTri(r["has_kev"]),
+    hasExploit: parseTri(r["has_exploit"]),
+    epssPeak: parsedPeak !== null && isFinite(parsedPeak) ? parsedPeak : null,
+    findingCount: isFinite(count) ? count : 0,
+    sampleFindingIds: String(r["sample_finding_ids"] ?? "").split(",").filter(Boolean),
+    observedAt: String(r["observed_at"] ?? ""),
+  };
+}
+
+/** The stored exploitation evidence, one row per issue. Empty when no pass has ever run. */
+export function loadExploitation(): ExploitationRow[] {
+  return readAll(TABS.issueExploitation).map(rowToExploitation).filter((e) => !!e.issueId);
+}
+
+/**
+ * Stamp the folded reading onto the issues themselves, so the ranker reads one row rather than
+ * performing a join it has no index for.
+ *
+ * ONLY the issues the fold reached are stamped. An issue with no exploitation evidence keeps
+ * all three fields ABSENT, which is the same shape a register that never ran the step carries —
+ * and that is deliberate rather than sloppy: `rank.exploitationOf` drops an absent tier out of
+ * the blend, so an issue nothing exploited is scored on the terms that WERE measured instead of
+ * being credited with a "none" the fold never wrote for it. The tab beside it is where "this
+ * issue was looked at and joined nothing" would have to be recorded, and no finding produces
+ * such a row: a fold only ever sees findings that exist.
+ */
+function withExploitation(issues: IssueRow[], rows: readonly ExploitationRow[]): IssueRow[] {
+  if (!rows.length) return issues;
+  const byIssue = new Map<string, ExploitationRow>();
+  for (const r of rows) byIssue.set(r.issueId, r);
+  return issues.map((issue) => {
+    const e = byIssue.get(issue.id);
+    if (!e) return issue;
+    return {
+      ...issue,
+      exploitationTier: e.tier,
+      epssPeak: e.epssPeak,
+      exploitationFindingCount: e.findingCount,
+    };
+  });
+}
+
+/**
  * A posture cell's percentage, round-tripped through a Sheets cell.
  *
  * The empty string is null, NOT zero. A blank cell means Wiz sent no posture — the
@@ -898,6 +1007,17 @@ export function persistSync(
     configRules?: ConfigRuleRow[];
     identityFindings?: IdentityFindingRow[];
     effectiveAccess?: EffectiveAccessRow[];
+    /**
+     * The exploitation observations this sync READ — absent when the pass did not run.
+     *
+     * ABSENT AND EMPTY ARE DIFFERENT ARGUMENTS and the whole optional-step contract rests on
+     * the difference. `undefined` means VULN_FINDINGS was refused (or this caller has no such
+     * step): the tab is left untouched, the issue columns stay absent, and `exploitation_json`
+     * is null. `[]` means the step ran and matched nothing, which is a measurement: the tab is
+     * overwritten empty and the census records five zeroes. A refusal that arrived as `[]`
+     * would erase a good register on a tenant that rejected one query.
+     */
+    vulnFindings?: NormalizedVulnFinding[];
   } = {},
 ): GraphDoc {
   const { version: ruleVersion, rule } = settingsStore.getAarsRule();
@@ -941,7 +1061,33 @@ export function persistSync(
   // attributed to nothing.
   const { issues: placedIssues, census: adjacencyCensus } =
     withAiAdjacency(reachable, attributedIssues);
-  const enriched = enrichGraphDoc(reachable, placedIssues, hints, rule);
+  // Exploitation BESIDE adjacency, and gated where the other two folds are not.
+  //
+  // The gate is the difference in KIND, not in taste. Attribution and adjacency are derived
+  // from the sync's OWN graph — they can always run, and running them costs nothing but the
+  // walk. This one is derived from an OPTIONAL STEP's rows, so "no rows" has two readings and
+  // only one of them is a measurement (see `extras.vulnFindings`). An ungated fold would give
+  // both readings the same answer and write a five-zero census over a register whose evidence
+  // query the tenant refused — the identical failure `stepRows` was added to make impossible
+  // for the traversals.
+  //
+  // `knownIssueIds` is THIS sync's register, not the ledger's: evidence for an issue this scan
+  // did not collect is unreachable from every page, and `foldExploitation` counts those rather
+  // than storing them.
+  const vulnFindings = extras.vulnFindings;
+  const exploitation = vulnFindings
+    ? foldExploitation(vulnFindings, new Set(placedIssues.map((i) => i.id)), nowIso(now))
+    : null;
+  // Stamped from THIS sync's fold and from nothing else. On a refusal the issue rows are
+  // rewritten with all three columns ABSENT while the tab below keeps the last measured
+  // evidence, and the asymmetry is deliberate: the tab is dated evidence (`observed_at` says
+  // when it was seen), the columns are this sync's READING. Restamping them from stored rows
+  // would date a reading to a scan that never looked, which is the one thing a register whose
+  // whole subject is provenance must not do.
+  const exploitedIssues = exploitation
+    ? withExploitation(placedIssues, exploitation.rows)
+    : placedIssues;
+  const enriched = enrichGraphDoc(reachable, exploitedIssues, hints, rule);
 
   // The problem/decision-vector verdict, BESIDE the AARS enrichment above, never inside
   // it — see withProblemVerdicts's own comment for why the two must stay independently
@@ -952,7 +1098,7 @@ export function persistSync(
   const { version: problemRuleVersion, rule: problemRule } = settingsStore.getProblemRule();
   const { issues: decidedIssues, findings: decidedFindings } = withProblemVerdicts(
     enriched,
-    placedIssues,
+    exploitedIssues,
     findings,
     problemRule,
     problemRuleVersion,
@@ -1016,6 +1162,15 @@ export function persistSync(
   // has no open identity-hygiene findings — and a register still saying three people lack MFA
   // after they have all fixed it is worse than an empty one.
   overwrite(TABS.identityFindings, (extras.identityFindings ?? []).map(identityFindingToRow));
+  // GUARDED ON THE NULL, NOT ON EMPTINESS — the distinction the two comments above are between.
+  // `exploitation === null` is the step not having run, and blanking a good tab on the strength
+  // of a refused query is the failure mode; `exploitation.rows === []` is the step having run
+  // and joined nothing, and there the wipe is correct for exactly the reason the identity
+  // findings above are unguarded — a register still claiming a KEV after every one was fixed is
+  // worse than an empty one.
+  if (exploitation) {
+    overwrite(TABS.issueExploitation, exploitation.rows.map(exploitationToRow));
+  }
 
   const snapshotRef = writeGraphSnapshot(postured);
 
@@ -1117,6 +1272,20 @@ export function persistSync(
     // and problem_outcome_json above: the snapshot this row points at is overwritten by the
     // next sync, so this is the only record the trend can ever read it from.
     adjacency_json: JSON.stringify(adjacencyCensus),
+    // The exploitation census, and NULL when no pass ran — the same "we never asked" that
+    // `posture_fail_count` above already refuses to write as a zero. The two unusable counts
+    // travel inside: `unjoined` is the join field being wrong (the query asked for
+    // `hasRelatedIssue: true`, so a row with no issue id is a fact about the SELECTION), and
+    // `droppedNotInRegister` is the finding filter and the issue filter having drifted apart.
+    // Either one rising is how this axis fails, and neither is visible from the tiers alone.
+    exploitation_json: exploitation
+      ? JSON.stringify({
+        ...censusExploitation(exploitation.rows),
+        unjoined: exploitation.unjoined,
+        droppedNotInRegister: exploitation.droppedNotInRegister,
+        findings: (vulnFindings ?? []).length,
+      })
+      : null,
   }]);
   settingsStore.setScoredRuleVersion(ruleVersion);
   settingsStore.setDecidedRuleVersion(problemRuleVersion);

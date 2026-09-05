@@ -22,6 +22,7 @@ export const TABS = {
   frameworkPolicies: "ai_framework_policies",
   configRules: "ai_config_rules",
   identityFindings: "ai_identity_findings",
+  issueExploitation: "ai_issue_exploitation",
   syncHistory: "sync_history",
   settings: "settings",
   jobs: "jobs",
@@ -138,6 +139,17 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // UNDEFINED and never as "UNLINKED" — no pass ran over that row, which is a different
     // claim from having looked and found no link, and the ranker prices the two differently.
     "ai_adjacency", "adjacency_via", "adjacent_asset_ids",
+    // THE EXPLOITATION READING, folded from the vulnerability findings that name this issue
+    // (ai_issue_exploitation holds the evidence). Appended, same no-migration contract, and
+    // declared here for the same `writeGrid` reason the three blocks above state.
+    //
+    // ALL THREE EMPTY IS THE FOURTH STATE and the one that matters: no evidence pass ran over
+    // this row — VULN_FINDINGS was refused, or the row predates the step. `rank.exploitationOf`
+    // prices an absent tier as null (the term leaves the blend) and `"none"` as a measurement
+    // that scores, so a reader defaulting the blank to "none" would score every register that
+    // never ran the step as one where nothing is exploited. `epss_peak` is empty rather than 0
+    // for the same reason one column over: 0 is a computed EPSS, blank is no EPSS.
+    "exploitation_tier", "epss_peak", "exploitation_findings",
   ],
   [TABS.findings]: [
     "id", "resource_id", "rule_short_id", "severity", "remediation", "framework_codes",
@@ -233,6 +245,23 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "id", "resource_id", "resource_name", "rule_id", "rule_short_id", "rule_name",
     "severity", "status", "result", "first_seen_at", "analyzed_at", "remediation", "hygiene",
   ],
+  // Exploitation evidence, one row per ISSUE rather than per finding. The findings themselves
+  // are not stored: 7,368 of them fold to at most a few thousand rows here, they describe assets
+  // `ai_assets` does not hold (AARS_LIVE_MEASUREMENTS.md §6.4), and the OS-vulnerability register
+  // already owns that population. This tab is the fold and its audit trail.
+  //
+  // `has_kev` / `has_exploit` / `epss_peak` are TRI-STATE and an empty cell means UNMEASURED —
+  // Wiz answers null for a signal it never evaluated. The reader must not read a blank as false
+  // or as zero; `tier: "unknown"` is what an all-null row says out loud.
+  //
+  // The three derived columns also ride on `ai_issues` (`exploitation_tier`, `epss_peak`,
+  // `exploitation_findings`) so the ranker needs no join. Two homes for one fact, the same split
+  // `projects_json` / `project_refs_json` already carries: this tab is the evidence, those
+  // columns are the reading, and only this one can say WHICH findings it was folded from.
+  [TABS.issueExploitation]: [
+    "issue_id", "tier", "has_kev", "has_exploit", "epss_peak",
+    "finding_count", "sample_finding_ids", "observed_at",
+  ],
   [TABS.syncHistory]: [
     "sync_id", "started_at", "finished_at", "status", "mode",
     "node_count", "edge_count", "issue_count", "api_calls", "snapshot_ref", "error",
@@ -283,6 +312,16 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // is mostly "not traversed". Splitting them into two columns is how a later reader ends up
     // plotting the counts alone.
     "adjacency_json",
+    // THE EXPLOITATION CENSUS THIS SYNC MEASURED — the five tiers, plus the two counts that say
+    // what the fold could NOT use (`unjoined`, `droppedNotInRegister`) and the number of findings
+    // it read. Appended, same no-migration contract.
+    //
+    // NULL, NOT A ZEROED CENSUS, when no evidence pass ran. VULN_FINDINGS is optional; a tenant
+    // that refuses it has no reading here, and "no issue carries exploitation evidence" is a very
+    // different claim from "we never asked". The two counts travel INSIDE the object for the
+    // reason `edgesKnown` does one row up: the tier counts are unreadable without them, and split
+    // into their own columns a later reader plots the tiers alone.
+    "exploitation_json",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

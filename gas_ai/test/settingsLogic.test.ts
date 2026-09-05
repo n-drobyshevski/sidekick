@@ -28,7 +28,12 @@ import {
   withDefaultDepth,
   withMaxNodes,
   withScoredRuleVersion,
+  getRankRule,
+  getRankLeadsSort,
+  withRankRule,
+  withRankLeadsSort,
 } from "../src/domain/settingsLogic";
+import { DEFAULT_RANK_RULE, RANK_PRESET_V2 } from "../src/domain/rank";
 import {
   DEPTH_DEFAULT,
   MAX_NODES_CEILING,
@@ -382,5 +387,71 @@ describe("five rs pins", () => {
     for (const junk of [null, undefined, "nonsense", 7, [1, 2, 3]]) {
       expect(cleanFiveRsPins(junk, ["policy-a"])).toEqual({ in: [], out: [] });
     }
+  });
+});
+
+describe("rank rule", () => {
+  it("an unset key is version 0 and exactly DEFAULT_RANK_RULE", () => {
+    const stored = getRankRule({});
+    expect(stored.version).toBe(0);
+    expect(stored.rule).toEqual(DEFAULT_RANK_RULE);
+  });
+
+  it("cleans on the way OUT, so a rule blob written by an older schema is repaired", () => {
+    // The migration mechanism, same as getProblemRule's: nothing migrates on the way in.
+    const settings: Rec = {
+      rank_rule: { version: 4, rule: { defaultRuleWeight: 9, overdueDayBuckets: [-5, 90, 30, 90] } },
+    };
+    const stored = getRankRule(settings);
+    expect(stored.version).toBe(4);
+    expect(stored.rule.defaultRuleWeight).toBe(1); // clamped into 0..1, not rejected
+    expect(stored.rule.overdueDayBuckets).toEqual([30, 90]); // ascending, deduped, non-negative
+    expect(stored.rule.timeSource).toBe("dueAtOnly"); // the SPEC value on anything unreadable
+  });
+
+  it("reads a pre-v2 rule — timeShare and no shares — as the two-term case", () => {
+    const stored = getRankRule({ rank_rule: { version: 2, rule: { timeShare: 0.3 } } });
+    expect(stored.rule.shares).toEqual({
+      rule: 0.7, time: 0.3, exploitation: 0, adjacency: 0,
+    });
+    // Held equal in both directions: two fields naming one fact is how the two of them drift.
+    expect(stored.rule.timeShare).toBe(0.3);
+  });
+
+  it("withRankRule bumps the generation and touches NO other key", () => {
+    const before: Rec = { default_depth: 3, problem_rule: { version: 7, rule: {} }, rank_leads_sort: true };
+    const after = withRankRule(before, RANK_PRESET_V2);
+    expect(getRankRule(after).version).toBe(1);
+    expect(getRankRule(after).rule).toEqual(RANK_PRESET_V2);
+    // The PATCH claim, stated as an equality on everything else — two tabs of one Settings
+    // form saving a minute apart must not revert each other.
+    expect(after["default_depth"]).toBe(3);
+    expect(after["problem_rule"]).toEqual(before["problem_rule"]);
+    expect(after["rank_leads_sort"]).toBe(true);
+    expect(withRankRule(after, RANK_PRESET_V2)["rank_rule"]).toEqual({
+      version: 2, rule: RANK_PRESET_V2,
+    });
+  });
+});
+
+describe("rank_leads_sort", () => {
+  it("is FALSE by default — the iron rule, not a preference", () => {
+    expect(getRankLeadsSort({})).toBe(false);
+  });
+
+  it("reads absent, null and anything unreadable as off, in every direction", () => {
+    expect(getRankLeadsSort({ rank_leads_sort: null })).toBe(false);
+    expect(getRankLeadsSort({ rank_leads_sort: "true" })).toBe(false);
+    expect(getRankLeadsSort({ rank_leads_sort: 1 })).toBe(false);
+    expect(getRankLeadsSort({ rank_leads_sort: true })).toBe(true);
+  });
+
+  it("round-trips and leaves every other key alone", () => {
+    const before: Rec = { default_depth: 2, rank_rule: { version: 3, rule: {} } };
+    const on = withRankLeadsSort(before, true);
+    expect(getRankLeadsSort(on)).toBe(true);
+    expect(on["default_depth"]).toBe(2);
+    expect(getRankRule(on).version).toBe(3);
+    expect(getRankLeadsSort(withRankLeadsSort(on, false))).toBe(false);
   });
 });

@@ -31,6 +31,7 @@ import {
   normalizePrincipalsPage,
   normalizeRunsAsPage,
   normalizeSensitiveDataAccessPage,
+  normalizeVulnFindingsPage,
   partIsEmpty,
   withFrameworkCodes,
   type NormalizedPart,
@@ -105,8 +106,10 @@ import {
   Q_PRINCIPALS,
   Q_SA_EXCESSIVE_ACCESS,
   Q_SECURITY_FRAMEWORKS,
+  Q_VULN_FINDINGS,
   aiCompliancePostureVariables,
   aiSecurityFrameworksVariables,
+  aiVulnFindingsVariables,
 } from "./wizQueriesAi";
 
 export interface StartResult {
@@ -271,6 +274,45 @@ function syncSteps(aiTypes?: readonly string[]): SyncStepDef[] {
         normalize: (rows: Rec[]) => normalizeIssuesPage(rows, categoryId),
         optional: true,
       })),
+    // Exploitation evidence for the issues the steps above collected — `vulnerabilityFindings`
+    // filtered to the SAME category list, through `hasRelatedIssue`.
+    //
+    // THE FILTER IS THE CLAIM. There is nothing on a vulnerability finding that says it is
+    // exploitation evidence for this register; what makes it so is that it names an issue in
+    // one of the selected categories. Sent unfiltered, the same root answers 5,173,698 rows in
+    // project scope (AARS_LIVE_MEASUREMENTS.md §6.4) — not a bigger version of this step but a
+    // different product, and one nothing here is built to store. Narrowed, it is 7,368 at ~15
+    // pages, 99.8% of every related-issue finding in scope.
+    //
+    // ONE STEP, NOT ONE PER CATEGORY, and the asymmetry with the family above it is deliberate.
+    // The issue steps are split because an issue carries no category and an unstamped row is
+    // what turns "AI issues" into "issues". A finding is not stored under a category at all: it
+    // is folded onto the ISSUE it names, and that issue already carries the stamp. Splitting
+    // this would fetch the same finding once per category of the issue it joins.
+    //
+    // OPTIONAL, and that is load-bearing rather than cautious: the related-issue selection in
+    // Q_VULN_FINDINGS is UNVERIFIED until `phase0.mjs --stage=k` runs, so a wrong field name is
+    // an HTTP 400 on the whole document. Optional makes that LOUD — the step lands in
+    // `skippedSteps` with Wiz's own message, which names the field — and leaves
+    // `ai_issue_exploitation` and the three issue columns untouched rather than writing an
+    // empty axis over a good one.
+    //
+    // No `vars()` indirection, exactly like the ISSUES_CAT family: the step is LOCKED
+    // (scanVars.ts), so an override slot would be one nothing could ever write to.
+    {
+      id: "VULN_FINDINGS",
+      area: "toxic",
+      writes: ["ai_issue_exploitation", "ai_issues"],
+      run: "connection",
+      connectionField: "vulnerabilityFindings",
+      query: Q_VULN_FINDINGS,
+      extraVariables: aiVulnFindingsVariables(projectScope(), categoryIds) as Rec,
+      normalize: normalizeVulnFindingsPage,
+      optional: true,
+      // Eleven flat scalars, one `{id}` list and a union read for three fields — narrow by the
+      // standard `pageSize` sets, and ~15 pages at 500 against ~74 at the default.
+      pageSize: PAGE_SIZE_WIDE,
+    },
     // Real compliance findings (configurationFindings) — feeds AARS pillar B.
     {
       id: "CONFIG_FINDINGS",
@@ -1220,6 +1262,12 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
       return;
     }
 
+    // Did the exploitation pass actually happen? See the `vulnFindings` note at the
+    // persistSync call below for why `[]` is not an answer to that question.
+    const vulnRefused = params.skippedSteps.indexOf("VULN_FINDINGS") >= 0;
+    const vulnRan = Object.prototype.hasOwnProperty.call(params.stepRows, "VULN_FINDINGS");
+    const vulnEvidence = vulnRan && !vulnRefused ? merged.vulnFindings : undefined;
+
     // ---------------------------------------------------------------- persist
     // Live AARS is no longer purely heuristic: config-findings supply real pillar-B
     // hints (union with the issue-framework heuristic), so persistSync enriches with
@@ -1239,6 +1287,22 @@ function runBattery(job: JobRow, opts: { budgetMs: number; lockHeld: boolean }):
         configRules: merged.configRules,
         identityFindings: merged.identityFindings,
         effectiveAccess: merged.effectiveAccess,
+        // PASSED ONLY WHEN THE STEP ACTUALLY RAN, and this is the whole optional-step
+        // contract rather than a nicety. `merged.vulnFindings` is `[]` both when the tenant
+        // refused the query and when it answered with nothing, and `persistSync` reads `[]`
+        // as a MEASUREMENT: it overwrites `ai_issue_exploitation` and writes a five-zero
+        // census. Handing it the refusal in that shape would erase a good exploitation
+        // register on the first sync a tenant rejected one document — the same class as the
+        // empty page a sync must never be able to read as a remediation.
+        //
+        // Two conditions, because each catches a refusal the other cannot. `skippedSteps`
+        // names a step the tenant rejected, whether on page one or on page three — and a
+        // page-three refusal leaves REAL ROWS behind, so an unguarded read would publish a
+        // population truncated at whatever page the walk died on. `stepRows` catches the
+        // other direction: a battery that never ran the step at all records no entry, and a
+        // step that was never asked has no more measured an empty register than one that was
+        // refused.
+        vulnFindings: vulnEvidence,
       });
       // Written with the commit, so what the Scans page reports as skipped always describes
       // the sync whose numbers it is showing. The job row carrying this is discarded the

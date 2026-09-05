@@ -1,4 +1,4 @@
-// The eleven arms of NormalizedPart, and the accumulation the sync loop does over them.
+// The twelve arms of NormalizedPart, and the accumulation the sync loop does over them.
 //
 // These exist because of a shipped defect: the loop in syncJobs.ts wrote the accumulation
 // out by hand and carried three of the four arms. `findings` was never collected, so the
@@ -11,6 +11,11 @@
 // arm added to NormalizedPart fails these tests until appendPart and partIsEmpty carry it.
 // (It has now earned its keep twice: the three compliance-posture arms tripped it, and so
 // did the rule catalogue, identity-hygiene and effective-access arms.)
+//
+// The twelfth arm, `vulnFindings`, is OPTIONAL on the type — unlike the eleven above it —
+// because a part revived from an older hop's Drive spill was written before the arm existed
+// and carries no such key; the pin still counts it because `emptyPart()` materialises it as
+// `[]` and `appendPart`/`partIsEmpty` are required to carry it regardless.
 
 import { describe, expect, it } from "vitest";
 import {
@@ -49,14 +54,20 @@ function partWithOnly(arm: keyof NormalizedPart): NormalizedPart {
   if (arm === "effectiveAccess") {
     part.effectiveAccess.push({ identityId: "u1", resourceId: "a" } as never);
   }
+  if (arm === "vulnFindings") {
+    (part.vulnFindings ??= []).push({
+      id: "v1", hasKev: null, hasExploit: null, epss: null, issueIds: [],
+    } as never);
+  }
   return part;
 }
 
 describe("the arm list", () => {
-  it("is the eleven the ledger persists", () => {
+  it("is the twelve the ledger persists", () => {
     expect(ARMS.sort()).toEqual([
       "configRules", "dataFindings", "edges", "effectiveAccess", "findings",
       "frameworkPolicies", "frameworks", "identityFindings", "issues", "nodes", "posture",
+      "vulnFindings",
     ]);
   });
 });

@@ -240,6 +240,12 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   // endpoints (setPostureRule, previewPostureRule, recomputePostures) stay out of this
   // list, per its own rule.
   ["getPostureRule", {}],
+  // WP6: the minimal model's rule state. In this list rather than exempted alongside the
+  // three rule endpoints in verdictIsolation.test.ts — the rank is not one of the confined
+  // verdicts, so it has to pass the wire guard like a page endpoint does, and passing it is
+  // a stronger claim than an exemption would be. Mutating endpoints (setRankRule) stay out,
+  // per this list's own rule.
+  ["getRankRule", {}],
   ["getStorageStats", {}],
   // agent-h-chatbot is the max-degree node in the golden getGraph payload (17 neighbors),
   // so it exercises the widest neighbour list getAssetDetail can produce in this landscape.

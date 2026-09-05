@@ -3,6 +3,7 @@
 // enum-style values ("AI_AGENT") inside a $filterBy variable with the
 // { type: { equals: [...] } } operator shape.
 
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { entityField, kindFromWizType } from "../src/domain/graphTypes";
 import {
@@ -20,6 +21,7 @@ import {
   Q_ISSUES,
   Q_PRINCIPALS,
   Q_SECURITY_FRAMEWORKS,
+  Q_VULN_FINDINGS,
   agentRunsAsVariables,
   aiCompliancePostureVariables,
   aiConfigFindingsVariables,
@@ -28,6 +30,7 @@ import {
   aiPrincipalsVariables,
   aiPropertiesVariables,
   aiSecurityFrameworksVariables,
+  aiVulnFindingsVariables,
   chooseAiResourceTypes,
   isInvalidEnumValueError,
   noGuardrailVariables,
@@ -363,6 +366,109 @@ describe("the cloudResourcesV2 project scope", () => {
   });
 });
 
+describe("Q_VULN_FINDINGS + aiVulnFindingsVariables", () => {
+  it("hits vulnerabilityFindings as a static document with a filter variable", () => {
+    expect(Q_VULN_FINDINGS).toContain("vulnerabilityFindings");
+    expect(Q_VULN_FINDINGS).toContain("$filterBy: VulnerabilityFindingFilters");
+    expect(Q_VULN_FINDINGS).toContain("filterBy: $filterBy");
+    expect(Q_VULN_FINDINGS).not.toContain("@include");
+    expect(Q_VULN_FINDINGS).not.toContain("//");
+  });
+
+  it("selects the three exploitation signals and the two clock fields", () => {
+    for (const field of [
+      "hasExploit", "hasCisaKevExploit", "epssProbability", "epssPercentile", "epssSeverity",
+      "firstDetectedAt", "resolvedAt", "severity", "status",
+    ]) {
+      expect(Q_VULN_FINDINGS, field).toContain(field);
+    }
+  });
+
+  it("fragments the vulnerableAsset union rather than selecting through it", () => {
+    // `vulnerableAsset { id }` IS REJECTED — a union of 16 types with no shared interface
+    // (AARS_LIVE_MEASUREMENTS.md §6.8). The member list is copied from the sibling's
+    // console-captured document, which has run against this tenant since it shipped; a name
+    // this gateway does not have fails the WHOLE document, not the one fragment.
+    expect(Q_VULN_FINDINGS).toContain("vulnerableAsset {");
+    expect(Q_VULN_FINDINGS).toContain("... on VulnerableAssetVirtualMachine { id type name }");
+    expect(Q_VULN_FINDINGS).toContain("... on VulnerableAssetContainerImage { id type name }");
+    // The one member that carries no id at all: `__typename`, never `id`, because asking for
+    // a field the member does not have is the same 400 as naming a member that does not exist.
+    expect(Q_VULN_FINDINGS).toContain("... on VulnerableAssetNetworkAddress { __typename }");
+    expect(Q_VULN_FINDINGS).not.toContain("... on VulnerableAssetNetworkAddress { id");
+  });
+
+  it("names the related-issue selection as an ASSUMPTION, pinned by phase0 stage k", () => {
+    // The join field's shape is unverified: it could be a single object, a bare list, or a
+    // connection. The document picks one and the comment says so — this asserts the ADMISSION
+    // is there, because the day it stops being labelled is the day someone reads the guess as
+    // a measurement. `relatedIssueIdsOf` reads all three shapes, so only this line moves when
+    // stage K answers.
+    const src = readFileSync(
+      new URL("../src/server/wizQueriesAi.ts", import.meta.url), "utf8",
+    );
+    expect(src).toContain("UNVERIFIED — pinned by `phase0.mjs --stage=k`");
+    expect(Q_VULN_FINDINGS).toContain("relatedIssues { id }");
+  });
+
+  it("sends the NARROW filter — never the 5.17M", () => {
+    // §6.4: `vulnerabilityFindings` in project scope holds 5,173,698 open rows. Filtered to
+    // `hasRelatedIssue` AND a related issue in the selected categories it holds 7,368. The
+    // three keys below are the entire difference, and dropping any one of them changes the
+    // step from ~15 pages to a population nothing here can store.
+    const v = aiVulnFindingsVariables(null) as { filterBy: Record<string, unknown> };
+    expect(v.filterBy["status"]).toEqual(["OPEN"]);
+    expect(v.filterBy["hasRelatedIssue"]).toBe(true);
+    expect(v.filterBy["relatedIssueFrameworkCategory"])
+      .toEqual({ equalsAny: [RISK_CATEGORY_ID] });
+    expect(Object.keys(v.filterBy).sort())
+      .toEqual(["hasRelatedIssue", "relatedIssueFrameworkCategory", "status"]);
+  });
+
+  it("carries the widened category list, the same one the issue steps use", () => {
+    const cats = [RISK_CATEGORY_ID, "wct-id-3", "861eb856-54f6-4d1b-8ca1-1d6130841d20"];
+    const v = aiVulnFindingsVariables(null, cats) as { filterBy: Record<string, unknown> };
+    // ALL SIX IN ONE STEP, unlike the issue register's one step per category. An issue carries
+    // no category so its rows must be stamped by the step that fetched them; a finding is not
+    // stored under a category at all — it is folded onto the issue, which already carries the
+    // stamp. Splitting this would fetch the same finding once per category of its issue.
+    expect(v.filterBy["relatedIssueFrameworkCategory"]).toEqual({ equalsAny: cats });
+    // A copy, not the caller's array: a step's variables are held for the life of a battery.
+    expect((v.filterBy["relatedIssueFrameworkCategory"] as { equalsAny: string[] }).equalsAny)
+      .not.toBe(cats);
+    // An empty list is the DEFAULT, never "every category" — an absent category filter here
+    // is the 5.17M with extra steps.
+    const empty = aiVulnFindingsVariables(null, []) as { filterBy: Record<string, unknown> };
+    expect(empty.filterBy["relatedIssueFrameworkCategory"]).toEqual({ equalsAny: [RISK_CATEGORY_ID] });
+  });
+
+  it("uses `equalsAny`, not `equals` — RelatedIssueFrameworkCategoryFilter's own spelling", () => {
+    // §6.8, learned from real calls. `equals` is a validation error, which on an optional step
+    // is an empty axis that looks exactly like a tenant with no exploitation evidence.
+    const v = aiVulnFindingsVariables(["proj-1"], ["wct-id-3"]) as
+      { filterBy: Record<string, unknown> };
+    const cat = v.filterBy["relatedIssueFrameworkCategory"] as Record<string, unknown>;
+    expect(Object.keys(cat)).toEqual(["equalsAny"]);
+  });
+
+  it("scopes the project as `projectIdV2: {equals:[...]}` — the SIXTH spelling", () => {
+    // The five this app already sends are tabulated in probe.mjs; §6.8 established that this
+    // root accepts none of them. A wrong spelling here is a validation error, and on an
+    // optional step that is an empty register rather than a failure.
+    const scoped = aiVulnFindingsVariables(["proj-value-chain"]) as
+      { filterBy: Record<string, unknown> };
+    expect(scoped.filterBy["projectIdV2"]).toEqual({ equals: ["proj-value-chain"] });
+    expect(scoped.filterBy["project"]).toBeUndefined();
+    expect(scoped.filterBy["projectId"]).toBeUndefined();
+    // No project chosen means no project key at all — never an empty list, which some roots
+    // read as "match nothing".
+    const unscoped = aiVulnFindingsVariables(null) as { filterBy: Record<string, unknown> };
+    expect("projectIdV2" in unscoped.filterBy).toBe(false);
+    expect("projectIdV2" in (aiVulnFindingsVariables([]) as
+      { filterBy: Record<string, unknown> }).filterBy).toBe(false);
+  });
+});
+
 // ------------------------------------------------------------- query document snapshots
 //
 // The GraphQL documents are never exercised by a dry-run sync (it never reaches the API),
@@ -378,6 +484,7 @@ describe("query documents", () => {
     ["Q_AGENTS_NO_GUARDRAIL", Q_AGENTS_NO_GUARDRAIL],
     ["Q_ISSUES", Q_ISSUES],
     ["Q_CONFIG_FINDINGS", Q_CONFIG_FINDINGS],
+    ["Q_VULN_FINDINGS", Q_VULN_FINDINGS],
     ["Q_PRINCIPALS", Q_PRINCIPALS],
     ["Q_AGENT_SENSITIVE_DATA_ACCESS", Q_AGENT_SENSITIVE_DATA_ACCESS],
     ["Q_AGENT_EXPANSION", Q_AGENT_EXPANSION],

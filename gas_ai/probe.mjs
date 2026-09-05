@@ -237,13 +237,14 @@ else {
 
 // ------------------------------------------- 2b. which project filter each root accepts
 //
-// FIVE SPELLINGS, and choosing the wrong one is a silent zero rather than an error. This app
+// SIX SPELLINGS, and choosing the wrong one is a silent zero rather than an error. This app
 // already sends `filterBy.project` (issuesV2), `filterBy.resource.projectId`
 // (configurationFindings), `filterBy.projectId` (cloudResourcesV2), the scalar
 // `graphSearch(projectId:)` argument, and `analyticsSelection.projectId` — wizQueriesAi.ts
-// names all five itself. The sibling gas/ tool sends `projectIdV2: {equals:[id]}`, but on
-// `vulnerabilityFindings`, which is a different filter type; brick's own test records that
-// "the two filter types spell it differently".
+// names all five itself. The sixth is `filterBy.projectIdV2: {equals:[id]}` on
+// `vulnerabilityFindings` (VULN_FINDINGS) — the spelling the sibling gas/ tool has always sent
+// on that root, and the one §6.8 confirmed is the only one it accepts. brick's own test already
+// recorded that "the two filter types spell it differently"; this app now sends both.
 //
 // So the question is asked per root rather than carried across from a connection that is not
 // this one. `expected` is what this app sends TODAY, so a mismatch is either a latent bug or
@@ -257,6 +258,8 @@ const FILTER_TYPES = [
   // `Field "sourceRuleId" is not defined by type "CloudResourceRelatedIssueFilters"`, and
   // the answer to a name the tenant does not have is to ask which names it does.
   ["CloudResourceRelatedIssueFilters", "sourceRuleId", "ISSUES_<ruleId> — four steps, rejected every sync"],
+  // The sixth spelling, and the only one this root accepts (AARS_LIVE_MEASUREMENTS.md §6.8).
+  ["VulnerabilityFindingFilters", "projectIdV2", "VULN_FINDINGS"],
 ];
 if (!DRY_RUN) {
   console.log("\n=== which project filter each root accepts ===");

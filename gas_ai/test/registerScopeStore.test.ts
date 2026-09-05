@@ -268,3 +268,120 @@ describe("sync_history.adjacency_json — the census and its denominator", () =>
     teardownServer();
   });
 });
+
+/**
+ * The exploitation fold, through the sheet and back — in BOTH homes it has.
+ *
+ * `ai_issue_exploitation` is the evidence (which findings, how many, when observed) and the
+ * three `ai_issues` columns are the reading the ranker consumes without a join. Two homes for
+ * one fact, the same split `projects_json` / `project_refs_json` already carries, and both are
+ * held to the same whole-row discipline for the `writeGrid` reason at the top of this file.
+ *
+ * What a field-list test could never reach, and what the cases below are actually about: an
+ * ABSENT cell reads back as undefined and never as the `none` tier. `rank.exploitationOf`
+ * drops an absent tier out of the blend and scores `none` as a measurement, so collapsing the
+ * two would score every register that never ran VULN_FINDINGS as one where nothing is
+ * exploited.
+ */
+describe("ai_issues exploitation — the reading survives the sheet", () => {
+  it("declares all three columns and round-trips the WHOLE row", () => {
+    for (const col of ["exploitation_tier", "epss_peak", "exploitation_findings"]) {
+      expect(TAB_HEADERS[TABS.issues]).toContain(col);
+    }
+    const row = issueToRow(issue({
+      exploitationTier: "kev",
+      epssPeak: 0.62,
+      exploitationFindingCount: 3,
+    }));
+    expect([row["exploitation_tier"], row["epss_peak"], row["exploitation_findings"]])
+      .toEqual(["kev", 0.62, 3]);
+    const back = issueToRow(rowToIssue(throughSheet(row)));
+    expect(back).toEqual(row);
+    const parsed = rowToIssue(throughSheet(row));
+    expect([parsed.exploitationTier, parsed.epssPeak, parsed.exploitationFindingCount])
+      .toEqual(["kev", 0.62, 3]);
+  });
+
+  it("reads an absent cell as undefined, not as the `none` tier", () => {
+    const legacy = {
+      id: "iss-legacy", rule_id: "r", rule_name: "r", combo_group: "other",
+      native_severity: "LOW", adjusted_severity: "LOW", status: "OPEN",
+      asset_id: "n1", asset_name: "n1",
+    };
+    expect(rowToIssue(legacy).exploitationTier).toBeUndefined();
+    expect(rowToIssue(legacy).epssPeak).toBeUndefined();
+    expect(rowToIssue(legacy).exploitationFindingCount).toBeUndefined();
+    // The column existing and being blank is the same claim: no fold ran over this row.
+    expect(rowToIssue({ ...legacy, exploitation_tier: null }).exploitationTier).toBeUndefined();
+  });
+
+  it("keeps a measured `none` and a measured EPSS of zero", () => {
+    // `none` is the fold saying it looked and nothing fired; `0` is a computed EPSS. Both are
+    // measurements, and both are what a falsy-eliding writer or reader would erase.
+    const row = issueToRow(issue({
+      exploitationTier: "none", epssPeak: 0, exploitationFindingCount: 0,
+    }));
+    expect([row["exploitation_tier"], row["epss_peak"], row["exploitation_findings"]])
+      .toEqual(["none", 0, 0]);
+    const parsed = rowToIssue(throughSheet({ ...row, epss_peak: 0, exploitation_findings: 0 }));
+    expect([parsed.exploitationTier, parsed.epssPeak, parsed.exploitationFindingCount])
+      .toEqual(["none", 0, 0]);
+  });
+
+  it("carries a tier with no EPSS as an explicit null rather than dropping the field", () => {
+    // A KEV finding need not have an EPSS score. `epssPeak: null` is "the tier was decided and
+    // no probability was captured", which `rank.exploitationOf` prints as "EPSS not captured".
+    const row = issueToRow(issue({ exploitationTier: "kev", epssPeak: null, exploitationFindingCount: 1 }));
+    expect(row["epss_peak"]).toBeNull();
+    expect(rowToIssue(throughSheet(row)).epssPeak).toBeNull();
+  });
+});
+
+describe("ai_issue_exploitation — the evidence survives the sheet", () => {
+  const row = {
+    issueId: "iss-1",
+    tier: "kev" as const,
+    hasKev: true,
+    hasExploit: false,
+    epssPeak: 0.62,
+    findingCount: 3,
+    sampleFindingIds: ["vf-1", "vf-2"],
+    observedAt: "2026-09-05T00:00:00.000Z",
+  };
+
+  it("declares every column the writer emits", async () => {
+    const store = await import("../src/server/syncStore");
+    const headers = TAB_HEADERS[TABS.issueExploitation]!;
+    for (const key of Object.keys(store.exploitationToRow(row))) {
+      expect([key, headers.indexOf(key) >= 0]).toEqual([key, true]);
+    }
+  });
+
+  it("round-trips the WHOLE row", async () => {
+    const store = await import("../src/server/syncStore");
+    const written = store.exploitationToRow(row);
+    const back = store.exploitationToRow(store.rowToExploitation(throughSheet(written)));
+    expect(back).toEqual(written);
+    expect(store.rowToExploitation(throughSheet(written))).toEqual(row);
+  });
+
+  it("keeps the two flags TRI-STATE through the cell", async () => {
+    // The reason the tab exists in this shape. `triCell` writes the string "null" for a signal
+    // Wiz never evaluated, so the column can say unmeasured in a place whose other two values
+    // are true and false — and `parseTri` is the only reader allowed to decode it.
+    const store = await import("../src/server/syncStore");
+    const unmeasured = store.exploitationToRow({
+      ...row, tier: "unknown", hasKev: null, hasExploit: null, epssPeak: null,
+    });
+    expect([unmeasured["has_kev"], unmeasured["has_exploit"]]).toEqual(["null", "null"]);
+    expect(unmeasured["epss_peak"]).toBeNull();
+    const parsed = store.rowToExploitation(throughSheet(unmeasured));
+    expect([parsed.hasKev, parsed.hasExploit, parsed.epssPeak]).toEqual([null, null, null]);
+    // A measured false must NOT come back as unmeasured — that is the collapse this file's
+    // whole discipline exists to catch.
+    const measured = store.rowToExploitation(
+      throughSheet(store.exploitationToRow({ ...row, hasKev: false })),
+    );
+    expect(measured.hasKev).toBe(false);
+  });
+});
