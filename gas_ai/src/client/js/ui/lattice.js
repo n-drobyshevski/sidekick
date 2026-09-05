@@ -30,10 +30,10 @@
 // moment anyone tabbed into the grid. `paint()` below writes `data-*`, textContent and
 // aria-label in place and never touches structure.
 
-import { el } from "./dom.js";
+import { el } from "../../../../../gas_shared/ui/dom.js";
 import { LATTICE_GUTTER_PX, latticeCells, latticeHeaders, vectorSentence } from "../lattice.js";
 
-import { tipAnchor } from "./tip.js";
+import { tipAnchor } from "../../../../../gas_shared/ui/tip.js";
 /**
  * One tab stop per grid, arrows moving in two dimensions — the APG grid pattern, and the
  * same roving-tabindex shape `graphView`'s canvas, the sheet's section rail and

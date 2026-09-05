@@ -35,11 +35,11 @@ function plural(n, one, many) {
  * The dot's state, its accessible name, and the detail line beneath it.
  *
  * PRECEDENCE IS THE DESIGN, not an implementation detail. In order: something is happening
- * now; something failed; there is nothing to scan with; something has never been looked at;
+ * now; something failed; there is nothing to sync with; something has never been looked at;
  * something is old; everything is current. Each one is more actionable than the ones below
  * it, and the last two are the only ones that mean "no action".
  *
- * `never` beating `stale` is the load-bearing pair. A register nobody has ever scanned is not
+ * `never` beating `stale` is the load-bearing pair. A register nobody has ever synced is not
  * a stale register — it is an unmeasured one, and reporting the average freshness of the two
  * that DID run would describe a population nobody has looked at. Same rule the Executive page
  * already applies to its hero figure.
@@ -56,7 +56,7 @@ export function railStatus({
     const where = job.scope ? ` — ${label(job.scope)}` : "";
     return {
       state: "scanning",
-      label: `Scan in progress${where}`,
+      label: `Sync in progress${where}`,
       detail: job.total_count > 0
         ? `${job.findings_so_far.toLocaleString()} of ${job.total_count.toLocaleString()}`
         : `${job.findings_so_far.toLocaleString()} so far`,
@@ -66,10 +66,10 @@ export function railStatus({
   if (job && job.phase === "FAILED") {
     return {
       state: "bad",
-      label: "Last scan failed",
+      label: "Last sync failed",
       // The error itself is on the card and in the diagnostic. Here it would not fit and
       // would not be readable at a glance anyway.
-      detail: job.scope ? `while scanning ${label(job.scope)}` : "",
+      detail: job.scope ? `while syncing ${label(job.scope)}` : "",
     };
   }
 
@@ -79,7 +79,7 @@ export function railStatus({
     return {
       state: "neutral",
       label: "No Wiz credentials — nothing is being collected",
-      detail: "Set them in Script Properties, then Run scan.",
+      detail: "Set them in Script Properties, then Run sync.",
     };
   }
 

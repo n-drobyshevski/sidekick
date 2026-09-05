@@ -34,7 +34,7 @@
 
 import { CODEBOOK, FAMILY_GROUP } from "./codebook.js";
 import { MEASURE_ENTRIES } from "./measureContent.js";
-import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "./icons.js";
+import { CATEGORY_LABELS, CATEGORY_ORDER, kindIconSvg } from "../../../../gas_shared/icons.js";
 import {
   aarsChip, el, outcomeBadge, pluralize, sevBadge, statusPill,
   tierBadge,

@@ -1,11 +1,30 @@
 // Local dev bootstrap: runs after gas-shims.js and the Server bundle, before the
-// client app script. Provisions the fake environment (Server.setup()), runs one sync
-// so every page has data, and installs a google.script.run shim that dispatches api_*
-// RPCs to Server.api in this page.
+// client app script. Provisions the fake environment (Server.setup()), and installs a
+// google.script.run shim that dispatches api_* RPCs to Server.api in this page.
 //
-// The sync is the sample dataset or the real tenant depending on whether dev/serve.mjs
-// found credentials — the app decides that itself, from the Script Properties written
-// below (syncJobs.startSync: no credentials → dryRunSync).
+// SEEDING, HONESTLY STATED. `Server.scanJobs`, `Server.readModels` and now `Server.devSeed`
+// are all real (`src/server/index.ts` re-exports the three onto the GAS global), and
+// `api.ts`'s page RPCs (getExecutivePage, getMttrPage, getRegisterPage, getSecretsPage, ...)
+// read genuine ledger state through them. The two gaps a previous version of this comment
+// described are both closed:
+//
+//   1. `src/server/devSeed.ts` is the import site for the specifier `./sampleData` that
+//      nothing under `src/server` used to reach for — so `dev/serve.mjs`'s esbuild alias
+//      (which rewrites that exact specifier to `dev/sampleData.dev.ts` on every dev build)
+//      now actually fires, and the dev dataset reaches this browser bundle at all.
+//   2. `Server.devSeed.seedSampleLedger()` is reachable from this page and runs the REAL
+//      `scanJobs.slimRecord` -> `ledgerStore.persistSync` pipeline over `dev/sampleData.dev.ts`'s
+//      three-scan battery — never hand-written ledger rows (see `devSeed.ts`'s header). In a
+//      deployed build `./sampleData` resolves instead to `src/server/sampleData.ts`, which
+//      ships every array empty on principle, so the exact same call is a documented no-op
+//      there: "this project ships no sample data, and inventing one would put fabricated
+//      findings in a security register" (scanJobs.ts) holds for production, and this seed
+//      path is now the harness-only exception that principle always meant to allow.
+//
+// `?noseed` still skips seeding outright (below); it is no longer this file's ENTIRE seeding
+// story, just the escape hatch that keeps the empty-state rendering reachable. Everything the
+// seed claims — the twin fold, resolve-by-disappearance, the three-scan trend, the exact
+// counts — is pinned by `test/sampleData.test.ts` and `test/devSeed.test.ts`.
 
 (function () {
   "use strict";
@@ -37,29 +56,24 @@
 
   console.log("[dev] " + Server.setup().split("\n").join("\n[dev] "));
 
-  // THE SEED IS BACK, and ?noseed means something again.
-  //
-  // It replays the dev dataset (dev/sampleData.dev.ts) through the real pipeline — the same
-  // normalizers, the same reconcile, the same Sheet writes the deployed bundle would make,
-  // against gas-shims' in-memory fakes. Nothing about the path is a dev shortcut; only the
-  // SOURCE of the rows differs, and the live source refuses rather than returning an empty
-  // page (src/server/sync.ts), so there is no way to half-run a sync that does not exist.
-  //
-  // Three scans, three scopes, so the ledger has actually accumulated: a single snapshot
-  // would leave every row OPEN and the MTTR page with nothing to measure.
+  // ?noseed: skip seeding outright, so the empty-state rendering stays reachable and
+  // testable. In LIVE mode there is nothing here to seed either — a real sync populates the
+  // ledger through the app UI, not through this bootstrap — so the sample battery only ever
+  // runs for a dry, unseeded session.
   if (query.has("noseed")) {
-    console.log("[dev] ?noseed — empty ledger, for testing empty states");
-  } else {
-    const seeded = Server.api.runSampleSync({});
-    if (seeded && seeded.ok) {
-      const rows = seeded.data.scans;
-      const totals = rows.reduce((a, s) => ({
-        n: a.n + s.deltas.new_count,
-        r: a.r + s.deltas.resolved_count,
-      }), { n: 0, r: 0 });
-      console.log(`[dev] seeded ${rows.length} scans — ${totals.n} new, ${totals.r} resolved`);
+    console.log("[dev] ?noseed — no seed attempted; pages read the empty ledger.");
+  } else if (!live) {
+    const result = Server.devSeed.seedSampleLedger();
+    if (result.reason) {
+      // Only reachable if `./sampleData` resolved to the production stub instead of the dev
+      // alias — i.e. this bundle was NOT built by dev/serve.mjs's buildDevServer(). Says so
+      // rather than silently rendering an empty ledger with no explanation.
+      console.log(`[dev] No seed: ${result.reason} — pages read the empty ledger.`);
     } else {
-      console.warn("[dev] seed failed:", seeded && seeded.error);
+      console.log(
+        `[dev] Seeded ${result.seeded} ledger row(s) from ${result.syncs} sync(s) ` +
+        `(${result.rows} raw record(s) through slimRecord -> persistSync).`,
+      );
     }
   }
 

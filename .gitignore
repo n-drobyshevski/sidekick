@@ -61,3 +61,12 @@ skills-lock.json
 
 # Generated HTML review surfaces (lavish-axi serves these from a local express server).
 .lavish/
+
+# design-sync (claude.ai/design)
+.ds-sync/
+ds-bundle/
+.design-sync/.cache/
+.design-sync/learnings/
+.design-sync/node_modules
+.design-sync/adapter/node_modules
+.design-sync/adapter/dist/

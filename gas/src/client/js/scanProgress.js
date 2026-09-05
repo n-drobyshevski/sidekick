@@ -2,7 +2,7 @@
 // to the JobRow the poller already fetches. `scanProgressView` is pure (no DOM) so it
 // is unit-tested; the renderers wrap it in the design-system primitives.
 
-import { clear, el, openSheet, progressBar } from "./ui.js";
+import { absent, clear, el, num, openSheet, progressBar, tip, tipAnchor } from "./ui.js";
 
 const STEPS = [
   { key: "FETCHING", label: "Fetch" },
@@ -67,9 +67,15 @@ export function scanProgressView(job, nowMs) {
     return { key: s.key, label: s.label, status };
   });
 
-  const findings = Number(job.findings_so_far || 0);
-  const total = Number(job.total_count || 0);
-  const page = Number(job.page || 0);
+  // `num(v, 0)` rather than `Number(v || 0)`. The zero is intended and stays: a job row that
+  // has not reported a page yet has fetched nothing, and `total === 0` is this file's own
+  // sentinel for "the count was never recorded" (see the `total > 0` guards below). What the
+  // bare cast could not refuse is a field that was never a number — `Number("many")` is NaN,
+  // and a NaN `findings` reaches `toLocaleString()` and prints "NaN findings" on the scan
+  // card, which is worse than any of the states this view model exists to tell apart.
+  const findings = num(job.findings_so_far, 0);
+  const total = num(job.total_count, 0);
+  const page = num(job.page, 0);
 
   let pct = null;
   if (state === "done") pct = 100;
@@ -204,7 +210,12 @@ export function renderScanCard(host, job, { onStop, onDetails, nowMs, stopping }
   // name of the button instead — hover or focus surfaces the same status the card shows.
   const summary = [phaseText, v.countsText].filter(Boolean).join(" · ");
   miniBtn.setAttribute("aria-label", summary || "Scan progress");
-  miniBtn.title = summary || "";
+  // This was a native `title`, which is why the comment above could only promise "hover".
+  // A native tooltip is unreachable by keyboard, absent on touch and truncated by the OS,
+  // so the phase words the rail is too narrow to draw were effectively pointer-only. The
+  // hover card opens on focus as well, and the copy is read at reveal time so a card that
+  // is already open during a 3s poll shows the phase the card now shows.
+  tip(miniBtn, () => (summary ? [summary] : null));
   miniBtn.onclick = onDetails || null;
   miniBtn.disabled = !onDetails;
 
@@ -231,17 +242,26 @@ export function renderScanCard(host, job, { onStop, onDetails, nowMs, stopping }
       // The run has gone quiet long enough to be presumed dead, so Stop comes back at any
       // phase — the label says "Force" because the server may have to roll a half-written
       // ledger back from its journal rather than simply cancel.
-      actionsEl.append(el("button", {
-        class: "linklike danger", onclick: onStop,
-        title: "The scan appears to have stopped — clear it so a new one can run.",
-      }, "Force stop"));
+      actionsEl.append(tip(
+        el("button", { class: "linklike danger", onclick: onStop }, "Force stop"),
+        ["The scan appears to have stopped — clear it so a new one can run."],
+      ));
     } else if (running && onStop) {
       // Past FETCHING a healthy run can't be cancelled — explain rather than silently drop Stop.
-      actionsEl.append(el("button", {
-        class: "linklike", disabled: true,
-        title: "Saving can't be interrupted — let it finish.",
-        "aria-label": "Stop unavailable while saving",
-      }, "Stop"));
+      // `tipAnchor`, not `tip`: a `disabled` button is not focusable and receives no pointer
+      // events in Chromium, so neither the old native title nor a hover card can open on it.
+      // The explanation therefore rides on the aria-label, which assistive technology does
+      // read; the card is the sighted-pointer half and is reachable wherever the browser
+      // still dispatches over a disabled control. Making it reachable for everyone means
+      // trading `disabled` for `aria-disabled` and keeping the button in the tab order,
+      // which is a behaviour change this pass is not making.
+      actionsEl.append(tipAnchor(
+        el("button", {
+          class: "linklike", disabled: true,
+          "aria-label": "Stop unavailable while saving",
+        }, "Stop"),
+        () => ["Saving can't be interrupted — let it finish."],
+      ));
     }
   }
 
@@ -295,9 +315,13 @@ export function openScanDetails(job, opts = {}) {
         "Force stop"));
     } else if (v.state === "running" && onStop) {
       // Explain the vanished Stop instead of leaving it a mystery once saving starts.
-      actions.append(el("button", { class: "danger", disabled: true,
-        title: "Saving can't be interrupted — let it finish.",
-        "aria-label": "Stop unavailable while saving" }, "Stop scan"));
+      // See the same conversion on the sidebar card above for why this is `tipAnchor` and
+      // why a disabled button can still leave the card unreachable to a pointer.
+      actions.append(tipAnchor(
+        el("button", { class: "danger", disabled: true,
+          "aria-label": "Stop unavailable while saving" }, "Stop scan"),
+        () => ["Saving can't be interrupted — let it finish."],
+      ));
     }
     actions.append(el("button", { class: "primary", onclick: closeFn }, "Close"));
 
@@ -320,12 +344,15 @@ export function openScanDetails(job, opts = {}) {
       el("dl", { class: "scan-detail-grid" },
         el("dt", {}, "Status"), el("dd", {}, v.phaseLabel),
         el("dt", {}, "Findings"),
-        el("dd", {}, `${Number(currentJob.findings_so_far || 0).toLocaleString()}` +
-          (Number(currentJob.total_count || 0) > 0
-            ? ` of ${Number(currentJob.total_count).toLocaleString()}`
+        el("dd", {}, `${num(currentJob.findings_so_far, 0).toLocaleString()}` +
+          (num(currentJob.total_count, 0) > 0
+            ? ` of ${num(currentJob.total_count, 0).toLocaleString()}`
             : "")),
         el("dt", {}, "Pages"), el("dd", {}, String(currentJob.page || 0)),
-        el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || "—"),
+        // `absent()`, not a bare em dash: elapsed is empty only when `started_at` did not
+        // parse, and a black dash in the same ink as the figures beside it reads as a
+        // measured value. The muted one says nobody is claiming there should be a number.
+        el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || absent()),
       ),
       v.error ? el("div", { class: "scan-detail-error" }, v.error) : null,
       actions,

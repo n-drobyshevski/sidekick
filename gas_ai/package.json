@@ -7,13 +7,16 @@
   "scripts": {
     "build": "node esbuild.config.mjs",
     "which-build": "node whichBuild.mjs",
+    "check-dist-fresh": "node checkDistFresh.mjs",
     "dev": "node dev/serve.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:exact": "GAS_TEST_FULL_ISOLATION=1 vitest run",
+    "test:exact": "node -e \"process.env.GAS_TEST_FULL_ISOLATION='1';require('child_process').execSync('vitest run',{stdio:'inherit'})\"",
     "typecheck": "tsc --noEmit",
-    "check": "npm run typecheck && npm run test && npm run build",
-    "check:exact": "npm run typecheck && npm run test:exact && npm run build",
+    "lint": "eslint \"src/client/js/**/*.js\" \"dev/*.js\" && npm run lint:shared",
+    "lint:shared": "cd ../gas_shared && node ../gas_ai/node_modules/eslint/bin/eslint.js .",
+    "check": "npm run typecheck && npm run lint && npm run test && npm run check-dist-fresh",
+    "check:exact": "npm run typecheck && npm run lint && npm run test:exact && npm run check-dist-fresh",
     "push": "npm run check:exact && clasp push",
     "deploy": "npm run push && clasp deploy",
     "probe": "node probe.mjs"
@@ -23,6 +26,7 @@
     "@types/google-apps-script": "^2.0.12",
     "@types/node": "^22.20.1",
     "esbuild": "^0.28.2",
+    "eslint": "^10.9.1",
     "typescript": "^7.0.2",
     "vitest": "^4.1.11"
   },

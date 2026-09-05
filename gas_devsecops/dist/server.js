@@ -24,12 +24,13 @@ var Server = (() => {
     access: () => access_exports,
     api: () => api_exports,
     deploymentDiagnostic: () => deploymentDiagnostic,
+    devSeed: () => devSeed_exports,
     doGet: () => doGet,
     include: () => include,
-    jobs: () => scanJobs_exports,
+    readModels: () => readModels_exports,
+    scanJobs: () => scanJobs_exports,
     setup: () => setup,
-    welcome: () => welcome_exports,
-    wizDiagnostic: () => wizDiagnostic
+    welcome: () => welcome_exports
   });
 
   // src/server/main.ts
@@ -80,7 +81,7 @@ var Server = (() => {
   function brandMarkSvg(height) {
     const width = Math.round(height * MARK_COMPACT_RATIO * 100) / 100;
     const nodes = MARK_NODES.map(
-      (n) => '<circle cx="' + n[0] + '" cy="' + n[1] + '" r="' + n[2] + '" fill="#0a0a0a"/>'
+      (n2) => '<circle cx="' + n2[0] + '" cy="' + n2[1] + '" r="' + n2[2] + '" fill="#0a0a0a"/>'
     ).join("");
     return [
       '<svg class="brand-mark" viewBox="' + MARK_COMPACT_VIEWBOX + '"',
@@ -94,8 +95,8 @@ var Server = (() => {
       "</svg>"
     ].join("");
   }
-  function escapeHtml(s) {
-    return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  function escapeHtml(s2) {
+    return s2.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
   function primaryAction(href, label) {
     return '<a class="btn" target="_top" href="' + escapeHtml(href) + '">' + escapeHtml(label) + "</a>";
@@ -359,8 +360,8 @@ var Server = (() => {
     return parseAllowlist(getProp(PROP_KEYS.allowedAdmins));
   }
   function ownerDomain() {
-    const at2 = ownerEmail().lastIndexOf("@");
-    return at2 >= 0 ? ownerEmail().slice(at2 + 1).toLowerCase() : "";
+    const at = ownerEmail().lastIndexOf("@");
+    return at >= 0 ? ownerEmail().slice(at + 1).toLowerCase() : "";
   }
 
   // src/server/welcome.ts
@@ -373,16 +374,16 @@ var Server = (() => {
   });
 
   // src/domain/sha1.ts
-  function utf8Bytes(s) {
+  function utf8Bytes(s2) {
     const out = [];
-    for (let i = 0; i < s.length; i++) {
-      let c = s.charCodeAt(i);
+    for (let i = 0; i < s2.length; i++) {
+      let c = s2.charCodeAt(i);
       if (c < 128) {
         out.push(c);
       } else if (c < 2048) {
         out.push(192 | c >> 6, 128 | c & 63);
-      } else if (c >= 55296 && c <= 56319 && i + 1 < s.length) {
-        const c2 = s.charCodeAt(++i);
+      } else if (c >= 55296 && c <= 56319 && i + 1 < s2.length) {
+        const c2 = s2.charCodeAt(++i);
         const cp = 65536 + (c - 55296 << 10) + (c2 - 56320);
         out.push(
           240 | cp >> 18,
@@ -396,8 +397,8 @@ var Server = (() => {
     }
     return out;
   }
-  function rotl(n, b) {
-    return (n << b | n >>> 32 - b) >>> 0;
+  function rotl(n2, b) {
+    return (n2 << b | n2 >>> 32 - b) >>> 0;
   }
   function sha1Hex(input) {
     const bytes = utf8Bytes(input);
@@ -449,7 +450,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7ba516955905" : "dev";
+  var BUILD_ID = true ? "5c336794fb12" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -499,9 +500,9 @@ var Server = (() => {
   function currentStamp(version) {
     return `${KEY_PREFIX}:${version != null ? version : dataVersion()}.${configStamp()}`;
   }
-  function splitChunks(s, size = CHUNK_CHARS) {
+  function splitChunks(s2, size = CHUNK_CHARS) {
     const out = [];
-    for (let i = 0; i < s.length; i += size) out.push(s.slice(i, i + size));
+    for (let i = 0; i < s2.length; i += size) out.push(s2.slice(i, i + size));
     return out.length ? out : [""];
   }
   function cachePutJson(key, value, ttlSec = DEFAULT_TTL_SEC, chunkChars = CHUNK_CHARS) {
@@ -519,10 +520,10 @@ var Server = (() => {
     const cache = CacheService.getScriptCache();
     const meta = cache.get(`${key}:m`);
     if (!meta) return void 0;
-    const n = Number(meta);
-    if (!Number.isInteger(n) || n < 1) return void 0;
+    const n2 = Number(meta);
+    if (!Number.isInteger(n2) || n2 < 1) return void 0;
     const names = [];
-    for (let i = 0; i < n; i++) names.push(`${key}:${i}`);
+    for (let i = 0; i < n2; i++) names.push(`${key}:${i}`);
     const got = cache.getAll(names);
     let packed = "";
     for (const name of names) {
@@ -607,20 +608,6 @@ var Server = (() => {
     return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
-  // src/server/scanJobs.ts
-  var scanJobs_exports = {};
-  __export(scanJobs_exports, {
-    CONTINUE_HANDLER: () => CONTINUE_HANDLER,
-    DAILY_HANDLER: () => DAILY_HANDLER,
-    cancelScan: () => cancelScan,
-    clearContinuationTriggers: () => clearContinuationTriggers,
-    continueJob: () => continueJob,
-    dailyScan: () => dailyScan,
-    jobStatus: () => jobStatus,
-    resetStuckJob: () => resetStuckJob,
-    startScan: () => startScan
-  });
-
   // src/domain/config.ts
   var SEVERITY_ORDER = [
     "CRITICAL",
@@ -630,6 +617,7 @@ var Server = (() => {
     "INFO",
     "UNKNOWN"
   ];
+  var SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s2) => s2 !== "UNKNOWN");
   var SLA_TARGETS = {
     CRITICAL: 7,
     HIGH: 14,
@@ -653,133 +641,99 @@ var Server = (() => {
   var STATUS_RESOLVED = "RESOLVED";
   var RESOLUTION_API = "api";
   var RESOLUTION_DISAPPEARED = "disappeared";
+  var EPSS_PRIORITY_THRESHOLD = 0.1;
+  var DEFAULT_RISK_RULE = {
+    kev: true,
+    exploit: true,
+    epss: true,
+    epssThreshold: EPSS_PRIORITY_THRESHOLD
+  };
+  var DEFAULT_SAST_RISK_RULE = {
+    cwe: true,
+    aiVerdict: true,
+    critical: true
+  };
+  var CWE_TOP_25_2024 = [
+    "CWE-79",
+    "CWE-787",
+    "CWE-89",
+    "CWE-352",
+    "CWE-22",
+    "CWE-125",
+    "CWE-78",
+    "CWE-416",
+    "CWE-862",
+    "CWE-434",
+    "CWE-94",
+    "CWE-20",
+    "CWE-77",
+    "CWE-287",
+    "CWE-269",
+    "CWE-502",
+    "CWE-200",
+    "CWE-863",
+    "CWE-918",
+    "CWE-119",
+    "CWE-476",
+    "CWE-798",
+    "CWE-190",
+    "CWE-400",
+    "CWE-306"
+  ];
+  var CWE_ANCESTORS = {
+    "CWE-23": "CWE-22",
+    "CWE-36": "CWE-22",
+    "CWE-80": "CWE-79",
+    "CWE-83": "CWE-79",
+    "CWE-91": "CWE-94",
+    "CWE-95": "CWE-94",
+    "CWE-470": "CWE-94",
+    "CWE-1321": "CWE-94",
+    "CWE-88": "CWE-77",
+    "CWE-611": "CWE-20",
+    "CWE-547": "CWE-798",
+    "CWE-259": "CWE-798",
+    "CWE-321": "CWE-798",
+    "CWE-1333": "CWE-400",
+    "CWE-732": "CWE-863",
+    "CWE-284": "CWE-862"
+  };
+  var AI_VERDICTS_HIGH = /* @__PURE__ */ new Set([
+    "EXPLOITABLE",
+    "TRUE_POSITIVE",
+    "CONFIRMED",
+    "VULNERABLE"
+  ]);
+  function ruleForScope(scope) {
+    if (scope === "sca") return DEFAULT_RISK_RULE;
+    if (scope === "sast") return DEFAULT_SAST_RISK_RULE;
+    return null;
+  }
+  var NET_CAPACITY_BAND_PCT = 2;
+  var OVERALL = "OVERALL";
+  var POPULATION_ALL = "all";
+  var POPULATION_HIGH_RISK = "high_risk";
+  var ASSET_GROUP_UNKNOWN = "UNKNOWN";
+  var DISAPPEARANCE_RESOLUTION = "scan_ts";
+  var MIN_UNSEALED_FLAT_SCANS = 2;
+  var DEFAULT_RETENTION_DAYS = 180;
 
-  // src/server/archiveStore.ts
-  var rootFolderMemo;
-  var subfolderMemo = /* @__PURE__ */ new Map();
-  var syncFolderMemo = /* @__PURE__ */ new Map();
-  function rootFolder() {
-    if (!rootFolderMemo) {
-      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
-    }
-    return rootFolderMemo;
-  }
-  function childFolder(parent, name) {
-    const it = parent.getFoldersByName(name);
-    return it.hasNext() ? it.next() : parent.createFolder(name);
-  }
-  function subfolder(name) {
-    const hit = subfolderMemo.get(name);
-    if (hit) return hit;
-    const folder = childFolder(rootFolder(), name);
-    subfolderMemo.set(name, folder);
-    return folder;
-  }
-  function safeName(id) {
-    return id.replace(/[^0-9A-Za-z._-]/g, "") || "sync";
-  }
-  function writeGzJson(folder, name, payload) {
-    const json = JSON.stringify(payload);
-    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
-    const existing = folder.getFilesByName(name);
-    while (existing.hasNext()) existing.next().setTrashed(true);
-    return folder.createFile(blob);
-  }
-  function readGzJsonNamed(folder, name) {
-    const it = subfolder(folder).getFilesByName(name);
-    if (!it.hasNext()) return null;
-    return parseGzBlob(it.next().getBlob());
-  }
-  function readGzJsonFile(fileId) {
-    try {
-      const file = DriveApp.getFileById(fileId);
-      return parseGzBlob(file.getBlob());
-    } catch (e) {
-      console.warn(`Unreadable Drive file ${fileId}: ${e}`);
-      return null;
-    }
-  }
-  function parseGzBlob(blob) {
-    try {
-      const bytes = blob.getBytes();
-      const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
-      return JSON.parse(text);
-    } catch (e) {
-      console.warn(`Failed to parse archive blob: ${e}`);
-      return null;
-    }
-  }
-  function syncFolder(syncId) {
-    const key = safeName(syncId);
-    const hit = syncFolderMemo.get(key);
-    if (hit) return hit;
-    const folder = childFolder(subfolder("syncs"), key);
-    syncFolderMemo.set(key, folder);
-    return folder;
-  }
-  function writeSyncPage(syncId, stepIndex, pageNumber, payload) {
-    const name = `step-${stepIndex}-page-${String(pageNumber).padStart(4, "0")}.json.gz`;
-    return writeGzJson(syncFolder(syncId), name, payload).getId();
-  }
-  function readSyncStepPages(syncId, stepIndex, expectedPages) {
-    const prefix = `step-${stepIndex}-page-`;
-    const pages = [];
-    const files = syncFolder(syncId).getFiles();
-    while (files.hasNext()) {
-      const f = files.next();
-      const name = f.getName();
-      if (!name.startsWith(prefix)) continue;
-      const payload = parseGzBlob(f.getBlob());
-      if (payload === null) {
-        throw new Error(
-          `Archive page ${name} of sync ${syncId} could not be read. Refusing to reconcile a scope against a population that is missing a page \u2014 every finding in it would resolve as remediated.`
-        );
-      }
-      pages.push({ name, payload });
-    }
-    pages.sort((a, b) => a.name < b.name ? -1 : 1);
-    if (pages.length !== expectedPages) {
-      throw new Error(
-        `Sync ${syncId} step ${stepIndex} recorded ${expectedPages} page(s) but ${pages.length} are on disk. Refusing to reconcile against an incomplete population.`
-      );
-    }
-    return pages.map((p) => p.payload);
-  }
-  function trashSyncStepPages(syncId, stepIndex) {
-    const prefix = `step-${stepIndex}-page-`;
-    try {
-      const files = syncFolder(syncId).getFiles();
-      while (files.hasNext()) {
-        const f = files.next();
-        if (f.getName().startsWith(prefix)) f.setTrashed(true);
-      }
-    } catch (e) {
-      console.warn(`Couldn't trash step ${stepIndex} of sync ${syncId}: ${e}`);
-    }
-  }
-  function trashFile(fileId) {
-    if (!fileId) return;
-    try {
-      DriveApp.getFileById(fileId).setTrashed(true);
-    } catch (e) {
-      console.warn(`Couldn't trash file ${fileId}: ${e}`);
-    }
+  // src/domain/severity.ts
+  function normalizeSeverity(sev2) {
+    if (typeof sev2 !== "string") return "UNKNOWN";
+    const s2 = sev2.toUpperCase().trim();
+    if (s2 === "INFORMATIONAL" || s2 === "INFO") return "INFO";
+    return SEVERITY_ORDER.includes(s2) ? s2 : "UNKNOWN";
   }
 
   // src/domain/util.ts
+  function clampInt(v, fallback, min, max) {
+    const n2 = Math.round(Number(v));
+    if (!Number.isFinite(n2)) return fallback;
+    return Math.min(max, Math.max(min, n2));
+  }
   function cmp(a, b) {
     return a < b ? -1 : a > b ? 1 : 0;
-  }
-  function pushInto(map, key, ...values) {
-    const bucket = map.get(key);
-    if (bucket) bucket.push(...values);
-    else map.set(key, [...values]);
-  }
-  function groupBy(xs, key) {
-    const out = /* @__PURE__ */ new Map();
-    for (const x of xs) pushInto(out, key(x), x);
-    return out;
   }
   function present(v) {
     if (v === null || v === void 0) return false;
@@ -790,16 +744,21 @@ var Server = (() => {
   function clean(v) {
     return present(v) ? v : null;
   }
+  function pyStr(v) {
+    if (v === true) return "True";
+    if (v === false) return "False";
+    return String(v);
+  }
   function parseTs(v) {
     const c = clean(v);
     if (c === null) return null;
     if (c instanceof Date) return isNaN(c.getTime()) ? null : c.getTime();
     if (typeof c === "number" && Number.isFinite(c)) return c;
-    let s = String(c).trim();
-    if (!s) return null;
-    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s)) s = s.replace(" ", "T");
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s)) s += "Z";
-    const t = Date.parse(s);
+    let s2 = String(c).trim();
+    if (!s2) return null;
+    if (/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(s2)) s2 = s2.replace(" ", "T");
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(s2)) s2 += "Z";
+    const t = Date.parse(s2);
     return Number.isNaN(t) ? null : t;
   }
   function toIso(ms) {
@@ -824,9 +783,6 @@ var Server = (() => {
   function nowIso(now) {
     return toIso(now != null ? now : Date.now());
   }
-  function maxNum(values) {
-    return values.reduce((m, v) => Math.max(m, v), -Infinity);
-  }
   function mean(values) {
     if (!values.length) return null;
     return values.reduce((a, b) => a + b, 0) / values.length;
@@ -842,6 +798,2589 @@ var Server = (() => {
   }
   function median(values) {
     return quantile(values, 0.5);
+  }
+  function maxNum(values) {
+    return values.reduce((m, v) => Math.max(m, v), -Infinity);
+  }
+  function minNum(values) {
+    return values.reduce((m, v) => Math.min(m, v), Infinity);
+  }
+  function pushAll(target, items) {
+    for (const item of items) target.push(item);
+  }
+
+  // src/domain/compaction.ts
+  function serializeSeverities(sevs) {
+    if (sevs === null || sevs === void 0) return null;
+    const vals = /* @__PURE__ */ new Set();
+    for (const s2 of sevs) {
+      if (typeof s2 === "string") {
+        const n2 = normalizeSeverity(s2);
+        if (SELECTABLE_SEVERITIES.includes(n2)) vals.add(n2);
+      }
+    }
+    if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;
+    const ordered = SEVERITY_ORDER.filter((s2) => vals.has(s2));
+    return `[${ordered.map((s2) => JSON.stringify(s2)).join(", ")}]`;
+  }
+  function parseSeverities(text) {
+    if (typeof text !== "string" || !text) return null;
+    let vals;
+    try {
+      vals = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(vals)) return null;
+    const chosen = new Set(
+      vals.filter((v) => typeof v === "string").map(normalizeSeverity)
+    );
+    const out = SEVERITY_ORDER.filter((s2) => chosen.has(s2));
+    return out.length ? out : null;
+  }
+  function selectSealCandidates(rows, cutoffMs) {
+    const protectedIds = new Set(rows.map((r) => r.scan_id).slice(-MIN_UNSEALED_FLAT_SCANS));
+    const candidates = [];
+    for (const r of rows) {
+      if (protectedIds.has(r.scan_id)) break;
+      const ts = parseTs(r.ts);
+      if (ts === null || ts > cutoffMs) break;
+      candidates.push(r);
+    }
+    return candidates;
+  }
+  function statsEqual(a, b) {
+    if (isMissing(a) && isMissing(b)) return true;
+    if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+      const ka = Object.keys(a);
+      const kb = Object.keys(b);
+      if (ka.length !== kb.length || !ka.every((k) => kb.includes(k))) return false;
+      return ka.every((k) => statsEqual(a[k], b[k]));
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+      return a.length === b.length && a.every((x, i) => statsEqual(x, b[i]));
+    }
+    return a === b;
+  }
+  function isMissing(v) {
+    return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
+  }
+
+  // src/domain/metrics.ts
+  var DAY_MS = 864e5;
+  function summarize(workIn, now, scope) {
+    var _a;
+    const work = scope ? workIn.filter((r) => r.scope === void 0 || r.scope === scope) : workIn;
+    if (!work.length) return { perSev: {}, overall: {} };
+    const nowMs = now != null ? now : Date.now();
+    const mttrDays = (r) => r.resolved !== null && r.firstSeen !== null ? (r.resolved - r.firstSeen) / DAY_MS : null;
+    const ageDays = (r) => r.firstSeen !== null ? (nowMs - r.firstSeen) / DAY_MS : null;
+    const perSev = {};
+    for (const sev2 of SEVERITY_ORDER) {
+      const sub = work.filter((r) => r.sev === sev2);
+      if (!sub.length) continue;
+      const resolvedDays = sub.map(mttrDays).filter((d) => d !== null);
+      const openAges = sub.filter((r) => r.resolved === null && r.firstSeen !== null).map(ageDays).filter((d) => d !== null);
+      const target = (_a = SLA_TARGETS[sev2]) != null ? _a : null;
+      const withinSla = target !== null && resolvedDays.length ? resolvedDays.filter((d) => d <= target).length : 0;
+      perSev[sev2] = {
+        mttr_mean: resolvedDays.length ? mean(resolvedDays) : null,
+        mttr_median: resolvedDays.length ? median(resolvedDays) : null,
+        resolved: resolvedDays.length,
+        open: openAges.length,
+        open_age_p50: openAges.length ? median(openAges) : null,
+        open_age_p90: openAges.length ? quantile(openAges, 0.9) : null,
+        sla_target: target,
+        sla_compliant: withinSla,
+        sla_pct: resolvedDays.length && target !== null ? withinSla / resolvedDays.length * 100 : null
+      };
+    }
+    const allMttr = work.map(mttrDays).filter((d) => d !== null);
+    const overall = {
+      mttr_mean: allMttr.length ? mean(allMttr) : null,
+      mttr_median: allMttr.length ? median(allMttr) : null,
+      resolved: work.filter((r) => r.resolved !== null).length,
+      open: work.filter((r) => r.resolved === null).length
+    };
+    return { perSev, overall };
+  }
+  function overallSlaOldest(perSev) {
+    const stats = Object.values(perSev);
+    const compliant = stats.reduce((a, d) => {
+      var _a;
+      return a + ((_a = d.sla_compliant) != null ? _a : 0);
+    }, 0);
+    const resolved = stats.reduce((a, d) => {
+      var _a;
+      return a + ((_a = d.resolved) != null ? _a : 0);
+    }, 0);
+    const slaPct = resolved ? compliant / resolved * 100 : null;
+    const p90s = stats.map((d) => d.open_age_p90).filter((v) => v !== null && v !== void 0);
+    const oldestDays = p90s.length ? maxNum(p90s) : null;
+    return { slaPct, oldestDays };
+  }
+
+  // src/domain/lifecycle.ts
+  function findingKey(scope, node) {
+    var _a, _b, _c, _d;
+    if (scope === "secrets") {
+      const secretDataId = pyStr((_a = clean(node["secretDataId"])) != null ? _a : "").trim();
+      if (!secretDataId) {
+        throw new Error(`findingKey: scope "secrets" node has no secretDataId`);
+      }
+      const path = pyStr((_b = clean(node["path"])) != null ? _b : "");
+      const lineNumber = pyStr((_c = clean(node["lineNumber"])) != null ? _c : "");
+      const basis = `${secretDataId}|${path}|${lineNumber}`;
+      return `${scope}:h:${sha1Hex(basis).slice(0, 16)}`;
+    }
+    const rawId = node["id"];
+    const id = typeof rawId === "string" ? rawId.trim() : pyStr((_d = clean(rawId)) != null ? _d : "");
+    if (!id) {
+      throw new Error(`findingKey: scope "${scope}" node has no id`);
+    }
+    return `${scope}:id:${id}`;
+  }
+  function mttrFromLedger(ledgerRows, opts = {}) {
+    const rows = [...ledgerRows];
+    if (!rows.length) return { perSev: {}, overall: {} };
+    const work = rows.map((r) => ({
+      sev: "severity" in r ? normalizeSeverity(r["severity"]) : "UNKNOWN",
+      firstSeen: parseTs(r["first_seen"]),
+      resolved: parseTs(r["resolved_at"]),
+      scope: "scope" in r ? r["scope"] : void 0
+    }));
+    return summarize(work, opts.now, opts.scope);
+  }
+
+  // src/domain/reconcile.ts
+  var DAY_MS2 = 864e5;
+  var MEASURED_VALIDATION = /* @__PURE__ */ new Set(["VALID", "INVALID"]);
+  var RESOURCE_BRANCH = "REPOSITORY_BRANCH";
+  function dottedRaw(record, path) {
+    const flat = record[path];
+    if (present(flat)) return flat;
+    let cur = record;
+    for (const seg of path.split(".")) {
+      if (cur === null || typeof cur !== "object" || Array.isArray(cur)) return null;
+      cur = cur[seg];
+    }
+    return present(cur) ? cur : null;
+  }
+  function dotted(record, path) {
+    const v = dottedRaw(record, path);
+    return v === null ? "" : pyStr(v);
+  }
+  function str(record, ...paths) {
+    for (const p of paths) {
+      const v = dotted(record, p);
+      if (v !== "") return v;
+    }
+    return null;
+  }
+  function num(record, path) {
+    const v = dottedRaw(record, path);
+    if (v === null) return null;
+    const n2 = typeof v === "number" ? v : Number(v);
+    return Number.isFinite(n2) ? n2 : null;
+  }
+  function canonicalJson(entries) {
+    const keys = Object.keys(entries).sort();
+    if (!keys.length) return null;
+    const parts = keys.map((k) => `${JSON.stringify(k)}: ${JSON.stringify(entries[k])}`);
+    return `{${parts.join(", ")}}`;
+  }
+  var TAGS_PREFIX = "vulnerableAsset.tags.";
+  function tagsJson(record) {
+    const va = record["vulnerableAsset"];
+    let tags = null;
+    if (va && typeof va === "object" && !Array.isArray(va)) {
+      const t = va["tags"];
+      if (t && typeof t === "object" && !Array.isArray(t)) tags = t;
+    }
+    if (tags === null) {
+      const flat = record["vulnerableAsset.tags"];
+      if (flat && typeof flat === "object" && !Array.isArray(flat)) tags = flat;
+    }
+    if (tags === null) {
+      const collected = {};
+      for (const [k, v] of Object.entries(record)) {
+        if (k.startsWith(TAGS_PREFIX) && clean(v) !== null) {
+          collected[k.slice(TAGS_PREFIX.length)] = v;
+        }
+      }
+      tags = collected;
+    }
+    const kept = {};
+    for (const [k, v] of Object.entries(tags)) {
+      if (clean(v) !== null || v === "") kept[String(k)] = v;
+    }
+    return canonicalJson(kept);
+  }
+  function projectList(record) {
+    const raw = record["projects"];
+    if (!Array.isArray(raw)) return [];
+    return raw.filter((p) => p !== null && typeof p === "object" && !Array.isArray(p));
+  }
+  function projectsJson(record) {
+    const entries = {};
+    for (const p of projectList(record)) {
+      const key = str(p, "slug", "id");
+      const name = str(p, "name");
+      if (key !== null) entries[key] = name != null ? name : key;
+    }
+    return canonicalJson(entries);
+  }
+  function projectsListJson(record) {
+    var _a;
+    const byKey = /* @__PURE__ */ new Map();
+    for (const p of projectList(record)) {
+      const key = str(p, "slug", "id");
+      if (key === null) continue;
+      const name = (_a = str(p, "name")) != null ? _a : key;
+      const entry = { slug: key, name };
+      if (typeof p["isFolder"] === "boolean") entry.isFolder = p["isFolder"];
+      byKey.set(key, entry);
+    }
+    if (!byKey.size) return null;
+    const parts = [...byKey.keys()].sort().map((k) => canonicalJson(byKey.get(k)));
+    return `[${parts.join(", ")}]`;
+  }
+  function ownerProject(record) {
+    var _a;
+    const projects = projectList(record);
+    const leaf = projects.find((p) => p["isFolder"] !== true);
+    return str((_a = leaf != null ? leaf : projects[0]) != null ? _a : {}, "name");
+  }
+  function ownerPath(record) {
+    const names = [];
+    for (const p of projectList(record)) {
+      if (p["isFolder"] !== true) continue;
+      const n2 = str(p, "name");
+      if (n2 !== null) names.push(n2);
+    }
+    if (!names.length) return null;
+    return names.sort().join(" / ");
+  }
+  function splitRepoBranch(name, type) {
+    if (name === null) return { repo: null, branch: null };
+    if ((type != null ? type : "").toUpperCase() !== RESOURCE_BRANCH) return { repo: name, branch: null };
+    const i = name.lastIndexOf("/");
+    if (i <= 0 || i === name.length - 1) return { repo: name, branch: null };
+    return { repo: name.slice(0, i), branch: name.slice(i + 1) };
+  }
+  function firstLanguage(v) {
+    if (Array.isArray(v)) {
+      for (const item of v) {
+        if (present(item)) return pyStr(item);
+      }
+      return null;
+    }
+    return present(v) ? pyStr(v) : null;
+  }
+  function joinedCwes(record) {
+    const raw = record["weaknesses"];
+    if (!Array.isArray(raw)) return null;
+    const ids = [];
+    for (const w of raw) {
+      if (w === null || typeof w !== "object" || Array.isArray(w)) continue;
+      const id = str(w, "id");
+      if (id !== null) ids.push(id);
+    }
+    if (!ids.length) return null;
+    return ids.sort().join(",");
+  }
+  function attributes(rec, scope) {
+    var _a, _b, _c, _d, _e, _f;
+    const empty = {
+      identifier: null,
+      component: null,
+      repo_id: null,
+      repo_name: null,
+      branch: null,
+      platform: null,
+      fixed_version: null,
+      cwe: null,
+      ai_verdict: null,
+      language: null,
+      file_path: null,
+      start_line: null,
+      origin: null,
+      secret_kind: null,
+      confidence: null,
+      owner_project: ownerProject(rec),
+      owner_path: ownerPath(rec),
+      // projects[] is this register's ownership dimension on all three scopes; the
+      // vulnerableAsset.tags fallback is what keeps gas/'s tags_json fixture live for SCA,
+      // whose nodes come off the same connection the OS register reads.
+      tags_json: (_a = projectsJson(rec)) != null ? _a : tagsJson(rec),
+      // The flat projects[] list, uncollapsed — see projectsListJson's own comment for why this
+      // is additive alongside tags_json rather than a replacement for it.
+      projects_json: projectsListJson(rec)
+    };
+    if (scope === "sast") {
+      const parts2 = splitRepoBranch(str(rec, "resource.name"), str(rec, "resource.type"));
+      return {
+        ...empty,
+        // brick/devsecops/metrics.py:365 puts the weakness TITLE here ("SQL Injection"), not
+        // an identifier — it is what every panel groups on to answer "what kind of thing is
+        // this". The identifier-shaped value lives in `cwe`.
+        identifier: (_b = clean(rec["name"])) != null ? _b : null,
+        // DIVERGENCE (brick): brick/devsecops/metrics.py:362 aliases `filePath` as `component`
+        // for SAST. This register has a dedicated `file_path` column, so writing the path into
+        // both would store the same string twice under two names; `component` stays null for
+        // sast and secrets per the D2 brief. Reported, not papered over.
+        component: null,
+        repo_id: str(rec, "resource.id"),
+        repo_name: parts2.repo,
+        branch: parts2.branch,
+        // Q_SAST's `resource { id name type }` selects no cloudPlatform — an honest gap, not a
+        // dropped mapping. There is nothing on the SAST node to fill `platform` from.
+        platform: null,
+        cwe: joinedCwes(rec),
+        ai_verdict: (_d = (_c = str(rec, "aiAnalysis.verdict")) == null ? void 0 : _c.trim().toUpperCase()) != null ? _d : null,
+        language: firstLanguage(dottedRaw(rec, "codeLibraryLanguage")),
+        file_path: str(rec, "filePath"),
+        start_line: num(rec, "startLine"),
+        origin: str(rec, "origin")
+      };
+    }
+    if (scope === "secrets") {
+      const parts2 = splitRepoBranch(str(rec, "resource.name"), str(rec, "resource.type"));
+      return {
+        ...empty,
+        // identifier <- secretDataId: it names the CREDENTIAL, and is what a rotation decision
+        // groups by. It is deliberately NOT the row key (that is the (secretDataId, path,
+        // lineNumber) hash in lifecycle.findingKey) — the same credential in five files is
+        // five findings and one rotation.
+        identifier: (_e = clean(rec["secretDataId"])) != null ? _e : null,
+        component: null,
+        repo_id: str(rec, "resource.id"),
+        repo_name: parts2.repo,
+        branch: parts2.branch,
+        platform: str(rec, "resource.cloudPlatform"),
+        secret_kind: str(rec, "type"),
+        confidence: str(rec, "confidence"),
+        file_path: str(rec, "path"),
+        start_line: num(rec, "lineNumber")
+      };
+    }
+    const parts = splitRepoBranch(
+      str(rec, "vulnerableAsset.name"),
+      str(rec, "vulnerableAsset.type")
+    );
+    return {
+      ...empty,
+      identifier: (_f = clean(rec["name"])) != null ? _f : null,
+      // The package, per brick/devsecops/metrics.py:269 — `detailedName` is "braces" on the
+      // live probe sample where `name` is "CVE-2024-4068".
+      component: str(rec, "detailedName"),
+      repo_id: str(rec, "vulnerableAsset.id"),
+      repo_name: parts.repo,
+      branch: parts.branch,
+      platform: str(rec, "vulnerableAsset.cloudPlatform"),
+      fixed_version: str(rec, "fixedVersion"),
+      // Filled for sca as well as sast, following brick's `_first_language`: Q_SCA selects
+      // `artifactType { codeLibraryLanguage }` and brick's asset_profile groups the SCA
+      // register by exactly this value. Leaving it null here would make every SCA asset group
+      // read UNKNOWN downstream.
+      language: firstLanguage(dottedRaw(rec, "artifactType.codeLibraryLanguage"))
+    };
+  }
+  function emptyRiskSignals() {
+    return { has_kev: null, has_exploit: null, epss: null, risk_observed_at: null };
+  }
+  function coerceRiskSignals(r) {
+    var _a;
+    const obs = observeRiskSignals({
+      hasCisaKevExploit: r["has_kev"],
+      hasExploit: r["has_exploit"],
+      epssProbability: r["epss"]
+    });
+    return {
+      has_kev: obs.kev,
+      has_exploit: obs.exploit,
+      epss: obs.epss,
+      risk_observed_at: (_a = clean(r["risk_observed_at"])) != null ? _a : null
+    };
+  }
+  function observeRiskSignals(rec) {
+    const bool = (v) => {
+      if (typeof v === "boolean") return v;
+      if (typeof v === "string") {
+        const s2 = v.trim().toUpperCase();
+        if (s2 === "TRUE") return true;
+        if (s2 === "FALSE") return false;
+      }
+      return null;
+    };
+    const rawEpss = clean(rec["epssProbability"]);
+    const n2 = typeof rawEpss === "number" ? rawEpss : rawEpss === null ? NaN : Number(rawEpss);
+    return {
+      kev: bool(rec["hasCisaKevExploit"]),
+      exploit: bool(rec["hasExploit"]),
+      epss: Number.isFinite(n2) ? n2 : null
+    };
+  }
+  function mergeRiskSignals(row, rec, scanTsIso) {
+    const obs = observeRiskSignals(rec);
+    if (obs.kev !== null && (row.has_kev == null || obs.kev)) row.has_kev = obs.kev;
+    if (obs.exploit !== null && (row.has_exploit == null || obs.exploit)) {
+      row.has_exploit = obs.exploit;
+    }
+    if (obs.epss !== null && (row.epss == null || obs.epss > row.epss)) row.epss = obs.epss;
+    const witnessed = obs.kev !== null || obs.exploit !== null || obs.epss !== null;
+    if (!witnessed) return;
+    if (row.risk_observed_at == null || scanTsIso < row.risk_observed_at) {
+      row.risk_observed_at = scanTsIso;
+    }
+  }
+  function emptyTwinStats() {
+    return { keys: 0, folded: 0, medianGapDays: null };
+  }
+  function foldSecretTwins(nodes) {
+    const groups = /* @__PURE__ */ new Map();
+    const order = [];
+    for (const n2 of nodes) {
+      const key = findingKey("secrets", n2);
+      const bucket = groups.get(key);
+      if (bucket) bucket.push(n2);
+      else {
+        groups.set(key, [n2]);
+        order.push(key);
+      }
+    }
+    const out = [];
+    const gaps = [];
+    let keys = 0;
+    let folded = 0;
+    for (const key of order) {
+      const bucket = groups.get(key);
+      if (bucket.length === 1) {
+        out.push(bucket[0]);
+        continue;
+      }
+      keys += 1;
+      folded += bucket.length - 1;
+      const births = [];
+      for (const n2 of bucket) {
+        const t = parseTs(n2["firstSeenAt"]);
+        if (t !== null) births.push(t);
+      }
+      if (births.length > 1) gaps.push((maxNum(births) - minNum(births)) / DAY_MS2);
+      let base = bucket[0];
+      let baseSeen = parseTs(base["lastSeenAt"]);
+      for (let i = 1; i < bucket.length; i += 1) {
+        const cand = bucket[i];
+        const t = parseTs(cand["lastSeenAt"]);
+        if (t !== null && (baseSeen === null || t > baseSeen)) {
+          base = cand;
+          baseSeen = t;
+        }
+      }
+      const merged = { ...base };
+      if (births.length) merged["firstSeenAt"] = toIso(minNum(births));
+      const branchTwin = bucket.find(
+        (n2) => {
+          var _a;
+          return ((_a = str(n2, "resource.type")) != null ? _a : "").toUpperCase() === RESOURCE_BRANCH;
+        }
+      );
+      if (branchTwin !== void 0 && branchTwin !== base) {
+        for (const k of Object.keys(merged)) {
+          if (k === "resource" || k.startsWith("resource.")) delete merged[k];
+        }
+        for (const [k, v] of Object.entries(branchTwin)) {
+          if (k === "resource" || k.startsWith("resource.")) merged[k] = v;
+        }
+      }
+      out.push(merged);
+    }
+    return {
+      nodes: out,
+      stats: { keys, folded, medianGapDays: gaps.length ? median(gaps) : null }
+    };
+  }
+  function makeRow(key, scope, attrs, sev2, firstSeen, scanId, scanTs, fixDate, fixObservedAt) {
+    return {
+      finding_key: key,
+      scope,
+      identifier: attrs.identifier,
+      component: attrs.component,
+      severity: sev2,
+      repo_id: attrs.repo_id,
+      repo_name: attrs.repo_name,
+      branch: attrs.branch,
+      platform: attrs.platform,
+      first_seen: firstSeen,
+      last_seen: scanTs,
+      status: STATUS_OPEN,
+      resolved_at: null,
+      resolution_src: null,
+      reopened_count: 0,
+      first_scan_id: scanId,
+      last_scan_id: scanId,
+      fix_date: fixDate,
+      fix_observed_at: fixObservedAt,
+      fixed_version: attrs.fixed_version,
+      // Left null here and filled by mergeRiskSignals() after the branch, which runs identically
+      // for new, reopened and persisting rows.
+      ...emptyRiskSignals(),
+      cwe: attrs.cwe,
+      ai_verdict: attrs.ai_verdict,
+      language: attrs.language,
+      file_path: attrs.file_path,
+      start_line: attrs.start_line,
+      origin: attrs.origin,
+      secret_kind: attrs.secret_kind,
+      rotated_at: null,
+      removed_at: null,
+      // Left null here and filled by applyValidation() after the branch, for the same reason
+      // the risk merge is: the rule is identical in all three branches.
+      validation_state: null,
+      validated_at: null,
+      confidence: attrs.confidence,
+      owner_project: attrs.owner_project,
+      owner_path: attrs.owner_path,
+      tags_json: attrs.tags_json,
+      projects_json: attrs.projects_json
+    };
+  }
+  function applyValidation(row, rec, scanTsIso) {
+    var _a, _b;
+    const observedState = ((_a = str(rec, "validationStatus")) != null ? _a : "").trim().toUpperCase();
+    if (observedState === "") return;
+    const observedAt = present(rec["lastValidatedAt"]) ? toIso(parseTs(rec["lastValidatedAt"])) : null;
+    const observedMeasured = MEASURED_VALIDATION.has(observedState);
+    const currentMeasured = MEASURED_VALIDATION.has(((_b = row.validation_state) != null ? _b : "").toUpperCase());
+    if (observedMeasured || !currentMeasured) {
+      row.validation_state = observedState;
+      row.validated_at = observedAt;
+    }
+    if (observedState === "INVALID" && row.rotated_at == null) {
+      row.rotated_at = observedAt != null ? observedAt : scanTsIso;
+    }
+  }
+  function reconcile(currentRecords, existingLedger, scanId, scanTs, prevScanId, options) {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A, _B, _C;
+    const {
+      scope,
+      disappearanceMode = "scan_ts",
+      prevScanTs = null,
+      scannedSeverities = null,
+      prevScanIdBySeverity: prevScanIdBySeverity2 = null
+    } = options;
+    const updated = {};
+    for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
+    const seen = /* @__PURE__ */ new Set();
+    const observations = [];
+    let newCount = 0;
+    let resolvedCount = 0;
+    let reopenedCount = 0;
+    const scanTsIso = (_a = toIso(parseTs(scanTs))) != null ? _a : String(scanTs);
+    const folded = scope === "secrets" ? foldSecretTwins(currentRecords) : { nodes: currentRecords, stats: emptyTwinStats() };
+    for (const rec of folded.nodes) {
+      const key = findingKey(scope, rec);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const sev2 = normalizeSeverity(
+        scope === "sast" ? (_b = clean(rec["severity"])) != null ? _b : clean(rec["originalSeverity"]) : clean(rec["severity"])
+      );
+      const apiFirst = (_d = (_c = clean(rec["firstDetectedAt"])) != null ? _c : clean(rec["firstSeenAt"])) != null ? _d : clean(rec["createdAt"]);
+      const apiStatus = String((_e = clean(rec["status"])) != null ? _e : "").toUpperCase();
+      const apiResolved = (_g = (_f = clean(rec["resolvedAt"])) != null ? _f : clean(rec["remediatedAt"])) != null ? _g : clean(rec["fixedAt"]);
+      const apiSaysResolved = present(apiResolved) || RESOLVED_STATUSES.has(apiStatus);
+      const attrs = attributes(rec, scope);
+      const fixSignal = present(rec["fixedVersion"]) || present(rec["fixDate"]);
+      const recFixDate = present(rec["fixDate"]) ? toIso(parseTs(rec["fixDate"])) : null;
+      const seedFix = (r) => {
+        if (r.fix_date == null && recFixDate !== null) r.fix_date = recFixDate;
+        if (r.fix_observed_at == null && fixSignal) r.fix_observed_at = scanTsIso;
+      };
+      let row = updated[key];
+      if (row === void 0) {
+        const firstSeen = (_h = minIso(apiFirst, scanTsIso)) != null ? _h : scanTsIso;
+        row = makeRow(
+          key,
+          scope,
+          attrs,
+          sev2,
+          firstSeen,
+          scanId,
+          scanTsIso,
+          recFixDate,
+          fixSignal ? scanTsIso : null
+        );
+        updated[key] = row;
+        newCount += 1;
+      } else if (row.status === STATUS_RESOLVED && !apiSaysResolved) {
+        row.status = STATUS_OPEN;
+        row.resolved_at = null;
+        row.resolution_src = null;
+        row.reopened_count = Number((_i = row.reopened_count) != null ? _i : 0) + 1;
+        row.first_seen = (_j = minIso(apiFirst, scanTsIso)) != null ? _j : scanTsIso;
+        row.last_seen = scanTsIso;
+        row.last_scan_id = scanId;
+        row.fix_date = null;
+        row.fix_observed_at = null;
+        row.removed_at = null;
+        row.rotated_at = null;
+        seedFix(row);
+        reopenedCount += 1;
+      } else {
+        if (row.status === STATUS_OPEN) {
+          row.first_seen = (_k = minIso(row.first_seen, apiFirst)) != null ? _k : row.first_seen;
+        }
+        row.last_seen = scanTsIso;
+        row.last_scan_id = scanId;
+        seedFix(row);
+      }
+      mergeRiskSignals(row, rec, scanTsIso);
+      if (scope === "secrets") applyValidation(row, rec, scanTsIso);
+      row.scope = scope;
+      row.severity = sev2;
+      row.identifier = attrs.identifier;
+      row.component = attrs.component;
+      row.repo_id = (_l = attrs.repo_id) != null ? _l : row.repo_id;
+      row.repo_name = (_m = attrs.repo_name) != null ? _m : row.repo_name;
+      row.branch = (_n = attrs.branch) != null ? _n : row.branch;
+      row.platform = (_o = attrs.platform) != null ? _o : row.platform;
+      row.fixed_version = (_p = attrs.fixed_version) != null ? _p : row.fixed_version;
+      row.cwe = (_q = attrs.cwe) != null ? _q : row.cwe;
+      row.ai_verdict = (_r = attrs.ai_verdict) != null ? _r : row.ai_verdict;
+      row.language = (_s = attrs.language) != null ? _s : row.language;
+      row.file_path = (_t = attrs.file_path) != null ? _t : row.file_path;
+      row.start_line = (_u = attrs.start_line) != null ? _u : row.start_line;
+      row.origin = (_v = attrs.origin) != null ? _v : row.origin;
+      row.secret_kind = (_w = attrs.secret_kind) != null ? _w : row.secret_kind;
+      row.confidence = (_x = attrs.confidence) != null ? _x : row.confidence;
+      row.owner_project = (_y = attrs.owner_project) != null ? _y : row.owner_project;
+      row.owner_path = (_z = attrs.owner_path) != null ? _z : row.owner_path;
+      row.tags_json = (_A = attrs.tags_json) != null ? _A : row.tags_json;
+      row.projects_json = (_B = attrs.projects_json) != null ? _B : row.projects_json;
+      if (apiSaysResolved && row.status === STATUS_OPEN) {
+        row.status = STATUS_RESOLVED;
+        row.resolved_at = present(apiResolved) ? toIso(parseTs(apiResolved)) : scanTsIso;
+        row.resolution_src = RESOLUTION_API;
+        if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
+        resolvedCount += 1;
+      }
+      observations.push({
+        scan_id: scanId,
+        finding_key: key,
+        present: 1,
+        severity: sev2,
+        status: row.status
+      });
+    }
+    if (prevScanId !== null) {
+      const inScope = scannedSeverities !== null ? new Set(scannedSeverities) : null;
+      for (const [key, row] of Object.entries(updated)) {
+        if (seen.has(key) || row.status === STATUS_RESOLVED) continue;
+        const sevRow = row.severity;
+        if (inScope !== null && (sevRow === null || !inScope.has(sevRow))) {
+          continue;
+        }
+        const expectedPrev = (_C = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[sevRow != null ? sevRow : ""]) != null ? _C : prevScanId;
+        if (row.last_scan_id !== expectedPrev) continue;
+        if (disappearanceMode === "midpoint" && prevScanTs) {
+          row.resolved_at = midpointIso(prevScanTs, scanTsIso);
+        } else {
+          row.resolved_at = scanTsIso;
+        }
+        row.status = STATUS_RESOLVED;
+        row.resolution_src = RESOLUTION_DISAPPEARED;
+        if (scope === "secrets" && row.removed_at == null) row.removed_at = row.resolved_at;
+        resolvedCount += 1;
+        observations.push({
+          scan_id: scanId,
+          finding_key: key,
+          present: 0,
+          severity: row.severity,
+          status: STATUS_RESOLVED
+        });
+      }
+    }
+    return {
+      ledger: updated,
+      observations,
+      deltas: {
+        new_count: newCount,
+        resolved_count: resolvedCount,
+        reopened_count: reopenedCount
+      },
+      twinStats: folded.stats
+    };
+  }
+
+  // src/domain/ledgerCore.ts
+  var DAY_MS3 = 864e5;
+  var COMPACTED_ASSET = "(compacted)";
+  function emptyState() {
+    return { scans: [], ledger: {}, episodes: [] };
+  }
+  function scansAsc(scans, scope) {
+    const rows = scope === void 0 ? [...scans] : scans.filter((r) => r.scope === scope);
+    return rows.sort((a, b) => {
+      var _a, _b;
+      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
+      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
+      if (ta !== tb) return ta - tb;
+      return cmp(a.scan_id, b.scan_id);
+    });
+  }
+  function latestScan(scans, scope) {
+    const asc = scansAsc(scans, scope);
+    return asc.length ? asc[asc.length - 1] : null;
+  }
+  function prevScanIdBySeverity(scans, scope) {
+    const remaining = new Set(SEVERITY_ORDER);
+    const mapping = {};
+    const desc = scansAsc(scans, scope).reverse();
+    for (const r of desc) {
+      const sevScope = parseSeverities(r.severities);
+      const covered = sevScope === null ? [...remaining] : [...remaining].filter((s2) => sevScope.includes(s2));
+      for (const sev2 of covered) mapping[sev2] = r.scan_id;
+      covered.forEach((s2) => remaining.delete(s2));
+      if (!remaining.size) break;
+    }
+    return Object.keys(mapping).length ? mapping : null;
+  }
+  function existingScanDeltas(scans, scanId, scope) {
+    const row = scans.find(
+      (r) => r.scan_id === scanId && (scope === void 0 || r.scope === scope)
+    );
+    if (!row) return null;
+    return {
+      new_count: row.new_count,
+      resolved_count: row.resolved_count,
+      reopened_count: row.reopened_count
+    };
+  }
+  function reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId) {
+    var _a;
+    const newKeys = Object.keys(updated).filter((k) => !(k in existingLedger));
+    if (!newKeys.length) return;
+    const newKeySet = new Set(newKeys);
+    const episodeReopens = /* @__PURE__ */ new Map();
+    for (const e of state.episodes) {
+      if (e.superseded_by_scan === null && newKeySet.has(e.finding_key)) {
+        episodeReopens.set(e.finding_key, e);
+      }
+    }
+    for (const [key, episode] of episodeReopens) {
+      const row = updated[key];
+      if (row.status === "OPEN") {
+        row.reopened_count = Number((_a = episode.reopened_count) != null ? _a : 0) + 1;
+        deltas.new_count -= 1;
+        deltas.reopened_count += 1;
+        episode.superseded_by_scan = scanId;
+      } else {
+        if (!episode.owner_project && row.owner_project) episode.owner_project = row.owner_project;
+        delete updated[key];
+        deltas.new_count -= 1;
+        deltas.resolved_count -= 1;
+      }
+    }
+  }
+  function persistFlatScan(state, records, options) {
+    var _a, _b, _c, _d;
+    const scope = options.scope;
+    const scanId = options.scanId || nowIso(options.now);
+    const scanTs = scanId;
+    const disappearanceMode = (_a = options.disappearanceMode) != null ? _a : DISAPPEARANCE_RESOLUTION;
+    const severitiesText = serializeSeverities((_b = options.scannedSeverities) != null ? _b : null);
+    const sevScope = parseSeverities(severitiesText);
+    const existing = existingScanDeltas(state.scans, scanId, scope);
+    if (existing !== null) {
+      return { deltas: existing, observations: [], scanRow: null, twinStats: emptyTwinStats() };
+    }
+    const prev = latestScan(state.scans, scope);
+    const prevScanId = prev ? prev.scan_id : null;
+    const prevScanTs = prev ? prev.ts : null;
+    const prevBySev = prevScanId !== null ? prevScanIdBySeverity(state.scans, scope) : null;
+    const prefix = `${scope}:`;
+    const existingLedger = {};
+    const otherScopes = {};
+    for (const [key, row] of Object.entries(state.ledger)) {
+      if (key.startsWith(prefix)) existingLedger[key] = row;
+      else otherScopes[key] = row;
+    }
+    const { ledger: updated, observations, deltas, twinStats } = reconcile(
+      records,
+      existingLedger,
+      scanId,
+      scanTs,
+      prevScanId,
+      {
+        scope,
+        disappearanceMode,
+        prevScanTs,
+        scannedSeverities: sevScope,
+        prevScanIdBySeverity: prevBySev
+      }
+    );
+    reconcileEpisodeCollisions(state, updated, existingLedger, deltas, scanId);
+    const scanRow = {
+      scan_id: scanId,
+      ts: scanTs,
+      scope,
+      mode: options.mode,
+      severities: severitiesText,
+      total: records.length,
+      new_count: deltas.new_count,
+      resolved_count: deltas.resolved_count,
+      reopened_count: deltas.reopened_count,
+      raw_ref: (_c = options.rawRef) != null ? _c : null,
+      obs_ref: (_d = options.obsRef) != null ? _d : null,
+      sealed: 0
+    };
+    state.scans.push(scanRow);
+    state.ledger = { ...otherScopes, ...updated };
+    return { deltas, observations, scanRow, twinStats };
+  }
+  function withDerived(row, nowMs) {
+    var _a, _b;
+    const first = parseTs(row.first_seen);
+    const resolved = parseTs(row.resolved_at);
+    const open = row.status === "OPEN";
+    const isSca = row.scope === "sca";
+    const fixAvailableAt = isSca ? (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null : row.first_seen;
+    const fixAvailMs = parseTs(fixAvailableAt);
+    const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
+    const actionableFrom = actionableMs === null ? null : toIso(actionableMs);
+    return {
+      ...row,
+      mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS3 : null,
+      age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS3 : null,
+      fix_available_at: fixAvailableAt,
+      actionable_from: actionableFrom,
+      mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS3 : null,
+      actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS3 : null,
+      // `isSca &&` is the flag's DEFINITION, not a shortcut: "awaiting a vendor fix" names a
+      // state only a dependency finding can be in. On sast/secrets it is false even for the
+      // degenerate row whose first_seen is missing — that row cannot be measured (its actionable
+      // fields are null above), which is a different and true statement about it.
+      awaiting_vendor_fix: isSca && open && fixAvailableAt === null
+    };
+  }
+  function rowFromEpisode(e) {
+    return {
+      finding_key: e.finding_key,
+      scope: e.scope,
+      identifier: e.identifier,
+      component: e.component,
+      severity: e.severity,
+      repo_id: null,
+      // gas/'s COMPACTED_ASSET placeholder, on this register's asset column.
+      repo_name: COMPACTED_ASSET,
+      branch: null,
+      platform: null,
+      first_seen: e.first_seen,
+      last_seen: e.resolved_at,
+      status: "RESOLVED",
+      resolved_at: e.resolved_at,
+      resolution_src: e.resolution_src,
+      reopened_count: e.reopened_count,
+      first_scan_id: null,
+      last_scan_id: null,
+      // Carried through compaction (ledgerTypes.EpisodeRow) so a sealed sca episode keeps its
+      // actionable-clock inputs; null on sast/secrets episodes, where withDerived does not read
+      // them anyway.
+      fix_date: e.fix_date,
+      fix_observed_at: e.fix_observed_at,
+      fixed_version: null,
+      has_kev: e.has_kev,
+      has_exploit: e.has_exploit,
+      epss: e.epss,
+      risk_observed_at: null,
+      cwe: e.cwe,
+      ai_verdict: null,
+      language: e.language,
+      file_path: null,
+      start_line: null,
+      origin: null,
+      secret_kind: null,
+      rotated_at: null,
+      removed_at: null,
+      validation_state: null,
+      validated_at: null,
+      confidence: null,
+      owner_project: e.owner_project,
+      owner_path: null,
+      tags_json: null,
+      // EpisodeRow carries no projects_json (compaction.ts's EpisodeRow has no such column, and
+      // a sealed episode's owner_path is already null above for the same reason) — nothing to
+      // expand it from.
+      projects_json: null
+    };
+  }
+  function baseRows(state, options = {}) {
+    var _a;
+    const nowMs = (_a = options.now) != null ? _a : Date.now();
+    const scope = options.scope;
+    const out = [];
+    for (const row of Object.values(state.ledger)) {
+      if (scope !== void 0 && row.scope !== scope) continue;
+      out.push(withDerived(row, nowMs));
+    }
+    for (const e of state.episodes) {
+      if (e.superseded_by_scan !== null) continue;
+      if (e.finding_key in state.ledger) continue;
+      if (scope !== void 0 && e.scope !== scope) continue;
+      out.push(withDerived(rowFromEpisode(e), nowMs));
+    }
+    return out;
+  }
+  function severityCountsFromObservations(observations) {
+    var _a;
+    const counts = {};
+    for (const o of observations) {
+      if (o.present !== 1) continue;
+      const sev2 = normalizeSeverity(o.severity);
+      counts[sev2] = ((_a = counts[sev2]) != null ? _a : 0) + 1;
+    }
+    return counts;
+  }
+
+  // src/domain/program.ts
+  var DAY_MS4 = 864e5;
+  function isOpen(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function isSastRule(rule) {
+    return "cwe" in rule;
+  }
+  var SIGNAL_NAMES = [
+    "kev",
+    "exploit",
+    "epss",
+    "cwe",
+    "aiVerdict",
+    "critical"
+  ];
+  function ruleIsEmpty(rule) {
+    return isSastRule(rule) ? !rule.cwe && !rule.aiVerdict && !rule.critical : !rule.kev && !rule.exploit && !rule.epss;
+  }
+  function ruleSentence(rule) {
+    const parts = [];
+    if (isSastRule(rule)) {
+      if (rule.cwe) parts.push("CWE in the Top 25");
+      if (rule.aiVerdict) parts.push("AI triage says exploitable");
+      if (rule.critical) parts.push("severity CRITICAL");
+    } else {
+      if (rule.kev) parts.push("CISA KEV");
+      if (rule.exploit) parts.push("public exploit");
+      if (rule.epss) parts.push("EPSS >= " + rule.epssThreshold.toFixed(2));
+    }
+    return parts.length ? parts.join(" or ") : "no signal enabled";
+  }
+  function resolveRule(row, rule) {
+    const forScope = ruleForScope(row.scope);
+    if (forScope === null) {
+      throw new Error(
+        `program metrics have no meaning for scope "${row.scope}": coverage and efficiency are rates over a high-risk population, and that scope has no high-risk rule (config.ruleForScope returns null). Segment secrets by validation_state and confidence instead.`
+      );
+    }
+    return rule != null ? rule : forScope;
+  }
+  function cweMatchesExploited(cwe) {
+    const top = CWE_TOP_25_2024;
+    for (const raw of cwe.split(",")) {
+      const id = raw.trim();
+      if (!id) continue;
+      if (top.includes(id)) return true;
+      const parent = CWE_ANCESTORS[id];
+      if (parent !== void 0 && top.includes(parent)) return true;
+    }
+    return false;
+  }
+  function cveClauses(row, rule) {
+    const epssObserved = typeof row.epss === "number" && Number.isFinite(row.epss);
+    const out = [];
+    if (rule.kev) {
+      out.push({ name: "kev", fired: row.has_kev === true, observed: row.has_kev != null });
+    }
+    if (rule.exploit) {
+      out.push({
+        name: "exploit",
+        fired: row.has_exploit === true,
+        observed: row.has_exploit != null
+      });
+    }
+    if (rule.epss) {
+      out.push({
+        name: "epss",
+        fired: epssObserved && row.epss >= rule.epssThreshold,
+        observed: epssObserved
+      });
+    }
+    return out;
+  }
+  function sastClauses(row, rule) {
+    const cwe = typeof row.cwe === "string" ? row.cwe : "";
+    const cweObserved = cwe.trim().length > 0;
+    const verdictRaw = typeof row.ai_verdict === "string" ? row.ai_verdict.trim() : "";
+    const verdictObserved = verdictRaw.length > 0;
+    const severity = normalizeSeverity(row.severity);
+    const severityObserved = severity !== "UNKNOWN";
+    const out = [];
+    if (rule.cwe) {
+      out.push({ name: "cwe", fired: cweObserved && cweMatchesExploited(cwe), observed: cweObserved });
+    }
+    if (rule.aiVerdict) {
+      out.push({
+        name: "aiVerdict",
+        fired: verdictObserved && AI_VERDICTS_HIGH.has(verdictRaw.toUpperCase()),
+        observed: verdictObserved
+      });
+    }
+    if (rule.critical) {
+      out.push({
+        name: "critical",
+        fired: severityObserved && severity === "CRITICAL",
+        observed: severityObserved
+      });
+    }
+    return out;
+  }
+  function ruleClauses(row, rule) {
+    return isSastRule(rule) ? sastClauses(row, rule) : cveClauses(row, rule);
+  }
+  function firedSignals(row, rule) {
+    const r = resolveRule(row, rule);
+    return ruleClauses(row, r).filter((c) => c.fired).map((c) => c.name);
+  }
+  function classifyRisk(row, rule) {
+    const r = resolveRule(row, rule);
+    if (ruleIsEmpty(r)) return "unknown";
+    const clauses = ruleClauses(row, r);
+    if (clauses.some((c) => c.fired)) return "high";
+    if (clauses.some((c) => !c.observed)) return "unknown";
+    return "low";
+  }
+  var RISK_TIER_ORDER = [...SIGNAL_NAMES, "none", "unknown"];
+  function riskTier(row, rule) {
+    const cls = classifyRisk(row, rule);
+    if (cls !== "high") return cls === "low" ? "none" : "unknown";
+    return firedSignals(row, rule)[0];
+  }
+  var NO_RATE = { point: null, lo: null, hi: null };
+  function pct(num2, den) {
+    return den > 0 ? num2 / den * 100 : null;
+  }
+  function emptyMatrix() {
+    return {
+      tp: 0,
+      fp: 0,
+      fn: 0,
+      tn: 0,
+      unknownRemediated: 0,
+      unknownOpen: 0,
+      classified: 0,
+      unknown: 0,
+      total: 0,
+      remediated: 0,
+      open: 0,
+      highRisk: 0,
+      notHighRisk: 0,
+      coverage: NO_RATE,
+      efficiency: NO_RATE,
+      prevalence: null,
+      signalCoveragePct: null
+    };
+  }
+  function finalize(m) {
+    m.classified = m.tp + m.fp + m.fn + m.tn;
+    m.unknown = m.unknownRemediated + m.unknownOpen;
+    m.total = m.classified + m.unknown;
+    m.remediated = m.tp + m.fp + m.unknownRemediated;
+    m.open = m.fn + m.tn + m.unknownOpen;
+    m.highRisk = m.tp + m.fn;
+    m.notHighRisk = m.fp + m.tn;
+    m.coverage = {
+      point: pct(m.tp, m.tp + m.fn),
+      lo: pct(m.tp, m.tp + m.fn + m.unknownOpen),
+      hi: pct(m.tp + m.unknownRemediated, m.tp + m.unknownRemediated + m.fn)
+    };
+    m.efficiency = {
+      point: pct(m.tp, m.tp + m.fp),
+      lo: pct(m.tp, m.tp + m.fp + m.unknownRemediated),
+      hi: pct(m.tp + m.unknownRemediated, m.tp + m.fp + m.unknownRemediated)
+    };
+    m.prevalence = pct(m.highRisk, m.classified);
+    m.signalCoveragePct = pct(m.classified, m.total);
+    return m;
+  }
+  function tallyRow(m, row, rule) {
+    const open = isOpen(row.status);
+    switch (classifyRisk(row, rule)) {
+      case "high":
+        if (open) m.fn += 1;
+        else m.tp += 1;
+        break;
+      case "low":
+        if (open) m.tn += 1;
+        else m.fp += 1;
+        break;
+      default:
+        if (open) m.unknownOpen += 1;
+        else m.unknownRemediated += 1;
+    }
+  }
+  function confusionMatrix(rows, rule) {
+    const m = emptyMatrix();
+    for (const row of rows) tallyRow(m, row, rule);
+    return finalize(m);
+  }
+  function confusionBySeverity(rows, rule) {
+    var _a;
+    const bySev = {};
+    const overall = emptyMatrix();
+    for (const row of rows) {
+      const s2 = normalizeSeverity(row.severity);
+      const m = (_a = bySev[s2]) != null ? _a : bySev[s2] = emptyMatrix();
+      tallyRow(m, row, rule);
+      tallyRow(overall, row, rule);
+    }
+    const perSev = {};
+    for (const s2 of SEVERITY_ORDER) if (bySev[s2]) perSev[s2] = finalize(bySev[s2]);
+    return { perSev, overall: finalize(overall) };
+  }
+  function zeroCounts() {
+    return { kev: 0, exploit: 0, epss: 0, cwe: 0, aiVerdict: 0, critical: 0 };
+  }
+  function signalBreakdown(rows, rule) {
+    const out = {
+      fired: zeroCounts(),
+      missing: zeroCounts(),
+      anyOf: 0,
+      cweUnmapped: 0
+    };
+    for (const row of rows) {
+      const r = resolveRule(row, rule);
+      const clauses = ruleClauses(row, r);
+      for (const c of clauses) {
+        if (c.fired) out.fired[c.name] += 1;
+        if (!c.observed) out.missing[c.name] += 1;
+        if (c.name === "cwe" && c.observed && !c.fired) out.cweUnmapped += 1;
+      }
+      if (classifyRisk(row, r) === "high") out.anyOf += 1;
+    }
+    return out;
+  }
+  var RULE_SUBSETS = [
+    ["KEV only", true, false, false],
+    ["Exploit only", false, true, false],
+    ["EPSS only", false, false, true],
+    ["KEV or exploit", true, true, false],
+    ["KEV or EPSS", true, false, true],
+    ["Exploit or EPSS", false, true, true],
+    ["All three", true, true, true]
+  ];
+  var SAST_RULE_SUBSETS = [
+    ["CWE only", true, false, false],
+    ["AI verdict only", false, true, false],
+    ["CRITICAL only", false, false, true],
+    ["CWE or AI verdict", true, true, false],
+    ["CWE or CRITICAL", true, false, true],
+    ["AI verdict or CRITICAL", false, true, true],
+    ["All three", true, true, true]
+  ];
+  function ruleSensitivity(rows, active) {
+    if (isSastRule(active)) {
+      return SAST_RULE_SUBSETS.map(([label, cwe, aiVerdict, critical]) => {
+        const rule = { cwe, aiVerdict, critical };
+        return point(
+          label,
+          rule,
+          rows,
+          cwe === active.cwe && aiVerdict === active.aiVerdict && critical === active.critical
+        );
+      });
+    }
+    return RULE_SUBSETS.map(([label, kev, exploit, epss]) => {
+      const rule = { kev, exploit, epss, epssThreshold: active.epssThreshold };
+      return point(
+        label,
+        rule,
+        rows,
+        kev === active.kev && exploit === active.exploit && epss === active.epss
+      );
+    });
+  }
+  function point(label, rule, rows, active) {
+    const matrix = confusionMatrix(rows, rule);
+    return {
+      label,
+      rule,
+      sentence: ruleSentence(rule),
+      active,
+      coverage: matrix.coverage.point,
+      efficiency: matrix.efficiency.point,
+      highRisk: matrix.highRisk,
+      unknown: matrix.unknown,
+      matrix
+    };
+  }
+  function monthKey(ms) {
+    const d = new Date(ms);
+    return d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+  }
+  function monthStartMs(key) {
+    const [y, m] = key.split("-").map(Number);
+    return Date.UTC(y, m - 1, 1);
+  }
+  function nextMonthKey(key) {
+    const [y, m] = key.split("-").map(Number);
+    return m === 12 ? y + 1 + "-01" : y + "-" + String(m + 1).padStart(2, "0");
+  }
+  function verdictOf(netPct) {
+    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
+    return netPct > 0 ? "gaining" : "falling-behind";
+  }
+  function capacityByMonth(rows, scans, options = {}) {
+    var _a, _b, _c, _d, _e, _f;
+    const nowMs = (_a = options.now) != null ? _a : Date.now();
+    const parsed = [];
+    for (const row of rows) {
+      if (options.highRiskOnly && classifyRisk(row, options.rule) !== "high") continue;
+      const first = parseTs(row.first_seen);
+      if (first === null) continue;
+      parsed.push({ first, resolved: parseTs(row.resolved_at) });
+    }
+    const scanMs = scans.filter((s2) => s2["shape"] !== "grouped").map((s2) => parseTs(s2["ts"])).filter((t) => t !== null);
+    const firstScanMs = scanMs.length ? minNum(scanMs) : null;
+    const observedFromMs = options.observedFrom !== void 0 ? parseTs(options.observedFrom) : firstScanMs;
+    const observedMonth = observedFromMs === null ? null : monthKey(observedFromMs);
+    const scanClosedByMonth = {};
+    if (options.closedObserved !== void 0) {
+      for (const [k, v] of Object.entries((_b = options.closedObserved) != null ? _b : {})) {
+        const t = parseTs(k);
+        const key = t === null ? k : monthKey(t);
+        scanClosedByMonth[key] = ((_c = scanClosedByMonth[key]) != null ? _c : 0) + Number(v != null ? v : 0);
+      }
+    } else {
+      for (const s2 of scans) {
+        if (s2["shape"] === "grouped") continue;
+        const t = parseTs(s2["ts"]);
+        if (t === null) continue;
+        if (firstScanMs !== null && t === firstScanMs) continue;
+        const k = monthKey(t);
+        scanClosedByMonth[k] = ((_d = scanClosedByMonth[k]) != null ? _d : 0) + Number((_e = s2["resolved_count"]) != null ? _e : 0);
+      }
+    }
+    if (!parsed.length) {
+      return { months: [], mmcrMean: null, oneInN: null, netTotal: 0, verdict: null, monthsCounted: 0 };
+    }
+    const earliest = minNum(parsed.map((p) => p.first));
+    const months = [];
+    const lastKey = monthKey(nowMs);
+    for (let key = monthKey(earliest); ; key = nextMonthKey(key)) {
+      const start = monthStartMs(key);
+      const end = monthStartMs(nextMonthKey(key));
+      let openAtStart = 0;
+      let opened = 0;
+      let closed = 0;
+      for (const p of parsed) {
+        if (p.first < start && (p.resolved === null || p.resolved >= start)) openAtStart += 1;
+        if (p.first >= start && p.first < end) opened += 1;
+        if (p.resolved !== null && p.resolved >= start && p.resolved < end) closed += 1;
+      }
+      const netPct = openAtStart > 0 ? (closed - opened) / openAtStart * 100 : null;
+      months.push({
+        month: key,
+        openAtStart,
+        opened,
+        closed,
+        mmcr: openAtStart > 0 ? closed / openAtStart * 100 : null,
+        net: closed - opened,
+        netPct,
+        verdict: verdictOf(netPct),
+        // The first month is partial only in the sense that the register begins mid-month; it
+        // still fully observes its own closures, so only the current month is excluded.
+        partial: key === lastKey,
+        reconstructed: observedMonth !== null && key < observedMonth,
+        scanClosed: (_f = scanClosedByMonth[key]) != null ? _f : null
+      });
+      if (key === lastKey) break;
+      if (months.length > 600) break;
+    }
+    const counted = months.filter((m) => !m.partial && !m.reconstructed && m.mmcr !== null);
+    const mmcrMean = counted.length ? counted.reduce((a, m) => a + m.mmcr, 0) / counted.length : null;
+    const netTotal = months.reduce((a, m) => a + m.net, 0);
+    const netPctOverall = counted.length ? counted.reduce((a, m) => {
+      var _a2;
+      return a + ((_a2 = m.netPct) != null ? _a2 : 0);
+    }, 0) / counted.length : null;
+    const trimmed = options.maxMonths !== void 0 && months.length > options.maxMonths ? months.slice(months.length - options.maxMonths) : months;
+    return {
+      months: trimmed,
+      mmcrMean,
+      oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
+      netTotal,
+      verdict: counted.length ? verdictOf(netPctOverall) : null,
+      monthsCounted: counted.length
+    };
+  }
+  function observationWindowDays(rows, now) {
+    const nowMs = now != null ? now : Date.now();
+    const firsts = rows.map((r) => parseTs(r.first_seen)).filter((t) => t !== null);
+    if (!firsts.length) return null;
+    return (nowMs - minNum(firsts)) / DAY_MS4;
+  }
+
+  // src/domain/insights.ts
+  function isOpen2(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function sev(r) {
+    return normalizeSeverity(r["severity"]);
+  }
+  function byScope(rows, scope) {
+    return scope ? rows.filter((r) => r.scope === scope) : rows;
+  }
+  function severityStats(records, scope) {
+    var _a;
+    const rows = scope ? records.filter((r) => r["scope"] === scope) : records;
+    const out = {};
+    for (const r of rows) {
+      const s2 = sev(r);
+      const stat = (_a = out[s2]) != null ? _a : out[s2] = { total: 0, open: 0, resolved: 0 };
+      stat.total += 1;
+      if (isOpen2(r["status"])) stat.open += 1;
+      else stat.resolved += 1;
+    }
+    return out;
+  }
+  var AGE_BUCKET_EDGES = [7, 30, 90];
+  var AGE_BUCKET_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"];
+  function ageBuckets(rows, scope) {
+    const { perKey, totalOpen } = ageBucketsBy(rows, (r) => normalizeSeverity(r.severity), scope);
+    return { perSev: perKey, totalOpen };
+  }
+  function ageBucketsBy(rowsIn, keyOf2, scope) {
+    const rows = byScope(rowsIn, scope);
+    const perKey = {};
+    let totalOpen = 0;
+    for (const row of rows) {
+      if (!isOpen2(row.status)) continue;
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) continue;
+      const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+      const k = keyOf2(row);
+      if (!perKey[k]) perKey[k] = [0, 0, 0, 0];
+      perKey[k][bucket] += 1;
+      totalOpen += 1;
+    }
+    return { perKey, totalOpen };
+  }
+  function slaEdgeBucket(severity) {
+    const target = SLA_TARGETS[normalizeSeverity(severity)];
+    if (typeof target !== "number" || !Number.isFinite(target)) return null;
+    return target <= AGE_BUCKET_EDGES[0] ? 0 : target <= AGE_BUCKET_EDGES[1] ? 1 : target <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+  }
+  function slaEdgeIsExact(severity) {
+    const target = SLA_TARGETS[normalizeSeverity(severity)];
+    return typeof target === "number" && AGE_BUCKET_EDGES.indexOf(target) >= 0;
+  }
+  function agingDistribution(rows, scope) {
+    const perSev = {};
+    let unaged = 0;
+    let totalOpen = 0;
+    for (const row of byScope(rows, scope)) {
+      if (!isOpen2(row.status)) continue;
+      const s2 = normalizeSeverity(row.severity);
+      if (!perSev[s2]) perSev[s2] = [0, 0, 0, 0];
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) {
+        unaged += 1;
+        continue;
+      }
+      const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+      perSev[s2][bucket] += 1;
+      totalOpen += 1;
+    }
+    const slaEdge = {};
+    const slaTargets = {};
+    const slaEdgeExact = {};
+    for (const s2 of Object.keys(perSev)) {
+      slaEdge[s2] = slaEdgeBucket(s2);
+      const t = SLA_TARGETS[s2];
+      slaTargets[s2] = typeof t === "number" && Number.isFinite(t) ? t : null;
+      slaEdgeExact[s2] = slaEdgeIsExact(s2);
+    }
+    return {
+      labels: AGE_BUCKET_LABELS.slice(),
+      perSev,
+      unaged,
+      totalOpen,
+      slaEdge,
+      slaTargets,
+      slaEdgeExact
+    };
+  }
+  var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
+  function openAge(row) {
+    if (!isOpen2(row.status)) return null;
+    const age = row.age_days;
+    return typeof age === "number" && Number.isFinite(age) ? age : null;
+  }
+  function rankGroups(rows, keyFn, topN, meta) {
+    const groups = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const age = openAge(row);
+      if (age === null) continue;
+      const raw = keyFn(row);
+      const key = raw && raw.trim() !== "" ? raw : "(none)";
+      let g = groups.get(key);
+      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...meta ? meta(row) : {} });
+      g.openCount += 1;
+      if (age > AGED_OPEN_EDGE) g.agedCount += 1;
+      if (age > g.oldestDays) g.oldestDays = age;
+    }
+    return [...groups.values()].sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)).slice(0, topN);
+  }
+  function oldestOpen(rows, topN = 7, scope) {
+    const scoped = byScope(rows, scope);
+    const findings = scoped.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
+      identifier: r.identifier,
+      repo: r.repo_name,
+      ownerProject: r.owner_project,
+      severity: normalizeSeverity(r.severity),
+      ageDays: age
+    }));
+    return {
+      findings,
+      byRepo: rankGroups(scoped, (r) => {
+        var _a;
+        return String((_a = r.repo_name) != null ? _a : "");
+      }, topN, (r) => {
+        var _a;
+        return {
+          ownerProject: String((_a = r.owner_project) != null ? _a : "")
+        };
+      })
+    };
+  }
+  function movement(baseRowsIn, latestFlatScan, scanCount, scope) {
+    if (!latestFlatScan) {
+      return { newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: scanCount > 1 };
+    }
+    const baseRows2 = byScope(baseRowsIn, scope);
+    let persisting = 0;
+    for (const row of baseRows2) {
+      if (!isOpen2(row.status)) continue;
+      if (row.last_scan_id === latestFlatScan.scan_id && row.first_scan_id !== latestFlatScan.scan_id) {
+        persisting += 1;
+      }
+    }
+    return {
+      newCount: latestFlatScan.new_count,
+      resolvedCount: latestFlatScan.resolved_count,
+      reopenedCount: latestFlatScan.reopened_count,
+      persisting,
+      hasPrevious: scanCount > 1
+    };
+  }
+  var GROUP_COLUMNS = {
+    repo: "repo_name",
+    language: "language",
+    owner_project: "owner_project",
+    secret_kind: "secret_kind",
+    cwe: "cwe"
+  };
+  function riskTierStats(rowsIn, rule, scope) {
+    var _a;
+    const rows = byScope(rowsIn, scope);
+    const perTier = {};
+    for (const t of RISK_TIER_ORDER) perTier[t] = 0;
+    let open = 0;
+    let excludedSecrets = 0;
+    for (const row of rows) {
+      if (!isOpen2(row.status)) continue;
+      if (row.scope === "secrets") {
+        excludedSecrets += 1;
+        continue;
+      }
+      open += 1;
+      perTier[riskTier(row, rule)] += 1;
+    }
+    return { perTier, open, unclassified: (_a = perTier["unknown"]) != null ? _a : 0, excludedSecrets };
+  }
+  function triageFunnel(rowsIn, rule, exposedKeys, exposureKnown, scope) {
+    const rows = byScope(rowsIn, scope);
+    const out = {
+      open: 0,
+      intel: 0,
+      exploitable: 0,
+      exposed: 0,
+      overdue: 0,
+      unclassified: 0,
+      exposureKnown,
+      excludedSecrets: 0
+    };
+    for (const row of rows) {
+      if (!isOpen2(row.status)) continue;
+      if (row.scope === "secrets") {
+        out.excludedSecrets += 1;
+        continue;
+      }
+      out.open += 1;
+      const tier = riskTier(row, rule);
+      if (tier === "unknown") {
+        out.unclassified += 1;
+        continue;
+      }
+      out.intel += 1;
+      if (tier !== "kev" && tier !== "exploit") continue;
+      out.exploitable += 1;
+      if (!exposureKnown || !exposedKeys.has(row.finding_key)) continue;
+      out.exposed += 1;
+      const target = SLA_TARGETS[normalizeSeverity(row.severity)];
+      const age = row.actionable_age_days;
+      if (typeof target === "number" && typeof age === "number" && Number.isFinite(age) && age > target) {
+        out.overdue += 1;
+      }
+    }
+    return out;
+  }
+  function concentration(records, dims, topN = 5, scope) {
+    var _a;
+    const rows = scope ? records.filter((r) => r["scope"] === scope) : records;
+    const perDim = {};
+    const moreDim = {};
+    for (const dim of dims) {
+      const column = GROUP_COLUMNS[dim];
+      if (!column) continue;
+      const buckets = /* @__PURE__ */ new Map();
+      for (const r of rows) {
+        if (!isOpen2(r["status"])) continue;
+        const raw = r[column];
+        const k = raw === null || raw === void 0 || String(raw).trim() === "" ? "(none)" : String(raw);
+        let b = buckets.get(k);
+        if (!b) buckets.set(k, b = { open: 0, repos: /* @__PURE__ */ new Set(), kev: 0 });
+        b.open += 1;
+        const a = String((_a = r["repo_name"]) != null ? _a : "");
+        if (a) b.repos.add(a);
+        if (r["has_kev"] === true) b.kev += 1;
+      }
+      const rowsRanked = [...buckets.entries()].map(([key, b]) => ({ key, open: b.open, repos: b.repos.size, kev: b.kev })).sort((a, b) => b.open - a.open || a.key.localeCompare(b.key));
+      perDim[dim] = rowsRanked.slice(0, topN);
+      moreDim[dim] = Math.max(0, rowsRanked.length - topN);
+    }
+    return { perDim, moreDim };
+  }
+
+  // src/domain/remediation.ts
+  var DAY_MS5 = 864e5;
+  function isOpen3(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function resolvedMttr(row) {
+    const m = row.mttr_days;
+    return typeof m === "number" && Number.isFinite(m) ? m : null;
+  }
+  function openAge2(row) {
+    if (!isOpen3(row.status)) return null;
+    const a = row.age_days;
+    return typeof a === "number" && Number.isFinite(a) ? a : null;
+  }
+  function kmCurve(events, times) {
+    const curve = [];
+    let s2 = 1;
+    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
+      const atRisk = times.filter((x) => x >= t).length;
+      if (atRisk === 0) continue;
+      const d = events.filter((x) => x === t).length;
+      s2 *= 1 - d / atRisk;
+      curve.push({ t, s: s2, atRisk, events: d });
+    }
+    return curve;
+  }
+  function kmQuantileFromCurve(curve, q) {
+    const threshold = 1 - q;
+    for (const p of curve) if (p.s <= threshold) return p.t;
+    return null;
+  }
+  function kmMedianFromCurve(curve) {
+    return kmQuantileFromCurve(curve, 0.5);
+  }
+  function kaplanMeier(rows) {
+    const events = [];
+    const censored = [];
+    for (const row of rows) {
+      const m = resolvedMttr(row);
+      if (m !== null) {
+        events.push(m);
+        continue;
+      }
+      const c = openAge2(row);
+      if (c !== null) censored.push(c);
+    }
+    const times = events.concat(censored);
+    const total = events.length + censored.length;
+    const restrictionTime = times.length ? maxNum(times) : null;
+    const naiveMean = mean(events);
+    const naiveMedian = median(events);
+    if (!events.length) {
+      return {
+        curve: [],
+        median: null,
+        medianLowerBound: restrictionTime,
+        mean: null,
+        restrictionTime,
+        meanTruncated: false,
+        naiveMean,
+        naiveMedian,
+        events: 0,
+        censored: censored.length,
+        total
+      };
+    }
+    const curve = kmCurve(events, times);
+    const median_ = kmMedianFromCurve(curve);
+    const tau = restrictionTime;
+    let rmst = 0;
+    let prevT = 0;
+    let prevS = 1;
+    for (const p of curve) {
+      rmst += prevS * (p.t - prevT);
+      prevT = p.t;
+      prevS = p.s;
+    }
+    rmst += prevS * (tau - prevT);
+    return {
+      curve,
+      median: median_,
+      medianLowerBound: median_ === null ? restrictionTime : null,
+      mean: rmst,
+      restrictionTime,
+      meanTruncated: prevS > 0,
+      // S(τ) = S_m > 0
+      naiveMean,
+      naiveMedian,
+      events: events.length,
+      censored: censored.length,
+      total
+    };
+  }
+  function filterScope(rows, scope) {
+    return scope ? rows.filter((r) => r.scope === void 0 || r.scope === scope) : rows;
+  }
+  var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
+  var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
+  function mttrPercentiles(rows, opts) {
+    var _a;
+    const filtered = filterScope(rows, opts == null ? void 0 : opts.scope);
+    const bySev = {};
+    const all = [];
+    for (const row of filtered) {
+      const m = resolvedMttr(row);
+      if (m === null) continue;
+      const s2 = normalizeSeverity(row.severity);
+      ((_a = bySev[s2]) != null ? _a : bySev[s2] = []).push(m);
+      all.push(m);
+    }
+    const perSev = {};
+    for (const s2 of SEVERITY_ORDER) {
+      const vals = bySev[s2];
+      if (!vals) continue;
+      perSev[s2] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
+    }
+    return {
+      perSev,
+      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
+    };
+  }
+  function resolutionBuckets(rows, opts) {
+    const filtered = filterScope(rows, opts == null ? void 0 : opts.scope);
+    const perSev = {};
+    let total = 0;
+    for (const row of filtered) {
+      const m = resolvedMttr(row);
+      if (m === null) continue;
+      const bucket = m <= RESOLUTION_BUCKET_EDGES[0] ? 0 : m <= RESOLUTION_BUCKET_EDGES[1] ? 1 : m <= RESOLUTION_BUCKET_EDGES[2] ? 2 : m <= RESOLUTION_BUCKET_EDGES[3] ? 3 : 4;
+      const s2 = normalizeSeverity(row.severity);
+      if (!perSev[s2]) perSev[s2] = [0, 0, 0, 0, 0];
+      perSev[s2][bucket] += 1;
+      total += 1;
+    }
+    return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
+  }
+  function openPastSla(rows, opts) {
+    var _a, _b;
+    const filtered = filterScope(rows, opts == null ? void 0 : opts.scope);
+    const perSev = {};
+    let totalOpen = 0;
+    let totalBreached = 0;
+    for (const row of filtered) {
+      const age = openAge2(row);
+      if (age === null) continue;
+      const s2 = normalizeSeverity(row.severity);
+      const target = (_a = SLA_TARGETS[s2]) != null ? _a : null;
+      const stat = (_b = perSev[s2]) != null ? _b : perSev[s2] = { open: 0, breached: 0, pct: null, target };
+      stat.open += 1;
+      totalOpen += 1;
+      if (target !== null && age > target) {
+        stat.breached += 1;
+        totalBreached += 1;
+      }
+    }
+    for (const stat of Object.values(perSev)) {
+      stat.pct = stat.open ? stat.breached / stat.open * 100 : null;
+    }
+    return {
+      perSev,
+      overall: {
+        open: totalOpen,
+        breached: totalBreached,
+        pct: totalOpen ? totalBreached / totalOpen * 100 : null
+      }
+    };
+  }
+  function actionableView(rows) {
+    return rows.map((r) => ({
+      severity: r.severity,
+      status: r.status,
+      mttr_days: r.mttr_actionable_days,
+      age_days: r.actionable_age_days
+    }));
+  }
+  function awaitingVendorFix(rows, opts) {
+    var _a;
+    const filtered = filterScope(rows, opts == null ? void 0 : opts.scope);
+    const perSev = {};
+    let overall = 0;
+    let openTotal = 0;
+    let notApplicable = 0;
+    for (const row of filtered) {
+      if (!isOpen3(row.status)) continue;
+      openTotal += 1;
+      if (row.scope !== void 0 && row.scope !== "sca") {
+        if (row.awaiting_vendor_fix) notApplicable += 1;
+        continue;
+      }
+      if (!row.awaiting_vendor_fix) continue;
+      const s2 = normalizeSeverity(row.severity);
+      perSev[s2] = ((_a = perSev[s2]) != null ? _a : 0) + 1;
+      overall += 1;
+    }
+    return {
+      perSev,
+      overall,
+      openTotal,
+      pctOfOpen: openTotal ? overall / openTotal * 100 : null,
+      notApplicable
+    };
+  }
+  function latencyObservation(row, nowMs) {
+    const first = parseTs(row.first_seen);
+    if (first === null) return null;
+    const fixAvail = parseTs(row.fix_available_at);
+    if (fixAvail !== null) {
+      const raw = fixAvail - first;
+      return { t: Math.max(0, raw) / DAY_MS5, event: true, closedBeforeFix: false };
+    }
+    const resolved = parseTs(row.resolved_at);
+    if (resolved !== null) {
+      return { t: Math.max(0, resolved - first) / DAY_MS5, event: false, closedBeforeFix: true };
+    }
+    if (isOpen3(row.status)) {
+      return { t: Math.max(0, nowMs - first) / DAY_MS5, event: false, closedBeforeFix: false };
+    }
+    return null;
+  }
+  function latencyView(rows, origin, now, opts) {
+    const nowMs = now != null ? now : Date.now();
+    const filtered = filterScope(rows, opts == null ? void 0 : opts.scope);
+    const out = [];
+    for (const row of filtered) {
+      const obs = latencyObservation(row, nowMs);
+      if (obs === null) continue;
+      out.push({
+        severity: row.severity,
+        status: obs.event ? "RESOLVED" : "OPEN",
+        mttr_days: obs.event ? obs.t : null,
+        age_days: obs.event ? null : obs.t
+      });
+    }
+    return out;
+  }
+  function latencySegments(rows, origin, now, opts) {
+    const nowMs = now != null ? now : Date.now();
+    const filtered = filterScope(rows, opts == null ? void 0 : opts.scope);
+    const seg = {
+      events: 0,
+      censored: 0,
+      closedBeforeFix: 0,
+      zeroAtOrigin: 0,
+      unmeasured: 0,
+      total: 0
+    };
+    for (const row of filtered) {
+      seg.total += 1;
+      const obs = latencyObservation(row, nowMs);
+      if (obs === null) {
+        seg.unmeasured += 1;
+      } else if (obs.event) {
+        seg.events += 1;
+        if (obs.t === 0) seg.zeroAtOrigin += 1;
+      } else if (obs.closedBeforeFix) {
+        seg.closedBeforeFix += 1;
+      } else {
+        seg.censored += 1;
+      }
+    }
+    return seg;
+  }
+  function baseRowNoFix(row) {
+    return row.scope === "sca" && row.awaiting_vendor_fix === true;
+  }
+
+  // src/domain/trend.ts
+  var DAY_MS6 = 864e5;
+  var round1 = (v) => v === null ? null : Math.round(v * 10) / 10;
+  var round3 = (v) => v === null ? null : Math.round(v * 1e3) / 1e3;
+  function byScope2(rows, scope) {
+    return scope ? rows.filter((r) => r["scope"] === scope) : rows;
+  }
+  function bySeverity(rows, severities) {
+    if (severities === null || !rows.length) return rows;
+    const keep = /* @__PURE__ */ new Set([...severities, "UNKNOWN"]);
+    return rows.filter((r) => keep.has(normalizeSeverity(r["severity"])));
+  }
+  function scopeRows(base, severities, scope) {
+    return bySeverity(byScope2(base, scope), severities);
+  }
+  function pointTimes(scans, scope) {
+    return byScope2(scans, scope).map((s2) => ({ iso: String(s2["ts"]), ms: parseTs(s2["ts"]) })).filter((t) => t.ms !== null).sort((a, b) => a.ms - b.ms);
+  }
+  function mttrOf(r) {
+    const m = r["mttr_days"];
+    return typeof m === "number" && !Number.isNaN(m) ? m : null;
+  }
+  function awaitingFixAsOf(firstMs, resolvedMs, fixAvailMs, d) {
+    const openAsOfD = firstMs !== null && firstMs <= d && (resolvedMs === null || resolvedMs > d);
+    return openAsOfD && (fixAvailMs === null || fixAvailMs > d);
+  }
+  function trendFromFrames(scans, base, severities = null, opts = {}) {
+    var _a;
+    const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
+    const rows = scopeRows(base, severities, opts.scope);
+    if (!scans.length || !rows.length) return [];
+    const times = pointTimes(scans, opts.scope);
+    if (!times.length) return [];
+    const parsed = rows.map((r) => ({
+      first: parseTs(r["first_seen"]),
+      resolvedAt: parseTs(r["resolved_at"]),
+      mttr: mttrOf(r),
+      sev: normalizeSeverity(r["severity"]),
+      fixAvail: parseTs(r["fix_available_at"])
+    }));
+    const out = [];
+    for (const ts of times) {
+      const resolvedMask = parsed.map((r) => r.resolvedAt !== null && r.resolvedAt <= ts.ms);
+      const openMask = parsed.map(
+        (r) => r.first !== null && r.first <= ts.ms && (r.resolvedAt === null || r.resolvedAt > ts.ms) && !(hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, ts.ms))
+      );
+      const resolvedMttr2 = parsed.filter((_, i) => resolvedMask[i]).map((r) => r.mttr).filter((m) => m !== null);
+      const med = median(resolvedMttr2);
+      const denom = resolvedMttr2.length;
+      const within = parsed.filter(
+        (r, i) => resolvedMask[i] && r.mttr !== null && SLA_TARGETS[r.sev] !== void 0 && r.mttr <= SLA_TARGETS[r.sev]
+      ).length;
+      const slaPct = denom ? within / denom * 100 : null;
+      const p90s = [];
+      for (const sev2 of SEVERITY_ORDER) {
+        const ages = parsed.filter((r, i) => openMask[i] && r.sev === sev2).map((r) => (ts.ms - r.first) / DAY_MS6);
+        if (ages.length) {
+          const p = quantile(ages, 0.9);
+          if (p !== null) p90s.push(p);
+        }
+      }
+      const oldest = p90s.length ? maxNum(p90s) : null;
+      out.push({
+        date: ts.iso,
+        open: openMask.filter(Boolean).length,
+        resolved: resolvedMask.filter(Boolean).length,
+        median_days: round3(med),
+        sla_pct: round1(slaPct),
+        oldest_open_days: round3(oldest)
+      });
+    }
+    return out;
+  }
+  function trendFromBase(scans, base, severities = null, opts = {}) {
+    var _a;
+    const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
+    const scope = opts.scope;
+    const tag = (points, synthetic2) => points.map((p) => ({ ...p, reconstructed: synthetic2.has(p.date) }));
+    if (!opts.backfill) {
+      return tag(trendFromFrames(scans, base, severities, { hideNoFix, scope }), /* @__PURE__ */ new Set());
+    }
+    const rows = scopeRows(base, severities, scope);
+    const realMs = pointTimes(scans, scope).map((t) => t.ms);
+    const firstSeenMs = rows.map((r) => parseTs(r["first_seen"])).filter((t) => t !== null);
+    const synthetic = [];
+    const syntheticIso = /* @__PURE__ */ new Set();
+    if (realMs.length && firstSeenMs.length) {
+      const firstScanDay = Math.floor(minNum(realMs) / DAY_MS6) * DAY_MS6;
+      const startDay = Math.floor(minNum(firstSeenMs) / DAY_MS6) * DAY_MS6;
+      for (let day = startDay; day < firstScanDay; day += DAY_MS6) {
+        const iso = toIso(day);
+        if (iso === null) continue;
+        synthetic.push(scope ? { ts: iso, scope } : { ts: iso });
+        syntheticIso.add(iso);
+      }
+    }
+    return tag(
+      trendFromFrames(synthetic.concat(scans), base, severities, { hideNoFix, scope }),
+      syntheticIso
+    );
+  }
+  function kmSkipMask(points, max) {
+    if (max === void 0 || max < 0) return null;
+    const reconIdx = [];
+    points.forEach((p, i) => {
+      if (p.reconstructed) reconIdx.push(i);
+    });
+    if (reconIdx.length <= max) return null;
+    const skip = new Array(points.length).fill(false);
+    for (const i of reconIdx) skip[i] = true;
+    if (max > 0) {
+      const last = reconIdx.length - 1;
+      const denom = max === 1 ? 1 : max - 1;
+      for (let k = 0; k < max; k++) {
+        skip[reconIdx[Math.round(k * last / denom)]] = false;
+      }
+    }
+    return skip;
+  }
+  function withKmMedian(points, base, severities = null, opts = {}) {
+    var _a;
+    const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
+    const rows = scopeRows(base, severities, opts.scope);
+    const parsed = rows.map((r) => ({
+      first: parseTs(r["first_seen"]),
+      resolvedAt: parseTs(r["resolved_at"]),
+      mttr: mttrOf(r),
+      fixAvail: parseTs(r["fix_available_at"])
+    }));
+    const skip = kmSkipMask(points, opts.maxReconstructed);
+    return points.map((p, i) => {
+      if (skip !== null && skip[i]) return { ...p, km_median_days: null };
+      const d = parseTs(p.date);
+      let med = null;
+      if (d !== null) {
+        const events = [];
+        const risk = [];
+        for (const r of parsed) {
+          if (r.resolvedAt !== null && r.resolvedAt <= d) {
+            if (r.mttr !== null) {
+              events.push(r.mttr);
+              risk.push(r.mttr);
+            }
+          } else if (r.first !== null && r.first <= d) {
+            if (hideNoFix && awaitingFixAsOf(r.first, r.resolvedAt, r.fixAvail, d)) continue;
+            risk.push((d - r.first) / DAY_MS6);
+          }
+        }
+        med = kmMedianFromCurve(kmCurve(events, risk));
+      }
+      return { ...p, km_median_days: round3(med) };
+    });
+  }
+  function kmMedianAsOf(base, severities, d, opts = {}) {
+    var _a;
+    if (d === null || !base.length) return null;
+    const hideNoFix = (_a = opts.hideNoFix) != null ? _a : false;
+    const rows = scopeRows(base, severities, opts.scope);
+    const events = [];
+    const risk = [];
+    for (const r of rows) {
+      const resolvedAt = parseTs(r["resolved_at"]);
+      if (resolvedAt !== null && resolvedAt <= d) {
+        const mttr = mttrOf(r);
+        if (mttr !== null) {
+          events.push(mttr);
+          risk.push(mttr);
+        }
+        continue;
+      }
+      const first = parseTs(r["first_seen"]);
+      if (first !== null && first <= d) {
+        if (hideNoFix && awaitingFixAsOf(first, resolvedAt, parseTs(r["fix_available_at"]), d)) {
+          continue;
+        }
+        risk.push((d - first) / DAY_MS6);
+      }
+    }
+    return round3(kmMedianFromCurve(kmCurve(events, risk)));
+  }
+  function withOpenPastSla(points, base, severities = null, fromField = "first_seen", opts = {}) {
+    const rows = scopeRows(base, severities, opts.scope);
+    const parsed = rows.map((r) => ({
+      origin: parseTs(r[fromField]),
+      resolvedAt: parseTs(r["resolved_at"]),
+      sev: normalizeSeverity(r["severity"])
+    }));
+    return points.map((p) => {
+      const d = parseTs(p.date);
+      let breached = 0;
+      if (d !== null) {
+        for (const r of parsed) {
+          const open = r.origin !== null && r.origin <= d && (r.resolvedAt === null || r.resolvedAt > d);
+          if (!open) continue;
+          const target = SLA_TARGETS[r.sev];
+          if (target !== void 0 && (d - r.origin) / DAY_MS6 > target) breached += 1;
+        }
+      }
+      return { ...p, open_past_sla: breached };
+    });
+  }
+  function slaDeadlineRows(base, severities, scope) {
+    const out = [];
+    for (const r of scopeRows(base, severities, scope)) {
+      const actionable = parseTs(r["actionable_from"]);
+      const target = SLA_TARGETS[normalizeSeverity(r["severity"])];
+      if (actionable === null || target === void 0) continue;
+      out.push({ deadline: actionable + target * DAY_MS6, resolvedAt: parseTs(r["resolved_at"]) });
+    }
+    return out;
+  }
+  function withSlaBurn(points, base, severities = null, opts = {}) {
+    const parsed = slaDeadlineRows(base, severities, opts.scope);
+    let prevMs = null;
+    return points.map((p, i) => {
+      const d = parseTs(p.date);
+      let entered = null;
+      let cleared = null;
+      if (i > 0 && prevMs !== null && d !== null) {
+        entered = 0;
+        cleared = 0;
+        for (const r of parsed) {
+          if (r.deadline > prevMs && r.deadline <= d && (r.resolvedAt === null || r.resolvedAt > r.deadline)) {
+            entered += 1;
+          }
+          if (r.resolvedAt !== null && r.resolvedAt > prevMs && r.resolvedAt <= d && r.resolvedAt > r.deadline) {
+            cleared += 1;
+          }
+        }
+      }
+      prevMs = d;
+      return {
+        ...p,
+        sla_entered: entered,
+        sla_cleared: cleared,
+        sla_net: entered !== null && cleared !== null ? entered - cleared : null
+      };
+    });
+  }
+  function cohortSlaAttainment(points, base, severities = null, opts = {}) {
+    const parsed = slaDeadlineRows(base, severities, opts.scope);
+    return points.map((p) => {
+      const d = parseTs(p.date);
+      let cohort = 0;
+      let met = 0;
+      if (d !== null) {
+        for (const r of parsed) {
+          if (r.deadline > d) continue;
+          cohort += 1;
+          if (r.resolvedAt !== null && r.resolvedAt <= r.deadline) met += 1;
+        }
+      }
+      return { ...p, sla_attainment_pct: cohort ? round1(met / cohort * 100) : null };
+    });
+  }
+  function withCoverageEfficiency(points, base, rule, severities = null, opts = {}) {
+    const rows = scopeRows(base, severities, opts.scope);
+    const secrets = rows.filter((r) => r["scope"] === "secrets");
+    const classifiable = rows.filter((r) => r["scope"] !== "secrets");
+    const parsed = classifiable.map((r) => ({
+      first: parseTs(r["first_seen"]),
+      resolvedAt: parseTs(r["resolved_at"]),
+      cls: classifyRisk(r, rule)
+    }));
+    const secretFirst = secrets.map((r) => parseTs(r["first_seen"]));
+    return points.map((p) => {
+      const d = parseTs(p.date);
+      let tp = 0;
+      let fp = 0;
+      let fn = 0;
+      let unknown = 0;
+      let counted = 0;
+      let excluded = 0;
+      if (d !== null) {
+        for (const r of parsed) {
+          if (r.first === null || r.first > d) continue;
+          const remediated = r.resolvedAt !== null && r.resolvedAt <= d;
+          counted += 1;
+          if (r.cls === "unknown") {
+            unknown += 1;
+            continue;
+          }
+          if (r.cls === "high") {
+            if (remediated) tp += 1;
+            else fn += 1;
+          } else if (remediated) {
+            fp += 1;
+          }
+        }
+        for (const first of secretFirst) if (first !== null && first <= d) excluded += 1;
+      }
+      return {
+        ...p,
+        coverage_pct: round1(tp + fn > 0 ? tp / (tp + fn) * 100 : null),
+        efficiency_pct: round1(tp + fp > 0 ? tp / (tp + fp) * 100 : null),
+        high_risk_open: fn,
+        high_risk_remediated: tp,
+        unknown_pct: round1(counted > 0 ? unknown / counted * 100 : null),
+        secrets_excluded: excluded
+      };
+    });
+  }
+
+  // src/domain/maintenance.ts
+  var RETENTION_MIN_DAYS = 30;
+  var CHECKPOINT_VERSION = 1;
+  var LedgerRebuildError = class extends Error {
+  };
+  var SealedScanError = class extends LedgerRebuildError {
+  };
+  function recordsFromPayload(payload) {
+    return extractNodes(payload);
+  }
+  function coerceResults(results) {
+    if (results === null || results === void 0) return results;
+    if (typeof results === "object") return results;
+    if (typeof results === "string") {
+      try {
+        return JSON.parse(results.trim());
+      } catch {
+        return results;
+      }
+    }
+    return results;
+  }
+  function extractNodes(results) {
+    var _a, _b;
+    const coerced = coerceResults(results);
+    if (!coerced) return [];
+    if (Array.isArray(coerced) && coerced.length && typeof coerced[0] === "object") {
+      const merged = [];
+      let ok = false;
+      for (const page of coerced) {
+        if (page && typeof page === "object" && !Array.isArray(page)) {
+          const sub = extractNodes(page);
+          if (sub.length) {
+            pushAll(merged, sub);
+            ok = true;
+          }
+        }
+      }
+      if (ok) return merged;
+    }
+    if (coerced && typeof coerced === "object" && !Array.isArray(coerced)) {
+      const obj = coerced;
+      const data = obj["data"];
+      if (data && typeof data === "object" && !Array.isArray(data)) {
+        for (const v of Object.values(data)) {
+          if (v && typeof v === "object" && !Array.isArray(v) && "nodes" in v) {
+            return (_a = v["nodes"]) != null ? _a : [];
+          }
+        }
+      }
+      if ("nodes" in obj) return (_b = obj["nodes"]) != null ? _b : [];
+    }
+    if (Array.isArray(coerced)) return coerced;
+    return [coerced];
+  }
+  function loadReplayPayloads(rows, readPayload, missingMsg) {
+    const replay = [];
+    for (const r of rows) {
+      if (r.sealed) continue;
+      const payload = readPayload(r);
+      if (payload === null) {
+        throw new LedgerRebuildError(missingMsg(r.scan_id));
+      }
+      replay.push({ row: r, payload });
+    }
+    return replay;
+  }
+  function replayScans(rebuilt, replay) {
+    const observationsByScan = {};
+    for (const { row, payload } of replay) {
+      const { observations } = persistFlatScan(rebuilt, recordsFromPayload(payload), {
+        scope: row.scope,
+        mode: row.mode,
+        scanId: row.scan_id,
+        scannedSeverities: parseSeverities(row.severities),
+        rawRef: row.raw_ref,
+        obsRef: row.obs_ref
+      });
+      observationsByScan[row.scan_id] = observations;
+    }
+    return observationsByScan;
+  }
+  function settledEpisodeRows(checkpointLedger, ledger, sealedIds) {
+    var _a;
+    const episodes = [];
+    for (const cpRow of checkpointLedger) {
+      if (cpRow.status !== "RESOLVED") continue;
+      const live = ledger[cpRow.finding_key];
+      if (live === void 0 || live.status !== "RESOLVED" || live.resolved_at !== cpRow.resolved_at || !sealedIds.has((_a = live.last_scan_id) != null ? _a : "")) {
+        continue;
+      }
+      episodes.push(live);
+    }
+    return episodes;
+  }
+  function toEpisodeRow(live, compactionId) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    return {
+      finding_key: live.finding_key,
+      scope: live.scope,
+      identifier: live.identifier,
+      component: live.component,
+      severity: live.severity,
+      first_seen: live.first_seen,
+      resolved_at: live.resolved_at,
+      resolution_src: live.resolution_src,
+      reopened_count: Number((_a = live.reopened_count) != null ? _a : 0),
+      compaction_id: compactionId,
+      superseded_by_scan: null,
+      fix_date: live.fix_date,
+      fix_observed_at: live.fix_observed_at,
+      has_kev: (_b = live.has_kev) != null ? _b : null,
+      has_exploit: (_c = live.has_exploit) != null ? _c : null,
+      epss: (_d = live.epss) != null ? _d : null,
+      cwe: (_e = live.cwe) != null ? _e : null,
+      language: (_f = live.language) != null ? _f : null,
+      owner_project: (_g = live.owner_project) != null ? _g : null
+    };
+  }
+  function deleteScansCore(state, scanIds, readPayload, checkpoint, now) {
+    var _a;
+    const targets = new Set([...scanIds].filter(Boolean));
+    const zero = { deleted: 0, scans: 0, tracked: 0 };
+    if (!targets.size) {
+      return { state, result: zero, observationsByScan: {} };
+    }
+    const rows = scansAsc(state.scans);
+    const present2 = new Set(rows.filter((r) => targets.has(r.scan_id)).map((r) => r.scan_id));
+    if (!present2.size) {
+      return { state, result: zero, observationsByScan: {} };
+    }
+    const sealedTargets = rows.filter((r) => present2.has(r.scan_id) && r.sealed).map((r) => r.scan_id).sort();
+    if (sealedTargets.length) {
+      throw new SealedScanError(
+        `Cannot delete sealed scan(s) ${sealedTargets.join(", ")}: they are part of the compacted baseline (their raw archives were pruned), so their effects can no longer be un-replayed.`
+      );
+    }
+    const survivors = rows.filter((r) => !present2.has(r.scan_id));
+    const replay = loadReplayPayloads(
+      survivors,
+      readPayload,
+      (scanId) => `Cannot delete: the archived payload for surviving scan ${scanId} is missing, so the ledger can't be rebuilt.`
+    );
+    const rebuilt = {
+      scans: survivors.filter((r) => r.sealed).map((r) => ({ ...r })),
+      ledger: {},
+      episodes: state.episodes.map((e) => ({ ...e, superseded_by_scan: null }))
+    };
+    if (checkpoint !== null) {
+      const episodeKeys = new Set(state.episodes.map((e) => e.finding_key));
+      for (const row of (_a = checkpoint.ledger) != null ? _a : []) {
+        if (!episodeKeys.has(row.finding_key)) rebuilt.ledger[row.finding_key] = { ...row };
+      }
+    }
+    const observationsByScan = replayScans(rebuilt, replay);
+    return {
+      state: rebuilt,
+      result: {
+        deleted: present2.size,
+        scans: rebuilt.scans.length,
+        tracked: baseRows(rebuilt, { now }).length
+      },
+      observationsByScan
+    };
+  }
+  function buildCheckpoint(rows, newly, prevCheckpoint, floorRow, readPayload) {
+    var _a;
+    const tmp = emptyState();
+    if (prevCheckpoint !== null) {
+      for (const row of (_a = prevCheckpoint.ledger) != null ? _a : []) tmp.ledger[row.finding_key] = { ...row };
+    }
+    for (const r of rows) {
+      if (r.sealed) tmp.scans.push({ ...r });
+    }
+    for (const r of newly) {
+      const payload = readPayload(r);
+      if (payload === null) {
+        throw new LedgerRebuildError(
+          `Cannot compact: the archived payload for scan ${r.scan_id} is missing or unreadable.`
+        );
+      }
+      persistFlatScan(tmp, recordsFromPayload(payload), {
+        scope: r.scope,
+        mode: r.mode,
+        scanId: r.scan_id,
+        scannedSeverities: parseSeverities(r.severities)
+      });
+    }
+    return {
+      version: CHECKPOINT_VERSION,
+      floor_scan_id: floorRow ? floorRow.scan_id : null,
+      floor_ts: floorRow ? floorRow.ts : null,
+      ledger: Object.values(tmp.ledger)
+    };
+  }
+  function openAndResolved(state) {
+    const out = [];
+    for (const row of Object.values(state.ledger)) {
+      out.push({
+        finding_key: row.finding_key,
+        scope: row.scope,
+        severity: row.severity,
+        first_seen: row.first_seen,
+        status: row.status,
+        resolved_at: row.resolved_at
+      });
+    }
+    for (const e of state.episodes) {
+      if (e.superseded_by_scan !== null || e.finding_key in state.ledger) continue;
+      out.push({
+        finding_key: e.finding_key,
+        scope: e.scope,
+        severity: e.severity,
+        first_seen: e.first_seen,
+        status: "RESOLVED",
+        resolved_at: e.resolved_at
+      });
+    }
+    return out;
+  }
+  function coverageOf(state, now) {
+    const rows = baseRows(state, { now });
+    const out = {};
+    for (const scope of SCOPES) {
+      if (ruleForScope(scope) === null) continue;
+      const scoped = [];
+      for (const r of rows) {
+        if (r.scope !== scope) continue;
+        scoped.push({
+          scope: r.scope,
+          severity: r.severity,
+          status: r.status,
+          has_kev: r.has_kev,
+          has_exploit: r.has_exploit,
+          epss: r.epss,
+          cwe: r.cwe,
+          ai_verdict: r.ai_verdict
+        });
+      }
+      out[scope] = confusionMatrix(scoped);
+    }
+    return out;
+  }
+  function trendOf(state, now) {
+    return trendFromFrames(
+      state.scans.map((s2) => ({ ts: s2.ts, scope: s2.scope })),
+      baseRows(state, { now }).map((r) => ({
+        severity: r.severity,
+        first_seen: r.first_seen,
+        resolved_at: r.resolved_at,
+        mttr_days: r.mttr_days,
+        fix_available_at: r.fix_available_at
+      }))
+    );
+  }
+  function compactLedgerCore(state, retentionDays, prevCheckpoint, readPayload, options) {
+    var _a, _b, _c, _d;
+    const dryRun = Boolean(options.dryRun);
+    const result = {
+      no_op: true,
+      dry_run: dryRun,
+      scans_sealed: 0,
+      episodes_created: 0,
+      observations_pruned: 0,
+      archive_bytes_freed: 0,
+      db_bytes_freed: 0,
+      floor_scan_id: null,
+      floor_ts: null
+    };
+    const noOp = {
+      result,
+      checkpoint: null,
+      newly: [],
+      state: null,
+      compactionId: null
+    };
+    if (retentionDays === null) return noOp;
+    const days = Math.max(Math.trunc(retentionDays), RETENTION_MIN_DAYS);
+    const nowMs = (_a = options.now) != null ? _a : Date.now();
+    const cutoff = nowMs - days * 864e5;
+    const rows = scansAsc(state.scans);
+    if (!rows.length) return noOp;
+    const candidates = selectSealCandidates(rows, cutoff);
+    const sealedPrefix = rows.filter((r) => r.sealed);
+    const candidatePrefixIds = candidates.slice(0, sealedPrefix.length).map((r) => r.scan_id);
+    if (JSON.stringify(candidatePrefixIds) !== JSON.stringify(sealedPrefix.map((r) => r.scan_id))) {
+      return noOp;
+    }
+    const newly = candidates.filter((r) => !r.sealed);
+    if (!newly.length) return noOp;
+    const floorRow = candidates.length ? candidates[candidates.length - 1] : null;
+    const checkpoint = buildCheckpoint(rows, newly, prevCheckpoint, floorRow, readPayload);
+    const sealedIds = new Set(candidates.map((r) => r.scan_id));
+    const episodes = settledEpisodeRows(checkpoint.ledger, state.ledger, sealedIds);
+    const newlyIds = newly.map((r) => r.scan_id);
+    let obsCount = 0;
+    for (const id of newlyIds) obsCount += (_c = (_b = options.obsCountByScan) == null ? void 0 : _b[id]) != null ? _c : 0;
+    result.no_op = false;
+    result.scans_sealed = newly.length;
+    result.episodes_created = episodes.length;
+    result.observations_pruned = obsCount;
+    result.archive_bytes_freed = (_d = options.archiveBytes) != null ? _d : 0;
+    result.floor_scan_id = checkpoint.floor_scan_id;
+    result.floor_ts = checkpoint.floor_ts;
+    if (dryRun) return { result, checkpoint, newly, state: null, compactionId: null };
+    const beforeMttr = mttrFromLedger(openAndResolved(state), { now: nowMs });
+    const beforeTrend = trendOf(state, nowMs);
+    const beforeCoverage = coverageOf(state, nowMs);
+    const newlyIdSet = new Set(newlyIds);
+    const applied = {
+      scans: state.scans.map(
+        (r) => newlyIdSet.has(r.scan_id) ? { ...r, sealed: 1, raw_ref: null, obs_ref: null } : { ...r }
+      ),
+      ledger: {},
+      episodes: [
+        ...state.episodes.map((e) => ({ ...e })),
+        ...episodes.map((e) => toEpisodeRow(e, options.compactionId))
+      ]
+    };
+    const converted = new Set(episodes.map((e) => e.finding_key));
+    for (const [key, row] of Object.entries(state.ledger)) {
+      if (!converted.has(key)) applied.ledger[key] = { ...row };
+    }
+    const afterMttr = mttrFromLedger(openAndResolved(applied), { now: nowMs });
+    const afterTrend = trendOf(applied, nowMs);
+    if (!statsEqual(
+      { perSev: beforeMttr.perSev, overall: beforeMttr.overall },
+      { perSev: afterMttr.perSev, overall: afterMttr.overall }
+    ) || !statsEqual(beforeTrend, afterTrend)) {
+      throw new LedgerRebuildError(
+        "Compaction aborted: MTTR/SLA/trend stats would change \u2014 rolled back."
+      );
+    }
+    if (!statsEqual(beforeCoverage, coverageOf(applied, nowMs))) {
+      throw new LedgerRebuildError(
+        "Compaction aborted: coverage/efficiency would change \u2014 rolled back."
+      );
+    }
+    return { result, checkpoint, newly, state: applied, compactionId: options.compactionId };
+  }
+  function compactionRow(plan, checkpointRef, now) {
+    return {
+      compaction_id: plan.compactionId,
+      ts: nowIso(now),
+      floor_scan_id: plan.result.floor_scan_id,
+      floor_ts: plan.result.floor_ts,
+      scans_sealed: plan.result.scans_sealed,
+      episodes_created: plan.result.episodes_created,
+      archive_bytes_freed: plan.result.archive_bytes_freed,
+      checkpoint_ref: checkpointRef
+    };
+  }
+
+  // src/domain/settingsLogic.ts
+  var DEFAULT_SYNC_HOUR = 5;
+  var DEFAULT_SETTINGS = {
+    scopes: [...SCOPES],
+    fetchSeverities: {
+      sca: [...DEFAULT_FETCH_SEVERITIES.sca],
+      sast: [...DEFAULT_FETCH_SEVERITIES.sast],
+      secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
+    },
+    slaTargets: { ...SLA_TARGETS },
+    showExperimental: false,
+    syncSchedule: DEFAULT_SYNC_HOUR,
+    autoCompact: false,
+    retentionDays: DEFAULT_RETENTION_DAYS,
+    projectView: ""
+  };
+  function asList(v, allowed) {
+    if (!Array.isArray(v)) return null;
+    const seen = /* @__PURE__ */ new Set();
+    for (const x of v) {
+      const s2 = String(x).trim().toUpperCase();
+      if (allowed.includes(s2)) seen.add(s2);
+    }
+    return [...seen];
+  }
+  function cleanFetchSeverities(raw) {
+    var _a, _b;
+    const out = {};
+    if (Array.isArray(raw)) {
+      const shared = (_a = asList(raw, SEVERITY_ORDER)) != null ? _a : [];
+      for (const scope of SCOPES) {
+        out[scope] = shared.length ? [...shared] : [...DEFAULT_FETCH_SEVERITIES[scope]];
+      }
+      return out;
+    }
+    const rec = raw != null ? raw : {};
+    for (const scope of SCOPES) {
+      out[scope] = (_b = asList(rec[scope], SEVERITY_ORDER)) != null ? _b : [...DEFAULT_FETCH_SEVERITIES[scope]];
+    }
+    return out;
+  }
+  function numericOrNull(v) {
+    if (typeof v === "number") return Number.isFinite(v) ? v : null;
+    if (typeof v === "string" && v.trim() !== "") {
+      const n2 = Number(v);
+      return Number.isFinite(n2) ? n2 : null;
+    }
+    return null;
+  }
+  function cleanHourOfDay(v, fallback) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return fallback;
+    return Number.isInteger(n2) && n2 >= 0 && n2 <= 23 ? n2 : fallback;
+  }
+  function cleanRetentionDays(v) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return DEFAULT_RETENTION_DAYS;
+    return Math.max(Math.floor(n2), RETENTION_MIN_DAYS);
+  }
+  function cleanProjectView(v) {
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function cleanSettings(raw) {
+    const r = raw || {};
+    const scopes = (Array.isArray(r.scopes) ? r.scopes : []).map((x) => String(x).trim().toLowerCase()).filter((x) => SCOPES.includes(x));
+    const sla = { ...SLA_TARGETS };
+    const rawSla = r.slaTargets || {};
+    for (const sev2 of SEVERITY_ORDER) {
+      const v = Number(rawSla[sev2]);
+      if (Number.isFinite(v) && v > 0) sla[sev2] = Math.floor(v);
+    }
+    return {
+      // An empty list would collect nothing while looking configured, so it falls back
+      // rather than persisting a register that can never fill.
+      scopes: scopes.length ? scopes : [...SCOPES],
+      fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
+      slaTargets: sla,
+      showExperimental: r.showExperimental === true,
+      syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
+      // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
+      // only a literal boolean true turns compaction on.
+      autoCompact: r.autoCompact === true,
+      retentionDays: cleanRetentionDays(r.retentionDays),
+      projectView: cleanProjectView(r.projectView)
+    };
+  }
+  function withSettings(current, patch) {
+    return cleanSettings({ ...current, ...patch });
   }
 
   // src/server/sheetsDb.ts
@@ -869,15 +3408,20 @@ var Server = (() => {
     //   sticky-first-wins      fix_date / fix_observed_at, reset only by a reopen
     //   monotone, never reset  has_kev / has_exploit (null -> false -> true), epss keeps the peak
     [TABS.ledger]: [
+      // ALL THREE SCOPES. `identifier` is the register-facing name of the thing found, and it
+      // is a different field per scope — SCA's CVE, SAST's weakness, and for secrets the
+      // CREDENTIAL id: identifier <- secretDataId. `component` is what it was found in.
       "finding_key",
       "scope",
       "identifier",
       "component",
       "severity",
+      // All three: the asset dimension. Latest-wins.
       "repo_id",
       "repo_name",
       "branch",
       "platform",
+      // All three: the lifecycle the whole product measures.
       "first_seen",
       "last_seen",
       "status",
@@ -886,19 +3430,27 @@ var Server = (() => {
       "reopened_count",
       "first_scan_id",
       "last_scan_id",
-      // The second clock's inputs. Written from day one even though nothing derives
-      // fix_available_at yet — capturing them later would leave a hole no backfill can close.
+      // SCA ONLY — the second clock's inputs; SAST and secrets have no vendor to wait on.
+      // Written from day one even though nothing derives fix_available_at yet — capturing them
+      // later would leave a hole no backfill can close.
       "fix_date",
       "fix_observed_at",
       "fixed_version",
-      // Tri-state forever: Wiz returns null for a signal it never evaluated, and collapsing
-      // that to false is what makes an unassessed finding look clean.
+      // SCA ONLY. Tri-state forever: Wiz returns null for a signal it never evaluated, and
+      // collapsing that to false is what makes an unassessed finding look clean.
       "has_kev",
       "has_exploit",
       "epss",
       "risk_observed_at",
-      // SAST-shaped columns; null for an SCA row and vice versa. One ledger, three scopes.
+      // SAST fills cwe / ai_verdict / language / origin. SAST AND SECRETS SHARE THE LOCATION
+      // PAIR: file_path <- filePath on SAST and <- path on secrets, start_line <- startLine and
+      // <- lineNumber. That is not a convenience — lineNumber is part of the secrets row key
+      // (above), so the column it lands in has to be the one the key is read back from.
+      // ai_verdict <- aiAnalysis.verdict, which Q_SAST already selects and nothing stored:
+      // it is the register's only signal about whether a weakness is real, and dropping it on
+      // the floor for a phase would leave a column of nulls no backfill can date.
       "cwe",
+      "ai_verdict",
       "language",
       "file_path",
       "start_line",
@@ -922,59 +3474,46 @@ var Server = (() => {
       // validated_at only where validation_state is INVALID. removed_at is the other axis
       // entirely: the string left HEAD. PROBE_FINDINGS.md §3.
       //
-      // IDENTITY IS `(secretDataId, path, lineNumber)`, hashed — src/domain/secretsLedger.ts.
+      // IDENTITY IS `(secretDataId, path, lineNumber)`, AND THE CLOCK IS THE EARLIEST
+      // `firstSeenAt` ACROSS THE TWINS. Two earlier revisions of this comment were wrong in
+      // opposite directions. The first said the pair (secretDataId, path) — which collides
+      // 2.27:1. The second said `externalId`, on the evidence that it is unique across the
+      // register. It still is. It is unique FOR THE WRONG REASON, and keying on it would
+      // silently double the ledger (PROBE_FINDINGS.md §10.6 / §10.7, measured with the
+      // severity gate off, over all 1,958 rows rather than §9.5's gated 843):
       //
-      // TWO EARLIER REVISIONS OF THIS COMMENT WERE WRONG, in opposite directions, and the
-      // sequence is the point. The first said the pair (secretDataId, path), on one page
-      // showing 3.82 rows per credential. Measured over both pages of the 843-row gated
-      // register, that pair collides 2.27:1 with a single pair covering 49 rows (§9.5):
+      //     rows 1,958            REPOSITORY 1,359 · REPOSITORY_BRANCH 599
+      //     (secretDataId, path, lineNumber) keys spanning BOTH resource types:  187
+      //     identical externalId across the twin:  0          different:  187
       //
-      //     key                                page 1   page 2
-      //     id                                   1.00     1.00
-      //     secretDataId                         4.39     2.09
-      //     (secretDataId, path)                 2.27     1.37   <- merges distinct findings
-      //     (secretDataId, path, line)           1.32     1.06
-      //     (secretDataId, path, line, resource) 1.00     1.00
-      //     externalId                           1.00     1.00
+      // Wiz builds `externalId` from the resource, and the branch form inserts a branch segment:
+      //     REPOSITORY         github.com##<repo>##<path>##<contentHash>##<lineIndex>
+      //     REPOSITORY_BRANCH  github.com##<repo>##main##<path>##<contentHash>##<lineIndex>
+      // So it does not resolve the duplicate, it PRESERVES it — one credential, in one file, at
+      // one line, recorded as two findings with two clocks.
       //
-      // So the second revision took `externalId`, because it is unique. IT IS UNIQUE FOR THE
-      // WRONG REASON (§10.6). With the severity gate off — the whole 1,958-row CODE
-      // population rather than 843 — the register splits REPOSITORY 1,359 / REPOSITORY_BRANCH
-      // 599, and 187 (secretDataId, path, lineNumber) keys span BOTH. All 187 carry two
-      // different externalIds, because Wiz splices the branch segment into its composite:
-      //
-      //     REPOSITORY         github.com##<org>/<repo>##<path>##<hash>##<line>
-      //     REPOSITORY_BRANCH  github.com##<org>/<repo>##<branch>##<path>##<hash>##<line>
-      //
-      // `externalId` is unique BECAUSE IT PRESERVES THE DUPLICATE. A ledger keyed on it
-      // records one secret, in one file, at one line, as two findings with two clocks — and
-      // §10.7 measured those clocks genuinely disagreeing: median 19.9 days apart, max 285.3,
-      // 83 of 187 over 30 days, with the branch twin earlier in 135 cases and the repository
-      // twin in the other 52. Neither type is reliably older, so the register cannot prefer
-      // one. It keys on the triple, folds the twins, and takes the EARLIEST first_seen.
-      //
-      // THE KEY IS DERIVED, NEVER ADOPTED, which inverts the OS ledger's first rule.
-      // gas/src/domain/lifecycle.ts::vulnKey prefers the Wiz `id` because there it is stable
-      // per FINDING. Here `id` and `externalId` are both stable per ROW, and the row is not
-      // the finding — so adopting either is the same mistake one level down.
+      // AND THE TWO CLOCKS DISAGREE, which is why the tie-break is written down rather than
+      // left to whichever row arrives first. Across the 187 twins the earlier `firstSeenAt`
+      // belongs to the BRANCH row 135 times and to the REPOSITORY row 52 times — never the same
+      // instant — median gap 19.9 days, max 285.3, and 83 of 187 over 30 days. So there is no
+      // resource type to prefer: taking REPOSITORY because it is the majority (1,359 of 1,958)
+      // would misdate 135 secrets by a median of three weeks. Dedupe on the triple, take the
+      // earliest birth date — the clock convention the OS ledger already uses.
       //
       // secretDataId still names the CREDENTIAL and is what rotation groups by — one decision
       // per credential across however many occurrences it has. It is just not the row key.
       //
-      // THREE CAVEATS, none resolved, all of which the ledger depends on:
-      //   * A LINE MOVE LOOKS LIKE A NEW FINDING. The triple encodes the line, and so does
-      //     every unique candidate above — there is no line-stable unique key. Reformatting a
-      //     file would close one finding and open another, and the MTTR clock would believe
-      //     it.
+      // TWO CAVEATS, neither resolved, both of which the ledger depends on:
+      //   * A LINE MOVE LOOKS LIKE A NEW FINDING. This key encodes lineNumber, and so does
+      //     every other unique candidate — `externalId` and (secretDataId, path, lineNumber,
+      //     resource.id) — so there is no line-stable identity on offer. Reformatting a file
+      //     closes one finding and opens another, and the MTTR clock believes it.
       //   * UUID STABILITY IS INFERRED, NOT MEASURED. id and secretDataId carry a version-5
       //     nibble, i.e. name-based UUIDs derived from content, which WOULD make them stable
-      //     across scans. §10.8 re-fetched §9's exact rows and found both unchanged — but
-      //     lastUpdatedAt showed no rescan had intervened, so that is not the two-scan test.
-      //     The strongest evidence is incidental: branch twins carry firstSeenAt 2025-11-14
-      //     with lastSeenAt 2026-08-23 under a SINGLE id, one identity spanning nine months
-      //     of scans. Persuasive, still not controlled, and the ledger depends on it.
-      //   * THE FOLD DISCARDS A MEASUREMENT, so the row records what it discarded:
-      //     twin_count, twin_first_seen_spread_days and source_external_ids below.
+      //     across scans. Re-fetching the sampled rows found both unchanged, but `lastUpdatedAt`
+      //     shows no rescan intervened (§10.8), so it is still not the two-scan test the
+      //     question asks for. A key that is not stable across scans resolves every row on
+      //     every sync.
       //
       // DO NOT ADD isDefaultBranch TO THE SECRETS FILTER TO DEDUPLICATE. There is real
       // duplication — 18 of 176 (secretDataId, path) pairs appear under both REPOSITORY and
@@ -988,23 +3527,26 @@ var Server = (() => {
       // as deduplication: absent collapsed to false, which is the failure the AI register
       // already has a name for. The duplication is real and wants deduplication on the
       // resource entity, after the rows are keyed — not a filter that drops two-thirds of the
-      // register on the way in. That is now what happens: secretsLedger.collapseTwins folds
-      // them once they are keyed, and the filter still asks for the whole population.
+      // register on the way in.
+      //
+      // SECRETS ONLY. `confidence` <- SecretInstance.confidence, selected by Q_SECRETS and
+      // until now dropped: with the severity gate off (config.ts) it is one of the two axes
+      // that replaces severity as this register's volume control — severity grades a
+      // detection, `validation_state` says whether the credential is dead, and `confidence`
+      // says how sure the detector is that it is a credential at all.
       "secret_kind",
-      "confidence",
       "rotated_at",
       "removed_at",
       "validation_state",
       "validated_at",
-      // The twin fold, made auditable. Collapsing 187 pairs to the earliest first_seen is
-      // the right call (§10.7) and it throws a number away; a 285-day disagreement has to
-      // be visible in the row rather than only in the module that folded it.
-      "twin_count",
-      "twin_first_seen_spread_days",
-      "source_external_ids",
+      "confidence",
+      // All three: ownership, from projects[]. `projects_json` is the flat list itself, sorted
+      // by slug — owner_project/owner_path are the two strings it was collapsed to; this is what
+      // src/domain/projectScope.ts builds its catalogue and membership predicate from.
       "owner_project",
       "owner_path",
-      "tags_json"
+      "tags_json",
+      "projects_json"
     ],
     [TABS.episodes]: [
       "finding_key",
@@ -1028,6 +3570,12 @@ var Server = (() => {
       "owner_project"
     ],
     [TABS.scans]: [
+      // `raw_ref` addresses the scan's archived pages; `obs_ref` addresses its OBSERVATION SET
+      // — the finding_keys this scan actually saw. Two refs because they answer two questions,
+      // and the second is the one resolve-by-disappearance rests on: a key absent from the
+      // latest scan's observations is resolved, and without the set persisted the only way to
+      // recompute that is to re-read every raw page. Both are Drive ids: internal storage
+      // addresses, never client-facing.
       "scan_id",
       "ts",
       "scope",
@@ -1038,6 +3586,7 @@ var Server = (() => {
       "resolved_count",
       "reopened_count",
       "raw_ref",
+      "obs_ref",
       "sealed"
     ],
     [TABS.repos]: [
@@ -1082,7 +3631,7 @@ var Server = (() => {
     ],
     [TABS.meta]: ["version"]
   };
-  var SCHEMA_VERSION = 1;
+  var SCHEMA_VERSION = 3;
   var spreadsheetCache = null;
   function ledgerSpreadsheet() {
     if (spreadsheetCache === null) {
@@ -1165,13 +3714,13 @@ var Server = (() => {
     const values = readGrid(sh, tab, lastRow, lastCol);
     return mapRows(values[0].map(String), values.slice(1));
   }
-  function readTail(tab, n) {
+  function readTail(tab, n2) {
     const sh = sheet(tab);
     const lastRow = sh.getLastRow();
     const lastCol = sh.getLastColumn();
     if (lastRow < 2 || lastCol < 1) return [];
     const headers = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
-    const first = Math.max(2, lastRow - Math.max(1, n) + 1);
+    const first = Math.max(2, lastRow - Math.max(1, n2) + 1);
     const values = sh.getRange(first, 1, lastRow - first + 1, lastCol).getValues();
     return mapRows(headers, values);
   }
@@ -1216,6 +3765,15 @@ var Server = (() => {
   function dataRowCount(tab) {
     return Math.max(0, sheet(tab).getLastRow() - 1);
   }
+  var TRIM_BUFFER_ROWS = 1e3;
+  function trimSurplusRows(tab, bufferRows = TRIM_BUFFER_ROWS) {
+    const sh = sheet(tab);
+    const keep = Math.max(sh.getLastRow(), 1) + Math.max(0, bufferRows);
+    const surplus = sh.getMaxRows() - keep;
+    if (surplus <= 0) return 0;
+    sh.deleteRows(keep + 1, surplus);
+    return surplus;
+  }
   function updateWhere(tab, keyColumn, keyValue, patch) {
     const sh = sheet(tab);
     if (sh.getLastRow() < 2) return false;
@@ -1238,19 +3796,85 @@ var Server = (() => {
     }
     return false;
   }
+  function gridSize(tab) {
+    const sh = sheet(tab);
+    return { rows: sh.getMaxRows(), cols: sh.getMaxColumns() };
+  }
   function cellCount() {
     return ledgerSpreadsheet().getSheets().reduce((acc, sh) => acc + sh.getMaxRows() * sh.getMaxColumns(), 0);
+  }
+
+  // src/server/setup.ts
+  var DAILY_SYNC_HANDLER = "trigger_dailySync";
+  var DAILY_SYNC_HOUR = DEFAULT_SYNC_HOUR;
+  var WARM_HANDLER = "trigger_warmReadModels";
+  var WARM_READY_BY_HOURS = [9, 13, 17];
+  var WARM_TRIGGER_HOURS = WARM_READY_BY_HOURS.map((h) => (h + 23) % 24);
+  var WARM_TRIGGER_NEAR_MINUTE = 30;
+  var WARM_TRIGGER_TZ = "Europe/Paris";
+  function warmTriggerSchedule() {
+    return `${WARM_TRIGGER_TZ}|${WARM_TRIGGER_HOURS.join(",")}@${WARM_TRIGGER_NEAR_MINUTE}`;
+  }
+  function setup() {
+    const notes = [];
+    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
+    let ss;
+    if (ssId) {
+      ss = SpreadsheetApp.openById(ssId);
+      notes.push(`Ledger: reusing ${ssId}`);
+    } else {
+      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
+      ssId = ss.getId();
+      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
+      notes.push(`Ledger: created ${ssId}`);
+    }
+    ensureTabs(ss);
+    notes.push("Tabs: ensured (headers appended where missing)");
+    let folderId = getProp(PROP_KEYS.archiveFolderId);
+    if (!folderId) {
+      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
+      setProp(PROP_KEYS.archiveFolderId, folderId);
+      notes.push(`Archive: created ${folderId}`);
+    } else {
+      notes.push(`Archive: reusing ${folderId}`);
+    }
+    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
+    if (!getProp(PROP_KEYS.allowedUsers)) {
+      const owner = Session.getEffectiveUser().getEmail();
+      if (owner) {
+        setProp(PROP_KEYS.allowedUsers, owner);
+        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
+      }
+    }
+    const dailyExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_SYNC_HANDLER);
+    if (!dailyExisting.length) {
+      ScriptApp.newTrigger(DAILY_SYNC_HANDLER).timeBased().everyDays(1).atHour(DAILY_SYNC_HOUR).create();
+      notes.push(`Daily sync trigger: installed (${DAILY_SYNC_HOUR}:00 script-local)`);
+    } else {
+      notes.push("Daily sync trigger: already installed");
+    }
+    const warmExisting = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === WARM_HANDLER);
+    const wantSchedule = warmTriggerSchedule();
+    if (warmExisting.length === WARM_TRIGGER_HOURS.length && getProp(PROP_KEYS.warmTriggerSchedule) === wantSchedule) {
+      notes.push(`Warm triggers: already installed (${wantSchedule})`);
+    } else {
+      for (const t of warmExisting) ScriptApp.deleteTrigger(t);
+      for (const hour of WARM_TRIGGER_HOURS) {
+        ScriptApp.newTrigger(WARM_HANDLER).timeBased().everyDays(1).atHour(hour).nearMinute(WARM_TRIGGER_NEAR_MINUTE).inTimezone(WARM_TRIGGER_TZ).create();
+      }
+      setProp(PROP_KEYS.warmTriggerSchedule, wantSchedule);
+      notes.push(
+        `Warm triggers: installed ${WARM_TRIGGER_HOURS.length}x daily, warm by ${WARM_READY_BY_HOURS.map((h) => `${h}:00`).join(", ")} ${WARM_TRIGGER_TZ}` + (warmExisting.length ? ` (replaced ${warmExisting.length})` : "")
+      );
+    }
+    return notes.join("\n");
   }
 
   // src/server/jobsStore.ts
   var ACTIVE_JOB_PROP = "ACTIVE_JOB_ID";
   function normError(v) {
-    const s = v == null ? "" : String(v).trim();
-    return s === "" || s === "null" || s === "undefined" ? null : s;
-  }
-  function normText(v) {
-    const s = v == null ? "" : String(v);
-    return s === "" || s === "null" || s === "undefined" ? null : s;
+    const s2 = v == null ? "" : String(v).trim();
+    return s2 === "" || s2 === "null" || s2 === "undefined" ? null : s2;
   }
   function newJobId(kind, now) {
     return `${kind}-${nowIso(now).replace(/[:]/g, "")}`;
@@ -1266,26 +3890,26 @@ var Server = (() => {
       ...patch,
       updated_at: nowIso(now)
     });
-    if (patch.phase && TERMINAL.includes(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
+    if (patch.phase && isTerminalPhase(patch.phase)) deleteProp(ACTIVE_JOB_PROP);
   }
   function rowToJob(r) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     return {
       job_id: String((_a = r["job_id"]) != null ? _a : ""),
-      kind: (_b = r["kind"]) != null ? _b : "scan",
+      kind: (_b = r["kind"]) != null ? _b : "sync",
       phase: (_c = r["phase"]) != null ? _c : "FAILED",
-      scan_id: normText(r["scan_id"]),
-      scope: normText(r["scope"]),
-      cursor: normText(r["cursor"]),
-      page: Number((_d = r["page"]) != null ? _d : 0),
-      findings_so_far: Number((_e = r["findings_so_far"]) != null ? _e : 0),
-      page_size: Number((_f = r["page_size"]) != null ? _f : 0),
-      total_count: Number((_g = r["total_count"]) != null ? _g : 0),
-      params_json: normText(r["params_json"]),
-      journal_ref: normText(r["journal_ref"]),
+      scan_id: (_d = r["scan_id"]) != null ? _d : null,
+      scope: (_e = r["scope"]) != null ? _e : null,
+      cursor: (_f = r["cursor"]) != null ? _f : null,
+      page: Number((_g = r["page"]) != null ? _g : 0),
+      findings_so_far: Number((_h = r["findings_so_far"]) != null ? _h : 0),
+      page_size: Number((_i = r["page_size"]) != null ? _i : 0),
+      total_count: Number((_j = r["total_count"]) != null ? _j : 0),
+      params_json: (_k = r["params_json"]) != null ? _k : null,
+      journal_ref: (_l = r["journal_ref"]) != null ? _l : null,
       error: normError(r["error"]),
-      started_at: String((_h = r["started_at"]) != null ? _h : ""),
-      updated_at: String((_i = r["updated_at"]) != null ? _i : "")
+      started_at: String((_m = r["started_at"]) != null ? _m : ""),
+      updated_at: String((_n = r["updated_at"]) != null ? _n : "")
     };
   }
   function listJobs() {
@@ -1301,344 +3925,40 @@ var Server = (() => {
   function isTerminalPhase(phase) {
     return TERMINAL.includes(phase);
   }
+  var STALE_JOB_MS = 30 * 6e4;
+  function isStaleJob(job, now) {
+    const updated = parseTs(job.updated_at);
+    if (updated === null) return false;
+    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
+  }
+  function clearTriggers(handlerName) {
+    for (const t of ScriptApp.getProjectTriggers()) {
+      if (t.getHandlerFunction() === handlerName) ScriptApp.deleteTrigger(t);
+    }
+  }
+  var CONTINUE_HANDLERS = {
+    sync: "trigger_continueSync"
+  };
+  var WATCHDOG_HANDLERS = {
+    sync: "trigger_watchdogSync"
+  };
+  function reclaimIfStale(job, now) {
+    if (!isStaleJob(job, now)) return false;
+    for (const handler of [CONTINUE_HANDLERS[job.kind], WATCHDOG_HANDLERS[job.kind]]) {
+      if (handler) clearTriggers(handler);
+    }
+    updateJob(job.job_id, {
+      phase: "FAILED",
+      error: "Reclaimed: the job stalled with no progress."
+    });
+    return true;
+  }
   function activeJob() {
     var _a;
     if (!getProp(ACTIVE_JOB_PROP)) return null;
-    const job = (_a = listJobs().find((j) => !TERMINAL.includes(j.phase))) != null ? _a : null;
+    const job = (_a = listJobs().find((j) => !isTerminalPhase(j.phase))) != null ? _a : null;
     if (!job) deleteProp(ACTIVE_JOB_PROP);
     return job;
-  }
-  var STALE_JOB_MS = 30 * 6e4;
-  function isStaleJob(job, now) {
-    const updated = Date.parse(job.updated_at);
-    if (!Number.isFinite(updated)) return false;
-    return (now != null ? now : Date.now()) - updated >= STALE_JOB_MS;
-  }
-
-  // src/domain/observation.ts
-  var LEDGER_COLUMNS = [
-    "finding_key",
-    "scope",
-    "identifier",
-    "component",
-    "severity",
-    "repo_id",
-    "repo_name",
-    "branch",
-    "platform",
-    "first_seen",
-    "last_seen",
-    "status",
-    "resolved_at",
-    "resolution_src",
-    "reopened_count",
-    "first_scan_id",
-    "last_scan_id",
-    "fix_date",
-    "fix_observed_at",
-    "fixed_version",
-    "has_kev",
-    "has_exploit",
-    "epss",
-    "risk_observed_at",
-    "cwe",
-    "language",
-    "file_path",
-    "start_line",
-    "origin",
-    "secret_kind",
-    "confidence",
-    "rotated_at",
-    "removed_at",
-    "validation_state",
-    "validated_at",
-    "twin_count",
-    "twin_first_seen_spread_days",
-    "source_external_ids",
-    "owner_project",
-    "owner_path",
-    "tags_json"
-  ];
-  function emptyObservation(scope, findingKey) {
-    return {
-      finding_key: findingKey,
-      scope,
-      identifier: null,
-      component: null,
-      severity: "UNKNOWN",
-      repo_id: null,
-      repo_name: null,
-      branch: null,
-      platform: null,
-      first_seen: null,
-      resolved_at: null,
-      is_open: true,
-      fix_date: null,
-      fixed_version: null,
-      has_kev: null,
-      has_exploit: null,
-      epss: null,
-      cwe: null,
-      language: null,
-      file_path: null,
-      start_line: null,
-      origin: null,
-      secret_kind: null,
-      confidence: null,
-      validation_state: null,
-      validated_at: null,
-      rotated_at: null,
-      removed_at: null,
-      twin_count: null,
-      twin_first_seen_spread_days: null,
-      source_external_ids: null,
-      owner_project: null,
-      owner_path: null,
-      tags_json: null
-    };
-  }
-
-  // src/server/ledgerStore.ts
-  function str(v) {
-    const c = clean(v);
-    return c === null ? null : String(c);
-  }
-  function num(v) {
-    const c = clean(v);
-    if (c === null) return null;
-    const n = Number(c);
-    return Number.isFinite(n) ? n : null;
-  }
-  function triBool(v) {
-    if (typeof v === "boolean") return v;
-    if (typeof v === "string") {
-      const s = v.trim().toUpperCase();
-      if (s === "TRUE") return true;
-      if (s === "FALSE") return false;
-    }
-    return null;
-  }
-  function validation(v) {
-    const s = str(v);
-    return s === "VALID" || s === "INVALID" || s === "ERROR" || s === "UNKNOWN" ? s : null;
-  }
-  function rowFromSheet(r) {
-    var _a, _b, _c, _d;
-    return {
-      finding_key: String((_a = r["finding_key"]) != null ? _a : ""),
-      scope: (_b = str(r["scope"])) != null ? _b : "sca",
-      identifier: str(r["identifier"]),
-      component: str(r["component"]),
-      severity: (_c = str(r["severity"])) != null ? _c : "UNKNOWN",
-      repo_id: str(r["repo_id"]),
-      repo_name: str(r["repo_name"]),
-      branch: str(r["branch"]),
-      platform: str(r["platform"]),
-      first_seen: str(r["first_seen"]),
-      last_seen: str(r["last_seen"]),
-      status: str(r["status"]) === STATUS_RESOLVED ? STATUS_RESOLVED : STATUS_OPEN,
-      resolved_at: str(r["resolved_at"]),
-      resolution_src: str(r["resolution_src"]),
-      reopened_count: (_d = num(r["reopened_count"])) != null ? _d : 0,
-      first_scan_id: str(r["first_scan_id"]),
-      last_scan_id: str(r["last_scan_id"]),
-      fix_date: str(r["fix_date"]),
-      fix_observed_at: str(r["fix_observed_at"]),
-      fixed_version: str(r["fixed_version"]),
-      has_kev: triBool(r["has_kev"]),
-      has_exploit: triBool(r["has_exploit"]),
-      epss: num(r["epss"]),
-      risk_observed_at: str(r["risk_observed_at"]),
-      cwe: str(r["cwe"]),
-      language: str(r["language"]),
-      file_path: str(r["file_path"]),
-      start_line: num(r["start_line"]),
-      origin: str(r["origin"]),
-      secret_kind: str(r["secret_kind"]),
-      confidence: str(r["confidence"]),
-      rotated_at: str(r["rotated_at"]),
-      removed_at: str(r["removed_at"]),
-      validation_state: validation(r["validation_state"]),
-      validated_at: str(r["validated_at"]),
-      twin_count: num(r["twin_count"]),
-      twin_first_seen_spread_days: num(r["twin_first_seen_spread_days"]),
-      source_external_ids: str(r["source_external_ids"]),
-      owner_project: str(r["owner_project"]),
-      owner_path: str(r["owner_path"]),
-      tags_json: str(r["tags_json"])
-    };
-  }
-  function rowToSheet(row) {
-    var _a;
-    const out = {};
-    for (const col of LEDGER_COLUMNS) out[col] = (_a = row[col]) != null ? _a : null;
-    return out;
-  }
-  function readLedger() {
-    const out = {};
-    for (const r of readAll(TABS.ledger)) {
-      const row = rowFromSheet(r);
-      if (row.finding_key) out[row.finding_key] = row;
-    }
-    return out;
-  }
-  function writeLedger(ledger) {
-    overwrite(TABS.ledger, Object.values(ledger).map(rowToSheet));
-  }
-  function readScans() {
-    return readAll(TABS.scans).map((r) => {
-      var _a, _b, _c, _d, _e, _f, _g, _h;
-      return {
-        scan_id: String((_a = r["scan_id"]) != null ? _a : ""),
-        ts: String((_b = r["ts"]) != null ? _b : ""),
-        scope: String((_c = r["scope"]) != null ? _c : ""),
-        mode: String((_d = r["mode"]) != null ? _d : ""),
-        severities: String((_e = r["severities"]) != null ? _e : ""),
-        new_count: Number((_f = r["new_count"]) != null ? _f : 0),
-        resolved_count: Number((_g = r["resolved_count"]) != null ? _g : 0),
-        reopened_count: Number((_h = r["reopened_count"]) != null ? _h : 0)
-      };
-    });
-  }
-  function appendScan(row) {
-    var _a;
-    appendRows(TABS.scans, [{
-      scan_id: row.scan_id,
-      ts: row.ts,
-      scope: row.scope,
-      mode: row.mode,
-      severities: row.severities === null || !row.severities.length ? "" : row.severities.join(","),
-      total: row.total,
-      new_count: row.new_count,
-      resolved_count: row.resolved_count,
-      reopened_count: row.reopened_count,
-      raw_ref: (_a = row.raw_ref) != null ? _a : null,
-      sealed: false
-    }]);
-  }
-
-  // src/server/locks.ts
-  var LedgerBusyError = class extends Error {
-  };
-  var DEAD_JOB_MS = 30 * 60 * 1e3;
-  function withScriptLock(fn, timeoutMs = 3e4) {
-    const lock = LockService.getScriptLock();
-    if (!lock.tryLock(timeoutMs)) {
-      throw new LedgerBusyError(
-        "The data store is busy (a scan is writing). Try again shortly."
-      );
-    }
-    try {
-      return fn();
-    } finally {
-      lock.releaseLock();
-    }
-  }
-  function recoverIfNeeded(now) {
-    const job = activeJob();
-    if (!job) return;
-    const updated = parseTs(job.updated_at);
-    const ageMs = updated === null ? Infinity : (now != null ? now : Date.now()) - updated;
-    if (job.phase === "PERSISTING") {
-      const committed = job.scan_id !== null && readScans().some((s) => s.scan_id === job.scan_id);
-      if (committed) {
-        updateJob(job.job_id, { phase: "DONE", journal_ref: null });
-        if (job.journal_ref) trashFile(job.journal_ref);
-        return;
-      }
-      const restored = job.journal_ref ? restoreLedger(job.journal_ref) : false;
-      updateJob(job.job_id, {
-        phase: "FAILED",
-        journal_ref: null,
-        error: restored ? "Recovered: the execution died mid-write; the ledger was restored from its journal and no scan was recorded." : "The execution died mid-write and no journal was found. The ledger may be incomplete \u2014 run a fresh scan before trusting its figures."
-      });
-      return;
-    }
-    if (ageMs > DEAD_JOB_MS) {
-      updateJob(job.job_id, {
-        phase: "FAILED",
-        error: "Recovered: the job stalled with no progress. Nothing was written \u2014 the last committed scan stands."
-      });
-    }
-  }
-  function restoreLedger(journalRef) {
-    const doc = readGzJsonFile(journalRef);
-    if (!doc || typeof doc !== "object") return false;
-    writeLedger(doc);
-    trashFile(journalRef);
-    return true;
-  }
-
-  // src/domain/settingsLogic.ts
-  var DEFAULT_SETTINGS = {
-    scopes: [...SCOPES],
-    fetchSeverities: {
-      sca: [...DEFAULT_FETCH_SEVERITIES.sca],
-      sast: [...DEFAULT_FETCH_SEVERITIES.sast],
-      secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
-    },
-    slaTargets: { ...SLA_TARGETS }
-  };
-  function asList(v, allowed) {
-    if (!Array.isArray(v)) return null;
-    const seen = /* @__PURE__ */ new Set();
-    for (const x of v) {
-      const s = String(x).trim().toUpperCase();
-      if (allowed.includes(s)) seen.add(s);
-    }
-    return [...seen];
-  }
-  function cleanFetchSeverities(raw) {
-    var _a, _b;
-    const out = {};
-    if (Array.isArray(raw)) {
-      const shared = (_a = asList(raw, SEVERITY_ORDER)) != null ? _a : [];
-      for (const scope of SCOPES) {
-        out[scope] = shared.length ? [...shared] : [...DEFAULT_FETCH_SEVERITIES[scope]];
-      }
-      return out;
-    }
-    const rec = raw != null ? raw : {};
-    for (const scope of SCOPES) {
-      out[scope] = (_b = asList(rec[scope], SEVERITY_ORDER)) != null ? _b : [...DEFAULT_FETCH_SEVERITIES[scope]];
-    }
-    return out;
-  }
-  function cleanSettings(raw) {
-    const r = raw || {};
-    const scopes = (Array.isArray(r.scopes) ? r.scopes : []).map((x) => String(x).trim().toLowerCase()).filter((x) => SCOPES.includes(x));
-    const sla = { ...SLA_TARGETS };
-    const rawSla = r.slaTargets || {};
-    for (const sev of SEVERITY_ORDER) {
-      const v = Number(rawSla[sev]);
-      if (Number.isFinite(v) && v > 0) sla[sev] = Math.floor(v);
-    }
-    return {
-      // An empty list would collect nothing while looking configured, so it falls back
-      // rather than persisting a register that can never fill.
-      scopes: scopes.length ? scopes : [...SCOPES],
-      fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
-      slaTargets: sla
-    };
-  }
-  function validateSettings(s) {
-    var _a;
-    const errs = [];
-    if (!s.scopes.length) errs.push("Choose at least one register to collect.");
-    for (const scope of s.scopes) {
-      if (!Array.isArray((_a = s.fetchSeverities) == null ? void 0 : _a[scope])) {
-        errs.push(`No severity selection stored for the ${scope} register.`);
-      }
-    }
-    for (const [sev, days] of Object.entries(s.slaTargets)) {
-      if (!Number.isFinite(days) || days <= 0) {
-        errs.push(`The SLA target for ${sev} must be a positive number of days.`);
-      }
-    }
-    return errs;
-  }
-  function withSettings(current, patch) {
-    return cleanSettings({ ...current, ...patch });
   }
 
   // src/server/settingsStore.ts
@@ -1669,557 +3989,6 @@ var Server = (() => {
     settingsMemo = cleaned;
     bumpDataVersion();
     return cleaned;
-  }
-
-  // src/domain/ledgerCore.ts
-  var DAY_MS = 864e5;
-  function parseSeverities(value) {
-    const s = String(value != null ? value : "").trim();
-    if (!s || s === "*") return null;
-    return s.split(",").map((v) => v.trim().toUpperCase()).filter(Boolean);
-  }
-  function scansAsc(scans, scope) {
-    return scans.filter((r) => r.scope === scope).sort((a, b) => {
-      var _a, _b;
-      const ta = (_a = parseTs(a.ts)) != null ? _a : 0;
-      const tb = (_b = parseTs(b.ts)) != null ? _b : 0;
-      if (ta !== tb) return ta - tb;
-      return a.scan_id < b.scan_id ? -1 : a.scan_id > b.scan_id ? 1 : 0;
-    });
-  }
-  function latestScan(scans, scope) {
-    const asc = scansAsc(scans, scope);
-    return asc.length ? asc[asc.length - 1] : null;
-  }
-  function prevScanIdBySeverity(scans, scope) {
-    const remaining = new Set(SEVERITY_ORDER);
-    const mapping = {};
-    for (const r of scansAsc(scans, scope).reverse()) {
-      const covered = parseSeverities(r.severities);
-      const hit = covered === null ? [...remaining] : [...remaining].filter((s) => covered.includes(s));
-      for (const sev of hit) mapping[sev] = r.scan_id;
-      for (const sev of hit) remaining.delete(sev);
-      if (!remaining.size) break;
-    }
-    return Object.keys(mapping).length ? mapping : null;
-  }
-  function existingScanDeltas(scans, scanId) {
-    var _a, _b, _c;
-    const row = scans.find((r) => r.scan_id === scanId);
-    if (!row) return null;
-    return {
-      new_count: Number((_a = row.new_count) != null ? _a : 0),
-      resolved_count: Number((_b = row.resolved_count) != null ? _b : 0),
-      reopened_count: Number((_c = row.reopened_count) != null ? _c : 0)
-    };
-  }
-  var HAS_VENDOR_FIX = /* @__PURE__ */ new Set(["sca"]);
-  function baseRows(rows, now) {
-    const nowMs = now != null ? now : Date.now();
-    return rows.map((row) => {
-      var _a, _b;
-      const first = parseTs(row.first_seen);
-      const resolved = parseTs(row.resolved_at);
-      const open = row.status === "OPEN";
-      const vendor = HAS_VENDOR_FIX.has(row.scope);
-      const fixAvailableAt = vendor ? (_b = (_a = row.fix_date) != null ? _a : row.fix_observed_at) != null ? _b : null : null;
-      const fixAvailMs = parseTs(fixAvailableAt);
-      const actionableMs = fixAvailMs === null ? null : first === null ? fixAvailMs : Math.max(first, fixAvailMs);
-      return {
-        ...row,
-        mttr_days: first !== null && resolved !== null ? (resolved - first) / DAY_MS : null,
-        age_days: resolved === null && first !== null ? (nowMs - first) / DAY_MS : null,
-        fix_available_at: fixAvailableAt,
-        actionable_from: actionableMs === null ? null : toIso(actionableMs),
-        mttr_actionable_days: resolved !== null && actionableMs !== null ? (resolved - actionableMs) / DAY_MS : null,
-        actionable_age_days: open && actionableMs !== null ? (nowMs - actionableMs) / DAY_MS : null,
-        awaiting_vendor_fix: open && vendor && fixAvailableAt === null
-      };
-    });
-  }
-
-  // src/domain/severity.ts
-  function normalizeSeverity(sev) {
-    if (typeof sev !== "string") return "UNKNOWN";
-    const s = sev.toUpperCase().trim();
-    if (s === "INFORMATIONAL" || s === "INFO") return "INFO";
-    return SEVERITY_ORDER.includes(s) ? s : "UNKNOWN";
-  }
-
-  // src/domain/normalize.ts
-  function str2(v) {
-    const c = clean(v);
-    return c === null ? null : String(c);
-  }
-  function at(rec, path) {
-    let cur = rec;
-    for (const part of path.split(".")) {
-      if (cur === null || typeof cur !== "object") return null;
-      cur = cur[part];
-    }
-    return clean(cur);
-  }
-  function adoptedKey(scope, rec, basis) {
-    const id = str2(rec["id"]);
-    if (id !== null && id.trim()) return `${scope}:id:${id.trim()}`;
-    return `${scope}:h:${sha1Hex(basis.map((v) => v != null ? v : "").join("|")).slice(0, 16)}`;
-  }
-  function triBool2(v) {
-    return typeof v === "boolean" ? v : null;
-  }
-  function triNum(v) {
-    const c = clean(v);
-    if (c === null) return null;
-    const n = Number(c);
-    return Number.isFinite(n) ? n : null;
-  }
-  function ownerProject(rec) {
-    var _a, _b;
-    const projects = Array.isArray(rec["projects"]) ? rec["projects"] : [];
-    return (_b = (_a = projects.find((p) => p && p["isFolder"] !== true)) != null ? _a : projects[0]) != null ? _b : null;
-  }
-  function normalizeSca(node) {
-    var _a;
-    const cve = str2(node["name"]);
-    const component = str2(node["detailedName"]);
-    const assetId = str2(at(node, "vulnerableAsset.id"));
-    const assetName = str2(at(node, "vulnerableAsset.name"));
-    const status = String((_a = str2(node["status"])) != null ? _a : "").toUpperCase();
-    const resolvedAt = str2(node["resolvedAt"]);
-    return {
-      ...emptyObservation("sca", adoptedKey("sca", node, [
-        cve,
-        assetId != null ? assetId : assetName,
-        str2(at(node, "vulnerableAsset.type")),
-        component
-      ])),
-      identifier: cve,
-      component,
-      severity: normalizeSeverity(node["severity"]),
-      repo_id: assetId,
-      repo_name: assetName,
-      // A VulnerableAssetRepositoryBranch IS the branch, so its name is the branch identity.
-      // The union member that carries no branch leaves this null rather than guessing.
-      branch: str2(at(node, "vulnerableAsset.type")) === "REPOSITORY_BRANCH" ? assetName : null,
-      platform: str2(at(node, "vulnerableAsset.cloudPlatform")),
-      language: str2(at(node, "artifactType.codeLibraryLanguage")),
-      first_seen: toIso(parseTs(node["firstDetectedAt"])),
-      resolved_at: toIso(parseTs(resolvedAt)),
-      is_open: !(present(resolvedAt) || RESOLVED_STATUSES.has(status)),
-      fix_date: toIso(parseTs(node["fixDate"])),
-      fixed_version: str2(node["fixedVersion"]),
-      has_kev: triBool2(node["hasCisaKevExploit"]),
-      has_exploit: triBool2(node["hasExploit"]),
-      epss: triNum(node["epssProbability"]),
-      owner_project: str2(at(node, "vulnerableAsset.subscriptionName")),
-      owner_path: str2(at(node, "vulnerableAsset.subscriptionExternalId"))
-    };
-  }
-  function normalizeSast(node) {
-    var _a;
-    const rule = str2(node["name"]);
-    const filePath = str2(node["filePath"]);
-    const line = clean(node["startLine"]);
-    const weaknesses = Array.isArray(node["weaknesses"]) ? node["weaknesses"] : [];
-    const owner = ownerProject(node);
-    const resource = (_a = node["resource"]) != null ? _a : null;
-    return {
-      ...emptyObservation("sast", adoptedKey("sast", node, [
-        rule,
-        str2(at(node, "resource.id")),
-        filePath,
-        line === null ? null : String(line)
-      ])),
-      identifier: rule,
-      component: filePath === null ? null : line === null ? filePath : `${filePath}:${String(line)}`,
-      severity: normalizeSeverity(node["severity"]),
-      repo_id: resource === null ? null : str2(resource["id"]),
-      repo_name: resource === null ? null : str2(resource["name"]),
-      platform: resource === null ? null : str2(resource["type"]),
-      // The CWE the rule maps to. Wiz can return several; the first is the primary one, and
-      // the ledger has one column — a joined list would break every group-by that reads it.
-      cwe: weaknesses.length ? str2(weaknesses[0]["name"]) : null,
-      language: str2(node["codeLibraryLanguage"]),
-      file_path: filePath,
-      start_line: typeof line === "number" ? line : line === null ? null : Number(line),
-      origin: str2(at(node, "vcsDetails.commitHash")),
-      // §2: createdAt is the birth date. firstDetectedAtSource is Wiz's own re-derivation and
-      // can post-date it, so the earlier of the two would be wrong to take blindly — createdAt
-      // is the one the filter sorts on and the one the register dates from.
-      first_seen: toIso(parseTs(node["createdAt"])),
-      resolved_at: null,
-      is_open: true,
-      owner_project: owner === null ? null : str2(owner["name"]),
-      owner_path: owner === null ? null : str2(owner["slug"])
-    };
-  }
-  var NORMALIZERS = {
-    sca: normalizeSca,
-    sast: normalizeSast
-  };
-
-  // src/domain/reconcile.ts
-  function makeRow(obs, firstSeen, scanId, scanTsIso) {
-    const { is_open: _isOpen, ...rest } = obs;
-    return {
-      ...rest,
-      first_seen: firstSeen,
-      last_seen: scanTsIso,
-      status: STATUS_OPEN,
-      resolved_at: null,
-      resolution_src: null,
-      reopened_count: 0,
-      first_scan_id: scanId,
-      last_scan_id: scanId,
-      fix_observed_at: present(obs.fixed_version) || present(obs.fix_date) ? scanTsIso : null,
-      risk_observed_at: null
-    };
-  }
-  function mergeRiskSignals(row, obs, scanTsIso) {
-    if (obs.has_kev !== null && (row.has_kev == null || obs.has_kev)) row.has_kev = obs.has_kev;
-    if (obs.has_exploit !== null && (row.has_exploit == null || obs.has_exploit)) {
-      row.has_exploit = obs.has_exploit;
-    }
-    if (obs.epss !== null && (row.epss == null || obs.epss > row.epss)) row.epss = obs.epss;
-    const witnessed = obs.has_kev !== null || obs.has_exploit !== null || obs.epss !== null;
-    if (!witnessed) return;
-    if (row.risk_observed_at == null || scanTsIso < row.risk_observed_at) {
-      row.risk_observed_at = scanTsIso;
-    }
-  }
-  function reconcile(observations, existingLedger, scope, scanId, scanTs, prevScanId, options = {}) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s, _t, _u, _v, _w, _x, _y, _z, _A;
-    const {
-      disappearanceMode = "scan_ts",
-      prevScanTs = null,
-      scannedSeverities = null,
-      prevScanIdBySeverity: prevScanIdBySeverity2 = null
-    } = options;
-    const updated = {};
-    for (const [key, row] of Object.entries(existingLedger)) updated[key] = { ...row };
-    const seen = /* @__PURE__ */ new Set();
-    let newCount = 0;
-    let resolvedCount = 0;
-    let reopenedCount = 0;
-    const scanTsIso = (_a = toIso(parseTs(scanTs))) != null ? _a : String(scanTs);
-    for (const obs of observations) {
-      if (obs.scope !== scope) {
-        throw new Error(`reconcile(${scope}): observation ${obs.finding_key} carries scope ${obs.scope}`);
-      }
-      const key = obs.finding_key;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      const apiSaysResolved = !obs.is_open;
-      const fixSignal = present(obs.fixed_version) || present(obs.fix_date);
-      const seedFix = (r) => {
-        if (r.fix_date == null && obs.fix_date !== null) r.fix_date = obs.fix_date;
-        if (r.fix_observed_at == null && fixSignal) r.fix_observed_at = scanTsIso;
-      };
-      let row = updated[key];
-      if (row === void 0) {
-        row = makeRow(obs, (_b = minIso(obs.first_seen, scanTsIso)) != null ? _b : scanTsIso, scanId, scanTsIso);
-        updated[key] = row;
-        newCount += 1;
-      } else if (row.status === STATUS_RESOLVED && !apiSaysResolved) {
-        row.status = STATUS_OPEN;
-        row.resolved_at = null;
-        row.resolution_src = null;
-        row.reopened_count = Number((_c = row.reopened_count) != null ? _c : 0) + 1;
-        row.first_seen = (_d = minIso(obs.first_seen, scanTsIso)) != null ? _d : scanTsIso;
-        row.last_seen = scanTsIso;
-        row.last_scan_id = scanId;
-        row.fix_date = null;
-        row.fix_observed_at = null;
-        seedFix(row);
-        reopenedCount += 1;
-      } else {
-        if (row.status === STATUS_OPEN) {
-          row.first_seen = (_e = minIso(row.first_seen, obs.first_seen)) != null ? _e : row.first_seen;
-        }
-        row.last_seen = scanTsIso;
-        row.last_scan_id = scanId;
-        seedFix(row);
-      }
-      mergeRiskSignals(row, obs, scanTsIso);
-      row.severity = obs.severity;
-      row.identifier = (_f = obs.identifier) != null ? _f : row.identifier;
-      row.component = (_g = obs.component) != null ? _g : row.component;
-      row.repo_id = (_h = obs.repo_id) != null ? _h : row.repo_id;
-      row.repo_name = (_i = obs.repo_name) != null ? _i : row.repo_name;
-      row.branch = (_j = obs.branch) != null ? _j : row.branch;
-      row.platform = (_k = obs.platform) != null ? _k : row.platform;
-      row.cwe = (_l = obs.cwe) != null ? _l : row.cwe;
-      row.language = (_m = obs.language) != null ? _m : row.language;
-      row.file_path = (_n = obs.file_path) != null ? _n : row.file_path;
-      row.start_line = (_o = obs.start_line) != null ? _o : row.start_line;
-      row.origin = (_p = obs.origin) != null ? _p : row.origin;
-      row.secret_kind = (_q = obs.secret_kind) != null ? _q : row.secret_kind;
-      row.confidence = (_r = obs.confidence) != null ? _r : row.confidence;
-      row.owner_project = (_s = obs.owner_project) != null ? _s : row.owner_project;
-      row.owner_path = (_t = obs.owner_path) != null ? _t : row.owner_path;
-      row.tags_json = (_u = obs.tags_json) != null ? _u : row.tags_json;
-      row.fixed_version = (_v = obs.fixed_version) != null ? _v : row.fixed_version;
-      row.twin_count = (_w = obs.twin_count) != null ? _w : row.twin_count;
-      row.twin_first_seen_spread_days = (_x = obs.twin_first_seen_spread_days) != null ? _x : row.twin_first_seen_spread_days;
-      row.source_external_ids = (_y = obs.source_external_ids) != null ? _y : row.source_external_ids;
-      if (obs.validation_state !== null && obs.validation_state !== "UNKNOWN") {
-        row.validation_state = obs.validation_state;
-        row.validated_at = obs.validated_at;
-        row.rotated_at = obs.rotated_at;
-      } else if (row.validation_state == null && obs.validation_state !== null) {
-        row.validation_state = obs.validation_state;
-        row.validated_at = obs.validated_at;
-      }
-      if (apiSaysResolved && row.status === STATUS_OPEN) {
-        row.status = STATUS_RESOLVED;
-        row.resolved_at = present(obs.resolved_at) ? obs.resolved_at : scanTsIso;
-        row.resolution_src = RESOLUTION_API;
-        resolvedCount += 1;
-      }
-    }
-    if (prevScanId !== null) {
-      const covered = scannedSeverities !== null ? new Set(scannedSeverities) : null;
-      for (const [key, row] of Object.entries(updated)) {
-        if (row.scope !== scope) continue;
-        if (seen.has(key) || row.status === STATUS_RESOLVED) continue;
-        if (covered !== null && (row.severity === null || !covered.has(row.severity))) {
-          continue;
-        }
-        const expectedPrev = (_A = (prevScanIdBySeverity2 != null ? prevScanIdBySeverity2 : {})[(_z = row.severity) != null ? _z : ""]) != null ? _A : prevScanId;
-        if (row.last_scan_id !== expectedPrev) continue;
-        row.resolved_at = disappearanceMode === "midpoint" && prevScanTs ? midpointIso(prevScanTs, scanTsIso) : scanTsIso;
-        row.status = STATUS_RESOLVED;
-        row.resolution_src = RESOLUTION_DISAPPEARED;
-        if (row.scope === "secrets") row.removed_at = row.resolved_at;
-        resolvedCount += 1;
-      }
-    }
-    return {
-      ledger: updated,
-      deltas: { new_count: newCount, resolved_count: resolvedCount, reopened_count: reopenedCount }
-    };
-  }
-
-  // src/domain/secretsLedger.ts
-  var DAY_MS2 = 864e5;
-  var VALIDATION_RANK = {
-    VALID: 0,
-    INVALID: 1,
-    ERROR: 2,
-    UNKNOWN: 3
-  };
-  function normalizeValidation(v) {
-    const s = typeof v === "string" ? v.toUpperCase().trim() : "";
-    return s === "VALID" || s === "INVALID" || s === "ERROR" ? s : "UNKNOWN";
-  }
-  function str3(v) {
-    const c = clean(v);
-    return c === null ? null : String(c);
-  }
-  function secretsFindingKey(node) {
-    var _a, _b;
-    const line = clean(node["lineNumber"]);
-    const basis = [
-      (_a = str3(node["secretDataId"])) != null ? _a : "",
-      (_b = str3(node["path"])) != null ? _b : "",
-      line === null ? "" : String(line)
-    ].join("|");
-    return `secrets:h:${sha1Hex(basis).slice(0, 16)}`;
-  }
-  function severityRank(sev) {
-    const i = SEVERITY_ORDER.indexOf(sev);
-    return i === -1 ? SEVERITY_ORDER.length : i;
-  }
-  function resourceType(node) {
-    const res = node["resource"];
-    return res && typeof res === "object" ? str3(res["type"]) : null;
-  }
-  function resourceField(node, field) {
-    const res = node["resource"];
-    return res && typeof res === "object" ? str3(res[field]) : null;
-  }
-  function isOpen(node) {
-    const s = str3(node["status"]);
-    return s === null ? true : !RESOLVED_STATUSES.has(s.toUpperCase());
-  }
-  function collapseTwins(nodes) {
-    var _a, _b, _c, _d, _e, _f;
-    const groups = groupBy(nodes, secretsFindingKey);
-    const observations = [];
-    let twinned = 0;
-    let keyedWithoutLine = 0;
-    for (const rows of groups.values()) {
-      if (rows.length > 1) twinned += 1;
-      if (clean(rows[0]["lineNumber"]) === null) keyedWithoutLine += rows.length;
-      const births = rows.map((r) => parseTs(r["firstSeenAt"])).filter((t) => t !== null);
-      const firstMs = births.length ? Math.min(...births) : null;
-      const spreadDays = births.length > 1 ? (Math.max(...births) - Math.min(...births)) / DAY_MS2 : 0;
-      const anyOpen = rows.some(isOpen);
-      const resolvedTs = rows.map((r) => parseTs(r["resolvedAt"])).filter((t) => t !== null);
-      const resolvedMs = !anyOpen && resolvedTs.length === rows.length ? Math.max(...resolvedTs) : null;
-      let severity = "UNKNOWN";
-      for (const r of rows) {
-        const s = normalizeSeverity(r["severity"]);
-        if (severityRank(s) < severityRank(severity)) severity = s;
-      }
-      let best = rows[0];
-      let bestState = normalizeValidation(best["validationStatus"]);
-      for (const r of rows.slice(1)) {
-        const state = normalizeValidation(r["validationStatus"]);
-        if (VALIDATION_RANK[state] < VALIDATION_RANK[bestState]) {
-          best = r;
-          bestState = state;
-        }
-      }
-      const validatedAt = toIso(parseTs(best["lastValidatedAt"]));
-      const repoRow = (_a = rows.find((r) => resourceType(r) === "REPOSITORY")) != null ? _a : rows[0];
-      const branchRow = (_b = rows.find((r) => resourceType(r) === "REPOSITORY_BRANCH")) != null ? _b : null;
-      const repoName = resourceField(repoRow, "name");
-      const branchName = branchRow === null ? null : resourceField(branchRow, "name");
-      const branch = branchName !== null && repoName !== null && branchName.startsWith(`${repoName}/`) ? branchName.slice(repoName.length + 1) : branchName;
-      const projects = Array.isArray(rows[0]["projects"]) ? rows[0]["projects"] : [];
-      const owner = (_d = (_c = projects.find((p) => p && p["isFolder"] !== true)) != null ? _c : projects[0]) != null ? _d : null;
-      const path = str3(repoRow["path"]);
-      const line = clean(repoRow["lineNumber"]);
-      observations.push({
-        ...emptyObservation("secrets", secretsFindingKey(repoRow)),
-        identifier: str3(repoRow["secretDataId"]),
-        component: path === null ? null : line === null ? path : `${path}:${String(line)}`,
-        severity,
-        secret_kind: str3(repoRow["type"]),
-        confidence: str3(repoRow["confidence"]),
-        repo_id: resourceField(repoRow, "id"),
-        repo_name: repoName,
-        branch,
-        platform: resourceField(repoRow, "cloudPlatform"),
-        file_path: path,
-        start_line: typeof line === "number" ? line : line === null ? null : Number(line),
-        origin: str3(
-          (_f = (_e = repoRow["vcsDetails"]) == null ? void 0 : _e["initialCommitHash"]) != null ? _f : null
-        ),
-        first_seen: toIso(firstMs),
-        // `is_open`, not a status: an observation reports what the API said, and only a
-        // sequence of scans can turn that into a lifecycle. Reconcile owns the status column.
-        is_open: anyOpen,
-        resolved_at: toIso(resolvedMs),
-        validation_state: bestState,
-        validated_at: validatedAt,
-        // ONLY on INVALID. rotated_at means "observed dead at this time"; setting it from a
-        // VALID or an UNKNOWN check would publish an unmeasured credential as rotated, which
-        // on a register that is 99.6% UNKNOWN is the absent-is-never-zero failure at scale.
-        rotated_at: bestState === "INVALID" ? validatedAt : null,
-        // removed_at stays null (emptyObservation's default): the string leaving HEAD is a
-        // DISAPPEARANCE, visible only by comparing two scans. The normalizer sees one.
-        owner_project: owner === null ? null : str3(owner["name"]),
-        owner_path: owner === null ? null : str3(owner["slug"]),
-        twin_count: rows.length,
-        twin_first_seen_spread_days: spreadDays,
-        source_external_ids: JSON.stringify(
-          rows.map((r) => str3(r["externalId"])).filter((v) => v !== null)
-        )
-      });
-    }
-    return {
-      observations,
-      nodes: nodes.length,
-      findings: observations.length,
-      twinned,
-      keyed_without_line: keyedWithoutLine
-    };
-  }
-
-  // src/server/sync.ts
-  function observationsFor(scope, nodes) {
-    if (scope === "secrets") {
-      const folded = collapseTwins(nodes);
-      return { observations: folded.observations, keyedWithoutLine: folded.keyed_without_line };
-    }
-    const normalize = NORMALIZERS[scope];
-    return { observations: nodes.map((n) => normalize(n)) };
-  }
-  function stagedSource(syncId, stepIndex, expectedPages) {
-    return {
-      mode: "live",
-      nodes(_scope) {
-        const pages = readSyncStepPages(syncId, stepIndex, expectedPages);
-        const out = [];
-        for (const page of pages) {
-          const nodes = (page != null ? page : {})["nodes"];
-          if (!Array.isArray(nodes)) {
-            throw new Error(
-              `Archive page of sync ${syncId} step ${stepIndex} carried no nodes array.`
-            );
-          }
-          for (const n of nodes) out.push(n);
-        }
-        return out;
-      }
-    };
-  }
-  function sampleSource(dataset) {
-    return { mode: "sample", nodes: (scope) => {
-      var _a;
-      return (_a = dataset[scope]) != null ? _a : [];
-    } };
-  }
-  function runScan(scope, source, opts) {
-    var _a, _b, _c, _d, _e, _f;
-    const ts = (_a = opts.ts) != null ? _a : nowIso();
-    const scans = readScans();
-    const already = existingScanDeltas(scans, opts.scanId);
-    if (already) {
-      return {
-        scan_id: opts.scanId,
-        scope,
-        ts,
-        mode: source.mode,
-        nodes: 0,
-        findings: 0,
-        deltas: already,
-        alreadyRecorded: true
-      };
-    }
-    const nodes = source.nodes(scope);
-    const { observations, keyedWithoutLine } = observationsFor(scope, nodes);
-    const requested = opts.severities !== void 0 ? opts.severities : (_c = (_b = loadSettings().fetchSeverities) == null ? void 0 : _b[scope]) != null ? _c : DEFAULT_FETCH_SEVERITIES[scope];
-    const scannedSeverities = requested && requested.length ? [...requested] : null;
-    const prev = latestScan(scans, scope);
-    const prevBySev = prevScanIdBySeverity(scans, scope);
-    const result = reconcile(
-      observations,
-      readLedger(),
-      scope,
-      opts.scanId,
-      ts,
-      (_d = prev == null ? void 0 : prev.scan_id) != null ? _d : null,
-      {
-        scannedSeverities,
-        prevScanIdBySeverity: prevBySev,
-        prevScanTs: (_e = prev == null ? void 0 : prev.ts) != null ? _e : null
-      }
-    );
-    writeLedger(result.ledger);
-    appendScan({
-      scan_id: opts.scanId,
-      ts,
-      scope,
-      mode: source.mode,
-      severities: scannedSeverities,
-      total: observations.length,
-      raw_ref: (_f = opts.rawRef) != null ? _f : null,
-      ...result.deltas
-    });
-    return {
-      scan_id: opts.scanId,
-      scope,
-      ts,
-      mode: source.mode,
-      nodes: nodes.length,
-      findings: observations.length,
-      deltas: result.deltas,
-      alreadyRecorded: false,
-      ...keyedWithoutLine === void 0 ? {} : { keyed_without_line: keyedWithoutLine }
-    };
   }
 
   // src/server/wizQueries.ts
@@ -2293,6 +4062,7 @@ var Server = (() => {
         }
       }
       artifactType { codeLibraryLanguage }
+      projects { id name isFolder slug }
     }
     totalCount
     pageInfo { hasNextPage endCursor }
@@ -2334,11 +4104,6 @@ var Server = (() => {
     sast: Q_SAST,
     sca: Q_SCA,
     secrets: Q_SECRETS
-  };
-  var ROOT_FIELDS = {
-    sast: "sastFindings",
-    sca: "vulnerabilityFindings",
-    secrets: "secretInstances"
   };
   var API_SEVERITY = {
     CRITICAL: "CRITICAL",
@@ -2410,8 +4175,8 @@ var Server = (() => {
   }
   function severityFilter(severities) {
     const out = [];
-    for (const s of severities) {
-      const api = API_SEVERITY[String(s).trim().toUpperCase()];
+    for (const s2 of severities) {
+      const api = API_SEVERITY[String(s2).trim().toUpperCase()];
       if (api && !out.includes(api)) out.push(api);
     }
     return out;
@@ -2425,8 +4190,8 @@ var Server = (() => {
     if (scope === "sast" && SAST_FETCH_RESOLVED) {
       filterBy.status = listFilter(scope, "status", ["OPEN", "RESOLVED"]);
     }
-    const sev = severityFilter((_b = opts.severities) != null ? _b : []);
-    if (sev.length) filterBy.severity = listFilter(scope, "severity", sev);
+    const sev2 = severityFilter((_b = opts.severities) != null ? _b : []);
+    if (sev2.length) filterBy.severity = listFilter(scope, "severity", sev2);
     if (opts.projectId) {
       const key = scope === "sca" ? "projectIdV2" : "projectId";
       filterBy[key] = listFilter(scope, key, [opts.projectId]);
@@ -2443,13 +4208,9 @@ var Server = (() => {
   }
 
   // src/server/wizClient.ts
-  var WizError = class extends Error {
+  var WizQueryError = class extends Error {
   };
-  var WizAuthError = class extends WizError {
-  };
-  var WizRefusedError = class extends WizError {
-  };
-  var WizNotAuthorizedError = class extends WizError {
+  var WizNotAuthorizedError = class extends Error {
   };
   var EXTERNAL_REQUEST_SCOPE = "script.external_request";
   function guardAuthorization(fn) {
@@ -2464,14 +4225,25 @@ var Server = (() => {
       );
     }
   }
-  var TOKEN_CACHE_KEY = "wiz_token";
-  var ATTEMPTS = 4;
+  var TOKEN_CACHE_KEY = "wiz_devsecops_token";
+  function staticToken() {
+    const raw = getProp(PROP_KEYS.wizApiToken);
+    return raw && raw.trim() ? raw.trim() : null;
+  }
+  function forgetToken() {
+    try {
+      CacheService.getScriptCache().remove(TOKEN_CACHE_KEY);
+    } catch {
+    }
+  }
   function getToken(forceRefresh = false) {
     var _a, _b;
-    const staticToken = getProp(PROP_KEYS.wizApiToken);
-    if (staticToken && staticToken.trim()) return staticToken.trim();
+    const token = staticToken();
+    if (token) return token;
     const cache = CacheService.getScriptCache();
-    if (!forceRefresh) {
+    if (forceRefresh) {
+      forgetToken();
+    } else {
       const cached2 = cache.get(TOKEN_CACHE_KEY);
       if (cached2) return cached2;
     }
@@ -2487,49 +4259,74 @@ var Server = (() => {
       },
       muteHttpExceptions: true
     }));
-    const code = response.getResponseCode();
-    if (code !== 200) {
-      throw new WizAuthError(
-        `Wiz token request failed (HTTP ${code}): ${response.getContentText().slice(0, 400)}`
+    if (response.getResponseCode() !== 200) {
+      throw new WizQueryError(
+        `Wiz token request failed (${response.getResponseCode()}): ` + errorDigest(response.getContentText())
       );
     }
-    let body;
-    try {
-      body = JSON.parse(response.getContentText());
-    } catch {
-      throw new WizAuthError("Wiz token response was not JSON.");
-    }
-    const token = body["access_token"];
-    if (typeof token !== "string" || !token) {
-      throw new WizAuthError("Wiz token response carried no access_token.");
+    const body = JSON.parse(response.getContentText());
+    const issued = body["access_token"];
+    if (typeof issued !== "string" || !issued) {
+      throw new WizQueryError("Wiz token response carried no access_token.");
     }
     const expiresIn = Number((_b = body["expires_in"]) != null ? _b : 3600);
     const ttl = Math.max(60, Math.min(Math.trunc(expiresIn) - 300, 21600));
-    cache.put(TOKEN_CACHE_KEY, token, ttl);
-    return token;
+    cache.put(TOKEN_CACHE_KEY, issued, ttl);
+    return issued;
   }
-  function forgetToken() {
+  var ERROR_BODY_MAX = 800;
+  function redact(text) {
+    return String(text).replace(
+      /(access_token|refresh_token|id_token|client_secret)("|')?\s*[:=]\s*("|')?[^"',}\s&]+("|')?/gi,
+      "$1=<redacted>"
+    ).replace(/Bearer\s+[A-Za-z0-9._~+/-]{8,}=*/gi, "Bearer <redacted>");
+  }
+  function errorDigest(text) {
     try {
-      CacheService.getScriptCache().remove(TOKEN_CACHE_KEY);
+      const parsed = JSON.parse(text);
+      const errors = parsed["errors"];
+      if (Array.isArray(errors) && errors.length) {
+        const parts = errors.map((e) => {
+          var _a, _b;
+          if (!e || typeof e !== "object") return "";
+          const rec = e;
+          const ext = rec["extensions"];
+          const code = ext && typeof ext === "object" ? String((_a = ext["code"]) != null ? _a : "") : "";
+          const message = String((_b = rec["message"]) != null ? _b : "");
+          if (code && message) return `${code}: ${message}`;
+          return code || message;
+        }).filter(Boolean);
+        if (parts.length) return redact(parts.join(" | ")).slice(0, ERROR_BODY_MAX);
+      }
     } catch {
     }
+    return redact(String(text)).slice(0, ERROR_BODY_MAX);
+  }
+  function errorMessages(errors) {
+    if (!Array.isArray(errors)) return [];
+    return errors.map((e) => {
+      var _a;
+      return e && typeof e === "object" ? String((_a = e["message"]) != null ? _a : "") : String(e);
+    }).filter(Boolean).map((m) => redact(m));
   }
   function resolveConnection(data) {
-    const rec = data != null ? data : {};
-    for (const key of Object.keys(rec)) {
-      const v = rec[key];
-      if (v !== null && typeof v === "object" && ("nodes" in v || "pageInfo" in v)) {
-        return { root: key, conn: v };
-      }
-    }
-    return null;
+    const source = data != null ? data : {};
+    const keys = Object.keys(source);
+    const root = keys.find((k) => {
+      const v = source[k];
+      return v !== null && typeof v === "object" && ("nodes" in v || "pageInfo" in v);
+    });
+    if (root === void 0) return { ok: false, keys };
+    return { ok: true, root, conn: source[root] };
   }
-  function post(query, variables, first, expectedRoot) {
-    var _a, _b, _c, _d;
+  var MAX_ATTEMPTS = 4;
+  function queryPage(query, variables) {
+    var _a, _b, _c;
     const apiUrl = requireProp(PROP_KEYS.wizApiUrl);
     let token = getToken();
-    let lastTransient = "";
-    for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+    let refreshed = false;
+    let lastError = "";
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const response = guardAuthorization(() => UrlFetchApp.fetch(apiUrl, {
         method: "post",
         contentType: "application/json",
@@ -2538,451 +4335,91 @@ var Server = (() => {
         muteHttpExceptions: true
       }));
       const code = response.getResponseCode();
-      if (code === 401 && attempt === 0 && !getProp(PROP_KEYS.wizApiToken)) {
+      if (code === 401 && !refreshed && !staticToken()) {
+        refreshed = true;
         token = getToken(true);
         continue;
       }
       if (code === 429 || code >= 500) {
-        lastTransient = `HTTP ${code}`;
-        Utilities.sleep(1e3 * Math.pow(2, attempt));
+        lastError = `HTTP ${code}`;
+        if (attempt + 1 < MAX_ATTEMPTS) Utilities.sleep(1e3 * Math.pow(2, attempt));
         continue;
       }
       if (code !== 200) {
-        const hint = code === 401 && getProp(PROP_KEYS.wizApiToken) ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID and WIZ_CLIENT_SECRET so the token can be re-minted automatically." : "";
-        const Cls = code === 401 || code === 403 ? WizAuthError : WizRefusedError;
-        throw new Cls(
-          `Wiz query failed (HTTP ${code})${hint}: ${response.getContentText().slice(0, 400)}`
+        const hint = code !== 401 ? "" : staticToken() ? " \u2014 WIZ_API_TOKEN was rejected; it may have expired. Refresh it, or set WIZ_CLIENT_ID/WIZ_CLIENT_SECRET for auto-refresh." : " \u2014 a freshly issued OAuth token was rejected; check WIZ_CLIENT_ID / WIZ_CLIENT_SECRET and the API scopes granted to that service account.";
+        throw new WizQueryError(
+          `Wiz query failed (HTTP ${code})${hint}: ${errorDigest(response.getContentText())}`
         );
       }
-      let body;
-      try {
-        body = JSON.parse(response.getContentText());
-      } catch {
-        throw new WizError(
-          `Wiz returned a 200 that was not JSON: ${response.getContentText().slice(0, 300)}`
-        );
+      const text = response.getContentText();
+      const body = JSON.parse(text);
+      const data = body["data"];
+      if (!data) {
+        throw new WizQueryError(`Wiz response carried no data: ${errorDigest(text)}`);
       }
-      const errors = ((_a = body["errors"]) != null ? _a : []).map((e) => {
-        var _a2;
-        return String((_a2 = e["message"]) != null ? _a2 : e);
-      });
-      const found = resolveConnection(body["data"]);
-      if (!found) {
-        throw new WizError(
-          `Wiz response carried no connection${errors.length ? `: ${errors.join("; ").slice(0, 400)}` : "."}`
-        );
-      }
-      if (found.root !== expectedRoot) {
-        throw new WizError(
-          `Wiz answered under \`${found.root}\` where \`${expectedRoot}\` was asked for.`
+      const found = resolveConnection(data);
+      if (!found.ok) {
+        throw new WizQueryError(
+          `Wiz response carried no connection; root keys: [${found.keys.join(", ")}]. A response that parses but carries no nodes/pageInfo is a defect, not an empty register.`
         );
       }
       const conn = found.conn;
-      const pageInfo = (_b = conn["pageInfo"]) != null ? _b : {};
+      const pageInfo = (_a = conn["pageInfo"]) != null ? _a : {};
       const rawTotal = conn["totalCount"];
       return {
-        nodes: (_c = conn["nodes"]) != null ? _c : [],
-        hasNextPage: Boolean(pageInfo["hasNextPage"]),
-        endCursor: (_d = pageInfo["endCursor"]) != null ? _d : null,
+        nodes: (_b = conn["nodes"]) != null ? _b : [],
+        pageInfo: {
+          hasNextPage: Boolean(pageInfo["hasNextPage"]),
+          endCursor: (_c = pageInfo["endCursor"]) != null ? _c : null
+        },
         totalCount: typeof rawTotal === "number" ? rawTotal : null,
-        pageSize: first,
-        partialErrors: errors
+        // PARTIAL: data AND errors. The nodes are returned; the errors travel with them.
+        partialErrors: errorMessages(body["errors"])
       };
     }
-    throw new WizError(`Wiz query failed after ${ATTEMPTS} attempts (${lastTransient}).`);
+    throw new WizQueryError(`Wiz query failed after retries (${lastError}).`);
   }
-  function fetchPage(scope, opts = {}) {
-    var _a;
+  function smallerPageCouldHelp(e) {
+    if (!(e instanceof WizQueryError)) return true;
+    const m = e.message;
+    if (/HTTP 429/.test(m)) return false;
+    if (/HTTP 4\d\d/.test(m)) return false;
+    if (/internal error has occurred/i.test(m)) return true;
+    if (/carried no data/.test(m)) return false;
+    if (/carried no connection/.test(m)) return false;
+    return true;
+  }
+  function newScanPaging(pageSize = PAGE_SIZE) {
+    return { pageSize, pageNumber: 0 };
+  }
+  function fetchPage(scope, variables, paging = newScanPaging()) {
     const query = QUERIES[scope];
-    if (!query) throw new WizError(`No query is defined for scope ${scope}.`);
-    const first = (_a = opts.first) != null ? _a : PAGE_SIZE;
-    const vars = (size) => {
-      var _a2;
-      return buildVariables(scope, {
-        severities: opts.severities,
-        projectId: opts.projectId,
-        after: (_a2 = opts.cursor) != null ? _a2 : null,
-        first: size
-      });
-    };
-    const root = ROOT_FIELDS[scope];
+    if (query == null) {
+      throw new WizQueryError(`no query document for scope "${scope}" \u2014 see wizQueries.ts`);
+    }
+    if (paging.pageNumber >= MAX_PAGES) {
+      throw new WizQueryError(
+        `Wiz ${scope} walk reached MAX_PAGES (${MAX_PAGES}) at ${paging.pageSize} rows a page and the cursor still reports more. Refusing to truncate silently \u2014 a partial register that looks complete is worse than a failed scan.`
+      );
+    }
+    const send = (first) => queryPage(query, { ...variables, first });
+    const probing = paging.pageNumber === 0 && paging.pageSize > PAGE_SIZE_FALLBACK;
     try {
-      return post(query, vars(first), first, root);
+      const page = send(paging.pageSize);
+      paging.pageNumber += 1;
+      return page;
     } catch (e) {
-      if (!(e instanceof WizRefusedError) || first <= PAGE_SIZE_FALLBACK) throw e;
-      return post(query, vars(PAGE_SIZE_FALLBACK), PAGE_SIZE_FALLBACK, root);
+      if (!probing || !smallerPageCouldHelp(e)) throw e;
+      const page = send(PAGE_SIZE_FALLBACK);
+      paging.pageSize = PAGE_SIZE_FALLBACK;
+      paging.pageNumber += 1;
+      return page;
     }
   }
   function testConnection(scope = "sast") {
     forgetToken();
-    const page = fetchPage(scope, { first: 1 });
+    const page = fetchPage(scope, {}, { pageSize: 1, pageNumber: 0 });
     return { ok: true, rows: page.totalCount };
-  }
-
-  // src/server/scanJobs.ts
-  var FIRST_STEP_BUDGET_MS = 45e3;
-  var BUDGET_MS = 27e4;
-  var EXECUTION_MS = 3e5;
-  var COMMIT_RESERVE_MS = 12e4;
-  var CONTINUE_DELAY_MS = 3e4;
-  var CONTINUE_RETRY_MS = 9e4;
-  var CHECKPOINT_MS = 8e3;
-  var CONTINUE_HANDLER = "trigger_continueScan";
-  var DAILY_HANDLER = "trigger_dailyScan";
-  var CANCEL_PROP = "CANCEL_SCAN_JOB_ID";
-  var ScanCancelled = class extends Error {
-  };
-  var TruncatedStep = class extends Error {
-  };
-  function cancelRequested(jobId) {
-    return getProp(CANCEL_PROP) === jobId;
-  }
-  function clearCancel() {
-    deleteProp(CANCEL_PROP);
-  }
-  function jobParams(job) {
-    var _a, _b, _c, _d;
-    const raw = JSON.parse((_a = job.params_json) != null ? _a : "{}");
-    return {
-      scopes: (_b = raw.scopes) != null ? _b : [],
-      severities: (_c = raw.severities) != null ? _c : {},
-      projectId: (_d = raw.projectId) != null ? _d : null
-    };
-  }
-  function clearContinuationTriggers() {
-    for (const t of ScriptApp.getProjectTriggers()) {
-      if (t.getHandlerFunction() === CONTINUE_HANDLER) ScriptApp.deleteTrigger(t);
-    }
-  }
-  function scheduleContinuation(delayMs = CONTINUE_DELAY_MS) {
-    ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(delayMs).create();
-  }
-  function stepIndexOf(params, scope) {
-    const i = params.scopes.indexOf(scope != null ? scope : "");
-    if (i < 0) {
-      throw new Error(
-        `Job is on scope ${scope != null ? scope : "(none)"}, which is not in the list it started with (${params.scopes.join(", ") || "empty"}). Refusing to guess which step this is.`
-      );
-    }
-    return i;
-  }
-  function abandonStep(job, phase, error) {
-    try {
-      const params = jobParams(job);
-      if (job.scope) trashSyncStepPages(job.job_id, stepIndexOf(params, job.scope));
-    } catch {
-    }
-    updateJob(job.job_id, { phase, error });
-    clearCancel();
-    clearContinuationTriggers();
-  }
-  function fetchStep(job, params, deadline) {
-    var _a;
-    const scope = job.scope;
-    const stepIndex = stepIndexOf(params, scope);
-    let cursor = job.cursor;
-    let page = job.page;
-    let findings = job.findings_so_far;
-    let total = job.total_count;
-    let pageSize = job.page_size || PAGE_SIZE;
-    let lastCheckpoint = 0;
-    const checkpoint = () => {
-      updateJob(job.job_id, {
-        cursor,
-        page,
-        findings_so_far: findings,
-        total_count: total,
-        page_size: pageSize
-      });
-      lastCheckpoint = Date.now();
-    };
-    for (; ; ) {
-      if (cancelRequested(job.job_id)) throw new ScanCancelled();
-      if (Date.now() >= deadline) {
-        checkpoint();
-        scheduleContinuation();
-        return "yielded";
-      }
-      const result = fetchPage(scope, {
-        severities: (_a = params.severities[scope]) != null ? _a : void 0,
-        projectId: params.projectId,
-        cursor,
-        first: pageSize
-      });
-      writeSyncPage(job.job_id, stepIndex, page + 1, { nodes: result.nodes });
-      page += 1;
-      findings += result.nodes.length;
-      pageSize = result.pageSize;
-      if (result.totalCount !== null) total = result.totalCount;
-      if (page === 1 || Date.now() - lastCheckpoint >= CHECKPOINT_MS) checkpoint();
-      if (!result.hasNextPage) break;
-      if (page >= MAX_PAGES) {
-        throw new TruncatedStep(
-          `${scope} still had pages after ${MAX_PAGES}. Refusing to record a partial walk as a scan: every finding past the cut would resolve as remediated.`
-        );
-      }
-      if (!result.endCursor) {
-        throw new Error(
-          `${scope} reported another page but gave no cursor to reach it. Refusing to loop.`
-        );
-      }
-      cursor = result.endCursor;
-    }
-    checkpoint();
-    return "complete";
-  }
-  function commitStep(job, params) {
-    var _a;
-    const scope = job.scope;
-    const stepIndex = stepIndexOf(params, scope);
-    const scanId = `${job.job_id}-${scope}`;
-    updateJob(job.job_id, { phase: "RECONCILING", scan_id: scanId });
-    const source = stagedSource(job.job_id, stepIndex, job.page);
-    const journalId = writeGzJson(
-      syncFolder(job.job_id),
-      `step-${stepIndex}-ledger-before.json.gz`,
-      readLedger()
-    ).getId();
-    updateJob(job.job_id, { phase: "PERSISTING", journal_ref: journalId });
-    runScan(scope, source, {
-      scanId,
-      // FROZEN AT JOB START, never re-read. Settings can move mid-walk, and a hop that read
-      // them fresh would stamp today's gate on pages fetched under yesterday's — which makes
-      // the disappearance guard believe a severity was covered by a scan that never asked for
-      // it. The gate a scan records has to be the gate it applied.
-      severities: (_a = params.severities[scope]) != null ? _a : null,
-      rawRef: syncFolder(job.job_id).getId()
-    });
-    trashFile(journalId);
-    updateJob(job.job_id, { journal_ref: null });
-    bumpWizDataVersion();
-  }
-  function runBattery(job, budgetMs) {
-    var _a;
-    const started = Date.now();
-    const fetchDeadline = started + budgetMs;
-    const executionEnd = started + EXECUTION_MS;
-    const params = jobParams(job);
-    let cur = job;
-    try {
-      for (; ; ) {
-        if (cancelRequested(cur.job_id)) throw new ScanCancelled();
-        if (cur.phase === "FETCHING") {
-          if (fetchStep(cur, params, fetchDeadline) === "yielded") return;
-          cur = { ...cur, phase: "RECONCILING", ...(_a = getJob(cur.job_id)) != null ? _a : {} };
-        }
-        if (Date.now() + COMMIT_RESERVE_MS > executionEnd) {
-          updateJob(cur.job_id, { phase: "RECONCILING" });
-          scheduleContinuation();
-          return;
-        }
-        commitStep(cur, params);
-        const next = params.scopes[stepIndexOf(params, cur.scope) + 1];
-        if (!next) {
-          updateJob(cur.job_id, { phase: "DONE", error: null });
-          clearCancel();
-          clearContinuationTriggers();
-          return;
-        }
-        updateJob(cur.job_id, {
-          phase: "FETCHING",
-          scope: next,
-          scan_id: null,
-          cursor: null,
-          page: 0,
-          findings_so_far: 0,
-          total_count: 0,
-          page_size: 0
-        });
-        cur = getJob(cur.job_id);
-      }
-    } catch (e) {
-      if (e instanceof ScanCancelled) {
-        abandonStep(cur, "CANCELLED", null);
-        return;
-      }
-      const scope = cur.scope ? `[${cur.scope}] ` : "";
-      abandonStep(cur, "FAILED", `${scope}${String(e).slice(0, 900)}`);
-      throw e;
-    }
-  }
-  function startScan() {
-    return withScriptLock(() => {
-      var _a, _b;
-      recoverIfNeeded();
-      const active = activeJob();
-      if (active) {
-        if (!isStaleJob(active)) {
-          return { jobId: active.job_id, message: "A scan is already in progress." };
-        }
-        clearContinuationTriggers();
-        updateJob(active.job_id, {
-          phase: "FAILED",
-          error: "Reclaimed: the job stalled with no progress."
-        });
-      }
-      if (!hasWizCredentials()) {
-        throw new Error(
-          "No Wiz credentials are set, so there is nothing to scan. Set WIZ_API_URL and either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Script Properties."
-        );
-      }
-      const settings = loadSettings();
-      const scopes = SCOPES.filter((s) => settings.scopes.indexOf(s) >= 0);
-      if (!scopes.length) {
-        throw new Error("Settings collects no register, so a scan has nothing to walk.");
-      }
-      const severities = {};
-      for (const s of scopes) {
-        const gate2 = (_b = (_a = settings.fetchSeverities) == null ? void 0 : _a[s]) != null ? _b : [];
-        severities[s] = gate2.length ? [...gate2] : null;
-      }
-      const project = projectScope();
-      clearCancel();
-      const job = createJob({
-        job_id: newJobId("scan"),
-        kind: "scan",
-        phase: "FETCHING",
-        scan_id: null,
-        scope: scopes[0],
-        cursor: null,
-        page: 0,
-        findings_so_far: 0,
-        page_size: 0,
-        total_count: 0,
-        params_json: JSON.stringify({
-          scopes,
-          severities,
-          projectId: project ? project[0] : null
-        }),
-        journal_ref: null,
-        error: null
-      });
-      runBattery(job, FIRST_STEP_BUDGET_MS);
-      return { jobId: job.job_id, message: "Scan started." };
-    });
-  }
-  function continueJob(_e) {
-    try {
-      withScriptLock(() => {
-        clearContinuationTriggers();
-        const job = activeJob();
-        if (!job || job.kind !== "scan") return;
-        if (cancelRequested(job.job_id)) {
-          abandonStep(job, "CANCELLED", null);
-          return;
-        }
-        runBattery(job, BUDGET_MS);
-      }, 12e4);
-    } catch (e) {
-      if (e instanceof LedgerBusyError) scheduleContinuation(CONTINUE_RETRY_MS);
-      throw e;
-    }
-  }
-  function cancelScan(jobId) {
-    const job = getJob(jobId);
-    if (!job || isTerminalPhase(job.phase)) {
-      return { jobId, message: "That scan has already finished.", stopped: true };
-    }
-    setProp(CANCEL_PROP, jobId);
-    const lock = LockService.getScriptLock();
-    if (lock.tryLock(1e4)) {
-      try {
-        const fresh = getJob(jobId);
-        if (fresh && !isTerminalPhase(fresh.phase)) {
-          abandonStep(fresh, "CANCELLED", null);
-          return { jobId, message: "Scan stopped.", stopped: true };
-        }
-      } finally {
-        lock.releaseLock();
-      }
-      return { jobId, message: "Scan stopped.", stopped: true };
-    }
-    return { jobId, message: "Stopping after the current page\u2026", stopped: false };
-  }
-  function jobStatus(jobId) {
-    const job = jobId ? getJob(jobId) : activeJob();
-    if (!job) return null;
-    const params = jobParams(job);
-    const step = job.scope ? params.scopes.indexOf(job.scope) : -1;
-    return {
-      job_id: job.job_id,
-      phase: job.phase,
-      scope: job.scope,
-      scopes: params.scopes.slice(),
-      step: step < 0 ? 0 : step,
-      steps_total: params.scopes.length,
-      page: job.page,
-      findings_so_far: job.findings_so_far,
-      total_count: job.total_count,
-      error: job.error,
-      started_at: job.started_at,
-      updated_at: job.updated_at,
-      stale: !isTerminalPhase(job.phase) && isStaleJob(job)
-    };
-  }
-  function dailyScan(_e) {
-    if (!hasWizCredentials()) return;
-    try {
-      startScan();
-    } catch (e) {
-      console.error(`Daily scan could not start: ${e}`);
-    }
-  }
-  function resetStuckJob() {
-    const job = activeJob();
-    if (!job) return "No active job.";
-    clearContinuationTriggers();
-    clearCancel();
-    updateJob(job.job_id, {
-      phase: "FAILED",
-      error: "Reset by an operator from the Apps Script editor."
-    });
-    return `Reset ${job.job_id} (was ${job.phase}).`;
-  }
-
-  // src/server/setup.ts
-  function setup() {
-    const notes = [];
-    let ssId = getProp(PROP_KEYS.ledgerSpreadsheetId);
-    let ss;
-    if (ssId) {
-      ss = SpreadsheetApp.openById(ssId);
-      notes.push(`Ledger: reusing ${ssId}`);
-    } else {
-      ss = SpreadsheetApp.create("Wiz Sidekick DevSecOps \u2014 ledger");
-      ssId = ss.getId();
-      setProp(PROP_KEYS.ledgerSpreadsheetId, ssId);
-      notes.push(`Ledger: created ${ssId}`);
-    }
-    ensureTabs(ss);
-    notes.push("Tabs: ensured (headers appended where missing)");
-    let folderId = getProp(PROP_KEYS.archiveFolderId);
-    if (!folderId) {
-      folderId = DriveApp.createFolder("Wiz Sidekick DevSecOps \u2014 archive").getId();
-      setProp(PROP_KEYS.archiveFolderId, folderId);
-      notes.push(`Archive: created ${folderId}`);
-    } else {
-      notes.push(`Archive: reusing ${folderId}`);
-    }
-    if (!getProp(PROP_KEYS.wizAuthUrl)) setProp(PROP_KEYS.wizAuthUrl, DEFAULT_WIZ_AUTH_URL);
-    if (!getProp(PROP_KEYS.allowedUsers)) {
-      const owner = Session.getEffectiveUser().getEmail();
-      if (owner) {
-        setProp(PROP_KEYS.allowedUsers, owner);
-        notes.push(`Access: seeded ALLOWED_USERS with ${owner}`);
-      }
-    }
-    const existing = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === DAILY_HANDLER);
-    if (existing.length) {
-      notes.push(`Triggers: daily scan already installed (${existing.length})`);
-    } else {
-      ScriptApp.newTrigger(DAILY_HANDLER).timeBased().everyDays(1).atHour(3).create();
-      notes.push("Triggers: installed the daily scan (03:00, project timezone)");
-    }
-    if (!hasWizCredentials()) {
-      notes.push("  note: no Wiz credentials are set, so it will return without scanning.");
-    }
-    return notes.join("\n");
   }
 
   // src/server/diagnostics.ts
@@ -3029,11 +4466,11 @@ var Server = (() => {
     const users = getProp(PROP_KEYS.allowedUsers);
     if (users) ok("Allowlist", `${users.split(/[,;\s]+/).filter(Boolean).length} address(es)`);
     else bad("Allowlist", "empty \u2014 the app is owner-only until ALLOWED_USERS is set");
-    const s = loadSettings();
-    ok("Scopes collected", s.scopes.join(", ") || "(none)");
+    const s2 = loadSettings();
+    ok("Scopes collected", s2.scopes.join(", ") || "(none)");
     ok("Scopes available", SCOPES.join(", "));
     for (const scope of SCOPES) {
-      ok(`Severities requested (${scope})`, s.fetchSeverities[scope].join(", ") || "(all)");
+      ok(`Severities requested (${scope})`, s2.fetchSeverities[scope].join(", ") || "(all)");
     }
     r.line("");
     const daily = ScriptApp.getProjectTriggers().filter((t) => t.getHandlerFunction() === "trigger_dailyScan").length;
@@ -3054,288 +4491,1669 @@ var Server = (() => {
     else bad("Credentials last verified", "never \u2014 the tenant has not accepted them yet");
     return r.text();
   }
-  function redact(v) {
-    if (!v) return "(unset)";
-    const t = v.trim();
-    return t.length <= 8 ? "(set)" : `${t.slice(0, 4)}\u2026${t.slice(-2)} (${t.length} chars)`;
-  }
-  function wizDiagnostic() {
-    var _a, _b, _c, _d;
-    const r = reporter();
-    const say = (label, value) => r.line(`  ${label}: ${value}`);
-    r.line("Wiz connectivity diagnostic");
-    r.line(`Build ${BUILD_ID}`);
-    r.line("");
-    const mode = resolveWizAuthMode(
-      getProp(PROP_KEYS.wizApiToken),
-      getProp(PROP_KEYS.wizClientId),
-      getProp(PROP_KEYS.wizClientSecret)
-    );
-    say("Auth mode", mode != null ? mode : "NONE \u2014 set WIZ_API_TOKEN, or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET");
-    say("API url", (_a = getProp(PROP_KEYS.wizApiUrl)) != null ? _a : "(unset)");
-    say("Auth url", (_b = getProp(PROP_KEYS.wizAuthUrl)) != null ? _b : "(unset)");
-    say("Client id", redact(getProp(PROP_KEYS.wizClientId)));
-    say("Client secret", redact(getProp(PROP_KEYS.wizClientSecret)));
-    say("Static token", redact(getProp(PROP_KEYS.wizApiToken)));
-    say("Project scope", ((_c = projectScope()) != null ? _c : []).join(", ") || "(all projects)");
-    r.line("");
-    if (!hasWizCredentials()) {
-      r.line("STOP: no usable credentials, so there is nothing to test. Set WIZ_API_URL and");
-      r.line("either WIZ_API_TOKEN or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET in Project Settings.");
-      return r.text();
-    }
-    forgetToken();
-    try {
-      const token = getToken(true);
-      r.line(`  Step 1 OK    token acquired (${token.length} chars)`);
-    } catch (e) {
-      r.line(`  Step 1 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
-      r.line("");
-      r.line(e instanceof WizNotAuthorizedError ? "This is the deployment's authorization, NOT the credentials. Accept the consent\nprompt this run should have shown you, then deploy a NEW VERSION of the web app \u2014\npushing code does not change what the /exec URL serves." : "The token endpoint refused these credentials. Check WIZ_CLIENT_ID and\nWIZ_CLIENT_SECRET, and that WIZ_AUTH_URL matches your tenant's region.");
-      return r.text();
-    }
-    try {
-      const page = fetchPage("sast", { first: 1 });
-      r.line(`  Step 2 OK    query answered \u2014 ${(_d = page.totalCount) != null ? _d : "?"} finding(s) in scope`);
-      if (page.partialErrors.length) {
-        r.line(`               with partial errors: ${page.partialErrors.join("; ").slice(0, 300)}`);
-      }
-      setProp(PROP_KEYS.wizVerifiedAt, (/* @__PURE__ */ new Date()).toISOString());
-      r.line("");
-      r.line("Connectivity is fine. Settings > System will now read 'Verified'.");
-    } catch (e) {
-      r.line(`  Step 2 FAIL  ${String(e instanceof Error ? e.message : e).slice(0, 600)}`);
-      r.line("");
-      r.line("The token was accepted but the query was not. A 401 here means the service");
-      r.line("account cannot read this data; a 404 means WIZ_API_URL's host or path is wrong.");
-    }
-    return r.text();
-  }
 
   // src/server/api.ts
   var api_exports = {};
   __export(api_exports, {
     bootstrap: () => bootstrap,
-    cancelScan: () => cancelScan2,
+    cancelSync: () => cancelSync2,
+    compact: () => compact,
+    deleteScans: () => deleteScans2,
     getAccess: () => getAccess,
     getChartsBundle: () => getChartsBundle,
-    getDiagnostic: () => getDiagnostic,
-    getExecutive: () => getExecutive,
+    getExecutivePage: () => getExecutivePage,
+    getExportCsv: () => getExportCsv,
     getJobStatus: () => getJobStatus,
-    getMttr: () => getMttr,
-    getRegister: () => getRegister,
+    getMttrPage: () => getMttrPage,
+    getProgramPage: () => getProgramPage,
+    getRecentErrors: () => getRecentErrors,
+    getRegisterPage: () => getRegisterPage,
+    getRegisterRows: () => getRegisterRows,
+    getReposPage: () => getReposPage,
+    getScanHistory: () => getScanHistory,
+    getSecretsPage: () => getSecretsPage,
     getSettings: () => getSettings,
+    getStorageStats: () => getStorageStats,
     putSettings: () => putSettings,
-    runSampleSync: () => runSampleSync,
-    runScan: () => runScan2,
+    resetLedger: () => resetLedger2,
+    runSync: () => runSync,
     saveAccess: () => saveAccess,
     saveAdmins: () => saveAdmins,
-    setSettings: () => setSettings,
+    setProjectView: () => setProjectView,
     testWizConnection: () => testWizConnection
   });
 
-  // src/domain/remediation.ts
-  var RESOLUTION_BUCKET_EDGES = [1, 7, 30, 90];
-  var RESOLUTION_BUCKET_LABELS = ["\u22641d", "2\u20137d", "8\u201330d", "31\u201390d", "90+d"];
-  function isOpen2(status) {
-    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  // src/domain/projectScope.ts
+  function parseProjects(projectsJson2) {
+    if (!projectsJson2) return [];
+    let parsed;
+    try {
+      parsed = JSON.parse(projectsJson2);
+    } catch {
+      return [];
+    }
+    if (!Array.isArray(parsed)) return [];
+    const out = [];
+    for (const p of parsed) {
+      if (p === null || typeof p !== "object" || Array.isArray(p)) continue;
+      const rec = p;
+      const slug = rec["slug"];
+      const name = rec["name"];
+      if (typeof slug !== "string" || slug === "" || typeof name !== "string") continue;
+      const ref = { slug, name };
+      if (typeof rec["isFolder"] === "boolean") ref.isFolder = rec["isFolder"];
+      out.push(ref);
+    }
+    return out;
   }
-  function resolvedMttr(row) {
-    const m = row.mttr_days;
-    return typeof m === "number" && Number.isFinite(m) ? m : null;
-  }
-  function openAge(row) {
-    if (!isOpen2(row.status)) return null;
-    const a = row.age_days;
-    return typeof a === "number" && Number.isFinite(a) ? a : null;
-  }
-  function mttrPercentiles(rows) {
-    var _a;
-    const bySev = {};
-    const all = [];
+  function projectCatalogue(rows) {
+    const bySlug = /* @__PURE__ */ new Map();
     for (const row of rows) {
-      const m = resolvedMttr(row);
-      if (m === null) continue;
-      const s = normalizeSeverity(row.severity);
-      ((_a = bySev[s]) != null ? _a : bySev[s] = []).push(m);
-      all.push(m);
+      for (const p of parseProjects(row.projects_json)) {
+        const seen = bySlug.get(p.slug);
+        if (!seen) {
+          bySlug.set(p.slug, { slug: p.slug, name: p.name, isFolder: p.isFolder, findings: 1 });
+          continue;
+        }
+        seen.findings += 1;
+        if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
+      }
     }
-    const perSev = {};
-    for (const s of SEVERITY_ORDER) {
-      const vals = bySev[s];
-      if (!vals) continue;
-      perSev[s] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
+    return [...bySlug.values()].sort(
+      (a, b) => a.isFolder === b.isFolder ? a.name.localeCompare(b.name) : a.isFolder ? -1 : 1
+    );
+  }
+  function inProject(projects, slug) {
+    if (!slug) return false;
+    return (projects != null ? projects : []).some((p) => p.slug === slug);
+  }
+  function unattributedCount(rows) {
+    let count = 0;
+    for (const row of rows) {
+      if (parseProjects(row.projects_json).length === 0) count += 1;
     }
+    return count;
+  }
+
+  // src/domain/pagePayload.ts
+  function execMttrSlice(mttr) {
+    var _a, _b;
+    if (!mttr || typeof mttr !== "object") return null;
+    const m = mttr;
+    const overall = (_a = m["overall"]) != null ? _a : {};
+    const km = ((_b = m["remediation"]) != null ? _b : {})["km"];
     return {
-      perSev,
-      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
+      rowCount: m["rowCount"],
+      overall: { resolved: overall["resolved"], open: overall["open"] },
+      remediation: km ? { km: { median: km["median"], medianLowerBound: km["medianLowerBound"] } } : {}
     };
   }
-  function resolutionBuckets(rows) {
-    const perSev = {};
-    let total = 0;
-    for (const row of rows) {
-      const m = resolvedMttr(row);
-      if (m === null) continue;
-      const bucket = m <= RESOLUTION_BUCKET_EDGES[0] ? 0 : m <= RESOLUTION_BUCKET_EDGES[1] ? 1 : m <= RESOLUTION_BUCKET_EDGES[2] ? 2 : m <= RESOLUTION_BUCKET_EDGES[3] ? 3 : 4;
-      const s = normalizeSeverity(row.severity);
-      if (!perSev[s]) perSev[s] = [0, 0, 0, 0, 0];
-      perSev[s][bucket] += 1;
-      total += 1;
-    }
-    return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
+  function execGroupSlice(byGroup) {
+    if (!byGroup || typeof byGroup !== "object") return null;
+    const b = byGroup;
+    const rows = Array.isArray(b["rows"]) ? b["rows"] : [];
+    return {
+      dimension: b["dimension"],
+      rows: rows.map((r) => {
+        var _a;
+        return {
+          group: (_a = r["group"]) != null ? _a : r["domain"],
+          kmMedian: r["kmMedian"],
+          open: r["open"]
+        };
+      })
+    };
   }
-  function kmCurve(events, times) {
-    const curve = [];
-    let s = 1;
-    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
-      const atRisk = times.filter((x) => x >= t).length;
-      if (atRisk === 0) continue;
-      const d = events.filter((x) => x === t).length;
-      s *= 1 - d / atRisk;
-      curve.push({ t, s, atRisk, events: d });
-    }
-    return curve;
+  function pickRows(rows, keys) {
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => {
+      const out = {};
+      for (const k of keys) if (k in r) out[k] = r[k];
+      return out;
+    });
   }
-  var CROSSING_EPSILON = 1e-9;
-  function kmQuantileFromCurve(curve, q) {
-    const threshold = 1 - q + CROSSING_EPSILON;
-    for (const p of curve) if (p.s <= threshold) return p.t;
+  var MTTR_TREND_KEYS = [
+    "date",
+    "reconstructed",
+    "open",
+    "resolved",
+    "median_days",
+    "km_median_days",
+    "open_past_sla",
+    "sla_net",
+    "sla_attainment_pct"
+  ];
+  var HISTORY_TREND_KEYS = ["date", "reconstructed", "open", "resolved", "km_median_days"];
+  var PROGRAM_TREND_KEYS = ["date", "reconstructed", "coverage_pct", "efficiency_pct"];
+  function mttrPageTrendSlice(trends) {
+    var _a;
+    if (!trends || typeof trends !== "object") return null;
+    const t = trends;
+    return { history: (_a = t["history"]) != null ? _a : [], trend: pickRows(t["trend"], MTTR_TREND_KEYS) };
+  }
+  function historyTrendSlice(trends) {
+    if (!trends || typeof trends !== "object") return null;
+    return { trend: pickRows(trends["trend"], HISTORY_TREND_KEYS) };
+  }
+  function programTrendSlice(trends) {
+    if (!trends || typeof trends !== "object") return null;
+    return { trend: pickRows(trends["trend"], PROGRAM_TREND_KEYS) };
+  }
+  var SCAN_ROW_KEYS = [
+    "scan_id",
+    "ts",
+    "scope",
+    "mode",
+    "total",
+    "new_count",
+    "resolved_count",
+    "reopened_count",
+    "severities",
+    "sealed"
+  ];
+  function scanRowsSlice(scans) {
+    return pickRows(scans, SCAN_ROW_KEYS);
+  }
+  function latestScanSlice(scan) {
+    var _a;
+    if (!scan || typeof scan !== "object") return null;
+    return (_a = scanRowsSlice([scan])[0]) != null ? _a : null;
+  }
+  function mttrGroupTableSlice(byGroup) {
+    if (!byGroup || typeof byGroup !== "object") return null;
+    const b = byGroup;
+    return { dimension: b["dimension"], rows: Array.isArray(b["rows"]) ? b["rows"] : [] };
+  }
+  var JOB_KEYS = [
+    // `page_size` rides along with `page` and `total_count` because the three are the only
+    // honest per-scope progress fraction on offer: `findings_so_far` is cumulative across the
+    // whole sync while `total_count` is one scope's, so their ratio is wrong from the second
+    // register onward. All three are per-scope (scanJobs resets page/page_size on advance) and
+    // none is sensitive — a page size is a constant of this app, not a fact about the tenant.
+    "job_id",
+    "kind",
+    "phase",
+    "scope",
+    "page",
+    "page_size",
+    "findings_so_far",
+    "total_count",
+    "started_at",
+    "updated_at",
+    "error"
+  ];
+  function jobSummarySlice(job, stale) {
+    var _a, _b;
+    if (!job || typeof job !== "object") return null;
+    const j = job;
+    const out = { stale };
+    for (const k of JOB_KEYS) out[k] = (_a = j[k]) != null ? _a : null;
+    let incremental = null;
+    try {
+      const raw = j["params_json"];
+      if (typeof raw === "string" && raw) incremental = Boolean((_b = JSON.parse(raw)) == null ? void 0 : _b.incremental);
+    } catch {
+      incremental = null;
+    }
+    out["incremental"] = incremental;
+    return out;
+  }
+  var REGISTER_ROW_COLUMNS = {
+    sca: [
+      "identifier",
+      "component",
+      "severity",
+      "status",
+      "repo_name",
+      "branch",
+      "first_seen",
+      "last_seen",
+      "fixed_version",
+      "fix_available_at",
+      "awaiting_vendor_fix",
+      "has_kev",
+      "has_exploit",
+      "epss",
+      "mttr_days",
+      "age_days"
+    ],
+    sast: [
+      "identifier",
+      "cwe",
+      "file_path",
+      "start_line",
+      "language",
+      "origin",
+      "ai_verdict",
+      "severity",
+      "status",
+      "repo_name",
+      "first_seen",
+      "last_seen",
+      "age_days"
+    ],
+    secrets: [
+      "identifier",
+      "secret_kind",
+      "confidence",
+      "file_path",
+      "start_line",
+      "validation_state",
+      "validated_at",
+      "rotated_at",
+      "removed_at",
+      "repo_name",
+      "branch",
+      "first_seen",
+      "last_seen"
+    ]
+  };
+  var REGISTER_ROW_KEY = "finding_key";
+  var REGISTER_ROW_DEFAULT_SORT = {
+    sca: { sort: "age_days", dir: "desc" },
+    sast: { sort: "age_days", dir: "desc" },
+    secrets: { sort: "first_seen", dir: "asc" }
+  };
+  var REGISTER_ROWS_PAGE_SIZE_CAP = 250;
+  var REGISTER_ROWS_DEFAULT_PAGE_SIZE = 50;
+  function registerRowColumns(scope) {
+    var _a;
+    return (_a = REGISTER_ROW_COLUMNS[scope]) != null ? _a : [];
+  }
+  function registerRowsSlice(rows, scope) {
+    const cols = registerRowColumns(scope);
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => {
+      const key = r[REGISTER_ROW_KEY];
+      const out = { [REGISTER_ROW_KEY]: key === void 0 ? null : key };
+      for (const k of cols) out[k] = r[k] === void 0 ? null : r[k];
+      return out;
+    });
+  }
+  function compareRegisterValues(a, b) {
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
+    const sa = String(a).toLowerCase();
+    const sb = String(b).toLowerCase();
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
+  }
+  function nullsLastOrder(a, b) {
+    const na = a === null || a === void 0;
+    const nb = b === null || b === void 0;
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
     return null;
   }
-  function kmMedianFromCurve(curve) {
-    return kmQuantileFromCurve(curve, 0.5);
-  }
-  function kaplanMeier(rows) {
-    const events = [];
-    const censored = [];
-    for (const row of rows) {
-      const m = resolvedMttr(row);
-      if (m !== null) {
-        events.push(m);
-        continue;
+  function sortRegisterRows(rows, spec) {
+    const list = Array.isArray(rows) ? rows.slice() : [];
+    const value = spec && spec.value;
+    if (typeof value !== "function") return list;
+    const descending = Boolean(spec.descending);
+    const tiebreak = typeof spec.tiebreak === "function" ? spec.tiebreak : null;
+    return list.sort((ra, rb) => {
+      const va = value(ra);
+      const vb = value(rb);
+      const order = nullsLastOrder(va, vb);
+      if (order === null) {
+        const d = compareRegisterValues(va, vb);
+        if (d !== 0) return descending ? -d : d;
+      } else if (order !== 0) {
+        return order;
       }
-      const c = openAge(row);
-      if (c !== null) censored.push(c);
-    }
-    const times = events.concat(censored);
-    const total = events.length + censored.length;
-    const restrictionTime = times.length ? maxNum(times) : null;
-    const naiveMean = mean(events);
-    const naiveMedian = median(events);
-    if (!events.length) {
-      return {
-        curve: [],
-        median: null,
-        medianLowerBound: restrictionTime,
-        mean: null,
-        restrictionTime,
-        meanTruncated: false,
-        naiveMean,
-        naiveMedian,
-        events: 0,
-        censored: censored.length,
-        total
+      if (!tiebreak) return 0;
+      const ta = tiebreak(ra);
+      const tb = tiebreak(rb);
+      const tie = nullsLastOrder(ta, tb);
+      return tie === null ? compareRegisterValues(ta, tb) : tie;
+    });
+  }
+  function pageOfRegisterRows(rows, page, pageSize) {
+    const size = Math.max(1, Math.floor(pageSize));
+    const pageCount = Math.max(1, Math.ceil(rows.length / size));
+    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
+    return {
+      rows: rows.slice(clamped * size, (clamped + 1) * size),
+      page: clamped,
+      pageCount
+    };
+  }
+  var DATE_SORT_COLUMNS = /* @__PURE__ */ new Set([
+    "first_seen",
+    "last_seen",
+    "fix_available_at",
+    "validated_at",
+    "rotated_at",
+    "removed_at"
+  ]);
+  var NUMBER_SORT_COLUMNS = /* @__PURE__ */ new Set(["start_line", "epss", "mttr_days", "age_days"]);
+  function severityRank(v) {
+    const s2 = normalizeSeverity(v);
+    const i = SEVERITY_ORDER.indexOf(s2);
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function orNull(v) {
+    return v === null || v === void 0 || v === "" ? null : v;
+  }
+  function registerSortValue(column) {
+    if (column === "severity") return (r) => severityRank(r["severity"]);
+    if (DATE_SORT_COLUMNS.has(column)) return (r) => parseTs(r[column]);
+    if (NUMBER_SORT_COLUMNS.has(column)) {
+      return (r) => {
+        const raw = orNull(r[column]);
+        if (raw === null) return null;
+        const n2 = Number(raw);
+        return Number.isFinite(n2) ? n2 : null;
       };
     }
-    const curve = kmCurve(events, times);
-    const med = kmMedianFromCurve(curve);
-    const tau = restrictionTime;
-    let rmst = 0;
-    let prevT = 0;
-    let prevS = 1;
-    for (const p of curve) {
-      rmst += prevS * (p.t - prevT);
-      prevT = p.t;
-      prevS = p.s;
-    }
-    rmst += prevS * (tau - prevT);
-    return {
-      curve,
-      median: med,
-      medianLowerBound: med === null ? restrictionTime : null,
-      mean: rmst,
-      restrictionTime,
-      meanTruncated: prevS > 0,
-      naiveMean,
-      naiveMedian,
-      events: events.length,
-      censored: censored.length,
-      total
-    };
-  }
-  function openPastSla(rows) {
-    var _a, _b;
-    const perSev = {};
-    let totalOpen = 0;
-    let totalBreached = 0;
-    for (const row of rows) {
-      const age = openAge(row);
-      if (age === null) continue;
-      const s = normalizeSeverity(row.severity);
-      const target = (_a = SLA_TARGETS[s]) != null ? _a : null;
-      const stat = (_b = perSev[s]) != null ? _b : perSev[s] = { open: 0, breached: 0, pct: null, target };
-      stat.open += 1;
-      totalOpen += 1;
-      if (target !== null && age > target) {
-        stat.breached += 1;
-        totalBreached += 1;
-      }
-    }
-    for (const stat of Object.values(perSev)) {
-      stat.pct = stat.open ? stat.breached / stat.open * 100 : null;
-    }
-    return {
-      perSev,
-      overall: {
-        open: totalOpen,
-        breached: totalBreached,
-        pct: totalOpen ? totalBreached / totalOpen * 100 : null
-      }
-    };
-  }
-  function openAgePercentiles(rows) {
-    var _a;
-    const bySev = {};
-    const all = [];
-    for (const row of rows) {
-      const a = openAge(row);
-      if (a === null) continue;
-      const s = normalizeSeverity(row.severity);
-      ((_a = bySev[s]) != null ? _a : bySev[s] = []).push(a);
-      all.push(a);
-    }
-    const perSev = {};
-    for (const s of SEVERITY_ORDER) {
-      const vals = bySev[s];
-      if (!vals) continue;
-      perSev[s] = { p50: quantile(vals, 0.5), p90: quantile(vals, 0.9), count: vals.length };
-    }
-    return {
-      perSev,
-      overall: { p50: quantile(all, 0.5), p90: quantile(all, 0.9), count: all.length }
-    };
-  }
-  function awaitingVendorFix(rows) {
-    let count = 0;
-    let openWithVendor = 0;
-    for (const row of rows) {
-      if (row.scope !== "sca" || !isOpen2(row.status)) continue;
-      openWithVendor += 1;
-      if (row.awaiting_vendor_fix) count += 1;
-    }
-    return { count, openWithVendor, pct: openWithVendor ? count / openWithVendor * 100 : null };
+    return (r) => orNull(r[column]);
   }
 
-  // src/server/sampleData.ts
-  var SAMPLE_SCANS = [];
+  // src/server/archiveStore.ts
+  function looksLikeLedgerState(v) {
+    return Array.isArray(v["scans"]) && Array.isArray(v["episodes"]) && typeof v["ledger"] === "object" && v["ledger"] !== null && !Array.isArray(v["ledger"]);
+  }
+  var rootFolderMemo;
+  var subfolderMemo = /* @__PURE__ */ new Map();
+  var scanFolderMemo = /* @__PURE__ */ new Map();
+  function rootFolder() {
+    if (!rootFolderMemo) {
+      rootFolderMemo = DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
+    }
+    return rootFolderMemo;
+  }
+  function childFolder(parent, name) {
+    const it = parent.getFoldersByName(name);
+    return it.hasNext() ? it.next() : parent.createFolder(name);
+  }
+  function subfolder(name) {
+    const hit = subfolderMemo.get(name);
+    if (hit) return hit;
+    const folder = childFolder(rootFolder(), name);
+    subfolderMemo.set(name, folder);
+    return folder;
+  }
+  function safeName(id) {
+    return id.replace(/[^0-9A-Za-z._-]/g, "") || "scan";
+  }
+  function writeGzJson(folder, name, payload) {
+    const json = JSON.stringify(payload);
+    const blob = Utilities.gzip(Utilities.newBlob(json, "application/json"), name);
+    const existing = folder.getFilesByName(name);
+    while (existing.hasNext()) existing.next().setTrashed(true);
+    return folder.createFile(blob);
+  }
+  function parseGzBlob(blob, name) {
+    const bytes = blob.getBytes();
+    const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
+    const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error(`Unparseable archive file ${name}: ${e}`);
+    }
+  }
+  function readGzJson(folder, name) {
+    const it = folder.getFilesByName(name);
+    if (!it.hasNext()) return null;
+    return parseGzBlob(it.next().getBlob(), name);
+  }
+  function readGzJsonNamed(folder, name) {
+    return readGzJson(subfolder(folder), name);
+  }
+  function listNames(folder) {
+    const out = [];
+    const it = subfolder(folder).getFiles();
+    while (it.hasNext()) out.push(it.next().getName());
+    return out;
+  }
+  function trashNamed(folder, name) {
+    const it = subfolder(folder).getFilesByName(name);
+    while (it.hasNext()) it.next().setTrashed(true);
+  }
+  function pageFileName(pageIndex) {
+    return `page-${String(pageIndex).padStart(4, "0")}.json.gz`;
+  }
+  var PAGE_NAME_RE = /^page-\d{4}\.json\.gz$/;
+  function scanFolder(scanId) {
+    const key = safeName(scanId);
+    const hit = scanFolderMemo.get(key);
+    if (hit) return hit;
+    const folder = childFolder(subfolder("scans"), key);
+    scanFolderMemo.set(key, folder);
+    return folder;
+  }
+  function writeScanPage(scanId, pageIndex, payload) {
+    return writeGzJson(scanFolder(scanId), pageFileName(pageIndex), payload).getId();
+  }
+  function readScanPages(scanId) {
+    const pages = [];
+    const files = scanFolder(scanId).getFiles();
+    while (files.hasNext()) {
+      const f = files.next();
+      const name = f.getName();
+      if (!PAGE_NAME_RE.test(name)) continue;
+      pages.push({ name, payload: parseGzBlob(f.getBlob(), name) });
+    }
+    pages.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+    return pages.map((p) => p.payload);
+  }
+  var SLIM_NAME = "slim.json.gz";
+  function writeSlim(scanId, records) {
+    return writeGzJson(scanFolder(scanId), SLIM_NAME, records).getId();
+  }
+  function readSlim(scanId) {
+    const parsed = readGzJson(scanFolder(scanId), SLIM_NAME);
+    return Array.isArray(parsed) ? parsed : null;
+  }
+  var PAGE_RUNS_NAME = "pageruns.json.gz";
+  function writePageRuns(scanId, runs) {
+    writeGzJson(scanFolder(scanId), PAGE_RUNS_NAME, runs);
+  }
+  function readPageRuns(scanId) {
+    const parsed = readGzJson(scanFolder(scanId), PAGE_RUNS_NAME);
+    return Array.isArray(parsed) ? parsed : null;
+  }
+  function obsFileName(scanId) {
+    return `${safeName(scanId)}.json.gz`;
+  }
+  function writeObservations(scanId, keys) {
+    return writeGzJson(subfolder("obs"), obsFileName(scanId), keys).getId();
+  }
+  function readObservations(scanId) {
+    const parsed = readGzJson(subfolder("obs"), obsFileName(scanId));
+    return Array.isArray(parsed) ? parsed : [];
+  }
+  function trashScan(scanId) {
+    try {
+      scanFolder(scanId).setTrashed(true);
+    } catch (e) {
+      console.warn(`Couldn't trash scan ${scanId}: ${e}`);
+    } finally {
+      scanFolderMemo.delete(safeName(scanId));
+    }
+    trashNamed("obs", obsFileName(scanId));
+  }
+  var SNAPSHOT_NAME = "ledger-snapshot.json.gz";
+  function writeLedgerSnapshot(state) {
+    const snap = {
+      version: 1,
+      scans: state.scans,
+      ledger: state.ledger,
+      episodes: state.episodes
+    };
+    writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
+  }
+  function readLedgerSnapshot() {
+    const parsed = readGzJson(subfolder("snapshots"), SNAPSHOT_NAME);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const obj = parsed;
+    return looksLikeLedgerState(obj) ? obj : null;
+  }
+  function backupFileName(jobId) {
+    return `backup-${safeName(jobId)}.json.gz`;
+  }
+  function writeBackup(jobId, state) {
+    return writeGzJson(subfolder("backups"), backupFileName(jobId), state).getId();
+  }
+  function readBackup(jobId) {
+    const parsed = readGzJson(subfolder("backups"), backupFileName(jobId));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const obj = parsed;
+    return looksLikeLedgerState(obj) ? obj : null;
+  }
+  function trashBackup(jobId) {
+    trashNamed("backups", backupFileName(jobId));
+  }
+
+  // src/server/ledgerStore.ts
+  function scanIdFor(syncId, scope) {
+    return `${syncId}-${scope}`;
+  }
+  function archiveIdOf(row) {
+    return scanIdFor(row.scan_id, row.scope);
+  }
+  function s(r, k) {
+    const v = r[k];
+    return v === null || v === void 0 || v === "" ? null : String(v);
+  }
+  function n(r, k) {
+    const v = s(r, k);
+    if (v === null) return null;
+    const num2 = Number(v);
+    return Number.isFinite(num2) ? num2 : null;
+  }
+  function scopeOf(key, raw) {
+    if (raw === "sca" || raw === "sast" || raw === "secrets") return raw;
+    const head = key.slice(0, key.indexOf(":"));
+    return head === "sast" || head === "secrets" ? head : "sca";
+  }
+  function rowToScan(r) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    return {
+      scan_id: String((_a = r["scan_id"]) != null ? _a : ""),
+      ts: String((_b = r["ts"]) != null ? _b : ""),
+      // A scans row has no key to fall back on, so an unreadable scope defaults to sca the way
+      // scopeOf does — but the column is written by this file on every row it appends.
+      scope: scopeOf("", s(r, "scope")),
+      mode: String((_c = r["mode"]) != null ? _c : ""),
+      severities: s(r, "severities"),
+      total: Number((_d = r["total"]) != null ? _d : 0),
+      new_count: Number((_e = r["new_count"]) != null ? _e : 0),
+      resolved_count: Number((_f = r["resolved_count"]) != null ? _f : 0),
+      reopened_count: Number((_g = r["reopened_count"]) != null ? _g : 0),
+      raw_ref: s(r, "raw_ref"),
+      obs_ref: s(r, "obs_ref"),
+      sealed: r["sealed"] === 1 || r["sealed"] === "1" || r["sealed"] === true ? 1 : 0
+    };
+  }
+  function rowToLedger(r) {
+    var _a, _b, _c;
+    const key = String((_a = r["finding_key"]) != null ? _a : "");
+    return {
+      finding_key: key,
+      scope: scopeOf(key, s(r, "scope")),
+      identifier: s(r, "identifier"),
+      component: s(r, "component"),
+      severity: s(r, "severity"),
+      repo_id: s(r, "repo_id"),
+      repo_name: s(r, "repo_name"),
+      branch: s(r, "branch"),
+      platform: s(r, "platform"),
+      first_seen: s(r, "first_seen"),
+      last_seen: s(r, "last_seen"),
+      status: String((_b = r["status"]) != null ? _b : "OPEN"),
+      resolved_at: s(r, "resolved_at"),
+      resolution_src: s(r, "resolution_src"),
+      reopened_count: Number((_c = r["reopened_count"]) != null ? _c : 0),
+      first_scan_id: s(r, "first_scan_id"),
+      last_scan_id: s(r, "last_scan_id"),
+      fix_date: s(r, "fix_date"),
+      fix_observed_at: s(r, "fix_observed_at"),
+      fixed_version: s(r, "fixed_version"),
+      // Tri-state, via the domain's own coercion: blank stays null, and the plain-text grid's
+      // "TRUE"/"FALSE" round-trip is understood there rather than re-implemented here.
+      ...coerceRiskSignals(r),
+      cwe: s(r, "cwe"),
+      ai_verdict: s(r, "ai_verdict"),
+      language: s(r, "language"),
+      file_path: s(r, "file_path"),
+      start_line: n(r, "start_line"),
+      origin: s(r, "origin"),
+      secret_kind: s(r, "secret_kind"),
+      rotated_at: s(r, "rotated_at"),
+      removed_at: s(r, "removed_at"),
+      validation_state: s(r, "validation_state"),
+      validated_at: s(r, "validated_at"),
+      confidence: s(r, "confidence"),
+      owner_project: s(r, "owner_project"),
+      owner_path: s(r, "owner_path"),
+      tags_json: s(r, "tags_json"),
+      projects_json: s(r, "projects_json")
+    };
+  }
+  function rowToEpisode(r) {
+    var _a, _b, _c;
+    const key = String((_a = r["finding_key"]) != null ? _a : "");
+    const risk = coerceRiskSignals(r);
+    return {
+      finding_key: key,
+      scope: scopeOf(key, s(r, "scope")),
+      identifier: s(r, "identifier"),
+      component: s(r, "component"),
+      severity: s(r, "severity"),
+      first_seen: s(r, "first_seen"),
+      resolved_at: s(r, "resolved_at"),
+      resolution_src: s(r, "resolution_src"),
+      reopened_count: Number((_b = r["reopened_count"]) != null ? _b : 0),
+      compaction_id: String((_c = r["compaction_id"]) != null ? _c : ""),
+      superseded_by_scan: s(r, "superseded_by_scan"),
+      fix_date: s(r, "fix_date"),
+      fix_observed_at: s(r, "fix_observed_at"),
+      has_kev: risk.has_kev,
+      has_exploit: risk.has_exploit,
+      epss: risk.epss,
+      cwe: s(r, "cwe"),
+      language: s(r, "language"),
+      owner_project: s(r, "owner_project")
+    };
+  }
+  var scanRowsMemo;
+  var stateMemo;
+  function invalidateLedgerMemos() {
+    scanRowsMemo = void 0;
+    stateMemo = void 0;
+    bumpDataVersion();
+  }
+  function loadScanRows() {
+    if (scanRowsMemo === void 0) {
+      scanRowsMemo = scansAsc(readAll(TABS.scans).map(rowToScan));
+    }
+    return scanRowsMemo;
+  }
+  function syncCommitted(syncId) {
+    if (!syncId) return false;
+    return loadScanRows().some((r) => r.scan_id === syncId);
+  }
+  function loadState(useSnapshot = true) {
+    if (useSnapshot && stateMemo !== void 0) return stateMemo;
+    const state = emptyState();
+    state.scans = loadScanRows().slice();
+    if (useSnapshot) {
+      const snap = readLedgerSnapshot();
+      if (snap) {
+        state.ledger = snap.ledger;
+        state.episodes = snap.episodes;
+        stateMemo = state;
+        return state;
+      }
+    }
+    for (const r of readAll(TABS.ledger)) {
+      const row = rowToLedger(r);
+      state.ledger[row.finding_key] = row;
+    }
+    state.episodes = readAll(TABS.episodes).map(rowToEpisode);
+    if (useSnapshot) stateMemo = state;
+    return state;
+  }
+  function writeStateTables(state) {
+    overwrite(TABS.ledger, Object.values(state.ledger));
+    overwrite(TABS.episodes, state.episodes);
+    overwrite(TABS.scans, scansAsc(state.scans));
+    overwrite(TABS.repos, repoRows(state));
+    writeLedgerSnapshot(state);
+    invalidateLedgerMemos();
+  }
+  function repoRows(state) {
+    const byRepo = /* @__PURE__ */ new Map();
+    const rows = Object.values(state.ledger).slice().sort((a, b) => {
+      var _a, _b;
+      const ta = (_a = parseTs(a.last_seen)) != null ? _a : 0;
+      const tb = (_b = parseTs(b.last_seen)) != null ? _b : 0;
+      if (ta !== tb) return ta - tb;
+      return a.finding_key < b.finding_key ? -1 : a.finding_key > b.finding_key ? 1 : 0;
+    });
+    for (const row of rows) {
+      const id = row.repo_id;
+      if (!id) continue;
+      let acc = byRepo.get(id);
+      if (!acc) {
+        acc = {
+          repo_id: id,
+          repo_name: null,
+          branch: null,
+          platform: null,
+          owner_project: null,
+          owner_path: null,
+          projects_json: null,
+          first_seen: null,
+          last_seen: null
+        };
+        byRepo.set(id, acc);
+      }
+      if (row.repo_name !== null) acc.repo_name = row.repo_name;
+      if (row.branch !== null) acc.branch = row.branch;
+      if (row.platform !== null) acc.platform = row.platform;
+      if (row.owner_project !== null) acc.owner_project = row.owner_project;
+      if (row.owner_path !== null) acc.owner_path = row.owner_path;
+      if (row.projects_json !== null) acc.projects_json = row.projects_json;
+      acc.first_seen = earlier(acc.first_seen, row.first_seen);
+      acc.last_seen = later(acc.last_seen, row.last_seen);
+    }
+    return [...byRepo.values()].sort((a, b) => a.repo_id < b.repo_id ? -1 : a.repo_id > b.repo_id ? 1 : 0).map((a) => ({
+      repo_id: a.repo_id,
+      repo_name: a.repo_name,
+      branch: a.branch,
+      platform: a.platform,
+      default_branch: null,
+      owner_project: a.owner_project,
+      owner_path: a.owner_path,
+      projects_json: a.projects_json,
+      first_seen: a.first_seen,
+      last_seen: a.last_seen
+    }));
+  }
+  function earlier(a, b) {
+    const ta = parseTs(a);
+    const tb = parseTs(b);
+    if (ta === null) return tb === null ? a != null ? a : b : b;
+    if (tb === null) return a;
+    return tb < ta ? b : a;
+  }
+  function later(a, b) {
+    const ta = parseTs(a);
+    const tb = parseTs(b);
+    if (ta === null) return tb === null ? a != null ? a : b : b;
+    if (tb === null) return a;
+    return tb > ta ? b : a;
+  }
+  function persistSync(jobId, syncId, perScope) {
+    var _a, _b;
+    const state = loadState();
+    const outcomes = [];
+    const todo = [];
+    for (const entry of perScope) {
+      const stored = existingScanDeltas(state.scans, syncId, entry.scope);
+      if (stored !== null) {
+        outcomes.push({
+          scope: entry.scope,
+          scan_id: syncId,
+          deltas: stored,
+          total: 0,
+          twins: null,
+          written: false
+        });
+        continue;
+      }
+      todo.push({ entry });
+    }
+    if (!todo.length) {
+      return { sync_id: syncId, scopes: outcomes, committed_scopes: [] };
+    }
+    const journalRef = writeBackup(jobId, state);
+    updateJob(jobId, { phase: "PERSISTING", scan_id: syncId, journal_ref: journalRef });
+    const newRows = [];
+    const pendingObs = [];
+    for (const { entry } of todo) {
+      const out = persistFlatScan(state, entry.records, {
+        scope: entry.scope,
+        mode: entry.mode,
+        // The syncId, which is also the scan's `ts`. See scanIdFor.
+        scanId: syncId,
+        scannedSeverities: (_a = entry.scannedSeverities) != null ? _a : null,
+        rawRef: (_b = entry.rawRef) != null ? _b : null
+      });
+      outcomes.push({
+        scope: entry.scope,
+        scan_id: syncId,
+        deltas: out.deltas,
+        total: entry.records.length,
+        twins: out.twinStats,
+        written: out.scanRow !== null
+      });
+      if (out.scanRow) {
+        newRows.push(out.scanRow);
+        pendingObs.push({
+          archiveId: archiveIdOf(out.scanRow),
+          keys: observedKeys(out.observations),
+          row: out.scanRow
+        });
+      }
+    }
+    overwrite(TABS.ledger, Object.values(state.ledger));
+    overwrite(TABS.episodes, state.episodes);
+    trimSurplusRows(TABS.ledger);
+    trimSurplusRows(TABS.episodes);
+    for (const obs of pendingObs) {
+      obs.row.obs_ref = writeObservations(obs.archiveId, obs.keys);
+    }
+    writeLedgerSnapshot(state);
+    overwrite(TABS.repos, repoRows(state));
+    appendRows(TABS.scans, newRows);
+    invalidateLedgerMemos();
+    updateJob(jobId, { journal_ref: null });
+    trashBackup(jobId);
+    bumpWizDataVersion();
+    return {
+      sync_id: syncId,
+      scopes: outcomes,
+      committed_scopes: newRows.map((r) => r.scope)
+    };
+  }
+  function observedKeys(observations) {
+    const keys = [];
+    for (const o of observations) if (o.present === 1) keys.push(o.finding_key);
+    return keys;
+  }
+  var readPayloadForRow = (row) => {
+    const id = archiveIdOf(row);
+    const slim = readSlim(id);
+    if (slim !== null) return slim;
+    const pages = readScanPages(id);
+    return pages.length ? pages : null;
+  };
+  function loadBaseRows(options = {}) {
+    return baseRows(loadState(), options);
+  }
+  var KM_TREND_MAX_RECONSTRUCTED = 48;
+  function loadTrend(options = {}) {
+    var _a, _b, _c;
+    const state = loadState();
+    const severities = (_a = options.severities) != null ? _a : null;
+    const scope = options.scope;
+    const hideNoFix = !((_b = options.showNoFix) != null ? _b : true);
+    const base = ((_c = options.base) != null ? _c : baseRows(state)).map((r) => ({
+      scope: r.scope,
+      severity: r.severity,
+      first_seen: r.first_seen,
+      resolved_at: r.resolved_at,
+      mttr_days: r.mttr_days,
+      actionable_from: r.actionable_from,
+      fix_available_at: r.fix_available_at
+    }));
+    const points = trendFromBase(
+      state.scans.map((sc) => ({ ts: sc.ts, scope: sc.scope })),
+      base,
+      severities,
+      { backfill: true, hideNoFix, scope }
+    );
+    const withSla = withOpenPastSla(points, base, severities, "actionable_from", { scope });
+    const withBurn = withSlaBurn(withSla, base, severities, { scope });
+    const withAttainment = cohortSlaAttainment(withBurn, base, severities, { scope });
+    return withKmMedian(withAttainment, base, severities, {
+      hideNoFix,
+      maxReconstructed: KM_TREND_MAX_RECONSTRUCTED,
+      scope
+    });
+  }
+  function loadProgramTrend(rule, options = {}) {
+    var _a, _b;
+    const state = loadState();
+    const severities = (_a = options.severities) != null ? _a : null;
+    const scope = options.scope;
+    const base = ((_b = options.base) != null ? _b : baseRows(state)).map((r) => ({
+      scope: r.scope,
+      severity: r.severity,
+      status: r.status,
+      first_seen: r.first_seen,
+      resolved_at: r.resolved_at,
+      mttr_days: r.mttr_days,
+      has_kev: r.has_kev,
+      has_exploit: r.has_exploit,
+      epss: r.epss
+    }));
+    const points = trendFromBase(
+      state.scans.map((sc) => ({ ts: sc.ts, scope: sc.scope })),
+      base,
+      severities,
+      { backfill: true, scope }
+    );
+    return withCoverageEfficiency(points, base, rule, severities, { scope });
+  }
+  function previousSeverityCounts(scope) {
+    const rows = scansAsc(loadScanRows(), scope);
+    if (rows.length < 2) return {};
+    const prev = rows[rows.length - 2];
+    const ledger = loadState().ledger;
+    const observations = readObservations(archiveIdOf(prev)).map((key) => {
+      var _a, _b;
+      return {
+        present: 1,
+        severity: (_b = (_a = ledger[key]) == null ? void 0 : _a.severity) != null ? _b : null
+      };
+    });
+    return severityCountsFromObservations(observations);
+  }
+  function latestScanRow(scope) {
+    return latestScan(loadScanRows(), scope);
+  }
+  function checkpointName(compactionId) {
+    return `checkpoint-${compactionId.replace(/[^0-9A-Za-z._-]/g, "")}.json.gz`;
+  }
+  function readCheckpointRef(ref) {
+    if (!ref) return null;
+    const parsed = readGzJson(subfolder("checkpoints"), ref);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  }
+  function latestCheckpoint() {
+    const rows = readAll(TABS.compactions).filter((r) => r["checkpoint_ref"]);
+    if (!rows.length) return null;
+    rows.sort((a, b) => String(a["ts"]) < String(b["ts"]) ? 1 : -1);
+    return readCheckpointRef(String(rows[0]["checkpoint_ref"]));
+  }
+  function openJournaledJob(jobId, state, params) {
+    const jid = jobId != null ? jobId : newJobId("sync");
+    const journalRef = writeBackup(jid, state);
+    if (jobId) {
+      updateJob(jid, { phase: "PERSISTING", journal_ref: journalRef });
+    } else {
+      createJob({
+        job_id: jid,
+        kind: "sync",
+        phase: "PERSISTING",
+        scan_id: null,
+        scope: null,
+        cursor: null,
+        page: 0,
+        findings_so_far: 0,
+        page_size: 0,
+        total_count: 0,
+        params_json: params,
+        journal_ref: journalRef,
+        error: null
+      });
+    }
+    return jid;
+  }
+  function closeJournaledJob(jobId, now) {
+    updateJob(jobId, { phase: "DONE", journal_ref: null }, now);
+    trashBackup(jobId);
+  }
+  function deleteScans(scanIds, jobId) {
+    const state = loadState();
+    const checkpoint = latestCheckpoint();
+    const { state: rebuilt, result } = deleteScansCore(
+      state,
+      scanIds,
+      readPayloadForRow,
+      checkpoint
+    );
+    if (!result.deleted) return result;
+    const jid = openJournaledJob(jobId, state, JSON.stringify({ deleteScans: scanIds.length }));
+    writeStateTables(rebuilt);
+    closeJournaledJob(jid);
+    bumpWizDataVersion();
+    const survivors = new Set(rebuilt.scans.map(archiveIdOf));
+    for (const r of state.scans) {
+      const id = archiveIdOf(r);
+      if (!survivors.has(id)) trashScan(id);
+    }
+    return result;
+  }
+  function resetLedger() {
+    const counts = {
+      scans: loadScanRows().length,
+      findings: dataRowCount(TABS.ledger),
+      episodes: dataRowCount(TABS.episodes),
+      repos: dataRowCount(TABS.repos),
+      compactions: readAll(TABS.compactions).length
+    };
+    overwrite(TABS.scans, []);
+    overwrite(TABS.ledger, []);
+    overwrite(TABS.episodes, []);
+    overwrite(TABS.repos, []);
+    overwrite(TABS.compactions, []);
+    overwrite(TABS.jobs, []);
+    writeLedgerSnapshot(emptyState());
+    invalidateLedgerMemos();
+    return counts;
+  }
+  function previewMaintenance(retentionDays, now) {
+    const state = loadState();
+    const nowMs = now != null ? now : Date.now();
+    const plan = compactLedgerCore(state, retentionDays, latestCheckpoint(), readPayloadForRow, {
+      dryRun: true,
+      now: nowMs,
+      compactionId: compactionIdFor(nowMs)
+    });
+    return {
+      compaction: plan.result,
+      scans: state.scans.length,
+      findings: Object.keys(state.ledger).length,
+      episodes: state.episodes.length
+    };
+  }
+  function compactionIdFor(nowMs) {
+    return `cmp-${nowIso(nowMs).replace(/[:]/g, "")}`;
+  }
+  function compactLedger(retentionDays, dryRun = false, now) {
+    const state = loadState();
+    const prevCheckpoint = latestCheckpoint();
+    const nowMs = now != null ? now : Date.now();
+    const compactionId = compactionIdFor(nowMs);
+    const probe = compactLedgerCore(state, retentionDays, prevCheckpoint, readPayloadForRow, {
+      dryRun: true,
+      now: nowMs,
+      compactionId
+    });
+    if (probe.result.no_op) return probe.result;
+    const obsCountByScan = {};
+    let archiveBytes = 0;
+    for (const r of probe.newly) {
+      obsCountByScan[r.scan_id] = readObservations(archiveIdOf(r)).length;
+      archiveBytes += scanFolderBytes(archiveIdOf(r));
+    }
+    const plan = compactLedgerCore(state, retentionDays, prevCheckpoint, readPayloadForRow, {
+      dryRun,
+      now: nowMs,
+      compactionId,
+      obsCountByScan,
+      archiveBytes
+    });
+    if (dryRun || plan.state === null) return plan.result;
+    const jobId = openJournaledJob(void 0, state, JSON.stringify({ retentionDays }));
+    const ref = checkpointName(compactionId);
+    writeGzJson(subfolder("checkpoints"), ref, plan.checkpoint);
+    const compactions = readAll(TABS.compactions).map((r) => ({
+      ...r,
+      checkpoint_ref: null
+    }));
+    compactions.push(compactionRow(plan, ref, nowMs));
+    overwrite(TABS.compactions, compactions);
+    writeStateTables(plan.state);
+    closeJournaledJob(jobId, nowMs);
+    let freed = 0;
+    for (const r of plan.newly) {
+      const id = archiveIdOf(r);
+      freed += scanFolderBytes(id);
+      trashScan(id);
+    }
+    plan.result.archive_bytes_freed = freed;
+    return plan.result;
+  }
+  function scanFolderBytes(scanId) {
+    let total = 0;
+    try {
+      const files = scanFolder(scanId).getFiles();
+      while (files.hasNext()) total += files.next().getSize();
+    } catch {
+      return 0;
+    }
+    return total;
+  }
+
+  // src/server/locks.ts
+  var LedgerBusyError = class extends Error {
+  };
+  function withScriptLock(fn, timeoutMs = 3e4) {
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(timeoutMs)) {
+      throw new LedgerBusyError(
+        "The data store is busy (a sync is writing). Try again shortly."
+      );
+    }
+    try {
+      return fn();
+    } finally {
+      lock.releaseLock();
+    }
+  }
+  function recoverIfNeeded(now) {
+    const job = activeJob();
+    if (!job) return;
+    if (job.phase === "PERSISTING") {
+      if (!job.journal_ref) {
+        updateJob(job.job_id, {
+          phase: "FAILED",
+          error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."
+        });
+        return;
+      }
+      if (syncCommitted(job.scan_id)) {
+        updateJob(job.job_id, {
+          phase: "FAILED",
+          journal_ref: null,
+          error: "Recovered: execution died after the commit landed; the scan is saved and the journal was discarded."
+        });
+        trashBackup(job.job_id);
+        invalidateLedgerMemos();
+        return;
+      }
+      const backup = readBackup(job.job_id);
+      if (backup) {
+        writeStateTables(backup);
+        updateJob(job.job_id, {
+          phase: "FAILED",
+          journal_ref: null,
+          error: "Recovered: execution died mid-rewrite; the ledger was RESTORED from the journal and the scan was not saved."
+        });
+        trashBackup(job.job_id);
+        return;
+      }
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        journal_ref: null,
+        error: "Recovered: execution died mid-rewrite and the journal could not be read, so the ledger was left as written. Re-run the sync to reconcile it."
+      });
+      return;
+    }
+    if (isStaleJob(job, now)) {
+      updateJob(job.job_id, {
+        phase: "FAILED",
+        error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."
+      });
+    }
+  }
+
+  // src/server/readModels.ts
+  var readModels_exports = {};
+  __export(readModels_exports, {
+    WARM_BUDGET_MS: () => WARM_BUDGET_MS,
+    __resetModelMemosForTest: () => __resetModelMemosForTest,
+    executiveModel: () => executiveModel,
+    historyModel: () => historyModel,
+    mttrModel: () => mttrModel,
+    programModel: () => programModel,
+    registerModel: () => registerModel,
+    registerRowsModel: () => registerRowsModel,
+    reposModel: () => reposModel,
+    secretsModel: () => secretsModel,
+    signalCoverage: () => signalCoverage,
+    storageModel: () => storageModel,
+    warmReadModels: () => warmReadModels
+  });
+
+  // src/domain/assets.ts
+  var DAY_MS7 = 864e5;
+  var DAYS_PER_MONTH = 30.4375;
+  function isOpen4(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function safePct(numerator, denominator) {
+    if (numerator === null || denominator === null) return null;
+    return denominator > 0 ? numerator / denominator * 100 : null;
+  }
+  function verdictOf2(netPct) {
+    if (Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
+    return netPct > 0 ? "gaining" : "falling-behind";
+  }
+  function blank(v) {
+    return v === null || v === void 0 || String(v).trim() === "";
+  }
+  function assetGroupOf(value) {
+    return blank(value) ? ASSET_GROUP_UNKNOWN : String(value);
+  }
+  function perAsset(rows, windowStart, groupBy) {
+    const byKey = /* @__PURE__ */ new Map();
+    for (const { row, risk } of rows) {
+      const assetId = String(row.repo_id).trim();
+      const group = groupBy === "repo" ? assetId : assetGroupOf(row.language);
+      const key = assetId + "\0" + group;
+      let a = byKey.get(key);
+      if (!a) {
+        a = {
+          assetId,
+          group,
+          label: null,
+          density: 0,
+          hasFoothold: false,
+          tp: 0,
+          fn: 0,
+          opened: windowStart === null ? null : 0,
+          closed: windowStart === null ? null : 0,
+          openAtStart: windowStart === null ? null : 0,
+          coveragePct: null,
+          netPct: null,
+          verdict: null
+        };
+        byKey.set(key, a);
+      }
+      if (a.label === null && !blank(row.repo_name)) a.label = String(row.repo_name);
+      const open = isOpen4(row.status);
+      const high = risk === "high";
+      if (open) a.density += 1;
+      if (high && open) {
+        a.hasFoothold = true;
+        a.fn += 1;
+      }
+      if (high && !open) a.tp += 1;
+      if (windowStart !== null) {
+        const firstMs = parseTs(row.first_seen);
+        const resolvedMs = parseTs(row.resolved_at);
+        if (firstMs !== null && firstMs >= windowStart) a.opened += 1;
+        if (resolvedMs !== null && resolvedMs >= windowStart) a.closed += 1;
+        if (firstMs !== null && firstMs < windowStart && (resolvedMs === null || resolvedMs >= windowStart)) {
+          a.openAtStart += 1;
+        }
+      }
+    }
+    for (const a of byKey.values()) {
+      a.coveragePct = safePct(a.tp, a.tp + a.fn);
+      a.netPct = a.closed === null || a.opened === null ? null : safePct(a.closed - a.opened, a.openAtStart);
+      a.verdict = a.netPct === null ? null : verdictOf2(a.netPct);
+    }
+    return [...byKey.values()];
+  }
+  function aggregate(group, label, assets, windowMonths, population, km) {
+    const densities = assets.map((a) => a.density);
+    const coverages = [];
+    for (const a of assets) if (a.coveragePct !== null) coverages.push(a.coveragePct);
+    const mmcr = [];
+    if (windowMonths !== null) {
+      for (const a of assets) {
+        const rate = safePct(a.closed, a.openAtStart);
+        if (rate !== null) mmcr.push(rate / windowMonths);
+      }
+    }
+    let footholds = 0;
+    let flowing = 0;
+    let fallingBehind = 0;
+    let maintaining = 0;
+    let gaining = 0;
+    for (const a of assets) {
+      if (a.hasFoothold) footholds += 1;
+      if (a.verdict === null) continue;
+      flowing += 1;
+      if (a.verdict === "falling-behind") fallingBehind += 1;
+      else if (a.verdict === "keeping-up") maintaining += 1;
+      else gaining += 1;
+    }
+    return {
+      asset_group: group,
+      assets: assets.length,
+      open_findings: densities.reduce((s2, d) => s2 + d, 0),
+      density_p25: quantile(densities, 0.25),
+      density_p50: quantile(densities, 0.5),
+      density_p75: quantile(densities, 0.75),
+      assets_with_high_risk_pct: safePct(footholds, assets.length),
+      assets_with_high_risk: coverages.length,
+      asset_coverage_p50: quantile(coverages, 0.5),
+      km_median_days: km.median,
+      km_median_lower_bound: km.medianLowerBound,
+      mmcr_p50: quantile(mmcr, 0.5),
+      falling_behind_pct: safePct(fallingBehind, flowing),
+      maintaining_pct: safePct(maintaining, flowing),
+      gaining_pct: safePct(gaining, flowing),
+      assets_flowing: flowing,
+      window_months: windowMonths,
+      population,
+      asset_label: label
+    };
+  }
+  function halfLife(group, rows) {
+    const projection = rows.map((r) => ({
+      severity: group,
+      status: r.status,
+      mttr_days: r.mttr_days,
+      age_days: r.age_days
+    }));
+    const km = kaplanMeier(projection);
+    return { median: km.median, medianLowerBound: km.medianLowerBound };
+  }
+  function assetProfile(rows, opts) {
+    var _a, _b, _c, _d;
+    const groupBy = (_a = opts.groupBy) != null ? _a : "language";
+    const highRiskOnly = opts.highRiskOnly === true;
+    const population = highRiskOnly ? POPULATION_HIGH_RISK : POPULATION_ALL;
+    const nowMs = parseTs(opts.now);
+    if (nowMs === null) {
+      throw new Error(`assetProfile: unparseable now (${JSON.stringify(opts.now)})`);
+    }
+    const observedFrom = (_b = opts.observedFrom) != null ? _b : null;
+    const windowStart = observedFrom === null ? null : parseTs(observedFrom);
+    if (observedFrom !== null && windowStart === null) {
+      throw new Error(`assetProfile: unparseable observedFrom (${JSON.stringify(observedFrom)})`);
+    }
+    const windowMonths = windowStart === null ? null : Math.max((nowMs - windowStart) / (DAY_MS7 * DAYS_PER_MONTH), 1);
+    let unclassifiedSecrets = 0;
+    const classified = [];
+    for (const row of rows) {
+      if (row.scope === "secrets") {
+        unclassifiedSecrets += 1;
+        classified.push({ row, risk: "unknown" });
+        continue;
+      }
+      classified.push({ row, risk: classifyRisk(row, opts.rule) });
+    }
+    const population_ = highRiskOnly ? classified.filter((c) => c.risk === "high") : classified;
+    let droppedNoAsset = 0;
+    const kept = [];
+    for (const c of population_) {
+      if (blank(c.row.repo_id)) {
+        droppedNoAsset += 1;
+        continue;
+      }
+      kept.push(c);
+    }
+    const assets = perAsset(kept, windowStart, groupBy);
+    const assetsByGroup = /* @__PURE__ */ new Map();
+    const labelByGroup = /* @__PURE__ */ new Map();
+    for (const a of assets) {
+      const list = assetsByGroup.get(a.group);
+      if (list) list.push(a);
+      else assetsByGroup.set(a.group, [a]);
+      if (groupBy === "repo" && !labelByGroup.get(a.group)) labelByGroup.set(a.group, a.label);
+    }
+    const findingsByGroup = /* @__PURE__ */ new Map();
+    for (const { row } of kept) {
+      const g = groupBy === "repo" ? String(row.repo_id).trim() : assetGroupOf(row.language);
+      const list = findingsByGroup.get(g);
+      if (list) list.push(row);
+      else findingsByGroup.set(g, [row]);
+    }
+    const allFindings = kept.map((c) => c.row);
+    const out = [];
+    for (const [group, list] of assetsByGroup) {
+      out.push(
+        aggregate(
+          group,
+          groupBy === "repo" ? (_c = labelByGroup.get(group)) != null ? _c : null : null,
+          list,
+          windowMonths,
+          population,
+          halfLife(group, (_d = findingsByGroup.get(group)) != null ? _d : [])
+        )
+      );
+    }
+    out.push(aggregate(OVERALL, null, assets, windowMonths, population, halfLife(OVERALL, allFindings)));
+    out.sort((a, b) => {
+      if (a.asset_group === OVERALL) return b.asset_group === OVERALL ? 0 : -1;
+      if (b.asset_group === OVERALL) return 1;
+      if (a.assets !== b.assets) return b.assets - a.assets;
+      return a.asset_group < b.asset_group ? -1 : a.asset_group > b.asset_group ? 1 : 0;
+    });
+    return { rows: out, population, groupBy, windowMonths, droppedNoAsset, unclassifiedSecrets };
+  }
+  function assetProfilePopulations(rows, opts) {
+    const all = assetProfile(rows, { ...opts, highRiskOnly: false });
+    const highRisk = assetProfile(rows, { ...opts, highRiskOnly: true });
+    return { all, highRisk, rows: all.rows.concat(highRisk.rows) };
+  }
+
+  // src/domain/secretsLifecycle.ts
+  var DAY_MS8 = 864e5;
+  var MEASURED_STATES = /* @__PURE__ */ new Set(["VALID", "INVALID"]);
+  var SEGMENT_NONE = "(none)";
+  var DEFAULT_REVOKE_SLA_DAYS = 7;
+  function stateOf(row) {
+    return present(row.validation_state) ? String(row.validation_state).trim().toUpperCase() : "";
+  }
+  function isMeasured(row) {
+    return MEASURED_STATES.has(stateOf(row));
+  }
+  function secretsOnly(rows) {
+    const kept = [];
+    let ignored = 0;
+    for (const row of rows) {
+      if (row.scope === "secrets") kept.push(row);
+      else ignored += 1;
+    }
+    return { rows: kept, ignoredOtherScopes: ignored };
+  }
+  function pct2(numerator, denominator) {
+    return denominator > 0 ? numerator / denominator * 100 : null;
+  }
+  function validationCoverage(rows) {
+    const { rows: secrets, ignoredOtherScopes } = secretsOnly(rows);
+    let measured = 0;
+    for (const row of secrets) if (isMeasured(row)) measured += 1;
+    return {
+      measured,
+      unmeasured: secrets.length - measured,
+      total: secrets.length,
+      coveragePct: pct2(measured, secrets.length),
+      ignoredOtherScopes
+    };
+  }
+  function postDetectionValidityRate(rows) {
+    const { rows: secrets } = secretsOnly(rows);
+    let valid = 0;
+    let invalid = 0;
+    for (const row of secrets) {
+      const state = stateOf(row);
+      if (state === "VALID") valid += 1;
+      else if (state === "INVALID") invalid += 1;
+    }
+    const measured = valid + invalid;
+    return { valid, invalid, measured, ratePct: pct2(valid, measured) };
+  }
+  function timeToRevoke(rows, opts) {
+    var _a;
+    const { rows: secrets, ignoredOtherScopes } = secretsOnly(rows);
+    const sla = (_a = opts.sla) != null ? _a : DEFAULT_REVOKE_SLA_DAYS;
+    const projected = [];
+    const eventDays = [];
+    let excludedUnmeasured = 0;
+    let excludedNoClock = 0;
+    for (const row of secrets) {
+      const state = stateOf(row);
+      if (!MEASURED_STATES.has(state)) {
+        excludedUnmeasured += 1;
+        continue;
+      }
+      const born = parseTs(row.first_seen);
+      if (born === null) {
+        excludedNoClock += 1;
+        continue;
+      }
+      const died = parseTs(row.rotated_at);
+      if (died !== null) {
+        const days = (died - born) / DAY_MS8;
+        if (!Number.isFinite(days) || days < 0) {
+          excludedNoClock += 1;
+          continue;
+        }
+        eventDays.push(days);
+        projected.push({
+          severity: null,
+          status: STATUS_RESOLVED,
+          mttr_days: days,
+          age_days: null
+        });
+        continue;
+      }
+      if (state === "INVALID") {
+        excludedNoClock += 1;
+        continue;
+      }
+      const age = (opts.now - born) / DAY_MS8;
+      if (!Number.isFinite(age) || age < 0) {
+        excludedNoClock += 1;
+        continue;
+      }
+      projected.push({ severity: null, status: STATUS_OPEN, mttr_days: null, age_days: age });
+    }
+    const km = kaplanMeier(projected);
+    let withinSla = 0;
+    for (const d of eventDays) if (d <= sla) withinSla += 1;
+    return {
+      km,
+      median: km.median,
+      p90: kmQuantileFromCurve(km.curve, 0.9),
+      medianLowerBound: km.medianLowerBound,
+      events: km.events,
+      censored: km.censored,
+      excludedUnmeasured,
+      excludedNoClock,
+      total: secrets.length,
+      withinSlaPct: pct2(withinSla, eventDays.length),
+      sla,
+      ignoredOtherScopes
+    };
+  }
+  function removalVsRotation(rows) {
+    const { rows: secrets } = secretsOnly(rows);
+    const out = {
+      removedAndRotated: 0,
+      removedNotRotated: 0,
+      rotatedNotRemoved: 0,
+      neither: 0,
+      total: secrets.length
+    };
+    for (const row of secrets) {
+      const removed = present(row.removed_at);
+      const rotated = present(row.rotated_at);
+      if (removed && rotated) out.removedAndRotated += 1;
+      else if (removed) out.removedNotRotated += 1;
+      else if (rotated) out.rotatedNotRemoved += 1;
+      else out.neither += 1;
+    }
+    return out;
+  }
+  var SEVERITY_AXIS_REFUSAL = 'bySegment: "severity" is not a valid axis for the secrets register \u2014 severity grades a detection, not whether a credential is live. Segment by validation_state, confidence or secret_kind instead.';
+  function bySegment(rows, axis) {
+    var _a;
+    if (axis === "severity") throw new Error(SEVERITY_AXIS_REFUSAL);
+    const { rows: secrets } = secretsOnly(rows);
+    const buckets = /* @__PURE__ */ new Map();
+    for (const row of secrets) {
+      const raw = row[axis];
+      const key = present(raw) ? String(raw).trim() : SEGMENT_NONE;
+      let stat = buckets.get(key);
+      if (!stat) {
+        stat = {
+          segment: key,
+          total: 0,
+          open: 0,
+          measured: 0,
+          valid: 0,
+          invalid: 0,
+          rotated: 0,
+          removed: 0,
+          removedNotRotated: 0
+        };
+        buckets.set(key, stat);
+      }
+      stat.total += 1;
+      if (!RESOLVED_STATUSES.has(String((_a = row.status) != null ? _a : "").toUpperCase())) stat.open += 1;
+      const state = stateOf(row);
+      if (MEASURED_STATES.has(state)) stat.measured += 1;
+      if (state === "VALID") stat.valid += 1;
+      else if (state === "INVALID") stat.invalid += 1;
+      const rotated = present(row.rotated_at);
+      const removed = present(row.removed_at);
+      if (rotated) stat.rotated += 1;
+      if (removed) stat.removed += 1;
+      if (removed && !rotated) stat.removedNotRotated += 1;
+    }
+    return [...buckets.values()].sort((a, b) => cmp(b.total, a.total) || cmp(a.segment, b.segment));
+  }
+
+  // src/server/fixNext.ts
+  var FIX_NEXT_LIMIT = 8;
+  var TIER2_SEVERITIES = /* @__PURE__ */ new Set(["CRITICAL", "HIGH"]);
+  var TIER3_SEVERITIES = /* @__PURE__ */ new Set(["CRITICAL"]);
+  var TIER_LABELS = {
+    1: "Live credential",
+    2: "Fixable and late",
+    3: "Critical code weakness"
+  };
+  var TIER_SCOPES = { 1: "secrets", 2: "sca", 3: "sast" };
+  function isOpen5(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function pastSla(row, targets) {
+    const age = row.age_days;
+    if (age === null || age === void 0 || !Number.isFinite(age)) return null;
+    const target = targets[normalizeSeverity(row.severity)];
+    if (target === void 0 || target === null || !Number.isFinite(target)) return null;
+    return age > target;
+  }
+  function secretIsLive(row) {
+    var _a;
+    return String((_a = row.validation_state) != null ? _a : "").toUpperCase() === "VALID";
+  }
+  function classify(row, targets) {
+    const sev2 = normalizeSeverity(row.severity);
+    if (row.scope === "secrets") {
+      return secretIsLive(row) ? { tier: 1 } : { reason: "unvalidated" };
+    }
+    if (row.scope === "sca") {
+      if (row.fix_available_at === null || row.fix_available_at === void 0) {
+        return { reason: "noFix" };
+      }
+      const late2 = pastSla(row, targets);
+      if (late2 === null) return { reason: "other" };
+      if (!late2) return { reason: "insideSla" };
+      return TIER2_SEVERITIES.has(sev2) ? { tier: 2 } : { reason: "other" };
+    }
+    const late = pastSla(row, targets);
+    if (late === null) return { reason: "other" };
+    if (!late) return { reason: "insideSla" };
+    return TIER3_SEVERITIES.has(sev2) ? { tier: 3 } : { reason: "other" };
+  }
+  function repoOf(row) {
+    const name = row.repo_name === null || row.repo_name === void 0 ? "" : String(row.repo_name);
+    if (name.trim() !== "") return name;
+    const id = row.repo_id === null || row.repo_id === void 0 ? "" : String(row.repo_id);
+    return id.trim() === "" ? null : id;
+  }
+  function fixNext(rows, opts = {}) {
+    var _a;
+    const now = opts.now === void 0 ? Date.now() : opts.now;
+    const targets = (_a = opts.slaTargets) != null ? _a : SLA_TARGETS;
+    const limit = opts.limit === void 0 ? FIX_NEXT_LIMIT : Math.max(0, Math.trunc(opts.limit));
+    const tiers = { 1: 0, 2: 0, 3: 0 };
+    const unranked = { noFix: 0, unvalidated: 0, insideSla: 0, other: 0 };
+    const buckets = /* @__PURE__ */ new Map();
+    let openTotal = 0;
+    let ranked = 0;
+    for (const row of rows) {
+      if (!isOpen5(row.status)) continue;
+      openTotal += 1;
+      const verdict = classify(row, targets);
+      if ("reason" in verdict) {
+        unranked[verdict.reason] += 1;
+        continue;
+      }
+      ranked += 1;
+      tiers[String(verdict.tier)] += 1;
+      const repo = repoOf(row);
+      const key = verdict.tier + "\0" + (repo === null ? "" : repo);
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = { tier: verdict.tier, repo, count: 0, oldestAgeDays: null, owners: /* @__PURE__ */ new Set() };
+        buckets.set(key, bucket);
+      }
+      bucket.count += 1;
+      const age = row.age_days;
+      if (age !== null && age !== void 0 && Number.isFinite(age)) {
+        if (bucket.oldestAgeDays === null || age > bucket.oldestAgeDays) bucket.oldestAgeDays = age;
+      }
+      const owner = row.owner_project === null || row.owner_project === void 0 ? "" : String(row.owner_project);
+      if (owner.trim() !== "") bucket.owners.add(owner);
+    }
+    const all = [...buckets.values()].map((b) => {
+      const scope = TIER_SCOPES[b.tier];
+      return {
+        tier: b.tier,
+        label: TIER_LABELS[b.tier],
+        scope,
+        repo: b.repo,
+        owner_project: b.owners.size === 1 ? [...b.owners][0] : null,
+        count: b.count,
+        // One decimal. `age_days` is a float carrying sub-second precision that no reader
+        // wants and every group pays 14 bytes for; the page rounds it to whole days anyway.
+        oldestAgeDays: b.oldestAgeDays === null ? null : Math.round(b.oldestAgeDays * 10) / 10,
+        route: scope,
+        params: { scope, repo: b.repo }
+      };
+    }).sort((a, b) => {
+      var _a2, _b, _c, _d;
+      return a.tier - b.tier || b.count - a.count || ((_a2 = b.oldestAgeDays) != null ? _a2 : -1) - ((_b = a.oldestAgeDays) != null ? _b : -1) || String((_c = a.repo) != null ? _c : "").localeCompare(String((_d = b.repo) != null ? _d : ""));
+    });
+    const groups = all.slice(0, limit);
+    const cutRows = all.slice(limit);
+    return {
+      groups,
+      tiers,
+      unranked,
+      ranked,
+      openTotal,
+      groupsTotal: all.length,
+      groupsCut: cutRows.length,
+      findingsCut: cutRows.reduce((n2, g) => n2 + g.count, 0),
+      limit,
+      asOf: now
+    };
+  }
+
+  // src/server/historyStore.ts
+  var FOLDER = "history";
+  var NAME_RE = /^(\d{4}-\d{2}-\d{2})\.json\.gz$/;
+  function utcDay(now) {
+    return new Date(now).toISOString().slice(0, 10);
+  }
+  function fileName(day) {
+    return `${day}.json.gz`;
+  }
+  function recordDaily(stats, now = Date.now()) {
+    writeGzJson(subfolder(FOLDER), fileName(utcDay(now)), stats);
+  }
+  function listHistory() {
+    const days = listNames(FOLDER).map((n2) => {
+      var _a;
+      return (_a = NAME_RE.exec(n2)) == null ? void 0 : _a[1];
+    }).filter((d) => Boolean(d)).sort();
+    return days.map((date) => ({ date, stats: readGzJson(subfolder(FOLDER), fileName(date)) }));
+  }
 
   // src/server/readModelStore.ts
-  var FOLDER = "readmodels";
+  var FOLDER2 = "readmodels";
   var ENVELOPE_V = 1;
   var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
   var warming = false;
   var touched = null;
+  function duringWarm(fn) {
+    warming = true;
+    touched = /* @__PURE__ */ new Set();
+    try {
+      return fn();
+    } finally {
+      warming = false;
+      touched = null;
+    }
+  }
   var disabled = false;
   function readModelFileName(name, params) {
     return `rm-${name}-${paramsHash(params)}.json.gz`;
@@ -3343,7 +6161,7 @@ var Server = (() => {
   function l2Read(name, params, version) {
     if (disabled) return { hit: false, why: "absent" };
     try {
-      const raw = readGzJsonNamed(FOLDER, readModelFileName(name, params));
+      const raw = readGzJsonNamed(FOLDER2, readModelFileName(name, params));
       if (!raw || typeof raw !== "object") return { hit: false, why: "absent" };
       const env = raw;
       if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
@@ -3368,7 +6186,7 @@ var Server = (() => {
         writtenAtMs: Date.now(),
         value
       };
-      writeGzJson(subfolder(FOLDER), readModelFileName(name, params), env);
+      writeGzJson(subfolder(FOLDER2), readModelFileName(name, params), env);
     } catch (e) {
       disabled = true;
       console.warn(`Durable read-model write failed (${name}) \u2014 L2 disabled for this run: ${e}`);
@@ -3384,89 +6202,1421 @@ var Server = (() => {
       return value;
     }, ttlSec, version);
   }
-
-  // src/server/registers.ts
-  function tally(into, key) {
-    var _a;
-    const k = key === null || key === void 0 || key === "" ? "(none)" : key;
-    into[k] = ((_a = into[k]) != null ? _a : 0) + 1;
-  }
-  function facetsFor(rows) {
-    var _a;
-    const facets = { severity: {}, repo: {}, status: {}, validation: {} };
-    for (const r of rows) {
-      tally(facets.severity, normalizeSeverity(r.severity));
-      tally(facets.repo, r.repo_name);
-      tally(facets.status, r.status);
-      if (r.scope === "secrets") tally(facets.validation, (_a = r.validation_state) != null ? _a : "UNKNOWN");
+  function sweepReadModels() {
+    if (disabled || !touched) return 0;
+    const keep = touched;
+    let trashed = 0;
+    try {
+      for (const name of listNames(FOLDER2)) {
+        if (!keep.has(name)) {
+          trashNamed(FOLDER2, name);
+          trashed += 1;
+        }
+      }
+    } catch (e) {
+      console.warn(`Durable read-model sweep failed: ${e}`);
     }
-    return facets;
+    return trashed;
   }
-  function matches(row, q) {
+
+  // src/server/readModels.ts
+  var DAY_MS9 = 864e5;
+  var WEEK_MS = 7 * DAY_MS9;
+  var CLOCK_TTL_SEC = 3600;
+  var OLDEST_TOP_N = 100;
+  var WARM_BUDGET_MS = 27e4;
+  function norm(p) {
     var _a, _b;
-    if (q.severities && q.severities.length && !q.severities.includes(normalizeSeverity(row.severity))) return false;
-    if (q.repo && ((_a = row.repo_name) != null ? _a : "(none)") !== q.repo) return false;
-    if (q.status === "open" && row.status !== "OPEN") return false;
-    if (q.status === "resolved" && row.status !== "RESOLVED") return false;
-    if (q.validation && ((_b = row.validation_state) != null ? _b : "UNKNOWN") !== q.validation) return false;
-    if (q.awaitingVendor && !row.awaiting_vendor_fix) return false;
-    return true;
+    const scopeRaw = (_a = p == null ? void 0 : p.scope) != null ? _a : null;
+    const scope = scopeRaw && SCOPES.includes(scopeRaw) ? scopeRaw : null;
+    const sevRaw = (_b = p == null ? void 0 : p.severities) != null ? _b : null;
+    const severities = Array.isArray(sevRaw) && sevRaw.length ? sevRaw.map((s2) => normalizeSeverity(s2)).filter((s2, i, a) => a.indexOf(s2) === i).sort() : null;
+    const projectRaw = loadSettings().projectView;
+    const project2 = projectRaw ? projectRaw : null;
+    return { scope, severities, showNoFix: (p == null ? void 0 : p.showNoFix) !== false, project: project2 };
   }
-  var SEV_RANK = {};
-  SEVERITY_ORDER.forEach((s, i) => {
-    SEV_RANK[s] = i;
-  });
-  function sortRows(rows, sort) {
-    if (!sort) return rows;
-    const desc = sort.startsWith("-");
-    const key = desc ? sort.slice(1) : sort;
-    const value = (r) => {
-      var _a;
-      return key === "severity" ? (_a = SEV_RANK[normalizeSeverity(r.severity)]) != null ? _a : 99 : r[key];
-    };
-    const out = [...rows].sort((a, b) => {
-      const va = value(a);
-      const vb = value(b);
-      if (va === null || va === void 0) return vb === null || vb === void 0 ? 0 : 1;
-      if (vb === null || vb === void 0) return -1;
-      return cmp(va, vb);
+  function keyOf(n2) {
+    return { scope: n2.scope, severities: n2.severities, showNoFix: n2.showNoFix, project: n2.project };
+  }
+  var baseMemo;
+  function baseSnapshot() {
+    const version = dataVersion();
+    if (!baseMemo || baseMemo.version !== version) {
+      const now = Date.now();
+      baseMemo = { version, now, rows: loadBaseRows({ now }) };
+    }
+    return baseMemo;
+  }
+  function __resetModelMemosForTest() {
+    baseMemo = void 0;
+    clockMemo = void 0;
+  }
+  var clockMemo;
+  function ledgerClock(scope) {
+    const version = dataVersion();
+    if (!clockMemo || clockMemo.version !== version) {
+      clockMemo = { version, all: buildClock(null), byScope: {} };
+    }
+    if (scope === null) return clockMemo.all;
+    const hit = clockMemo.byScope[scope];
+    if (hit) return hit;
+    const built = buildClock(scope);
+    clockMemo.byScope[scope] = built;
+    return built;
+  }
+  function buildClock(scope) {
+    const scans = loadScanRows().filter((s2) => scope === null || s2.scope === scope);
+    let newest = null;
+    let earliest = null;
+    let earliestIso = null;
+    for (const s2 of scans) {
+      const ms = parseTs(s2.ts);
+      if (ms === null) continue;
+      if (newest === null || ms > newest) newest = ms;
+      if (earliest === null || ms < earliest) {
+        earliest = ms;
+        earliestIso = s2.ts;
+      }
+    }
+    return newest === null ? { asOf: Date.now(), asOfSource: "wallClock", observedFrom: earliestIso } : { asOf: newest, asOfSource: "scan", observedFrom: earliestIso };
+  }
+  function isOpen6(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function scopedRows(rows, n2) {
+    let out = rows;
+    if (n2.scope) out = out.filter((r) => r.scope === n2.scope);
+    if (n2.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
+    if (n2.severities) {
+      const keep = new Set(n2.severities);
+      out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
+    }
+    return out;
+  }
+  function visibleRows(rows, n2) {
+    const scoped = scopedRows(rows, n2);
+    return n2.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
+  }
+  function classifiableRows(rows) {
+    const kept = [];
+    let excludedSecrets = 0;
+    for (const r of rows) {
+      if (r.scope === "secrets") excludedSecrets += 1;
+      else kept.push(r);
+    }
+    return { rows: kept, excludedSecrets };
+  }
+  function atLedgerClock(rows, asOf) {
+    return rows.map((r) => {
+      if (!isOpen6(r.status)) return r;
+      const first = parseTs(r.first_seen);
+      if (first === null) return r;
+      return { ...r, age_days: Math.max(0, asOf - first) / DAY_MS9 };
     });
-    return desc ? out.reverse() : out;
   }
-  function scopeRows(scope) {
-    return baseRows(Object.values(readLedger()).filter((r) => r.scope === scope));
-  }
-  function registerPage(q, page, pageSize, sort) {
-    const all = durablyCached(`register-rows-1`, { scope: q.scope }, () => scopeRows(q.scope), 3600);
-    const facets = durablyCached(`register-facets-1`, { scope: q.scope }, () => facetsFor(all), 3600);
-    const filtered = sortRows(all.filter((r) => matches(r, q)), sort);
-    const size = Math.min(500, Math.max(1, pageSize));
-    const pageCount = Math.max(1, Math.ceil(filtered.length / size));
-    const at2 = Math.min(Math.max(0, page), pageCount - 1);
-    let open = 0;
-    let disappeared = 0;
-    let awaiting = 0;
-    for (const r of filtered) {
-      if (r.status === "OPEN") open += 1;
-      else if (r.resolution_src === "disappeared") disappeared += 1;
-      if (r.awaiting_vendor_fix) awaiting += 1;
+  function coverageOf2(rows, applies, measured) {
+    let applicable = 0;
+    let seen = 0;
+    let na = 0;
+    for (const r of rows) {
+      if (!applies(r)) {
+        na += 1;
+        continue;
+      }
+      applicable += 1;
+      if (measured(r)) seen += 1;
     }
     return {
-      scope: q.scope,
-      total: filtered.length,
-      scopeTotal: all.length,
-      page: at2,
-      pageCount,
-      pageSize: size,
-      rows: filtered.slice(at2 * size, (at2 + 1) * size),
-      facets,
-      summary: {
-        open,
-        resolved: filtered.length - open,
-        disappeared,
-        awaitingVendor: awaiting
-      }
+      applicable,
+      measured: seen,
+      missing: applicable - seen,
+      coveragePct: applicable > 0 ? seen / applicable * 100 : null,
+      notApplicable: na,
+      total: rows.length
     };
+  }
+  function signalCoverage(rows) {
+    const isSca = (r) => r.scope === "sca";
+    const isSast = (r) => r.scope === "sast";
+    const isSecrets = (r) => r.scope === "secrets";
+    return {
+      has_kev: coverageOf2(rows, isSca, (r) => r.has_kev !== null),
+      has_exploit: coverageOf2(rows, isSca, (r) => r.has_exploit !== null),
+      epss: coverageOf2(rows, isSca, (r) => r.epss !== null),
+      ai_verdict: coverageOf2(rows, isSast, (r) => r.ai_verdict !== null && String(r.ai_verdict) !== ""),
+      validation_state: coverageOf2(
+        rows,
+        isSecrets,
+        (r) => r.validation_state !== null && String(r.validation_state).trim() !== ""
+      )
+    };
+  }
+  function shipKM(km) {
+    return {
+      curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
+      median: km.median,
+      medianLowerBound: km.medianLowerBound,
+      p90: kmQuantileFromCurve(km.curve, 0.9),
+      mean: km.mean,
+      meanTruncated: km.meanTruncated,
+      restrictionTime: km.restrictionTime,
+      events: km.events,
+      censored: km.censored,
+      total: km.total
+    };
+  }
+  function latencySummary(rows, now, scope) {
+    const km = kaplanMeier(latencyView(rows, "detection", now, { scope }));
+    return {
+      median: km.median,
+      medianLowerBound: km.medianLowerBound,
+      mean: km.mean,
+      meanTruncated: km.meanTruncated,
+      restrictionTime: km.restrictionTime,
+      events: km.events,
+      censored: km.censored,
+      total: km.total,
+      segments: latencySegments(rows, "detection", now, { scope })
+    };
+  }
+  function buildMttr(n2) {
+    var _a;
+    const snap = baseSnapshot();
+    const scoped = scopedRows(snap.rows, n2);
+    const rows = visibleRows(snap.rows, n2);
+    const { perSev, overall } = mttrFromLedger(rows, { now: snap.now });
+    const { slaPct, oldestDays } = overallSlaOldest(perSev);
+    const kmMedianPerSev = {};
+    const kmP90PerSev = {};
+    const kmLowerBoundPerSev = {};
+    const kmPerSev = {};
+    {
+      const bySev = {};
+      for (const r of rows) {
+        const s2 = normalizeSeverity(r.severity);
+        ((_a = bySev[s2]) != null ? _a : bySev[s2] = []).push(r);
+      }
+      const seen = Object.keys(bySev);
+      const ordered = SEVERITY_ORDER.filter((s2) => seen.indexOf(s2) >= 0).concat(seen.filter((s2) => SEVERITY_ORDER.indexOf(s2) < 0));
+      for (const s2 of ordered) {
+        const k = kaplanMeier(bySev[s2]);
+        kmMedianPerSev[s2] = k.median;
+        kmLowerBoundPerSev[s2] = k.medianLowerBound;
+        kmP90PerSev[s2] = kmQuantileFromCurve(k.curve, 0.9);
+        kmPerSev[s2] = shipKM(k);
+      }
+    }
+    const scaScoped = scoped.filter((r) => r.scope === "sca");
+    const scaVisible = rows.filter((r) => r.scope === "sca");
+    return {
+      asOf: snap.now,
+      scope: n2.scope,
+      severities: n2.severities,
+      showNoFix: n2.showNoFix,
+      rowCount: rows.length,
+      perSev,
+      overall,
+      slaPct,
+      oldestDays,
+      remediation: {
+        pctiles: mttrPercentiles(rows),
+        buckets: resolutionBuckets(rows),
+        km: shipKM(kaplanMeier(rows)),
+        kmMedianPerSev,
+        kmP90PerSev,
+        kmLowerBoundPerSev,
+        kmPerSev,
+        openPastSla: openPastSla(rows),
+        /**
+         * The open backlog as an age DISTRIBUTION, against the per-severity SLA edge.
+         *
+         * `openPastSla` above it is the same population reduced to one ratio per severity; a
+         * ratio cannot say whether the breaches are a week late or a year late, and every
+         * surveyed vendor but two compresses age into exactly that percentage. This ships the
+         * shape as well, over the SAME `rows` every other block here measures — so the scope,
+         * project, severity and no-fix filters apply to it identically.
+         *
+         * `unaged` is on the wire for the reason `ageBuckets` could not put it there: an open
+         * row with no readable `first_seen` is not young, it is undated, and the page prints
+         * that count rather than letting the bars quietly cover fewer rows than the hero does.
+         */
+        aging: agingDistribution(rows),
+        awaiting: awaitingVendorFix(rows),
+        /**
+         * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
+         * refused to price — sast and secrets have no vendor to wait on, so their actionable
+         * clock is their detection clock and including them would inflate the sample with
+         * copies of the figure above.
+         */
+        actionable: {
+          scope: "sca",
+          rowCount: scaVisible.length,
+          notMeasured: rows.length - scaVisible.length,
+          openPastSla: openPastSla(actionableView(scaVisible)),
+          km: shipKM(kaplanMeier(actionableView(scaVisible))),
+          /** How long we waited for a fix to EXIST, over the pre-toggle sca population. Pairs
+           *  additively with the clock above: exposure = latency + actionable. */
+          vendorLatency: latencySummary(scaScoped, snap.now, "sca")
+        }
+      },
+      signalCoverage: signalCoverage(rows)
+    };
+  }
+  function mttrModel(p) {
+    const n2 = norm(p);
+    return cached("dsMttr1", keyOf(n2), () => buildMttr(n2), CLOCK_TTL_SEC);
+  }
+  function buildExecutive(n2) {
+    var _a;
+    const snap = baseSnapshot();
+    const scoped = scopedRows(snap.rows, n2);
+    const rows = visibleRows(snap.rows, n2);
+    const counts = {};
+    let open = 0;
+    for (const r of rows) {
+      if (!isOpen6(r.status)) continue;
+      open += 1;
+      const s2 = normalizeSeverity(r.severity);
+      counts[s2] = ((_a = counts[s2]) != null ? _a : 0) + 1;
+    }
+    const byScope3 = (n2.scope ? [n2.scope] : [...SCOPES]).map((scope) => {
+      const sub = rows.filter((r) => r.scope === scope);
+      const km = kaplanMeier(sub);
+      return {
+        group: scope,
+        dimension: "scope",
+        total: sub.length,
+        open: sub.filter((r) => isOpen6(r.status)).length,
+        resolved: sub.filter((r) => !isOpen6(r.status)).length,
+        kmMedian: km.median,
+        kmMedianLowerBound: km.medianLowerBound,
+        awaiting: awaitingVendorFix(sub).overall
+      };
+    });
+    return {
+      asOf: snap.now,
+      scope: n2.scope,
+      severities: n2.severities,
+      showNoFix: n2.showNoFix,
+      severityCounts: { counts, open, total: rows.length },
+      byScope: { dimension: "scope", rows: byScope3 },
+      weekTrend: weekTrend(scoped, n2, snap.now),
+      // What to do next, and what the list left out. One call, one pass over the rows the
+      // severity tiles already counted, so the ranked figure and the tiles cannot disagree.
+      fixNext: fixNext(rows, { now: snap.now }),
+      movement: openMovement(rows, n2),
+      tiers: riskTierStats(scopedTierRows(rows), void 0),
+      signalCoverage: signalCoverage(rows)
+    };
+  }
+  function scopedTierRows(rows) {
+    return rows;
+  }
+  function weekTrend(scoped, n2, now) {
+    if (!scoped.length) return null;
+    let earliest = Infinity;
+    for (const r of scoped) {
+      const f = parseTs(r.first_seen);
+      if (f !== null && f < earliest) earliest = f;
+    }
+    const weekAgo = now - WEEK_MS;
+    if (!Number.isFinite(earliest) || earliest > weekAgo) return null;
+    const base = scoped;
+    const opts = { hideNoFix: !n2.showNoFix, ...n2.scope ? { scope: n2.scope } : {} };
+    const current = kmMedianAsOf(base, n2.severities, now, opts);
+    const previous = kmMedianAsOf(base, n2.severities, weekAgo, opts);
+    if (current === null || previous === null) return null;
+    return {
+      current,
+      previous,
+      deltaDays: Math.round((current - previous) * 1e3) / 1e3,
+      days: 7
+    };
+  }
+  var MOVEMENT_MIN_GAP_DAYS = 7;
+  function round12(n2) {
+    return Math.round(n2 * 10) / 10;
+  }
+  function syncInstants() {
+    const seen = /* @__PURE__ */ new Map();
+    for (const s2 of loadScanRows()) {
+      const ms = parseTs(s2.ts);
+      if (ms === null) continue;
+      if (!seen.has(ms)) seen.set(ms, s2.ts);
+    }
+    return [...seen.entries()].map(([ms, iso]) => ({ ms, iso })).sort((a, b) => a.ms - b.ms);
+  }
+  function openAsOf(r, d) {
+    const first = parseTs(r.first_seen);
+    if (first === null || first > d) return false;
+    const resolved = parseTs(r.resolved_at);
+    return resolved === null || resolved > d;
+  }
+  function openMovement(rows, n2) {
+    const instants = syncInstants();
+    const scopes = n2.scope ? [n2.scope] : [...SCOPES];
+    const until = instants.length ? instants[instants.length - 1] : null;
+    if (until === null) {
+      return { comparable: false, reason: "noSync", syncs: 0, since: null, until: null, days: null };
+    }
+    if (instants.length === 1) {
+      return {
+        comparable: false,
+        reason: "oneSync",
+        syncs: 1,
+        since: null,
+        until: until.iso,
+        days: null
+      };
+    }
+    let since = null;
+    for (let i = instants.length - 2; i >= 0; i -= 1) {
+      if ((until.ms - instants[i].ms) / DAY_MS9 >= MOVEMENT_MIN_GAP_DAYS) {
+        since = instants[i];
+        break;
+      }
+    }
+    if (since === null) {
+      return {
+        comparable: false,
+        reason: "tooClose",
+        syncs: instants.length,
+        since: null,
+        until: until.iso,
+        days: round12((until.ms - instants[0].ms) / DAY_MS9)
+      };
+    }
+    const perScope = {};
+    let open = 0;
+    let prevOpen = 0;
+    for (const scope of scopes) {
+      const sub = rows.filter((r) => r.scope === scope);
+      const nowOpen = sub.filter((r) => isOpen6(r.status)).length;
+      const thenOpen = sub.filter((r) => openAsOf(r, since.ms)).length;
+      perScope[scope] = { open: nowOpen, prevOpen: thenOpen, delta: nowOpen - thenOpen };
+      open += nowOpen;
+      prevOpen += thenOpen;
+    }
+    return {
+      comparable: true,
+      reason: null,
+      syncs: instants.length,
+      since: since.iso,
+      until: until.iso,
+      days: round12((until.ms - since.ms) / DAY_MS9),
+      perScope,
+      total: { open, prevOpen, delta: open - prevOpen }
+    };
+  }
+  function executiveModel(p) {
+    const n2 = norm(p);
+    return cached("dsExecutive1", keyOf(n2), () => buildExecutive(n2), CLOCK_TTL_SEC);
+  }
+  var CONCENTRATION_DIMS = {
+    sca: ["repo", "language", "owner_project"],
+    sast: ["repo", "cwe", "language", "owner_project"],
+    secrets: ["repo", "secret_kind", "owner_project"]
+  };
+  function buildRegister(scope, n2) {
+    const snap = baseSnapshot();
+    const scoped = { ...n2, scope };
+    const rows = visibleRows(snap.rows, scoped);
+    const isSecrets = scope === "secrets";
+    const latest = latestScanRow(scope);
+    const scanCount = loadScanRows().filter((s2) => s2.scope === scope).length;
+    return {
+      asOf: snap.now,
+      scope,
+      severities: isSecrets ? null : n2.severities,
+      showNoFix: n2.showNoFix,
+      rowCount: rows.length,
+      open: rows.filter((r) => isOpen6(r.status)).length,
+      resolved: rows.filter((r) => !isOpen6(r.status)).length,
+      // The severity axis, or the reason there is not one.
+      severityAxis: isSecrets ? { supported: false, reason: SEVERITY_AXIS_REFUSAL } : { supported: true },
+      counts: isSecrets ? null : countsOf(rows),
+      sevStats: isSecrets ? null : severityStats(rows, scope),
+      previousCounts: isSecrets ? null : previousSeverityCounts(scope),
+      segments: isSecrets ? {
+        validation_state: bySegment(rows, "validation_state"),
+        confidence: bySegment(rows, "confidence"),
+        secret_kind: bySegment(rows, "secret_kind")
+      } : null,
+      aging: ageBuckets(rows, scope),
+      oldest: oldestOpen(rows, OLDEST_TOP_N, scope),
+      movement: movement(rows, latest, scanCount, scope),
+      // The dimensions are per scope, because `insights.GROUP_COLUMNS` maps to real ledger
+      // columns and a dimension the scope never fills would rank one "(none)" bucket. Asking for
+      // a name outside that table is silently DROPPED by `concentration`, so the list is spelled
+      // from the table rather than from what a page might like to see.
+      concentration: concentration(rows, CONCENTRATION_DIMS[scope], 5, scope),
+      tiers: riskTierStats(scopedTierRows(rows), void 0, scope),
+      funnel: triageFunnel(rows, void 0, /* @__PURE__ */ new Set(), false, scope),
+      awaiting: awaitingVendorFix(rows, { scope }),
+      latestScan: latest,
+      signalCoverage: signalCoverage(rows)
+    };
+  }
+  function countsOf(rows) {
+    var _a;
+    const out = {};
+    for (const r of rows) {
+      const s2 = normalizeSeverity(r.severity);
+      out[s2] = ((_a = out[s2]) != null ? _a : 0) + 1;
+    }
+    return out;
+  }
+  function registerModel(scope, p) {
+    const n2 = norm(p);
+    return cached(
+      "dsRegister1",
+      { ...keyOf(n2), scope },
+      () => buildRegister(scope, n2),
+      CLOCK_TTL_SEC
+    );
+  }
+  function normRowStatus(v) {
+    const s2 = String(v != null ? v : "").toLowerCase();
+    return s2 === "open" || s2 === "resolved" ? s2 : "all";
+  }
+  function registerRowsModel(scope, p) {
+    var _a;
+    const n2 = norm(p);
+    const snap = baseSnapshot();
+    const severityFilterSupported = scope !== "secrets";
+    const severities = severityFilterSupported ? n2.severities : null;
+    const scoped = visibleRows(snap.rows, { ...n2, scope, severities });
+    const status = normRowStatus(p == null ? void 0 : p.status);
+    const rows = status === "all" ? scoped : scoped.filter((r) => isOpen6(r.status) === (status === "open"));
+    const def = REGISTER_ROW_DEFAULT_SORT[scope];
+    const columns = registerRowColumns(scope);
+    const asked = typeof (p == null ? void 0 : p.sort) === "string" ? p.sort : "";
+    const sort = columns.includes(asked) ? asked : def.sort;
+    const askedDir = String((_a = p == null ? void 0 : p.dir) != null ? _a : "").toLowerCase();
+    const dir = askedDir === "asc" || askedDir === "desc" ? askedDir : sort === def.sort ? def.dir : "asc";
+    const pageSize = clampInt(
+      p == null ? void 0 : p.pageSize,
+      REGISTER_ROWS_DEFAULT_PAGE_SIZE,
+      1,
+      REGISTER_ROWS_PAGE_SIZE_CAP
+    );
+    const sorted = sortRegisterRows(rows, {
+      value: registerSortValue(sort),
+      descending: dir === "desc",
+      // The row identity, and it is unique by construction (`lifecycle.findingKey`), so the
+      // arrangement is total: two requests for the same page return the same rows.
+      tiebreak: (r) => r["finding_key"]
+    });
+    const cut = pageOfRegisterRows(sorted, clampInt(p == null ? void 0 : p.page, 0, 0, Number.MAX_SAFE_INTEGER), pageSize);
+    return {
+      asOf: snap.now,
+      scope,
+      columns: columns.slice(),
+      rows: cut.rows,
+      total: sorted.length,
+      page: cut.page,
+      pageCount: cut.pageCount,
+      pageSize,
+      sort,
+      dir,
+      status,
+      severities,
+      severityFilterSupported,
+      showNoFix: n2.showNoFix
+    };
+  }
+  function buildSecrets(n2) {
+    const snap = baseSnapshot();
+    const rows = visibleRows(snap.rows, { ...n2, scope: "secrets", severities: null });
+    const secretRows = rows;
+    return {
+      asOf: snap.now,
+      scope: "secrets",
+      // NOT an echo of what the caller asked for. `severities` is deliberately absent from this
+      // model's cache key, so ONE entry serves every selection — and a payload echoing the
+      // requesting caller's list would report whichever caller happened to compute it. The
+      // refusal is a property of the register, so that is all it states.
+      severityAxis: { supported: false, reason: SEVERITY_AXIS_REFUSAL },
+      rowCount: rows.length,
+      open: rows.filter((r) => isOpen6(r.status)).length,
+      coverage: validationCoverage(secretRows),
+      validity: postDetectionValidityRate(secretRows),
+      timeToRevoke: timeToRevoke(secretRows, { now: snap.now }),
+      removalVsRotation: removalVsRotation(secretRows),
+      segments: {
+        validation_state: bySegment(secretRows, "validation_state"),
+        confidence: bySegment(secretRows, "confidence"),
+        secret_kind: bySegment(secretRows, "secret_kind")
+      },
+      signalCoverage: signalCoverage(rows)
+    };
+  }
+  function secretsModel(p) {
+    const n2 = norm(p);
+    return cached(
+      "dsSecrets1",
+      { scope: "secrets", showNoFix: n2.showNoFix },
+      () => buildSecrets(n2),
+      CLOCK_TTL_SEC
+    );
+  }
+  function buildProgram(n2) {
+    const snap = baseSnapshot();
+    const clock = ledgerClock(n2.scope);
+    const visible = visibleRows(snap.rows, n2);
+    const { rows, excludedSecrets } = classifiableRows(visible);
+    const riskRows = rows;
+    const scans = loadScanRows();
+    const capacityRows = rows;
+    const perScopeSensitivity = {};
+    for (const scope of SCOPES) {
+      if (scope === "secrets") continue;
+      if (n2.scope && n2.scope !== scope) continue;
+      const sub = riskRows.filter((r) => r.scope === scope);
+      if (!sub.length) continue;
+      const rule = ruleForScope(scope);
+      perScopeSensitivity[scope] = {
+        rule,
+        sentence: ruleSentence(rule),
+        points: ruleSensitivity(sub, rule)
+      };
+    }
+    const { perSev, overall } = confusionBySeverity(riskRows);
+    return {
+      asOf: clock.asOf,
+      asOfSource: clock.asOfSource,
+      observedFrom: clock.observedFrom,
+      scope: n2.scope,
+      severities: n2.severities,
+      showNoFix: n2.showNoFix,
+      rowCount: rows.length,
+      excludedSecrets,
+      rules: {
+        sca: { rule: DEFAULT_RISK_RULE, sentence: ruleSentence(DEFAULT_RISK_RULE) },
+        sast: { rule: DEFAULT_SAST_RISK_RULE, sentence: ruleSentence(DEFAULT_SAST_RISK_RULE) },
+        secrets: null
+      },
+      matrix: overall,
+      perSev,
+      signals: signalBreakdown(riskRows),
+      sensitivity: perScopeSensitivity,
+      // Whole-register capacity AND the high-risk cut. P2P v3's net remediation capacity is
+      // specifically the high-risk population; the overall close rate is what the 1-in-10
+      // benchmark refers to. The two routinely disagree, so both are published rather than one
+      // unlabelled number.
+      capacity: capacityByMonth(capacityRows, scans, {
+        now: clock.asOf,
+        maxMonths: 24,
+        ...clock.observedFrom !== null ? { observedFrom: clock.observedFrom } : {}
+      }),
+      capacityHighRisk: capacityByMonth(capacityRows, scans, {
+        now: clock.asOf,
+        highRiskOnly: true,
+        maxMonths: 24,
+        closedObserved: null,
+        ...clock.observedFrom !== null ? { observedFrom: clock.observedFrom } : {}
+      }),
+      observationDays: observationWindowDays(rows, clock.asOf),
+      signalCoverage: signalCoverage(visible),
+      // `pagePayload.programTrendSlice` reads exactly this key. Empty under a secrets scope —
+      // coverage and efficiency are rates over a high-risk population and that scope has none,
+      // so an empty series is the honest answer rather than a line of zeroes.
+      trend: n2.scope === "secrets" ? [] : programTrendFor(n2, snap.rows),
+      trendSupported: n2.scope !== "secrets"
+    };
+  }
+  function programTrendFor(n2, all) {
+    const { rows } = classifiableRows(scopedRows(all, n2));
+    return loadProgramTrend(void 0, {
+      severities: n2.severities,
+      base: rows,
+      ...n2.scope ? { scope: n2.scope } : {}
+    });
+  }
+  function programModel(p) {
+    const n2 = norm(p);
+    return durablyCached("dsProgram1", keyOf(n2), () => buildProgram(n2));
+  }
+  function buildRepos(n2) {
+    const snap = baseSnapshot();
+    const clock = ledgerClock(n2.scope);
+    const visible = visibleRows(snap.rows, n2);
+    const rows = atLedgerClock(visible, clock.asOf);
+    const opts = { observedFrom: clock.observedFrom, now: clock.asOf };
+    return {
+      asOf: clock.asOf,
+      asOfSource: clock.asOfSource,
+      observedFrom: clock.observedFrom,
+      scope: n2.scope,
+      severities: n2.severities,
+      showNoFix: n2.showNoFix,
+      rowCount: visible.length,
+      byRepo: assetProfilePopulations(rows, { ...opts, groupBy: "repo" }),
+      byLanguage: assetProfilePopulations(rows, { ...opts, groupBy: "language" }),
+      signalCoverage: signalCoverage(visible)
+    };
+  }
+  function reposModel(p) {
+    const n2 = norm(p);
+    return durablyCached("dsRepos1", keyOf(n2), () => buildRepos(n2));
+  }
+  function buildHistory(n2) {
+    var _a;
+    const snap = baseSnapshot();
+    const clock = ledgerClock(n2.scope);
+    const scansAll = loadScanRows();
+    const scans = (n2.scope ? scansAll.filter((s2) => s2.scope === n2.scope) : scansAll).slice().reverse();
+    const rows = visibleRows(snap.rows, n2);
+    const { overall } = mttrFromLedger(rows, { now: snap.now });
+    return {
+      asOf: clock.asOf,
+      asOfSource: clock.asOfSource,
+      observedFrom: clock.observedFrom,
+      scope: n2.scope,
+      severities: n2.severities,
+      showNoFix: n2.showNoFix,
+      scans,
+      perScope: perScopeScanStats(scansAll),
+      kpis: {
+        tracked: rows.length,
+        open: rows.filter((r) => isOpen6(r.status)).length,
+        resolvedAllTime: rows.filter((r) => !isOpen6(r.status)).length,
+        // The KM median, NOT the naive closed-only one, and its lower bound beside it: where the
+        // curve never reaches half there is no median to print and the bound is what is true.
+        medianMttr: (_a = overall.mttr_median) != null ? _a : null,
+        km: shipKM(kaplanMeier(rows))
+      },
+      // `mttrPageTrendSlice` reads both of these keys.
+      history: listHistory(),
+      trend: trendFor(n2, snap.rows),
+      // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
+      // facts with no project dimension and do NOT narrow with `n.project`; everything else in
+      // this payload does.
+      scanScopeApplies: false,
+      scanScopeNote: n2.project ? "scans, perScope and history describe the whole register \u2014 a sync and a daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above are scoped to the selected project." : null
+    };
+  }
+  function trendFor(n2, all) {
+    return loadTrend({
+      severities: n2.severities,
+      showNoFix: n2.showNoFix,
+      base: scopedRows(all, n2),
+      ...n2.scope ? { scope: n2.scope } : {}
+    });
+  }
+  function perScopeScanStats(scans) {
+    const out = {};
+    for (const scope of SCOPES) {
+      const sub = scans.filter((s2) => s2.scope === scope);
+      const last = sub.length ? sub[sub.length - 1] : null;
+      out[scope] = {
+        scans: sub.length,
+        sealed: sub.filter((s2) => s2.sealed === 1).length,
+        firstScanTs: sub.length ? sub[0].ts : null,
+        lastScanTs: last ? last.ts : null,
+        lastTotal: last ? last.total : null
+      };
+    }
+    return out;
+  }
+  function historyModel(p) {
+    const n2 = norm(p);
+    return durablyCached("dsHistory1", keyOf(n2), () => buildHistory(n2));
+  }
+  function cellsByTab() {
+    const tabs = [];
+    let known = 0;
+    for (const tab of Object.values(TABS)) {
+      try {
+        const g = gridSize(tab);
+        const cells = g.rows * g.cols;
+        known += cells;
+        tabs.push({ tab, cells });
+      } catch (e) {
+        tabs.push({ tab, cells: null, error: String(e) });
+      }
+    }
+    return { tabs, known };
+  }
+  function buildStorage() {
+    var _a;
+    const snap = baseSnapshot();
+    const clock = ledgerClock(null);
+    const scans = loadScanRows();
+    const total = cellCount();
+    const usage = cellsByTab();
+    const rows = snap.rows;
+    const perScope = {};
+    for (const scope of SCOPES) {
+      perScope[scope] = {
+        findings: rows.filter((r) => r.scope === scope).length,
+        scans: scans.filter((s2) => s2.scope === scope).length
+      };
+    }
+    return {
+      asOf: clock.asOf,
+      asOfSource: clock.asOfSource,
+      cellCount: total,
+      cellLimit: 1e7,
+      cellsByTab: usage.tabs,
+      /** The spreadsheet minus the declared tabs — sheets nothing here manages. */
+      cellsOther: total - usage.known,
+      ledgerRowCells: ((_a = TAB_HEADERS[TABS.ledger]) != null ? _a : []).length,
+      scanCount: scans.length,
+      sealedCount: scans.filter((s2) => s2.sealed === 1).length,
+      oldestScanTs: scans.length ? scans[0].ts : null,
+      newestScanTs: scans.length ? scans[scans.length - 1].ts : null,
+      trackedFindings: rows.length,
+      perScope,
+      distinctSeverities: [...new Set(rows.map((r) => normalizeSeverity(r.severity)))].sort(
+        (a, b) => SEVERITY_ORDER.indexOf(a) - SEVERITY_ORDER.indexOf(b)
+      ),
+      unknownSeverityCount: rows.filter((r) => normalizeSeverity(r.severity) === "UNKNOWN").length,
+      scopeApplies: false,
+      scopeNote: "Storage prices sheet and Drive bytes for the whole spreadsheet \u2014 there is no project column on a tab to narrow one row's worth of storage by. These figures always describe the whole register, regardless of the view-project scope."
+    };
+  }
+  function storageModel() {
+    return durablyCached("dsStorage1", null, () => buildStorage());
+  }
+  function warmTargets() {
+    const all = { scope: null, severities: null, showNoFix: true };
+    const targets = [
+      // The durable four first: they are what the Drive layer exists for, and a budget cut-out
+      // that never reached them would leave the expensive answers cold overnight.
+      { label: "history", run: () => historyModel(all) },
+      { label: "program", run: () => programModel(all) },
+      { label: "repos", run: () => reposModel(all) },
+      { label: "storage", run: () => storageModel() },
+      { label: "executive", run: () => executiveModel(all) },
+      { label: "mttr", run: () => mttrModel(all) },
+      { label: "secrets", run: () => secretsModel(all) }
+    ];
+    for (const scope of SCOPES) {
+      targets.push({ label: `register:${scope}`, run: () => registerModel(scope, all) });
+    }
+    return targets;
+  }
+  function warmReadModels(budgetMs = WARM_BUDGET_MS) {
+    const job = activeJob();
+    if (job) {
+      const reason = `${job.kind} job ${job.job_id} is ${job.phase}`;
+      console.log(`Read-model warm: skipped, ${reason}`);
+      return { warmed: 0, skipped: 0, swept: 0, blockedBy: reason, elapsedMs: 0 };
+    }
+    return duringWarm(() => warmInner(budgetMs));
+  }
+  function warmInner(budgetMs) {
+    const t0 = Date.now();
+    let warmed = 0;
+    let skipped = 0;
+    for (const target of warmTargets()) {
+      if (Date.now() - t0 >= budgetMs) {
+        skipped += 1;
+        continue;
+      }
+      try {
+        target.run();
+        warmed += 1;
+      } catch (e) {
+        console.warn(`Read-model warm (${target.label}) failed: ${e}`);
+      }
+    }
+    if (skipped) {
+      console.warn(`Read-model warm: out of budget after ${warmed} entries, ${skipped} left cold`);
+    }
+    const swept = skipped ? 0 : sweepReadModels();
+    return { warmed, skipped, swept, blockedBy: null, elapsedMs: Date.now() - t0 };
+  }
+
+  // src/server/scanJobs.ts
+  var scanJobs_exports = {};
+  __export(scanJobs_exports, {
+    DENIED_KEY: () => DENIED_KEY,
+    SLIM_FIELDS: () => SLIM_FIELDS,
+    SLIM_LISTS: () => SLIM_LISTS,
+    SLIM_NESTED: () => SLIM_NESTED,
+    cancelSync: () => cancelSync,
+    clearContinuationTriggers: () => clearContinuationTriggers,
+    continueJob: () => continueJob,
+    dailySync: () => dailySync,
+    jobStatus: () => jobStatus,
+    resetStuckJob: () => resetStuckJob,
+    slimRecord: () => slimRecord,
+    startSync: () => startSync,
+    watchdogSync: () => watchdogSync
+  });
+  var BUDGET_MS = 27e4;
+  var FIRST_STEP_BUDGET_MS = 45e3;
+  var CONTINUE_DELAY_MS = 3e4;
+  var CONTINUE_RETRY_MS = 9e4;
+  var CONTINUE_HANDLER = CONTINUE_HANDLERS.sync;
+  var WATCHDOG_HANDLER = WATCHDOG_HANDLERS.sync;
+  var SYNC_KIND = "sync";
+  var FORCE_STOP_LOCK_MS = 1e4;
+  var MAX_PARTIAL_ERRORS = 10;
+  var SyncCancelled = class extends Error {
+  };
+  var cancelKey = (jobId) => `CANCEL_${jobId}`;
+  function isCancelRequested(jobId) {
+    return Boolean(getProp(cancelKey(jobId)));
+  }
+  function clearCancel(jobId) {
+    deleteProp(cancelKey(jobId));
+  }
+  function emptyProgress() {
+    return { pages: 0, rows: 0, rawRef: null, totalCount: 0, partialPages: 0, partialErrors: [] };
+  }
+  function parseParams(job) {
+    var _a, _b, _c, _d, _e, _f;
+    let raw = {};
+    try {
+      const parsed = JSON.parse((_a = job.params_json) != null ? _a : "{}");
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) raw = parsed;
+    } catch {
+    }
+    const syncId = String((_c = (_b = raw["syncId"]) != null ? _b : job.scan_id) != null ? _c : "");
+    if (!syncId) {
+      throw new Error(`Sync job ${job.job_id} carries no syncId \u2014 it cannot be resumed.`);
+    }
+    const scopes = (Array.isArray(raw["scopes"]) ? raw["scopes"] : []).map((s2) => String(s2)).filter((s2) => SCOPES.includes(s2));
+    const severities = (_d = raw["severitiesByScope"]) != null ? _d : {};
+    const stored = (_e = raw["perScope"]) != null ? _e : {};
+    const params = {
+      syncId,
+      scopes: scopes.length ? scopes : [...SCOPES],
+      scopeIndex: Number((_f = raw["scopeIndex"]) != null ? _f : 0) || 0,
+      severitiesByScope: {},
+      perScope: {}
+    };
+    for (const scope of params.scopes) {
+      const sev2 = severities[scope];
+      params.severitiesByScope[scope] = Array.isArray(sev2) ? sev2.map((s2) => String(s2)) : [];
+      const p = stored[scope];
+      params.perScope[scope] = p && typeof p === "object" && !Array.isArray(p) ? { ...emptyProgress(), ...p } : emptyProgress();
+    }
+    return params;
+  }
+  function progressFor(params, scope) {
+    const existing = params.perScope[scope];
+    if (existing) return existing;
+    const fresh = emptyProgress();
+    params.perScope[scope] = fresh;
+    return fresh;
+  }
+  var SLIM_FIELDS = {
+    sca: [
+      "id",
+      "name",
+      "detailedName",
+      "severity",
+      "status",
+      "firstDetectedAt",
+      "lastDetectedAt",
+      "resolvedAt",
+      "fixDate",
+      "fixedVersion",
+      "hasExploit",
+      "hasCisaKevExploit",
+      "epssProbability"
+    ],
+    sast: [
+      "id",
+      "name",
+      "status",
+      "severity",
+      "originalSeverity",
+      "filePath",
+      "startLine",
+      "codeLibraryLanguage",
+      "origin",
+      "resolutionReason",
+      "createdAt",
+      "updatedAt",
+      "firstDetectedAtSource"
+    ],
+    secrets: [
+      "id",
+      "externalId",
+      "secretDataId",
+      "name",
+      "type",
+      "confidence",
+      "severity",
+      "path",
+      "lineNumber",
+      "status",
+      "resolvedAt",
+      "validationStatus",
+      "lastValidatedAt",
+      "firstSeenAt",
+      "lastSeenAt",
+      "lastUpdatedAt",
+      "codeToCloudPipelineStage"
+    ]
+  };
+  var SLIM_NESTED = {
+    sca: {
+      // `tags` is kept whole: reconcile's tagsJson reads the dict, and Q_SCA does not select
+      // it today — so this is the seat, empty, rather than a mapping that has to be added
+      // later in two places at once.
+      vulnerableAsset: [
+        "id",
+        "name",
+        "type",
+        "cloudPlatform",
+        "subscriptionName",
+        "subscriptionExternalId",
+        "tags"
+      ],
+      artifactType: ["codeLibraryLanguage"]
+    },
+    sast: {
+      resource: ["id", "name", "type"],
+      vcsDetails: ["commitHash"],
+      aiAnalysis: ["verdict"]
+    },
+    secrets: {
+      resource: ["id", "name", "type", "externalId", "nativeType", "cloudPlatform"],
+      // `initialCommitHash`, NOT `commitHash` — SecretInstanceVcsDetails has no `commitHash`
+      // (wizQueries.ts trap 1). Copying SAST's spelling here would silently drop the column.
+      vcsDetails: ["initialCommitHash"]
+    }
+  };
+  var SLIM_LISTS = {
+    // `projects` is listed for all three scopes even though Q_SCA does not select it: it is
+    // this register's only ownership dimension, and the day the SCA document gains it the
+    // projection must not be the thing that swallows it.
+    sca: { projects: ["id", "name", "isFolder", "slug"] },
+    sast: { projects: ["id", "name", "isFolder", "slug"], weaknesses: ["id", "name"] },
+    secrets: { projects: ["id", "name", "isFolder", "slug"] }
+  };
+  var DENIED_KEY = /snippet|validationDetails/i;
+  function stripDenied(value) {
+    if (Array.isArray(value)) return value.map(stripDenied);
+    if (value !== null && typeof value === "object") {
+      const out = {};
+      for (const [k, v] of Object.entries(value)) {
+        if (DENIED_KEY.test(k)) continue;
+        out[k] = stripDenied(v);
+      }
+      return out;
+    }
+    return value;
+  }
+  function project(src, keys) {
+    const out = {};
+    for (const k of keys) {
+      if (k in src) out[k] = src[k];
+    }
+    return out;
+  }
+  function slimRecord(scope, node) {
+    const out = project(node, SLIM_FIELDS[scope]);
+    for (const [key, keys] of Object.entries(SLIM_NESTED[scope])) {
+      const v = node[key];
+      if (v !== null && typeof v === "object" && !Array.isArray(v)) out[key] = project(v, keys);
+    }
+    for (const [key, keys] of Object.entries(SLIM_LISTS[scope])) {
+      const v = node[key];
+      if (!Array.isArray(v)) continue;
+      out[key] = v.map(
+        (e) => e !== null && typeof e === "object" && !Array.isArray(e) ? project(e, keys) : e
+      );
+    }
+    return stripDenied(out);
+  }
+  var CONNECTION_ROOT = {
+    sca: "vulnerabilityFindings",
+    sast: "sastFindings",
+    secrets: "secretInstances"
+  };
+  function envelope(scope, nodes) {
+    return { data: { [CONNECTION_ROOT[scope]]: { nodes } } };
+  }
+  function startSync(options = {}) {
+    return withScriptLock(() => {
+      var _a, _b, _c;
+      recoverIfNeeded();
+      const active = activeJob();
+      if (active && !reclaimStaleJob(active)) {
+        return { jobId: active.job_id, message: "A sync is already in progress." };
+      }
+      if (!hasWizCredentials()) {
+        return {
+          jobId: null,
+          message: "No Wiz credentials are configured \u2014 run setup() before syncing."
+        };
+      }
+      const settings = loadSettings();
+      const scopes = [...(_a = options.scopes) != null ? _a : settings.scopes].filter(
+        (s2) => SCOPES.includes(s2)
+      );
+      if (!scopes.length) {
+        return { jobId: null, message: "No registers are selected \u2014 choose one in Settings." };
+      }
+      const syncId = nowIso();
+      const params = {
+        syncId,
+        scopes,
+        scopeIndex: 0,
+        severitiesByScope: {},
+        perScope: {}
+      };
+      for (const scope of scopes) {
+        params.severitiesByScope[scope] = [...(_b = settings.fetchSeverities[scope]) != null ? _b : []];
+        params.perScope[scope] = emptyProgress();
+      }
+      const job = createJob({
+        job_id: newJobId(SYNC_KIND),
+        kind: SYNC_KIND,
+        phase: "FETCHING",
+        // THE BARE syncId. The composite `<syncId>-<scope>` is the DRIVE address only —
+        // ledgerStore.scanIdFor's comment has the measurement that settled it.
+        scan_id: syncId,
+        scope: (_c = scopes[0]) != null ? _c : null,
+        cursor: null,
+        page: 0,
+        findings_so_far: 0,
+        page_size: 0,
+        total_count: 0,
+        params_json: JSON.stringify(params),
+        journal_ref: null,
+        error: null
+      });
+      step(job, FIRST_STEP_BUDGET_MS);
+      return { jobId: job.job_id, message: "Sync started." };
+    });
+  }
+  function reclaimStaleJob(job) {
+    if (!reclaimIfStale(job)) return false;
+    clearCancel(job.job_id);
+    return true;
+  }
+  function spill(archiveId, slim, runs) {
+    writeSlim(archiveId, slim);
+    writePageRuns(archiveId, runs);
+  }
+  function step(job, budgetMs = BUDGET_MS) {
+    var _a, _b, _c, _d, _e, _f;
+    const started = Date.now();
+    const params = parseParams(job);
+    const jobId = job.job_id;
+    const projectId = (_b = (_a = projectScope()) == null ? void 0 : _a[0]) != null ? _b : null;
+    let findings = job.findings_so_far;
+    try {
+      while (params.scopeIndex < params.scopes.length) {
+        const scope = params.scopes[params.scopeIndex];
+        const archiveId = scanIdFor(params.syncId, scope);
+        const progress = progressFor(params, scope);
+        const resuming = job.scope === scope;
+        const paging = newScanPaging(
+          resuming && job.page_size > 0 ? job.page_size : PAGE_SIZE
+        );
+        paging.pageNumber = resuming ? job.page : 0;
+        let cursor = resuming ? job.cursor : null;
+        const slim = paging.pageNumber > 0 ? (_c = readSlim(archiveId)) != null ? _c : [] : [];
+        const runs = paging.pageNumber > 0 ? (_d = readPageRuns(archiveId)) != null ? _d : [] : [];
+        for (; ; ) {
+          if (isCancelRequested(jobId)) throw new SyncCancelled();
+          const variables = buildVariables(scope, {
+            severities: (_e = params.severitiesByScope[scope]) != null ? _e : [],
+            projectId,
+            after: cursor
+          });
+          const pageIndex = paging.pageNumber + 1;
+          const page = fetchPage(scope, variables, paging);
+          writeScanPage(archiveId, pageIndex, envelope(scope, page.nodes));
+          pushAll(slim, page.nodes.map((n2) => slimRecord(scope, n2)));
+          runs.push([pageIndex, page.nodes.length]);
+          findings += page.nodes.length;
+          cursor = page.pageInfo.endCursor;
+          progress.pages = paging.pageNumber;
+          progress.rows = slim.length;
+          if (page.totalCount !== null) progress.totalCount = page.totalCount;
+          if (page.partialErrors.length) {
+            progress.partialPages += 1;
+            for (const message of page.partialErrors) {
+              if (progress.partialErrors.length >= MAX_PARTIAL_ERRORS) break;
+              progress.partialErrors.push(message);
+            }
+          }
+          updateJob(jobId, {
+            scope,
+            cursor,
+            page: paging.pageNumber,
+            page_size: paging.pageSize,
+            // Cumulative across the WHOLE sync — this is one job, and the card counts one
+            // sync. It therefore DOES NOT pair with `total_count` below, which is only the
+            // current scope's total: dividing them is right for the first scope and silently
+            // wrong from the second on. An earlier revision of this comment pointed at
+            // `params.perScope[scope].rows` as the per-scope numerator; that field is only
+            // written when a scope COMPLETES (`progress.rows = slim.length`), so it is absent
+            // for exactly the duration anyone would want it, and `params_json` never reaches
+            // the browser anyway (pagePayload's JOB_KEYS allowlist).
+            //
+            // The honest per-scope fraction is PAGE-BASED — `page` and `page_size` are both
+            // reset on every scope advance below, so `page * page_size / total_count` is a
+            // fraction of one register. syncProgress.js::syncViewModel computes it there.
+            findings_so_far: findings,
+            // The CURRENT scope's total, per the jobs tab's own column definition.
+            total_count: progress.totalCount,
+            params_json: JSON.stringify(params)
+          });
+          if (!page.pageInfo.hasNextPage) break;
+          if (Date.now() - started > budgetMs) {
+            spill(archiveId, slim, runs);
+            scheduleContinuation();
+            return;
+          }
+        }
+        progress.rawRef = scanFolder(archiveId).getId();
+        progress.rows = slim.length;
+        spill(archiveId, slim, runs);
+        params.scopeIndex += 1;
+        const nextScope = (_f = params.scopes[params.scopeIndex]) != null ? _f : null;
+        updateJob(jobId, {
+          scope: nextScope,
+          cursor: null,
+          page: 0,
+          page_size: 0,
+          total_count: 0,
+          findings_so_far: findings,
+          params_json: JSON.stringify(params)
+        });
+        if (nextScope !== null && Date.now() - started > budgetMs) {
+          scheduleContinuation();
+          return;
+        }
+      }
+      finishSync(jobId, params);
+    } catch (e) {
+      if (e instanceof SyncCancelled) {
+        finalizeCancel(job, params);
+        return;
+      }
+      clearCancel(jobId);
+      updateJob(jobId, {
+        phase: "FAILED",
+        error: e == null ? "Sync failed." : String(e).slice(0, 1e3)
+      });
+      throw e;
+    }
+  }
+  function finishSync(jobId, params) {
+    clearCancel(jobId);
+    updateJob(jobId, { phase: "RECONCILING", params_json: JSON.stringify(params) });
+    const perScope = params.scopes.map((scope) => {
+      var _a, _b, _c, _d;
+      return {
+        scope,
+        // The spill IS the projection reconcile is fed; reading it back rather than keeping it in
+        // memory is what lets a battery that spanned three executions commit at all.
+        records: (_a = readSlim(scanIdFor(params.syncId, scope))) != null ? _a : [],
+        mode: "live",
+        scannedSeverities: (_b = params.severitiesByScope[scope]) != null ? _b : [],
+        rawRef: (_d = (_c = params.perScope[scope]) == null ? void 0 : _c.rawRef) != null ? _d : null
+      };
+    });
+    scheduleWatchdog();
+    updateJob(jobId, { phase: "PERSISTING" });
+    const outcome = persistSync(jobId, params.syncId, perScope);
+    updateJob(jobId, { phase: "DONE", error: null });
+    clearContinuationTriggers();
+    clearCancel(jobId);
+    afterPersist(params, outcome);
+  }
+  function afterPersist(params, outcome) {
+    try {
+      recordDaily(dailyStats(params, outcome));
+    } catch (e) {
+      console.warn(`Failed to record the daily history entry: ${e}`);
+    }
+    autoCompactIfDue();
+    warmAfterSync();
+  }
+  function warmAfterSync() {
+    try {
+      const report = warmReadModels();
+      if (report.blockedBy) {
+        console.warn(`Post-sync read-model warm did not run: ${report.blockedBy}`);
+      } else {
+        console.log(`Post-sync read-model warm: ${report.warmed} warmed, ${report.skipped} cold.`);
+      }
+    } catch (e) {
+      console.warn(`Post-sync read-model warm failed: ${e}`);
+    }
+  }
+  function dailyStats(params, outcome) {
+    const ledger = loadState().ledger;
+    return {
+      sync_id: outcome.sync_id,
+      at: nowIso(),
+      committed_scopes: outcome.committed_scopes,
+      scopes: outcome.scopes.map((s2) => {
+        var _a, _b, _c, _d, _e, _f;
+        return {
+          scope: s2.scope,
+          total: s2.total,
+          written: s2.written,
+          deltas: s2.deltas,
+          twins: s2.twins,
+          pages: (_b = (_a = params.perScope[s2.scope]) == null ? void 0 : _a.pages) != null ? _b : 0,
+          total_count: (_d = (_c = params.perScope[s2.scope]) == null ? void 0 : _c.totalCount) != null ? _d : 0,
+          // The caveat travels with the figure: a scope whose pages came back PARTIAL has good
+          // rows and a suspect count, and a history entry that hid that would be the lie.
+          partial_pages: (_f = (_e = params.perScope[s2.scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0
+        };
+      }),
+      mttr: mttrFromLedger(Object.values(ledger))
+    };
+  }
+  function autoCompactIfDue() {
+    try {
+      const settings = loadSettings();
+      if (!settings.autoCompact) return;
+      const days = Number(settings.retentionDays);
+      if (!Number.isFinite(days) || days <= 0) return;
+      compactLedger(Math.floor(days));
+    } catch (e) {
+      console.warn(`Auto-compaction after the sync failed: ${e}`);
+    }
+  }
+  function cancelSync(jobId) {
+    const job = getJob(jobId);
+    if (!job) return { jobId, stopped: false, message: "No such job." };
+    if (isTerminalPhase(job.phase)) {
+      return { jobId, stopped: true, message: "Sync already finished." };
+    }
+    setProp(cancelKey(jobId), "1");
+    const message = forceStop(jobId);
+    return message === null ? { jobId, stopped: false, message: "Stopping sync\u2026" } : { jobId, stopped: true, message };
+  }
+  function forceStop(jobId) {
+    const lock = LockService.getScriptLock();
+    if (!lock.tryLock(FORCE_STOP_LOCK_MS)) return null;
+    try {
+      recoverIfNeeded();
+      const job = getJob(jobId);
+      if (!job || job.kind !== SYNC_KIND) return null;
+      if (isTerminalPhase(job.phase)) {
+        clearContinuationTriggers();
+        clearCancel(jobId);
+        return "Sync stopped.";
+      }
+      if (job.phase === "FETCHING" || job.phase === "RECONCILING") {
+        clearContinuationTriggers();
+        finalizeCancel(job);
+        return "Sync stopped.";
+      }
+      return null;
+    } finally {
+      lock.releaseLock();
+    }
+  }
+  function finalizeCancel(job, known) {
+    let params = known != null ? known : null;
+    if (params === null) {
+      try {
+        params = parseParams(job);
+      } catch {
+        params = null;
+      }
+    }
+    if (params !== null) {
+      for (const scope of params.scopes) {
+        try {
+          trashScan(scanIdFor(params.syncId, scope));
+        } catch {
+        }
+      }
+    }
+    updateJob(job.job_id, { phase: "CANCELLED", error: null });
+    clearCancel(job.job_id);
+  }
+  function scheduleContinuation(delayMs = CONTINUE_DELAY_MS) {
+    ScriptApp.newTrigger(CONTINUE_HANDLER).timeBased().after(delayMs).create();
+  }
+  function scheduleWatchdog(delayMs = CONTINUE_DELAY_MS) {
+    ScriptApp.newTrigger(WATCHDOG_HANDLER).timeBased().after(delayMs).create();
+  }
+  function clearContinuationTriggers() {
+    clearTriggers(CONTINUE_HANDLER);
+    clearTriggers(WATCHDOG_HANDLER);
+  }
+  function continueJob(_e) {
+    try {
+      withScriptLock(() => {
+        clearTriggers(CONTINUE_HANDLER);
+        const job = activeJob();
+        if (!job || job.kind !== SYNC_KIND) return;
+        if (job.phase === "FETCHING") {
+          if (isCancelRequested(job.job_id)) {
+            finalizeCancel(job);
+            return;
+          }
+          step(job);
+        } else if (job.phase === "RECONCILING") {
+          finishSync(job.job_id, parseParams(job));
+        } else if (job.phase === "PERSISTING") {
+          recoverIfNeeded();
+          clearCancel(job.job_id);
+        }
+      }, 12e4);
+    } catch (e) {
+      if (e instanceof LedgerBusyError) scheduleContinuation(CONTINUE_RETRY_MS);
+      throw e;
+    }
+  }
+  function watchdogSync(_e) {
+    try {
+      withScriptLock(() => {
+        clearTriggers(WATCHDOG_HANDLER);
+        const job = activeJob();
+        if (!job || job.kind !== SYNC_KIND) return;
+        if (job.phase !== "PERSISTING") return;
+        recoverIfNeeded();
+        clearCancel(job.job_id);
+      }, 12e4);
+    } catch (e) {
+      if (e instanceof LedgerBusyError) scheduleWatchdog(CONTINUE_RETRY_MS);
+      throw e;
+    }
+  }
+  function dailySync() {
+    if (!hasWizCredentials()) return;
+    startSync();
+  }
+  function jobStatus(jobId) {
+    return getJob(jobId);
+  }
+  function resetStuckJob() {
+    const result = withScriptLock(() => {
+      const before = activeJob();
+      recoverIfNeeded();
+      if (!before) {
+        return { cleared: false, jobId: null, kind: null, phase: null, message: "No active job." };
+      }
+      for (const handler of Object.values(CONTINUE_HANDLERS)) clearTriggers(handler);
+      for (const handler of Object.values(WATCHDOG_HANDLERS)) clearTriggers(handler);
+      clearCancel(before.job_id);
+      const after = activeJob();
+      if (after) {
+        updateJob(after.job_id, {
+          phase: "FAILED",
+          error: "Reset: cleared by resetStuckJob() from the Apps Script editor."
+        });
+      }
+      return {
+        cleared: true,
+        jobId: before.job_id,
+        kind: before.kind,
+        phase: before.phase,
+        message: `Cleared ${before.kind} job ${before.job_id} (was ${before.phase}).`
+      };
+    }, 12e4);
+    console.log(result.message);
+    return result;
   }
 
   // src/server/api.ts
@@ -3486,182 +7636,98 @@ var Server = (() => {
   }
   function bootstrap(_p) {
     return run(() => {
-      var _a, _b, _c, _d;
+      var _a, _b, _c, _d, _e, _f;
       const scans = readAll(TABS.scans);
-      let latest = null;
-      const byScope = {};
-      for (const scope of SCOPES) byScope[scope] = null;
+      let newestTs = "";
+      let newestSyncId = "";
+      const lastScanByScope = {};
+      for (const scope of SCOPES) lastScanByScope[scope] = null;
       for (const row of scans) {
         const ts = String((_a = row.ts) != null ? _a : "");
-        if (!ts) continue;
-        const scope = String((_b = row.scope) != null ? _b : "");
-        if (scope in byScope && (byScope[scope] === null || ts > byScope[scope])) {
-          byScope[scope] = ts;
-        }
-        if (!latest || ts > latest.finished_at) {
-          latest = {
-            scan_id: String((_c = row.scan_id) != null ? _c : ""),
-            finished_at: ts,
-            total: Number((_d = row.total) != null ? _d : 0)
-          };
+        if (!ts || ts <= newestTs) continue;
+        newestTs = ts;
+        newestSyncId = String((_b = row.scan_id) != null ? _b : "");
+      }
+      for (const row of scans) {
+        const ts = String((_c = row.ts) != null ? _c : "");
+        const scope = String((_d = row.scope) != null ? _d : "");
+        if (!ts || !(scope in lastScanByScope)) continue;
+        if (lastScanByScope[scope] === null || ts > lastScanByScope[scope]) {
+          lastScanByScope[scope] = ts;
         }
       }
+      let latestSync = null;
+      if (newestSyncId) {
+        const members = scans.filter((r) => {
+          var _a2;
+          return String((_a2 = r.scan_id) != null ? _a2 : "") === newestSyncId;
+        });
+        const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
+        const rows = members.map((r) => {
+          var _a2, _b2, _c2;
+          return {
+            scope: String((_a2 = r.scope) != null ? _a2 : ""),
+            total: Number((_b2 = r.total) != null ? _b2 : 0),
+            severities: r.severities == null ? null : String(r.severities),
+            ts: String((_c2 = r.ts) != null ? _c2 : "")
+          };
+        }).sort((a, b) => {
+          var _a2, _b2;
+          return ((_a2 = order.get(a.scope)) != null ? _a2 : 99) - ((_b2 = order.get(b.scope)) != null ? _b2 : 99);
+        });
+        let total = 0;
+        let ts = "";
+        for (const r of rows) {
+          total += r.total;
+          if (r.ts > ts) ts = r.ts;
+        }
+        latestSync = {
+          sync_id: newestSyncId,
+          ts: ts || newestTs,
+          total,
+          scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities }))
+        };
+      }
+      const settings = loadSettings();
+      const allRows = loadBaseRows();
+      const projectView = settings.projectView || null;
+      const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : allRows.length;
       return {
         product: "Wiz Sidekick DevSecOps",
         buildId: BUILD_ID,
         hasCredentials: hasWizCredentials(),
+        wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
         scopes: SCOPES,
-        // Shipped so the Settings page can label a scope without a second copy of the mapping —
-        // and so its divergence warning can compare against the SHARED windows rather than a
-        // client-side duplicate of them, which is the copy that would drift invisibly.
         scopeLabels: SCOPE_LABELS,
         severityOrder: SEVERITY_ORDER,
         slaTargets: SLA_TARGETS,
-        latestScan: latest,
-        lastScanByScope: byScope,
-        wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
-        activeJob: jobStatus(),
+        latestSync,
+        lastScanByScope,
+        activeJob: (() => {
+          const job = activeJob();
+          return job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null;
+        })(),
         canEditAccess: canEditUsers(),
-        settings: loadSettings()
+        settings,
+        scope: {
+          projectView: settings.projectView,
+          shown,
+          register: allRows.length,
+          unattributed: unattributedCount(allRows),
+          // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
+          // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
+          syncProjectId: (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null
+        },
+        filterOptions: { projectList: projectCatalogue(allRows) }
       };
     });
   }
-  function getSettings(_p) {
-    return run(() => loadSettings());
-  }
-  function putSettings(p) {
-    return mutate(() => saveSettings(p.settings));
-  }
-  function getChartsBundle(_p) {
-    return run(() => HtmlService.createHtmlOutputFromFile("js_charts").getContent());
-  }
-  function runSampleSync(_p) {
-    return mutate(() => {
-      var _a, _b;
-      if (!SAMPLE_SCANS.length) {
-        throw new Error(
-          "No sample dataset in this bundle. The deployed bundle ships none on purpose \u2014 a register must show what its tenant has. Run `npm run dev`, which aliases the dev dataset in."
-        );
-      }
-      const scans = [];
-      for (const s of SAMPLE_SCANS) {
-        for (const scope of SCOPES) {
-          scans.push(runScan(scope, sampleSource(s.nodes), {
-            scanId: `${s.id}-${scope}`,
-            ts: s.ts,
-            // The gate THIS scan applied, not the one the settings hold now.
-            severities: (_b = (_a = s.gates) == null ? void 0 : _a[scope]) != null ? _b : null
-          }));
-        }
-      }
-      return { scans, seeded: true };
-    });
-  }
-  function getMttr(p) {
+  function testWizConnection(_p) {
     return run(() => {
-      var _a;
-      const wanted = (p == null ? void 0 : p.scope) && SCOPES.includes(p.scope) ? p.scope : null;
-      const all = Object.values(readLedger());
-      const rows = baseRows(wanted === null ? all : all.filter((r) => r.scope === wanted));
-      const byScope = {};
-      for (const r of rows) byScope[r.scope] = ((_a = byScope[r.scope]) != null ? _a : 0) + 1;
-      const open = rows.filter((r) => r.status === "OPEN").length;
-      const scans = readScans();
-      const lastScanByScope = {};
-      for (const scope of SCOPES) {
-        const forScope = scans.filter((s) => s.scope === scope);
-        const last = forScope.length ? forScope[forScope.length - 1] : null;
-        lastScanByScope[scope] = last ? { scan_id: last.scan_id, ts: last.ts } : null;
-      }
-      return {
-        scope: wanted,
-        km: kaplanMeier(rows),
-        percentiles: mttrPercentiles(rows),
-        openAge: openAgePercentiles(rows),
-        buckets: resolutionBuckets(rows),
-        sla: openPastSla(rows),
-        vendor: awaitingVendorFix(rows),
-        population: { total: rows.length, open, resolved: rows.length - open, byScope },
-        lastScanByScope
-      };
-    });
-  }
-  function readList(v) {
-    if (Array.isArray(v)) return v.map((x) => String(x).toUpperCase()).filter(Boolean);
-    const s = String(v != null ? v : "").trim();
-    if (!s) return null;
-    return s.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
-  }
-  function getRegister(p) {
-    return run(() => {
-      var _a, _b, _c;
-      const params = p != null ? p : {};
-      const scope = String((_a = params["scope"]) != null ? _a : "");
-      if (!SCOPES.includes(scope)) {
-        throw new Error(`Unknown register scope "${scope}" \u2014 expected one of ${SCOPES.join(", ")}.`);
-      }
-      const q = {
-        scope,
-        severities: readList(params["severities"]),
-        repo: params["repo"] || null,
-        status: params["status"] || null,
-        validation: params["validation"] || null,
-        awaitingVendor: params["awaitingVendor"] === true || params["awaitingVendor"] === "1"
-      };
-      return registerPage(
-        q,
-        Math.max(0, Number((_b = params["page"]) != null ? _b : 0)),
-        Number((_c = params["pageSize"]) != null ? _c : 50),
-        params["sort"] || null
-      );
-    });
-  }
-  function getExecutive(_p) {
-    return run(() => {
-      var _a, _b, _c;
-      const rows = baseRows(Object.values(readLedger()));
-      const scans = readScans();
-      const openBySeverity = {};
-      const totals = {};
-      for (const scope of SCOPES) {
-        openBySeverity[scope] = {};
-        totals[scope] = { open: 0, resolved: 0, total: 0 };
-      }
-      for (const r of rows) {
-        const t = (_a = totals[r.scope]) != null ? _a : totals[r.scope] = { open: 0, resolved: 0, total: 0 };
-        t.total += 1;
-        if (r.status === "OPEN") {
-          t.open += 1;
-          const bucket = (_b = openBySeverity[r.scope]) != null ? _b : openBySeverity[r.scope] = {};
-          bucket[r.severity] = ((_c = bucket[r.severity]) != null ? _c : 0) + 1;
-        } else {
-          t.resolved += 1;
-        }
-      }
-      const lastScan = {};
-      const movement = {};
-      for (const scope of SCOPES) {
-        const mine = scans.filter((s) => s.scope === scope);
-        const last = mine.length ? mine[mine.length - 1] : null;
-        lastScan[scope] = last ? { scan_id: last.scan_id, ts: last.ts, severities: last.severities } : null;
-        movement[scope] = last ? {
-          new_count: last.new_count,
-          resolved_count: last.resolved_count,
-          reopened_count: last.reopened_count
-        } : null;
-      }
-      return {
-        km: kaplanMeier(rows),
-        openBySeverity,
-        totals,
-        lastScan,
-        movement,
-        everScanned: scans.length > 0,
-        // From the scans tab's own `mode` column, not a scan_id prefix: a naming
-        // convention is something a later caller forgets, and a page claiming real data
-        // over sample rows is the worst lie this product could tell.
-        sampleOnly: scans.length > 0 && scans.every((s) => s.mode !== "live")
-      };
+      const res = testConnection();
+      const at = (/* @__PURE__ */ new Date()).toISOString();
+      setProp(PROP_KEYS.wizVerifiedAt, at);
+      return { ...res, at };
     });
   }
   function logAccessChange(what, actor, before, after) {
@@ -3704,43 +7770,299 @@ var Server = (() => {
       return { admins: list };
     });
   }
-  function setSettings(p) {
+  function getSettings(_p) {
+    return run(() => loadSettings());
+  }
+  function putSettings(p) {
     return mutate(() => {
-      const next = withSettings(loadSettings(), p != null ? p : {});
-      const errors = validateSettings(next);
-      if (errors.length) throw new Error(errors.join(" "));
-      return saveSettings(next);
+      var _a;
+      return saveSettings(withSettings(loadSettings(), (_a = p.settings) != null ? _a : {}));
     });
   }
-  function getDiagnostic(_p) {
-    return run(() => ({
-      text: deploymentDiagnostic(),
-      // Read-only here. Changing the project scope changes WHICH POPULATION every register
-      // measures, and a ledger built under one scope is not comparable with one built under
-      // another — so it stays a Script Property, set deliberately, rather than a text box on a
-      // settings page.
-      project: getProp(PROP_KEYS.wizProjectIdV2)
-    }));
+  function setProjectView(p) {
+    return mutate(() => saveSettings(withSettings(loadSettings(), { projectView: p.projectView })));
   }
-  function runScan2(_p) {
-    return run(() => startScan());
+  function getChartsBundle(_p) {
+    return run(() => {
+      const html = HtmlService.createHtmlOutputFromFile("js_charts").getContent();
+      const start = html.indexOf("<script");
+      const open = start < 0 ? -1 : html.indexOf(">", start);
+      const close = html.lastIndexOf("<\/script>");
+      const src = open < 0 || close < open ? "" : html.slice(open + 1, close).trim();
+      if (!src) throw new Error("js_charts is missing or empty in this deployment");
+      return src;
+    });
+  }
+  function modelParams(p) {
+    const r = p != null ? p : {};
+    const scopeRaw = r["scope"];
+    const scope = typeof scopeRaw === "string" && SCOPES.includes(scopeRaw) ? scopeRaw : null;
+    const sevRaw = r["severities"];
+    const severities = Array.isArray(sevRaw) ? sevRaw.map(String) : null;
+    return { scope, severities, showNoFix: r["showNoFix"] !== false };
+  }
+  function requestedScope(p) {
+    const raw = (p != null ? p : {})["scope"];
+    return typeof raw === "string" && SCOPES.includes(raw) ? raw : null;
+  }
+  function getExecutivePage(p) {
+    return run(() => {
+      const params = modelParams(p);
+      const exec = executiveModel(params);
+      return {
+        asOf: exec["asOf"],
+        scope: exec["scope"],
+        severities: exec["severities"],
+        showNoFix: exec["showNoFix"],
+        mttr: execMttrSlice(mttrModel(params)),
+        byScope: execGroupSlice(exec["byScope"]),
+        // Already minimal — a per-severity tally, a delta pair, the tier table and the coverage
+        // caveat — so these four ship whole.
+        severityCounts: exec["severityCounts"],
+        weekTrend: exec["weekTrend"],
+        // The two W4 blocks. `fixNext` is capped at eight groups server-side (readModels calls
+        // it with the default limit) and `movement` is a handful of scalars per register, so
+        // both ship whole rather than through a slice — there is nothing in either that the
+        // page does not draw.
+        fixNext: exec["fixNext"],
+        movement: exec["movement"],
+        tiers: exec["tiers"],
+        signalCoverage: exec["signalCoverage"]
+      };
+    });
+  }
+  function getMttrPage(p) {
+    return run(() => {
+      const params = modelParams(p);
+      return {
+        mttr: mttrModel(params),
+        trends: mttrPageTrendSlice(historyModel(params)),
+        byScope: mttrGroupTableSlice(executiveModel(params)["byScope"])
+      };
+    });
+  }
+  function getProgramPage(p) {
+    return run(() => {
+      const program = { ...programModel(modelParams(p)) };
+      const trends = programTrendSlice(program);
+      delete program["trend"];
+      return { program, trends };
+    });
+  }
+  function getRegisterPage(p) {
+    return run(() => {
+      const scope = requestedScope(p);
+      if (scope === null) {
+        throw new Error("getRegisterPage needs a scope: one of sca, sast.");
+      }
+      if (scope === "secrets") {
+        throw new Error(
+          "The secrets register has its own page \u2014 call getSecretsPage. Severity is not one of its axes, so this page's blocks would come back empty."
+        );
+      }
+      const register = { ...registerModel(scope, modelParams(p)) };
+      register["latestScan"] = latestScanSlice(register["latestScan"]);
+      return register;
+    });
+  }
+  function getSecretsPage(p) {
+    return run(() => {
+      const params = modelParams(p);
+      const register = { ...registerModel("secrets", params) };
+      delete register["segments"];
+      register["latestScan"] = latestScanSlice(register["latestScan"]);
+      return { register, secrets: secretsModel(params) };
+    });
+  }
+  function getRegisterRows(p) {
+    return run(() => {
+      const scope = requestedScope(p);
+      if (scope === null) {
+        throw new Error("getRegisterRows needs a scope: one of sca, sast, secrets.");
+      }
+      const r = p != null ? p : {};
+      const params = {
+        ...modelParams(p),
+        page: r["page"],
+        pageSize: r["pageSize"],
+        sort: r["sort"],
+        dir: r["dir"],
+        status: r["status"]
+      };
+      const model = registerRowsModel(scope, params);
+      return { ...model, rows: registerRowsSlice(model["rows"], scope) };
+    });
+  }
+  function getReposPage(p) {
+    return run(() => reposModel(modelParams(p)));
+  }
+  function getScanHistory(p) {
+    return run(() => {
+      const h = historyModel(modelParams(p));
+      return {
+        asOf: h["asOf"],
+        asOfSource: h["asOfSource"],
+        observedFrom: h["observedFrom"],
+        scope: h["scope"],
+        severities: h["severities"],
+        showNoFix: h["showNoFix"],
+        kpis: h["kpis"],
+        perScope: h["perScope"],
+        // The scans tab narrowed to the ten columns the table draws — raw_ref / obs_ref are
+        // Drive file ids and are not among them (pagePayload.ts's SCAN_ROW_KEYS).
+        scans: scanRowsSlice(h["scans"]),
+        trends: historyTrendSlice(h),
+        // `scans` and `perScope` above are per-scan/per-day facts with no project dimension —
+        // see `readModels.ts::buildHistory`'s own comment. `kpis` and `trends` DO narrow to the
+        // view-project scope; these two flags name exactly which keys in THIS payload do not, so
+        // the client can mark the scan table and the per-register coverage strip without
+        // implying the KPIs or trend beside them are unscoped too.
+        scanScopeApplies: h["scanScopeApplies"],
+        scanScopeNote: h["scanScopeNote"]
+      };
+    });
+  }
+  function getStorageStats(_p) {
+    return run(() => storageModel());
+  }
+  function runSync(p) {
+    return run(() => {
+      const raw = (p != null ? p : {})["scopes"];
+      const scopes = Array.isArray(raw) ? raw.map(String).filter((s2) => SCOPES.includes(s2)) : void 0;
+      return startSync(scopes ? { scopes } : {});
+    });
   }
   function getJobStatus(p) {
-    return run(() => jobStatus((p == null ? void 0 : p.jobId) ? String(p.jobId) : void 0));
-  }
-  function cancelScan2(p) {
     return run(() => {
       var _a;
-      return cancelScan(String((_a = p == null ? void 0 : p.jobId) != null ? _a : ""));
+      const jobId = String((_a = (p != null ? p : {})["jobId"]) != null ? _a : "");
+      const job = jobId ? getJob(jobId) : activeJob();
+      if (!job) return null;
+      return jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job));
     });
   }
-  function testWizConnection(_p) {
+  function cancelSync2(p) {
     return run(() => {
-      const res = testConnection();
-      const at2 = nowIso();
-      setProp(PROP_KEYS.wizVerifiedAt, at2);
-      return { ...res, at: at2 };
+      var _a;
+      return cancelSync(String((_a = (p != null ? p : {})["jobId"]) != null ? _a : ""));
     });
+  }
+  function deleteScans2(p) {
+    var _a;
+    const scanIds = ((_a = (p != null ? p : {})["scanIds"]) != null ? _a : []).map(String);
+    return mutate(() => deleteScans(scanIds));
+  }
+  function compact(p) {
+    const params = p != null ? p : {};
+    const dryRun = params["dryRun"] === true;
+    const days = params["retentionDays"] !== void 0 && params["retentionDays"] !== null ? Number(params["retentionDays"]) : loadSettings().retentionDays;
+    if (dryRun) return run(() => previewMaintenance(days));
+    return mutate(() => compactLedger(days, false));
+  }
+  function resetLedger2(_p) {
+    return mutate(() => {
+      try {
+        clearContinuationTriggers();
+      } catch (e) {
+        console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
+      }
+      return resetLedger();
+    });
+  }
+  function csvCell(v) {
+    if (v === null || v === void 0) return "";
+    const s2 = String(v);
+    return /[",\r\n]/.test(s2) ? `"${s2.replace(/"/g, '""')}"` : s2;
+  }
+  function getExportCsv(p) {
+    return run(() => {
+      var _a;
+      const params = p != null ? p : {};
+      const scope = requestedScope(p);
+      const sevRaw = params["severities"];
+      const severities = Array.isArray(sevRaw) && sevRaw.length ? new Set(sevRaw.map((s2) => normalizeSeverity(s2))) : null;
+      const statusRaw = params["statuses"];
+      const statuses = Array.isArray(statusRaw) && statusRaw.length ? new Set(statusRaw.map((s2) => String(s2).toUpperCase())) : null;
+      const projectView = loadSettings().projectView || null;
+      const rows = loadBaseRows(scope ? { scope } : {}).filter((r) => !severities || severities.has(normalizeSeverity(r["severity"]))).filter((r) => {
+        var _a2;
+        return !statuses || statuses.has(String((_a2 = r["status"]) != null ? _a2 : "").toUpperCase());
+      }).filter(
+        (r) => !projectView || inProject(parseProjects(r["projects_json"]), projectView)
+      );
+      const cols = (_a = TAB_HEADERS[TABS.ledger]) != null ? _a : [];
+      const lines = [cols.join(",")];
+      for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(","));
+      return {
+        content: lines.join("\r\n"),
+        filename: `wiz-devsecops-ledger-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10)}.csv`,
+        rowCount: rows.length,
+        columns: cols.length,
+        scope,
+        projectView
+      };
+    });
+  }
+  var RECENT_ERROR_LIMIT = 50;
+  function getRecentErrors(p) {
+    return run(() => {
+      var _a;
+      const raw = Number((_a = (p != null ? p : {})["limit"]) != null ? _a : RECENT_ERROR_LIMIT);
+      const limit = Number.isFinite(raw) && raw > 0 ? Math.min(Math.floor(raw), RECENT_ERROR_LIMIT) : RECENT_ERROR_LIMIT;
+      const errors = listJobs().filter((j) => j.error !== null && j.error !== "").map((j) => ({
+        job_id: j.job_id,
+        kind: j.kind,
+        phase: j.phase,
+        scope: j.scope,
+        at: j.updated_at,
+        started_at: j.started_at,
+        error: j.error
+      })).sort((a, b) => a.at < b.at ? 1 : a.at > b.at ? -1 : 0).slice(0, limit);
+      return {
+        errors,
+        // The panel must be able to say what it is NOT showing.
+        covers: "jobs",
+        note: "Job failures only \u2014 this register has no error-log tab. A read that fails returns its message to the caller and records no row."
+      };
+    });
+  }
+
+  // src/server/devSeed.ts
+  var devSeed_exports = {};
+  __export(devSeed_exports, {
+    seedSampleLedger: () => seedSampleLedger
+  });
+
+  // src/server/sampleData.ts
+  var SAMPLE_SYNCS = [];
+
+  // src/server/devSeed.ts
+  function seedSampleLedger() {
+    if (SAMPLE_SYNCS.length === 0) {
+      return { seeded: 0, syncs: 0, rows: 0, reason: "no sample data in this build" };
+    }
+    let rows = 0;
+    const scopesTouched = /* @__PURE__ */ new Set();
+    for (let i = 0; i < SAMPLE_SYNCS.length; i++) {
+      const sync = SAMPLE_SYNCS[i];
+      const perScope = sync.scopes.map((battery) => {
+        rows += battery.rawRecords.length;
+        scopesTouched.add(battery.scope);
+        return {
+          scope: battery.scope,
+          records: battery.rawRecords.map((node) => slimRecord(battery.scope, node)),
+          mode: battery.mode,
+          scannedSeverities: battery.scannedSeverities,
+          rawRef: null
+        };
+      });
+      const jobId = `dev-seed-${i + 1}`;
+      persistSync(jobId, sync.syncId, perScope);
+    }
+    const seeded = Object.values(loadState().ledger).filter(
+      (row) => scopesTouched.has(row.scope)
+    ).length;
+    return { seeded, syncs: SAMPLE_SYNCS.length, rows };
   }
   return __toCommonJS(index_exports);
 })();

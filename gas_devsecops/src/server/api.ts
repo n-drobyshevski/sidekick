@@ -5,35 +5,73 @@
 // production-only: a new endpoint ships, the client calls it, and google.script.run reports
 // only that the function does not exist.
 //
-// Still deliberately small. The ledger core is in and the MTTR page reads it, so two
-// endpoints joined the surface. The live sync did NOT: `sync.ts`'s live source refuses
-// rather than returning an empty page, and no RPC pretends otherwise. Adding an endpoint
-// that returns invented figures would be the one thing this product does not do.
+// WHAT THIS FILE IS NOW. Phase 1 shipped four endpoints; this is the whole surface. It is a
+// THIN ASSEMBLY LAYER and nothing else: `server/readModels.ts` builds, `domain/pagePayload.ts`
+// slices, and every function below composes one or two of each and wraps the result in the
+// envelope. No figure is computed here.
+//
+// READS GO THROUGH `run()`, WRITES THROUGH `mutate()` — with THREE DELIBERATE EXCEPTIONS, all
+// of them jobs. `scanJobs.startSync` takes the script lock itself, and `cancelSync` is
+// documented lock-free on purpose (it writes a Script Property that the running page loop
+// re-reads between pages — taking the lock would block on the very execution it is trying to
+// stop). Wrapping either in `mutate()` would nest `withScriptLock`, and the inner `finally`
+// releases the lock the outer frame still believes it holds. `compact({dryRun:true})` is the
+// third: a dry run mutates nothing, so it is a read. gas/ makes the same three calls
+// (`runScan` uses `run`, not `mutate`).
+//
+// NO NEW SLICE WAS NEEDED, AND THAT WAS CHECKED RATHER THAN ASSUMED. Every endpoint below
+// feeds an EXISTING `pagePayload` function with the key the model already publishes:
+// `programModel().trend` -> `programTrendSlice`, `historyModel().{history,trend}` ->
+// `mttrPageTrendSlice` / `historyTrendSlice`, `historyModel().scans` -> `scanRowsSlice`,
+// `mttrModel()` -> `execMttrSlice`, `executiveModel().byScope` -> `execGroupSlice` /
+// `mttrGroupTableSlice`. `test/api.test.ts`'s "each read model reaches its slice" block asserts
+// the resulting key sets, so the claim is measured at the endpoint rather than read off S5's
+// field names.
+//
+// ONE SLICE HAS NO PRODUCER AND IS DELIBERATELY LEFT UNCALLED: `mttrGroupTrendSlice` reads
+// `byGroup.trend`, a per-group x per-scan series nothing in `readModels.ts` builds —
+// `executiveModel().byScope` is `{dimension, rows}` and stops there. It is NOT dropped: the
+// function is pinned by `test/pagePayload.test.ts` and inventing a producer to fill it would
+// mean shipping a series no page draws, computed per scope per scan, for nobody. When a
+// by-scope drawer wants that chart, the producer belongs in `readModels.ts` and the slice is
+// already waiting for it.
+//
+// THE SECRETS ASYMMETRY IS IN THE SURFACE, not only in the payloads. `getRegisterPage` serves
+// sca and sast and REFUSES `secrets`; `getSecretsPage` serves that register, because its page
+// is a superset (`registerModel("secrets")` for the aging / movement / concentration blocks,
+// `secretsModel` for the lifecycle) and severity is not one of its axes. A client that got
+// `getRegisterPage({scope:"secrets"})` back would render a register page missing the only
+// blocks that say whether a credential is live.
 
-import { SCOPES, SCOPE_LABELS, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "../domain/config";
-import { baseRows } from "../domain/ledgerCore";
+import { SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "../domain/config";
+import { normalizeSeverity } from "../domain/severity";
+import { withSettings } from "../domain/settingsLogic";
+import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
+import type { Rec } from "../domain/util";
 import {
-  awaitingVendorFix, kaplanMeier, mttrPercentiles, openAgePercentiles, openPastSla,
-  resolutionBuckets,
-} from "../domain/remediation";
-import { readLedger, readScans } from "./ledgerStore";
-import { SAMPLE_SCANS } from "./sampleData";
-// Aliased: `runScan` is also the name of the RPC below, which starts a whole BATTERY of
-// scans rather than one scope. Two different jobs, and the shadowing would be silent.
-import { runScan as runOneScan, sampleSource } from "./sync";
-import { registerPage, type RegisterQuery } from "./registers";
+  execGroupSlice,
+  execMttrSlice,
+  historyTrendSlice,
+  jobSummarySlice,
+  latestScanSlice,
+  mttrGroupTableSlice,
+  mttrPageTrendSlice,
+  programTrendSlice,
+  registerRowsSlice,
+  scanRowsSlice,
+} from "../domain/pagePayload";
 import { BUILD_ID } from "./buildInfo";
-import { nowIso } from "../domain/util";
-import { getProp, hasWizCredentials, PROP_KEYS, setProp } from "./props";
+import { getProp, hasWizCredentials, projectScope, PROP_KEYS, setProp } from "./props";
 import { loadSettings, saveSettings } from "./settingsStore";
-import { validateSettings, withSettings } from "../domain/settingsLogic";
-import { deploymentDiagnostic } from "./diagnostics";
-import { readAll, TABS } from "./sheetsDb";
+import { readAll, TAB_HEADERS, TABS } from "./sheetsDb";
 import * as access from "./access";
+import { canEditUsers } from "./access";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
+import { activeJob, getJob, isStaleJob, isTerminalPhase, listJobs, type JobRow } from "./jobsStore";
+import * as ledgerStore from "./ledgerStore";
+import * as readModels from "./readModels";
 import * as scanJobs from "./scanJobs";
-import * as wizClient from "./wizClient";
-import { WizNotAuthorizedError } from "./wizClient";
+import { testConnection, WizNotAuthorizedError } from "./wizClient";
 
 /**
  * THE ENVELOPE, and it lives here rather than in dist/entry.js.
@@ -54,12 +92,15 @@ function run<T>(fn: () => T): ApiResult<T> {
   try {
     return { ok: true, data: fn() };
   } catch (e) {
-    // The KIND travels separately from the message on purpose. A client that had to
-    // recognise "this deployment is not authorized" by reading the text would be matching a
-    // sentence the platform localises — the report that prompted this arrived in French.
-    const kind = e instanceof LedgerBusyError ? "busy"
+    // `not-authorized` is a DIFFERENT failure with a different remedy, and it is not about
+    // Wiz at all: Apps Script refused the outbound call before one was made. The client reads
+    // this kind to print the platform's own remediation sequence rather than a generic
+    // "Refused", which would send an operator chasing the Wiz credentials for a problem the
+    // credentials never had.
+    const kind =
+      e instanceof LedgerBusyError ? "busy"
       : e instanceof WizNotAuthorizedError ? "not-authorized"
-        : "error";
+      : "error";
     return { ok: false, error: String(e instanceof Error ? e.message : e), errorKind: kind };
   }
 }
@@ -76,25 +117,109 @@ export interface Bootstrap {
   product: string;
   buildId: string;
   hasCredentials: boolean;
+  /**
+   * When `testWizConnection` last got a real answer FROM THE TENANT — never set by
+   * `hasCredentials` alone. `hasCredentials` is three non-empty Script Properties: no
+   * exchange, no call, nothing the tenant has ever agreed to. A row that showed a green
+   * "Connected" pill off that boolean alone stated the weaker fact while reading as the
+   * stronger one; this field is what lets the client tell them apart instead of collapsing
+   * "present" and "connected" into the same pixel.
+   */
+  wizVerifiedAt: string | null;
   scopes: readonly string[];
+  /** So the rail (and any other chrome reading a bare scope key) can name a register without
+   *  a second copy of the mapping — `railStatus.js`'s `withLabels`. */
   scopeLabels: Record<string, string>;
   severityOrder: readonly string[];
   slaTargets: Record<string, number>;
-  latestScan: { scan_id: string; finished_at: string; total: number } | null;
   /**
-   * When each scope was last scanned — THREE CLOCKS, not one.
+   * When each scope was last scanned — THREE CLOCKS, not one, unlike `latestSync` below.
    *
-   * `latestScan` above is a max over the whole scans tab, so it reads "fresh" when SCA ran an
-   * hour ago and secrets has never run at all. The rail dot takes the WORST over the scopes
-   * Settings collects, because a register nobody has looked at is the fact worth surfacing.
+   * `latestSync` is a max over the whole `scans` tab grouped by the newest sync_id, so it
+   * reads "fresh" the moment ANY scope ran — even the run that scanned only sca an hour ago
+   * while secrets has never run at all. The rail dot (`railStatus.js`) takes the WORST over
+   * the scopes Settings collects, because a register nobody has ever looked at is the fact
+   * worth surfacing, and averaging it into a single "last sync" timestamp would hide exactly
+   * that.
    */
   lastScanByScope: Record<string, string | null>;
-  /** Credentials the tenant has actually accepted, and when. Null = never verified. */
-  wizVerifiedAt: string | null;
-  /** The scan in flight, so a reload mid-scan picks the progress card back up. */
-  activeJob: scanJobs.JobStatus | null;
+  /** The sync in flight, so a reload mid-sync — or the rail dot — picks the progress back up
+   *  without a second RPC. Same slice `getJobStatus` returns. */
+  activeJob: Rec | null;
+  /**
+   * The freshness caption's SYNC — every row of it, not one of them.
+   *
+   * THIS USED TO PUBLISH A SINGLE ROW and it under-reported by two thirds. One sync writes
+   * one `scans` row PER SCOPE, all carrying the same bare syncId in `scan_id` with `scope` as
+   * the other half of the key (ledgerStore's `scanIdFor` settled that), and all three share a
+   * timestamp. The old loop kept the row with the greatest `ts` under a strict `>`, so among
+   * three equal timestamps it kept whichever it happened to meet first and dropped the rest —
+   * and the Executive page rendered "Last scan · Dependencies (SCA) · 310 findings" for a
+   * sync that had also written 30 SAST and 112 secrets findings.
+   *
+   * That is the same page which says, two sections higher, that the three registers are never
+   * summed into one number because they are three clocks. Naming one of them as "the scan" is
+   * the same error from the other direction: silently choosing one register and presenting it
+   * as the whole observation.
+   *
+   * Grouping by `scan_id` is not a heuristic here — it IS the sync, by the key ledgerStore
+   * writes. `ts` is the newest among the rows rather than any one row's, since nothing
+   * guarantees they are written in the same millisecond.
+   *
+   * `severities` rides along PER SCOPE because the caption is a claim about coverage, not just
+   * about time: a sync that requested CRITICAL/HIGH on SCA has not looked at a MEDIUM, and it
+   * is normal here for one scope to be narrowed while another is not — `secrets` runs with the
+   * gate off (`null`, meaning all) while `sca` and `sast` do not. A single coverage field could
+   * not have said that.
+   *
+   * `ts` is named for the `scans` column it is read from. It was once published as
+   * `finished_at`, a name neither side of the wire had, so the caption would have read "Last
+   * scan undefined" the first day a scan row existed.
+   */
+  latestSync: {
+    sync_id: string;
+    ts: string;
+    total: number;
+    scopes: Array<{ scope: string; total: number; severities: string | null }>;
+  } | null;
   canEditAccess: boolean;
   settings: ReturnType<typeof loadSettings>;
+  /**
+   * The view-project scope, stated rather than left for the client to re-derive.
+   *
+   * `shown` / `register` are both over the WHOLE ledger (every scope), because this is the
+   * header's own status line, not a page's — a per-page narrowed count already ships on that
+   * page's own model. `unattributed` is `projectScope.unattributedCount`'s population: rows
+   * carrying no project at all, invisible to every scope including "no scope selected" is
+   * NOT one of them — it is a genuinely different population, counted out loud rather than
+   * folded into `register - shown` where a reader would have to do that subtraction
+   * themselves to notice it exists at all.
+   *
+   * `syncProjectId` is the FETCH scope (`props.projectScope()`'s first id, or null for "every
+   * project"), reported for the header to show, NEVER written from here — see
+   * `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO HOMES" note. A view scope narrower than the
+   * fetch scope is normal; a view scope naming a project the fetch scope never collected
+   * yields zero rows, which is exactly `unattributedCount`'s sibling case rather than an
+   * error.
+   */
+  scope: {
+    projectView: string;
+    shown: number;
+    register: number;
+    unattributed: number;
+    syncProjectId: string | null;
+  };
+  /**
+   * Everything a project-scope selector needs to draw its list — REGISTER-WIDE, not filtered
+   * by the CURRENT `projectView`. `projectCatalogue` is asked over every row the ledger holds
+   * so every sibling project — including ones the current scope selection has nothing in
+   * common with — stays offered. A list computed over already-scoped rows collapses to the
+   * current selection the moment one is made, at which point clearing it is the only way to
+   * ever see another project again.
+   */
+  filterOptions: {
+    projectList: ReturnType<typeof projectCatalogue>;
+  };
 }
 
 /**
@@ -104,295 +229,122 @@ export interface Bootstrap {
 export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
   return run(() => {
   const scans = readAll(TABS.scans);
-  let latest: Bootstrap["latestScan"] = null;
-  const byScope: Record<string, string | null> = {};
-  for (const scope of SCOPES) byScope[scope] = null;
+  // Pass 1: which sync is newest. Pass 2: every row of THAT sync. Two passes rather than one
+  // because the winner is only known at the end, and a sync's rows are not adjacent on the tab.
+  let newestTs = "";
+  let newestSyncId = "";
+  // The rail's OWN clock, one per scope — a max over the whole tab (above) reads "fresh" the
+  // moment any one scope ran; this is the per-scope answer `railStatus.js` takes the worst of.
+  const lastScanByScope: Record<string, string | null> = {};
+  for (const scope of SCOPES) lastScanByScope[scope] = null;
   for (const row of scans) {
     const ts = String(row.ts ?? "");
-    if (!ts) continue;
+    if (!ts || ts <= newestTs) continue;
+    newestTs = ts;
+    newestSyncId = String(row.scan_id ?? "");
+  }
+  for (const row of scans) {
+    const ts = String(row.ts ?? "");
     const scope = String(row.scope ?? "");
-    if (scope in byScope && (byScope[scope] === null || ts > byScope[scope]!)) {
-      byScope[scope] = ts;
-    }
-    if (!latest || ts > latest.finished_at) {
-      latest = {
-        scan_id: String(row.scan_id ?? ""),
-        finished_at: ts,
-        total: Number(row.total ?? 0),
-      };
+    if (!ts || !(scope in lastScanByScope)) continue;
+    if (lastScanByScope[scope] === null || ts > lastScanByScope[scope]!) {
+      lastScanByScope[scope] = ts;
     }
   }
+  let latestSync: Bootstrap["latestSync"] = null;
+  if (newestSyncId) {
+    const members = scans.filter((r) => String(r.scan_id ?? "") === newestSyncId);
+    const order = new Map(SCOPES.map((sc, i) => [String(sc), i]));
+    const rows = members
+      .map((r) => ({
+        scope: String(r.scope ?? ""),
+        total: Number(r.total ?? 0),
+        severities: r.severities == null ? null : String(r.severities),
+        ts: String(r.ts ?? ""),
+      }))
+      // Battery order, not tab order, so the caption reads the same on every load.
+      .sort((a, b) => (order.get(a.scope) ?? 99) - (order.get(b.scope) ?? 99));
+    let total = 0;
+    let ts = "";
+    for (const r of rows) {
+      total += r.total;
+      if (r.ts > ts) ts = r.ts;
+    }
+    latestSync = {
+      sync_id: newestSyncId,
+      ts: ts || newestTs,
+      total,
+      scopes: rows.map((r) => ({ scope: r.scope, total: r.total, severities: r.severities })),
+    };
+  }
+
+  const settings = loadSettings();
+  // Unscoped by construction — `ledgerStore.loadBaseRows()` with no options is every scope,
+  // every project. `scope.register` / `filterOptions.projectList` both read off this same
+  // array so the register-wide side of the header can never disagree with itself.
+  const allRows = ledgerStore.loadBaseRows();
+  const projectView = settings.projectView || null;
+  const shown = projectView
+    ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length
+    : allRows.length;
+
   return {
     product: "Wiz Sidekick DevSecOps",
     buildId: BUILD_ID,
     hasCredentials: hasWizCredentials(),
+    wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
     scopes: SCOPES,
-    // Shipped so the Settings page can label a scope without a second copy of the mapping —
-    // and so its divergence warning can compare against the SHARED windows rather than a
-    // client-side duplicate of them, which is the copy that would drift invisibly.
     scopeLabels: SCOPE_LABELS,
     severityOrder: SEVERITY_ORDER,
     slaTargets: SLA_TARGETS,
-    latestScan: latest,
-    lastScanByScope: byScope,
-    wizVerifiedAt: getProp(PROP_KEYS.wizVerifiedAt),
-    activeJob: scanJobs.jobStatus(),
-    canEditAccess: access.canEditUsers(),
-    settings: loadSettings(),
+    latestSync,
+    lastScanByScope,
+    activeJob: (() => {
+      const job = activeJob();
+      return job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null;
+    })(),
+    canEditAccess: canEditUsers(),
+    settings,
+    scope: {
+      projectView: settings.projectView,
+      shown,
+      register: allRows.length,
+      unattributed: unattributedCount(allRows),
+      // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
+      // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
+      syncProjectId: projectScope()?.[0] ?? null,
+    },
+    filterOptions: { projectList: projectCatalogue(allRows) },
   };
   });
 }
 
-/** The current settings dict. */
-export function getSettings(_p?: unknown): ApiResult<ReturnType<typeof loadSettings>> {
-  return run(() => loadSettings());
-}
-
-/** Persist settings. Returns what was actually stored, after cleaning. */
-export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(p.settings as never));
-}
-
 /**
- * The Chart.js bundle, fetched on demand.
+ * Does the tenant answer at all, with these credentials? A real token exchange plus one page
+ * of one row — `wizClient.testConnection` — which is what turns "credentials are present in
+ * Script Properties" into something measured, and it drops the cached token first: a cached
+ * token outlives a revoked client secret by up to six hours, so a test that accepted it would
+ * keep reporting success after the credentials had already stopped working.
  *
- * Chart.js is ~170 KB of the client payload and most routes draw nothing, so it ships as
- * its own HtmlService partial rather than inside js_app. Returning it through an RPC keeps
- * the sandbox happy — the page cannot add a <script src> the CSP would refuse.
+ * `WizNotAuthorizedError` reaches the client as `errorKind: "not-authorized"` (see `run()`
+ * above), a DIFFERENT failure from a refused query: the deployment cannot make outbound
+ * requests at all, and the credentials are never the problem there.
  */
-export function getChartsBundle(_p?: unknown): ApiResult<string> {
-  return run(() => HtmlService.createHtmlOutputFromFile("js_charts").getContent());
-}
-
-
-/* ------------------------------------------------------------------- the ledger */
-
-/**
- * Replay the sample dataset into the ledger.
- *
- * THE SAMPLE SOURCE ONLY, and the endpoint says so in its name rather than taking a `mode`
- * flag that could be pointed at a tenant by accident. The live paged fetch is not built; its
- * source refuses when called, so there is nothing here that could quietly run half of it.
- *
- * Re-running is a no-op: `runScan` finds each scan_id already in the log and returns its
- * stored deltas without rewriting anything. That is what makes the dev harness safe to
- * refresh, and it is the same property a real sync needs after a partial failure.
- */
-export function runSampleSync(_p?: unknown): ApiResult<{ scans: unknown[]; seeded: boolean }> {
-  return mutate(() => {
-    if (!SAMPLE_SCANS.length) {
-      throw new Error(
-        "No sample dataset in this bundle. The deployed bundle ships none on purpose — a "
-        + "register must show what its tenant has. Run `npm run dev`, which aliases the "
-        + "dev dataset in.",
-      );
-    }
-    const scans: unknown[] = [];
-    for (const s of SAMPLE_SCANS) {
-      for (const scope of SCOPES) {
-        scans.push(runOneScan(scope, sampleSource(s.nodes), {
-          scanId: `${s.id}-${scope}`,
-          ts: s.ts,
-          // The gate THIS scan applied, not the one the settings hold now.
-          severities: s.gates?.[scope] ?? null,
-        }));
-      }
-    }
-    return { scans, seeded: true };
-  });
-}
-
-export interface MttrPayload {
-  /** Which scopes the figures cover. `null` scope means all three together. */
-  scope: string | null;
-  km: ReturnType<typeof kaplanMeier>;
-  percentiles: ReturnType<typeof mttrPercentiles>;
-  openAge: ReturnType<typeof openAgePercentiles>;
-  buckets: ReturnType<typeof resolutionBuckets>;
-  sla: ReturnType<typeof openPastSla>;
-  vendor: ReturnType<typeof awaitingVendorFix>;
-  /** The denominators every figure on the page has to name. */
-  population: { total: number; open: number; resolved: number; byScope: Record<string, number> };
-  /** The scan that last covered each scope — the freshness caption, per register. */
-  lastScanByScope: Record<string, { scan_id: string; ts: string } | null>;
-}
-
-/**
- * The MTTR & SLA page's whole payload, in one round trip.
- *
- * `scope` narrows to one register; omitted, the figures cover all three. Both are honest
- * answers to different questions — "how fast do we fix dependencies" and "how fast do we fix
- * anything" — and the page names which it is showing.
- */
-export function getMttr(p?: { scope?: string }): ApiResult<MttrPayload> {
+export function testWizConnection(
+  _p?: unknown,
+): ApiResult<{ ok: true; rows: number | null; at: string }> {
   return run(() => {
-    const wanted = p?.scope && (SCOPES as readonly string[]).includes(p.scope)
-      ? (p.scope as Scope)
-      : null;
-    const all = Object.values(readLedger());
-    const rows = baseRows(wanted === null ? all : all.filter((r) => r.scope === wanted));
-
-    const byScope: Record<string, number> = {};
-    for (const r of rows) byScope[r.scope] = (byScope[r.scope] ?? 0) + 1;
-    const open = rows.filter((r) => r.status === "OPEN").length;
-
-    const scans = readScans();
-    const lastScanByScope: Record<string, { scan_id: string; ts: string } | null> = {};
-    for (const scope of SCOPES) {
-      const forScope = scans.filter((s) => s.scope === scope);
-      const last = forScope.length ? forScope[forScope.length - 1]! : null;
-      lastScanByScope[scope] = last ? { scan_id: last.scan_id, ts: last.ts } : null;
-    }
-
-    return {
-      scope: wanted,
-      km: kaplanMeier(rows),
-      percentiles: mttrPercentiles(rows),
-      openAge: openAgePercentiles(rows),
-      buckets: resolutionBuckets(rows),
-      sla: openPastSla(rows),
-      vendor: awaitingVendorFix(rows),
-      population: { total: rows.length, open, resolved: rows.length - open, byScope },
-      lastScanByScope,
-    };
+    const res = testConnection();
+    const at = new Date().toISOString();
+    setProp(PROP_KEYS.wizVerifiedAt, at);
+    return { ...res, at };
   });
 }
 
-
-/* ------------------------------------------------------------- the register pages */
-
-/** Read a list param that may arrive as an array or a comma string (the URL hash form). */
-function readList(v: unknown): string[] | null {
-  if (Array.isArray(v)) return v.map((x) => String(x).toUpperCase()).filter(Boolean);
-  const s = String(v ?? "").trim();
-  if (!s) return null;
-  return s.split(",").map((x) => x.trim().toUpperCase()).filter(Boolean);
-}
-
 /**
- * One page of one register.
- *
- * `page` and `pageSize` reach `registerPage` but never reach a cache key — see the rule at
- * the top of registers.ts. An unknown scope is REFUSED rather than defaulted: defaulting
- * would answer a question nobody asked with a register they were not looking at.
- */
-export function getRegister(p?: Record<string, unknown>): ApiResult<ReturnType<typeof registerPage>> {
-  return run(() => {
-    const params = p ?? {};
-    const scope = String(params["scope"] ?? "");
-    if (!(SCOPES as readonly string[]).includes(scope)) {
-      throw new Error(`Unknown register scope "${scope}" — expected one of ${SCOPES.join(", ")}.`);
-    }
-    const q: RegisterQuery = {
-      scope: scope as Scope,
-      severities: readList(params["severities"]),
-      repo: (params["repo"] as string) || null,
-      status: (params["status"] as string) || null,
-      validation: (params["validation"] as string) || null,
-      awaitingVendor: params["awaitingVendor"] === true || params["awaitingVendor"] === "1",
-    };
-    return registerPage(
-      q,
-      Math.max(0, Number(params["page"] ?? 0)),
-      Number(params["pageSize"] ?? 50),
-      (params["sort"] as string) || null,
-    );
-  });
-}
-
-export interface ExecutivePayload {
-  km: ReturnType<typeof kaplanMeier>;
-  /** Open counts, severity x scope. The row a leader reads across. */
-  openBySeverity: Record<string, Record<string, number>>;
-  totals: Record<string, { open: number; resolved: number; total: number }>;
-  /** The last scan of each register, and what it changed. */
-  lastScan: Record<string, { scan_id: string; ts: string; severities: string } | null>;
-  /** Movement since the previous scan of each register. */
-  movement: Record<string, { new_count: number; resolved_count: number; reopened_count: number } | null>;
-  /**
-   * Whether anything has ever been synced, and by what route. The page needs this to tell
-   * "the register is empty" from "the register has not been measured".
-   */
-  everScanned: boolean;
-  /** True while the only rows present came from the bundled sample rather than a tenant. */
-  sampleOnly: boolean;
-}
-
-/**
- * The front door's whole payload.
- *
- * NO RUN-SCAN CONTROL IS OFFERED, and that is deliberate rather than an omission. The stub
- * promised one; the live Wiz fetch does not exist yet, and a button that does nothing is
- * worse than no button — it makes a reader believe the number in front of them is one
- * refresh away from being current. The payload says what fed the register instead.
- */
-export function getExecutive(_p?: unknown): ApiResult<ExecutivePayload> {
-  return run(() => {
-    const rows = baseRows(Object.values(readLedger()));
-    const scans = readScans();
-
-    const openBySeverity: Record<string, Record<string, number>> = {};
-    const totals: Record<string, { open: number; resolved: number; total: number }> = {};
-    for (const scope of SCOPES) {
-      openBySeverity[scope] = {};
-      totals[scope] = { open: 0, resolved: 0, total: 0 };
-    }
-    for (const r of rows) {
-      const t = totals[r.scope] ?? (totals[r.scope] = { open: 0, resolved: 0, total: 0 });
-      t.total += 1;
-      if (r.status === "OPEN") {
-        t.open += 1;
-        const bucket = openBySeverity[r.scope] ?? (openBySeverity[r.scope] = {});
-        bucket[r.severity] = (bucket[r.severity] ?? 0) + 1;
-      } else {
-        t.resolved += 1;
-      }
-    }
-
-    const lastScan: ExecutivePayload["lastScan"] = {};
-    const movement: ExecutivePayload["movement"] = {};
-    for (const scope of SCOPES) {
-      const mine = scans.filter((s) => s.scope === scope);
-      const last = mine.length ? mine[mine.length - 1]! : null;
-      lastScan[scope] = last
-        ? { scan_id: last.scan_id, ts: last.ts, severities: last.severities }
-        : null;
-      // The deltas are already stored per scan, so movement is a read rather than a second
-      // pass over the ledger — and it is the SCAN's own account of what it changed, which is
-      // the only thing that can be right after a compaction.
-      movement[scope] = last
-        ? {
-            new_count: last.new_count,
-            resolved_count: last.resolved_count,
-            reopened_count: last.reopened_count,
-          }
-        : null;
-    }
-
-    return {
-      km: kaplanMeier(rows),
-      openBySeverity,
-      totals,
-      lastScan,
-      movement,
-      everScanned: scans.length > 0,
-      // From the scans tab's own `mode` column, not a scan_id prefix: a naming
-      // convention is something a later caller forgets, and a page claiming real data
-      // over sample rows is the worst lie this product could tell.
-      sampleOnly: scans.length > 0 && scans.every((s) => s.mode !== "live"),
-    };
-  });
-}
-
-
-/* ------------------------------------------------------------------ who may open this */
-
-/**
- * One Stackdriver line per change.
- *
- * A DELEGATED GRANT POWER NEEDS A RECORD OF WHO USED IT. The owner can hand an admin the
- * ability to admit people; without this, the only trace of an admission is the property's
- * current value, which says who has access and nothing about who let them in or when.
+ * A change to who may reach the app or edit access, logged with actor + before/after — never
+ * the current value alone, which says who has access and nothing about who let them in or
+ * when.
  */
 function logAccessChange(what: string, actor: string, before: string[], after: string[]): void {
   const added = after.filter((e) => before.indexOf(e) < 0);
@@ -463,89 +415,568 @@ export function saveAdmins(p?: { admins?: unknown }): ApiResult<{ admins: string
   });
 }
 
+/** The current settings dict. */
+export function getSettings(_p?: unknown): ApiResult<ReturnType<typeof loadSettings>> {
+  return run(() => loadSettings());
+}
 
 /**
- * Save only the fields that moved.
+ * Persist settings. Returns what was actually stored, after cleaning.
  *
- * A PATCH rather than the whole object, which is `putSettings`'s shape and the reason this
- * exists beside it. The page batches edits across four tabs behind one save bar, and sending
- * the whole settings object would make every save a write of every key — so two readers saving
- * different tabs a minute apart would have the second silently revert the first's field to
- * whatever their page loaded with. `withSettings` merges over CURRENT, read at save time.
- *
- * Returns the cleaned result so the page can re-seed its draft from what was actually stored
- * rather than from what it sent — the two differ wherever `cleanSettings` normalizes.
+ * MERGES the incoming payload over the CURRENTLY-LOADED settings, rather than replacing them
+ * outright. `saveSettings` runs `cleanSettings` over whatever object it is handed and
+ * `overwrite`s the whole tab with the result, so a plain `saveSettings(p.settings)` here would
+ * be a REPLACE: any Settings field the caller's payload does not carry reads as "not
+ * provided" and comes back as that field's default. The Settings page's draft is built from
+ * exactly the seven page-editable fields (`SETTINGS_KEYS` in `pages/settings.js`) and does not
+ * carry `projectView` — that field is app-header chrome, not a page field — so every ordinary
+ * settings save from that page would have silently reset the view scope to "" the moment this
+ * endpoint went through a plain replace. `withSettings` (settingsLogic.ts) already exists for
+ * exactly this merge-then-reclean shape; this endpoint is its first caller.
  */
-export function setSettings(p?: Record<string, unknown>): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => {
-    const next = withSettings(loadSettings(), (p ?? {}) as never);
-    const errors = validateSettings(next);
-    if (errors.length) throw new Error(errors.join(" "));
-    return saveSettings(next);
+export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
+  return mutate(() => saveSettings(withSettings(loadSettings(), (p.settings ?? {}) as never)));
+}
+
+/**
+ * Set the view scope alone — which project's rows the pages show, out of everything the
+ * ledger holds. A separate endpoint rather than routing this through `putSettings` because
+ * the header control that will call it (a later package) has no reason to load, mutate and
+ * resend the other seven Settings fields just to change one that lives outside the Settings
+ * page entirely.
+ *
+ * Accepts an UNVALIDATED slug on purpose, including `""` (no scope) and a slug naming a
+ * project the register no longer holds — see `Settings.projectView`'s own doc comment: a
+ * validated field would turn a retired project's stale name into a scope nobody can clear.
+ */
+export function setProjectView(p: { projectView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
+  return mutate(() => saveSettings(withSettings(loadSettings(), { projectView: p.projectView } as never)));
+}
+
+/**
+ * The Chart.js bundle, fetched on demand.
+ *
+ * Chart.js is ~170 KB of the client payload and most routes draw nothing, so it ships as
+ * its own HtmlService partial rather than inside js_app. Returning it through an RPC keeps
+ * the sandbox happy — the page cannot add a <script src> the CSP would refuse.
+ *
+ * The `<script>` WRAPPER IS STRIPPED, because `chartsLoader.js` on the client does not render
+ * this string — it EXECUTES it (`new Function`, a `<script>` element's `textContent`, or a
+ * `blob:` URL; see that file's header). The wrapper exists at all only because a GAS project
+ * has nowhere to put a bare `.js` file: `HtmlService.createHtmlOutputFromFile` and
+ * `include()` both read `.html`, so `esbuild.config.mjs` writes the bundle wrapped in the one
+ * shape the platform is willing to store it in. An empty `src` here means the deployment is
+ * missing `js_charts.html` (or shipped it empty) — a deploy fault, so it is reported as an
+ * error rather than as an empty string the client would go on to try to run.
+ *
+ * ONE DELIBERATE DEVIATION FROM gas_ai's COPY OF THIS FUNCTION: that version computes
+ * `indexOf(">", indexOf("<script"))` without checking that `<script` was found. With no
+ * wrapper at all, `indexOf("<script")` is `-1` and `indexOf(">", -1)` searches from the
+ * START of the string, so it can latch onto an unrelated `>` inside the source — the closing
+ * angle bracket of an arrow function, say — and return a head-truncated string that still
+ * looks non-empty. Guarding `start` and requiring `close > open` closes that path.
+ */
+export function getChartsBundle(_p?: unknown): ApiResult<string> {
+  return run(() => {
+    const html = HtmlService.createHtmlOutputFromFile("js_charts").getContent();
+    const start = html.indexOf("<script");
+    const open = start < 0 ? -1 : html.indexOf(">", start);
+    const close = html.lastIndexOf("</script>");
+    const src = open < 0 || close < open ? "" : html.slice(open + 1, close).trim();
+    if (!src) throw new Error("js_charts is missing or empty in this deployment");
+    return src;
+  });
+}
+
+// --------------------------------------------------------------------------------------- //
+//  Page params
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * The three knobs every page RPC forwards to a read-model, read off ONE place.
+ *
+ * `readModels.norm()` is what actually settles "absent vs null vs empty" — it is the cache
+ * key's definition and a second normalization here would be a second answer to the same
+ * question, free to drift. So this only transports: whatever arrives is coerced to the shape
+ * `ModelParams` declares and handed on unchanged.
+ *
+ * `showNoFix` defaults to TRUE by omission, and the coercion below preserves that: only an
+ * explicit `false` turns the toggle off. `Boolean(undefined)` would have inverted the default
+ * for every caller that never sends the key.
+ */
+function modelParams(p?: unknown): readModels.ModelParams {
+  const r = (p ?? {}) as Rec;
+  const scopeRaw = r["scope"];
+  const scope = typeof scopeRaw === "string" && (SCOPES as readonly string[]).includes(scopeRaw)
+    ? (scopeRaw as Scope)
+    : null;
+  const sevRaw = r["severities"];
+  const severities = Array.isArray(sevRaw) ? sevRaw.map(String) : null;
+  return { scope, severities, showNoFix: r["showNoFix"] !== false };
+}
+
+/** The scope a per-register page is asking for, or null when it did not name a valid one. */
+function requestedScope(p?: unknown): Scope | null {
+  const raw = ((p ?? {}) as Rec)["scope"];
+  return typeof raw === "string" && (SCOPES as readonly string[]).includes(raw)
+    ? (raw as Scope)
+    : null;
+}
+
+// --------------------------------------------------------------------------------------- //
+//  Page reads
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * The landing page in one round trip.
+ *
+ * TWO MODELS, ONE OF THEM SLICED TO FOUR SCALARS. `mttrModel` is the whole MTTR page's payload
+ * — two Kaplan-Meier curves and an SLA block — and the hero here draws four numbers out of it,
+ * so it travels through `execMttrSlice`. `getMttrPage` below resolves the SAME cached entry
+ * and ships it whole; the slice is what stops the landing page paying for that.
+ *
+ * `byScope` is this register's by-domain split (three registers, three clocks) and goes
+ * through `execGroupSlice` verbatim — `executiveModel` was shaped for it (readModels.ts's
+ * header says so, and this is the call that makes the claim testable).
+ */
+export function getExecutivePage(p?: unknown): ApiResult {
+  return run(() => {
+    const params = modelParams(p);
+    const exec = readModels.executiveModel(params);
+    return {
+      asOf: exec["asOf"],
+      scope: exec["scope"],
+      severities: exec["severities"],
+      showNoFix: exec["showNoFix"],
+      mttr: execMttrSlice(readModels.mttrModel(params)),
+      byScope: execGroupSlice(exec["byScope"]),
+      // Already minimal — a per-severity tally, a delta pair, the tier table and the coverage
+      // caveat — so these four ship whole.
+      severityCounts: exec["severityCounts"],
+      weekTrend: exec["weekTrend"],
+      // The two W4 blocks. `fixNext` is capped at eight groups server-side (readModels calls
+      // it with the default limit) and `movement` is a handful of scalars per register, so
+      // both ship whole rather than through a slice — there is nothing in either that the
+      // page does not draw.
+      fixNext: exec["fixNext"],
+      movement: exec["movement"],
+      tiers: exec["tiers"],
+      signalCoverage: exec["signalCoverage"],
+    };
   });
 }
 
 /**
- * The System tab's read-only half: what this deployment is wired to.
+ * MTTR and SLA: the summary, the trend backbone, and the per-scope table.
  *
- * The diagnostic is a STRING built by diagnostics.ts and printed verbatim. It is the same text
- * an operator gets from the Apps Script editor, deliberately: a settings page that paraphrased
- * it would be a second thing to keep in step with the checks themselves.
- */
-export function getDiagnostic(_p?: unknown): ApiResult<{ text: string; project: string | null }> {
-  return run(() => ({
-    text: deploymentDiagnostic(),
-    // Read-only here. Changing the project scope changes WHICH POPULATION every register
-    // measures, and a ledger built under one scope is not comparable with one built under
-    // another — so it stays a Script Property, set deliberately, rather than a text box on a
-    // settings page.
-    project: getProp(PROP_KEYS.wizProjectIdV2),
-  }));
-}
-
-/* ------------------------------------------------------------------- the battery */
-
-/**
- * Start a live scan of every collected register.
+ * DIVERGENCE (gas/): gas/'s `getMttrPage` deliberately OMITS the summary, because `mttr.js`
+ * fires `api_getMttr` for the same `cachedMttrData` entry and shipping it from both endpoints
+ * sent it twice per load — two GAS executions, two Kaplan-Meier curves on a cold cache. There
+ * is no second endpoint here: one RPC, one resolve, so the summary ships from this one. The
+ * duplication gas/ is guarding against is the thing this shape makes impossible.
  *
- * Returns as soon as the first hop's budget is spent — the walk continues on its own
- * continuation triggers — so the client gets a job id to poll rather than a blocked RPC.
+ * `trends` comes from `historyModel`, not from `mttrModel`, and that is the caching audit
+ * rather than a convenience: the trend backbone is time-invariant and lives in the durable
+ * layer, while `mttrModel` is a clock model on a 1 h TTL. `mttrPageTrendSlice` reads
+ * `{history, trend}` — both keys `historyModel` publishes — and keeps `history` because this
+ * page is the only reader of it (the change chips, and the young-ledger chart fallback).
  */
-export function runScan(_p?: unknown): ApiResult<scanJobs.StartResult> {
-  // Not `mutate`: `startScan` takes the lock itself and holds it for the whole first hop,
-  // and wrapping it would take the same lock twice.
-  return run(() => scanJobs.startScan());
-}
-
-/**
- * The progress of one job, or of whatever is running.
- *
- * NARROWED on purpose (see `jobStatus`): the cursor is a production tenant's pagination
- * handle and `params_json` carries the severity gate and the project id. This is polled every
- * three seconds for the length of a scan.
- */
-export function getJobStatus(p?: { jobId?: string }): ApiResult<scanJobs.JobStatus | null> {
-  return run(() => scanJobs.jobStatus(p?.jobId ? String(p.jobId) : undefined));
-}
-
-/** Ask a running scan to stop, or reap it if nothing is actually running. */
-export function cancelScan(p?: { jobId?: string }): ApiResult<scanJobs.CancelResult> {
-  return run(() => scanJobs.cancelScan(String(p?.jobId ?? "")));
-}
-
-/**
- * Does the tenant answer, with the credentials this deployment holds?
- *
- * The endpoint behind the Settings tab's "Test connection". `hasCredentials` is three
- * truthiness tests over Script Properties and has never meant more than that; this is one
- * token exchange and one page of one row, which is the difference between a stored string and
- * a working integration.
- */
-export function testWizConnection(_p?: unknown): ApiResult<{ ok: true; rows: number | null; at: string }> {
+export function getMttrPage(p?: unknown): ApiResult {
   return run(() => {
-    const res = wizClient.testConnection();
-    const at = nowIso();
-    setProp(PROP_KEYS.wizVerifiedAt, at);
-    return { ...res, at };
+    const params = modelParams(p);
+    return {
+      mttr: readModels.mttrModel(params),
+      trends: mttrPageTrendSlice(readModels.historyModel(params)),
+      byScope: mttrGroupTableSlice(readModels.executiveModel(params)["byScope"]),
+    };
+  });
+}
+
+/**
+ * Program performance: the confusion matrix, capacity, and the coverage/efficiency lines.
+ *
+ * THE TREND IS SHIPPED ONCE, THROUGH THE SLICE. `programModel().trend` is the twelve-field
+ * shared `TrendPoint` multiplied by a backbone carrying one point per day of pre-scan history;
+ * the page draws four of those fields. So the raw key is dropped from the model half and the
+ * projection travels under `trends`, which is exactly what `programTrendSlice` reads.
+ */
+export function getProgramPage(p?: unknown): ApiResult {
+  return run(() => {
+    const program = { ...readModels.programModel(modelParams(p)) };
+    const trends = programTrendSlice(program);
+    delete program["trend"];
+    return { program, trends };
+  });
+}
+
+/**
+ * One register's own page — sca or sast, ONE SHAPE.
+ *
+ * SECRETS IS REFUSED, and the refusal is the point rather than an omission. `getSecretsPage`
+ * serves that register because its page is a different question: severity there grades a
+ * DETECTION, not whether a credential is live, so the severity blocks this page is built
+ * around are null on secrets and the lifecycle blocks that replace them are not in this
+ * payload at all. Silently serving `registerModel("secrets")` here would answer the call with
+ * a page whose whole middle is missing, which is worse than saying no.
+ */
+export function getRegisterPage(p?: unknown): ApiResult {
+  return run(() => {
+    const scope = requestedScope(p);
+    if (scope === null) {
+      throw new Error("getRegisterPage needs a scope: one of sca, sast.");
+    }
+    if (scope === "secrets") {
+      throw new Error(
+        "The secrets register has its own page — call getSecretsPage. Severity is not one of "
+        + "its axes, so this page's blocks would come back empty.",
+      );
+    }
+    // `buildRegister` attaches the RAW `ScanRow` `movement()` needs for its change badge —
+    // `raw_ref`/`obs_ref` included. `latestScanSlice` is the same allowlist `getScanHistory`
+    // already routes its `scans` array through (`pagePayload.ts`'s `SCAN_ROW_KEYS`), applied
+    // to this endpoint's singular `latestScan` field.
+    const register = { ...readModels.registerModel(scope, modelParams(p)) };
+    register["latestScan"] = latestScanSlice(register["latestScan"]);
+    return register;
+  });
+}
+
+/**
+ * The secrets register: the register blocks AND the credential lifecycle.
+ *
+ * TWO MODELS, AND THE SECOND IS NOT OPTIONAL. `registerModel("secrets")` carries the aging
+ * curve, the oldest-open ranking, the movement badge and the concentration tables — everything
+ * a register page draws that is not a severity breakdown. `secretsModel` carries what replaces
+ * that breakdown: validation coverage, post-detection validity, time-to-revoke, and the
+ * removal-vs-rotation 2x2. Both are `warmTargets` entries; without this call the warm's
+ * `register:secrets` entry would be computed on every pass for nobody.
+ *
+ * `segments` IS DROPPED FROM THE REGISTER HALF, because both models build it and they do not
+ * always agree: `buildRegister` filters by the caller's `severities`, `buildSecrets` ignores
+ * them outright (empty means all — that is the register). Shipping both would put two
+ * differently-filtered copies of the same three tables in one payload with nothing saying
+ * which is which. The one that ignores severity is the honest one, and it is the one kept.
+ */
+export function getSecretsPage(p?: unknown): ApiResult {
+  return run(() => {
+    const params = modelParams(p);
+    const register = { ...readModels.registerModel("secrets", params) };
+    delete register["segments"];
+    // Same leak, same fix as `getRegisterPage` — see its comment. `registerModel("secrets")`
+    // goes through the identical `buildRegister`, so it carries the identical raw `ScanRow`.
+    register["latestScan"] = latestScanSlice(register["latestScan"]);
+    return { register, secrets: readModels.secretsModel(params) };
+  });
+}
+
+/**
+ * One PAGE of per-finding rows for one register — sca, sast or secrets, all three.
+ *
+ * UNLIKE `getRegisterPage`, secrets is served here rather than refused: the register-page
+ * refusal is about the SEVERITY-shaped blocks that page draws (secrets has none), not about
+ * whether the register has rows. A per-finding table is the same question for every scope —
+ * "which findings, in what order" — so `REGISTER_ROW_COLUMNS.secrets` answers it with the
+ * lifecycle columns that scope actually carries.
+ *
+ * A READ, LIKE EVERY OTHER GET* HERE — `registerRowsModel` is deliberately not cached (see
+ * its own header), so `run()` is still the right wrapper: nothing here writes.
+ *
+ * THE SLICE HAPPENS HERE, NOT IN `readModels.ts`. `registerRowsModel` returns full `BaseRow`s
+ * so the model stays reusable for anything else that wants a page of rows; `registerRowsSlice`
+ * is what narrows `model.rows` to the allowlisted columns before they leave the server — the
+ * one place a secret's value could newly reach the wire, and an allowlist is why it cannot.
+ */
+export function getRegisterRows(p?: unknown): ApiResult {
+  return run(() => {
+    const scope = requestedScope(p);
+    if (scope === null) {
+      throw new Error("getRegisterRows needs a scope: one of sca, sast, secrets.");
+    }
+    const r = (p ?? {}) as Rec;
+    const params: readModels.RowPageParams = {
+      ...modelParams(p),
+      page: r["page"],
+      pageSize: r["pageSize"],
+      sort: r["sort"],
+      dir: r["dir"],
+      status: r["status"],
+    };
+    const model = readModels.registerRowsModel(scope, params);
+    return { ...model, rows: registerRowsSlice(model["rows"], scope) };
+  });
+}
+
+/** The estate: repositories as the asset, and the language cut beside them. Ships whole — the
+ *  profile is one row per repo, bounded by the estate rather than by the ledger. */
+export function getReposPage(p?: unknown): ApiResult {
+  return run(() => readModels.reposModel(modelParams(p)));
+}
+
+/**
+ * Scan History: what was measured and when.
+ *
+ * ENUMERATED, NOT SPREAD, and both omissions are the reason. `historyModel().history` is the
+ * whole `mttr_history` set and this page never dereferences it — only the MTTR page does — and
+ * the raw `trend` carries nine fields per point where this page draws five. Spreading the
+ * model and patching two keys would ship both by default the day a third key is added.
+ */
+export function getScanHistory(p?: unknown): ApiResult {
+  return run(() => {
+    const h = readModels.historyModel(modelParams(p));
+    return {
+      asOf: h["asOf"],
+      asOfSource: h["asOfSource"],
+      observedFrom: h["observedFrom"],
+      scope: h["scope"],
+      severities: h["severities"],
+      showNoFix: h["showNoFix"],
+      kpis: h["kpis"],
+      perScope: h["perScope"],
+      // The scans tab narrowed to the ten columns the table draws — raw_ref / obs_ref are
+      // Drive file ids and are not among them (pagePayload.ts's SCAN_ROW_KEYS).
+      scans: scanRowsSlice(h["scans"]),
+      trends: historyTrendSlice(h),
+      // `scans` and `perScope` above are per-scan/per-day facts with no project dimension —
+      // see `readModels.ts::buildHistory`'s own comment. `kpis` and `trends` DO narrow to the
+      // view-project scope; these two flags name exactly which keys in THIS payload do not, so
+      // the client can mark the scan table and the per-register coverage strip without
+      // implying the KPIs or trend beside them are unscoped too.
+      scanScopeApplies: h["scanScopeApplies"],
+      scanScopeNote: h["scanScopeNote"],
+    };
+  });
+}
+
+/** What the register costs and what is consuming the cell ceiling. */
+export function getStorageStats(_p?: unknown): ApiResult {
+  return run(() => readModels.storageModel());
+}
+
+// --------------------------------------------------------------------------------------- //
+//  Jobs
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * Start the sync battery.
+ *
+ * `run`, NOT `mutate`. `scanJobs.startSync` opens with `withScriptLock(() => { recoverIfNeeded();
+ * ... })` itself — the same two things `mutate` does — and nesting them would hand the inner
+ * frame's `finally` a `releaseLock()` on a lock the outer frame still expects to hold.
+ */
+export function runSync(p?: unknown): ApiResult {
+  return run(() => {
+    const raw = ((p ?? {}) as Rec)["scopes"];
+    const scopes = Array.isArray(raw)
+      ? raw.map(String).filter((s): s is Scope => (SCOPES as readonly string[]).includes(s))
+      : undefined;
+    return scanJobs.startSync(scopes ? { scopes } : {});
+  });
+}
+
+/**
+ * One job for the progress poll — THROUGH `jobSummarySlice`, NEVER the raw `JobRow`.
+ *
+ * This is polled every three seconds for the life of a sync. The row carries `cursor` (the Wiz
+ * `endCursor` for a production security tenant) and `journal_ref` (a Drive file id for the
+ * rollback journal), and neither has any business in a browser. `jobSummarySlice` is an
+ * ALLOWLIST that does not name them and only ever parses `params_json` for one boolean, so the
+ * exclusion is structural rather than a `delete` someone can forget to repeat — see that
+ * function's SECURITY RULE and `test/api.test.ts`'s assertion over the full `JSON.stringify`.
+ *
+ * `stale` is decided HERE, server-side, against the server clock: a browser with a skewed
+ * clock would otherwise draw a healthy job as wedged. A terminal job is never stale — it is
+ * finished.
+ */
+export function getJobStatus(p?: unknown): ApiResult {
+  return run(() => {
+    const jobId = String(((p ?? {}) as Rec)["jobId"] ?? "");
+    const job: JobRow | null = jobId ? getJob(jobId) : activeJob();
+    if (!job) return null;
+    return jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job));
+  });
+}
+
+/**
+ * Request cancellation of the running sync.
+ *
+ * `run`, NOT `mutate`, and this one is not merely avoiding a nested lock — `cancelSync` is
+ * documented lock-free BY DESIGN. During FETCHING the flag it writes is read by the page loop
+ * of an execution that is holding the lock right now, so taking the lock here would block on
+ * exactly the execution Stop is trying to reach, for the full timeout, and then fail.
+ */
+export function cancelSync(p?: unknown): ApiResult {
+  return run(() => scanJobs.cancelSync(String(((p ?? {}) as Rec)["jobId"] ?? "")));
+}
+
+// --------------------------------------------------------------------------------------- //
+//  Data page — maintenance
+// --------------------------------------------------------------------------------------- //
+
+/** Delete scans and replay the survivors. Journaled inside `ledgerStore`; the lock is this
+ *  layer's, so a delete cannot interleave with a persist. */
+export function deleteScans(p?: unknown): ApiResult {
+  const scanIds = (((p ?? {}) as Rec)["scanIds"] as unknown[] | undefined ?? []).map(String);
+  return mutate(() => ledgerStore.deleteScans(scanIds));
+}
+
+/**
+ * Compaction, and its dry run.
+ *
+ * THE DRY RUN IS A READ and takes no lock: `previewMaintenance` plans against a state read and
+ * writes nothing. Routing it through `mutate` would make looking at the Data page contend with
+ * a running sync for no reason.
+ *
+ * `retentionDays` falls back to the SETTING rather than to a constant, so the preview a reader
+ * is shown and the compaction the post-sync path runs are the same window by construction
+ * (`scanJobs.autoCompactIfDue` reads the same two fields).
+ */
+export function compact(p?: unknown): ApiResult {
+  const params = (p ?? {}) as Rec;
+  const dryRun = params["dryRun"] === true;
+  const days = params["retentionDays"] !== undefined && params["retentionDays"] !== null
+    ? Number(params["retentionDays"])
+    : loadSettings().retentionDays;
+  if (dryRun) return run(() => ledgerStore.previewMaintenance(days));
+  return mutate(() => ledgerStore.compactLedger(days, false));
+}
+
+/**
+ * Wipe the ledger back to a fresh, never-compacted state.
+ *
+ * The continuation triggers go first, best effort: a sync mid-walk would otherwise commit its
+ * battery on top of the wipe. A stray trigger left behind is harmless once the `jobs` tab is
+ * cleared (it wakes, finds no active job, and self-deletes), but stopping it early is cheaper
+ * than relying on that.
+ */
+export function resetLedger(_p?: unknown): ApiResult {
+  return mutate(() => {
+    try {
+      scanJobs.clearContinuationTriggers();
+    } catch (e) {
+      console.warn(`resetLedger: continuation-trigger cleanup skipped: ${e}`);
+    }
+    return ledgerStore.resetLedger();
+  });
+}
+
+// --------------------------------------------------------------------------------------- //
+//  Data page — export and diagnostics
+// --------------------------------------------------------------------------------------- //
+
+function csvCell(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  const s = String(v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+/**
+ * The ledger as CSV — the audit artifact.
+ *
+ * THE COLUMN LIST IS READ OFF `TAB_HEADERS[TABS.ledger]` AT RUN TIME, never re-literaled here
+ * and never taken from the rows. Both alternatives fail the same way: `loadBaseRows` returns
+ * `LedgerRow` plus five derived clock fields, so `Object.keys(row)` would export
+ * `mttr_days` / `awaiting_vendor_fix` / ... — columns that do not exist in the register and
+ * that nothing downstream could round-trip — and a second literal list would drift from the
+ * tab the day a column is added. Reading the live headers means the export is exactly the
+ * ledger.
+ *
+ * NO SECRET VALUE CAN APPEAR HERE, and that is true by construction rather than by filtering:
+ * the ledger has no column holding one (`scanJobs.DENIED_KEY` refuses `snippet` and
+ * `validationDetails` at ingest), so there is nothing to strip. Keep it that way — a column
+ * added upstream would arrive in this export automatically.
+ *
+ * THE VIEW-PROJECT SCOPE APPLIES HERE TOO, and not by accident: this endpoint bypasses
+ * `readModels.ts` entirely (it hand-filters `ledgerStore.loadBaseRows` directly rather than
+ * going through `visibleRows`/`scopedRows`), so without its own filter an export would hand
+ * back a file disagreeing with whatever scoped page the analyst exported it from — the whole
+ * register, silently, under a narrowed screen. `inProject` is still THE single definition of
+ * membership (`domain/projectScope.ts`); this is a second CALLER of it, never a second
+ * `.some()`.
+ */
+export function getExportCsv(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const scope = requestedScope(p);
+    const sevRaw = params["severities"];
+    const severities = Array.isArray(sevRaw) && sevRaw.length
+      ? new Set(sevRaw.map((s) => normalizeSeverity(s)))
+      : null;
+    const statusRaw = params["statuses"];
+    const statuses = Array.isArray(statusRaw) && statusRaw.length
+      ? new Set(statusRaw.map((s) => String(s).toUpperCase()))
+      : null;
+    const projectView = loadSettings().projectView || null;
+
+    const rows = (ledgerStore.loadBaseRows(scope ? { scope } : {}) as unknown as Rec[])
+      .filter((r) => !severities || severities.has(normalizeSeverity(r["severity"])))
+      .filter((r) => !statuses || statuses.has(String(r["status"] ?? "").toUpperCase()))
+      .filter((r) =>
+        !projectView
+        || inProject(parseProjects(r["projects_json"] as string | null | undefined), projectView),
+      );
+
+    const cols = TAB_HEADERS[TABS.ledger] ?? [];
+    const lines = [cols.join(",")];
+    for (const r of rows) lines.push(cols.map((c) => csvCell(r[c])).join(","));
+    return {
+      content: lines.join("\r\n"),
+      filename: `wiz-devsecops-ledger-${new Date().toISOString().slice(0, 10)}.csv`,
+      rowCount: rows.length,
+      columns: cols.length,
+      scope,
+      projectView,
+    };
+  });
+}
+
+/**
+ * How many failures the diagnostics panel looks back over. Jobs are single-flight and one row
+ * is appended per sync, so 50 is several weeks of a daily schedule.
+ */
+const RECENT_ERROR_LIMIT = 50;
+
+/**
+ * The recent server-side failures, newest first.
+ *
+ * DIVERGENCE (gas/), AND THE SOURCE IS DIFFERENT ON PURPOSE. gas/ serves this from an
+ * `errorLog` tab that S4 deliberately did not port: a tab written on every caught throw is a
+ * second write path into the spreadsheet whose failure mode is a full sheet, and this register
+ * has one place that already records a failure with its context — the `jobs` tab's `error`
+ * column, which every terminal transition, `reclaimIfStale` and `recoverIfNeeded` write. So
+ * this reads that, and NO ERROR-LOG TAB WAS CREATED.
+ *
+ * WHAT THAT COSTS, STATED RATHER THAN HIDDEN: this reports job failures only. A read RPC that
+ * throws returns `{ok:false}` to its caller and leaves no row, so it will not appear here.
+ * That is a narrower panel than gas/'s and the payload says so in `covers`.
+ *
+ * ENUMERATED, NOT SPREAD. `cursor` and `journal_ref` are on every `JobRow` and a spread would
+ * ship both — the same allowlist discipline `jobSummarySlice` exists for.
+ */
+export function getRecentErrors(p?: unknown): ApiResult {
+  return run(() => {
+    const raw = Number(((p ?? {}) as Rec)["limit"] ?? RECENT_ERROR_LIMIT);
+    const limit = Number.isFinite(raw) && raw > 0
+      ? Math.min(Math.floor(raw), RECENT_ERROR_LIMIT)
+      : RECENT_ERROR_LIMIT;
+    const errors = listJobs()
+      .filter((j) => j.error !== null && j.error !== "")
+      .map((j) => ({
+        job_id: j.job_id,
+        kind: j.kind,
+        phase: j.phase,
+        scope: j.scope,
+        at: j.updated_at,
+        started_at: j.started_at,
+        error: j.error,
+      }))
+      .sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0))
+      .slice(0, limit);
+    return {
+      errors,
+      // The panel must be able to say what it is NOT showing.
+      covers: "jobs",
+      note: "Job failures only — this register has no error-log tab. A read that fails returns "
+        + "its message to the caller and records no row.",
+    };
   });
 }

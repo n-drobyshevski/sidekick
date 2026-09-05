@@ -20,6 +20,82 @@ spec: `gas/test/export_*.py` generate golden fixtures by running this code, and 
 ports are tested against them — after changing the Python domain layer, regenerate the fixtures
 and run `cd gas && npm run check`. See `gas/README.md`.
 
+`gas_shared/` is the one copy of the component base, stylesheets and design tokens that
+`gas/`, `gas_ai/` and `gas_devsecops/` all draw with — plain ES modules and plain CSS,
+imported by relative path, bundled by each app's own esbuild step, nothing installed. It
+holds `ui/` (components, `index.js` the one barrel, `helpPage.js` a page and deliberately
+not in the barrel), `shell/` (`app.js`'s shell — nav rail, appbar, boot splash, the flyout
+panel — plus a generated `index.template.html`), `api.js`/`store.js`/`icons.js` (the RPC
+bridge, the bootstrap/RPC cache, node-kind SVG), `appConfig.js` (the seam, below),
+`styles/` (nine sheets, `tokens.base.css` first and `overrides.css` last), `test/contracts/`
+(eleven spec factories the apps register from their own test files), and `measure.mjs` (the
+wave's own before/after measurement — see `gas_shared/README.md`'s "Before / after"). Read
+`gas_shared/README.md` before touching any of it; it is the design system's own spec, the
+same way `wiz_dashboard/domain/` is `gas/`'s.
+
+**The `appConfig` seam.** A shared module cannot reach sideways into an app — `ui/tip.js` has
+no `../helpContent.js` to import, `store.js` cannot know which route is a register's front
+door. Each app's `app.js` calls `configureApp(manifest)` as the FIRST statement of its module
+body (productName, openingNoun, storagePrefix, defaultRoute, findHelpEntry, sync, …), and
+every shared consumer calls `appConfig()` to read it back — **always inside a function, never
+at module top level.** A top-level read runs during `import`, which under esbuild's bundling
+order happens BEFORE `app.js`'s own body runs, and throws even on a correctly wired app.
+`appConfig()` throws with nothing configured, on purpose: a default would silently hand one
+app another app's front door.
+
+**The contract-factory pattern.** `vitest.config.ts` in each app collects only that app's own
+`test/` directory, so a shared rule cannot *be* a test file — it is a factory function in
+`gas_shared/test/contracts/*.js` that an app's own `test/shared.test.js` calls with vitest's
+`describe`/`it`/`expect` and that app's specifics (severity constants, route lists, the
+manifest's copy). The same arithmetic or sweep then runs against three different brands /
+route sets / section lists instead of being re-typed three times. Every assertion in there is
+optional-with-a-named-skip where an app legitimately differs (no SLA table, no error log, no
+`ctx.localSheets` given yet) — a silent pass is the failure mode these guard against, so a skip
+always names why in the test summary rather than just not running.
+
+**Traps this wave earned:**
+
+- **`npm run check:exact` uses POSIX `VAR=1 cmd`** (`test:exact`'s `GAS_TEST_FULL_ISOLATION=1
+  vitest run`), which fails under npm's default Windows shell (`npm_config_script_shell=bash`
+  was the four-times-repeated workaround). P9 fixed the script itself in all three
+  `package.json`s to `node -e "process.env.X='1';require('child_process').execSync(...)"`,
+  which needs no shell-specific env-var syntax at all; the workaround still works too, but is
+  no longer necessary.
+- **The dev harness serves a stale CSS bundle.** Bust it with `?dry&v=<n>`. A 0.0000%
+  screenshot diff between two runs is a finding that the harness served the SAME bundle
+  twice, not a pass.
+- **A committed `dist/` going stale bit twice** (P4a: `gas_devsecops/dist/styles.html`
+  missing 90 selectors; P4b: all three stale at `5ae4701`, `.rail-amp` in `gas_shared/`
+  source and absent from every committed stylesheet) — both times because a `gas_shared/`
+  change never triggers a rebuild here, and `gas/buildStamp.mjs`'s `sourceStamp()` only
+  hashes `<root>/src`, so it stays green through exactly this class of defect. `npm run
+  check-dist-fresh` (`checkDistFresh.mjs`, wired into `check`/`check:exact`, one per app)
+  actually rebuilds and diffs the result against the committed bundle, modulo the
+  `__BUILD_ID__` stamp, via `git show HEAD:<path>` — no second stamp mechanism, and no
+  worktree touched.
+- **`Number(null)` is `0`, and it is finite — the third time this bit.** `ui/figures.js`'s
+  `relativeAge()` refuses null/undefined/blank/`[]`/`false` BEFORE any cast; the tempting
+  "simplify the two branches" rewrite casts first and reads every one of them as epoch 0.
+  `test/contracts/relativeAge.js`'s own perturbation reproduces the defective rewrite inline
+  and shows it failing, rather than asserting the rule from a comment.
+- **`portalsOpen()` answers two different questions with one counter, and the fix is not
+  yours to make here — it belongs with `ui/sheet.js`.** `gas_shared/shell/navFlyout.js`'s own
+  header has the full measurement: a PINNED nav panel is counted for the whole session, and
+  the sheet's Tab trap (`if (portalsOpen()) return;`) stops wrapping while one is pinned
+  (measured `{defaultPrevented: false, wrappedToFirst: false}` pinned vs `{true, true}`
+  unpinned — `inert` still contains Tab to the sheet, only the wrap is lost). It stays because
+  `gas_ai/pages/graph.js` (:726, :749) stands its own Escape handler down on the same count.
+- **The dry-run fallback makes "disabled with a reason" a ONE-APP AFFORDANCE, not a parity
+  gap.** `gas` and `gas_ai` fall back to `dryRunScan`/`dryRunSync` without credentials, so
+  they have no disabled sync/scan button to explain; only `gas_devsecops` needs one, and its
+  reason reaches the reader through the shared `tipAnchor()`/`.tip-disabled-wrap` mechanism
+  (a disabled control does not reliably take the pointer/focus events a plain `title` or a
+  bare tooltip needs). A scorecard or contract that expects all three to carry this is
+  checking for a gap that was never there.
+- **`gas_devsecops` still has no `navModel.js` test of its own** — `gas/test/navModel.test.js`
+  and `gas_ai/test/navModel.test.js` exist; `gas_devsecops` has neither, and nothing here
+  fixes that.
+
 ## Design Context
 
 Before any UI or design work, read:
@@ -70,6 +146,20 @@ because they are in this file.
   bar is high on purpose: a test asserting the old contract is the normal way a real fix
   announces itself.
 - **Report the honest number.** An attribution hop that recovered 7 of a possible 77 is a 7.
+- **`Number(null)` is `0`, and it is finite — the cast is where "absent is never zero" stops
+  being obvious.** This bit twice in one day, in unrelated packages: `cleanSettings` read a
+  missing `syncSchedule` as the valid hour 0 and a missing `retentionDays` as "retain nothing",
+  and a client `num(v, fallback)` helper rendered every genuinely-null figure (`density_p25`,
+  `falling_behind_pct`) as a confident `0` instead of an em dash. `Number("")`, `Number([])` and
+  `Number(false)` are 0 too. Refuse null/undefined/blank BEFORE the cast, never after, and let
+  `Number.isFinite` guard only the values that were really numbers.
+- **A guard that fires on nothing is a finding, not a pass.** Three separate packages here ran
+  a deliberate perturbation and saw ZERO tests fail: a credential deny-list that was shadowed
+  by an allow-list applied first, a durable-cache audit pinned to a list of names rather than
+  to time-invariance, and an ordering (`DONE` before `afterPersist`) that two packages agreed
+  on by accident and nothing held. In each case the fix was to find the one path where the
+  guard actually bites and test THAT. Perturb every guard you write; if nothing breaks, the
+  test is decorative.
 - **Destructive commands get read twice.** `rm -rf` over a path that may contain a symlink or
   junction once deleted `node_modules/.bin` through it. Remove the link non-recursively first.
 - **Commit locally; do not push or open a PR** unless asked. Message style is
@@ -110,20 +200,34 @@ already implements the pipeline and is the behavioural spec (same relationship `
   worse than none: `codeToCloudPipelineStage` sat in `BASE` as a literal and bypassed the
   table entirely, so adding it to the table changed nothing. `npm run probe -- --schema`
   prints a ready-made `OBJECT_FILTERS entry:` per filter type — copy it, never infer it.
-- **Severity defaults are per scope, and `secrets` is not `CRITICAL, HIGH`.** That default is
-  inherited from the vulnerability registers, where it is a volume control. On secrets it
-  deletes `PASSWORD` 209→0 and `CERTIFICATE` 160→0 — every one sits below HIGH — giving a
-  secrets register with no passwords in it. `DEFAULT_FETCH_SEVERITIES` is a
-  `Record<Scope, string[]>`; secrets reaches to MEDIUM, provisionally, until the probe's
-  type × severity crosstab confirms those rows are not LOW.
-- **The second clock is computed, and `awaiting_vendor_fix` is SCOPE-GUARDED.**
-  `baseRows` (`src/domain/ledgerCore.ts`) derives `fix_available_at`,
-  `mttr_actionable_days` and `awaiting_vendor_fix` from the `fix_date` / `fix_observed_at`
-  the schema has been capturing since day one. The guard is the load-bearing part: "open
-  with no fix available" is true of every SAST finding and every secret, neither of which
-  has a vendor, so without it 2,085 rows sit awaiting a vendor forever — out of every
-  actionable clock, in every exposure count, and the two halves of the page disagree in a
-  way that reads as broken arithmetic rather than a category error.
+- **Severity defaults are per scope, and on `secrets` the gate is OFF.**
+  `DEFAULT_FETCH_SEVERITIES.secrets = []`, and empty means all — `severityFilter([])` is `[]`
+  and `buildFilter` then omits the `severity` key entirely. Two earlier answers were wrong in
+  the same direction: `CRITICAL, HIGH` inherited from the vulnerability registers (where it is
+  a volume control), then MEDIUM, on "PASSWORD and CERTIFICATE sit below HIGH" — true, and not
+  the same as "they sit at MEDIUM". With the gate off the register is the whole CODE
+  population, 1,958 rows = 691 CRIT+HIGH + 152 MED + 738 LOW + 377 INFO, and `CERTIFICATE`
+  160/160 and `PASSWORD` 208/208 are finally in. Severity grades a DETECTION, not whether a
+  credential is live — 641 `SAAS_API_KEY` rows are LOW — so the secrets pages segment by
+  `validation_state` and `confidence` and never by severity. Volume was never the reason
+  either: 1,958 rows is an eighth of SCA. `test/severityScope.test.js` pins the chain.
+- **The second clock is computed, and it is only real on SCA.** This entry used to read
+  "captured but not yet computed"; `ledgerCore.baseRows` now derives `fix_available_at`,
+  `mttr_actionable_days`, `actionable_age_days` and `awaiting_vendor_fix` from `fix_date` /
+  `fix_observed_at`. The part worth carrying: SAST and secrets have no vendor to wait on, so
+  their `fix_available_at` collapses onto `first_seen` — which makes `mttr_actionable_days`
+  identical to `mttr_days` there and `awaiting_vendor_fix` false by construction. Only SCA
+  can leave `fix_available_at` null, and a null there is what puts a finding in the
+  awaiting-vendor bucket rather than in the actionable one. A figure that averages the
+  actionable clock across all three scopes is therefore two-thirds a restatement of MTTR.
+  The collapse is not the only reason the flag stays false there: `awaiting_vendor_fix:
+  isSca && open && fixAvailableAt === null` carries an explicit `isSca &&` guard, and the
+  code comment calls it "the flag's DEFINITION, not a shortcut" — without it, "open with no
+  fix available" is true of every SAST finding and every secret (neither has a vendor), so
+  every one of those 2,085 rows (127 SAST + 1,958 secrets) would sit in the awaiting-vendor
+  bucket forever, thinning every actionable clock and exposure count and making the two
+  halves of a page disagree in a way that reads as broken arithmetic rather than a category
+  error.
 - **Three scopes in one ledger, and DISAPPEARANCE IS THE DANGEROUS PART.** Neither source
   does this: `gas/` has one register, and `brick/devsecops`'s reconcile takes a `scope` but
   only stamps it — its caller hands it a prior already filtered down. Here the prior is one
@@ -161,6 +265,12 @@ already implements the pipeline and is the behavioural spec (same relationship `
   a dependency and through a host image is two findings with two clocks.
 - **Removed is not rotated.** A secret leaving the register means the string left HEAD. The
   credential is live until `rotated_at` says otherwise.
+- **The tolerance for a GraphQL PARTIAL is no longer theoretical.** Seven passes saw none;
+  the first live battery run hit one on every SAST fetch — `data` and `errors` together,
+  message `"Resource not found"`, reproduced across two independent runs, so it is a standing
+  condition of this tenant. The 127 rows still land with `first_seen` on all of them, which is
+  the designed behaviour: a page carrying both nodes and errors has good nodes and a suspect
+  COUNT. What the missing resource is remains unknown — the message names nothing.
 - **A zero has to prove it looked.** The probe read its GraphQL connection off a hardcoded
   root chain that never learned `secretInstances`, so an 843-row register printed `0 node(s)`
   and wrote `{count: 0}` to the report with no error beside it — indistinguishable from a
@@ -168,23 +278,48 @@ already implements the pipeline and is the behavioural spec (same relationship `
   silent, and guarding the failure that announces itself is not the same as guarding the one
   that does not. `resolveConnection` now finds the root in the response and REFUSES rather
   than returning an empty connection.
-- **The secrets ledger key is DERIVED, never adopted, and this entry has now been wrong
-  twice.** It first said `(secretDataId, path)`, which collides 2.27:1 with one pair covering
-  49 rows. It then said `externalId`, because that is unique across the register — and
-  §10.6, on the ungated 1,958-row population, showed it is unique BECAUSE IT PRESERVES THE
-  REPO/BRANCH DUPLICATE: 187 keys span both `REPOSITORY` and `REPOSITORY_BRANCH`, and all
-  187 carry two different `externalId`s, because Wiz splices the branch segment into its
-  composite. The clocks on those twins genuinely disagree — median 19.9 days apart, max
-  285.3, branch earlier in 135 and repository earlier in 52 — so neither type can be
-  preferred. Key on `(secretDataId, path, lineNumber)`, fold the twins, take the earliest
-  `firstSeenAt`, and write the discarded gap into the row (`twin_first_seen_spread_days`).
-  The generalisation, which inverts the OS ledger's first rule: `vulnKey` prefers the Wiz
-  `id` because THERE it is stable per finding; here every Wiz identifier is stable per ROW,
-  and the row is not the finding. Uniqueness is not identity. `secretDataId` names the
-  credential and is what rotation groups by — not the row key. The key still encodes the
-  line, so a line move reads as a new finding, and UUID stability across scans is still
-  inferred from a version-5 nibble (§10.8 strengthened it — one `id` spanning nine months of
-  scans — without making it a controlled test).
+- **The secrets fold is NOT a twin any more, and that may make the key wrong.** The first
+  live battery run (2026-09-03, PROBE_FINDINGS §12.2) folded 1,931 nodes to 1,324 rows:
+  324 keys carrying duplicates but **607 nodes folded**, i.e. **2.87 occurrences per
+  duplicated key, not 2**. The two-way model below predicts 324. 283 nodes are unexplained by
+  it. The leading candidate is the same `(secretDataId, path, lineNumber)` in DIFFERENT
+  REPOSITORIES — a copied config file does it — and since the key carries no `repo_id`, that
+  would MERGE two genuine findings into one row with one clock and an owner decided by
+  latest-wins. That is the opposite failure from the one the key was chosen to avoid, and no
+  aggregate shows it: the row count merely looks better. Read-only measurement that settles
+  it: group raw nodes by the triple and, for every group above two, print distinct
+  `resource.type` and distinct repository id. Until then the 1,324 figure is provisional.
+- **The secrets ledger key is `(secretDataId, path, lineNumber)` with the EARLIEST
+  `firstSeenAt`, and `externalId` is unique for the wrong reason.** This entry recommended
+  `externalId` on the evidence that it is unique; it still is, and keying on it would double
+  the ledger. 187 keys span both `REPOSITORY` and `REPOSITORY_BRANCH`, and `externalId`
+  differs on all 187 — Wiz builds it from the resource and the branch form inserts a branch
+  segment — so it preserves the twin instead of resolving it. The two clocks disagree: the
+  branch twin carries the earlier birth date in 135 of 187, the repo twin in 52, median gap
+  19.9 d, max 285.3 d. So there is no resource type to prefer; keying on `externalId`, or
+  taking `REPOSITORY` because it is the majority, records one secret twice and misdates 135
+  of them by a median of three weeks. `secretDataId` names the credential and is what
+  rotation groups by — not the row key. Every unique candidate encodes the line, so a line
+  move still reads as a new finding, and UUID stability across scans is still inferred from a
+  version-5 nibble rather than measured (§10.8 strengthened it — one `id` spanning nine
+  months of scans — without making it a controlled test). This entry has now been wrong
+  twice: it first said `(secretDataId, path)` alone, which collides 2.27:1 with one pair
+  covering 49 rows, before landing on the triple above. The generalisation inverts the OS
+  ledger's first rule: `vulnKey` prefers the Wiz `id` because THERE it is stable per finding;
+  here every Wiz identifier is stable per ROW, and the row is not the finding. Uniqueness is
+  not identity.
+- **A merge-history note: `src/domain/secretsLedger.ts` — the module the entry above
+  originally named as already implementing this resolution — turned out to be dead code from
+  an earlier architecture.** Nothing in the live pipeline imported it, so it was deleted in
+  this merge along with its own test. The ACTUAL live implementation is `reconcile.ts`'s
+  `foldSecretTwins`, and it keys on the triple and takes the earliest `firstSeenAt` exactly as
+  described above — but it reports the fold as an AGGREGATE (`TwinStats`: keys / folded /
+  medianGapDays) merged onto the surviving row, and does NOT stamp per-row `twin_count` /
+  `twin_first_seen_spread_days` / `source_external_ids` columns, even though `register.js` /
+  `registerModel.js` already have a `twinCell` ready to draw them (it degrades to "absent"
+  today because nothing populates the fields). That per-row auditability — seeing WHICH row
+  had a 285-day disagreement, not just the register's median — is not currently restored.
+  Flagged for a follow-up decision rather than fixed here.
 - **A flag that does nothing produces a run that looks like it measured something.**
   `--roots --crosstab --report` returned a one-key report with no crosstab and no warning:
   `--roots` short-circuits, and `--crosstab` was never a flag at all — `has()` only asks

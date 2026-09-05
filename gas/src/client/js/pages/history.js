@@ -3,14 +3,15 @@
 // job is history and recency, so it leans on humanized mode / sample-vs-live labels,
 // freshness cues, and colored posture deltas rather than raw enums.
 
-import { call } from "../api.js";
-import { openResolvedLines, trendLine } from "../charts.js";
-import { bootstrap, swrCall } from "../store.js";
+import { call } from "../../../../../gas_shared/api.js";
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, confirmDialog, el, emptyState, fmtDays, fmtDateTime,
-  kpiCard, pager, sectionLabel, statusPill, toast,
+  absent, clear, confirmDialog, dataTable, el, emptyState, fmtDateTime, fmtSpan, kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
 } from "../ui.js";
 
+// The rows-per-page the table OPENS on. It is no longer the only size available: the footer
+// below carries a rows-per-page select, so this is a starting point rather than a ceiling.
 const PAGE_SIZE = 25;
 
 // A saved scan's raw mode enum -> human labels. "dry-run*" is bundled sample data; the
@@ -26,38 +27,39 @@ function modeCell(mode) {
   return el("span", { style: "display:inline-flex; gap:6px; align-items:center; flex-wrap:wrap" },
     ...parts);
 }
+// The em dash for an unrecorded shape is the shared muted one, not a black one typed in
+// place: a scan whose shape the ledger never stored is not a scan whose shape is "—", and a
+// dash in the same ink as "Per-finding" says otherwise. Returning a Node is safe because the
+// only call site is the Shape cell below, which takes an el() child.
 function shapeLabel(shape) {
-  return shape === "flat" ? "Per-finding" : shape === "grouped" ? "Counts only" : String(shape || "—");
+  if (shape === "flat") return "Per-finding";
+  if (shape === "grouped") return "Counts only";
+  return shape ? String(shape) : absent();
 }
 
 // A signed posture delta cell: rising risk (new / reopened) reads bad, resolutions read good;
 // direction is carried by the sign, not color alone. Zero stays muted.
 function deltaCell(n, { good = false, sign = "" } = {}) {
-  const v = Number(n || 0);
+  // `num(n, 0)` rather than `Number(n || 0)`: the cast is where "absent is never zero" stops
+  // being obvious, so the fallback is stated instead of inherited. Zero IS the intent here —
+  // ScanRow's new / resolved / reopened counts are required numbers written when the scan is
+  // saved (src/domain/ledgerCore.ts), so the only way one arrives missing is a payload that
+  // predates the column, and "nothing moved" is the honest reading of that.
+  const v = num(n, 0);
   if (!v) return el("span", { class: "muted num" }, "0");
   return el("span",
     { class: "num", style: `color:var(--${good ? "ok" : "bad"})` },
     `${sign}${v.toLocaleString()}`);
 }
 
-function relativeAge(ts) {
-  const ms = Date.now() - Date.parse(ts);
-  if (Number.isNaN(ms)) return "";
-  const min = Math.floor(ms / 60000);
-  if (min < 1) return "just now";
-  if (min < 60) return `${min} min ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr} hour${hr > 1 ? "s" : ""} ago`;
-  const d = Math.floor(hr / 24);
-  return `${d} day${d > 1 ? "s" : ""} ago`;
-}
-
 export async function renderHistory(main, _params, ctx) {
   const boot = await bootstrap();
 
-  // Sort/page persist across SWR repaints so a background refresh doesn't reset the view.
+  // Sort, page and page size persist across SWR repaints so a background refresh doesn't
+  // reset the view.
   let sortDir = "desc";
   let page = 0;
+  let pageSize = PAGE_SIZE;
   let anySample = false;
 
   // Severity scope for the trend charts: the app-wide display setting, so the two trends
@@ -78,11 +80,10 @@ export async function renderHistory(main, _params, ctx) {
     paintScans(fresh.scans);
   });
 
-  main.append(
-    el("h1", {}, "Scan History"),
-    el("p", { class: "page-sub" },
-      "Every saved scan retained in the durable ledger, with remediation trends."),
-  );
+  main.append(pageHeader({
+    route: "history",
+    lede: "Every saved scan retained in the durable ledger, with remediation trends.",
+  }));
 
   const freshLine = el("p", { class: "section-note" });
   const kpiRow = el("div", { class: "kpi-row" });
@@ -105,7 +106,6 @@ export async function renderHistory(main, _params, ctx) {
   function loadTrends() {
     swrCall("api_getMttrTrend", { severities: scopeParam() }, paintTrends)
       .then(paintTrends)
-      // eslint-disable-next-line no-console
       .catch((e) => console.error("[history] trends failed:", e));
   }
   loadTrends();
@@ -127,7 +127,7 @@ export async function renderHistory(main, _params, ctx) {
       kpiCard("Tracked (all-time)", kpis.tracked.toLocaleString()),
       kpiCard("Currently open", kpis.open.toLocaleString()),
       kpiCard("Resolved all-time", kpis.resolvedAllTime.toLocaleString()),
-      kpiCard("Median MTTR", fmtDays(kpis.medianMttr)),
+      kpiCard("Median MTTR", fmtSpan(kpis.medianMttr)),
     );
   }
 
@@ -149,8 +149,8 @@ export async function renderHistory(main, _params, ctx) {
       "Delete selected");
     const actionBar = el("div", { class: "history-actionbar" }, deleteBtn);
     const tableHost = el("div", {});
-    const pagerHost = el("div", {});
-    scansHost.append(actionBar, tableHost, pagerHost);
+    const footerHost = el("div", {});
+    scansHost.append(actionBar, tableHost, footerHost);
 
     function syncDeleteBtn() {
       deleteBtn.disabled = !selected.size;
@@ -161,9 +161,9 @@ export async function renderHistory(main, _params, ctx) {
     function draw() {
       const sorted = [...scans].sort((a, b) =>
         sortDir === "desc" ? (a.ts < b.ts ? 1 : -1) : (a.ts > b.ts ? 1 : -1));
-      const pageCount = Math.max(1, Math.ceil(sorted.length / PAGE_SIZE));
+      const pageCount = Math.max(1, Math.ceil(sorted.length / pageSize));
       if (page >= pageCount) page = 0;
-      const slice = sorted.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+      const slice = sorted.slice(page * pageSize, page * pageSize + pageSize);
       const selectable = slice.filter((s) => !s.sealed);
 
       const selectAll = el("input", {
@@ -184,21 +184,80 @@ export async function renderHistory(main, _params, ctx) {
         draw();
       });
 
-      const sortBtn = el("button", {
-        class: "th-sort", type: "button",
-        "aria-label": `Sort by time, currently ${sortDir === "desc" ? "newest first" : "oldest first"}`,
-        onclick: () => { sortDir = sortDir === "desc" ? "asc" : "desc"; draw(); },
-      }, "When ", el("span", { "aria-hidden": "true" }, sortDir === "desc" ? "▼" : "▲"));
+      // `dataTable` NOW, AND TWO SHARED ADDITIONS ARE WHAT MADE IT POSSIBLE. This block was
+      // the last hand-built `<table class="data">` in the three apps, and the comment that
+      // stood here named the exact blocker: the sticky heading that actually works in this app
+      // is pinned by `.history-table th` — a class on the TABLE element — and `dataTable`
+      // hardcoded `class: "data"` there, able to class only the `.table-wrap` it returns. Its
+      // own `stickyHeader` is a different treatment (gated at 1100px, offset by
+      // `--sticky-inset`), so taking it would have un-pinned a heading that works. `dataTable`
+      // takes `tableClassName` now, and both CSS rules — `.history-table th` and
+      // `.history-table-wrap` — are unchanged and still the ones that match.
+      //
+      // THE SECOND ADDITION IS `cellClass`, AND THIS TABLE IS WHY IT IS SEPARATE FROM
+      // `col.className`. A column class lands on the header AND the cells; the six numeric
+      // columns here want `num` on the cells only, because `table.data th.num` right-aligns a
+      // heading and this table's headings are not right-aligned. Expressing it as a column
+      // class would have moved eight header labels. `cellClass` says what THIS VALUE is, where
+      // `className` says what the COLUMN is, and only one of the two is true here.
+      //
+      // WHAT THE COMPONENT ADDS, beyond deleting forty lines: `aria-sort` on the active header
+      // (this had none — the direction rode inside the button's aria-label, which a screen
+      // reader reads as part of the column NAME), and the sort glyph in its own
+      // `.th-sort-glyph` span rather than concatenated into the button's text.
+      const NUM_CELLS = new Set(["when", "total", "new", "resolved", "reopened"]);
+      const columns = [
+        { key: "select", label: selectAll, cell: (s) => selectCell(s) },
+        {
+          key: "when",
+          label: "When",
+          sortable: true,
+          cell: (s) => {
+            const when = el("span", {}, fmtDateTime(s.ts));
+            if (s.scan_id !== newestId) return when;
+            return el("span", {}, when,
+              el("span", { class: "domain-chip", style: "margin-left:8px" }, "Latest"));
+          },
+        },
+        { key: "mode", label: "Mode", cell: (s) => modeCell(s.mode) },
+        { key: "shape", label: "Shape", cell: (s) => shapeLabel(s.shape) },
+        { key: "total", label: "Findings", cell: (s) => s.total.toLocaleString() },
+        { key: "new", label: "+New", cell: (s) => deltaCell(s.new_count, { sign: "+" }) },
+        {
+          key: "resolved",
+          label: "−Resolved",
+          cell: (s) => deltaCell(s.resolved_count, { good: true, sign: "−" }),
+        },
+        {
+          key: "reopened",
+          label: "Reopened",
+          cell: (s) => deltaCell(s.reopened_count, { sign: "+" }),
+        },
+        {
+          key: "scope",
+          label: "Scope",
+          cell: (s) => (s.severities ? JSON.parse(s.severities).join(", ") : "all"),
+        },
+        // The sentence used to ride on a `title` attribute, which el() now throws on: a native
+        // tooltip cannot be reached by keyboard and does not exist on touch, so the one
+        // explanation of why a row's checkbox is disabled was unreadable for anyone not
+        // hovering a mouse. tipAnchor puts it in the app's own hover card; the pill is not a
+        // control, so it takes the anchor form rather than becoming a second tab stop inside a
+        // row that already has one.
+        {
+          key: "status",
+          label: "Status",
+          cell: (s) => (s.sealed
+            ? tipAnchor(
+              el("span", { class: "pill neutral",
+                "aria-label": "Sealed — part of the compacted baseline; can't be deleted." },
+                "Sealed"),
+              () => ["Sealed scans are part of the compacted baseline and can't be deleted."])
+            : ""),
+        },
+      ];
 
-      const table = el("table", { class: "data history-table" },
-        el("thead", {}, el("tr", {},
-          el("th", { scope: "col" }, selectAll),
-          el("th", { scope: "col" }, sortBtn),
-          ...["Mode", "Shape", "Findings", "+New", "−Resolved", "Reopened", "Scope", "Status"]
-            .map((h) => el("th", { scope: "col" }, h)))),
-      );
-      const tbody = el("tbody", {});
-      for (const s of slice) {
+      function selectCell(s) {
         const cb = el("input", {
           type: "checkbox",
           "aria-label": `Select scan ${fmtDateTime(s.ts)}`,
@@ -215,31 +274,33 @@ export async function renderHistory(main, _params, ctx) {
           selectAll.checked = !!all;
           selectAll.indeterminate = !all && rest.some((x) => selected.has(x.scan_id));
         });
-        const whenCell = el("td", { class: "num" }, fmtDateTime(s.ts));
-        if (s.scan_id === newestId) {
-          whenCell.append(el("span", { class: "domain-chip", style: "margin-left:8px" }, "Latest"));
-        }
-        tbody.append(el("tr", {},
-          el("td", {}, cb),
-          whenCell,
-          el("td", {}, modeCell(s.mode)),
-          el("td", {}, shapeLabel(s.shape)),
-          el("td", { class: "num" }, s.total.toLocaleString()),
-          el("td", { class: "num" }, deltaCell(s.new_count, { sign: "+" })),
-          el("td", { class: "num" }, deltaCell(s.resolved_count, { good: true, sign: "−" })),
-          el("td", { class: "num" }, deltaCell(s.reopened_count, { sign: "+" })),
-          el("td", {}, s.severities ? JSON.parse(s.severities).join(", ") : "all"),
-          el("td", {}, s.sealed
-            ? el("span", { class: "pill neutral",
-                "aria-label": "Sealed — part of the compacted baseline; can't be deleted.",
-                title: "Sealed scans are part of the compacted baseline and can't be deleted." },
-                "Sealed")
-            : ""),
-        ));
+        return cb;
       }
-      table.append(tbody);
-      clear(tableHost).append(el("div", { class: "table-wrap history-table-wrap" }, table));
-      clear(pagerHost).append(pager(page, pageCount, sorted.length, (p) => { page = p; draw(); }));
+
+      clear(tableHost).append(dataTable({
+        columns,
+        rows: slice,
+        // ONE SORTABLE COLUMN, so the active key is always this one; the direction is the
+        // state. `dataTable` puts it on the <th> as `aria-sort` and draws the glyph itself.
+        sort: { key: "when", descending: sortDir === "desc" },
+        onSort: () => { sortDir = sortDir === "desc" ? "asc" : "desc"; draw(); },
+        tableClassName: "history-table",
+        className: "history-table-wrap",
+        cellClass: (row, col) => (NUM_CELLS.has(col.key) ? "num" : ""),
+      }));
+      // `tableFooter`, not the bare `pager` this used to call, and it fixes two things. The
+      // pager alone printed the row count unpluralised, so a ledger holding one scan read
+      // "1 rows"; and there was no way to see more than 25 scans at a time on a page whose
+      // whole subject is history. The footer also recomputes the page from the row that was
+      // at the top, so changing the size does not teleport the reader somewhere else.
+      clear(footerHost).append(tableFooter({
+        page,
+        pageCount,
+        total: sorted.length,
+        pageSize,
+        onPage: (p) => { page = p; draw(); },
+        onPageSize: (size, nextPage) => { pageSize = size; page = nextPage; draw(); },
+      }));
     }
 
     draw();
@@ -318,9 +379,12 @@ export async function renderHistory(main, _params, ctx) {
         el("div", { class: "chart-box" }, openResolvedCanvas)),
       el("div", { class: "chart-card" }, el("h3", {}, "MTTR trend (KM median)"), mttrBody),
     );
-    requestAnimationFrame(() => {
-      openResolvedLines(openResolvedCanvas, trends.trend);
-      if (hasKm) trendLine(mttrCanvas, kmMedianPoints, { yLabel: "days" });
+    loadCharts().then((charts) => {
+      charts.openResolvedLines(openResolvedCanvas, trends.trend);
+      if (hasKm) charts.trendLine(mttrCanvas, kmMedianPoints, { yLabel: "days" });
+    }).catch(() => {
+      chartUnavailable(openResolvedCanvas);
+      if (hasKm) chartUnavailable(mttrCanvas);
     });
   }
 }

@@ -933,3 +933,144 @@ that produces a plausible-looking result while quietly not doing the work.
 - **UUID stability under a controlled rescan** (§10.8).
 - **`--roots` silently swallowing other flags** (§10.9).
 - **No live PARTIAL in five passes.** The tolerance remains unexercised outside the fixture.
+
+# 11 — sixth pass, 2026-09-03: the three registers re-read before the battery is wired
+
+Read-only (`npm run probe`), run before Wave 4 so that a figure the sync battery later
+produces can be told from a figure the tenant moved. Nothing was written to the sheet, to
+Drive, or to Wiz.
+
+## 11.1 Totals, against the fifth pass
+
+| Register | Root | §10 / CLAUDE.md | This pass | Δ |
+|---|---|---|---|---|
+| sca | `vulnerabilityFindings` | 17,991 | **18,839** | +848 (+4.7 %) |
+| sast | `sastFindings` | 127 | **127** | 0 |
+| secrets | `secretInstances` | 1,958 | **1,931** | −27 (−1.4 %) |
+
+All three read as tenant drift, and each is drift in the direction the register's own
+behaviour predicts: SCA accrues new third-party CVEs continuously, SAST is a small
+first-party set that has not moved at all, and secrets churns slightly as strings leave HEAD.
+None of the failure signatures §10 named appeared — sast is not 0 (which would be
+`VALIDATION_INVALID_TYPE_VARIABLE` on `OBJECT_FILTERS.sast`), and secrets is neither 691 (the
+severity gate returning) nor 843 (the old gated figure) nor 0 (a refusal read as an empty
+register).
+
+## 11.2 The crosstab still sums, and the gate is still off
+
+| type | CRITICAL | HIGH | MEDIUM | LOW | INFORMATIONAL |
+|---|---|---|---|---|---|
+| CERTIFICATE | 0 | 0 | 0 | 0 | **160** |
+| CLOUD_KEY | 0 | 171 | 0 | 39 | 0 |
+| DB_CONNECTION_STRING | 0 | 28 | 0 | 41 | 17 |
+| GIT_CREDENTIAL | 0 | 8 | 0 | 0 | 2 |
+| PASSWORD | 0 | **0** | 104 | 18 | 83 |
+| PRIVATE_KEY | 0 | 156 | 0 | 0 | 0 |
+| SAAS_API_KEY | 0 | 303 | 47 | **641** | 113 |
+| **total** | **0** | **666** | **151** | **739** | **375** |
+
+666 + 151 + 739 + 375 = **1,931**, which is `totalCount` exactly — so every row is accounted
+for and no bucket is empty. `DEFAULT_FETCH_SEVERITIES.secrets` is `[]` and empty means all.
+
+**This is the live re-confirmation of the gate-off decision, not a restatement of it.**
+`CERTIFICATE` is 160 of 160 INFORMATIONAL and `PASSWORD` carries nothing at all above
+MEDIUM — so a `CRITICAL, HIGH` gate inherited from the vulnerability registers would still
+drop both categories in their entirety, and a `+ MEDIUM` gate would still drop every
+certificate. 641 `SAAS_API_KEY` rows remain at LOW, which is the same evidence as before that
+severity here grades a DETECTION rather than whether a credential is live. The secrets pages
+segment by `validation_state` and `confidence`; §10.10's open item stands unchanged, to be
+read on the built page rather than settled here.
+
+## 11.3 What this pass did not change
+
+Still open, verbatim from §10.10: `noConnection` end-to-end (§10.5); UUID stability under a
+controlled rescan (§10.8) — which the **first two real syncs will finally answer**, and until
+they do the secrets clock is provisional; `--roots` silently swallowing other flags (§10.9).
+`partialErrors` was empty again — **six passes, no live PARTIAL**, so that tolerance is still
+exercised only by its fixture.
+
+# 12 — the battery's first live run, 2026-09-03: measured, and one number changed in kind
+
+The sync battery landed today, so this is the first time the real
+`fetchPage -> slimRecord -> persistSync` path has been run against the tenant rather than
+against fixtures. Sheets and Drive were in-memory fakes; `UrlFetchApp` did real HTTPS. Nothing
+was written to any Google account, no Wiz object was mutated, and `sca` was deliberately not
+synced — it is ~38 pages against a production API and answers nothing the other two do not.
+Two independent executions, minutes apart, byte-identical results.
+
+## 12.1 What held
+
+| Claim | Result |
+|---|---|
+| `scans` rows: one per scope, sharing the sync id | held |
+| `severities` null for secrets (gate off), configured list for sast | held — `null` / `["CRITICAL","HIGH"]` |
+| SAST `createdAt` reaches the ledger as `first_seen` | **127 / 127 non-null** |
+| SAST `resolved_at` empty on a first sync (death is by disappearance) | **0 / 127** |
+| A second sync over an unchanged upstream is a no-op | **new 0, resolved 0, reopened 0** on every scan row, both scopes |
+| Retries / 401 refresh / 429 / page-size fallback | none fired; 11 `UrlFetchApp` calls per battery |
+| Continuation hops needed | **0** — secrets + sast fit inside the first 45 s budget |
+
+`resolved_count = 42` on the *first* secrets sync looked wrong and is not: `reconcile.ts`
+resolves on first sighting when the incoming node's own `status`/`resolvedAt` already says
+resolved. 42 of 1,324 secrets arrived pre-resolved from Wiz. A first sync CAN resolve; what it
+cannot do is resolve by disappearance.
+
+## 12.2 The twin fold is bigger than documented, and it is no longer a twin
+
+1,931 nodes in, **1,324 ledger rows** out. `twinStats = {keys: 324, folded: 607}`, median gap
+**11.71 d** (§10.7 measured 19.9 d over 187 keys).
+
+The magnitude drift is unremarkable — the register churns. **The shape is not.** The model this
+key was chosen under (§10.6 / §10.7) is a two-way duplicate: one `REPOSITORY` row and one
+`REPOSITORY_BRANCH` row for the same credential at the same line. That model predicts
+`folded == keys`, i.e. 324. We measured 607:
+
+```
+keys carrying duplicates                      324
+nodes folded away                             607
+occurrences per duplicated key               2.87   (not 2)
+nodes beyond what a two-way twin explains     283
+```
+
+So for a large share of these keys the register holds **three or more** rows, and "twin" is the
+wrong word for whatever that is. Three candidate explanations, none of them measured yet:
+
+1. more than two resource forms per credential-line;
+2. several `REPOSITORY_BRANCH` rows — one per branch — for one line;
+3. **the same `(secretDataId, path, lineNumber)` in DIFFERENT REPOSITORIES**, which a copied
+   config file would produce readily.
+
+**(3) would make the current ledger key wrong, not merely coarse.** `(secretDataId, path,
+lineNumber)` carries no repository, so two genuinely distinct findings in two distinct repos
+would merge into one row — one clock, one `first_seen`, one owner, and a `repo_id` decided by
+whichever row the latest-wins rule saw last. That is the opposite failure from the one §10.6
+was written to avoid, and it is not visible in any aggregate: the row count looks *better*.
+
+**The measurement that settles it**, and it is read-only: group the raw `secretInstances` nodes
+by `(secretDataId, path, lineNumber)` and, for every group of more than two, print the distinct
+`resource.type` and the distinct repository id. If the repository ids differ within a group, the
+key needs `repo_id` and the fold has been silently merging registers. Until that is run, treat
+the 1,324-row figure as provisional and the key as an open question rather than a settled one.
+
+## 12.3 First live PARTIAL in seven passes
+
+SAST's single page returned a GraphQL PARTIAL — `data` **and** `errors` — with the message
+`"Resource not found"`, reproduced identically on both independent runs, so it is a standing
+condition of this tenant rather than a blip. Six probe passes had never seen one (§10.10), and
+the tolerance was exercised only by its fixture until now.
+
+The rows still landed: 127 fetched, 127 written, `first_seen` non-null on all of them. That is
+the designed behaviour — a page carrying both nodes and errors has good nodes and a suspect
+COUNT, so the caveat is recorded beside the rows rather than either being discarded. What is
+now open is what the missing resource is; the message names nothing.
+
+## 12.4 A dev-harness defect this run exposed, fixed
+
+`dev/gas-shims.js` fired continuation triggers into `window.Server.jobs.continueJob()` — a
+namespace inherited from the `gas_ai` fork that this bundle does not export (it exposes
+`Server.scanJobs`). Every continuation therefore threw into a `catch` that wrote one console
+line, so a dev-harness sync needing a second hop would sit in FETCHING indefinitely and read as
+a stalled tenant. It survived unnoticed because the only sync anyone had run finishes in **0
+hops**. `dist/entry.js` wires the real trigger correctly, so no deployment was affected. The
+lookup now resolves across candidate namespaces and, finding none, says what it looked for and
+what `Server` actually has.

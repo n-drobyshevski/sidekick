@@ -44,8 +44,8 @@
 // says where on it you are. .pill.ok/.warn/.bad/.neutral stay for statusPill, whose labels
 // ("Failing", "In progress", "Issue") really are categorical.
 
-import { el } from "./dom.js";
-import { bookTip } from "./tip.js";
+import { el } from "../../../../../gas_shared/ui/dom.js";
+import { bookTip } from "../../../../../gas_shared/ui/tip.js";
 
 // `spoken` exists only where the written label contains a mark a screen reader cannot make
 // sense of. The badge's accessible name used to be built from the label alone, so TRACK_STAR

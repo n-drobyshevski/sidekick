@@ -48,7 +48,7 @@ describe("the web-app entry", () => {
   });
 
   it("exposes every global entry.js reaches for on the Server namespace", () => {
-    for (const name of ["doGet", "include", "access", "welcome", "setup", "api", "jobs"]) {
+    for (const name of ["doGet", "include", "access", "welcome", "setup", "api"]) {
       expect(INDEX, `Server.${name} is not exported`).toMatch(
         new RegExp(`export (\\* as ${name}|\\{[^}]*\\b${name}\\b)`),
       );
@@ -56,32 +56,10 @@ describe("the web-app entry", () => {
   });
 });
 
-describe("the trigger handlers", () => {
-  const triggers = [...ENTRY.matchAll(/^function (trigger_\w+)\(/gm)].map((m) => m[1]);
-
-  it("exist as top-level globals", () => {
-    // A ClockTrigger pointing at a handler that does not exist fails silently, once a day,
-    // forever. The battery's continuation handler fails silently once per HOP.
-    expect(triggers.sort()).toEqual(["trigger_continueScan", "trigger_dailyScan"]);
-  });
-
-  it("are UNGATED, and this is the spec that stops a tidying refactor", () => {
-    // An installable trigger runs with no active user, so `Session.getActiveUser().getEmail()`
-    // is "" and any access check denies every firing — a multi-hop scan would stop dead at
-    // its first budget expiry and look exactly like a hang. Making these match the api_
-    // delegators is the obvious-looking change that breaks collection.
-    for (const name of triggers) {
-      const body = ENTRY.slice(ENTRY.indexOf(`function ${name}(`));
-      const end = body.indexOf("\n}");
-      expect(body.slice(0, end), `${name} must not check access`).not.toContain("denyResult");
-      expect(body.slice(0, end), `${name} must not check access`).not.toContain("assertAllowed");
-    }
-  });
-
-  it("are not RPC endpoints", () => {
-    for (const name of triggers) expect(delegated).not.toContain(name.replace("trigger_", ""));
-  });
-});
+// The old two-trigger contract (`trigger_continueScan` / `trigger_dailyScan`) was superseded
+// when the battery grew a watchdog and a warm-cache trigger of its own — see the richer
+// "trigger handlers" block below, which asserts against `TRIGGERS` (the four names this
+// register's `jobsStore.ts` / `setup.ts` actually install) rather than a hardcoded pair.
 
 describe("editor-run entry points", () => {
   it("are gated — the editor runs as whoever opened it", () => {
@@ -90,5 +68,89 @@ describe("editor-run entry points", () => {
         new RegExp(`function ${name}\\(\\)[\\s\\S]{0,120}assertAllowed\\("${name}"\\)`),
       );
     }
+  });
+});
+
+// ---------------------------------------------------------------------------- triggers
+//
+// A trigger handler is the one entry point whose failure is COMPLETELY SILENT. It runs on a
+// schedule, with no user, no page and no caller waiting on a result, so a handler that is
+// missing, misnamed, or refused by the access gate produces nothing at all: no error a person
+// sees, no row anywhere, just a sync that quietly stopped running. Every case below exists
+// because the symptom is absence.
+
+/** Trigger handler -> the Server namespace + method it must delegate into. */
+const TRIGGERS = {
+  trigger_continueSync: "Server.scanJobs.continueJob",
+  trigger_watchdogSync: "Server.scanJobs.watchdogSync",
+  trigger_dailySync: "Server.scanJobs.dailySync",
+  trigger_warmReadModels: "Server.readModels.warmReadModels",
+};
+
+/** One handler's body — from its `function` keyword to the closing brace on the same line. */
+function handlerBody(name) {
+  const at = ENTRY.indexOf(`function ${name}(`);
+  return at === -1 ? null : ENTRY.slice(at, ENTRY.indexOf("\n", at));
+}
+
+describe("trigger handlers", () => {
+  it("exist, one per installed handler name", () => {
+    for (const name of Object.keys(TRIGGERS)) {
+      expect(handlerBody(name), `${name} has no global in entry.js`).not.toBeNull();
+    }
+  });
+
+  it("delegate into the module the trigger is meant to run", () => {
+    for (const [name, target] of Object.entries(TRIGGERS)) {
+      expect(handlerBody(name)).toContain(target);
+    }
+  });
+
+  /**
+   * THE CASE THIS SECTION EXISTS FOR.
+   *
+   * An installable trigger runs as the project owner with NO ACTIVE USER, so
+   * `access.denyResult` / `assertAllowed` fail closed on it. Gating a handler therefore does
+   * not make it safer — it makes it never run, once a day, forever, with no symptom. So the
+   * assertion is that the gate is ABSENT, which is the opposite of every other case in this
+   * file and is why it is spelled out rather than folded into the loop above.
+   */
+  it("are NOT gated — a gated trigger is a trigger that never fires", () => {
+    for (const name of Object.keys(TRIGGERS)) {
+      const body = handlerBody(name);
+      expect(body, `${name} must not call denyResult`).not.toContain("denyResult");
+      expect(body, `${name} must not call assertAllowed`).not.toContain("assertAllowed");
+      expect(body, `${name} must not go through timedApi_`).not.toContain("timedApi_");
+    }
+  });
+
+  it("carry no api_ delegator — a trigger is not an RPC", () => {
+    for (const name of Object.keys(TRIGGERS)) {
+      expect(delegated).not.toContain(name.replace(/^trigger_/, ""));
+    }
+  });
+
+  it("exposes the two namespaces the handlers reach for on Server", () => {
+    for (const name of ["scanJobs", "readModels"]) {
+      expect(INDEX, `Server.${name} is not exported`).toMatch(
+        new RegExp(`export (\\* as ${name}|\\{[^}]*\\b${name}\\b)`),
+      );
+    }
+  });
+
+  /**
+   * The names are FIXED by the code that installs and clears the triggers, not chosen here.
+   * `scanJobs` arms its one-shots by `jobsStore.CONTINUE_HANDLERS` / `WATCHDOG_HANDLERS` and
+   * `setup.ts` installs the two standing ones by literal; a rename on either side points a
+   * live trigger at a function that no longer exists, which fails on a schedule and says
+   * nothing.
+   */
+  it("match the names jobsStore and setup.ts actually install", () => {
+    const JOBS = readFileSync(new URL("../src/server/jobsStore.ts", import.meta.url), "utf8");
+    const SETUP = readFileSync(new URL("../src/server/setup.ts", import.meta.url), "utf8");
+    expect(JOBS).toContain('sync: "trigger_continueSync"');
+    expect(JOBS).toContain('sync: "trigger_watchdogSync"');
+    expect(SETUP).toContain('const DAILY_SYNC_HANDLER = "trigger_dailySync"');
+    expect(SETUP).toContain('const WARM_HANDLER = "trigger_warmReadModels"');
   });
 });

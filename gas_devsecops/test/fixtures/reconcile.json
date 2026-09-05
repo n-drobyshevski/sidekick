@@ -1,0 +1,1323 @@
+{
+ "scenarios": [
+  {
+   "name": "first_scan",
+   "input": {
+    "records": [
+     {
+      "id": "f-1",
+      "name": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "firstDetectedAt": "2026-05-20T12:30:45Z",
+      "vulnerableAsset": {
+       "id": "vm-1",
+       "name": "api-server-1",
+       "type": "VIRTUAL_MACHINE",
+       "cloudPlatform": "AWS",
+       "subscriptionName": "prod-sub",
+       "subscriptionExternalId": "123",
+       "tags": {
+        "env": "prod"
+       }
+      }
+     },
+     {
+      "id": "f-2",
+      "name": "CVE-2024-2222",
+      "severity": "high",
+      "status": "RESOLVED",
+      "firstDetectedAt": "2026-05-25T00:00:00Z",
+      "resolvedAt": "2026-05-30T10:00:00+02:00",
+      "vulnerableAsset": {
+       "id": "vm-2",
+       "name": "db-1",
+       "type": "VIRTUAL_MACHINE",
+       "cloudPlatform": "Azure"
+      }
+     },
+     {
+      "name": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "status": "OPEN",
+      "vulnerableAsset.id": "vm-3",
+      "vulnerableAsset.name": "worker-1",
+      "vulnerableAsset.type": "VIRTUAL_MACHINE",
+      "vulnerableAsset.cloudPlatform": "GCP",
+      "vulnerableAsset.tags.env": "stage"
+     },
+     {
+      "id": "f-1",
+      "name": "CVE-2024-1111",
+      "severity": "LOW",
+      "status": "OPEN"
+     },
+     {
+      "id": "f-4",
+      "name": "CVE-2024-4444",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "firstDetectedAt": "2026-07-09T00:00:00Z"
+     }
+    ],
+    "ledger": {},
+    "scan_id": "2026-06-01T06:00:00Z",
+    "scan_ts": "2026-06-01T06:00:00Z",
+    "prev_scan_id": null,
+    "options": {}
+   },
+   "expected": {
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-20T12:30:45Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-05-30T08:00:00Z",
+      "resolution_src": "api",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "observations": [
+     {
+      "scan_id": "2026-06-01T06:00:00Z",
+      "vuln_key": "id:f-1",
+      "present": 1,
+      "severity": "CRITICAL",
+      "status": "OPEN"
+     },
+     {
+      "scan_id": "2026-06-01T06:00:00Z",
+      "vuln_key": "id:f-2",
+      "present": 1,
+      "severity": "HIGH",
+      "status": "RESOLVED"
+     },
+     {
+      "scan_id": "2026-06-01T06:00:00Z",
+      "vuln_key": "h:b9db6107009435fc",
+      "present": 1,
+      "severity": "MEDIUM",
+      "status": "OPEN"
+     },
+     {
+      "scan_id": "2026-06-01T06:00:00Z",
+      "vuln_key": "id:f-4",
+      "present": 1,
+      "severity": "HIGH",
+      "status": "OPEN"
+     }
+    ],
+    "deltas": {
+     "new_count": 4,
+     "resolved_count": 1,
+     "reopened_count": 0
+    }
+   }
+  },
+  {
+   "name": "second_scan",
+   "input": {
+    "records": [
+     {
+      "id": "f-1",
+      "name": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "firstDetectedAt": "2026-05-18T00:00:00Z",
+      "vulnerableAsset": {
+       "id": "vm-1",
+       "name": "api-server-1",
+       "type": "VIRTUAL_MACHINE",
+       "cloudPlatform": "AWS",
+       "subscriptionName": "prod-sub",
+       "subscriptionExternalId": "123",
+       "tags": {
+        "env": "prod"
+       }
+      }
+     },
+     {
+      "id": "f-2",
+      "name": "CVE-2024-2222",
+      "severity": "HIGH",
+      "status": "OPEN",
+      "firstDetectedAt": "2026-05-25T00:00:00Z",
+      "vulnerableAsset": {
+       "id": "vm-2",
+       "name": "db-1",
+       "type": "VIRTUAL_MACHINE",
+       "cloudPlatform": "Azure"
+      }
+     }
+    ],
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-20T12:30:45Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-05-30T08:00:00Z",
+      "resolution_src": "api",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "scan_id": "2026-06-08T06:00:00Z",
+    "scan_ts": "2026-06-08T06:00:00Z",
+    "prev_scan_id": "2026-06-01T06:00:00Z",
+    "options": {}
+   },
+   "expected": {
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-18T00:00:00Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 1,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "observations": [
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "id:f-1",
+      "present": 1,
+      "severity": "CRITICAL",
+      "status": "OPEN"
+     },
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "id:f-2",
+      "present": 1,
+      "severity": "HIGH",
+      "status": "OPEN"
+     },
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "h:b9db6107009435fc",
+      "present": 0,
+      "severity": "MEDIUM",
+      "status": "RESOLVED"
+     },
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "id:f-4",
+      "present": 0,
+      "severity": "HIGH",
+      "status": "RESOLVED"
+     }
+    ],
+    "deltas": {
+     "new_count": 0,
+     "resolved_count": 2,
+     "reopened_count": 1
+    }
+   }
+  },
+  {
+   "name": "midpoint_disappearance",
+   "input": {
+    "records": [
+     {
+      "id": "f-1",
+      "name": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "firstDetectedAt": "2026-05-20T12:30:45Z",
+      "vulnerableAsset": {
+       "id": "vm-1",
+       "name": "api-server-1",
+       "type": "VIRTUAL_MACHINE",
+       "cloudPlatform": "AWS",
+       "subscriptionName": "prod-sub",
+       "subscriptionExternalId": "123",
+       "tags": {
+        "env": "prod"
+       }
+      }
+     }
+    ],
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-20T12:30:45Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-05-30T08:00:00Z",
+      "resolution_src": "api",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "scan_id": "2026-06-08T06:00:00Z",
+    "scan_ts": "2026-06-08T06:00:00Z",
+    "prev_scan_id": "2026-06-01T06:00:00Z",
+    "options": {
+     "disappearance_mode": "midpoint",
+     "prev_scan_ts": "2026-06-01T06:00:00Z"
+    }
+   },
+   "expected": {
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-20T12:30:45Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-05-30T08:00:00Z",
+      "resolution_src": "api",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-04T18:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-04T18:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "observations": [
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "id:f-1",
+      "present": 1,
+      "severity": "CRITICAL",
+      "status": "OPEN"
+     },
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "h:b9db6107009435fc",
+      "present": 0,
+      "severity": "MEDIUM",
+      "status": "RESOLVED"
+     },
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "id:f-4",
+      "present": 0,
+      "severity": "HIGH",
+      "status": "RESOLVED"
+     }
+    ],
+    "deltas": {
+     "new_count": 0,
+     "resolved_count": 2,
+     "reopened_count": 0
+    }
+   }
+  },
+  {
+   "name": "scope_guard",
+   "input": {
+    "records": [
+     {
+      "id": "f-1",
+      "name": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "firstDetectedAt": "2026-05-20T12:30:45Z",
+      "vulnerableAsset": {
+       "id": "vm-1",
+       "name": "api-server-1",
+       "type": "VIRTUAL_MACHINE",
+       "cloudPlatform": "AWS",
+       "subscriptionName": "prod-sub",
+       "subscriptionExternalId": "123",
+       "tags": {
+        "env": "prod"
+       }
+      }
+     },
+     {
+      "id": "f-2",
+      "name": "CVE-2024-2222",
+      "severity": "HIGH",
+      "status": "OPEN"
+     }
+    ],
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-20T12:30:45Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-05-30T08:00:00Z",
+      "resolution_src": "api",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "scan_id": "2026-06-08T06:00:00Z",
+    "scan_ts": "2026-06-08T06:00:00Z",
+    "prev_scan_id": "2026-06-01T06:00:00Z",
+    "options": {
+     "scanned_severities": [
+      "CRITICAL",
+      "HIGH"
+     ]
+    }
+   },
+   "expected": {
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-20T12:30:45Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-08T06:00:00Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 1,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "observations": [
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "id:f-1",
+      "present": 1,
+      "severity": "CRITICAL",
+      "status": "OPEN"
+     },
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "id:f-2",
+      "present": 1,
+      "severity": "HIGH",
+      "status": "OPEN"
+     },
+     {
+      "scan_id": "2026-06-08T06:00:00Z",
+      "vuln_key": "id:f-4",
+      "present": 0,
+      "severity": "HIGH",
+      "status": "RESOLVED"
+     }
+    ],
+    "deltas": {
+     "new_count": 0,
+     "resolved_count": 1,
+     "reopened_count": 1
+    }
+   }
+  },
+  {
+   "name": "prev_by_severity",
+   "input": {
+    "records": [
+     {
+      "id": "f-1",
+      "name": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "status": "OPEN",
+      "firstDetectedAt": "2026-05-20T12:30:45Z",
+      "vulnerableAsset": {
+       "id": "vm-1",
+       "name": "api-server-1",
+       "type": "VIRTUAL_MACHINE",
+       "cloudPlatform": "AWS",
+       "subscriptionName": "prod-sub",
+       "subscriptionExternalId": "123",
+       "tags": {
+        "env": "prod"
+       }
+      }
+     }
+    ],
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-18T00:00:00Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 1,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "scan_id": "2026-06-15T06:00:00Z",
+    "scan_ts": "2026-06-15T06:00:00Z",
+    "prev_scan_id": "2026-06-08T06:00:00Z",
+    "options": {
+     "scanned_severities": [
+      "CRITICAL",
+      "MEDIUM"
+     ],
+     "prev_scan_id_by_severity": {
+      "CRITICAL": "2026-06-08T06:00:00Z",
+      "MEDIUM": "2026-06-01T06:00:00Z"
+     }
+    }
+   },
+   "expected": {
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-18T00:00:00Z",
+      "last_seen": "2026-06-15T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-15T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 1,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "observations": [
+     {
+      "scan_id": "2026-06-15T06:00:00Z",
+      "vuln_key": "id:f-1",
+      "present": 1,
+      "severity": "CRITICAL",
+      "status": "OPEN"
+     }
+    ],
+    "deltas": {
+     "new_count": 0,
+     "resolved_count": 0,
+     "reopened_count": 0
+    }
+   }
+  },
+  {
+   "name": "resolved_relisted",
+   "input": {
+    "records": [
+     {
+      "id": "f-2",
+      "name": "CVE-2024-2222",
+      "severity": "high",
+      "status": "RESOLVED",
+      "firstDetectedAt": "2026-05-25T00:00:00Z",
+      "resolvedAt": "2026-05-30T10:00:00+02:00",
+      "vulnerableAsset": {
+       "id": "vm-2",
+       "name": "db-1",
+       "type": "VIRTUAL_MACHINE",
+       "cloudPlatform": "Azure"
+      }
+     }
+    ],
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-18T00:00:00Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "OPEN",
+      "resolved_at": null,
+      "resolution_src": null,
+      "reopened_count": 1,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "scan_id": "2026-06-15T06:00:00Z",
+    "scan_ts": "2026-06-15T06:00:00Z",
+    "prev_scan_id": "2026-06-08T06:00:00Z",
+    "options": {}
+   },
+   "expected": {
+    "ledger": {
+     "id:f-1": {
+      "vuln_key": "id:f-1",
+      "cve": "CVE-2024-1111",
+      "severity": "CRITICAL",
+      "asset_id": "vm-1",
+      "asset_name": "api-server-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "AWS",
+      "subscription_name": "prod-sub",
+      "subscription_ext_id": "123",
+      "tags_json": "{\"env\": \"prod\"}",
+      "first_seen": "2026-05-18T00:00:00Z",
+      "last_seen": "2026-06-08T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-15T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-08T06:00:00Z"
+     },
+     "id:f-2": {
+      "vuln_key": "id:f-2",
+      "cve": "CVE-2024-2222",
+      "severity": "HIGH",
+      "asset_id": "vm-2",
+      "asset_name": "db-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "Azure",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-05-25T00:00:00Z",
+      "last_seen": "2026-06-15T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-05-30T08:00:00Z",
+      "resolution_src": "api",
+      "reopened_count": 1,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-15T06:00:00Z"
+     },
+     "h:b9db6107009435fc": {
+      "vuln_key": "h:b9db6107009435fc",
+      "cve": "CVE-2024-3333",
+      "severity": "MEDIUM",
+      "asset_id": "vm-3",
+      "asset_name": "worker-1",
+      "asset_type": "VIRTUAL_MACHINE",
+      "cloud": "GCP",
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": "{\"env\": \"stage\"}",
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     },
+     "id:f-4": {
+      "vuln_key": "id:f-4",
+      "cve": "CVE-2024-4444",
+      "severity": "HIGH",
+      "asset_id": null,
+      "asset_name": null,
+      "asset_type": null,
+      "cloud": null,
+      "subscription_name": null,
+      "subscription_ext_id": null,
+      "tags_json": null,
+      "first_seen": "2026-06-01T06:00:00Z",
+      "last_seen": "2026-06-01T06:00:00Z",
+      "status": "RESOLVED",
+      "resolved_at": "2026-06-08T06:00:00Z",
+      "resolution_src": "disappeared",
+      "reopened_count": 0,
+      "first_scan_id": "2026-06-01T06:00:00Z",
+      "last_scan_id": "2026-06-01T06:00:00Z"
+     }
+    },
+    "observations": [
+     {
+      "scan_id": "2026-06-15T06:00:00Z",
+      "vuln_key": "id:f-2",
+      "present": 1,
+      "severity": "HIGH",
+      "status": "RESOLVED"
+     },
+     {
+      "scan_id": "2026-06-15T06:00:00Z",
+      "vuln_key": "id:f-1",
+      "present": 0,
+      "severity": "CRITICAL",
+      "status": "RESOLVED"
+     }
+    ],
+    "deltas": {
+     "new_count": 0,
+     "resolved_count": 2,
+     "reopened_count": 0
+    }
+   }
+  }
+ ]
+}

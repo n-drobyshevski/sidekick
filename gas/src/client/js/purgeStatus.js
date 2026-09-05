@@ -9,6 +9,12 @@
 //   - UNREADABLE scans ARE residue, and a run with any of them is NOT "complete". Those
 //     archives still hold the purged findings, so deleting a scan could replay them back.
 //     Saying "done" there would be the one lie this whole feature exists to avoid.
+//
+// The one import is `num` from the UI barrel. That is a FIGURE formatter, not a DOM one — it
+// builds nothing and touches no document — so the "no DOM" claim above still holds and this
+// module still runs under the node test environment.
+
+import { num } from "./ui.js";
 
 /** Minutes since an ISO timestamp, or null when it doesn't parse. */
 function minutesSince(iso, now) {
@@ -17,8 +23,23 @@ function minutesSince(iso, now) {
   return Math.max(0, Math.round((now - t) / 60000));
 }
 
+/**
+ * A count off the PurgeStatus payload, where a missing count really is zero.
+ *
+ * `Number(v || 0)` refused only the FALSY values, and it refused them by luck: the `|| 0`
+ * had to catch null before the cast because `Number(null)` is 0 and finite, which is the
+ * trap CLAUDE.md names. What neither half could refuse is a value that was never a number —
+ * `Number("n/a")` is NaN, and this helper's one caller prints it, so a single bad field
+ * used to put the literal string "NaN archive(s)" in front of an operator deciding whether
+ * a purge finished. `num` refuses before the cast and hands back the stated 0 instead.
+ *
+ * The 0 is deliberate and not inherited: an unreported `scansDone` is zero archives
+ * rewritten, and the two places where a missing figure means something else — an
+ * unrecorded `scansTotal`, an unparseable timestamp — are guarded on their own below
+ * rather than through this helper.
+ */
 function n(v) {
-  return Number(v || 0);
+  return num(v, 0);
 }
 
 /** "1 finding" / "4,312 findings" — plural and grouped, since these numbers get large. */

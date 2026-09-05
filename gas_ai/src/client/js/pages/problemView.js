@@ -18,7 +18,7 @@
 // has to the toxic-combination ranking `rankGroups` already applied. "No sort selected"
 // means "trust the order the server sent."
 
-import { dueRank } from "../ui/format.js";
+import { dueRank } from "../../../../../gas_shared/ui/format.js";
 
 export const KIND_VALUES = ["ISSUE", "FINDING"];
 export const SEVERITY_RANK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];

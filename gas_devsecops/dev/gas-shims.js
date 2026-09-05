@@ -446,9 +446,35 @@
           // Both names on purpose: gas_ai spills a long live sync onto trigger_continueSync
           // (syncJobs.CONTINUE_HANDLER), and without firing it a real sync stops at the first
           // budget expiry and never resumes — looking exactly like a hang.
+          //
+          // THE NAMESPACE IS RESOLVED, NOT ASSUMED, and this used to read
+          // `window.Server.jobs.continueJob()` — a name inherited from the gas_ai fork that
+          // this register's bundle does not export. It exposes `Server.scanJobs`
+          // (src/server/index.ts). The old call therefore threw on every continuation, and
+          // the catch below turned that into one console line: a dev sync needing a second
+          // hop sat in FETCHING for ever and looked like a stalled tenant. It went unnoticed
+          // because the only sync anyone had run — secrets + sast, 11 API calls — finishes
+          // inside the first 45s budget and never asks for a hop at all.
+          //
+          // So the lookup now REFUSES rather than falling through quietly: if no candidate
+          // namespace carries continueJob it says what it looked for and what `Server`
+          // actually has, which is the difference between a bug you find in a minute and one
+          // that reads as a hanging fetch.
           if (handler === "trigger_continueScan" || handler === "trigger_continueSync") {
             setTimeout(() => {
-              try { window.Server.jobs.continueJob(); }
+              const ns = ["scanJobs", "jobs", "syncJobs"]
+                .map((n) => window.Server && window.Server[n])
+                .find((m) => m && typeof m.continueJob === "function");
+              if (!ns) {
+                console.error(
+                  "[shim] continuation trigger fired but no Server namespace carries "
+                  + "continueJob(). Looked for: scanJobs, jobs, syncJobs. Server has: "
+                  + Object.keys(window.Server || {}).join(", ")
+                  + ". The sync will stay in FETCHING — this is a harness defect, not a hang.",
+                );
+                return;
+              }
+              try { ns.continueJob(); }
               catch (e) { console.error("continueJob failed:", e); }
             }, 100);
           }

@@ -1,0 +1,356 @@
+/* THE SHARED TOKEN BASE - every design token that is NOT this or that app's brand.
+   Imported FIRST by each app's styles.css, with the app's own five-token brand block
+   directly after it. Nothing in this file may name a brand colour: the one axis of
+   variation between the three sidekicks is the accent, and holding it in exactly one small
+   block per app is what keeps that true.
+
+   The severity palette below is byte-identical across all four surfaces on purpose - a
+   severity means the same thing everywhere; the brand deliberately does not (PRODUCT.md).
+   The trailing * / html / body rules came with the tokens rather than with base.css and
+   stay here so the cascade is unchanged. */
+:root {
+  /* The icon rail's own track. It never moves: the second tier is a panel beside it, not a
+     wider version of it. Sized by its longest label rather than by its icons — "Landscape"
+     and "Assurance" have to sit on one line at 10px, because a rail that ellipsised its own
+     item names would be an icon rail with decoration under it. 84px while a disclosure caret
+     needed a lane of its own on the right; 76 now that nothing does. */
+  --rail-icon-w: 76px;
+  /* The nav panel — wide enough for a framework's full name, which is the longest thing it
+     ever lists ("OWASP Top 10 For Agentic Applications 2026"). */
+  --nav-flyout-w: 280px;
+  /* HOW MUCH CHROME IS ON THE LEFT, which is what this has always meant and why the route
+     overlay can clear it with `left: var(--rail-w)` and nothing else. The rail alone while
+     the panel floats; rail + panel once the panel is pinned into the flow, which navFlyout.js
+     writes onto the root. */
+  --rail-w: var(--rail-icon-w);
+  /* The app header's height. A token rather than a literal because the shell's rows, the
+     sticky offset below 800px and the rail beneath it all have to agree on one number. */
+  --appbar-h: 48px;
+  /* THE BRAND ACCENT lives in the APP's own tokens.css, imported directly after this file.
+     Five tokens, and the split between them is the contract: --accent (fills only),
+     --accent-hover, --accent-text (all ink, links and focus rings), --accent-edge (under
+     every accent fill) and --on-accent (ink ON an accent fill). See gas_shared/README.md
+     for the per-app values and the measured contrast behind each one, and the app's own
+     styles/tokens.css for why its accent needs the split at all.
+
+     RESERVED, NOT YET DEFINED: the --chart-cat-* prefix, for the categorical chart palette
+     the three registers will eventually agree on. Nothing may claim those names locally. */
+  --ink: #171717;
+  --graphite: #0a0a0a;
+  --graphite-hover: #27272a;
+  --on-graphite: #fafafa;
+  --page: #ffffff;
+  --surface: #f8f8fa;
+  --hairline: #e6e6e9;
+  /* A step darker than --surface, for a hover state on a flat control (button, combobox
+     trigger, sheet-cluster button) that --wash-hover reads as too faint against. */
+  --surface-2: #f1f1f4;
+  /* A step darker than --hairline, paired with --surface-2 on the same hover states so the
+     border darkens with the fill rather than vanishing into it. */
+  --hairline-strong: #d9d9de;
+  --text-2: rgba(0, 0, 0, 0.65);
+  /* Tertiary text: 0.6 alpha clears WCAG AA (~5.4:1 on the surface tint) for the 11-13px
+     labels, captions and sub-values it carries. 0.5 resolved to ~3.95:1 and failed — the
+     OS-vulns tool found the same and raised it there first. */
+  --text-3: rgba(0, 0, 0, 0.6);
+  /* Secondary text INSIDE the SVG canvas (node kind, group and edge labels, the AARS
+     figure). SVG text can't inherit --text-2 through `color`, and these sit on the pale
+     category tints as often as on white, so they carry their own token at ~5.5:1. */
+  --svg-text-2: rgba(0, 0, 0, 0.62);
+
+  /* Readable line length for running text. The pane fills the viewport; prose does
+     not follow it out to 1800px, where a sentence becomes a scan across the desk. */
+  /* 84ch was above the readable band for running text, and it is the reason a page subtitle
+     could run to 40 words without ever looking too long: it had a whole desk to spread across.
+     72ch sits inside the 65-75ch the shared document already asks for, and it makes an
+     overlong paragraph visibly overlong, which is the point. */
+  --measure: 72ch;
+
+  /* THE SPACING RAMP, which ../../../DESIGN.md specified from the start and this file never
+     carried. Every padding, margin and gap in the tree was a bare literal: 837 declarations,
+     35 distinct lengths, only 40.7% of them on a multiple of 4. The de-facto scale that grew
+     instead was a 2px ramp (2/4/6/8/10/12/14), where `10px` outranked `12px` and `6px`
+     outranked `16px`.
+
+     Numeric names rather than xs..xl, matching the shared document's own `spacing` block so
+     the two tools stay comparable. --space-half is the one sub-step and it has exactly one
+     job: the vertical interior of badges, chips and pills, which the shared component spec
+     already fixes at 2px 8px.
+
+     THE LAYOUT TIER IS THE POINT. 89% of spacing here is <=14px and only 27 declarations in
+     6,277 lines reach 24px, which is the whitespace deficit stated as a number. Intra-group
+     spacing stays tight (1..3); SEPARATION BETWEEN SECTIONS uses 5..7. Rhythm is the contrast
+     between the two tiers, not a uniform loosening. */
+  --space-half: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* THE TYPE SCALE. 335 font-size declarations resolved to 19 distinct sizes, 95.8% of them
+     inside the 9-15px band across 13 sizes stepping at 1.04-1.09 — a flat mush, plus 37
+     fractional-pixel hand-nudges. Seven steps now, and nothing else.
+
+     The 11/12 pair is a ROLE distinction (a badge is not a caption), not a hierarchy step, so
+     it is exempt from the ratio rule. Everything else steps at 1.14+, the display tier at
+     1.33. Deliberately tighter than the usual 1.25-per-step advice because this is a product
+     register: there are far more type roles here than on a brand surface and exaggerated
+     contrast between them reads as noise. Do not "fix" the body band by spreading it. */
+  --fs-hero: 32px;        /* the one hero value per page, and only ever a data value */
+  --fs-display: 24px;     /* h1 */
+  --fs-display-sm: 18px;  /* sub-hero values, sheet titles */
+  --fs-lead: 16px;        /* card and subsection titles */
+  --fs-body: 14px;        /* default: table cells, controls, prose */
+  --fs-label: 12px;       /* section labels, control labels, captions, tip copy */
+  --fs-micro: 11px;       /* badges, chips, dense table meta, counts */
+
+  /* Weight carried no gradation: 600 appeared 155 times against 400 six times, so the
+     inherited body weight did the work implicitly and 600 was the only emphasis step. Four
+     named steps, with 700 reserved for the hero value alone. */
+  --fw-body: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-hero: 700;
+
+  /* The product mark's three colours (ui/brandMark.js). DECORATIVE ONLY, and deliberately
+     their own tokens rather than aliases of anything below: the mark's warm dots land near
+     --sev-critical and its cool dots on the --sev-low hue, and DESIGN.md reserves that
+     channel for meaning. Naming them apart is what stops a later reader treating the globe
+     as a severity reading, and makes a retint one edit in one place. Nothing but
+     .brand-mark may consume them. */
+  --mark-map-blue: #5cb2e3;
+  --mark-map-red: #f32b2b;
+  --mark-ink: #0a0a0a;
+
+  --sev-critical: #dc2626;  --sev-critical-text: #b91c1c;
+  --sev-high: #ea580c;      --sev-high-text: #c2410c;
+  --sev-medium: #d97706;    --sev-medium-text: #b45309;
+  --sev-low: #2563eb;       --sev-low-text: #1d4ed8;
+  --sev-info: #64748b;      --sev-info-text: #475569;
+  --sev-unknown: #475569;   --sev-unknown-text: #334155;
+
+  /* Darkened from #15803d / #a16207, which measured 4.27:1 and 4.20:1 on their own 0.12
+     tints — under the 4.5:1 bar for the 12-13px badges they carry, and under the bar
+     DESIGN.md says the two-token split exists to clear. Now 5.55 and 5.35. The --sev-*-text
+     tokens always honoured this; these two never did. */
+  --ok: #136c34;
+  --warn: #8a5406;
+  --bad: #b91c1c;
+
+  /* THE POSTURE TIER SCALE, which is NOT the four .pill kinds — see ui/posture.js for why
+     an ordinal scale forks from a categorical one. Per step: the fill it wears solid (the
+     mass strip), the tint it wears as a surface (lattice cells, badges), the text that
+     clears 4.5:1 on that tint, and the edge that keeps adjacent cells apart.
+
+     Adopted against a measurement rather than a preference: every adjacent pair of SOLIDS
+     separates by 29.2 / 16.1 / 19.3 in OKLab and 18.0 / 12.0 / 16.5 under dichromatic
+     simulation, against floors of 15 and 8. That is the property the old scale lacked — its
+     amber and orange sat 6.7 apart, so they read as one block however the alphas were
+     tuned, which is what made the tier mass strip illegible. */
+  --rank-1-solid: #16a34a; --rank-1-tint: rgba(22, 163, 74, 0.20);
+  --rank-1-text: #08732f;  --rank-1-edge: #9dd8b3;
+  --rank-2-solid: #ffcb13; --rank-2-tint: rgba(255, 203, 19, 0.28);
+  --rank-2-text: #7f6405;  --rank-2-edge: #ffe074;
+  --rank-3-solid: #ff8605; --rank-3-tint: rgba(255, 134, 5, 0.36);
+  --rank-3-text: #894a06;  --rank-3-edge: #ffa442;
+  --rank-4-solid: #dc2626; --rank-4-tint: rgba(220, 38, 38, 0.52);
+  --rank-4-text: #790b0b;  --rank-4-edge: #e03c3c;
+
+  /* Graph node categories — reinforce the kind icon + label, never the only cue. These are
+     Wiz's own cluster hues, so a category means the same colour here as in the console the
+     analyst came from: compute blue, data green, identity purple, vulnerability red,
+     network orange. Each has a saturated `ink` (icon + medallion ring, ≥3:1 graphical), a
+     darker `text` that clears 4.5:1 on BOTH white and its own tint (combos.css uses it on
+     each), and a pale `tint` fill.
+
+     These USED to be held deliberately off the severity channel so the per-node severity
+     dot read as unambiguously a severity. Adopting Wiz's literal values gives that up, and
+     the collision is exact, not approximate:
+
+       --cat-vuln-ink      #dc2626 IS --sev-critical
+       --cat-vuln-text     #b91c1c IS --sev-critical-text
+       --cat-exposure-ink  #ea580c IS --sev-high
+       --cat-exposure-text #c2410c IS --sev-high-text
+       --cat-asset-text    #1d4ed8 IS --sev-low-text
+
+     So a category tint no longer reads as distinct from a severity, and the severity DOT
+     AND WORD are now the only severity signal on a node. They stay paired, so severity is
+     still never carried by colour alone — but the redundancy is gone. Retint deliberately.
+
+     One deviation from Wiz: its network orange #f97316 measures 2.64:1 on its own tint and
+     fails the 3:1 floor for a graphical mark, so exposure takes #ea580c (3.35:1). */
+  --cat-asset-ink: #3b82f6;    --cat-asset-text: #1d4ed8;    --cat-asset-tint: #eff6ff;
+  --cat-data-ink: #16a34a;     --cat-data-text: #15803d;     --cat-data-tint: #f0fdf4;
+  --cat-iam-ink: #8b5cf6;      --cat-iam-text: #6d28d9;      --cat-iam-tint: #f5f3ff;
+  --cat-vuln-ink: #dc2626;     --cat-vuln-text: #b91c1c;     --cat-vuln-tint: #fef2f2;
+  --cat-exposure-ink: #ea580c; --cat-exposure-text: #c2410c; --cat-exposure-tint: #fff7ed;
+
+  /* The sixth radius, which was already the most-used one after the five tokens (12 bare
+     literals) and never got named. Three of its uses sit on :focus-visible rules, so it is
+     load-bearing rather than cosmetic. */
+  --radius-xs: 3px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 14px;
+  /* Fully rounded: chips, dots and meter tracks. Was a bare 999px in ~30 places. */
+  --radius-pill: 999px;
+
+  /* The neutral wash under a meter/bar track, and the one under a hovered flat control.
+     Both were open-coded per component and had drifted across five alpha values
+     (0.03…0.05 for hover), which is five slightly different answers to one question. */
+  --track-bg: rgba(0, 0, 0, 0.07);
+  --wash-hover: rgba(0, 0, 0, 0.045);
+  /* --accent-wash / --accent-wash-hover are brand too - see the app's own tokens.css. */
+
+  /* Detail-sheet geometry. The register's asset record carries issues, compliance
+     findings, relationships AND identity, so it runs wider than DESIGN.md's flat
+     per-finding Finding Sheet; the widen step is there for the landscapes where the
+     relationship list is the point. */
+  --sheet-w: min(600px, 94vw);
+  --sheet-w-wide: min(920px, 96vw);
+
+  /* The record sheets (asset, issue) run wider again, and are user-resizable between the
+     floor and 96vw. They carry a section rail beside the content pane, so the rail's width
+     comes out of the sheet rather than out of the reading column. Deliberately separate
+     tokens from --sheet-w: the filter, sync-progress and scan drawers are single-pane and
+     must not widen along with them. */
+  --sheet-w-record: min(960px, 94vw);
+  --sheet-w-record-wide: min(1280px, 96vw);
+  --sheet-w-record-min: 520px;
+  --sheet-rail-w: 184px;
+
+  /* SEMANTIC Z-INDEX - one scale, merged across the three sidekicks.
+     Every layer these apps actually stack, in the order they stack, whether or not this
+     app draws all of them. Four values here were bare literals in the stylesheets until
+     this package: the route overlay (20), the <=800px sticky top bar (45 -> --z-topbar),
+     the boot splash (55) and the toasts (60). A literal is invisible to the reader of the
+     rule beside it and to anyone adding a layer between two others, which is the whole
+     reason for a named scale - a comment in this block reading "the route overlay (20)"
+     while the rule itself said z-index: 20 is documentation of a number nothing held.
+
+     Only 1 and 2 are still allowed as literals, and only for stacking WITHIN a component
+     (a sticky table header over its own rows, a focused segmented button over its
+     neighbour's border). Those are local, not app layers. test/shared.test.js's zscale
+     contract holds both halves. */
+  --z-canvas-chrome: 5;
+  /* The graph's query editor, floating over its own canvas: above the zoom capsule and the
+     legend it must cover, below the scrim so an asset sheet still covers IT. */
+  --z-canvas-panel: 10;
+  /* The route-reload veil over the CONTENT pane. Everything the reader must keep during a
+     refetch outranks it. */
+  --z-route-overlay: 20;
+  /* The nav panel, floating over the content pane. ABOVE the route overlay: a panel open
+     while a page refetches must stay readable and clickable, and hovering the rail is exactly
+     what a reader is doing when a route reload starts. BELOW the scrim, so a record sheet
+     still covers it - deliberately not --z-popover, which is for surfaces that open from
+     INSIDE a sheet and must therefore outrank it. */
+  --z-nav-flyout: 25;
+  /* The app header. Above the route overlay, because the overlay veils the CONTENT pane
+     while a page refetches and the header is not part of it - the same clearance the rail
+     gets for free by sitting outside the overlay's box. Below the scrim so a detail sheet
+     still covers it: a modal that dimmed the whole page except one bar would leave the
+     project switcher live underneath it. */
+  --z-appbar: 30;
+  /* The <=800px top bar, which is what the rail becomes below that width. It has the app
+     header's job at that size and therefore the app header's clearance: above the
+     full-width route overlay so nav + sync controls stay usable during a reload.
+     THIS MOVED, AND THE MOVE IS DELIBERATE. The rule carried a bare z-index: 45, which also
+     put it above the scrim (40) and above the sheet itself (41) - so on a narrow viewport
+     an open sheet dimmed the whole page EXCEPT the top bar and left it clickable behind the
+     modal. The rule's own comment never claimed that clearance; it claimed the route
+     overlay, which 32 keeps. */
+  --z-topbar: 32;
+  --z-scrim: 40;
+  --z-sheet: 41;
+  --z-popover: 52;
+  /* The boot splash: a full-viewport branded veil over everything the app has painted,
+     including any sheet a reload found open. Below the toasts, which must survive it. */
+  --z-splash: 55;
+  /* The hover card outranks --z-popover for the same reason --z-popover outranks --z-sheet: a
+     combobox trigger and a filter pill can both carry a tip, and a definition that opened
+     behind the list it explains would be a definition nobody reads. Below the boot splash
+     and the toasts, neither of which a tip should ever cover. */
+  --z-tooltip: 58;
+  /* The top of the stack, and the only layer with nothing above it: a toast reports what
+     just happened and must be readable over every surface, splash included. */
+  --z-toast: 60;
+
+  --shadow-card: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+  --shadow-button: 0 1px 2px 0 rgba(0, 0, 0, 0.04);
+  --shadow-sheet: -8px 0 24px -8px rgba(0, 0, 0, 0.18), -2px 0 8px -4px rgba(0, 0, 0, 0.1);
+  /* The sheet's shadow, mirrored. Both are the Whisper-Or-Lift Rule's "real elevation", spent
+     on an overlay rather than a card — but the sheet is anchored to the right edge and this is
+     anchored to the left, and a shadow that fell the same way would pool under the rail
+     instead of over the page the panel covers. */
+  --shadow-flyout: 8px 0 24px -8px rgba(0, 0, 0, 0.18), 2px 0 8px -4px rgba(0, 0, 0, 0.1);
+  /* The two overlays that were carrying bare literals. Both are real elevations under the
+     Whisper-Or-Lift Rule (they sit above the page), so they belong in the vocabulary rather
+     than open-coded in feedback.css. */
+  --shadow-dialog: 0 12px 32px -8px rgba(0, 0, 0, 0.2);
+  --shadow-toast: 0 6px 18px -6px rgba(0, 0, 0, 0.35);
+
+  /* The two non-neutral toast backgrounds (.toast.warn / .toast.error), which were carrying
+     bare literals in feedback.css alongside the graphite default above. */
+  --toast-warn-bg: #3f2d04;
+  --toast-error-bg: #450a0a;
+
+  --font: -apple-system, BlinkMacSystemFont, Inter, "Segoe UI", Roboto, "Helvetica Neue",
+    sans-serif;
+
+  /* Motion. Nothing referenced these before the ghost graph — every duration in the tree up to
+     now was a bare literal (~30 of them, from aars.css's 120ms to sheet.css's 220ms), and this
+     is not a sweep to collect them, only tokens for the new animations below. Keep the
+     vocabulary to `ease` / `ease-out` / `ease-in-out` / `linear`; no cubic-beziers anywhere in
+     this codebase, and no reason to start with a loading state. */
+  /* --dur-quick is the "updating / dim" idiom: seven bare uses across aars, compliance,
+     graph, lattice, sheet and tables. It is a fourth step rather than a redefinition of
+     --dur-fast, because eight rules already reference --dur-fast at 140ms and retiming those
+     would be a behaviour change wearing a cleanup's clothes. */
+  --dur-quick: 120ms;
+  --dur-fast: 140ms;
+  --dur-base: 180ms;
+  --dur-slow: 320ms;
+  --ease-out: ease-out;
+  --ease-loop: ease-in-out;
+}
+
+* { box-sizing: border-box; }
+
+/* THE 0.875rem WAS BEING APPLIED TWICE, and every rem in the tree inherited the mistake.
+   `html, body { font-size: 0.875rem }` sets BOTH: on the root, `rem` resolves against the
+   initial 16px and gives 14px; on body, the same declaration then resolves against the 14px
+   root it just created and gives 12.25px. Measured in the browser before this change:
+
+     html 14px | body 12.25px | 1rem 14px | 1.125rem 15.75px | 1.5rem 21px | 2rem 28px
+
+   So the documented body size was rendering at 12.25px, and the rem-based display tier was
+   landing 12% under spec everywhere. That the corrected root puts 2rem/1.5rem/1.125rem back
+   onto DESIGN.md's own 32/24/18 is the evidence this was always a bug rather than a taste:
+   the intent was a 16px root, and the accidental 14px one shrank the whole display tier.
+
+   Across the 11 routes this moved 2,036 of 8,309 nodes (24.5%) off an inherited 12.25px that
+   no stylesheet ever asked for. The root now keeps the browser's own size rather than
+   overriding it, which is what makes the remaining rem values honour a raised default font.
+   The --fs-* tokens are still px and still do not scale; whether they should is a real open
+   question, deliberately not answered in the same change that fixes the arithmetic. */
+html {
+  font-size: 100%;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--page);
+  color: var(--ink);
+  font-family: var(--font);
+  line-height: 1.5;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+body {
+  font-size: var(--fs-body);
+}

@@ -67,5 +67,5 @@ The price is paid structurally rather than forgiven:
 - `--accent-text` (`#7c4a0a`, 7.39:1) carries everything the accent used to;
 - the primary button stays graphite, because white on this accent is 1.52:1.
 
-`test/tokens.test.js` holds all four. A later edit that "simplifies" a focus ring back onto
+`test/shared.test.js` holds all four. A later edit that "simplifies" a focus ring back onto
 `var(--accent)` would look tidy and would be unreadable.

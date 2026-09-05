@@ -1,0 +1,122 @@
+{
+ "scans": [
+  {
+   "scan_id": "s1",
+   "ts": "2026-06-01T06:00:00Z",
+   "shape": "flat"
+  },
+  {
+   "scan_id": "s2",
+   "ts": "2026-06-08T06:00:00Z",
+   "shape": "flat"
+  },
+  {
+   "scan_id": "sg",
+   "ts": "2026-06-10T06:00:00Z",
+   "shape": "grouped"
+  },
+  {
+   "scan_id": "s3",
+   "ts": "2026-06-15T06:00:00Z",
+   "shape": "flat"
+  }
+ ],
+ "base": [
+  {
+   "severity": "CRITICAL",
+   "first_seen": "2026-05-20T00:00:00Z",
+   "resolved_at": "2026-06-05T00:00:00Z",
+   "mttr_days": 16.0
+  },
+  {
+   "severity": "CRITICAL",
+   "first_seen": "2026-06-02T00:00:00Z",
+   "resolved_at": null,
+   "mttr_days": null
+  },
+  {
+   "severity": "HIGH",
+   "first_seen": "2026-05-01T00:00:00Z",
+   "resolved_at": "2026-06-12T00:00:00Z",
+   "mttr_days": 42.0
+  },
+  {
+   "severity": "HIGH",
+   "first_seen": "2026-06-09T00:00:00Z",
+   "resolved_at": null,
+   "mttr_days": null
+  },
+  {
+   "severity": "MEDIUM",
+   "first_seen": "2026-04-01T00:00:00Z",
+   "resolved_at": "2026-05-01T00:00:00Z",
+   "mttr_days": 30.0
+  },
+  {
+   "severity": "LOW",
+   "first_seen": "2026-06-14T00:00:00Z",
+   "resolved_at": null,
+   "mttr_days": null
+  },
+  {
+   "severity": "UNKNOWN",
+   "first_seen": "2026-06-01T00:00:00Z",
+   "resolved_at": null,
+   "mttr_days": null
+  }
+ ],
+ "expected": {
+  "all": [
+   {
+    "date": "2026-06-01T06:00:00Z",
+    "open": 3,
+    "resolved": 1,
+    "median_days": 30.0,
+    "sla_pct": 100.0,
+    "oldest_open_days": 31.25
+   },
+   {
+    "date": "2026-06-08T06:00:00Z",
+    "open": 3,
+    "resolved": 2,
+    "median_days": 23.0,
+    "sla_pct": 50.0,
+    "oldest_open_days": 38.25
+   },
+   {
+    "date": "2026-06-15T06:00:00Z",
+    "open": 4,
+    "resolved": 3,
+    "median_days": 30.0,
+    "sla_pct": 33.3,
+    "oldest_open_days": 14.25
+   }
+  ],
+  "scoped_critical_high": [
+   {
+    "date": "2026-06-01T06:00:00Z",
+    "open": 3,
+    "resolved": 0,
+    "median_days": null,
+    "sla_pct": null,
+    "oldest_open_days": 31.25
+   },
+   {
+    "date": "2026-06-08T06:00:00Z",
+    "open": 3,
+    "resolved": 1,
+    "median_days": 16.0,
+    "sla_pct": 0.0,
+    "oldest_open_days": 38.25
+   },
+   {
+    "date": "2026-06-15T06:00:00Z",
+    "open": 3,
+    "resolved": 2,
+    "median_days": 29.0,
+    "sla_pct": 0.0,
+    "oldest_open_days": 14.25
+   }
+  ]
+ }
+}

@@ -18,12 +18,12 @@
 // mirrored into the hash — the same discipline combos.js documents, so a background SWR
 // revalidation cannot collapse the table you have open.
 
-import { bootstrapCached, setParams, swrCall } from "../store.js";
+import { bootstrapCached, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
   absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,
   pageHeader, statRow,
-  pager, plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
+  plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, tableFooter,
   skeletonStack, statusPill, togglePills,
   scopeNote,
 } from "../ui.js";
@@ -63,12 +63,16 @@ export async function renderConfigFindings(main, params, ctx) {
     page: Math.max(0, Number(params.page) || 0),
   };
 
-  main.append(
-    el("h1", {}, "Cloud Configuration"),
-    el("p", { class: "page-sub" },
-      "Wiz configuration findings for the AI security framework — what is failing, " +
-      "grouped by the control that failed."),
-  );
+  // `pageHeader`/`heroStat`, not a bare `el("h1", ...)` — see `pages/compliance.js`'s own
+  // note for the reasoning. "Risk" (this route's PAGES lane) is the eyebrow and "Cloud
+  // Configuration" — the route's own PAGES title — is the `<h1>`, at the 1.5rem heading
+  // ceiling rather than in the 2rem hero slot F3 put it in. The `heroStat` further down
+  // carries a figure and no `route`, so the page still owns exactly one h1.
+  main.append(pageHeader({
+    route: "config",
+    lede: "Wiz configuration findings for the AI security framework — what is failing, " +
+      "grouped by the control that failed.",
+  }));
 
   const headHost = el("div", {});
   const bodyHost = el("div", {});
@@ -210,6 +214,7 @@ export async function renderConfigFindings(main, params, ctx) {
         }));
     }
     headHost.append(pageHeader({
+      // NO `route`, SO NO h1: the page's heading is in the header above this one.
       hero: heroStat("Failing controls", String(totals.gaps ?? 0),
         plural(totals.controls ?? 0, "distinct control")),
       aside: strip,
@@ -492,10 +497,13 @@ export async function renderConfigFindings(main, params, ctx) {
       emptyText: "No findings match these filters.",
     });
     bodyHost.append(table);
-    bodyHost.append(pager(page, pageCount, model.filtered, (p) => {
-      view.page = p;
-      pushParams();
-      apply();
+    bodyHost.append(tableFooter({
+      page, pageCount, total: model.filtered,
+      onPage: (p) => {
+        view.page = p;
+        pushParams();
+        apply();
+      },
     }));
   }
 }

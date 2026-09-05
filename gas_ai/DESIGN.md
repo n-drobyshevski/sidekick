@@ -200,6 +200,13 @@ nothing else. Every animation keeps a `prefers-reduced-motion` alternative.
 - **Crimson** (`#be123c`, hover `#9f1239`): the single brand accent, and the one real divergence
   from the sibling tool's Signal Blue. It carries brand, nav, interactive state, the focus ring,
   links, and the toxic-combination halo. **It is never a severity and never a surface.**
+- This is the **five-token accent contract** (`gas_shared/test/contracts/tokens.js`;
+  `gas_shared/README.md`'s "The five-token accent contract") stated for this brand:
+  `--accent`/`--accent-hover` = `#be123c`/`#9f1239` (a fill); `--accent-text` = `#be123c` too,
+  because crimson clears the 4.5:1 TEXT floor on its own, not just the 3:1 graphical-mark
+  floor a fill owes — that is what lets `--accent-edge` stay `transparent` here and
+  `--on-accent` be `#ffffff`. `gas_devsecops`'s yellow cannot make that same collapse; see its
+  own `DESIGN.md`.
 
 ### Secondary
 - **Graphite** (`#0a0a0a`, hover `#27272a`, text on it `#fafafa`): the solid near-black that fills
@@ -275,20 +282,34 @@ are kinds and keep the status triad.
 ### The page shell
 Every route opens the same way, through one shared component:
 
-- **h1** at the display step, and **nothing else at that step**.
-- An optional one-line subtitle. **12 words or fewer.** If it needs more, it is a Help entry
-  wearing a page header, and it belongs in a tip that routes to Help.
+- An optional **lane eyebrow**: the nav group this route sits in, at the label step, uppercase,
+  muted. A `div`, never an `h*` — a lane holds several pages, so a lane name as the heading gives
+  them all the same one, which is precisely how three routes of the Risk lane came to announce
+  "Risk" as their primary heading. Omitted for the chrome tail, which has no lane.
+- **h1** — the route's own **`PAGES` title**, at the display step, and **nothing else at that
+  step**. It is read from the route table rather than typed here, so the heading, the rail link
+  and `document.title` cannot drift apart. A page title never takes the 32px hero step.
+- An optional **subtitle**: one sentence, **12 words or fewer**. If it needs more, it is a Help
+  entry wearing a page header, and it belongs in a tip that routes to Help. Where the route's
+  title is a bare noun the page qualifies (`Data`, `Settings`, `Help`), a short contents phrase
+  — four or five words, no verb — may precede that sentence as a second block line. It is copy
+  the old header carried in the hero-value slot, not a second heading, and never a second
+  sentence: the 12-word rule governs the sentence, and the phrase is not one.
 - An optional **header block**: a borderless grid with a bottom hairline, holding the Hero Stat, an
-  optional distribution strip, and a stat list. No card, no surface tint, no shadow.
+  optional distribution strip, and a stat list. No card, no surface tint, no shadow. A page with
+  a name and no figure renders the title block alone — most routes of a register are lists, and
+  inventing a number for the hero slot is the big-number template the anti-references reject.
 - An optional **toolbar**: one class, one shape, across every route.
 
 Below that, sections separated at the `--space-5`/`--space-6` tier, each opening with a
 section label.
 
 ### The Hero Stat
-The one-per-page headline metric. **Deliberately borderless**: an uppercase label, the value at
-the 32px hero step, an optional change or band chip beside it, and a muted plain-text source line.
-Complementary mini-stats sit below a hairline inside the same block.
+The one-per-page headline metric, and **only ever a measurement** — the page's name lives in the
+h1 above it. **Deliberately borderless**: an uppercase label naming the figure, the value at the
+32px hero step, an optional change or band chip beside it, and a muted plain-text source line.
+The label is dropped only where the h1 already names the figure, so the block never states the
+same word twice. Complementary mini-stats sit below a hairline inside the same block.
 
 Dominance comes from **size, top-left position, and whitespace** — never from a card, gradient, or
 accent stripe. A row of equal tiles is the hero-metric template the anti-references reject; it is
@@ -423,6 +444,7 @@ poll rather than rebuilding, so a live region does not chatter and focus survive
 - Apply `background-clip: text` gradient text anywhere.
 - Introduce a second family, a display font, or a fractional type size.
 - Nest a card inside a card, or reach for a card where spacing would group.
-- Write a page subtitle longer than 12 words.
+- Write a page subtitle sentence longer than 12 words, or a second sentence beside it.
+- Put a page TITLE in the 32px hero-value slot. That step is a measurement; the name is the h1.
 - Put a base64 data URI in the stylesheet. The build fails if a bare `//` survives minification,
   and the base64 alphabet contains `/`. Percent-encode SVG instead.

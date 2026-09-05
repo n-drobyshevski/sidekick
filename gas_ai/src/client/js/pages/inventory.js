@@ -17,13 +17,13 @@
 // The filter/sort/facet logic itself lives in ../assetQuery.js, a hand-kept mirror of
 // src/domain/assetTable.ts that test/assetQueryMirror.test.ts holds to it.
 
-import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../store.js";
+import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { SAVED_VIEW_KEYS, readSavedViews } from "../savedViews.js";
 import { openAssetSheet } from "../detailSheets.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
-} from "../icons.js";
+} from "../../../../../gas_shared/icons.js";
 import { facetGroup, filterUI } from "../filters.js";
 import {
   ADJACENCY_SERIES, EXPLOITATION_SERIES, adjacencyPointNotes, capacityReadout,
@@ -35,7 +35,7 @@ import {
 } from "../assetQuery.js";
 import {
   absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
-  emptyState, errorState,
+  emptyState, errorState, pageHeader,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtDate, kpiCard, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
@@ -171,10 +171,13 @@ export async function renderInventory(main, params) {
   closeActiveSheet();
   const boot = await bootstrap();
   main.append(
-    el("h1", {}, "AI Inventory"),
-    el("p", { class: "page-sub" },
-      "Every AI asset and its supporting identity/data surface from the last sync, " +
-      "ranked by how many issues and failing controls are open on it."),
+    // The three-level header every register page uses: the lane it sits in, the page, and
+    // the one line saying what the rows are. It replaces a bare h1 and the paragraph under
+    // it — same two facts, in the shape the rest of the app already reads in.
+    pageHeader({
+      route: "inventory",
+      lede: "Every AI asset from the last sync, ranked by what is open on it.",
+    }),
   );
 
   if (!boot.latestSync) {
@@ -413,7 +416,10 @@ export async function renderInventory(main, params) {
     const link = el(
       "a",
       { class: "link", href: buildHash("scans", { anchor: "reach" }), target: "_self" },
-      known ? observed.covered + " of " + observed.total : "—",
+      // `absent()`, not a hand-typed dash: `.link`'s own colour would otherwise carry the
+      // dash at the same visual weight the app uses for "click me", which is a stranger
+      // claim about an unmeasured figure than a bare black dash would have been.
+      known ? observed.covered + " of " + observed.total : absent(),
     );
     return el("div", { class: "kpi-row" },
       kpiCard(
@@ -461,7 +467,10 @@ export async function renderInventory(main, params) {
     const countStat = (label, value, key, term) => el("div", { class: "inv-count" },
       el("div", { class: "kpi-label" }, label),
       el("div", { class: "inv-count-row" },
-        el("span", { class: "inv-count-n num" }, value === null ? "—" : String(value)),
+        // `.inv-count-n` sets no colour of its own (it is meant to read at full weight for a
+        // real count), so a hand-typed dash here rendered bold and black — `absent()` is what
+        // this component was missing.
+        el("span", { class: "inv-count-n num" }, value === null ? absent() : String(value)),
         deltaChip(key)),
       term);
     const verdict = el("div", { class: "inv-verdict" },

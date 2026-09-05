@@ -1,0 +1,100 @@
+/* ----------------------------------------------------------- breakpoint survivors */
+/* Every max/min-width query in this tree was audited in this tree for a mergeable near-duplicate.
+   Two pairs looked like candidates on the numbers alone (20px apart) and both were kept
+   after a measured check found a real, visible difference in the gap between them —
+   collapsing either pair would silently change what ships in that 20px window rather
+   than just tidy a magic number.
+
+   620 (components.css .stat-row, under the "Open findings by severity" style stat rows
+   on MTTR & SLA) vs. the 640 already used elsewhere (sheet.css .kv, this file's own
+   .sheet-cluster / .sheet-panes rules): measured via getComputedStyle at #/mttr —
+     620px: .stat-row + .stat-row -> border-top: solid, border-left: none, padding: 8px 0
+     640px: .stat-row + .stat-row -> border-left: solid, border-top: none, padding: 0 16px
+   Moving .stat-row's threshold to 640 would flip that border/padding pair for the whole
+   621-640px band, which is exactly the boundary the query exists to control. Kept at 620.
+
+   1100 (tables.css, min-width, .table-wrap--sticky th — the pinned header on the SCA
+   dependencies table) vs. 1120 (this file's own .sheet-cluster max-width, the record
+   sheet's phone-style action row): measured via getComputedStyle at #/sca —
+     1090px: th position: static,  wrap overflow: auto    (sticky OFF)
+     1100px: th position: sticky,  wrap overflow: visible  (sticky ON)
+   Moving the sticky threshold to 1120 would turn the pinned header off again for
+   1100-1119px, undoing the min-width query's own job. Kept at 1100. */
+
+/* --------------------------------------------------------------- reduced motion */
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+  /* Zeroing the duration still leaves a 100vw jump-cut across the viewport. The sheet
+     appears where it lives; only the scrim changes, and it changes instantly. */
+  .sheet, .sheet.open { transform: none; }
+}
+
+/* -------------------------------------------------- record sheet on small screens */
+/* Three thresholds, and each is about geometry rather than device class.
+
+   The sheet is min(960px, 94vw), so the strip of page left beside it is
+   max(viewport - 960, 6vw). Under ~1120px that strip no longer clears the app's own rail
+   with room for a 40px control, so the cluster comes inside as a row: Close must never
+   end up off-screen or on top of the navigation. */
+@media (max-width: 1120px) {
+  .sheet-cluster {
+    position: static; flex-direction: row; justify-content: flex-end;
+    gap: var(--space-1); padding: var(--space-2) var(--space-4) 0;
+  }
+  .sheet-cluster-pos {
+    margin-right: auto; background: none; padding: 0;
+    color: var(--text-3); text-shadow: none;
+  }
+  .sheet-cluster-btn {
+    width: 32px; height: 32px; min-height: 32px;
+    background: var(--surface); color: var(--ink); box-shadow: none;
+    border: 1px solid var(--hairline);
+  }
+  .sheet-cluster-btn:hover { background: var(--surface-2); color: var(--ink); }
+  .sheet-cluster-btn:focus-visible {
+    box-shadow: none; outline: 2px solid var(--accent-text); outline-offset: 2px;
+  }
+}
+
+/* Under 900px the rail and the pane can no longer both hold a readable column, so the
+   rail becomes a scrolling strip above the pane — and the sheet is close enough to the
+   viewport that there is nothing left to redistribute by dragging. */
+@media (max-width: 900px) {
+  .sheet-panes { flex-direction: column; }
+  .sheet-rail {
+    flex: 0 0 auto; width: auto; max-width: 100%;
+    display: flex; align-items: center; gap: var(--space-1);
+    padding: var(--space-2) var(--space-3); overflow-x: auto; overflow-y: hidden;
+    border-right: none; border-bottom: 1px solid var(--hairline);
+  }
+  .sheet-rail-group { display: contents; }
+  .sheet-rail-label { padding: 0 var(--space-1) 0 var(--space-2); white-space: nowrap; }
+  .sheet-rail-item { width: auto; margin: 0; white-space: nowrap; }
+  .sheet-rail-item.is-active::before {
+    left: 8px; right: 8px; top: auto; bottom: 0; width: auto; height: 2px;
+  }
+  .sheet-grip { display: none; }
+  /* Two value columns stop being readable well before the pane runs out of width; one
+     column of pairs is the honest fallback. */
+  .kv--cols2 { grid-template-columns: 132px minmax(0, 1fr); }
+}
+
+/* ------------------------------------------------------- detail sheet on phones */
+/* DESIGN.md specifies the sheet full-bleed on phones; min(520px, 92vw) used to leave a
+   ~29px strip of dead scrim at 360px. */
+@media (max-width: 640px) {
+  .sheet { --sheet-w: 100vw; box-shadow: none; border-left: none; }
+  .sheet--wide { width: 100vw; }
+  .sheet--record, .sheet--record.sheet--wide { width: 100vw; }
+  .sheet-header, .sheet-body, .sheet-footer,
+  .sheet--record .sheet-header, .sheet--record .sheet-body {
+    padding-left: var(--space-3); padding-right: var(--space-3);
+  }
+  .sheet-cluster { padding-left: var(--space-3); padding-right: var(--space-3); }
+  /* DESIGN.md stacks the property list on phones; the two-column variant follows it. */
+  .kv--cols2 { grid-template-columns: 1fr; gap: 0 0; }
+  .kv--cols2 dt { margin-top: var(--space-2); }
+  .kv--cols2 dt:first-child { margin-top: 0; }
+  .sheet-footer { padding-bottom: calc(var(--space-3) + env(safe-area-inset-bottom, 0px)); }
+  .sheet-footer > button { flex: 1 1 auto; }
+}

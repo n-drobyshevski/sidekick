@@ -3,11 +3,11 @@
 // owns the live "what is this control doing right now" readouts; this file wires DOM controls
 // to the draft and repaints both on every edit.
 
-import { call } from "../api.js";
+import { call } from "../../../../../gas_shared/api.js";
 import { backfillStatusView } from "../backfillStatus.js";
 import { capacityView } from "../capacity.js";
 import { decodePrefill, PREFILL_KEY } from "../attributionPrefill.js";
-import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams } from "../store.js";
+import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams } from "../../../../../gas_shared/store.js";
 import {
   changeCountText, changeSummary, changedFields, clampDisplayToFetch, dirtyTabs, draftWarnings,
   normalizeTab, SETTINGS_TABS, settingsDraft, settingsPatch, validateDraft,
@@ -17,8 +17,10 @@ import {
   toggleReadoutBar, toggleReadoutNote,
 } from "../settingsReadouts.js";
 import {
-  clear, confirmDialog, disclosure, el, emptyState, fmtDateTime, openSheet, saveBar, settingRow,
-  settingsPanel, statusPill, switchToggle, tabList, toast, usageMeter,
+  absent, clear, confirmDialog, diagnosticsPanel, disclosure, el, errorCountBadge, errorLogBody,
+  heroLines,
+  fmtDateTime, normalizeErrorLog, openSheet, pageHeader, saveBar, settingRow,
+  settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor, toast,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
@@ -27,11 +29,16 @@ export async function renderSettings(main, params, ctx) {
   const boot = await bootstrap();
   const accessPanelNode = await renderAccessPanel();
 
-  main.append(
-    el("h1", {}, "Settings"),
-    el("p", { class: "page-sub" },
-      "Scan scope, risk classification, attribution, retention, and system health — grouped by task."),
-  );
+  main.append(pageHeader({
+    route: "settings",
+    // The old hero VALUE was the contents list, not a figure; it keeps its words one level
+    // down, under the h1 the route's PAGES title now supplies.
+    lede: heroLines(
+      "Scan scope, risk, attribution, retention",
+      "One save bar covers every panel below it; access and the system readouts save "
+        + "themselves, on their own controls.",
+    ),
+  }));
 
   // ------------------------------------------------------------------------ draft model
   // `savedShape` is the nested shape settingsDraft() reads (boot.settings, or api_saveSettings's
@@ -98,16 +105,23 @@ export async function renderSettings(main, params, ctx) {
     const fetchSet = new Set(draft.fetchSeverities);
     for (const sev of boot.palette.selectable) {
       const btn = displayPills.pills[sev];
-      if (fetchSet.has(sev)) {
-        btn.removeAttribute("aria-disabled");
-        btn.removeAttribute("title");
-      } else {
-        btn.setAttribute("aria-disabled", "true");
-        btn.title = "Not in the scan scope — add it above to show it.";
-      }
+      if (fetchSet.has(sev)) btn.removeAttribute("aria-disabled");
+      else btn.setAttribute("aria-disabled", "true");
     }
   }
   syncDisplayLock();
+  // Why a pill is locked used to be a native `title` assigned straight onto the button, which
+  // is the one form el()'s ban cannot catch and the one no keyboard or touch reader could
+  // ever summon — the rule the copy above states in prose was, in the control itself, visible
+  // only to a mouse. Anchored ONCE per pill rather than inside syncDisplayLock: the card's
+  // copy is read at reveal time, so a single anchor answers for both states and an unlocked
+  // pill (null lines) simply shows nothing.
+  for (const sev of boot.palette.selectable) {
+    const pill = displayPills.pills[sev];
+    tip(pill, () => (pill.getAttribute("aria-disabled") === "true"
+      ? ["Not in the scan scope — add it above to show it."]
+      : null));
+  }
 
   const scopeReadoutHost = el("div", {});
   const scopePanel = settingsPanel({
@@ -443,7 +457,7 @@ export async function renderSettings(main, params, ctx) {
         "bag is never overwritten, so a repeated or interrupted run converges on the same " +
         "result. Scans already sealed by compaction had their archives pruned; for those, use " +
         "Domain-tag backfill below, which reads the checkpoints instead."))),
-    el("td", { class: "num" }, "—"),
+    el("td", { class: "num" }, absent()),
     historyStatusCell,
     el("td", {}, historyBtn));
 
@@ -482,7 +496,7 @@ export async function renderSettings(main, params, ctx) {
         "runs. Reads the compaction checkpoints in Drive, which still hold them. Safe to " +
         "re-run: a row that already carries its tags is never overwritten, and a run that " +
         "recovers nothing writes nothing."))),
-    el("td", { class: "num" }, "—"),
+    el("td", { class: "num" }, absent()),
     tagStatusCell,
     el("td", {}, tagBtn));
 
@@ -493,11 +507,17 @@ export async function renderSettings(main, params, ctx) {
   } else {
     sgStatusCell.append(statusPill("neutral", "Not run this session"));
   }
+  // This `title` was a LIVE CRASH, not just an unreachable tooltip: el() throws on the key,
+  // and the ternary only evaluated to null on a tenant that HAS credentials — so the Settings
+  // page rendered fine everywhere the attribute was dropped and blew up on exactly the
+  // tenants the sentence was written for. `tipAnchor`, not `tip`: the button is disabled in
+  // that state, so it is out of the tab order and Chromium dispatches no pointer events over
+  // it; the card is best-effort and the status cell beside it says the same thing in text.
   const sgBtn = el("button", {
     onclick: refreshSupportGroups,
     disabled: boot.hasCredentials ? null : true,
-    title: boot.hasCredentials ? null : "Live Wiz credentials are required.",
   }, "Refresh support groups");
+  if (!boot.hasCredentials) tipAnchor(sgBtn, () => ["Live Wiz credentials are required."]);
   async function refreshSupportGroups() {
     sgBtn.disabled = true;
     clear(sgStatusCell);
@@ -528,7 +548,7 @@ export async function renderSettings(main, params, ctx) {
         "CS-SUPPLY-MONITORING). Refreshing pulls every tagged subscription from Wiz and joins " +
         "it onto findings, powering the Support group filter, breakdown, and domain condition. " +
         "Also refreshes automatically after each scan."))),
-    el("td", { class: "num" }, "—"),
+    el("td", { class: "num" }, absent()),
     sgStatusCell,
     el("td", {}, sgBtn));
 
@@ -543,6 +563,11 @@ export async function renderSettings(main, params, ctx) {
   });
 
   // ============================================================================= SYSTEM TAB
+  // The three read-outs this register publishes, drawn by gas_shared/ui/diagnostics.js. Every
+  // section in that module is optional and this app passes exactly the three it already had:
+  // storage, the error log, the build stamp. IT GAINS NOTHING. There is no credential card —
+  // `hasCredentials` in this app only disables a Lifecycle job button — and no last-sync line,
+  // because no `latestSync` field exists in this bootstrap at all.
   const storageHost = el("div", {});
   async function reloadStorageStats() {
     try {
@@ -550,53 +575,49 @@ export async function renderSettings(main, params, ctx) {
       // capacity.js owns the thresholds and the wording so this card and the Data page's
       // breakdown can never disagree about when the ledger is "nearly full".
       const cap = capacityView(stats);
-      clear(storageHost);
-      storageHost.append(
-        usageMeter({
-          used: cap.used, total: cap.total, label: "Spreadsheet cells",
-          state: cap.state, note: cap.note,
-        }),
-        el("p", { class: "muted small", style: "margin:10px 0 0" },
-          `${stats.scanCount} scan(s), ${stats.sealedCount} sealed, ` +
-          `${stats.trackedVulns.toLocaleString()} tracked vulnerabilities.`));
+      // The sentences under the meter stay HERE rather than in the shared module: this register
+      // counts scans and tracked vulnerabilities, a code register counts findings, and one
+      // vocabulary spoken on another's page is the drift the shared package exists to stop.
+      //
       // Data-quality line: tracked vulnerabilities whose severity never normalized to a real
       // value. Additive fields on this payload — guarded defensively so a stale pre-rollout
-      // cache (missing both) simply omits the line.
+      // cache (missing both) simply omits the line, and storageBody() drops a blank one.
+      const lines = [
+        `${stats.scanCount} scan(s), ${stats.sealedCount} sealed, `
+          + `${stats.trackedVulns.toLocaleString()} tracked vulnerabilities.`,
+      ];
       if (stats.unknownSeverityCount) {
         const n = stats.unknownSeverityCount;
-        storageHost.append(el("p", { class: "muted small", style: "margin:6px 0 0" },
-          `${n.toLocaleString()} tracked vulnerabilit${n === 1 ? "y" : "ies"} have an ` +
-          "unrecognized severity. Severity values seen this scan: " +
-          `${(stats.distinctSeverities || []).join(", ")}.`));
+        lines.push(
+          `${n.toLocaleString()} tracked vulnerabilit${n === 1 ? "y" : "ies"} have an `
+          + "unrecognized severity. Severity values seen this scan: "
+          + `${(stats.distinctSeverities || []).join(", ")}.`,
+        );
       }
+      clear(storageHost);
+      storageHost.append(...storageBody({
+        used: cap.used, total: cap.total, label: "Spreadsheet cells",
+        state: cap.state, note: cap.note, lines,
+      }));
     } catch {
       /* stats are decorative */
     }
   }
-  const storageCard = el("div", { class: "health-item" },
-    el("div", { class: "health-head" }, el("span", { class: "label" }, "Storage")),
-    storageHost);
 
   // Recent server-side errors, surfaced in-app so a failure — especially a background one that
   // never shows a toast (post-scan support-group refresh, MTTR snapshot, auto-compaction) — is
   // visible without opening the Apps Script execution log the web app can't reach.
   const errCountHost = el("span", {});
   const recentErrorsBtn = el("button", { onclick: openRecentErrors }, "Recent errors");
-  const errorsCard = el("div", { class: "health-item" },
-    el("div", { class: "health-head" }, el("span", { class: "label" }, "Recent errors")),
-    el("div", { class: "health-row" }, errCountHost, recentErrorsBtn),
-    el("p", { class: "muted small" },
-      "The last 25 server-side errors across scan, support-group refresh, import, compaction, " +
-      "and other operations — including background failures that never surface a toast."));
 
   // Best-effort count badge so a silent failure is discoverable at a glance (the log itself is
-  // decorative — a failed fetch just leaves the badge blank).
+  // decorative — a failed fetch just leaves the badge BLANK, which is deliberately not the same
+  // node as errorCountBadge([])'s "None recorded."; that is why the catch appends nothing).
   (async () => {
     try {
-      const errs = await call("api_getRecentErrors", {});
+      const log = normalizeErrorLog(await call("api_getRecentErrors", {}));
       clear(errCountHost);
-      if (errs && errs.length) errCountHost.append(statusPill("bad", `${errs.length} recorded`));
-      else errCountHost.append(el("span", { class: "muted small" }, "None recorded."));
+      errCountHost.append(errorCountBadge(log.items));
     } catch {
       /* decorative */
     }
@@ -607,75 +628,77 @@ export async function renderSettings(main, params, ctx) {
       title: "Recent errors",
       subtitle: "Newest first — the last 25 server-side errors.",
       width: "min(680px, 94vw)",
-      minWidth: 420,
-      storageKey: "sheetWidthDiagnostics",
+      // `minWidth` and `storageKey` were gas's own sheet options and the shared openSheet has
+      // neither — it destructures a fixed list and ignores the rest, so this sheet had
+      // silently lost its drag-to-resize edge. `resizable: true` is the shared spelling; the
+      // sheet persists its width itself under one app-wide key rather than a per-sheet one,
+      // and its floor comes from the --sheet-w-record-min custom property (520px by default)
+      // rather than from a number passed per call.
+      resizable: true,
     });
   }
   async function renderRecentErrors(body) {
     clear(body).append(el("p", { class: "muted" }, "Loading…"));
-    let errs;
+    let log;
     try {
-      errs = await call("api_getRecentErrors", {});
+      // A BARE ARRAY is what this app's api_getRecentErrors answers, and normalizeErrorLog
+      // unwraps that as readily as the {errors, covers, note} envelope a narrower log sends.
+      // `covers` and `note` come back null here, so neither line is drawn — this log covers
+      // everything the server records.
+      log = normalizeErrorLog(await call("api_getRecentErrors", {}));
     } catch (e) {
       clear(body).append(el("p", { class: "muted" }, `Couldn't load errors: ${e.message}`));
       return;
     }
-    clear(body);
-    body.append(el("div", { style: "display:flex; gap:8px; margin-bottom:12px" },
-      el("button", { onclick: () => renderRecentErrors(body) }, "Refresh"),
-      el("button", {
-        disabled: errs.length ? null : true,
-        onclick: async () => {
-          const ok = await confirmDialog({
-            title: "Clear the error log?",
-            body: el("p", {}, "Removes all recorded errors. It doesn't affect any scan or ledger data."),
-            confirmLabel: "Clear",
-          });
-          if (!ok) return;
-          try {
-            await call("api_clearRecentErrors", {});
-            toast("Error log cleared.");
-            clear(errCountHost);
-            errCountHost.append(el("span", { class: "muted small" }, "None recorded."));
-            renderRecentErrors(body);
-          } catch (e) {
-            toast(`Clear failed: ${e.message}`, "error");
-          }
-        },
-      }, "Clear log")));
-    if (!errs.length) {
-      body.append(emptyState("No errors recorded.",
-        "Background and foreground failures will appear here as they happen."));
-      return;
-    }
-    const tbody = el("tbody", {});
-    for (const e of errs) {
-      tbody.append(el("tr", {},
-        el("td", { class: "small muted", style: "white-space:nowrap" }, fmtDateTime(e.ts)),
-        el("td", {}, el("strong", {}, e.op || "—")),
-        el("td", {}, statusPill(e.kind === "error" ? "bad" : "warn", e.kind || "error")),
-        el("td", {},
-          el("code", { class: "small", style: "white-space:pre-wrap; word-break:break-word" },
-            e.message || "—")),
-      ));
-    }
-    body.append(el("div", { class: "table-wrap" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          ...["When", "Operation", "Kind", "Message"].map((h) => el("th", { scope: "col" }, h)))),
-        tbody)));
+    clear(body).append(...errorLogBody({
+      items: log.items, covers: log.covers, note: log.note, fmtDateTime,
+      onRefresh: () => renderRecentErrors(body),
+      // Clear is a CAPABILITY: this app has api_clearRecentErrors, so the control exists.
+      // gas_devsecops has no clear RPC, passes no onClear, and draws no button at all rather
+      // than a disabled one offering an operation that does not exist.
+      onClear: async () => {
+        const ok = await confirmDialog({
+          title: "Clear the error log?",
+          body: el("p", {}, "Removes all recorded errors. It doesn't affect any scan or ledger data."),
+          confirmLabel: "Clear",
+        });
+        if (!ok) return;
+        try {
+          await call("api_clearRecentErrors", {});
+          toast("Error log cleared.");
+          clear(errCountHost);
+          errCountHost.append(errorCountBadge([]));
+          renderRecentErrors(body);
+        } catch (e) {
+          toast(`Clear failed: ${e.message}`, "error");
+        }
+      },
+    }));
   }
 
-  // Deployed code stamp — confirm at a glance whether a `clasp push` actually took effect. It
-  // rides on the cached bootstrap, but the cache key is itself stamped with the build id
-  // (serverCache.ts), so a cached payload can never report a build that is no longer live.
-  // Reads "dev" when running locally, where there is no esbuild define step.
-  const buildCard = el("div", { class: "health-item" },
-    el("span", { class: "label" }, "Build"),
-    el("p", { class: "health-build small muted" },
-      "Build ", el("code", { class: "small" }, boot.buildId || "—"), "."));
-
-  const healthGrid = el("div", { class: "health-grid" }, storageCard, errorsCard, buildCard);
+  const diagnostics = diagnosticsPanel({
+    heading: "System health",
+    storage: { body: storageHost },
+    errors: {
+      badge: errCountHost,
+      action: recentErrorsBtn,
+      note: "The last 25 server-side errors across scan, support-group refresh, import, "
+        + "compaction, and other operations — including background failures that never surface "
+        + "a toast.",
+    },
+    // Deployed code stamp — confirm at a glance whether a `clasp push` actually took effect. It
+    // rides on the cached bootstrap, but the cache key is itself stamped with the build id
+    // (serverCache.ts), so a cached payload can never report a build that is no longer live.
+    // Reads "dev" when running locally, where there is no esbuild define step.
+    //
+    // ONE STAMP, SO NO MISMATCH CHECK. This app has no client-side build stamp to compare
+    // against — there is no buildInfo.js here — and passing no `client` is what tells the
+    // shared section to print the id rather than a Client/Server comparison whose second half
+    // does not exist. A missing id still reads as absent(), never as a value in code type:
+    // that absence is the whole point of the card, because it means the deploy stamp did not
+    // reach the client.
+    build: { server: boot.buildId },
+  });
 
   // ================================================================ tabs, save bar, assembly
   function tabPanel(key, ...children) {
@@ -688,8 +711,9 @@ export async function renderSettings(main, params, ctx) {
   const riskTab = tabPanel("risk", riskPanel);
   const attributionTab = tabPanel("attribution", domainsPanel, attributionCrossRef);
   const lifecycleTab = tabPanel("lifecycle", retentionPanel, jobsPanel);
-  const systemTab = tabPanel("system",
-    el("h2", { class: "section-label" }, "System health"), healthGrid, accessPanelNode);
+  // The Access roster editor is NOT a diagnostic — it is an editor with its own save control —
+  // so it stays a sibling of the read-out grid rather than moving inside it.
+  const systemTab = tabPanel("system", diagnostics.node, accessPanelNode);
 
   const panels = {
     register: registerTab, risk: riskTab, attribution: attributionTab,

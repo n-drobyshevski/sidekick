@@ -19,8 +19,8 @@ import { describe, expect, it } from "vitest";
 
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, KIND_CATEGORY, KIND_LABELS, glyphPaths, kindsLabel,
-} from "../src/client/js/icons.js";
-import { UI_ICON_NAMES } from "../src/client/js/ui/uiIcons.js";
+} from "../../gas_shared/icons.js";
+import { UI_ICON_NAMES } from "../../gas_shared/ui/uiIcons.js";
 import { NODE_KINDS } from "../src/domain/graphTypes";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");

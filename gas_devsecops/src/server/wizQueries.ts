@@ -144,6 +144,7 @@ export const Q_SCA = `query DevSecOpsVulnerabilityFindings(
         }
       }
       artifactType { codeLibraryLanguage }
+      projects { id name isFolder slug }
     }
     totalCount
     pageInfo { hasNextPage endCursor }

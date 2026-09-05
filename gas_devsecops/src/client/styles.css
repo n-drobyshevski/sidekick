@@ -6,17 +6,27 @@
    surfaces (brand, nav, fills) and NEVER as a severity, never as text, and never
    without --accent-edge under it. See styles/tokens.css for why. */
 
-/* This file is an index. The rules live in styles/, split by what they dress; esbuild
-   inlines them back into one <style> partial at build time (esbuild.config.mjs).
+/* This file is an index, and MOST OF WHAT IT INDEXES IS NO LONGER THIS APP'S. The eight
+   shared sheets live in gas_shared/styles/ — one copy for the three sidekicks instead of
+   three that drift. Only two files here are local: styles/tokens.css, which is the brand
+   and nothing else, and styles/pages.css, which dresses pages no sibling has.
 
-   Order is the cascade — these are contiguous slices and must stay in this sequence.
-   tokens first, overrides (reduced motion, phone layout) last. */
+   esbuild inlines the whole closure back into one <style> partial at build time
+   (esbuild.config.mjs, `bundle: true`), and it resolves a relative @import that leaves the
+   package root exactly like any other relative path.
 
+   ORDER IS THE CASCADE — these are contiguous slices and must stay in this sequence.
+   tokens first (shared base, then the brand that overrides nothing but adds the accent),
+   overrides (reduced motion, phone layout) last. */
+
+@import "../../../gas_shared/styles/tokens.base.css";
 @import "./styles/tokens.css";
-@import "./styles/base.css";
-@import "./styles/components.css";
-@import "./styles/tables.css";
-@import "./styles/sheet.css";
-@import "./styles/feedback.css";
-@import "./styles/settings.css";
-@import "./styles/overrides.css";
+@import "../../../gas_shared/styles/base.css";
+@import "../../../gas_shared/styles/components.css";
+@import "../../../gas_shared/styles/tables.css";
+@import "../../../gas_shared/styles/sheet.css";
+@import "../../../gas_shared/styles/feedback.css";
+@import "../../../gas_shared/styles/settings.css";
+@import "../../../gas_shared/styles/help.css";
+@import "./styles/pages.css";
+@import "../../../gas_shared/styles/overrides.css";

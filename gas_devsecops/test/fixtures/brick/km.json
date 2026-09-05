@@ -1,0 +1,501 @@
+{
+ "version": 1,
+ "source": "metrics.kaplan_meier",
+ "generated_by": "brick/devsecops/export_fixtures.py",
+ "cases": [
+  {
+   "name": "survival_curve_and_median",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 5.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 6.0
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": 8.0,
+     "age_days": null
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 8.0,
+     "km_events": 2,
+     "km_censored": 1,
+     "km_median": 8.0,
+     "km_rmst": 7.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 8.0,
+     "km_events": 2,
+     "km_censored": 1,
+     "km_median": 8.0,
+     "km_rmst": 7.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    }
+   ]
+  },
+  {
+   "name": "km_median_exceeds_the_naive_median",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 5.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 6.0
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": 8.0,
+     "age_days": null
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 8.0,
+     "km_events": 2,
+     "km_censored": 1,
+     "km_median": 8.0,
+     "km_rmst": 7.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 8.0,
+     "km_events": 2,
+     "km_censored": 1,
+     "km_median": 8.0,
+     "km_rmst": 7.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    }
+   ]
+  },
+  {
+   "name": "rmst_is_the_area_under_the_staircase",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 5.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 6.0
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": 8.0,
+     "age_days": null
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 8.0,
+     "km_events": 2,
+     "km_censored": 1,
+     "km_median": 8.0,
+     "km_rmst": 7.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 8.0,
+     "km_events": 2,
+     "km_censored": 1,
+     "km_median": 8.0,
+     "km_rmst": 7.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    }
+   ]
+  },
+  {
+   "name": "survival_landing_exactly_on_half_is_a_median",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 15.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": 21.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 60.0
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 90.0
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 90.0,
+     "km_events": 2,
+     "km_censored": 2,
+     "km_median": 21.0,
+     "km_rmst": 54.00000000000001,
+     "km_truncated": true,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 90.0,
+     "km_events": 2,
+     "km_censored": 2,
+     "km_median": 21.0,
+     "km_rmst": 54.00000000000001,
+     "km_truncated": true,
+     "km_median_lower_bound": null
+    }
+   ]
+  },
+  {
+   "name": "median_is_null_under_heavy_censoring",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 5.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 100.0
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 100.0
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 100.0
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 100.0,
+     "km_events": 1,
+     "km_censored": 3,
+     "km_median": null,
+     "km_rmst": 76.25,
+     "km_truncated": true,
+     "km_median_lower_bound": 100.0
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 100.0,
+     "km_events": 1,
+     "km_censored": 3,
+     "km_median": null,
+     "km_rmst": 76.25,
+     "km_truncated": true,
+     "km_median_lower_bound": 100.0
+    }
+   ]
+  },
+  {
+   "name": "all_censored_yields_no_curve_but_keeps_the_counts",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 10.0
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 20.0
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 20.0,
+     "km_events": 0,
+     "km_censored": 2,
+     "km_median": null,
+     "km_rmst": null,
+     "km_truncated": false,
+     "km_median_lower_bound": 20.0
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 20.0,
+     "km_events": 0,
+     "km_censored": 2,
+     "km_median": null,
+     "km_rmst": null,
+     "km_truncated": false,
+     "km_median_lower_bound": 20.0
+    }
+   ]
+  },
+  {
+   "name": "a_wiped_out_risk_set_drives_survival_to_zero",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 3.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": 3.0,
+     "age_days": null
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 3.0,
+     "km_events": 2,
+     "km_censored": 0,
+     "km_median": 3.0,
+     "km_rmst": 3.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 3.0,
+     "km_events": 2,
+     "km_censored": 0,
+     "km_median": 3.0,
+     "km_rmst": 3.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    }
+   ]
+  },
+  {
+   "name": "censoring_after_the_last_event_extends_the_rmst_short",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 10.0,
+     "age_days": null
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 10.0,
+     "km_events": 1,
+     "km_censored": 0,
+     "km_median": 10.0,
+     "km_rmst": 10.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 10.0,
+     "km_events": 1,
+     "km_censored": 0,
+     "km_median": 10.0,
+     "km_rmst": 10.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    }
+   ]
+  },
+  {
+   "name": "censoring_after_the_last_event_extends_the_rmst_long",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 10.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 50.0
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 50.0,
+     "km_events": 1,
+     "km_censored": 1,
+     "km_median": 10.0,
+     "km_rmst": 30.0,
+     "km_truncated": true,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 50.0,
+     "km_events": 1,
+     "km_censored": 1,
+     "km_median": 10.0,
+     "km_rmst": 30.0,
+     "km_truncated": true,
+     "km_median_lower_bound": null
+    }
+   ]
+  },
+  {
+   "name": "overall_row_pools_every_severity",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 5.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 6.0
+    },
+    {
+     "severity": "CRITICAL",
+     "mttr_days": 8.0,
+     "age_days": null
+    }
+   ],
+   "expected": [
+    {
+     "severity": "CRITICAL",
+     "km_restriction_time": 8.0,
+     "km_events": 1,
+     "km_censored": 0,
+     "km_median": 8.0,
+     "km_rmst": 8.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 6.0,
+     "km_events": 1,
+     "km_censored": 1,
+     "km_median": 5.0,
+     "km_rmst": 5.5,
+     "km_truncated": true,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 8.0,
+     "km_events": 2,
+     "km_censored": 1,
+     "km_median": 8.0,
+     "km_rmst": 7.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    }
+   ]
+  },
+  {
+   "name": "rows_with_no_time_at_all_drop_out",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 5.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": null
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 5.0,
+     "km_events": 1,
+     "km_censored": 0,
+     "km_median": 5.0,
+     "km_rmst": 5.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 5.0,
+     "km_events": 1,
+     "km_censored": 0,
+     "km_median": 5.0,
+     "km_rmst": 5.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    }
+   ]
+  },
+  {
+   "name": "km_columns_land_on_the_gold_table",
+   "input": [
+    {
+     "severity": "HIGH",
+     "mttr_days": 5.0,
+     "age_days": null
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": null,
+     "age_days": 6.0
+    },
+    {
+     "severity": "HIGH",
+     "mttr_days": 8.0,
+     "age_days": null
+    }
+   ],
+   "expected": [
+    {
+     "severity": "HIGH",
+     "km_restriction_time": 8.0,
+     "km_events": 2,
+     "km_censored": 1,
+     "km_median": 8.0,
+     "km_rmst": 7.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    },
+    {
+     "severity": "OVERALL",
+     "km_restriction_time": 8.0,
+     "km_events": 2,
+     "km_censored": 1,
+     "km_median": 8.0,
+     "km_rmst": 7.0,
+     "km_truncated": false,
+     "km_median_lower_bound": null
+    }
+   ]
+  }
+ ]
+}

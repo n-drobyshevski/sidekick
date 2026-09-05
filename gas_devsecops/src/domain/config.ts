@@ -11,6 +11,9 @@ export const SEVERITY_ORDER = [
 ] as const;
 export type Severity = (typeof SEVERITY_ORDER)[number];
 
+// UNKNOWN is a local normalization bucket, never an API value — not user-selectable.
+export const SELECTABLE_SEVERITIES = SEVERITY_ORDER.filter((s) => s !== "UNKNOWN");
+
 /** Graphical marks — dots, bars, chart series. Tuned to >= 3:1 on white. */
 export const SEVERITY_COLORS: Record<string, string> = {
   CRITICAL: "#dc2626",
@@ -160,4 +163,168 @@ export const EPSS_PRIORITY_THRESHOLD = 0.1;
  * a derivation reads has to move this, or a persisted result is silently reused across the
  * change and the knob appears to do nothing.
  */
-export const DERIVATION_VERSION = 1;
+// 1 -> 2: ledgerCore.baseRows' fix clock is now per scope (fix_available_at = first_seen for
+// sast and secrets, since neither waits on a vendor), which changes every derived row.
+export const DERIVATION_VERSION = 2;
+
+// --------------------------------------------------------------------------------------- //
+//  Risk classification — Prioritization to Prediction (P2P). brick/devsecops/config.py is
+//  the source for everything below through ruleForScope, unless a comment says otherwise.
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * The high-risk classifier for CVE-bearing findings (sca): an any-of over the exploit
+ * signals Wiz attaches. Mirrors gas/src/domain/program.ts's `RiskRule` / `DEFAULT_RISK_RULE`
+ * — itself the TS shape of brick's `RiskRule` dataclass, brick/devsecops/config.py:279-312.
+ *
+ * THIS IS THE ONLY DEFINITION IN THE TREE. gas/ declares `RiskRule` inside its program.ts;
+ * here it stays in config.ts, because `ruleForScope` below has to live beside the scope
+ * table and the settings layer reads its default from here. `src/domain/program.ts` imports
+ * both — it does not redeclare them, and a second declaration is the defect this note
+ * exists to prevent (two shapes that agree today and drift on the first field added).
+ */
+export interface RiskRule {
+  kev: boolean; // listed in the CISA KEV catalog
+  exploit: boolean; // a known exploit exists
+  epss: boolean; // EPSS probability at or above the threshold
+  epssThreshold: number;
+}
+
+export const DEFAULT_RISK_RULE: RiskRule = {
+  kev: true,
+  exploit: true,
+  epss: true,
+  epssThreshold: EPSS_PRIORITY_THRESHOLD,
+};
+
+/**
+ * The high-risk classifier for static-analysis findings (sast), where none of RiskRule's
+ * three signals exist — a weakness in first-party code has no CVE, so no KEV entry, no
+ * published exploit and no EPSS score. brick/devsecops/config.py:337-370 (`SastRiskRule` /
+ * `DEFAULT_SAST_RISK_RULE`). Any-of over three signals that each answer a different question:
+ *   cwe        is this a KIND of weakness that gets exploited? (external evidence — see
+ *              CWE_TOP_25_2024 below)
+ *   aiVerdict  does the scanner's own triage think this instance is real? (vendor opinion —
+ *              see AI_VERDICTS_HIGH)
+ *   critical   did somebody already say this one is the worst tier? (existing judgement)
+ */
+export interface SastRiskRule {
+  cwe: boolean;
+  aiVerdict: boolean;
+  critical: boolean;
+}
+
+export const DEFAULT_SAST_RISK_RULE: SastRiskRule = {
+  cwe: true,
+  aiVerdict: true,
+  critical: true,
+};
+
+/**
+ * MITRE's CWE Top 25 Most Dangerous Software Weaknesses, 2024 edition.
+ * brick/devsecops/config.py:382-408 (`CWE_TOP_25_2024`), copied verbatim — 25 entries,
+ * asserted by test/ledgerTypes.test.ts. A snapshot that ages: re-derive against the current
+ * year's publication rather than trusting this list indefinitely.
+ */
+export const CWE_TOP_25_2024: readonly string[] = [
+  "CWE-79", "CWE-787", "CWE-89", "CWE-352", "CWE-22",
+  "CWE-125", "CWE-78", "CWE-416", "CWE-862", "CWE-434",
+  "CWE-94", "CWE-20", "CWE-77", "CWE-287", "CWE-269",
+  "CWE-502", "CWE-200", "CWE-863", "CWE-918", "CWE-119",
+  "CWE-476", "CWE-798", "CWE-190", "CWE-400", "CWE-306",
+];
+
+/**
+ * CWE is a tree; scanners report leaves and the Top 25 above is mostly interior nodes, so a
+ * child is matched through its Top-25 ancestor. brick/devsecops/config.py:424-441
+ * (`CWE_ANCESTORS`), copied verbatim — deliberately incomplete (only children actually seen
+ * in the tenant's findings), never a transcription of the full CWE tree. An unmapped child
+ * classifies `low` rather than `high`, which is a coverage gap to publish, not paper over.
+ */
+export const CWE_ANCESTORS: Record<string, string> = {
+  "CWE-23": "CWE-22",
+  "CWE-36": "CWE-22",
+  "CWE-80": "CWE-79",
+  "CWE-83": "CWE-79",
+  "CWE-91": "CWE-94",
+  "CWE-95": "CWE-94",
+  "CWE-470": "CWE-94",
+  "CWE-1321": "CWE-94",
+  "CWE-88": "CWE-77",
+  "CWE-611": "CWE-20",
+  "CWE-547": "CWE-798",
+  "CWE-259": "CWE-798",
+  "CWE-321": "CWE-798",
+  "CWE-1333": "CWE-400",
+  "CWE-732": "CWE-863",
+  "CWE-284": "CWE-862",
+};
+
+/**
+ * `aiAnalysis.verdict` values that count as the AI triage firing. brick/devsecops/config.py:450
+ * (`AI_VERDICTS_HIGH`). UNVERIFIED against the live tenant — every node in the captured SAST
+ * response has `aiAnalysis: null` (brick's comment), so this is a guess at the vocabulary and
+ * will not fire until corrected against real data.
+ */
+export const AI_VERDICTS_HIGH: ReadonlySet<string> = new Set([
+  "EXPLOITABLE", "TRUE_POSITIVE", "CONFIRMED", "VULNERABLE",
+]);
+
+/**
+ * The high-risk rule a scope is classified under. brick/devsecops/config.py:453-461
+ * (`rule_for_scope`), extended to all three scopes rather than brick's CVE-register-or-SAST
+ * dispatch — secrets never existed in brick/devsecops, so brick had nothing to say about it.
+ *
+ * `secrets` returns null: there is no exploit intelligence for a hardcoded string the way
+ * there is for a CVE, and severity here grades a DETECTION (how confident the scanner is
+ * that a match is a real credential shape) rather than whether the credential is live — the
+ * same argument DEFAULT_FETCH_SEVERITIES.secrets above makes for turning the severity gate
+ * off. A secrets finding's risk is answered by validation_state and confidence, not a
+ * KEV/exploit/EPSS-style rule, so there is nothing for a RiskRule-shaped classifier to say.
+ */
+export function ruleForScope(scope: Scope): RiskRule | SastRiskRule | null {
+  if (scope === "sca") return DEFAULT_RISK_RULE;
+  if (scope === "sast") return DEFAULT_SAST_RISK_RULE;
+  return null;
+}
+
+// --------------------------------------------------------------------------------------- //
+//  Capacity, population labels, and ledger/retention guardrails.
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * The dead band (percentage points) around zero net flow that still counts as "keeping up".
+ * brick/devsecops/config.py:467 (`NET_CAPACITY_BAND_PCT`). P2P v3 Fig. 22 splits firms into
+ * falling behind / maintaining / gaining ground without a sharp cut; a one-finding swing
+ * should not flip a monthly verdict.
+ */
+export const NET_CAPACITY_BAND_PCT = 2;
+
+/** The row label used for the all-severities aggregate in gold tables. brick/devsecops/config.py:470. */
+export const OVERALL = "OVERALL";
+
+/**
+ * Which population a capacity row describes — every finding vs. high-risk lifecycles only.
+ * brick/devsecops/config.py:482-483 (`POPULATION_ALL` / `POPULATION_HIGH_RISK`).
+ */
+export const POPULATION_ALL = "all";
+export const POPULATION_HIGH_RISK = "high_risk";
+
+/**
+ * The asset-category fallback for a scope with no language/ecosystem to group on.
+ * brick/devsecops/config.py:272 (`ASSET_GROUP_UNKNOWN`).
+ */
+export const ASSET_GROUP_UNKNOWN = "UNKNOWN";
+
+/**
+ * Disappearance-resolution timestamping default: "scan_ts" (conservative) or "midpoint".
+ * gas/src/domain/config.ts:81 (`DISAPPEARANCE_RESOLUTION`); brick/devsecops/config.py:501
+ * mirrors the same value for the same reason.
+ */
+export const DISAPPEARANCE_RESOLUTION = "scan_ts";
+
+/** Retention / compaction guardrail: minimum unsealed flat scans to keep. gas/src/domain/config.ts:94. */
+export const MIN_UNSEALED_FLAT_SCANS = 2;
+
+/** Retention / compaction guardrail: default retention window, in days. gas/src/domain/config.ts:92. */
+export const DEFAULT_RETENTION_DAYS = 180;

@@ -1,0 +1,183 @@
+/* ----------------------------------------------------------------------- tables */
+.table-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-lg); }
+/* A table nested inside a card or a detail cell. The surrounding surface IS the box, so a
+   bordered wrapper here would be a surface inside a surface — the shape DESIGN.md rules out
+   for cards and the reason both of these tables were hand-built rather than asked for. The
+   heading keeps its label styling and loses the ground it used to sit on, which only ever
+   existed to cover rows scrolling under a sticky header. */
+.table-wrap--panel { border: none; border-radius: 0; }
+.table-wrap--panel table.data th { background: none; }
+table.data {
+  border-collapse: collapse; width: 100%;
+  font-size: var(--fs-body);
+}
+table.data th {
+  text-align: left; font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+  background: var(--surface);
+  padding: var(--space-2) var(--space-2); border-bottom: 1px solid var(--hairline);
+  white-space: nowrap;
+}
+
+/* THE STICKY HEADER, WHICH USED TO BE DECLARED HERE AND HAS NEVER ONCE WORKED.
+   `position: sticky; top: 0` sat on `table.data th` for every register in the app. It could
+   not take effect anywhere: sticky resolves against the nearest scrollport, which is
+   `.table-wrap` above, and `overflow-x: auto` computes the block axis to `auto` as well — a
+   scroll container that never scrolls vertically, so the header stuck to a box that cannot
+   move. aars.css says the same thing at greater length and has worked around it for the
+   cascade tables since; graphQuery.css carries the symptom, a `top: 27px` that pushed the
+   graph's header 27px DOWN over its own first row, because an offset against a scrollport
+   frozen at scrollTop 0 is applied once and never released.
+
+   The fix is aars.css's, generalised rather than reinvented: release the wrap, and the header
+   sticks to whatever ancestor is really scrolling — `main` on a register page, the graph's own
+   `.workbench-table`. The release costs the table its sideways scroll (a too-wide table then
+   pushes the page instead), so it is opt-in per table AND width-gated, at aars.css's own
+   1100px split point rather than a second magic number. Below that, and on the phone layout
+   where `.appbar` is itself sticky, nothing changes.
+
+   Take it where the row count is unbounded or the page size can exceed a viewport. Leave it
+   where the table is bounded by construction — a dozen rows of scan coverage pinning their
+   heading is noise, not orientation. */
+@media (min-width: 1100px) {
+  .table-wrap--sticky { overflow: visible; }
+  .table-wrap--sticky table.data th {
+    /* Pinned flush with the top of what the reader can see, not with the top of the content
+       box. A scrollport clips at its PADDING box, so rows scrolling through its top padding
+       stay visible — `top: 0` would pin the heading below that strip and let rows ride above
+       it. Each scrollport declares its own `--sticky-inset` beside the padding it cancels
+       (`main` in base.css, `.workbench-table` in graph.css); anything that does not gets 0. */
+    position: sticky; top: calc(-1 * var(--sticky-inset, 0px)); z-index: 1;
+    /* `border-collapse` paints a cell's border with the TABLE, not the cell, so the heading's
+       hairline is left behind the moment the row lifts off. An inset shadow travels with it. */
+    border-bottom: none; box-shadow: inset 0 -1px 0 var(--hairline);
+  }
+}
+/* Sortable column headers (graph table view): the whole label is the button. */
+.th-sort {
+  display: inline-flex; align-items: center; gap: var(--space-1);
+  background: none; border: none; box-shadow: none; padding: 0; min-height: 0;
+  font-size: var(--fs-micro); font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--text-3); cursor: pointer; border-radius: var(--radius-xs);
+}
+.th-sort:hover { color: var(--ink); background: none; }
+.th-sort-glyph { font-size: var(--fs-micro); }
+table.data td {
+  padding: var(--space-2) var(--space-2); border-bottom: 1px solid var(--hairline);
+  white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+}
+table.data tbody tr:last-child td { border-bottom: none; }
+/* CLICKABLE ROWS ONLY. The band used to light every row in every table, including the ones
+   with no `onRowOpen` — scans' reach kinds, the shared-controls list, the sync history, the
+   two panel tables. The prune census had to switch it back off locally and said why: "Nothing
+   here is clickable, so a hover band is a promise the row cannot keep." That is the general
+   rule, so it lives here now rather than in one caller's override. */
+table.data tbody tr.clickable:hover { background: rgba(0, 0, 0, 0.025); }
+table.data tbody tr.clickable { cursor: pointer; }
+/* The heading goes right with its figures. `td.num` alone left every numeric column's label
+   adrift from the numbers underneath it — components.css patched exactly this for one table
+   and called the base sheet wrong; it was. Reaches the header now that dataTable puts
+   `col.className` on the <th>.
+
+   QUALIFIED WITH `table.data`, and measured. Written as a bare `th.num` it is inert: the base
+   rule is `table.data th { text-align: left }` at (0,1,2) and a lone `th.num` scores (0,1,1),
+   so the class landed on every numeric heading in the app and changed nothing. The browser
+   said `text-align: left` on all four headings of the sync history before this line was
+   qualified. `td.num` never had the problem — nothing else sets a td's alignment. */
+table.data th.num, td.num { text-align: right; }
+
+/* dataTable()'s per-column `wrap: true` opt-out of the 320px nowrap-ellipsis clip above,
+   for a column that carries prose rather than a value — the secrets four-corner table's
+   Reading column, which truncated mid-sentence at every width down to 560px. Scoped to
+   `.col-wrap`, not the table, so the numeric Findings column beside it keeps its single
+   line: a column that fits stays clipped, only the one that can't wraps instead.
+   `table.data` is in the selector to WIN over `table.data td` (0,0,1,2) on specificity,
+   the same reason `.detail-row > td` below carries it. */
+table.data td.col-wrap {
+  white-space: normal; max-width: none; overflow: visible; text-overflow: clip;
+}
+
+/* ------------------------------------------------------------------- the name cell */
+/* A node's name behind its kind icon, in that kind's category tint — the same cue the graph
+   canvas's medallion carries, so a row and a node read as the same thing in two views. Moved
+   here from graphQuery.css when ui/cells.js made the renderer shared: the rules did not
+   change, only the three class names, which were spelled for one page. */
+.cell-name { display: inline-flex; align-items: center; gap: var(--space-2); max-width: 100%; }
+.cell-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* One more rule reaches this class from graphQuery.css: `.cell-icon .gnode-icon` sets
+   `stroke: currentColor; color: inherit`, without which the tint below is set on the wrapper
+   and the glyph renders grey anyway. It stays there because it is one selector in a group of
+   four that share the declaration and a comment explaining a hard-won fight; splitting it out
+   would duplicate both. Everything ships as one bundle, so the file it sits in is a question
+   of where a reader finds it, not of whether it applies. */
+.cell-icon {
+  flex: 0 0 auto; width: 18px; height: 18px; padding: var(--space-half);
+  border-radius: var(--radius-sm);
+  background: var(--track-bg);
+  color: var(--text-2);
+}
+.cell-name[data-category="asset"] .cell-icon { background: var(--cat-asset-tint); color: var(--cat-asset-ink); }
+.cell-name[data-category="data"] .cell-icon { background: var(--cat-data-tint); color: var(--cat-data-ink); }
+.cell-name[data-category="iam"] .cell-icon { background: var(--cat-iam-tint); color: var(--cat-iam-ink); }
+.cell-name[data-category="vuln"] .cell-icon { background: var(--cat-vuln-tint); color: var(--cat-vuln-ink); }
+.cell-name[data-category="exposure"] .cell-icon { background: var(--cat-exposure-tint); color: var(--cat-exposure-ink); }
+a { color: var(--accent-text); }
+
+.pager { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); font-size: var(--fs-label); color: var(--text-2); }
+
+/* Page-size select + pager under a paged table. */
+.table-footer { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-3); margin-top: var(--space-3); }
+.table-footer .pager { margin-top: 0; }
+.table-footer select { font-size: var(--fs-body); }
+/* A page fetched from the server: the old rows stay legible but read as superseded. */
+.table-host[aria-busy="true"] { opacity: 0.5; transition: opacity var(--dur-quick) ease; }
+@media (prefers-reduced-motion: reduce) {
+  .table-host[aria-busy="true"] { transition: none; }
+}
+
+/* ------------------------------------------------------------------ chart cards */
+.chart-card { padding: var(--space-4); }
+.chart-card h3 { margin-bottom: var(--space-3); }
+.chart-box { position: relative; height: 240px; }
+/* Two charts side by side, stacking below the width where a plot stops being readable. */
+.chart-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+/* The line under a chart title: what the chart leaves out, or what it's still waiting for. */
+.chart-note { margin: -4px 0 var(--space-3); font-size: var(--fs-label); color: var(--text-3); }
+/* Stands in for the plot when there aren't enough points to draw one — matched to the
+   chart-box height so the card doesn't resize when the first real line arrives. */
+.chart-empty {
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  height: 200px; padding: 0 var(--space-5);
+  font-size: var(--fs-body); color: var(--text-3);
+  border: 1px dashed var(--hairline); border-radius: var(--radius-lg);
+}
+
+/* The "nothing matched" row inside a table, so an empty result still sits in the
+   structure it belongs to rather than replacing it. */
+.table-empty { color: var(--text-3); white-space: normal; text-align: center; }
+
+/* dataTable()'s optional rowDetail() row: a full-width `<td colspan>` immediately under
+   its trigger row. It inherits every `table.data td` rule above — including the 320px clip
+   built for a normal cell's worth of text — which would clip a whole detail panel behind an
+   ellipsis. `.table-empty` above resets `white-space` for the same reason; this resets the
+   rest of the same trap (`max-width`, `overflow`, `text-overflow`) for a cell that can hold
+   a panel rather than a sentence. Generic and unscoped deliberately: any dataTable() caller
+   that opts into rowDetail needs this, not only the compliance register. */
+/* Undoes the row-cell clamp above for a dataTable() `rowDetail` cell, which holds a panel
+   rather than one line of a column.
+ *
+ * `table.data` is in the selector to WIN, not to scope: `table.data td` above is (0,0,1,2)
+ * and a bare `.detail-row > td` is (0,0,1,1), so the reset loses on specificity no matter
+ * how far down the file it sits — and loses silently, because a colspan cell in a
+ * width:100% table still lays out full-width, so `max-width` looks obeyed while
+ * `white-space: nowrap` quietly puts a paragraph on one line and `overflow: hidden` cuts
+ * it off. Seeded data has no prose in these panels, so nothing shows until a real tenant's
+ * assessment scope arrives. */
+table.data .detail-row > td {
+  white-space: normal; max-width: none; overflow: visible; text-overflow: clip;
+}

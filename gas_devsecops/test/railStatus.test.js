@@ -40,7 +40,7 @@ describe("precedence", () => {
       job: { phase: "FAILED", scope: "sast" },
     });
     expect(s.state).toBe("bad");
-    expect(s.label).toBe("Last scan failed");
+    expect(s.label).toBe("Last sync failed");
   });
 
   it("says NEVER SCANNED rather than averaging it away", () => {
@@ -69,7 +69,7 @@ describe("no tenant is not a fault", () => {
     const s = railStatus({ ...base, hasCredentials: false, lastScanByScope: scanned() });
     expect(s.state).toBe("neutral");
     expect(s.label).toContain("No Wiz credentials");
-    expect(s.detail).toContain("Run scan");
+    expect(s.detail).toContain("Run sync");
   });
 
   it("beats freshness, because a stale figure with no source behind it is not the story", () => {

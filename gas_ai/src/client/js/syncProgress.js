@@ -2,7 +2,7 @@
 // bound to the JobRow the poller already fetches. `syncProgressView` is pure (no
 // DOM) so it is unit-testable; the renderers wrap it in design-system primitives.
 
-import { clear, el, openSheet, progressBar } from "./ui.js";
+import { absent, clear, el, openSheet, progressBar } from "./ui.js";
 
 import { tipAnchor } from "./ui.js";
 const STEPS = [
@@ -288,7 +288,9 @@ export function openSyncDetails(job, opts = {}) {
             ? ` of ${Number(currentJob.total_count).toLocaleString()}`
             : "")),
         el("dt", {}, "Query"), el("dd", {}, String(Number(currentJob.step_index || 0) + 1)),
-        el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || "—"),
+        // `.scan-detail-grid dd` sets no colour, so a missing elapsed reading needs `absent()`
+        // rather than a dash that would read in the same ink as "Status"/"Rows" beside it.
+        el("dt", {}, "Elapsed"), el("dd", {}, v.elapsedText || absent()),
       ),
       v.error ? el("div", { class: "scan-detail-error" }, v.error) : null,
       actions,

@@ -56,10 +56,10 @@
 // to its own defaults. The in-memory `view` fields are untouched by the mode switch, so
 // flipping back to "By framework" restores exactly where the reader left it.
 
-import { setParams, swrCall } from "../store.js";
+import { setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, dataTable, el, emptyState, errorState, filterCombobox, meter, plural,
-  sectionLabel, segmented, sevBadge, skeletonStack, statRow,
+  absent, clear, dataTable, el, emptyState, errorState, filterCombobox, meter,
+  pageHeader, plural, sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
   checksCell, extChip, fiveRsDerived, postureCell, postureScopeNote, STATES, STATE_ORDER,
@@ -101,13 +101,18 @@ export async function renderCompliance(main, params, ctx) {
     expanded: new Set(String(params.open || "").split(",").filter(Boolean)),
   };
 
-  main.append(
-    el("h1", {}, "Compliance Posture"),
-    // Nine words. The three grains it used to enumerate (category, subcategory, policy) are
-    // the page's own structure, and the reader meets all three by scrolling.
-    el("p", { class: "page-sub" },
-      "How this landscape scores against the frameworks Wiz tracks."),
-  );
+  // `pageHeader({ route })`, not a bare `el("h1", ...)` and not a title in the hero VALUE.
+  // P8 converted this page's hand-rolled title onto the shared component by putting
+  // "Compliance Posture" in the 2rem hero slot — which left the page's name and its posture
+  // percentage (`.comp-hero-value`, also --fs-hero) reading at the same size, in a register
+  // whose first design principle is that the number is the product. The name is the h1 now, at
+  // the 1.5rem ceiling, and the percentage is the only thing on the page at the hero step.
+  main.append(pageHeader({
+    route: "compliance",
+    // Nine words. The three grains it used to enumerate (category, subcategory, policy)
+    // are the page's own structure, and the reader meets all three by scrolling.
+    lede: "How this landscape scores against the frameworks Wiz tracks.",
+  }));
 
   const host = el("div", {});
   main.append(host);
@@ -322,9 +327,11 @@ export async function renderCompliance(main, params, ctx) {
 
     const hero = el("div", {},
       el("div", { class: "label" }, "Compliance posture"),
+      // `.comp-hero-value` sets no colour (the scored case is meant to read at hero weight),
+      // so the unscored case needs `absent()` rather than a dash that inherits the same ink.
       scored
         ? el("div", { class: "comp-hero-value num" }, `${heroPct}%`)
-        : el("div", { class: "comp-hero-value" }, "—"),
+        : el("div", { class: "comp-hero-value" }, absent()),
       scored
         ? el("div", { class: "comp-hero-meter" }, heroMeter)
         : null,

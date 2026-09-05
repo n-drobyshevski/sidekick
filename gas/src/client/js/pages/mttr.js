@@ -1,15 +1,13 @@
 // MTTR & SLA — remediation performance from the durable ledger. Hero stat, trend
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
-import {
-  destroyChart, groupPalette, groupTrendLines, mttrContributionBars, mttrImpactBars,
-  openResolvedLines, stackedAgeBar, survivalCurve, trendLine,
-} from "../charts.js";
-import { bootstrap, swrCall } from "../store.js";
+import { groupPalette } from "../charts.js";
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import {
-  changeChip, clear, el, emptyState, fmtDays, helpTip, openSheet, scopeBar,
-  sectionLabel, sevBadge, skeleton,
+  absent, changeChip, clear, dataTable, el, emptyState, errorState, fmtSpan, glossaryTip,
+  openSheet, pageHeader, scopeBar, sectionLabel, sevBadge, skeleton, tip,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -127,7 +125,7 @@ function toggleRow(ariaLabel, options, current, onPick) {
 // hover, matching the table columns' convention). `box` is the .chart-box element.
 function chartCard(title, box, opts = {}) {
   const h3 = opts.helpLines
-    ? el("h3", {}, helpTip(title, opts.helpLines, { className: "help-label" }))
+    ? el("h3", {}, tip(title, opts.helpLines))
     : el("h3", {}, title);
   const head = opts.toggle ? el("div", { class: "chart-head" }, h3, opts.toggle) : h3;
   return el("div", { class: "chart-card" }, head, box);
@@ -136,10 +134,15 @@ function chartCard(title, box, opts = {}) {
 // Open-past-SLA cell, shared by the hero mini, the per-severity table, and the
 // by-domain table: "632 (77%)" — the breached count with its share of the open
 // population in parentheses. "0" when nothing is open (pct is null then, not a fake
-// 0%); "—" when the payload doesn't carry this metric at all (e.g. a stale
-// pre-remediation cache).
+// 0%); the muted em dash when the payload doesn't carry this metric at all (e.g. a
+// stale pre-remediation cache).
+//
+// ALL THREE CALL SITES ARE NODE CHILD POSITIONS, which is what lets the missing case be
+// `absent()` — a stale cache used to put a black dash beside three live counts, in the ink of a
+// measurement. The dash INSIDE the parenthesis stays a string: it is interpolated into the
+// template below, where a Node would render as "[object HTMLSpanElement]".
 function fmtOpenPastSla(o) {
-  if (!o || o.open === null || o.open === undefined) return "—";
+  if (!o || o.open === null || o.open === undefined) return absent();
   if (!o.open) return "0";
   const pct = o.pct !== null && o.pct !== undefined ? `${o.pct.toFixed(0)}%` : "—";
   return `${(o.breached ?? 0).toLocaleString()} (${pct})`;
@@ -196,23 +199,46 @@ function latencyLine(vendor, disclosure) {
       "vendor fix\" setting hides elsewhere on this page: they are exactly this metric's " +
       "censored population, so hiding them here would bias it toward zero.",
   ];
-  return helpTip(
+  // `tip(..., { term })` rather than `glossaryTip`: three of the five lines above are THIS
+  // scan's own population counts, which no glossary entry can carry. So the card keeps its
+  // sharper words and `term` only adds the route to the general definition.
+  return tip(
     [el("div", { class: "hero-src" }, `Wait for a vendor fix \u2014 ${parts.join(" \u00b7 ")}`)],
     detail,
+    { term: "vendor-fix-wait" },
   );
 }
 
 // Kaplan-Meier median formatter: the exact day count, "> X d" when the curve never drops to
 // 50% within the observed window (heavy censoring — the true median is at least that far
-// out), or "—" when there's no KM result at all (a stale pre-KM cached payload). `km` is a
+// out), or nothing at all when there's no KM result (a stale pre-KM cached payload). `km` is a
 // KMResult (or the null/undefined stand-in for one).
-function fmtKmMedian(km) {
-  if (!km) return "—";
-  if (km.median !== null && km.median !== undefined) return fmtDays(km.median);
+//
+// SPLIT IN TWO BECAUSE THE MISSING CASE HAS TWO DESTINATIONS. `latencyLine` interpolates the
+// result into a sentence, where a Node cannot go; the hero puts it in a `<div>`, where a bare
+// "—" arrives at 2rem in the same ink as a measured median. So `kmMedianText` is the one place
+// the KM shape is read, `fmtKmMedian` keeps the string for the sentence, and `kmMedianCell`
+// hands the Node to the one call site that is really a cell. `executive.js`'s copy of this
+// formatter has only the cell call site, so it returns the Node directly.
+function kmMedianText(km) {
+  if (!km) return null;
+  if (km.median !== null && km.median !== undefined) return fmtSpan(km.median);
   if (km.medianLowerBound !== null && km.medianLowerBound !== undefined) {
-    return `> ${fmtDays(km.medianLowerBound)}`;
+    return `> ${fmtSpan(km.medianLowerBound)}`;
   }
-  return "—";
+  return null;
+}
+
+/** The string form, for anything that concatenates or interpolates it. */
+function fmtKmMedian(km) {
+  const text = kmMedianText(km);
+  return text === null ? "—" : text;
+}
+
+/** The Node form, for a cell — the missing case is muted rather than measured-looking. */
+function kmMedianCell(km) {
+  const text = kmMedianText(km);
+  return text === null ? absent() : text;
 }
 
 // Circular-arrows (refresh) glyph for the by-domain panel's single lens-swap button. Inline
@@ -270,12 +296,11 @@ export async function renderMttr(main, _params, ctx) {
     ? [...boot.settings.displaySeverities]
     : [...boot.palette.selectable];
 
-  main.append(
-    el("h1", {}, "MTTR & SLA"),
-    el("p", { class: "page-sub" },
-      "How fast risk gets closed — measured over observed lifecycles. " +
-      "The SLA clock starts once a vendor fix is available."),
-  );
+  main.append(pageHeader({
+    route: "mttr",
+    lede: "How fast risk gets closed, measured over observed lifecycles. The SLA clock starts "
+      + "once a vendor fix is available.",
+  }));
 
   const scopeChips = scopeBar({
     domain: ctx.domain, supportGroup: ctx.supportGroup, onClear: ctx.clearScope,
@@ -402,20 +427,18 @@ export async function renderMttr(main, _params, ctx) {
     const summary = swrCall("api_getMttr", params, onSummary)
       .then(onSummary).catch((e) => {
         if (seq !== loadSeq) return;
-        // eslint-disable-next-line no-console
         console.error("[mttr] getMttr failed:", e);
         clear(chartsHost); clear(survivalHost); clear(slaHost); clear(byDomainHost);
-        clear(heroHost).append(emptyState(
-          "Couldn't load remediation data.",
-          "Try running a scan or reloading the page.",
-        ));
+        clear(heroHost).append(errorState("Couldn't load remediation data.", {
+          detail: String((e && e.message) || e),
+        }));
       });
     const full = swrCall("api_getMttrPage", params, onPage)
       .then(onPage).catch((e) => {
         if (seq !== loadSeq) return;
-        // eslint-disable-next-line no-console
         console.error("[mttr] getMttrPage failed:", e);
-        clear(chartsHost).append(emptyState("Couldn't load trends."));
+        clear(chartsHost).append(errorState("Couldn't load trends.",
+          { detail: String((e && e.message) || e) }));
         clear(byDomainHost);
       });
     await Promise.allSettled([summary, full]);
@@ -474,7 +497,9 @@ export async function renderMttr(main, _params, ctx) {
       canvas.style.display = "";
     }
     function showMsg(canvas, msg, text) {
-      destroyChart(canvas);
+      // Fire-and-forget: nothing to destroy if Chart.js never loaded (nothing was ever
+      // drawn), and the message swap below doesn't wait on it either way.
+      loadCharts().then((charts) => charts.destroyChart(canvas)).catch(() => {});
       canvas.style.display = "none";
       msg.textContent = text;
       msg.style.display = "";
@@ -560,12 +585,16 @@ export async function renderMttr(main, _params, ctx) {
           return;
         }
         showChart(lineCanvas, lineMsg);
-        groupTrendLines(lineCanvas, pts, series, {
-          unit: "days",
-          nullAsGap: true,
-          describe: usingKm
-            ? `Kaplan–Meier median time-to-remediation in days per ${dim.noun} over scan history.`
-            : `Naive median MTTR in days per ${dim.noun} over scan history.`,
+        loadCharts().then((charts) => {
+          charts.groupTrendLines(lineCanvas, pts, series, {
+            unit: "days",
+            nullAsGap: true,
+            describe: usingKm
+              ? `Kaplan–Meier median time-to-remediation in days per ${dim.noun} over scan history.`
+              : `Naive median MTTR in days per ${dim.noun} over scan history.`,
+          });
+        }).catch(() => {
+          chartUnavailable(lineCanvas);
         });
       }
 
@@ -598,7 +627,11 @@ export async function renderMttr(main, _params, ctx) {
         `Naive: median of closed findings only per ${dim.noun}, per scan — the biased comparison KM `
           + "corrects for, kept only to compare.",
       ];
-      const lineTitle = el("h3", {}, helpTip(`MTTR by ${dim.noun}`, lineHelp, { className: "help-label" }));
+      // The lines name the ACTIVE dimension ("MTTR by domain"), which is the state of a
+      // control rather than part of the definition -- so they stay, and `term` adds the
+      // route to the dimension-neutral entry.
+      const lineTitle = el("h3", {},
+        tip(`MTTR by ${dim.noun}`, lineHelp, { term: "mttr-by-dimension" }));
       const lineHead = lineToggle ? el("div", { class: "chart-head" }, lineTitle, lineToggle) : lineTitle;
 
       // Unified by-domain panel: "Contribution to MTTR" (signed impact) and "Median MTTR by …" (rate)
@@ -651,10 +684,12 @@ export async function renderMttr(main, _params, ctx) {
         swapBtn.title = nextLabel;
         clear(lensTitleHost).append(
           view === "impact"
-            ? helpTip(`${dim.Noun} contribution to MTTR`, impactHelp, { className: "help-label" })
-            : helpTip(`Median MTTR by ${dim.noun}`, medianHelp, { className: "help-label" }));
+            ? tip(`${dim.Noun} contribution to MTTR`, impactHelp,
+              { term: "mttr-contribution" })
+            : tip(`Median MTTR by ${dim.noun}`, medianHelp,
+              { term: "median-mttr-by-dimension" }));
         const [hideCanvas, hideMsg] = view === "impact" ? [medianCanvas, medianMsg] : [impactCanvas, impactMsg];
-        destroyChart(hideCanvas);
+        loadCharts().then((charts) => charts.destroyChart(hideCanvas)).catch(() => {});
         hideCanvas.style.display = "none";
         hideMsg.style.display = "none";
         if (view === "impact") paintImpact(); else paintMedian();
@@ -695,7 +730,11 @@ export async function renderMttr(main, _params, ctx) {
           return;
         }
         showChart(impactCanvas, impactMsg);
-        mttrImpactBars(impactCanvas, impactRows, { subject: `${dim.Noun} contribution to MTTR` });
+        loadCharts().then((charts) => {
+          charts.mttrImpactBars(impactCanvas, impactRows, { subject: `${dim.Noun} contribution to MTTR` });
+        }).catch(() => {
+          chartUnavailable(impactCanvas);
+        });
       }
 
       // Median lens (secondary): each group's KM median MTTR against the overall-median reference line —
@@ -711,9 +750,13 @@ export async function renderMttr(main, _params, ctx) {
           return;
         }
         showChart(medianCanvas, medianMsg);
-        mttrContributionBars(medianCanvas, medianRows, {
-          overall: overallKm,
-          subject: `${dim.Noun} median MTTR vs overall`,
+        loadCharts().then((charts) => {
+          charts.mttrContributionBars(medianCanvas, medianRows, {
+            overall: overallKm,
+            subject: `${dim.Noun} median MTTR vs overall`,
+          });
+        }).catch(() => {
+          chartUnavailable(medianCanvas);
         });
       }
       return {
@@ -721,51 +764,73 @@ export async function renderMttr(main, _params, ctx) {
         paint: () => { applyLens(byDomainLens); paintLine(); },
       };
     }
-    // Column headers carry the two new metrics' definitions via helpTip, matching the
-    // per-severity table's convention in renderSla above.
-    const columns = [
-      [dim.Noun, null],
-      ["Median MTTR (KM)",
-        [`Kaplan–Meier median time-to-remediation for this ${dim.noun} — the principal MTTR figure. `
-          + "Still-open findings count as censored instead of being ignored, so it isn't biased "
-          + "low by fresh fast-patched vulns."]],
-      ["Median (naive)",
-        [`Median days from first detection to remediation for this ${dim.noun}, counting closed `
-          + "findings only — no censoring. Biased low by a wave of fresh open findings, which is "
-          + "what the KM median corrects for; kept only for comparison."]],
-      ["MTTR p90",
-        ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
-          "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
-          "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
-          "shows \"—\" when too much is still open to observe it."]],
-      ["In SLA (of resolved)", null],
-      ["Open past SLA",
-        ["Open findings already older than their severity's SLA target, measured from when " +
-          "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
-          "findings), an aged-out open CRITICAL counts here."]],
-      ["Open", null],
-      ["Resolved", null],
-    ];
-    const table = el("table", { class: "data" },
-      el("thead", {}, el("tr", {},
-        ...columns.map(([h, lines]) => el("th", { scope: "col" },
-          lines ? helpTip(h, lines, { className: "help-label" }) : h)))),
-    );
-    const tbody = el("tbody", {});
-    for (const r of byDomain.rows) {
-      tbody.append(el("tr", {},
-        el("td", {}, groupOf(r)),
-        el("td", { class: "num num--key" }, fmtDays(r.kmMedian)),
-        el("td", { class: "num muted small" }, fmtDays(r.median)),
-        el("td", { class: "num" }, fmtDays(r.p90)),
-        el("td", { class: "num" }, r.slaPct != null ? `${r.slaPct.toFixed(0)}%` : "—"),
-        el("td", { class: "num" }, fmtOpenPastSla(r.openPastSla)),
-        el("td", { class: "num" }, (r.open ?? 0).toLocaleString()),
-        el("td", { class: "num" }, (r.resolved ?? 0).toLocaleString()),
-      ));
-    }
-    table.append(tbody);
-    const tableWrap = el("div", { class: "table-wrap" }, table);
+    // `dataTable`, not a hand-rolled `<table class="data">`: eight static columns, one header
+    // row, no colspan. The column definitions carried their help copy already, so the only
+    // change a reader sees is that the seven numeric headings now sit over their own figures
+    // (`col.className` reaches the <th>, and `table.data th.num` right-aligns it) and a group
+    // name too long for the 320px cell cap can be read from its truncTip instead of ending in
+    // an ellipsis. It returns the `.table-wrap` — the old code wrapped the table by hand, and
+    // wrapping this again would nest two.
+    const tableWrap = dataTable({
+      columns: [
+        { key: "group", label: dim.Noun, cell: groupOf },
+        {
+          key: "kmMedian",
+          label: "Median MTTR (KM)",
+          className: "num num--key",
+          help: [`Kaplan–Meier median time-to-remediation for this ${dim.noun} — the principal MTTR figure. `
+            + "Still-open findings count as censored instead of being ignored, so it isn't biased "
+            + "low by fresh fast-patched vulns."],
+          cell: (r) => fmtSpan(r.kmMedian),
+        },
+        {
+          key: "median",
+          label: "Median (naive)",
+          className: "num",
+          help: [`Median days from first detection to remediation for this ${dim.noun}, counting closed `
+            + "findings only — no censoring. Biased low by a wave of fresh open findings, which is "
+            + "what the KM median corrects for; kept only for comparison."],
+          // `.muted small` rides on a span rather than on the column, because `col.className`
+          // reaches the heading too: `.small` is 12px against a heading's 11px and `.muted` a
+          // lighter grey, so spending them there would restyle one heading out of eight.
+          cell: (r) => el("span", { class: "muted small" }, fmtSpan(r.median)),
+        },
+        {
+          key: "p90",
+          label: "MTTR p90",
+          className: "num",
+          help: ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
+            "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
+            "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
+            "shows \"—\" when too much is still open to observe it."],
+          cell: (r) => fmtSpan(r.p90),
+        },
+        {
+          key: "slaPct",
+          label: "In SLA (of resolved)",
+          className: "num",
+          // Null here means the group has closed nothing yet, so there is no share to state.
+          cell: (r) => (r.slaPct != null ? `${r.slaPct.toFixed(0)}%` : absent()),
+        },
+        {
+          key: "openPastSla",
+          label: "Open past SLA",
+          className: "num",
+          help: ["Open findings already older than their severity's SLA target, measured from when " +
+            "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
+            "findings), an aged-out open CRITICAL counts here."],
+          cell: (r) => fmtOpenPastSla(r.openPastSla),
+        },
+        { key: "open", label: "Open", className: "num", cell: (r) => (r.open ?? 0).toLocaleString() },
+        {
+          key: "resolved",
+          label: "Resolved",
+          className: "num",
+          cell: (r) => (r.resolved ?? 0).toLocaleString(),
+        },
+      ],
+      rows: byDomain.rows,
+    });
 
     // Awaiting-vendor-fix findings aren't a column (they don't breach any SLA) — a footnote
     // sums the per-domain `awaiting` counts so the excluded population is still visible.
@@ -808,10 +873,10 @@ export async function renderMttr(main, _params, ctx) {
         (fresh) => absorbTrend(chartHost, fresh))
         .then((t) => absorbTrend(chartHost, t))
         .catch((e) => {
-          // eslint-disable-next-line no-console
           console.error("[mttr] getMttrByDomainTrend failed:", e);
           if (!chartHost.isConnected) return;
-          clear(chartHost).append(emptyState("Couldn't load the trend charts."));
+          clear(chartHost).append(errorState("Couldn't load the trend charts.",
+            { detail: String((e && e.message) || e) }));
         });
     }
 
@@ -832,15 +897,20 @@ export async function renderMttr(main, _params, ctx) {
       // Wider default than other sheets: this one carries a trend chart *and* a full data
       // table (8 columns) side by side, which cramps hard at the shared 520px default. 820px
       // gives the table room to breathe on a normal desktop viewport while still clamping to
-      // 94vw on narrow ones. minWidth keeps a manual drag from shrinking the table into
-      // uselessness; storageKey remembers whatever width the user settles on across opens,
-      // same as the trend-window/survival-window prefs above.
+      // 94vw on narrow ones.
+      //
+      // `resizable: true` REPLACES `minWidth: 480` + `storageKey: "sheetWidthByDomain"`, which
+      // were gas's own sheet options and are not in the shared `openSheet`'s option set. It
+      // destructures a fixed list and ignores the rest silently, so this sheet had lost its
+      // drag-to-resize edge with nothing on screen or in the console saying so. The shared sheet
+      // owns both halves that those two options used to buy: it persists the width itself, under
+      // one key shared by every resizable sheet rather than a per-sheet one, and takes its floor
+      // from the `--sheet-w-record-min` custom property (520px) instead of a per-call number.
       onclick: () => openSheet(renderBody, {
         title: dim.title,
         subtitle: dim.sheetSubtitle,
         width: "min(820px, 94vw)",
-        minWidth: 480,
-        storageKey: "sheetWidthByDomain",
+        resizable: true,
       }),
     }, `Open ${dim.noun} breakdown →`));
   }
@@ -894,7 +964,10 @@ export async function renderMttr(main, _params, ctx) {
     const miniDefs = [
       // "of resolved" makes the survivorship explicit: In-SLA % scores only resolved
       // findings, so it can look healthy while the open backlog ages (Open past SLA next).
-      ["In SLA (of resolved)", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : "—",
+      // A null slaPct is "no resolved findings to score", not a rate — so the mini shows the
+      // muted dash rather than a black one sitting at the weight of the three real figures
+      // beside it.
+      ["In SLA (of resolved)", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : absent(),
         !scoped && prev && prev.sla_pct !== null && mttr.slaPct !== null
           ? changeChip(mttr.slaPct, prev.sla_pct, { invert: true, suffix: "%" }) : null],
       // Open findings already past their SLA target — unlike In SLA %, this scores open
@@ -903,11 +976,11 @@ export async function renderMttr(main, _params, ctx) {
         !scoped && prev && prev.open_past_sla !== null && prev.open_past_sla !== undefined &&
           openPastSla && openPastSla.breached !== null && openPastSla.breached !== undefined
           ? changeChip(openPastSla.breached, prev.open_past_sla) : null],
-      ["MTTR p90", fmtDays(overallKmP90 !== undefined ? overallKmP90 : overallPctiles?.p90), null],
+      ["MTTR p90", fmtSpan(overallKmP90 !== undefined ? overallKmP90 : overallPctiles?.p90), null],
       // p90 of open-finding age, not the single oldest — labelled to match the table below.
-      ["Open age p90", fmtDays(mttr.oldestDays),
+      ["Open age p90", fmtSpan(mttr.oldestDays),
         !scoped && prev && prev.oldest_open_days !== null && mttr.oldestDays !== null
-          ? changeChip(mttr.oldestDays, prev.oldest_open_days, { fmt: fmtDays }) : null],
+          ? changeChip(mttr.oldestDays, prev.oldest_open_days, { fmt: fmtSpan }) : null],
     ].filter(Boolean);
     for (const [label, value, chip] of miniDefs) {
       minis.append(el("div", {},
@@ -927,23 +1000,18 @@ export async function renderMttr(main, _params, ctx) {
     // (now a mini above), never a KM series, so there's nothing to diff against.
     // The single hero value (DESIGN.md: at most one per page). The mean (KM · RMST) is no
     // longer a second headline stat — it survives as a marker on the survival curve below,
-    // pointed to from the last helpTip line, so no methodology is lost.
-    const metric = helpTip(
+    // pointed to from the glossary entry's last line, so no methodology is lost.
+    //
+    // THE SAME DEFINITION pages/executive.js's hero carries, and the two used to be two
+    // hand-kept copies that had already drifted a word apart. One entry, both call sites:
+    // helpContent.js's `km-median`, which folds in the two lines only this copy had (the
+    // disappears-between-scans rule and the RMST marker on the curve below).
+    const metric = glossaryTip(
       [
         el("div", { class: "label" }, "Median MTTR (Kaplan–Meier)" + (domain ? ` — ${domain}` : "")),
-        el("div", { class: "hero-value num" }, fmtKmMedian(km)),
+        el("div", { class: "hero-value num" }, kmMedianCell(km)),
       ],
-      [
-        "Kaplan–Meier median days from first detection to remediation. Still-open findings " +
-          "count as censored observations instead of being ignored, so a wave of fresh open " +
-          "findings can't bias this down.",
-        "\"> X d\" means the curve never dropped to 50% within the observed window — over " +
-          "half of tracked findings are still open, so the true median is at least that " +
-          "many days out.",
-        "A vuln that disappears between scans counts as resolved.",
-        "Mean remediation time (KM · RMST) is marked on the survival curve below.",
-      ],
-      { className: "hero-metric" },
+      "km-median",
     );
     // Secondary metric beside the hero — the naive median (closed findings only), the biased
     // comparison the KM headline corrects for. Deliberately a step below the 2rem hero value
@@ -952,19 +1020,14 @@ export async function renderMttr(main, _params, ctx) {
     // the unscoped view, where the current population matches the global snapshot).
     const naiveChip = !scoped && prev && prev.median_days !== null && prev.median_days !== undefined
       && km?.naiveMedian !== null && km?.naiveMedian !== undefined
-      ? changeChip(km.naiveMedian, prev.median_days, { fmt: fmtDays })
+      ? changeChip(km.naiveMedian, prev.median_days, { fmt: fmtSpan })
       : null;
-    const naiveStat = helpTip(
+    const naiveStat = glossaryTip(
       [
         el("div", { class: "label" }, "Median (naive, closed)"),
-        el("div", { class: "kpi-value num" }, fmtDays(km?.naiveMedian), naiveChip),
+        el("div", { class: "kpi-value num" }, fmtSpan(km?.naiveMedian), naiveChip),
       ],
-      [
-        "Median days from first detection to remediation, counting closed findings only — no " +
-          "censoring. A wave of fresh open findings biases this down, which is exactly what " +
-          "the Kaplan–Meier headline corrects for.",
-      ],
-      { className: "hero-metric" },
+      "naive-median",
     );
     // Awaiting-vendor-fix moves off its own tile onto the source line — the honest-state
     // context stays legible without spending a KPI slot. Dropped when the vendor-fix filter
@@ -1046,12 +1109,14 @@ export async function renderMttr(main, _params, ctx) {
             "Median (closed), the naive closed-only median KM corrects for.",
         ],
       }));
-      requestAnimationFrame(() => {
+      loadCharts().then((charts) => {
         // The two KM markers plus the naive closed-only median dot, so the curve shows the
         // bias KM corrects for in place (naiveMean stays off the "MTTR over time" toggle).
-        survivalCurve(canvas, rem.km.curve,
+        charts.survivalCurve(canvas, rem.km.curve,
           { naiveMedian: rem.km.naiveMedian, median: rem.km.median, naiveMean: null, mean: rem.km.mean },
           { maxWeeks: survivalWeeks });
+      }).catch(() => {
+        chartUnavailable(canvas);
       });
     } else {
       const canvas = el("canvas", { id: "resolution-buckets" });
@@ -1062,9 +1127,11 @@ export async function renderMttr(main, _params, ctx) {
             "bars are the tail the median hides.",
         ],
       }));
-      requestAnimationFrame(() => {
-        stackedAgeBar(canvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
+      loadCharts().then((charts) => {
+        charts.stackedAgeBar(canvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
           boot.palette, "Resolved findings by time-to-resolve bucket and severity.");
+      }).catch(() => {
+        chartUnavailable(canvas);
       });
     }
   }
@@ -1175,9 +1242,9 @@ export async function renderMttr(main, _params, ctx) {
               "corrects for.",
           ],
         }));
-        painters.push(() => (mode === "km"
-          ? trendLine(canvas, kmMedianPoints, { yLabel: "days", xRange })
-          : trendLine(canvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange })));
+        painters.push({ canvas, paint: (charts) => (mode === "km"
+          ? charts.trendLine(canvas, kmMedianPoints, { yLabel: "days", xRange })
+          : charts.trendLine(canvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange })) });
       }
     }
 
@@ -1186,7 +1253,7 @@ export async function renderMttr(main, _params, ctx) {
     if (trend.length > 1) {
       const canvas = el("canvas", { id: "open-resolved" });
       grid.append(chartCard("Open vs resolved", el("div", { class: "chart-box" }, canvas)));
-      painters.push(() => openResolvedLines(canvas, trend, { xRange }));
+      painters.push({ canvas, paint: (charts) => charts.openResolvedLines(canvas, trend, { xRange }) });
     }
 
     // Card 3 — Open past SLA (aged backlog level).
@@ -1199,7 +1266,7 @@ export async function renderMttr(main, _params, ctx) {
             "rollout — findings awaiting a vendor fix are now included in the register.",
         ],
       }));
-      painters.push(() => trendLine(canvas, openSlaPoints, { yLabel: "findings", xRange }));
+      painters.push({ canvas, paint: (charts) => charts.trendLine(canvas, openSlaPoints, { yLabel: "findings", xRange }) });
     }
 
     // Card 4 — SLA quality: cohort attainment (rate) vs net-flow burn (direction), one card.
@@ -1225,9 +1292,9 @@ export async function renderMttr(main, _params, ctx) {
               "cleared, per scan. Above zero = the past-SLA backlog is growing.",
           ],
         }));
-        painters.push(() => (mode === "attainment"
-          ? trendLine(canvas, slaAttainmentPoints, { yLabel: "%", xRange })
-          : trendLine(canvas, slaBurnPoints, { yLabel: "findings", xRange })));
+        painters.push({ canvas, paint: (charts) => (mode === "attainment"
+          ? charts.trendLine(canvas, slaAttainmentPoints, { yLabel: "%", xRange })
+          : charts.trendLine(canvas, slaBurnPoints, { yLabel: "findings", xRange })) });
       }
     }
 
@@ -1250,8 +1317,10 @@ export async function renderMttr(main, _params, ctx) {
           + "Open counts there are exact; resolved and MTTR are lower bounds."));
     }
 
-    requestAnimationFrame(() => {
-      for (const paint of painters) paint();
+    loadCharts().then((charts) => {
+      for (const { paint } of painters) paint(charts);
+    }).catch(() => {
+      for (const { canvas } of painters) chartUnavailable(canvas);
     });
   }
 
@@ -1267,56 +1336,74 @@ export async function renderMttr(main, _params, ctx) {
     // target column are dropped from the default view (the target folds into the In-SLA
     // header helpTip). Column headers carry each metric's definition via helpTip so the
     // hero minis can stay plain.
-    const columns = [
-      ["Severity", null],
-      ["Median MTTR (KM)",
-        ["Kaplan–Meier median time-to-remediation for this severity — the principal MTTR " +
-          "figure. Still-open findings count as censored instead of being ignored, so it isn't " +
-          "biased low by fresh fast-patched vulns."]],
-      ["MTTR p90",
-        ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
-          "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
-          "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
-          "shows \"—\" when too much is still open to observe it."]],
-      ["Open", null],
-      ["Open past SLA",
-        ["Open findings already older than their severity's SLA target, measured from when " +
-          "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
-          "findings), an aged-out open CRITICAL counts here."]],
-      ["In SLA (of resolved)",
-        ["Share of resolved findings closed within their severity's SLA target — " +
-          "CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d."]],
-    ];
-    const table = el("table", { class: "data" },
-      el("thead", {}, el("tr", {},
-        ...columns.map(([h, lines]) => el("th", { scope: "col" },
-          lines ? helpTip(h, lines, { className: "help-label" }) : h)))),
-    );
-    const tbody = el("tbody", {});
-    for (const sev of sevs) {
-      const d = mttr.perSev[sev];
-      // KM median (still-open findings censored) when the payload carries it, falling back to
-      // the naive closed-only median for a stale pre-kmMedianPerSev cache.
-      const kmMedian = mttr.remediation?.kmMedianPerSev?.[sev];
-      // KM p90 (still-open findings censored) when present, falling back to the naive closed-only
-      // p90 for a stale pre-kmP90PerSev cache; a present-but-null value renders "—" (censored).
-      const kmP90 = mttr.remediation?.kmP90PerSev?.[sev];
-      tbody.append(el("tr", {},
-        el("td", {}, sevBadge(sev)),
-        el("td", { class: "num" }, fmtDays(kmMedian !== undefined ? kmMedian : d.mttr_median)),
-        el("td", { class: "num" },
-          fmtDays(kmP90 !== undefined ? kmP90 : mttr.remediation?.pctiles?.perSev?.[sev]?.p90)),
-        el("td", { class: "num" }, d.open),
-        el("td", { class: "num" }, fmtOpenPastSla(
-          mttr.remediation?.openPastSlaActionable?.perSev?.[sev]
-          ?? mttr.remediation?.openPastSla?.perSev?.[sev])),
-        el("td", { class: "num" }, d.sla_pct !== null ? `${d.sla_pct.toFixed(0)}%` : "—"),
-      ));
-    }
-    // The UNKNOWN severity (findings whose severity never normalized to a real value) is
-    // deliberately not rendered as a row here — it's still folded into every hero/table
-    // total above, and the hero source line surfaces the count as "unclassified severity".
-    table.append(tbody);
-    slaHost.append(el("div", { class: "table-wrap" }, table));
+    // KM median / p90 per severity fall back to the naive closed-only figures for a stale
+    // pre-kmMedianPerSev / pre-kmP90PerSev cache. `undefined` is the stale-cache signal, so the
+    // fallback tests for it specifically — a present-but-`null` value means the curve never got
+    // far enough to observe the statistic, and fmtSpan renders that rather than substituting a
+    // naive number that answers a different question.
+    const kmMedianOf = (sev) => {
+      const km = mttr.remediation?.kmMedianPerSev?.[sev];
+      return km !== undefined ? km : mttr.perSev[sev].mttr_median;
+    };
+    const kmP90Of = (sev) => {
+      const km = mttr.remediation?.kmP90PerSev?.[sev];
+      return km !== undefined ? km : mttr.remediation?.pctiles?.perSev?.[sev]?.p90;
+    };
+    // Same conversion as the by-domain table above: six static columns, one header row, no
+    // colspan, so the hand-rolled table had nothing the shared component lacks — and gains the
+    // right-aligned numeric headings its own `td.num` cells always implied.
+    slaHost.append(dataTable({
+      columns: [
+        { key: "sev", label: "Severity", cell: (sev) => sevBadge(sev) },
+        {
+          key: "kmMedian",
+          label: "Median MTTR (KM)",
+          className: "num",
+          help: ["Kaplan–Meier median time-to-remediation for this severity — the principal MTTR " +
+            "figure. Still-open findings count as censored instead of being ignored, so it isn't " +
+            "biased low by fresh fast-patched vulns."],
+          cell: (sev) => fmtSpan(kmMedianOf(sev)),
+        },
+        {
+          key: "kmP90",
+          label: "MTTR p90",
+          className: "num",
+          help: ["Kaplan–Meier 90th-percentile time-to-remediation — the slow tail. Nine in ten " +
+            "findings beat it; one in ten is slower. Censoring-aware like the KM median (read off " +
+            "the same survival curve), so the tail isn't biased low by fresh fast-patched vulns; " +
+            "shows \"—\" when too much is still open to observe it."],
+          cell: (sev) => fmtSpan(kmP90Of(sev)),
+        },
+        { key: "open", label: "Open", className: "num", cell: (sev) => mttr.perSev[sev].open },
+        {
+          key: "openPastSla",
+          label: "Open past SLA",
+          className: "num",
+          help: ["Open findings already older than their severity's SLA target, measured from when " +
+            "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
+            "findings), an aged-out open CRITICAL counts here."],
+          cell: (sev) => fmtOpenPastSla(
+            mttr.remediation?.openPastSlaActionable?.perSev?.[sev]
+            ?? mttr.remediation?.openPastSla?.perSev?.[sev]),
+        },
+        {
+          key: "slaPct",
+          label: "In SLA (of resolved)",
+          className: "num",
+          help: ["Share of resolved findings closed within their severity's SLA target — " +
+            "CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d."],
+          // Null is "nothing resolved at this severity yet", which is not a 0% and not a
+          // measured dash either — hence the muted one.
+          cell: (sev) => {
+            const pct = mttr.perSev[sev].sla_pct;
+            return pct !== null ? `${pct.toFixed(0)}%` : absent();
+          },
+        },
+      ],
+      // The UNKNOWN severity (findings whose severity never normalized to a real value) is
+      // deliberately not among these rows — it's still folded into every hero/table total
+      // above, and the hero source line surfaces the count as "unclassified severity".
+      rows: sevs,
+    }));
   }
 }

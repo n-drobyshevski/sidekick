@@ -14,7 +14,8 @@ import { describe, expect, it } from "vitest";
 import {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, compareValues, nullsLast, pageForSize, pageOf, sortRows,
   triState,
-} from "../src/client/js/ui/tableModel.js";
+} from "../../gas_shared/ui/tableModel.js";
+import { pageOf as mirrorPageOf } from "../src/client/js/assetQuery.js";
 
 const ids = (rows) => rows.map((r) => r.id);
 
@@ -127,6 +128,48 @@ describe("pageOf", () => {
 
   it("divides evenly without inventing an empty last page", () => {
     expect(pageOf(rows.slice(0, 6), 0, 3).pageCount).toBe(2);
+  });
+});
+
+// TWO IMPLEMENTATIONS, ON PURPOSE, AND THIS IS WHAT KEEPS THEM ONE ANSWER.
+//
+// `ui/tableModel.js` used to have no `pageOf` of its own: it re-exported `assetQuery.js`'s,
+// on the reasoning that the arithmetic already had exactly one definition on the client and
+// a third copy would be the only one nothing checked. That reasoning does not survive the
+// move — `gas_shared/ui/tableModel.js` cannot reach sideways into one app's `assetQuery.js`,
+// so it defines its own, and the re-export is gone.
+//
+// So the third copy now exists, and this is the check it was missing. `assetQuery.js` is a
+// hand-kept mirror of `src/domain/assetTable.ts` (assetQueryMirror.test.ts pins it row for
+// row), which is why it cannot simply import the shared one: the mirror has to read as a
+// translation of the TS module, not as a call into a UI package the server bundle never
+// loads. Three copies, two guards, and between them every pair is held.
+//
+// The table below is the boundaries a paging bug actually lives at: a page past the end, a
+// negative page, an empty register, an exact division, a fractional size, and a size of
+// zero (which both clamp to 1 rather than dividing by it).
+describe("pageOf: the shared table model and the assetTable mirror agree", () => {
+  const rows = Array.from({ length: 7 }, (_, i) => ({ id: String(i) }));
+  const CASES = [
+    [rows, 0, 5], [rows, 1, 5], [rows, 9, 5], [rows, -3, 5], [rows, 0, 7], [rows, 1, 7],
+    [rows, 0, 1], [rows, 6, 1], [rows, 7, 1], [rows, 0, 25], [rows, 2, 3],
+    [rows, 0, 0], [rows, 0, 2.7], [rows, 1.9, 3],
+    [[], 0, 25], [[], 3, 25], [rows.slice(0, 6), 0, 3],
+  ];
+
+  it("returns the same rows, page and pageCount on every boundary", () => {
+    for (const [list, page, size] of CASES) {
+      expect(pageOf(list, page, size), list.length + "/" + page + "/" + size)
+        .toEqual(mirrorPageOf(list, page, size));
+    }
+  });
+
+  // Without this the sweep above would pass on two functions that both return nothing.
+  it("is not vacuous — the table really does exercise more than one page", () => {
+    const counts = new Set(CASES.map(([list, page, size]) => pageOf(list, page, size).pageCount));
+    expect(counts.size).toBeGreaterThan(3);
+    expect([...CASES].some(([list, page, size]) => pageOf(list, page, size).rows.length > 0))
+      .toBe(true);
   });
 });
 

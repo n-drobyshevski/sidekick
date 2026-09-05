@@ -27,14 +27,14 @@
 // selected" — the default on load, in either mode — means the table reads exactly the
 // order the server sent.
 
-import { bootstrap, setParams, swrCall } from "../store.js";
+import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
-  pageHeader, pager, plural, segmented, select, selectField, sevBadge,
+  pageHeader, plural, segmented, select, selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statRow,
-  statusPill, tipMark, togglePills,
+  statusPill, tableFooter, tipMark, togglePills,
 } from "../ui.js";
 import {
   PAGE_SIZE, PROBLEM_SORT_DESC, RANK_REASON_LABEL, SEVERITY_RANK,
@@ -88,16 +88,23 @@ function actionsSkeleton() {
 
 export async function renderProblems(main, params) {
   const boot = await bootstrap();
-  main.append(
-    el("h1", {}, "Priorities"),
-    // NINE WORDS. The cascade this page ranks by — Wiz's severity, then how soon it is due,
-    // then how long it has been open — is a definition, and DESIGN.md is explicit that a
-    // definition belongs in the tip that routes to its Help entry rather than in a paragraph
-    // above the thing it describes. The term already existed; only the paragraph was new.
-    el("p", { class: "page-sub" },
-      "Every open issue and finding, ranked on one scale.",
-      glossaryTip(tipMark(), "priorities-rank")),
-  );
+  // `pageHeader({ route })`, not a bare `el("h1", ...)` and not a title in the hero VALUE —
+  // the same conversion `pages/compliance.js` made, and the same correction. F3 put "Risk"
+  // (this route's PAGES lane) in the h1 and "Priorities" in the 2rem hero slot, which left
+  // three pages of this lane all announcing "Risk" as their heading. The lane is the eyebrow
+  // and the h1 is the route's PAGES title now; the two `heroStat` calls further down carry
+  // figures and no `route`, so the page still owns exactly one h1.
+  main.append(pageHeader({
+    route: "problems",
+    // NINE WORDS, unchanged by either conversion. The cascade this page ranks by — Wiz's
+    // severity, then how soon it is due, then how long it has been open — is a definition,
+    // and DESIGN.md is explicit that a definition belongs in the tip that routes to its Help
+    // entry rather than in a paragraph above the thing it describes. An ARRAY, not a string:
+    // `el()` flattens its children, so the sentence and the tip that follows it land in the
+    // one `.page-hero-sub` line they used to share as a `<p>`.
+    lede: ["Every open issue and finding, ranked on one scale.",
+      glossaryTip(tipMark(), "priorities-rank")],
+  }));
 
   if (!boot.latestSync) {
     main.append(emptyState(
@@ -262,6 +269,8 @@ export async function renderProblems(main, params) {
     // anti-references reject, and it left the two modes of one page looking like two
     // different pages. Each level keeps the tip it already carried.
     return pageHeader({
+      // NO `route`, SO NO h1: the page's heading is in the header above this one. This used
+      // to need `{ heading: "div" }` on heroStat; heroStat renders no heading at all now.
       hero: heroStat("Open problems", String(total), "issues ∪ findings, the whole union"),
       stats,
     });
@@ -296,10 +305,15 @@ export async function renderProblems(main, params) {
 
     host.append(
       table(slice, filtered.length, rows.length),
-      pager(view.page, pageCount, sorted.length, (next) => {
-        view.page = next;
-        persist();
-        paint();
+      tableFooter({
+        page: view.page,
+        pageCount,
+        total: sorted.length,
+        onPage: (next) => {
+          view.page = next;
+          persist();
+          paint();
+        },
       }),
     );
   }
@@ -325,10 +339,15 @@ export async function renderProblems(main, params) {
     } else {
       host.append(table(sorted, filtered.length, rows.length));
     }
-    host.append(pager(fresh.page, fresh.pageCount, fresh.filtered, (next) => {
-      view.page = next;
-      persist();
-      refetch();
+    host.append(tableFooter({
+      page: fresh.page,
+      pageCount: fresh.pageCount,
+      total: fresh.filtered,
+      onPage: (next) => {
+        view.page = next;
+        persist();
+        refetch();
+      },
     }));
   }
 
@@ -623,7 +642,9 @@ export async function renderProblems(main, params) {
     // The count is the hero, the curve is what qualifies it, the other two are the strip:
     // three levels of emphasis instead of four blocks saying one thing.
     return pageHeader({
-      hero: heroStat("Open problems", String(problems), "issues ∪ findings, the whole union"),
+      // NO `route`, so no h1 — see the header above.
+      hero: heroStat("Open problems", String(problems),
+        "issues ∪ findings, the whole union"),
       aside,
       stats: [
         statRow("Collapse to", String(actions), "distinct remediation actions"),

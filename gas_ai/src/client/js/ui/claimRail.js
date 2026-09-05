@@ -25,7 +25,7 @@
 // reading means the same thing in each. That is also why it takes an explicit `offset`
 // rather than computing one: only the caller knows the row order the tally came in.
 
-import { el } from "./dom.js";
+import { el } from "../../../../../gas_shared/ui/dom.js";
 
 /**
  * Paint one row's claim in place. Built once per cell and thereafter mutated — rule 2 of

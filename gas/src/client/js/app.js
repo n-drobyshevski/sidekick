@@ -1,23 +1,27 @@
-// Wiz Sidekick OS SPA shell: app header, two-tier navigation, scan zone, hash router.
+// Wiz Sidekick OS: the manifest, the route table, the two client-side scopes, and the scan
+// battery.
+//
+// THE SHELL AROUND ALL THREE IS SHARED. `gas_shared/shell/` owns the boot splash, the app
+// header, the two-tier nav, the flyout panel, the route overlay and the hash router — one
+// copy for three registers, where there were three copies of ~1,500 lines that had already
+// drifted in four places that mattered. ONE OF THEM ARRIVED HERE AS A FIX: `<main>` is REPLACED
+// per route rather than cleared in place, so a slow page's late `.append()` lands in a detached
+// node instead of in the next page's DOM.
+//
+// Two travelled the other way, out of this file into the two siblings: route() dismisses the
+// combobox popover as well as the hover card, and a failure — boot or render — is `errorState`
+// rather than a `.empty` div wearing `role="status"`. See gas_shared/shell/appShell.js.
 
-import { call } from "./api.js";
-import { brandMark } from "./brandMark.js";
-import {
-  focusFirstRow,
-  itemHasPanel,
-  mountNavFlyout,
-  openFlyoutFor,
-  setActiveItem,
-  setNavContext,
-  tapOpensPanel,
-  wireRail,
-} from "./navFlyout.js";
-import { itemForRoute, railItems } from "./navModel.js";
-import { LANE_ICONS, ROUTE_ICONS, RUN_ICON } from "./routeIcons.js";
+import { configureApp } from "../../../../gas_shared/appConfig.js";
+import { call } from "../../../../gas_shared/api.js";
+import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
-import { scopeSwitchControl } from "./scopeSwitch.js";
-import { bootstrap, invalidateBootstrap, invalidateRpcCache, parseHash } from "./store.js";
-import { clear, el, fmtDateTime, progressBar, statusPill, toast } from "./ui.js";
+import { scopeChrome, scopeKinds, scopeSwitchView } from "./scopeKinds.js";
+import {
+  bookTip, clear, el, scopeControl, scopePayload, statusPill, syncCaption, tip, tipAnchor,
+  toast,
+} from "./ui.js";
+import { LANE_ICONS, ROUTE_ICONS, RUN_ICON } from "./routeIcons.js";
 import { renderExecutive } from "./pages/executive.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
@@ -26,54 +30,155 @@ import { renderHistory } from "./pages/history.js";
 import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
 import { renderAttribution } from "./pages/attribution.js";
+import { renderHelp } from "./pages/help.js";
+import { findEntry } from "./helpContent.js";
 
+// ============================================================================ the manifest
+//
+// WHAT THIS APP IS, handed to the shared core (gas_shared/appConfig.js) before anything else
+// in this module body runs.
+//
+// The shared modules cannot reach sideways into an app: `gas_shared/ui/tip.js` has no
+// `../helpContent.js` to import and `gas_shared/store.js` cannot know which route is this
+// register's front door. Those answers travel as data instead, handed over by the
+// `configureApp()` call BELOW THE PAGES TABLE — the manifest now carries PAGES, which is
+// declared after it, and everything between the two is a declaration rather than a call. That
+// is what appConfig.js's rule 1 is actually about: nothing may READ the manifest before it is
+// set, and no shared module reads it at import time (rule 2), so the first possible read is
+// still after `configureApp` runs.
+const MANIFEST = {
+  productName: "Wiz Sidekick OS",
+  // What the boot splash says it is opening. "ledger", not "register": devsecops already
+  // owns that noun for a shape this app doesn't have — three independent finding populations
+  // sitting side by side. This app's front door is the single deduplicated structure every
+  // scan writes into and every lifecycle reads out of, and it has always called itself that:
+  // the "Reset ledger" control, the "Ledger spreadsheet" card, and TABLE_NAMES's own "ledger"
+  // tab (migrationImport.js) all name the same object the splash is about to open. Two
+  // registers sharing "register" would flatten a real difference — one dedup ledger here,
+  // three independent registers there — so the words staying apart is right, not an accident.
+  // It reaches the STATIC first paint too: gas_shared/shell/renderIndex.js substitutes it into
+  // the shared index template at build time, so the splash cannot say one thing before the
+  // bundle loads and another after.
+  openingNoun: "ledger",
+  // Trailing dot included. Two sidekicks served from the same origin must not share a key.
+  storagePrefix: "sidekickos.",
+  // The first key of PAGES below, and the only place the two can disagree — which is what
+  // test/shared.test.js's navGroups contract checks. It used to be a bare "executive"
+  // literal inside store.js's parseHash AND a second `|| PAGES.executive` in route(); the
+  // two agreed by hand and test/navGroups.test.js existed to keep them agreeing.
+  defaultRoute: "executive",
+  // THIS REGISTER HAS A HELP BOOK NOW, and this line used to be the placeholder that said it
+  // did not: `findHelpEntry: () => null` — a resolver that resolves nothing, which made every
+  // glossary trigger degrade to a plain label (`glossaryTipLines(null)` is null) because there
+  // was nothing to resolve against and no `#/help` route to arrive at. Both ends landed
+  // together: `helpContent.js` holds the 21 definitions that were already written inside this
+  // app's own tip call sites, and PAGES below registers the route those tips have always named.
+  // `ui/tip.js` calls this as a FUNCTION, so a literal null would throw rather than degrade —
+  // which is why the placeholder was a function too, and why this is a reference and not a
+  // call. gas_shared/test/testConfig.js still ships the resolves-nothing shape, on purpose:
+  // a manifest fixture has no book.
+  findHelpEntry: findEntry,
+  // WHAT FILLS THIS REGISTER IS A SCAN, NOT A SYNC, and the shared first-run notice used to
+  // say otherwise. `firstRunNotice` (gas_shared/ui/feedback.js) hard-coded "No sync has run
+  // yet"; this app's endpoint is `api_runScan`, its bootstrap field is `latestScan` and the
+  // button in its rail says "Run scan", so that sentence sent a reader looking for a control
+  // this app does not have. The two siblings keep the default.
+  sync: { noun: "scan", unit: "findings" },
+  // The nav marks, read by gas_shared/shell/navRail.js (the rail and the stacked list) and
+  // gas_shared/shell/navFlyout.js (the panel's rows). routeIcons.js is still the only place
+  // they are drawn; the manifest is how the shared shell reaches them.
+  LANE_ICONS,
+  ROUTE_ICONS,
+  // No `panelBlocks`. The candidates were considered and each fails the one rule that
+  // matters: every row in a panel has to be a destination that ALREADY deep-links, because a
+  // panel that navigated somewhere a shared URL cannot reach would be inventing a nav surface
+  // the app cannot honour on the way back.
+  //   - The Security lane's instances would be saved filter states (`#/overview?sev=…&q=…`).
+  //     Those deep-link, but nothing in this app saves one yet — there is no saved-view store
+  //     to read, and a block drawn over nothing would say "you have none" where the truth is
+  //     "we never offered".
+  //   - The Data lane's would be the manual groups, whose names arrive with the bootstrap
+  //     payload the shell already holds — but a manual group is a SCOPE, and the scope
+  //     switcher in the header is where scopes live. Listing them here as destinations would
+  //     be the rail re-asserting the thing the header was built to take off it.
+  // When a saved-view store lands, this key is the one line that changes.
+};
 // THE ONE SOURCE for both the router and the nav. Order matters twice over: pages are drawn
 // in this insertion order, LANES ARE THE CONTIGUOUS RUNS OF ONE `group` (navModel.railItems
 // walks it once and joins a page to the item still open, so a lane split in two would draw
 // two items with one name), and the first key is the app's default landing page — which
-// store.parseHash hardcodes as "executive"; test/navGroups.test.js holds the two together.
+// MANIFEST.defaultRoute above names, and test/shared.test.js holds the two together.
 //
 // `group: null` is the CHROME TAIL: pages that name themselves, drawn under a rule rather
 // than under a heading. Settings is the whole tail here — a "Preferences" heading over one
 // item would restate the link it sits on.
+//
+// EXECUTIVE IS IN THE SECURITY LANE, AND IT USED TO HAVE AN "Overview" LANE OF ITS OWN.
+// A labelled lane earns its heading by holding two pages. navModel.railItems collapses a
+// lane holding one visible page to that page, so on the icon rail "Overview" was never drawn
+// — but renderStackedNav below 800px draws every lane heading UNCONDITIONALLY, and there it
+// really did render the word "Overview" directly above a single link reading "Executive".
+// The old test/navGroups.test.js knew about the collapse and asked multi-page lanes only for
+// a mark, so nothing caught the stacked case. Executive belongs here anyway: it, MTTR and
+// Program performance are all programme-level reads over the population that OS
+// vulnerabilities lists.
 const PAGES = {
-  executive: { title: "Executive", group: "Overview", render: renderExecutive },
+  executive: { title: "Executive", group: "Security", render: renderExecutive },
   mttr: { title: "MTTR & SLA", group: "Security", render: renderMttr },
   program: { title: "Program performance", group: "Security", render: renderProgram },
   overview: { title: "OS vulnerabilities", group: "Security", render: renderOverview },
   data: { title: "Data", group: "Data", render: renderData },
-  scan_history: { title: "Scan History", group: "Data", render: renderHistory },
+  // `history`, not `scan_history`, and the rename is what makes the route table checkable.
+  // gas_shared/test/contracts/navGroups.js resolves each route to `pages/<route>.js`, and
+  // this one was the only route in the app whose key did not name its own module — the page
+  // has always been pages/history.js. ROUTE_ALIASES below keeps every existing
+  // #/scan_history link working and rewrites it, so no bookmark is broken by the fix.
+  history: { title: "Scan History", group: "Data", render: renderHistory },
   attribution: { title: "Attribution", group: "Data", render: renderAttribution },
+  // The book, not the record: helpContent.js's whole glossary, searchable and deep-linkable —
+  // where every glossary tip's "Enter for the full definition" has always pointed
+  // (gas_shared/ui/tip.js's markTerm), landing on nothing until this route existed. LAST in the
+  // lane because a reader reaches for it only after wanting to check a word, never on the way
+  // in; in the Data lane rather than the chrome tail because the key sheet IS a page of this
+  // register's content. gas_devsecops files it identically and gas_ai does not — the two
+  // existing answers disagreed, and this is the one taken here.
+  help: { title: "Key sheet", group: "Data", render: renderHelp },
   settings: { title: "Settings", group: null, render: renderSettings },
 };
 
-// Below this the rail is a stacked list instead of an icon rail with a panel: at that width
-// there is nothing to fly out from and nowhere to put it.
-const NARROW_NAV = "(max-width: 800px)";
-function narrowNav() {
-  return !!(window.matchMedia && window.matchMedia(NARROW_NAV).matches);
-}
+// PAGES JOINS THE MANIFEST, AND THAT IS WHY THIS CALL MOVED DOWN A TABLE.
+// `gas_shared/ui/controls.js`'s `pageHeader({ route })` reads a route's own title and lane out
+// of `appConfig().PAGES`, so the `<h1>` on every page IS the PAGES title by construction
+// rather than by a second copy of the string sitting in the page module. PAGES is declared
+// below the manifest, so it is spread in here instead of named inside it.
+//
+// STILL BEFORE ANY SHARED FUNCTION RUNS, which is the rule appConfig.js's rule 1 actually
+// protects: everything between the manifest literal and this line is a declaration or an
+// object literal — no call — and no shared module reads the manifest at import time (rule 2).
+configureApp({ ...MANIFEST, PAGES });
 
-/** The rail's items for the current PAGES table. Recomputed rather than cached — it is a
- *  walk over eight entries, and a cached copy is a second list that could disagree. */
-function currentRailItems() {
-  return railItems(PAGES);
-}
+// Old bookmarks and links to the two pages that were merged into Data keep working. This was
+// `ROUTE_ALIASES` inside gas's own store.js; the shared store cannot carry one app's aliases,
+// so the shared router applies them and REWRITES the hash — a stale link that silently
+// renders a different page than the address bar names is three answers to "where am I". This
+// is the only app with any, which is why it is an argument rather than a shared table.
+const ROUTE_ALIASES = { reports: "data", exports: "data", scan_history: "history" };
 
 // A span carrying an inline SVG (el() builds HTML nodes, so SVG goes in via innerHTML).
-function iconSpan(svg, cls) {
-  const s = el("span", { class: cls || "nav-icon", "aria-hidden": "true" });
+function iconSpan(svg) {
+  const s = el("span", { class: "nav-icon", "aria-hidden": "true" });
   s.innerHTML = svg;
   return s;
 }
 
-const app = document.getElementById("app");
-let mainEl = null;
-let appbarEl = null;
-let bootData = null; // the last bootstrap payload, so renderAppbar can re-derive on a pick
-// The global "Domain" scope, shared by every page. "" = the whole register. Module-level
-// so it survives route() (which only re-renders mainEl, never the shell) and page navigation —
-// nav links carry no state.
+// ------------------------------------------------------------------------- the two scopes
+
+// The last bootstrap payload, so the header can be re-derived on a pick without re-fetching.
+let bootData = null;
+
+// The global "Domain" scope, shared by every page. "" = the whole register. Module-level so
+// it survives route() (which only re-renders the content pane, never the shell) and page
+// navigation — nav links carry no state.
 //
 // ONE VALUE FOR ONE QUESTION. A domain arrives from the resource's `Wiz/Domain` tag where the
 // tenant wrote one and from a manual group's rules where it did not, resolved server-side into
@@ -105,22 +210,25 @@ function syncScanZoneFiltering() {
  * The header switcher's pick: set one scope, clear the others, and re-read the page.
  *
  * No server round trip and no re-boot. This app scopes CLIENT-SIDE — both values ride the
- * page context and each page passes them into its own RPC — so the payload the switcher itself
- * reads (`bootData`) is unchanged by a pick, and only the header's own label, caption and
- * accent need re-deriving. `renderAppbar` does that by rebuilding from the same payload rather
- * than patching, which is what keeps the caption and the trigger from ever disagreeing.
+ * page context and each page passes them into its own RPC — so the bootstrap payload is
+ * unchanged by a pick, and only the header's own label, caption and accent need re-deriving.
+ * `renderChrome` does that by rebuilding from the same payload rather than patching, which is
+ * what keeps the caption and the trigger from ever disagreeing.
  */
-function pickScope(pick) {
-  // Set one, clear the other. Written as a clear-then-set rather than two branches so the
-  // "one at a time" rule is structural: there is no path through this function that leaves
-  // both of them non-empty.
-  activeDomain = "";
-  activeSupportGroup = "";
-  if (pick.kind === "supportGroup") activeSupportGroup = pick.value || "";
-  else activeDomain = pick.value || "";
-  renderAppbar(appbarEl, bootData);
+function pickScope(payload) {
+  // THE SHAPE OF `payload` IS THE OLD `activeScope()` OBJECT, byte for byte — `{domain,
+  // supportGroup}` with exactly one of them non-empty. It is built by the kind's own
+  // `payload(id)` in scopeKinds.js rather than reconstructed here from a `{kind, value}` pair,
+  // which is what makes "one at a time" structural: there is no branch in this function that
+  // could leave both set, because it does not compose the object at all.
+  // The registerScopeContract block in test/shared.test.js pins every one of those objects
+  // against what the deleted scopeSwitch.js produced for the same pick.
+  const pick = payload || { domain: "", supportGroup: "" };
+  activeDomain = pick.domain || "";
+  activeSupportGroup = pick.supportGroup || "";
+  shell.renderChrome(bootData);
   syncScanZoneFiltering();
-  route();
+  shell.route();
 }
 
 // Clear the scope from a page-header chip. The header is rebuilt so its trigger drops the
@@ -128,41 +236,33 @@ function pickScope(pick) {
 function clearScope(kind) {
   if (kind === "domain") activeDomain = "";
   else if (kind === "supportGroup") activeSupportGroup = "";
-  renderAppbar(appbarEl, bootData);
+  shell.renderChrome(bootData);
   syncScanZoneFiltering();
-  route();
+  shell.route();
 }
 
-// Route-reload overlay: veils the content pane (not the sidebar) with a progress bar
-// while the active page refetches — most visibly after a scope change, which
-// otherwise reloads silently. Shown only if the load outlasts a short delay, so cached
-// switches never flash; a sequence guard keeps it up across rapid successive changes.
-let routeOverlay = null;
-let routeSeq = 0;
-let routeLoadingTimer = null;
-const ROUTE_LOADING_DELAY_MS = 120;
-// The first page render after each boot is covered by the boot splash → page skeleton, so it
-// skips the route-overlay veil; every subsequent navigation uses the veil as normal.
-let firstRoute = true;
-
-function beginRouteLoading() {
-  clearTimeout(routeLoadingTimer);
-  routeLoadingTimer = setTimeout(() => {
-    if (!routeOverlay) return;
-    // Set the live-region text only after the overlay is visible so it announces.
-    routeOverlay.classList.add("visible");
-    const label = routeOverlay.querySelector(".route-overlay-label");
-    if (label) label.textContent = "Updating…";
-  }, ROUTE_LOADING_DELAY_MS);
+/**
+ * The header's scope control, or null when there is no register to slice — including the
+ * boot-failure path, where offering a picker over data we could not fetch would be a control
+ * with nothing behind it.
+ *
+ * ONE CONTROL, THREE REGISTERS. `scopeControl` (gas_shared/ui/scopeControl.js) draws it and
+ * `scopeKinds.js` says what this register's two dimensions are; the appbar only decides where
+ * it goes.
+ */
+function appbarScope(data) {
+  bootData = data;
+  const kinds = scopeKinds(data);
+  const chrome = scopeChrome(data);
+  return scopeControl(
+    scopeSwitchView(data, activeScope()),
+    { ...chrome, kinds },
+    (value) => pickScope(scopePayload(kinds, chrome, value)),
+  );
 }
 
-function endRouteLoading() {
-  clearTimeout(routeLoadingTimer);
-  if (!routeOverlay) return;
-  routeOverlay.classList.remove("visible");
-  const label = routeOverlay.querySelector(".route-overlay-label");
-  if (label) label.textContent = "";
-}
+// --------------------------------------------------------------------- the scan battery
+
 let jobPoller = null;
 let scanCardHost = null; // the progress-card slot in the current scan zone
 let scanButtonsRow = null; // the Run/Quick buttons, hidden while a job runs
@@ -176,285 +276,45 @@ const STOPPING_GRACE_MS = 45000;
 let lastJob = null; // most recent JobRow, for an immediate repaint on Stop
 let scanDetails = null; // open scan-details drawer handle, kept live by the poller
 
-// Recreate the branded boot splash index.html paints on first load, so refresh() (which
-// re-runs boot()) shows the same veil. Keep this markup in sync with the static copy in
-// index.html. Reuses the indeterminate progress bar so it reads as the same loader family
-// as the route-overlay (and inherits its reduced-motion striped fallback).
-function bootSplash() {
-  const bar = progressBar(null);
-  bar.classList.add("boot-splash-bar");
-  bar.setAttribute("aria-label", "Opening the ledger");
-  return el(
-    "div",
-    { class: "boot-splash", role: "status", "aria-live": "polite" },
-    el("div", { class: "boot-splash-inner" },
-      el("div", { class: "boot-brand" },
-        brandMark(112),
-        el("span", { class: "boot-brand-label" }, "Wiz Sidekick OS")),
-      bar,
-      el("p", { class: "boot-splash-note" }, "Opening the ledger…")),
-  );
-}
-
-// Fade the splash out and remove it. transitionend removes it; a timeout is the fallback if
-// that never fires. Under reduced motion there's no fade, so remove immediately.
-function hideBootSplash() {
-  const splash = document.querySelector(".boot-splash");
-  if (!splash) return;
-  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (reduce) { splash.remove(); return; }
-  splash.classList.add("hiding");
-  let done = false;
-  const finish = () => { if (done) return; done = true; splash.remove(); };
-  splash.addEventListener("transitionend", finish, { once: true });
-  setTimeout(finish, 240);
-}
-
-async function boot() {
-  firstRoute = true;
-  // Keep the splash index.html painted (first load) or recreate it (refresh) and remove only
-  // the *previous* app underneath it — so a refresh never flashes a cleared pane. clear(app)
-  // is deliberately avoided here: the splash must survive to cover the rebuild.
-  let splash = app.querySelector(".boot-splash");
-  if (!splash) { splash = bootSplash(); app.append(splash); }
-  for (const node of [...app.children]) if (node !== splash) node.remove();
-
-  const appbar = el("header", { class: "appbar" });
-  appbarEl = appbar;
-  const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
-  mainEl = el("main", { id: "main" });
-  // Kept out of <main> so clear(mainEl) never removes it and it always covers the
-  // pane regardless of scroll. role=status makes "Updating…" a polite announcement.
-  routeOverlay = el(
-    "div",
-    { class: "route-overlay", role: "status", "aria-live": "polite" },
-    el("div", { class: "route-overlay-bar", "aria-hidden": "true" },
-      el("div", { class: "route-overlay-fill" })),
-    el("span", { class: "route-overlay-label" }),
-  );
-  // The nav panel is a SIBLING of the rail rather than a child of it: .sidebar is
-  // overflow-y:auto and would clip it, and .app-body is already the positioning context the
-  // route overlay uses. Unpinned it floats over the content pane; pinned it is an in-flow
-  // column and `main` shrinks beside it.
-  const flyout = el("nav", { class: "nav-flyout", "aria-label": "Section pages" });
-  // The overlay is a child of the BODY row, not of `app`: it veils the content pane while a
-  // page refetches, and the header above it has to stay live — the rail already does, by
-  // sitting outside the overlay's box.
-  app.append(appbar, el("div", { class: "app-body" }, sidebar, flyout, mainEl, routeOverlay));
-  mountNavFlyout(flyout);
-  // The panel asks the shell what it holds each time it opens. Nothing yet — see
-  // navModel.panelBlocks for which candidates were considered and why none of them qualifies
-  // — but the provider is the seam a saved-view store would arrive through, and wiring it now
-  // is what keeps that a one-function change rather than a re-derivation.
-  setNavContext(() => ({}));
-  wireRail(sidebar, (id) => currentRailItems().filter((i) => i.id === id)[0] || null);
-
-  let data;
-  try {
-    data = await bootstrap();
-  } catch (e) {
-    // A denied user normally never reaches this file at all — doGet's own access.deniedPage()
-    // stops them before the SPA bundle ships. This branch is for the narrower case where
-    // access is REVOKED (removed from ALLOWED_USERS, or the property flipped) while a tab is
-    // already open: the next RPC's forbidden envelope surfaces here as err.kind (api.js), and
-    // "Couldn't reach the server / Retry" would be actively misleading — retrying re-sends the
-    // same identity and can only fail the same way.
-    const card = e && e.kind === "forbidden"
-      ? el("div", { class: "empty" },
-          el("div", {}, "You don't have access to this app."),
-          el("div", { class: "small", style: "margin:6px 0 4px" }, String(e.message || e)),
-          // Same offer as the denied page doGet serves, so the two surfaces a locked-out
-          // person can land on say the same thing. The href is built server-side (access.ts)
-          // so the prefilled subject exists once rather than in both bundles.
-          e.contact
-            ? el("div", { class: "small", style: "margin:0 0 14px" },
-                "If you think you should have access, contact ",
-                el("a", { href: e.contactUrl || ("mailto:" + e.contact) }, e.contact),
-                ".")
-            : null,
-        )
-      : el("div", { class: "empty" },
-          el("div", {}, "Couldn't reach the server."),
-          el("div", { class: "small", style: "margin:6px 0 14px" }, String(e.message || e)),
-          el("button", { class: "primary", onclick: () => refresh() }, "Retry"),
-        );
-    clear(mainEl).append(card);
-    bootData = null;
-    renderAppbar(appbar, null);
-    renderSidebar(sidebar, null);
-    hideBootSplash(); // reveal the error card
-    return;
-  }
-  bootData = data;
-  renderAppbar(appbar, data);
-  renderSidebar(sidebar, data);
-  route(); // paints the page's skeleton synchronously up to its first data await
-  // Fade the splash only after the skeleton has laid out — double rAF flushes the (cached)
-  // bootstrap microtasks and one layout tick, so the splash reveals the skeleton, never a blank pane.
-  requestAnimationFrame(() => requestAnimationFrame(hideBootSplash));
-}
-
 /**
- * The bar across the top: whose product this is, and which slice of the register it is showing.
+ * The scan zone under the nav.
  *
- * DELIBERATELY TWO THINGS. Both describe the whole app rather than any one page — the switcher
- * scopes every figure on every page, so it reads as chrome rather than as one page's filter.
- * The reference screens' search box, notification bell and avatar are absent because none of
- * them has anything behind it here. Everything else stays in the rail: the nav, Run scan, the
- * credentials pill and the last-scan line.
+ * Carries a subtle "filtering" accent when a scope is active, so the source of a scoped view
+ * is visible where the scan controls live (the header switcher and the scopeBar in the
+ * content pane are the primary cues).
  *
- * Rebuilt wholesale rather than patched, and from one payload, so the switcher's label, its
- * caption and its accent are always three readings of the same state.
- *
- * @param {HTMLElement} appbar
- * @param {object|null} data  the bootstrap payload, or null when boot failed
+ * The two global filters that used to live here — domain and Support group — are one control
+ * in the app header now. They were the only things in the rail that were not destinations,
+ * and a scope is not a destination. A SCOPE THAT FELL OUT OF THE REGISTER IS NO LONGER
+ * SILENTLY DROPPED, which is what the two comboboxes did on every rebuild: deleting a manual
+ * group in Settings and coming back to a whole-register view looks exactly like never having
+ * scoped at all. The switcher keeps the stale value in force and says so in words instead
+ * ("Not in this register — showing 0 of N", scopeSwitchView).
  */
-function renderAppbar(appbar, data) {
-  if (!appbar) return;
-  clear(appbar);
-  // Decorative, because the name is right there beside it in text and never hidden — the
-  // shell's other copy of the mark (the splash) is decorative for the same reason. The rail
-  // carries no mark at all now, so nothing in this file names the product twice.
-  appbar.append(
-    brandMark(22, { compact: true }),
-    el("span", { class: "appbar-name" }, "Wiz Sidekick OS"),
-  );
-  // Null when there is no register to slice — including the boot-failure path, where offering
-  // a picker over data we could not fetch would be a control with nothing behind it. The rule
-  // goes with it: a separator with one side missing separates nothing.
-  const scopeSwitch = scopeSwitchControl(data, activeScope(), pickScope);
-  if (scopeSwitch) {
-    appbar.append(el("span", { class: "appbar-sep", "aria-hidden": "true" }), scopeSwitch);
-  }
-}
-
-/**
- * A lane heading.
- *
- * An h2 rather than a div, and the label inside a span rather than loose in it, so the icon
- * rail can clip the words (rather than remove them) and draw the h2 itself as the hairline
- * between two icon clusters. The heading stays announced and navigable in every state; only
- * its pixels change.
- */
-function navGroupHeading(label) {
-  return el("h2", { class: "nav-group" }, el("span", { class: "nav-group-label" }, label));
-}
-
-// The chrome tail's separator. Settings names itself, so the tail is marked rather than
-// labelled — presentational, because it says nothing a reader could not see, and the page
-// under it is already an ordinary link.
-function navRule() {
-  return el("div", { class: "nav-rule", role: "presentation" });
-}
-
-/**
- * One rail item: a link that navigates, and — where the item has a panel — the trigger that
- * opens it.
- *
- * ONE CONTROL, and no caret beside it. `aria-haspopup` and `aria-expanded` say a panel is there
- * and whether it is open, ArrowRight opens it and lands focus inside, Escape closes it and
- * hands focus back. Enter still navigates, because this is still a link: the panel is a way in,
- * never the only one.
- */
-function railItem(item) {
-  const icon = item.kind === "lane" ? LANE_ICONS[item.id] : ROUTE_ICONS[item.route];
-  const node = el("div", { class: "rail-item", "data-nav-item": item.id });
-  const link = el(
-    "a",
-    {
-      class: "nav-link rail-link",
-      href: `#/${item.route}`,
-      // index.html sets <base target="_top"> so external links escape the GAS sandbox iframe.
-      // Without an explicit _self, hash links inherit it and navigate the top window to the
-      // sandbox's own googleusercontent URL — which, loaded bare, is a blank page.
-      target: "_self",
-      // Only where there is one. A rail item that announced a popup it does not have would
-      // send a screen-reader user hunting for a panel that never opens.
-      "aria-haspopup": itemHasPanel(item) ? "true" : null,
-      "aria-expanded": itemHasPanel(item) ? "false" : null,
-      onclick: (e) => {
-        // Where there is no hover there is no flyout, so the first tap has to do the revealing.
-        if (tapOpensPanel(item, node)) e.preventDefault();
-      },
-      onkeydown: (e) => {
-        if (e.key !== "ArrowRight" || !itemHasPanel(item)) return;
-        e.preventDefault();
-        openFlyoutFor(item, node, { viaFocus: true });
-        focusFirstRow();
-      },
-    },
-    iconSpan(icon),
-    el("span", { class: "nav-label" }, item.label),
-  );
-  node.append(link);
-  return node;
-}
-
-/** The two-tier rail: one item per lane, then a rule, then the chrome tail. */
-function renderRail(sidebar, items) {
-  let ruled = false;
-  for (const item of items) {
-    // Keyed on `lane`, never on `kind`: a lane holding one visible page is drawn AS that page,
-    // so kind alone would put the rule in front of the first collapsed lane instead of in front
-    // of the chrome.
-    if (item.lane === null && !ruled) { sidebar.append(navRule()); ruled = true; }
-    sidebar.append(railItem(item));
-  }
-}
-
-/**
- * The stacked list, for the top-bar layout below 800px: every page, lane headings as words, one
- * rule above the chrome tail. This is the rail as it shipped before the panel existed, and it
- * stays because at that width it is still the right answer.
- */
-function renderStackedNav(sidebar) {
-  const { route: active } = parseHash();
-  // `undefined`, not null: null is a real group — the unlabelled chrome tail — and a detector
-  // seeded with it would start the list inside that tail and never draw its rule.
-  let lastGroup;
-  for (const [key, page] of Object.entries(PAGES)) {
-    if (page.hidden) continue;
-    if (page.group !== lastGroup) {
-      sidebar.append(page.group ? navGroupHeading(page.group) : navRule());
-      lastGroup = page.group;
-    }
-    sidebar.append(
-      el(
-        "a",
-        {
-          class: `nav-link${key === active ? " active" : ""}`,
-          href: `#/${key}`,
-          target: "_self",
-          "aria-current": key === active ? "page" : null,
-        },
-        iconSpan(ROUTE_ICONS[key]),
-        el("span", { class: "nav-label" }, page.title),
-      ),
-    );
-  }
-}
-
-function renderSidebar(sidebar, data) {
-  clear(sidebar);
-  if (narrowNav()) renderStackedNav(sidebar);
-  else renderRail(sidebar, currentRailItems());
-
-  // Scan zone — carries a subtle "filtering" accent when a scope is active, so the source of a
-  // scoped view is visible where the scan controls live (the header switcher and the scopeBar
-  // in the content pane are the primary cues).
+function renderScanZone(data) {
   const zone = el("div",
     { class: `scan-zone${activeDomain || activeSupportGroup ? " filtering" : ""}` });
   const runBtn = el("button", { class: "primary", onclick: () => startScan(false, runBtn) },
     iconSpan(RUN_ICON), el("span", { class: "btn-label" }, "Run scan"));
   const quickBtn = el(
     "button",
-    {
-      onclick: () => startScan(true, quickBtn),
-      title: "Fetch only findings changed since the last full scan and merge them in. " +
-        "Deletions aren't detected — run a full scan for those.",
-    },
+    { onclick: () => startScan(true, quickBtn) },
     "Quick refresh",
   );
+  // Was a `title` attribute, which el() now refuses: a native tooltip cannot be reached by
+  // keyboard, does not exist on touch, and arrives half a second late. The card attaches to
+  // the button IN PLACE (it is already interactive), so this adds a hover card and no tab stop.
+  //
+  // `bookTip`, NOT `tip(..., { term })`, AND THE DIFFERENCE IS MEASURED RATHER THAN STYLISTIC.
+  // A term tip calls markTerm(), which registers the anchor in tip.js's ACTIVATE map; tip.js's
+  // delegated click handler then runs `act(e)` — navigate("help", { term }) — and does NOT
+  // preventDefault or stopPropagation. This button already has a click action of its own
+  // (startScan), so a term tip here would start a quick refresh AND route away from the page
+  // that is about to report it, on one click. bookTip reads the same entry out of the same book
+  // and attaches no activation, so the sentence still lives once in helpContent.js and the
+  // button still does the one thing it says. The trade is the "Enter for the full definition"
+  // affordance, which bookTip does not offer and therefore does not promise.
+  bookTip(quickBtn, "quick-refresh");
   // The controls wrapper (buttons + a persistent caveat) is hidden as a unit while a job
   // runs. The caveat states the Quick refresh trap in visible copy, not just a hover title.
   scanButtonsRow = el("div", { class: "scan-controls" },
@@ -465,6 +325,13 @@ function renderSidebar(sidebar, data) {
   scanCardHost = el("div", {}); // filled by the poller while a job runs
   zone.append(scanCardHost, scanButtonsRow);
   if (data) {
+    const credDot = el("span", {
+      class: `rail-status-dot ${data.hasCredentials ? "ok" : "neutral"}`,
+      "aria-hidden": "true",
+    });
+    tipAnchor(credDot, () => [
+      data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)",
+    ]);
     zone.append(
       el("div", { class: "scan-caption" },
         data.hasCredentials
@@ -473,23 +340,22 @@ function renderSidebar(sidebar, data) {
       ),
       // Compact stand-in for the pill above, shown on the icon rail (where the captions do not
       // fit) so the credentials/dry-run state stays glanceable at 76px.
-      el("span", {
-        class: `rail-status-dot ${data.hasCredentials ? "ok" : "neutral"}`,
-        "aria-hidden": "true",
-        title: data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)",
-      }),
+      //
+      // tipAnchor, NOT tip(): tip() wraps a non-interactive node in a `.tip-trigger` button,
+      // and this dot is aria-hidden decoration whose words are already on the pill beside it
+      // — a tab stop here would announce nothing and stop everyone. tipAnchor is the shared
+      // answer for an anchor that cannot host a wrapper.
+      credDot,
     );
-    if (data.latestScan) {
-      const age = Math.floor((Date.now() - Date.parse(data.latestScan.ts)) / 86400000);
-      zone.append(
-        el("div", { class: "scan-caption" },
-          `Last scan ${fmtDateTime(data.latestScan.ts)}` +
-            (age >= 2 ? ` — ${age} days ago` : ""),
-        ),
-      );
-    } else {
-      zone.append(el("div", { class: "scan-caption" }, "No scan saved yet."));
-    }
+    // `syncCaption` (gas_shared/ui/feedback.js), unified across all three apps: "Last <noun>
+    // <datetime> · <relativeAge>" once a scan is saved, "No <noun>s yet." before the first
+    // one. It used to be a bare Math.floor day count gated at `age >= 2` — a scan an hour old
+    // showed no age at all, and this app's own Scan History page had finer just-now/min/hour
+    // granularity that this caption never got. `sync.noun` in this app's MANIFEST ("scan") is
+    // what turns the shared sentence's default "sync"/"syncs" into "scan"/"scans" here.
+    zone.append(
+      el("div", { class: "scan-caption" }, syncCaption(data.latestScan && data.latestScan.ts)),
+    );
     // Seed the card immediately from the bootstrap job, then keep it live — this is
     // what makes progress survive a page reload mid-scan.
     if (data.activeJob) {
@@ -497,19 +363,7 @@ function renderSidebar(sidebar, data) {
       watchJob(data.activeJob.job_id);
     }
   }
-
-  // The two global filters that used to live here — domain and Support group — are one
-  // control in the app header now. They were the only things in the rail that were not
-  // destinations, and a scope is not a destination.
-  //
-  // A SCOPE THAT FELL OUT OF THE REGISTER IS NO LONGER SILENTLY DROPPED, which is what the two
-  // comboboxes did on every rebuild. Deleting a manual group in Settings and coming back to a
-  // whole-register view looks exactly like never having scoped at all — the numbers change,
-  // nothing says why, and the reader is left to work out which of the two happened. The
-  // switcher keeps the stale value in force and says so in words instead ("Not in this
-  // register — showing 0 of N", scopeSwitchView), so the empty pages behind it are explained
-  // by the control that caused them.
-  sidebar.append(zone);
+  return zone;
 }
 
 async function startScan(incremental, btn) {
@@ -621,55 +475,24 @@ function stopWatch() {
   jobPoller = null;
 }
 
-export async function refresh() {
-  invalidateBootstrap();
-  invalidateRpcCache();
-  await boot();
-}
+// ------------------------------------------------------------------------------ the shell
 
-async function route() {
-  const seq = ++routeSeq;
-  const { route: key, params } = parseHash();
-  const page = PAGES[key] || PAGES.executive;
-  document.title = `${page.title} — Wiz Sidekick OS`;
-  // active nav state — every link, wherever it is drawn: the stacked list, the icon rail, and
-  // the panel's rows are all `.nav-link`, and all three have to agree on where you are.
-  document.querySelectorAll(".nav-link").forEach((a) => {
-    const isActive = a.getAttribute("href") === `#/${key}`;
-    a.classList.toggle("active", isActive);
-    if (isActive) a.setAttribute("aria-current", "page");
-    else a.removeAttribute("aria-current");
-  });
-  // The rail marks the ITEM the route belongs to — a lane, usually. Deliberately a class and
-  // not `aria-current="page"`: the lane is not the page, and the page's own row inside the
-  // panel is already carrying that.
-  const here = itemForRoute(currentRailItems(), key);
-  document.querySelectorAll(".rail-item").forEach((node) => {
-    node.classList.toggle("current", !!here && node.getAttribute("data-nav-item") === here.id);
-  });
-  setActiveItem(here);
-  clear(mainEl);
-  // The first render after a boot is covered by the boot splash → page skeleton, so it skips
-  // the veil to avoid stacking two loaders; later navigations use it as normal.
-  const useOverlay = !firstRoute;
-  if (useOverlay) beginRouteLoading();
-  try {
-    await page.render(mainEl, params, {
-      refresh, clearScope, startScan, ...activeScope(),
-    });
-  } catch (e) {
-    clear(mainEl).append(
-      el("div", { class: "empty" },
-        el("div", {}, "This page failed to load."),
-        el("div", { class: "small", style: "margin-top:6px" }, String(e.message || e)),
-      ),
-    );
-  } finally {
-    // Only the latest route settles the overlay; a newer change keeps it up.
-    if (useOverlay && seq === routeSeq) endRouteLoading();
-    firstRoute = false;
-  }
-}
+const shell = createAppShell({
+  pages: PAGES,
+  routeAliases: ROUTE_ALIASES,
+  appbarScope,
+  railFooter: renderScanZone,
+  // The panel asks the shell what it holds each time it opens. Nothing yet — see the
+  // manifest's `panelBlocks` note for which candidates were considered and why none of them
+  // qualifies — but the provider is the seam a saved-view store would arrive through, and
+  // wiring it now is what keeps that a one-function change rather than a re-derivation.
+  navContext: () => ({}),
+  // The two client-side scopes and the two callbacks every page's header chip needs. The
+  // siblings pass nothing here: their scope is server state, so their pages never see it.
+  pageContext: () => ({ clearScope, startScan, ...activeScope() }),
+});
 
-window.addEventListener("hashchange", route);
-boot();
+export const refresh = shell.refresh;
+
+window.addEventListener("hashchange", shell.route);
+shell.boot();

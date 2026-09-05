@@ -155,18 +155,6 @@ export function nowIso(now?: number): string {
   return toIso(now ?? Date.now())!;
 }
 
-/**
- * Max of a numeric list WITHOUT spreading it into function arguments.
- *
- * `Math.max(...arr)` turns every element into a call argument, so it overflows the stack
- * once the array is large — fatal on findings-scale inputs like a Kaplan-Meier risk set,
- * which holds one entry per finding and would carry ~20,000 of them here. Same failure the
- * comment on `minIso` records. Returns -Infinity for an empty list; callers guard `.length`.
- */
-export function maxNum(values: number[]): number {
-  return values.reduce((m, v) => Math.max(m, v), -Infinity);
-}
-
 /** Arithmetic mean, or null for an empty list. */
 export function mean(values: number[]): number | null {
   if (!values.length) return null;
@@ -189,4 +177,58 @@ export function quantile(values: number[], q: number): number | null {
 
 export function median(values: number[]): number | null {
   return quantile(values, 0.5);
+}
+
+/**
+ * Max of a numeric list WITHOUT spreading it into function arguments. `Math.max(...arr)`
+ * turns every element into a call argument, so it overflows the stack ("Maximum call stack
+ * size exceeded") once `arr` is large — fatal on findings-scale inputs. This reduces with the
+ * two-argument Math.max, so it's O(n) with constant stack depth and NaN propagates exactly as
+ * the spread form did. Returns -Infinity for an empty list (callers guard `.length` first, as
+ * with the spreads). Ported from gas/src/domain/util.ts; see that file's note and
+ * test/util.test.ts for the measured argument-limit ceiling.
+ */
+export function maxNum(values: number[]): number {
+  return values.reduce((m, v) => Math.max(m, v), -Infinity);
+}
+
+/** Min counterpart of maxNum — see its note on why this avoids `Math.min(...arr)`. */
+export function minNum(values: number[]): number {
+  return values.reduce((m, v) => Math.min(m, v), Infinity);
+}
+
+/**
+ * Append every item of `items` onto `target` in place, WITHOUT spreading into arguments.
+ * `target.push(...items)` makes each item a call argument, so it overflows the call stack
+ * once `items` is large — the same failure class as `Math.max(...arr)` (see maxNum). Accepts
+ * any iterable (arrays and Map value iterators alike).
+ */
+export function pushAll<T>(target: T[], items: Iterable<T>): void {
+  for (const item of items) target.push(item);
+}
+
+/**
+ * First present value among dotted keys, tolerating a nested `vulnerableAsset` dict. Accepts
+ * both flattened "vulnerableAsset.name" keys and the raw nested node shape. Returns "" when
+ * nothing matches. Literal port of gas/src/domain/lifecycle.ts's field() — including the
+ * hardcoded `vulnerableAsset` unwrap, unchanged, because SCA reads the same
+ * `vulnerabilityFindings` connection the OS-vuln register does (brick/devsecops/config.py's
+ * `sca` scope) and so its nodes carry `vulnerableAsset` exactly like gas/'s do. Moved here
+ * from lifecycle.ts because it is a general value-access helper, not lifecycle logic — this
+ * mirrors the D1 brief's "Add ... field" instruction for util.ts.
+ */
+export function field(record: Rec, ...keys: string[]): string {
+  for (const k of keys) {
+    const v = record[k];
+    if (present(v)) return pyStr(v);
+  }
+  const va = record["vulnerableAsset"];
+  if (va && typeof va === "object" && !Array.isArray(va)) {
+    for (const k of keys) {
+      const leaf = k.split(".").pop()!;
+      const v = (va as Rec)[leaf];
+      if (present(v)) return pyStr(v);
+    }
+  }
+  return "";
 }

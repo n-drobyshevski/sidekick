@@ -1,31 +1,38 @@
-// Wiz Sidekick DevSecOps SPA shell: app header, sidebar navigation, scan zone, hash router.
+// Wiz Sidekick DevSecOps: the manifest, the route table, and the sync battery.
 //
-// THE HEADER CARRIES IDENTITY, and nothing else. The reference screen puts a search box,
-// notification icons and an avatar along the same bar; none of those has anything behind it
-// here, and a control with nothing behind it is the one thing this app's chrome is careful
-// never to offer. The scan controls stay in the rail, where the last-scan caption can afford
-// its words.
+// THE SHELL AROUND ALL THREE IS SHARED. `gas_shared/shell/` owns the boot splash, the app
+// header, the two-tier nav, the flyout panel, the route overlay and the hash router — one
+// copy for three registers, where there were three copies of ~1,500 lines that had already
+// drifted in four places that mattered. What is left in this file is what is genuinely this
+// app's: what it is called, which pages it has, and the sync battery.
 //
-// THE SCAN ZONE IS A MEASUREMENT NOW. It used to draw a hardcoded grey dot reading
-// "Collection not wired — Phase 2" and no button, which was honest while there was no
-// battery and became a second surface disagreeing with Settings once there was. The state
-// comes from `railStatus()` — credentials, per-scope freshness and the job in flight — and
-// the button starts a real scan. See README.md.
+// THE HEADER CARRIES IDENTITY AND SCOPE, AND NOTHING ELSE. The reference screen puts a search
+// box, notification icons and an avatar along the same bar; none of those has anything behind
+// it here, and a control with nothing behind it is the one thing this app's chrome is careful
+// never to offer. The project-scope switcher (ui/projectScope.js) earns the exception a page
+// filter would not: it governs every page rather than leading to one, so it is chrome in the
+// same sense the wordmark is. The sync controls stay in the rail, where the last-sync caption
+// can afford its words.
+//
+// THE SYNC ZONE'S DOT IS A MEASUREMENT NOW, not an assertion. It used to be
+// `hasCredentials ? "ok" : "neutral"` — a literal reading one field, agreeing with Settings
+// only by accident and never noticing a register that ran once and then went quiet for a
+// week. `railStatus()` (below, via renderSyncZone) takes the WORST over the scopes Settings
+// collects — a register nobody has ever scanned outranks a merely stale one — and every state
+// carries a sentence, because above 800px the dot IS the whole status readout.
 
-import { call } from "./api.js";
+import { configureApp } from "../../../../gas_shared/appConfig.js";
+import { call } from "../../../../gas_shared/api.js";
+import { swrCall } from "../../../../gas_shared/store.js";
+import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
+import { openSyncDetails, renderSyncCard, shouldContinuePolling } from "./syncProgress.js";
 import {
-  DEFAULT_ROUTE, bootstrap, bootstrapCached, buildHash, invalidateBootstrap,
-  invalidateRpcCache, parseHash,
-} from "./store.js";
-import { onExperimentalChange, showExperimental } from "./experimental.js";
-import {
-  clear, closeActiveSheet, closeTip, el, fmtDateTime, progressBar, runPageTeardown,
-  statusPill, tipAnchor,
+  clear, confirmDialog, el, statusPill, syncCaption, tipAnchor, toast,
 } from "./ui.js";
+import { projectScopeView, scopeChrome, scopeKinds } from "./ui/projectScope.js";
+import { scopeControl } from "../../../../gas_shared/ui/scopeControl.js";
+import { scopePayload } from "../../../../gas_shared/ui/scopeModel.js";
 import { railStatus, withLabels } from "./railStatus.js";
-import { openScanDetails, renderScanCard } from "./scanProgress.js";
-import { brandMark } from "./ui/brandMark.js";
-import { toast } from "./ui.js";
 import { renderExecutive } from "./pages/executive.js";
 import { renderMttr } from "./pages/mttr.js";
 import { renderProgram } from "./pages/program.js";
@@ -35,14 +42,48 @@ import { renderSecrets } from "./pages/secrets.js";
 import { renderRepos } from "./pages/repos.js";
 import { renderHistory } from "./pages/history.js";
 import { renderData } from "./pages/data.js";
+import { renderHelp } from "./pages/help.js";
 import { renderSettings } from "./pages/settings.js";
 import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
-import { itemForRoute, railItems } from "./navModel.js";
-import {
-  focusFirstRow, itemHasPanel, mountNavFlyout, openFlyoutFor, setActiveItem, setNavContext,
-  tapOpensPanel, wireRail,
-} from "./navFlyout.js";
+import { findEntry } from "./helpContent.js";
 
+// ============================================================================ the manifest
+//
+// WHAT THIS APP IS, handed to the shared core (gas_shared/appConfig.js) before anything
+// else in this module body runs.
+//
+// The shared modules cannot reach sideways into an app: `gas_shared/ui/tip.js` has no
+// `../helpContent.js` to import and `gas_shared/store.js` cannot know which route is this
+// register's front door. Those answers travel as data instead, handed over by the
+// `configureApp()` call BELOW THE PAGES TABLE — the manifest now carries PAGES, which is
+// declared after it, and everything between the two is a declaration rather than a call. That
+// is what appConfig.js's rule 1 is actually about: nothing may READ the manifest before it is
+// set, and no shared module reads it at import time (rule 2), so the first possible read is
+// still after `configureApp` runs.
+const MANIFEST = {
+  productName: "Wiz Sidekick DevSecOps",
+  // What the splash says it is opening. "register", not "graph": this app has no graph, and
+  // the word was inherited from the sibling it was forked from. It reaches the STATIC first
+  // paint too — gas_shared/shell/renderIndex.js substitutes it into the shared index template
+  // at build time, so the two copies of the splash cannot disagree again.
+  openingNoun: "register",
+  // Trailing dot included. Two sidekicks served from the same origin must not share a key.
+  storagePrefix: "sidekickdso.",
+  // The first key of PAGES below, and the only place the two can disagree — which is what
+  // test/shared.test.js's navGroups contract checks.
+  defaultRoute: "executive",
+  // This register's own vocabulary. ui/tip.js asks; helpContent.js answers.
+  findHelpEntry: findEntry,
+  // The nav marks, read by gas_shared/shell/navRail.js (the rail and the stacked list) and
+  // gas_shared/shell/navFlyout.js (the panel's rows). routeIcons.js is still the only place
+  // they are drawn; the manifest is how the shared shell reaches them.
+  LANE_ICONS,
+  ROUTE_ICONS,
+  // No `panelBlocks`: none of this app's three lanes has instances of its own beyond the
+  // pages it already groups — no saved queries, no per-lane collection to list — so every
+  // panel is plain page links. gas_shared/shell/navModel.js returns no blocks for an app that
+  // supplies no builder, which is the honest answer rather than a stub.
+};
 // The rail's information architecture, stated once.
 //
 // THREE LANES AND A TAIL. Every page here is a security page, so "Security" as a heading
@@ -54,13 +95,13 @@ import {
 // The first draft had four lanes, with Executive alone under an "Overview" heading.
 // navModel collapses a lane of one to that page on the rail, so it looked fine there — but
 // renderStackedNav below 800px draws the heading unconditionally, which would have put the
-// word "Overview" directly above a single link reading "Executive". navGroups.test.js
+// word "Overview" directly above a single link reading "Executive". shared.test.js
 // caught it. Executive belongs with the other two anyway: all three are programme-level
 // reads over the whole population, and the registers below ARE that population.
 //
-// Two rules renderSidebar depends on, both held by test/navGroups.test.js:
+// Two rules the shared shell depends on, both held by test/shared.test.js:
 //   * A LABELLED LANE EARNS ITS HEADING BY HOLDING TWO PAGES. A lane left holding one
-//     visible page is drawn AS that page — see navModel.js.
+//     visible page is drawn AS that page — see gas_shared/shell/navModel.js.
 //   * LANES ARE CONTIGUOUS. The lastGroup detector emits a fresh heading every time the
 //     value changes, so a lane split in two would quietly draw its heading twice.
 //
@@ -75,9 +116,9 @@ import {
 //   `hidden`        keeps a route off the nav while leaving it routable.
 //   `experimental`  gates a route behind Settings -> show experimental content.
 // `group` is arrangement, not availability. A lane the flags empty out never reaches the
-// rail — see navModel.js, which is where the three meet.
+// rail — see gas_shared/shell/navModel.js, which is where the three meet.
 const PAGES = {
-  // The front door, and DEFAULT_ROUTE in store.js names it. A leader opens the app wanting
+  // The front door, and MANIFEST.defaultRoute names it. A leader opens the app wanting
   // one number; an analyst passes straight through to a register.
   executive: { title: "Executive", group: "Program", render: renderExecutive },
 
@@ -104,12 +145,26 @@ const PAGES = {
   // "Storage", not "Data": the lane is already called Data, and gas/ shipping a Data page
   // inside a Data lane is a repetition worth not inheriting.
   data: { title: "Storage", group: "Data", render: renderData },
+  // The book, not the record: helpContent.js's whole glossary, searchable and deep-linkable
+  // — where every glossaryTip's "Enter for the full definition" has always pointed
+  // (ui/tip.js), landing on nothing until this route existed. Last in the lane because a
+  // reader reaches for it only after wanting to check a word, never on the way in.
+  help: { title: "Key sheet", group: "Data", render: renderHelp },
 
   // The tail: chrome, not a lane. A rule separates it and nothing labels it.
   settings: { title: "Settings", group: null, render: renderSettings },
 };
 
-// Nav icons (ROUTE_ICONS, LANE_ICONS) live in routeIcons.js — see that module for why.
+// PAGES JOINS THE MANIFEST, AND THAT IS WHY THIS CALL MOVED DOWN A TABLE.
+// `gas_shared/ui/controls.js`'s `pageHeader({ route })` reads a route's own title and lane out
+// of `appConfig().PAGES`, so the `<h1>` on every page IS the PAGES title by construction
+// rather than by a second copy of the string sitting in the page module. PAGES is declared
+// below the manifest, so it is spread in here instead of named inside it.
+//
+// STILL BEFORE ANY SHARED FUNCTION RUNS, which is the rule appConfig.js's rule 1 actually
+// protects: everything between the manifest literal and this line is a declaration or an
+// object literal — no call — and no shared module reads the manifest at import time (rule 2).
+configureApp({ ...MANIFEST, PAGES });
 
 // The Run scan button's mark: an arrow travelling into a store, not a "play" triangle. What
 // the button does is fetch a population and put it somewhere, and a play glyph would promise
@@ -117,373 +172,87 @@ const PAGES = {
 const RUN_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.5v10.5"/><path d="M8.2 10.3L12 14.1l3.8-3.8"/><path d="M4.5 15.5v3a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-3"/></svg>';
 
 // A span carrying an inline SVG (el() builds HTML nodes, so SVG goes in via innerHTML).
-function iconSpan(svg, cls) {
-  const s = el("span", { class: cls || "nav-icon", "aria-hidden": "true" });
+function iconSpan(svg) {
+  const s = el("span", { class: "nav-icon", "aria-hidden": "true" });
   s.innerHTML = svg;
   return s;
 }
 
-// Below this width the rail is not a rail at all — it becomes a wrapping top bar, where a
-// panel has nowhere to fly out to and a 76px icon column would be a column of one. So the nav
-// has two shapes, and this is the switch between them: the icon rail plus its panel above
-// 800px, and the plain stacked list (lane headings as words, one rule above the chrome tail)
-// below it. The query is the one queryPalette.js already makes for the same reason — it
-// renders into a sheet instead of a popover at exactly this width.
-const NARROW_NAV = "(max-width: 800px)";
-function narrowNav() {
-  return !!(window.matchMedia && window.matchMedia(NARROW_NAV).matches);
-}
+// The Run Sync button's glyph — two arrows chasing each other, the universal "sync" mark. Not
+// in routeIcons.js (that module is PAGES/lane marks only, held one-for-one by
+// test/shared.test.js) and not in gas_shared/ui/uiIcons.js (this file may compose from the
+// shared package but not edit it), so it lives here, drawn in the same
+// 24-grid/currentColor/aria-hidden convention routeIcons.js uses.
+const SYNC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" ' +
+  'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+  '<path d="M4.5 12a7.5 7.5 0 0 1 12.6-5.5l2.4 2.2"/><path d="M17.6 5.4V9h-3.6"/>' +
+  '<path d="M19.5 12a7.5 7.5 0 0 1-12.6 5.5l-2.4-2.2"/><path d="M6.4 18.6V15H10"/></svg>';
 
-const app = document.getElementById("app");
-let mainEl = null;
-// Held past boot() so the rail can be redrawn on its own. Flipping "show experimental
-// content" changes which pages the rail lists and nothing else — a full refresh() would
-// re-fetch the whole bootstrap payload to answer a question already settled locally.
-let sidebarEl = null;
+// --------------------------------------------------------------------- the sync battery
 
-// The Settings toggle reaches the rail through here rather than by importing app.js, which
-// would close the app.js → pages/settings.js import into a cycle. No re-route: the toggle
-// lives on Settings, so the page being hidden is never the page you are on.
-onExperimentalChange(() => {
-  if (!sidebarEl) return;
-  renderSidebar(sidebarEl, bootstrapCached());
-});
-
-// Route-reload overlay: veils the content pane (not the sidebar) with a progress bar
-// while the active page refetches. Shown only if the load outlasts a short delay, so
-// cached switches never flash; a sequence guard keeps it up across rapid changes.
-let routeOverlay = null;
-let routeSeq = 0;
-let routeLoadingTimer = null;
-const ROUTE_LOADING_DELAY_MS = 120;
-// The first page render after each boot is covered by the boot splash → page skeleton, so it
-// skips the route-overlay veil; every subsequent navigation uses the veil as normal.
-let firstRoute = true;
-
-// The scan battery's client state. `lastJob` exists so the Details handler reads the CURRENT
-// job at click time rather than the one captured when the handler was built — the poller has
-// almost certainly moved on by then.
+// The sync zone rebuilds these two nodes on every rail render (boot, refresh, and every
+// experimental-flag flip), so they are held at module scope and re-pointed each time — the
+// poll interval and the job it is watching outlive any one rail render.
+let syncCardHost = null;
+let syncButtonsRow = null;
 let jobPoller = null;
-let scanCardHost = null;
-let scanButtonsRow = null;
-let stoppingJobId = null;
-let stoppingSince = 0;
-let lastJob = null;
-let scanDetails = null;
-
-function beginRouteLoading() {
-  clearTimeout(routeLoadingTimer);
-  routeLoadingTimer = setTimeout(() => {
-    if (!routeOverlay) return;
-    routeOverlay.classList.add("visible");
-    const label = routeOverlay.querySelector(".route-overlay-label");
-    if (label) label.textContent = "Updating…";
-  }, ROUTE_LOADING_DELAY_MS);
-}
-
-function endRouteLoading() {
-  clearTimeout(routeLoadingTimer);
-  if (!routeOverlay) return;
-  routeOverlay.classList.remove("visible");
-  const label = routeOverlay.querySelector(".route-overlay-label");
-  if (label) label.textContent = "";
-}
-
-
-// Recreate the branded boot splash index.html paints on first load, so refresh() (which
-// re-runs boot()) shows the same veil. Keep this markup in sync with the static copy in
-// index.html. Reuses the indeterminate progress bar so it reads as the same loader family
-// as the route-overlay (and inherits its reduced-motion striped fallback).
-function bootSplash() {
-  const bar = progressBar(null);
-  bar.classList.add("boot-splash-bar");
-  bar.setAttribute("aria-label", "Opening the graph");
-  return el(
-    "div",
-    { class: "boot-splash", role: "status", "aria-live": "polite" },
-    el("div", { class: "boot-splash-inner" },
-      el("div", { class: "boot-brand" },
-        brandMark(112),
-        el("span", { class: "boot-brand-label" }, "Wiz Sidekick DevSecOps")),
-      bar,
-      el("p", { class: "boot-splash-note" }, "Opening the graph…")),
-  );
-}
-
-// Fade the splash out and remove it. transitionend removes it; a timeout is the fallback if
-// that never fires. Under reduced motion there's no fade, so remove immediately.
-function hideBootSplash() {
-  const splash = document.querySelector(".boot-splash");
-  if (!splash) return;
-  const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  if (reduce) { splash.remove(); return; }
-  splash.classList.add("hiding");
-  let done = false;
-  const finish = () => { if (done) return; done = true; splash.remove(); };
-  splash.addEventListener("transitionend", finish, { once: true });
-  setTimeout(finish, 240);
-}
-
-async function boot() {
-  firstRoute = true;
-  // Keep the splash index.html painted (first load) or recreate it (refresh) and remove only
-  // the *previous* app underneath it — so a refresh never flashes a cleared pane. clear(app)
-  // is deliberately avoided here: the splash must survive to cover the rebuild.
-  let splash = app.querySelector(".boot-splash");
-  if (!splash) { splash = bootSplash(); app.append(splash); }
-  for (const node of [...app.children]) if (node !== splash) node.remove();
-
-  const appbar = el("header", { class: "appbar" });
-  const sidebar = el("nav", { class: "sidebar", "aria-label": "Main navigation" });
-  sidebarEl = sidebar;
-  mainEl = el("main", { id: "main" });
-  routeOverlay = el(
-    "div",
-    { class: "route-overlay", role: "status", "aria-live": "polite" },
-    el("div", { class: "route-overlay-bar", "aria-hidden": "true" },
-      el("div", { class: "route-overlay-fill" })),
-    el("span", { class: "route-overlay-label" }),
-  );
-  // The nav panel is a sibling of the rail rather than a child of it: .sidebar is
-  // overflow-y:auto and would clip it, and .app-body is already the positioning context the
-  // route overlay uses. Unpinned it floats over the content pane; pinned it is an in-flow
-  // column and `main` shrinks beside it.
-  const flyout = el("nav", { class: "nav-flyout", "aria-label": "Section pages" });
-  // The overlay is a child of the BODY row, not of `app`: it veils the content pane while a
-  // page refetches, and the header above it has to stay live — the rail already does, by
-  // sitting outside the overlay's box.
-  app.append(appbar, el("div", { class: "app-body" }, sidebar, flyout, mainEl, routeOverlay));
-  mountNavFlyout(flyout);
-  setNavContext(navContext);
-  wireRail(sidebar, (id) => currentRailItems().filter((i) => i.id === id)[0] || null);
-
-  let data;
-  try {
-    data = await bootstrap();
-  } catch (e) {
-    // A denied user normally never reaches this file at all — doGet's own access.deniedPage()
-    // stops them before the SPA bundle ships. This branch is for the narrower case where
-    // access is REVOKED (removed from ALLOWED_USERS, or the property flipped) while a tab is
-    // already open: the next RPC's forbidden envelope surfaces here as err.kind (api.js), and
-    // "Couldn't reach the server / Retry" would be actively misleading — retrying re-sends the
-    // same identity and can only fail the same way.
-    const card = e && e.kind === "forbidden"
-      ? el("div", { class: "empty" },
-          el("div", {}, "You don't have access to this app."),
-          el("div", { class: "small", style: "margin:6px 0 4px" }, String(e.message || e)),
-          // Same offer as the denied page doGet serves, so the two surfaces a locked-out
-          // person can land on say the same thing. The href is built server-side (access.ts)
-          // so the prefilled subject exists once rather than in both bundles.
-          e.contact
-            ? el("div", { class: "small", style: "margin:0 0 14px" },
-                "If you think you should have access, contact ",
-                el("a", { href: e.contactUrl || ("mailto:" + e.contact) }, e.contact),
-                ".")
-            : null,
-        )
-      : el("div", { class: "empty" },
-          el("div", {}, "Couldn't reach the server."),
-          el("div", { class: "small", style: "margin:6px 0 14px" }, String(e.message || e)),
-          el("button", { class: "primary", onclick: () => refresh() }, "Retry"),
-        );
-    clear(mainEl).append(card);
-    renderAppbar(appbar, null);
-    renderSidebar(sidebar, null);
-    hideBootSplash(); // reveal the error card
-    return;
-  }
-  renderAppbar(appbar, data);
-  renderSidebar(sidebar, data);
-  route(); // paints the page's skeleton synchronously up to its first data await
-  // Fade the splash only after the skeleton has laid out — double rAF flushes the (cached)
-  // bootstrap microtasks and one layout tick, so the splash reveals the skeleton, never a blank pane.
-  requestAnimationFrame(() => requestAnimationFrame(hideBootSplash));
-}
+let lastJob = null; // the most recent job summary the poll has seen, or null between syncs
+let stoppingJobId = null; // set while a Stop request is in flight, so the card can say so
+let syncDetails = null; // the open details-drawer handle, kept live by the poller
+// Guards the one-time "is a sync already running" probe: a page LOAD (not a route change,
+// not an experimental-flag flip) is the only moment worth asking, since nothing else on this
+// page can start a sync out from under the client without the client itself starting it.
+let resumeChecked = false;
 
 /**
- * The bar across the top: whose product this is, and which register it is showing.
+ * THE SYNC ZONE, under the nav. Where the register's freshness caption lives, and where a
+ * reader starts a sync and watches it walk sca, then sast, then secrets.
  *
- * Rebuilt wholesale like the rail is, and from the same payload — a refresh ends in
- * a `refresh()`, so the switcher's own label and caption are re-derived rather than patched.
+ * Named for the act, not for the record it writes (README.md, above the Pages table). The
+ * CSS class is still `.scan-zone` — renaming it is not a copy change, and nothing a reader
+ * sees says "scan zone".
  *
- * @param {HTMLElement} appbar
- * @param {object|null} data  the bootstrap payload, or null when boot failed
+ * THE DOT IS DERIVED, NEVER ASSERTED — see railStatus.js for why that sentence needed writing
+ * down. It used to be `hasCreds ? "ok" : "neutral"`: a literal reading one field, agreeing
+ * with Settings only by accident and never noticing a register that ran once and then went
+ * silent for a week. `railStatus()` takes the WORST over the scopes Settings collects — `never
+ * scanned` beats `stale`, because a register nobody has looked at is not a stale one — and
+ * ABOVE 800px THE DOT IS THE WHOLE STATUS READOUT (the caption text is visually hidden, not
+ * removed), so every state carries a sentence rather than only a colour.
  */
-function renderAppbar(appbar, data) {
-  clear(appbar);
-  // Decorative, because the name is right there beside it in text and never hidden — the
-  // shell's other mark (the splash) is decorative for the same reason. The rail used to hold
-  // a labelled copy for its 56px width, where the mark was the only identity on screen; the
-  // rail carries no mark at all now, so nothing in this file names the product twice.
-  appbar.append(
-    brandMark(22, { compact: true }),
-    el("span", { class: "appbar-name" }, "Wiz Sidekick DevSecOps"),
-  );
-  // Phase 1 carries no scope switcher. The register has one population until the sync
-  // battery lands, and a picker over a population of one is a control with nothing behind
-  // it — which is the one thing this shell is careful never to offer.
-}
-
-/**
- * A lane heading.
- *
- * An h2 rather than a div, and the label inside a span rather than loose in it, for the
- * same reason: the collapsed rail is the DEFAULT, and it used to `display: none` these
- * outright — so the one state most readers see had no grouping in it at all, on screen or
- * in the accessibility tree. Collapsed, the span is what goes (clipped, not removed) and the
- * h2 itself draws as the hairline between two icon clusters. The heading stays announced and
- * navigable in every state; only its pixels change.
- */
-function navGroupHeading(label) {
-  return el("h2", { class: "nav-group" }, el("span", { class: "nav-group-label" }, label));
-}
-
-// The chrome tail's separator. Data, Settings and Help name themselves, so the tail is
-// marked rather than labelled — presentational, because it says nothing a reader could not
-// see, and the pages under it are already three ordinary links.
-function navRule() {
-  return el("div", { class: "nav-rule", role: "presentation" });
-}
-
-/**
- * One rail item: a link that navigates, and — where the item has a panel — the trigger that
- * opens it.
- *
- * ONE CONTROL, and no caret beside it. The rail carried a disclosure button for a while and
- * it earned its place at 12px on a 76px item: a second target crowding a label, drawing a
- * mark on the chrome that the panel it opens draws again as a heading. What it was for
- * survives without it — `aria-haspopup` and `aria-expanded` say a panel is there and whether
- * it is open, ArrowRight opens it and lands focus inside, Escape closes it and hands focus
- * back — so the announcement and the keyboard path are unchanged and only the pixels are
- * gone. Enter still navigates, because this is still a link: the panel is a way in, never the
- * only one.
- */
-function railItem(item) {
-  const icon = item.kind === "lane" ? LANE_ICONS[item.id] : ROUTE_ICONS[item.route];
-  const node = el("div", { class: "rail-item", "data-nav-item": item.id });
-  const link = el(
-    "a",
-    {
-      class: "nav-link rail-link",
-      href: `#/${item.route}`,
-      // index.html sets <base target="_top"> so external links escape the GAS
-      // sandbox iframe; _self keeps hash routing in-frame.
-      target: "_self",
-      // Only where there is one. A rail item that announced a popup it does not have would
-      // send a screen-reader user hunting for a panel that never opens.
-      "aria-haspopup": itemHasPanel(item) ? "true" : null,
-      "aria-expanded": itemHasPanel(item) ? "false" : null,
-      onclick: (e) => {
-        // Where there is no hover there is no flyout, so the first tap has to do the
-        // revealing — the same bargain tip.js strikes with its cards.
-        if (tapOpensPanel(item, node)) e.preventDefault();
-      },
-      onkeydown: (e) => {
-        if (e.key !== "ArrowRight" || !itemHasPanel(item)) return;
-        e.preventDefault();
-        openFlyoutFor(item, node, { viaFocus: true });
-        focusFirstRow();
-      },
-    },
-    iconSpan(icon),
-    el("span", { class: "nav-label" }, item.label),
-  );
-  node.append(link);
-  return node;
-}
-
-/** The two-tier rail: one item per lane, then a rule, then the chrome pages. */
-function renderRail(sidebar, items) {
-  let ruled = false;
-  for (const item of items) {
-    // The tail is chrome rather than a lane, and the rule is what says so — the same rule the
-    // stacked list draws, for the same reason. Keyed on `lane`, never on `kind`: a lane left
-    // holding one visible page is drawn AS that page, so kind alone would put the rule in
-    // front of the first collapsed lane instead of in front of the chrome.
-    if (item.lane === null && !ruled) { sidebar.append(navRule()); ruled = true; }
-    sidebar.append(railItem(item));
-  }
-}
-
-/**
- * The stacked list, for the top-bar layout below 800px: every page, lane headings as words,
- * one rule above the chrome tail. This is the rail as it shipped before the panel existed,
- * and it stays because at that width it is still the right answer.
- */
-function renderStackedNav(sidebar) {
-  const { route: active } = parseHash();
-  // `undefined`, not null: null is a real group — the unlabelled chrome tail — and a detector
-  // seeded with it would start the list inside that tail and never draw its rule.
-  let lastGroup;
-  for (const [key, page] of Object.entries(PAGES)) {
-    // Hidden routes still resolve and still render — they are only off the nav. See the
-    // PAGES header for why this branch is a flag rather than seven deletions.
-    if (page.hidden) continue;
-    // A gated page is absent, not disabled: the rest of this list is the security workflow,
-    // and a greyed-out row inside it would still be telling every reader that a model they
-    // cannot open exists. The "Labs" heading goes with it for free — the lastGroup detector
-    // only emits a header when a page that is actually being drawn changes group.
-    if (page.experimental && !showExperimental()) continue;
-    if (page.group !== lastGroup) {
-      sidebar.append(page.group ? navGroupHeading(page.group) : navRule());
-      lastGroup = page.group;
-    }
-    sidebar.append(
-      el(
-        "a",
-        {
-          class: `nav-link${key === active ? " active" : ""}`,
-          href: `#/${key}`,
-          target: "_self",
-          "aria-current": key === active ? "page" : null,
-        },
-        iconSpan(ROUTE_ICONS[key]),
-        el("span", { class: "nav-label" }, page.title),
-      ),
-    );
-  }
-}
-
-function renderSidebar(sidebar, data) {
-  clear(sidebar);
-  if (narrowNav()) renderStackedNav(sidebar);
-  else renderRail(sidebar, currentRailItems());
-
-  // The scan zone. Its state is derived, never asserted — see railStatus.js for why that
-  // sentence needed writing down.
+function renderSyncZone(data) {
+  const zone = el("div", { class: "scan-zone" });
+  const hasCreds = !!(data && data.hasCredentials);
+  const runBtn = el("button", {
+    class: "primary",
+    disabled: !hasCreds,
+    onclick: () => startSync(runBtn),
+  }, iconSpan(SYNC_ICON), el("span", { class: "btn-label" }, "Run sync"));
+  // A button that fails on click is worse than no button (PRODUCT.md, principle 5: honest
+  // state) — so with nothing to sync WITH, the button says so on hover/focus rather than
+  // being clicked once to learn it. `.tip-disabled-wrap` (components.css), not the button
+  // itself: a disabled element does not reliably take pointer/focus events for the tip to
+  // hang off in every browser — see syncProgress.js's Stop button for the same wrap.
+  const runControl = hasCreds
+    ? runBtn
+    : tipAnchor(el("span", { class: "tip-disabled-wrap" }, runBtn),
+        "No Wiz credentials are configured — run setup() before syncing.");
+  syncButtonsRow = el("div", { class: "scan-buttons" }, runControl);
+  syncCardHost = el("div", {});
   const status = railStatus({
-    hasCredentials: data ? data.hasCredentials : false,
+    hasCredentials: hasCreds,
     lastScanByScope: withLabels(data && data.lastScanByScope, data && data.scopeLabels),
+    // The scopes SETTINGS COLLECTS, never the constant list of all three — a register the
+    // reader turned off is not "never scanned", it is out of scope, and railStatus() would
+    // flag it as the worst offender on every load otherwise.
     scopes: (data && data.settings && data.settings.scopes) || [],
     job: data ? data.activeJob : null,
   });
-
-  const zone = el("div", { class: "scan-zone" });
-  scanCardHost = el("div", {});
-
-  // NO DRY-RUN BEHIND THIS BUTTON. Without credentials it refuses rather than quietly
-  // running the sample source: pressing "Run scan" and getting invented figures back under a
-  // real-looking scan row is worse than a disabled control that says why.
-  const runnable = Boolean(data && data.hasCredentials);
-  const runBtn = el("button", {
-    class: "primary",
-    disabled: runnable ? null : true,
-    onclick: runnable ? () => startScan(runBtn) : null,
-  }, iconSpan(RUN_ICON), el("span", { class: "btn-label" }, "Run scan"));
-  scanButtonsRow = runnable
-    ? el("div", { class: "scan-buttons" }, runBtn)
-    : el("div", { class: "scan-buttons" }, tipAnchor(
-      el("span", { class: "tip-disabled-wrap" }, runBtn),
-      "No Wiz credentials are set, so there is nothing to scan.",
-    ));
-
   zone.append(
-    scanCardHost,
-    scanButtonsRow,
-    // The status sentence, and the dot that is its glance version. The sentence comes FIRST
-    // in the DOM and is only visually hidden in the rail (base.css), so it is in the
-    // accessibility tree at every width — above 800px it is the only status a screen reader
-    // or a keyboard user can reach, because the dot is nine pixels of colour.
+    syncCardHost,
+    syncButtonsRow,
+    // The sentence comes FIRST in the DOM and is only visually hidden above 800px (base.css),
+    // so it is in the accessibility tree at every width.
     el("div", { class: "scan-caption" }, statusPill(
       status.state === "warn" ? "warn" : status.state === "bad" ? "bad"
         : status.state === "ok" ? "ok" : "neutral",
@@ -495,58 +264,45 @@ function renderSidebar(sidebar, data) {
       tabindex: "0",
     }), [status.label, status.detail].filter(Boolean).join(" — ")),
     ...(status.detail ? [el("div", { class: "scan-caption" }, status.detail)] : []),
+    // `syncCaption` (gas_shared/ui/feedback.js), unified across all three apps: "Last <noun>
+    // <datetime> · <relativeAge>" once a sync is saved, "No <noun>s yet." before the first
+    // one. A DIFFERENT fact from the dot above: this is when the register last ran ANYTHING,
+    // not the worst per-scope freshness the dot is deliberately weighted toward. `ts`, not
+    // `finished_at`: the field is named for the `scans` column it is read from, and the old
+    // name existed on neither side of the wire.
+    el("div", { class: "scan-caption" },
+      syncCaption(data && data.latestSync && data.latestSync.ts)),
   );
-  sidebar.append(zone);
-
-  // A reload in the middle of a scan picks the card back up: the job rides in the bootstrap
-  // payload, so there is nothing to reconstruct from the URL and no window where the scan is
-  // running with nothing on screen saying so.
-  if (data && data.activeJob) {
-    paintCard(data.activeJob);
-    watchJob(data.activeJob.job_id);
+  // A rail rebuild (boot, refresh, or an experimental-flag flip) throws away the old
+  // syncCardHost/syncButtonsRow nodes; if a sync is live, repaint the poller's last-known job
+  // onto the fresh ones right away rather than showing an empty card until the next 3s tick.
+  if (lastJob && shouldContinuePolling(lastJob)) paintCard(lastJob);
+  // A page LOAD is the only moment worth asking "is a sync already running behind my back" —
+  // nothing else that rebuilds the rail (a route change, an experimental-flag flip) can be
+  // the reason one started, so this runs once per app lifetime, not once per rebuild.
+  if (!resumeChecked) {
+    resumeChecked = true;
+    resumeActiveJob();
   }
-  // The rail is rebuilt wholesale on every refresh() and on every experimental-flag change,
-  // so the panel's marks on it — which item is open, which lane holds the current page — have
-  // to be re-stamped onto the new nodes each time. The panel's own state survives in
-  // navFlyout.js, which is why it is held there rather than on a rail item.
-  setActiveItem(itemForRoute(currentRailItems(), parseHash().route));
+  return zone;
 }
 
-/** The rail's items for the gate as it stands right now. */
-function currentRailItems() {
-  return railItems(PAGES, { experimental: showExperimental() });
-}
+// The sync battery's client half: start a sync, poll it, paint the card, and let a reader
+// stop it. The pure state logic (which phase/scope reads as what) lives in syncProgress.js —
+// ported from gas_ai/src/client/js/syncProgress.js — so only the RPC plumbing is here.
 
-/**
- * What the nav panel has to list, gathered from what the shell already holds.
- *
- * Empty in Phase 1, and deliberately still a function rather than a constant: navModel's
- * rule is that a rail item EARNS a panel by having something to put in it, so returning
- * nothing here is what makes every lane draw as a plain list today. Saved views are the
- * intended first occupant.
- */
-function navContext() {
-  return { savedViews: [] };
-}
-
-/* --------------------------------------------------------------- the scan battery */
-
-/**
- * How long an optimistic "Stopping…" is allowed to stand.
- *
- * It used to be permanent in the sibling: it hid the Stop button and cleared only on a
- * CANCELLED the server might never produce, so a job that died between hops left the reader
- * with no Stop and no Run. Expiring it puts the action back.
- */
-const STOPPING_GRACE_MS = 45_000;
-
-async function startScan(btn) {
+/** Run button handler: fire the RPC, then start (or hand off to) the poll. */
+async function startSync(btn) {
   btn.disabled = true;
   try {
-    const res = await call("api_runScan", {});
+    const res = await call("api_runSync", {});
     toast(res.message);
-    if (res.jobId) { stoppingJobId = null; watchJob(res.jobId); }
-    else await refresh();
+    if (res.jobId) {
+      stoppingJobId = null;
+      watchJob(res.jobId);
+    }
+    // No jobId: nothing started (no credentials, or nothing selected in Settings) — the
+    // toast already said why, and the button re-enables in the `finally` below.
   } catch (e) {
     toast(String(e.message || e), "error");
   } finally {
@@ -554,31 +310,32 @@ async function startScan(btn) {
   }
 }
 
+/** Paint the poller's latest job summary onto the card, and keep an open details drawer
+ *  in step with it — otherwise its values freeze at the moment it was opened. */
 function paintCard(job) {
+  if (!syncCardHost) return;
   lastJob = job;
-  if (stoppingJobId === job.job_id && Date.now() - stoppingSince > STOPPING_GRACE_MS) {
-    stoppingJobId = null;
-  }
-  const view = renderScanCard(scanCardHost, job, {
-    scopeLabels: (bootstrapCached() || {}).scopeLabels || {},
+  const stopping = stoppingJobId === job.job_id && job.phase !== "CANCELLED";
+  renderSyncCard(syncCardHost, job, {
+    // Read lastJob at click time, not the job captured when this Details button was built —
+    // renderSyncCard reuses the button across polls, so a captured job would be stale and the
+    // drawer would flash 0 rows for one tick before the poller updates it.
     onDetails: () => {
-      // `lastJob` at CLICK time, not the job captured when the handler was made: the poller
-      // has almost certainly moved on, and opening the drawer on a job from three seconds
-      // ago shows a stale page that then jumps on the next tick.
-      scanDetails = openScanDetails(lastJob, {
-        // The same labels the card uses. Without them the drawer's Register row printed the
-        // raw scope key ("sca") beside a card that said "Dependencies".
-        scopeLabels: (bootstrapCached() || {}).scopeLabels || {},
-        onStop: () => requestStop(lastJob.job_id),
-      });
+      syncDetails = openSyncDetails(lastJob, { onStop: () => requestStop(lastJob.job_id) });
     },
-    onStop: stoppingJobId === job.job_id ? null : () => requestStop(job.job_id),
+    onStop: stopping ? null : () => requestStop(job.job_id),
+    stopping,
   });
-  if (scanDetails) scanDetails.update(job);
-  // The run button comes back when the job has gone quiet. Hiding it unconditionally — which
-  // is what the sibling does — takes away the only way out of a wedged job, while the card
-  // itself advises "stop it, then run a new scan".
-  if (scanButtonsRow) scanButtonsRow.style.display = view && view.stale ? "" : "none";
+  if (syncDetails) syncDetails.update(job);
+  if (syncButtonsRow) syncButtonsRow.style.display = "none";
+}
+
+/** Drop the card and any open drawer, and bring the Run button back. */
+function clearCard() {
+  lastJob = null;
+  syncDetails = null;
+  if (syncCardHost) clear(syncCardHost);
+  if (syncButtonsRow) syncButtonsRow.style.display = "";
 }
 
 function stopWatch() {
@@ -587,170 +344,167 @@ function stopWatch() {
 }
 
 /**
- * Watch a job until it reaches a terminal phase.
+ * The 3s poll. THE STOP CONDITION IS `shouldContinuePolling` AND NOWHERE ELSE — a null job
+ * (nothing running) and every terminal phase (DONE / FAILED / CANCELLED) clear the interval
+ * before this function does anything else, which is what stops a poll outliving its job.
  *
- * THE FIRST POLL IS IMMEDIATE, and that is a fix rather than a detail. Written as a plain
- * `setInterval`, the card's first frame lands three seconds after the click — so pressing
- * Run scan produced no visible change at all, on the one control in the app whose whole job
- * is to say that something is now happening. Caught in the browser with the continuation
- * trigger frozen, which is the only way to hold a scan still long enough to look at it.
+ * Only DONE re-fetches the bootstrap payload and every cached RPC: a cancelled sync commits
+ * nothing (scanJobs.ts — persistSync's append is the only commit, and Stop is cooperative only
+ * during FETCHING, before it), so there is nothing on the ledger for `refresh()` to catch up on.
  */
-function watchJob(jobId) {
-  stopWatch();
-  const tick = async () => {
-    try {
-      const job = await call("api_getJobStatus", { jobId });
-      if (!job) { stopWatch(); clear(scanCardHost); return; }
-      if (job.phase === "DONE") {
-        stopWatch();
-        if (scanDetails) scanDetails.update(job);
-        toast("Scan complete.");
-        await refresh();
-      } else if (job.phase === "CANCELLED") {
-        stopWatch();
-        stoppingJobId = null;
-        if (scanDetails) scanDetails.update(job);
-        toast("Scan stopped.");
-        await refresh();
-      } else if (job.phase === "FAILED") {
-        // The card STAYS UP on a failure, holding the error where it happened. A refresh
-        // here would clear it and leave a toast as the only account of what went wrong.
-        stopWatch();
-        paintCard(job);
-        if (scanButtonsRow) scanButtonsRow.style.display = "";
-        toast(job.error || "Scan failed.", "error");
-      } else {
-        paintCard(job);
-      }
-    } catch {
-      // A poll that fails is not a scan that failed — the next tick asks again.
+function applyJob(job) {
+  if (!shouldContinuePolling(job)) {
+    stopWatch();
+    if (job && job.phase === "DONE") {
+      if (syncDetails) syncDetails.update(job); // let an open drawer settle on "Complete"
+      toast("Sync complete.");
+      clearCard();
+      refresh();
+    } else if (job && job.phase === "CANCELLED") {
+      stoppingJobId = null;
+      if (syncDetails) syncDetails.update(job); // an open drawer settles on "Cancelled"
+      toast("Sync stopped.");
+      clearCard();
+    } else if (job && job.phase === "FAILED") {
+      paintCard(job); // leave the failure on screen, with its error and a Details button
+      if (syncButtonsRow) syncButtonsRow.style.display = ""; // let a retry start right away
+      toast(job.error || "Sync failed.", "error");
+    } else {
+      clearCard(); // job === null: nothing running — never started, or the row was reclaimed
     }
-  };
-  tick();
-  jobPoller = setInterval(tick, 3000);
+    return;
+  }
+  paintCard(job);
 }
 
+/**
+ * One poll tick, through store.js's `swrCall` rather than a bare `call()` — a revisit with the
+ * same `{jobId}` resolves instantly from the session cache while the RPC refetches in the
+ * background, and `onFresh` repaints the moment the revalidated summary actually differs. The
+ * awaited return handles the very first tick (a cache miss, so it IS the fresh fetch); every
+ * tick after that is a cache hit and its real update arrives through `onFresh` instead — both
+ * paths funnel through the same `applyJob`, so the poll's stop condition is asked in one place.
+ */
+async function pollTick(jobId) {
+  try {
+    const job = await swrCall("api_getJobStatus", { jobId }, (fresh) => applyJob(fresh));
+    applyJob(job);
+  } catch {
+    /* a transient poll failure is fine — the next tick tries again */
+  }
+}
+
+function watchJob(jobId) {
+  stopWatch();
+  pollTick(jobId); // paint immediately rather than leaving the card blank for the first 3s
+  jobPoller = setInterval(() => pollTick(jobId), 3000);
+}
+
+/** A page LOAD is the only time worth asking whether a sync is already running (a reload
+ *  mid-walk, or a second tab) — `getJobStatus` with no jobId returns the server's own
+ *  single-flight `activeJob()`, so this resumes the SAME poll a fresh Run click would start. */
+async function resumeActiveJob() {
+  try {
+    const job = await swrCall("api_getJobStatus", {}, () => {});
+    if (job && shouldContinuePolling(job)) watchJob(job.job_id);
+  } catch {
+    /* unreachable, or nothing active — nothing to resume either way */
+  }
+}
+
+/** Stop button handler, behind a confirm — nothing fetched so far is committed until the
+ *  scopes finish and persistSync runs, so stopping mid-fetch discards the walk so far. */
 async function requestStop(jobId) {
+  const ok = await confirmDialog({
+    title: "Stop this sync?",
+    body: "Nothing fetched so far has been saved — stopping now discards this run, and the " +
+      "next sync starts over from the top of the register.",
+    confirmLabel: "Stop sync",
+    danger: true,
+  });
+  if (!ok) return;
   stoppingJobId = jobId;
-  stoppingSince = Date.now();
   if (lastJob && lastJob.job_id === jobId) paintCard(lastJob);
   try {
-    const res = await call("api_cancelScan", { jobId });
-    if (res.stopped) { stoppingJobId = null; stopWatch(); await refresh(); }
-    toast(res.message || "Stopping the scan…");
+    const res = await call("api_cancelSync", { jobId });
+    toast(res.message || "Stopping sync…");
   } catch (e) {
     stoppingJobId = null;
     toast(String(e.message || e), "error");
   }
 }
 
-export async function refresh() {
-  invalidateBootstrap();
-  invalidateRpcCache();
-  await boot();
-}
+// ------------------------------------------------------------------------- the scope seam
 
-async function route() {
-  // Every route render takes a ticket, and `routeSeq` is the only thing that says which
-  // render is current. It used to be consulted in exactly ONE place — the `endRouteLoading`
-  // call in the `finally` below — so it gated the loading veil and nothing else, while the
-  // awaited `page.render` beneath it ran to completion whatever the reader did next. Pages
-  // that hold their own request tickets (graph.js, inventory.js) were protected by those;
-  // every other page could resolve an RPC after the next route had already cleared `mainEl`
-  // and append into the live DOM of the page that replaced it. See the two checks below.
-  const seq = ++routeSeq;
-  const parsed = parseHash();
-  // RESOLVE ONCE, then use the resolved key for everything. An unknown path (a stale link, a
-  // typo) lands on the front door rather than on whatever page this line happened to name
-  // when it was written — see DEFAULT_ROUTE in store.js. The nav highlight used to key off
-  // the RAW path, so an unresolved hash rendered a page while marking no nav item current.
-  let key = PAGES[parsed.route] ? parsed.route : DEFAULT_ROUTE;
-  let params = parsed.params;
-  // A gated route is a link the reader followed in good faith, so unlike the fallback above
-  // this one REWRITES the hash: leaving `#/aars` in the address bar over a different page
-  // with no nav item current is three answers to "where am I", two of them wrong.
-  if (PAGES[key] && PAGES[key].experimental && !showExperimental()) {
-    key = DEFAULT_ROUTE;
-    params = {};
-    history.replaceState(null, "", buildHash(key, params));
-  }
-  const page = PAGES[key];
-  document.title = `${page.title} — Wiz Sidekick DevSecOps`;
-  document.querySelectorAll(".nav-link").forEach((a) => {
-    const isActive = a.getAttribute("href") === `#/${key}`;
-    a.classList.toggle("active", isActive);
-    if (isActive) a.setAttribute("aria-current", "page");
-    else a.removeAttribute("aria-current");
-  });
-  // The rail's own pass, which the one above cannot do: a lane is marked while you are on ANY
-  // of its pages, and its link points at only one of them. It is deliberately a different
-  // mark and NOT aria-current — a lane that merely contains the page you are on is not itself
-  // the page, and saying so would put two "you are here" answers in one nav.
-  const here = itemForRoute(currentRailItems(), key);
-  document.querySelectorAll(".rail-item").forEach((node) => {
-    node.classList.toggle("current", !!here && node.getAttribute("data-nav-item") === here.id);
-  });
-  setActiveItem(here);
-  // Before the DOM goes: cancel the outgoing page's pending work, so a debounced
-  // callback cannot fire into a page that no longer exists.
-  runPageTeardown();
-  // The hover card is portaled to <body>, so it is the one piece of UI a page teardown does
-  // not reach on its own. A definition left hanging over the next page would be explaining
-  // something that is no longer on screen.
-  closeTip();
-  // THE SHEET IS THE OTHER ONE, and it went unnoticed until a page finally opened one. It is
-  // portaled to <body> too, so a filter drawer or a drill-down left open survives the route
-  // change — and its SCRIM survives with it, sitting over the next page and swallowing every
-  // click. Measured in the browser: opening Dependencies' filter drawer and navigating to
-  // Secrets left the new page unclickable, with nothing on screen explaining why. Neither
-  // sibling app calls this either; neither had a page that opened a sheet.
-  closeActiveSheet();
-  // A FRESH <main> PER ROUTE, rather than clearing the one that is there.
-  //
-  // Clearing removed the outgoing page's nodes but left the ELEMENT, and every page is handed
-  // that element to append into. So a render that had not finished — one still awaiting an
-  // RPC — went on appending into the very node the next page was now using. Demonstrated in
-  // the browser under `?slow=1200` by entering Data and leaving before its two RPCs resolve:
-  // Priorities came back 2,106 -> 2,659 characters carrying Data's whole Maintenance section,
-  // "Reset synced data" and "Prune to project" included. A destructive control painted onto a
-  // page that does not own it.
-  //
-  // Replacing the element instead means the outgoing render keeps a reference to a DETACHED
-  // <main>: its late appends still happen and simply land nowhere, which is what a superseded
-  // render's output should do. Nothing else has to change, because no page uses this argument
-  // for anything but `append` — checked across all eleven.
-  //
-  // Replaced rather than wrapped in a container, and that is not cosmetic: `main.full-bleed`
-  // is `display: flex` and `main.full-bleed > .empty` is a direct-child selector, so a wrapper
-  // would break the graph workbench's layout and its empty state. A new element with the same
-  // tag and id keeps every rule, including the `#main` focus target sheet.js restores to.
-  const stale = mainEl;
-  mainEl = el("main", { id: "main" });
-  mainEl.classList.toggle("full-bleed", !!page.fullBleed);
-  stale.replaceWith(mainEl);
-  // The first render after a boot is covered by the boot splash → page skeleton, so it skips
-  // the veil to avoid stacking two loaders; later navigations use it as normal.
-  const useOverlay = !firstRoute;
-  if (useOverlay) beginRouteLoading();
+// Re-entry guard: the combobox commits on a single click/Enter, but the round trip to
+// `api_setProjectView` and the `refresh()` after it are not instant, and the control does not
+// disable itself mid-pick. Without this a fast double-pick could fire two `setProjectView`
+// calls and two overlapping `refresh()`s racing to rebuild the same `<main>`.
+let scopePickInFlight = false;
+
+/**
+ * The project-scope switcher's onPick: persist the new view scope, then let `refresh()` do
+ * everything else. STORES NOTHING CLIENT-SIDE — the scope is server state (`settingsStore
+ * .projectView`), so the client's only job here is to write it and invalidate what it cached.
+ * A client-held copy would be a second source of truth for exactly the value this control
+ * exists to keep singular.
+ */
+async function pickProjectScope(slug) {
+  if (scopePickInFlight) return;
+  scopePickInFlight = true;
   try {
-    await page.render(mainEl, params, { refresh });
+    await call("api_setProjectView", { projectView: slug });
+    await refresh();
   } catch (e) {
-    // GUARDED, like the paint below it. A rejection from a route the reader has already
-    // left would otherwise replace the page they are now looking at with this message —
-    // the failure is real but it belongs to a render whose DOM was cleared long ago.
-    if (seq !== routeSeq) return;
-    mainEl.classList.remove("full-bleed"); // error states get normal padding back
-    clear(mainEl).append(
-      el("div", { class: "empty" },
-        el("div", {}, "This page failed to load."),
-        el("div", { class: "small", style: "margin-top:6px" }, String(e.message || e)),
-      ),
-    );
+    toast(String(e.message || e), "error");
   } finally {
-    if (useOverlay && seq === routeSeq) endRouteLoading();
-    firstRoute = false;
+    scopePickInFlight = false;
   }
 }
 
-window.addEventListener("hashchange", route);
-boot();
+/**
+ * The header's scope control, or null.
+ *
+ * `null` (boot failed) or an empty `filterOptions.projectList` (nothing synced yet) both
+ * resolve to `show: false` inside projectScopeView — see that module for why an empty picker
+ * is a promise the register cannot keep.
+ *
+ * The control is `gas_shared/ui/scopeControl.js`; `ui/projectScope.js` says what this
+ * register's one dimension is. `scopePayload` turns the picked option value back into the
+ * `{projectView}` object `api_setProjectView` has always taken, so nothing below the seam
+ * learned a new encoding.
+ */
+function appbarScope(data) {
+  const kinds = scopeKinds(data);
+  const chrome = scopeChrome(data);
+  return scopeControl(
+    projectScopeView(data),
+    { ...chrome, kinds },
+    (value) => pickProjectScope(scopePayload(kinds, chrome, value).projectView),
+  );
+}
+
+/**
+ * What the nav panel has to list, gathered from what the shell already holds.
+ *
+ * Empty, and deliberately still a function rather than a constant: navModel's rule is that a
+ * rail item EARNS a panel by having something to put in it, so returning nothing here is what
+ * makes every lane draw as a plain list today. Saved views are the intended first occupant.
+ */
+function navContext() {
+  return { savedViews: [] };
+}
+
+// ------------------------------------------------------------------------------ the shell
+
+const shell = createAppShell({
+  pages: PAGES,
+  appbarScope,
+  railFooter: renderSyncZone,
+  navContext,
+});
+
+export const refresh = shell.refresh;
+
+window.addEventListener("hashchange", shell.route);
+shell.boot();

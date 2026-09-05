@@ -135,6 +135,33 @@ describe("the SCA documents carry the second clock's inputs", () => {
   });
 });
 
+describe("ownership is selected on ALL THREE documents", () => {
+  // THIS TEST EXISTS BECAUSE Q_SCA SHIPPED WITHOUT IT. `projects[]` is the register's only
+  // ownership signal — `reconcile.ownerProject` / `ownerPath` / `projectsJson` read nothing
+  // else — and Q_SAST and Q_SECRETS both selected it while Q_SCA did not. SCA is ~18,800 of
+  // ~20,900 ledger rows, so the repos page would have reported ~90% of the register as
+  // unowned and been believed: a null that looks like an unowned repository is
+  // indistinguishable from a null that means nobody asked.
+  //
+  // The gap was invisible to every existing test here because each one reads ONE document.
+  // A per-document assertion cannot catch a field missing from one of three; only the
+  // cross-document sweep can, which is why this is written as a loop over all three rather
+  // than a fourth single-document case.
+  const DOCS = { Q_SCA, Q_SAST, Q_SECRETS };
+
+  for (const [name, doc] of Object.entries(DOCS)) {
+    it(`${name} selects projects with the fields ownerPath walks`, () => {
+      expect(doc).toContain("projects {");
+      // `isFolder` is the one that matters and is the easiest to drop as noise: ownerPath
+      // builds the hierarchy from it, and ownerProject takes the first NON-folder entry.
+      // Selecting projects without isFolder yields a path that cannot be ordered.
+      for (const field of ["id", "name", "isFolder", "slug"]) {
+        expect(doc.match(/projects \{[^}]*\}/)[0]).toContain(field);
+      }
+    });
+  }
+});
+
 describe("no inline literals in any document", () => {
   it("passes every filter through $filterBy", () => {
     // Inline literals do not survive this gateway; gas_ai learned it twice.

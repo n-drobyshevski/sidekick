@@ -1,0 +1,19 @@
+{
+  "shape": "package",
+  "pkg": "@wiz-sidekick/design-system",
+  "globalName": "WizSidekick",
+  "srcDir": "src",
+  "cssEntry": "dist/styles.css",
+  "docsDir": "docs",
+  "tokensGlob": "../../gas_devsecops/src/client/styles/tokens.css",
+  "readmeHeader": ".design-sync/conventions.md",
+  "runtimeFontPrefixes": [
+    "Inter"
+  ],
+  "componentSrcMap": {},
+  "overrides": {
+    "SevSegmentBar": {
+      "cardMode": "column"
+    }
+  }
+}

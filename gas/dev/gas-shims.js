@@ -324,6 +324,28 @@
     },
   };
 
+  // ------------------------------------------------------------------- HtmlService
+  //
+  // Only `createHtmlOutputFromFile().getContent()`, and only enough of it for
+  // `api.getChartsBundle`, which reads `dist/js_charts.html` — the Chart.js bundle the client
+  // fetches on the first route that draws a chart. `doGet` and `include` are not exercised
+  // here at all: dev/serve.mjs composes index.html itself.
+  //
+  // SYNCHRONOUS, because the shim stands in for a GAS API that is synchronous and the server
+  // bundle calls it inside a `run()` with no await anywhere in the chain. A sync XHR on the
+  // main thread is a thing to wince at; it is a few hundred KB from localhost, it happens once
+  // per session, and the alternative is making the whole server surface async for a dev harness.
+  window.HtmlService = {
+    createHtmlOutputFromFile(name) {
+      const req = new XMLHttpRequest();
+      req.open("GET", "/_partial/" + name, false);
+      req.send(null);
+      if (req.status !== 200) throw new Error("No HTML file " + name);
+      const content = req.responseText;
+      return { getContent: () => content };
+    },
+  };
+
   // ------------------------------------------------------------------- ScriptApp
   const triggers = [];
   let triggerSeq = 0;

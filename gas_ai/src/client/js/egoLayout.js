@@ -1,9 +1,9 @@
 // The ego-graph mini-diagram on an asset/issue detail sheet: which neighbours it draws,
 // and where every box and edge lands. No DOM here — whichever surface paints this (a
-// detail-sheet section, same family as recordSections.js) turns these numbers into an
+// detail-sheet section, same family as sheetSections.js) turns these numbers into an
 // inline SVG; this module only decides them.
 
-import { sevRank as rankSeverity } from "./ui/format.js";
+import { sevRank as rankSeverity } from "../../../../gas_shared/ui/format.js";
 
 // Mirrors SEVERITY_ORDER in src/domain/config.ts. assetQuery.js and comboView.js each
 // keep their own copy of this same list for the same reason: the client bundle cannot

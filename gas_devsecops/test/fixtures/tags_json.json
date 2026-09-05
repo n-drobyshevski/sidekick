@@ -1,0 +1,83 @@
+{
+ "cases": [
+  {
+   "input": {
+    "vulnerableAsset": {
+     "tags": {
+      "env": "prod",
+      "team": "core"
+     }
+    }
+   },
+   "expected": "{\"env\": \"prod\", \"team\": \"core\"}"
+  },
+  {
+   "input": {
+    "vulnerableAsset": {
+     "tags": {
+      "b": "2",
+      "a": "1"
+     }
+    }
+   },
+   "expected": "{\"a\": \"1\", \"b\": \"2\"}"
+  },
+  {
+   "input": {
+    "vulnerableAsset.tags.env": "prod",
+    "vulnerableAsset.tags.team": "core"
+   },
+   "expected": "{\"env\": \"prod\", \"team\": \"core\"}"
+  },
+  {
+   "input": {
+    "vulnerableAsset.tags.empty": "",
+    "vulnerableAsset.tags.gone": null
+   },
+   "expected": null
+  },
+  {
+   "input": {
+    "vulnerableAsset": {
+     "tags": {}
+    }
+   },
+   "expected": null
+  },
+  {
+   "input": {
+    "vulnerableAsset": {
+     "tags": {
+      "only": null
+     }
+    }
+   },
+   "expected": null
+  },
+  {
+   "input": {},
+   "expected": null
+  },
+  {
+   "input": {
+    "vulnerableAsset": {
+     "tags": {
+      "num": 3,
+      "flag": true
+     }
+    }
+   },
+   "expected": "{\"flag\": true, \"num\": 3}"
+  },
+  {
+   "input": {
+    "vulnerableAsset": {
+     "tags": {
+      "uni": "\u00fcn\u00efcode"
+     }
+    }
+   },
+   "expected": "{\"uni\": \"\u00fcn\u00efcode\"}"
+  }
+ ]
+}

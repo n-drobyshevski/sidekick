@@ -24,9 +24,9 @@
 // to skip the reconciliation. A lattice that can be mounted without its guard is a lattice
 // that will eventually be mounted without its guard.
 
-import { el, clear } from "./dom.js";
-import { segmented, select } from "./controls.js";
-import { openPopover } from "./popover.js";
+import { el, clear } from "../../../../../gas_shared/ui/dom.js";
+import { segmented, select } from "../../../../../gas_shared/ui/controls.js";
+import { openPopover } from "../../../../../gas_shared/ui/popover.js";
 import { outcomeBadge, outcomeLabel } from "./outcome.js";
 import { tierBadge, tierLabel } from "./posture.js";
 import { latticeGrid } from "./lattice.js";
@@ -34,7 +34,7 @@ import { latticeIcicle } from "./latticeIcicle.js";
 import { latticeCells, occupancyTally, outcomeMass, paintCells, toneForKey, vectorSentence } from "../lattice.js";
 import { OUTCOME_VALUES } from "../decideMirror.js";
 
-import { tipAnchor } from "./tip.js";
+import { tipAnchor } from "../../../../../gas_shared/ui/tip.js";
 /**
  * The two lattices' display vocabularies. Worst-first in both cases, because `outcomeMass`
  * reads `order[0]` as the band the ceiling applies to — ACT is already first in

@@ -1,7 +1,7 @@
 // Data — the report generator, raw exports, and the one-time legacy migration
 // import, merged from the former Reports and Exports pages.
 
-import { call } from "../api.js";
+import { call } from "../../../../../gas_shared/api.js";
 import { renderCapacity } from "../capacity.js";
 import {
   MAX_BUNDLE_BYTES,
@@ -9,23 +9,12 @@ import {
   gzipToBase64,
   parseMigrationBundle,
 } from "../migrationImport.js";
-import { bootstrap } from "../store.js";
+import { bootstrap } from "../../../../../gas_shared/store.js";
 import { purgeStatusView } from "../purgeStatus.js";
 import {
-  clear,
-  confirmDialog,
-  downloadText,
-  el,
-  emptyState,
-  fmtDateTime,
-  fmtDays,
-  progressBar,
-  scopeBar,
-  sectionLabel,
-  settingRow,
-  settingsPanel,
-  switchToggle,
-  toast,
+  clear, confirmDialog, downloadText, el, emptyState, errorState, fmtDateTime, fmtSpan,
+  pageHeader, progressBar, scopeBar, sectionLabel, settingRow, settingsPanel,
+  switchToggle, toast,
 } from "../ui.js";
 
 // A one-line description of the global scope a report/export is generated under, so a
@@ -41,10 +30,10 @@ export async function renderData(main, params, ctx) {
   const boot = await bootstrap();
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
-  main.append(
-    el("h1", {}, "Data"),
-    el("p", { class: "page-sub" }, "Reports out, raw data out, legacy history in."),
-  );
+  main.append(pageHeader({
+    route: "data",
+    lede: "Reports out, raw data out, legacy history in.",
+  }));
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
 
@@ -106,9 +95,14 @@ function renderStorageSection(main) {
   (async () => {
     try {
       renderCapacity(host, await call("api_getStorageStats", {}));
-    } catch {
-      clear(host).append(el("p", { class: "muted small" },
-        "Storage usage is unavailable right now."));
+    } catch (e) {
+      // errorState, NOT a muted paragraph. This branch is reached only when the stats call
+      // THREW, and the old line announced that defect in the same calm grey the section uses
+      // for ordinary notes, with no role at all — a screen reader heard nothing. errorState
+      // is role="alert" and puts the exception in a disclosure instead of printing it at the
+      // reader; the section stays best-effort either way, exactly as the comment above says.
+      clear(host).append(errorState("Storage usage is unavailable right now.",
+        { detail: String((e && e.message) || e) }));
     }
   })();
 }
@@ -157,9 +151,15 @@ function renderReportSection(main, boot, domain, supportGroup) {
       const preview = await call("api_getReport", { format: "json", domains, supportGroups });
       renderMatrix(preview.matrix);
     } catch (e) {
-      clear(previewHost).append(el("p", { class: "small" },
-        `Report preview unavailable: ${e.message} `,
-        el("button", { class: "link", type: "button", onclick: loadPreview }, "Retry")));
+      // This was errorState hand-rolled: it already had both halves — a retry control and the
+      // exception text — but announced them as an ordinary paragraph with no role="alert",
+      // and printed the raw message as body copy beside the button. The shared component
+      // announces the failure, gives the retry its own action row, and demotes the exception
+      // into "Technical details" where it does not compete with the sentence a reader needs.
+      clear(previewHost).append(errorState("Couldn't load the report preview.", {
+        onRetry: loadPreview,
+        detail: String((e && e.message) || e),
+      }));
     }
   }
 
@@ -186,7 +186,7 @@ function renderReportSection(main, boot, domain, supportGroup) {
         el("td", {}, row.source),
         ...sevCols.map((s) => el("td", { class: "num" }, row[s] ?? 0)),
         el("td", { class: "num" }, row.total),
-        el("td", { class: "num" }, fmtDays(row.medianMttr)),
+        el("td", { class: "num" }, fmtSpan(row.medianMttr)),
         el("td", { class: "num" }, row.open),
       ));
     }

@@ -1,16 +1,25 @@
 // What the two-tier rail draws, from the PAGES table alone.
 //
-// Plain .js for the same reason navGroups.test.js is, and importing navModel.js directly is
-// the whole point of that module existing: every decision the rail makes is here, DOM-free,
+// Plain .js for the same reason navGroups.test.js is, and importing the nav model directly is
+// the whole point of that module existing: every decision the rail makes is there, DOM-free,
 // and the panel's own module is then only timers, listeners and nodes.
 //
 // The cases that matter are the ones where a rail could quietly LIE — a lane that keeps its
 // heading after the collapse rule took it, a chrome page filed under a lane, a panel offered
 // for an item with one row in it that repeats the item you clicked.
+//
+// THE MODULE IS `gas_shared/shell/navModel.js` NOW — one copy for three registers, where it
+// was three copies of the same arithmetic. This file stays in THIS package rather than moving
+// into a shared contract, and that is deliberate: it exercises the shared module against THIS
+// register's lane shape (a four-page Security lane, a three-page Data lane, a one-page tail),
+// which is a different set of cases from the fixture gas_ai's copy uses. Two apps' worth of
+// shapes over one module is worth more than one contract run three times over one fixture.
 
 import { describe, expect, it } from "vitest";
 
-import { hasPanel, itemForRoute, panelBlocks, railItems } from "../src/client/js/navModel.js";
+import {
+  hasPanel, itemForRoute, panelBlocks, railItems,
+} from "../../gas_shared/shell/navModel.js";
 
 /** A PAGES-shaped fixture: the real map's shape, without importing app.js (it touches DOM). */
 const PAGES = {
@@ -129,13 +138,33 @@ describe("hasPanel", () => {
   });
 });
 
-// This register has no per-lane instances that deep-link — see the note on panelBlocks for
-// which candidates were considered and why each was rejected. The empty answer is pinned so
-// that adding one is a deliberate change to this file rather than a silent one.
+// This register has no per-lane instances that deep-link — see MANIFEST.panelBlocks in app.js
+// for which candidates were considered and why each was rejected. The empty answer is pinned
+// so that adding one is a deliberate change rather than a silent one.
+//
+// AND IT IS NOW PINNED AT THE SEAM, not at a hardcoded `return []`. The shared function takes
+// the app's builder as its third argument; this register supplies none, so the "no builder"
+// path is what these two cases hold. The third case is the one that makes the guard bite: with
+// a builder that DOES return a block, the lane rule and the empty-block rule are still the
+// shared function's, so a future saved-view store cannot bypass either by accident.
 describe("panelBlocks", () => {
-  it("offers none, for any item", () => {
+  it("offers none for any item when the app supplies no builder", () => {
     for (const item of railItems(PAGES)) {
       expect(panelBlocks(item, {})).toEqual([]);
+      expect(panelBlocks(item, {}, undefined)).toEqual([]);
     }
+  });
+
+  it("still refuses a non-lane, and still drops an empty block, once one is supplied", () => {
+    const items = railItems(PAGES);
+    const lane = items.filter((i) => i.id === "Security")[0];
+    const tail = items.filter((i) => i.id === "settings")[0];
+    const full = () => [{ id: "x", label: "X", rows: [{ label: "r", route: "overview" }] }];
+    const empty = () => [{ id: "x", label: "X", rows: [] }];
+    expect(panelBlocks(lane, {}, full)).toHaveLength(1);
+    // A chrome page has no collection under it, so the builder is never even asked.
+    expect(panelBlocks(tail, {}, full)).toEqual([]);
+    // An empty heading would say "you have none" where the truth is "we could not ask".
+    expect(panelBlocks(lane, {}, empty)).toEqual([]);
   });
 });

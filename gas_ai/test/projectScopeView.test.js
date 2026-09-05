@@ -1,12 +1,13 @@
 // What the app-header switcher CLAIMS, from the bootstrap payload alone.
 //
-// DOM-free half of the control, tested the way syncProgressView is: the assembly in
-// `projectScopeControl` is a handful of `el()` calls, but the wording, the denominator and
-// the stale-scope detection are decisions, and a decision that can be wrong gets a test.
+// DOM-free half of the control, tested the way syncProgressView is: the assembly is now
+// `scopeControl` in `gas_shared/ui/scopeControl.js`, a handful of `el()` calls, but the
+// wording, the denominator and the stale-scope detection are decisions, and a decision that
+// can be wrong gets a test.
 
 import { describe, expect, it } from "vitest";
 import { projectScopeView, trendScopeView } from "../src/client/js/ui/projectScope.js";
-import { UI_ICON_NAMES } from "../src/client/js/ui/uiIcons.js";
+import { UI_ICON_NAMES } from "../../gas_shared/ui/uiIcons.js";
 
 const boot = (scope, projectList, domainList) => ({
   scope, filterOptions: { projectList, domainList },

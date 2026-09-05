@@ -19,19 +19,23 @@
 
 import {
   TIER_COLORS, TIER_GLYPHS, TIER_LABELS, TIER_ORDER, TIER_TEXT,
-  destroyChart, groupPalette, groupPie, groupTrendLines, sparkline, stackedAgeBar,
-  tierPalette, trendLine,
+  groupPalette, tierPalette,
 } from "../charts.js";
-import { bootstrap, setParams, swrCall } from "../store.js";
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, el, emptyState, fmtDate, helpTip, kpiCard, nvdUrl, openSheet, pager,
-  scopeBar, sectionLabel, skeleton,
+  absent, clear, dataTable, el, emptyState, errorState, fmtDate, glossaryTip, kpiCard, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter, tip,
+  tipAnchor, tipLabel,
 } from "../ui.js";
 
-// Rows per page in the "Oldest open findings" panel's prev/next pagination. The server ships
+// Rows per page in the "Oldest open findings" panel's pagination. The server ships
 // up to 100 rows for the view being shown (api.getOldestOpen), so this yields up to ten pages,
 // and paging stays client-side — in GAS the round trip is the expensive unit, not the few KB.
 const OLDEST_PAGE_SIZE = 10;
+// The sizes that panel's footer offers. NOT the shared PAGE_SIZES: its smallest step is 25,
+// which cannot show the 10 this panel opens on, and 100 is the whole payload — a "250 / page"
+// option would name rows the server never sent.
+const OLDEST_PAGE_SIZES = [10, 25, 50, 100];
 
 // Keep in sync with AGE_BUCKET_LABELS in src/domain/insights.ts (the client bundle
 // can't import the TS domain module).
@@ -43,7 +47,12 @@ function sevTitle(sev) {
 }
 
 // Whole-day label for an age in days ("412d"). The server ships fractional day counts.
-function fmtDays(n) {
+//
+// NOT `fmtDays`, and the rename is what stops an accident rather than a style preference:
+// the barrel now carries a `fmtDays` of its own (gas_shared/ui/figures.js, "412 days") and a
+// `fmtSpan` (ui/span.js, "1.1y"), and THIS one is neither. A page that later adds `fmtDays`
+// to its import list would have shadowed or redeclared it silently.
+function fmtAgeDays(n) {
   return `${Math.round(n).toLocaleString()}d`;
 }
 
@@ -119,13 +128,14 @@ export async function renderOverview(main, params, ctx) {
     ? [...boot.settings.displaySeverities]
     : [...boot.palette.selectable];
 
-  main.append(
-    el("h1", {}, "OS vulnerabilities"),
-    el("p", { class: "page-sub" },
-      "What's exploitable, where risk concentrates, and what to fix next. ",
-      el("a", { href: "#/mttr", target: "_self" }, "Remediation performance →"),
-    ),
-  );
+  main.append(pageHeader({
+    route: "overview",
+    lede: "What is exploitable, where risk concentrates, and what to fix next.",
+  }));
+  // The route out stays a paragraph rather than joining the lede: a link inside the hero
+  // sub-line would be the only interactive thing in a block that is otherwise a statement.
+  main.append(el("p", { class: "page-sub" },
+    el("a", { href: "#/mttr", target: "_self" }, "Remediation performance →")));
 
   // When one severity is in scope, a severity breakdown is one row, a severity trend is one
   // line and a severity-stacked bar is one colour. Say so rather than drawing four controls
@@ -249,9 +259,17 @@ export async function renderOverview(main, params, ctx) {
       el("div", { class: "hero-value num" }, value === null ? "…" : value.toLocaleString()),
       el("p", { class: "hero-src" }, source),
     );
-    const mini = (v, label, title) => el("div", { title: title || null },
-      el("div", { class: "mini-value num" }, v),
-      el("div", { class: "mini-label" }, label));
+    // The provenance line used to be a `title` attribute, which el() now throws on — and it
+    // was carrying real content (which clock "Past SLA" is measured on), not a restatement of
+    // the label, so a native tooltip no keyboard or touch reader could open was the wrong
+    // place for it. tipAnchor, not tip(): these tiles are figures, not controls, and turning
+    // four of them into buttons would add four tab stops to a hero that has none.
+    const mini = (v, label, help) => {
+      const node = el("div", {},
+        el("div", { class: "mini-value num" }, v),
+        el("div", { class: "mini-label" }, label));
+      return help ? tipAnchor(node, () => [help]) : node;
+    };
     const past = loaded && insights.pastSla ? insights.pastSla.overall : null;
     const aw = loaded ? insights.awaiting : null;
     const median = loaded ? insights.medianOpenAge : null;
@@ -261,7 +279,10 @@ export async function renderOverview(main, params, ctx) {
         "On the vendor-fix clock, matching the MTTR page — a finding with no patch "
         + "available yet is not counted as a breach."),
       mini(aw ? (aw.overall || 0).toLocaleString() : "…", "Awaiting vendor fix"),
-      mini(median === null || median === undefined ? "—" : fmtDays(median), "Median open age"),
+      // absent(), not a typed dash: no median open age means the insights payload never
+      // measured one, and the muted dash is the app's one way of saying that.
+      mini(median === null || median === undefined ? absent() : fmtAgeDays(median),
+        "Median open age"),
     ));
   }
 
@@ -328,12 +349,9 @@ export async function renderOverview(main, params, ctx) {
   function renderFunnel(insights) {
     const f = insights.funnel;
     insightsHost.append(el("h2", { class: "section-label" },
-      helpTip("Triage funnel",
-        ["Open findings only. Each step is a strict subset of the one above it, so the "
-          + "counts narrow rather than overlapping.",
-         "Exploit intelligence comes from the durable ledger; internet exposure comes from "
-          + "the current scan and cannot be replayed over history."],
-        { className: "help-label" })));
+      // The book already says it, so say it once: glossaryTip shows the entry's first
+      // two lines and Enter opens the whole thing on the key sheet.
+      glossaryTip("Triage funnel", "triage-funnel")));
     const steps = el("div", { class: "funnel" });
     steps.append(funnelStep({
       label: "Open", value: f.open, prev: null, open: f.open,
@@ -380,11 +398,16 @@ export async function renderOverview(main, params, ctx) {
     const prev = trend.length >= 2 ? trend[trend.length - 2].byGroup : null;
     insightsHost.append(el("div", { class: "section-head" },
       el("h2", { class: "section-label" },
-        helpTip("Risk tiers",
-          [insights.riskRule ? `High risk is ${insights.riskRule.sentence}.` : "",
-           "A finding takes its strongest signal, so the tiers partition the backlog "
-           + "rather than overlapping."].filter(Boolean),
-          { className: "help-label" })),
+        // THE FIRST LINE WAS THE ACTIVE RULE'S OWN SENTENCE — a state of a setting rather
+        // than a definition — so it stays in place and `term` adds the route to the general
+        // entry beside it. Routed through `tipLabel` rather than `tip` because when there is
+        // no rule to state there is no line either, and `tip(label, [], { term })` would
+        // build a trigger whose card never opens (scheduleOpen bails on an empty lines
+        // array) while Enter still navigated. tipLabel is the one place that decides between
+        // the three help shapes, and `{ term }` alone is its glossary-only case.
+        tipLabel("Risk tiers", insights.riskRule
+          ? { lines: [`High risk is ${insights.riskRule.sentence}.`], term: "risk-tiers" }
+          : { term: "risk-tiers" })),
     ));
     const card = el("div", { class: "stat-card" });
     for (const tier of TIER_ORDER) {
@@ -428,6 +451,7 @@ export async function renderOverview(main, params, ctx) {
       return card;
     }
     const grid = el("div", { class: "spark-grid" });
+    const pending = [];
     for (const tier of TIER_ORDER) {
       const series = trend.map((p) => p.byGroup[tier] || 0);
       const canvas = el("canvas", {});
@@ -439,13 +463,20 @@ export async function renderOverview(main, params, ctx) {
         el("div", { class: "spark__box" }, canvas),
         el("div", { class: "spark__value num" }, (series[series.length - 1] || 0).toLocaleString()),
       ));
-      requestAnimationFrame(() => sparkline(canvas, series, {
-        color: TIER_COLORS[tier],
-        desc: `${TIER_LABELS[tier]}: ${series[0]} to ${series[series.length - 1]} open findings `
-          + `across ${series.length} scans.`,
-      }));
+      pending.push({ canvas, series, tier });
     }
     card.append(grid);
+    loadCharts().then((charts) => {
+      for (const { canvas, series, tier } of pending) {
+        charts.sparkline(canvas, series, {
+          color: TIER_COLORS[tier],
+          desc: `${TIER_LABELS[tier]}: ${series[0]} to ${series[series.length - 1]} open findings `
+            + `across ${series.length} scans.`,
+        });
+      }
+    }).catch(() => {
+      for (const { canvas } of pending) chartUnavailable(canvas);
+    });
     card.append(el("p", { class: "chart-caption muted" },
       "Tiers are computed from today's signals and applied backwards: has_kev and has_exploit "
       + "never revert, and EPSS is the peak observed. So this traces the BACKLOG moving "
@@ -495,8 +526,8 @@ export async function renderOverview(main, params, ctx) {
         + "counted as a breach. Rows with no recorded age are omitted from the bars, which is "
         + "why this total can trail the open count above."),
     ));
-    requestAnimationFrame(() => {
-      stackedAgeBar(
+    loadCharts().then((charts) => {
+      charts.stackedAgeBar(
         canvas, AGE_LABELS, aging.perTier, tierPalette(),
         "Open findings by age bucket and risk tier.",
         // The 7-day Critical SLA coincides with the first bucket edge. Only mark it when the
@@ -504,6 +535,8 @@ export async function renderOverview(main, params, ctx) {
         // one edge would stand for several different deadlines and mean nothing.
         slaEdgeIndex() === null ? {} : { slaEdgeAfter: 0, slaEdgeLabel: slaEdgeLabel() },
       );
+    }).catch(() => {
+      chartUnavailable(canvas);
     });
     const aw = insights.awaiting;
     if (boot.settings.showNoFix !== false && aw && aw.overall > 0) {
@@ -552,9 +585,12 @@ export async function renderOverview(main, params, ctx) {
     const loaded = new Map();
     // Current page within the active view, reset to 0 whenever the view switches.
     let page = 0;
+    // Rows per page, adjustable from the footer and kept across a view switch: a reader who
+    // asked to see fifty rows meant it about the panel, not about one of its four tabs.
+    let pageSize = OLDEST_PAGE_SIZE;
     const toggle = el("div", { class: "filter-bar", role: "group", "aria-label": "Oldest open findings view" });
     const tableHost = el("div", {});
-    const pagerHost = el("div", {});
+    const footerHost = el("div", {});
     const caption = el("p", { class: "chart-caption muted" });
     for (const [value, label] of OLDEST_VIEWS) {
       const btn = el("button", {
@@ -580,11 +616,11 @@ export async function renderOverview(main, params, ctx) {
       swrCall("api_getOldestOpen", { ...insightsParams(), view: want }, (fresh) => absorb(fresh))
         .then(absorb)
         .catch((e) => {
-          // eslint-disable-next-line no-console
           console.error("[overview] getOldestOpen failed:", e);
           if (!tableHost.isConnected || view !== want) return;
-          clear(tableHost).append(emptyState("Couldn't load the ranked rows."));
-          clear(pagerHost);
+          clear(tableHost).append(errorState("Couldn't load the ranked rows.",
+            { detail: String((e && e.message) || e) }));
+          clear(footerHost);
         });
     }
 
@@ -606,85 +642,91 @@ export async function renderOverview(main, params, ctx) {
         clear(tableHost).append(el("div", { role: "status", "aria-label": "Loading ranked rows" },
           ...[0, 1, 2, 3, 4].map(() =>
             el("div", { style: "margin-bottom:10px" }, skeleton("line")))));
-        clear(pagerHost);
+        clear(footerHost);
         return;
       }
       const allRows = loaded.get(view) || [];
-      const pageCount = Math.max(1, Math.ceil(allRows.length / OLDEST_PAGE_SIZE));
+      const pageCount = Math.max(1, Math.ceil(allRows.length / pageSize));
       // Clamp when a view switch (or a smaller payload on revalidation) leaves `page` past the end.
       if (page >= pageCount) page = pageCount - 1;
-      const pageRows = allRows.slice(page * OLDEST_PAGE_SIZE, (page + 1) * OLDEST_PAGE_SIZE);
+      const pageRows = allRows.slice(page * pageSize, (page + 1) * pageSize);
       // The Assets view carries per-asset Subscription / Domain; other group views don't.
+      // absent() rather than a typed dash: an asset with no subscription recorded is a gap in
+      // the payload, and the muted dash is what says so without asserting a value.
       const extraCols = view === "byAsset"
-        ? [{ header: "Subscription", get: (g) => g.subscription || "—" },
-           { header: "Domain", get: (g) => g.domain || "—" }]
+        ? [{ key: "subscription", label: "Subscription", cell: (g) => g.subscription || absent() },
+           { key: "domain", label: "Domain", cell: (g) => g.domain || absent() }]
         : [];
       clear(tableHost).append(individual
         ? oldestFindingsTable(pageRows)
         : oldestGroupTable(pageRows, OLDEST_VIEWS.find(([v]) => v === view)[1], extraCols));
-      // Prev/Next controls (pager() shows just "N rows" when a single page fits). onPage
-      // repaints from the already-loaded rows, so paging never hits the server.
-      clear(pagerHost);
+      // The footer, not the bare pager it used to draw. Two things were wrong: the pager
+      // printed the count unpluralised, so a one-row ranking read "1 rows"; and ten rows was
+      // the only page size a reader could ever have, on a panel whose payload is a hundred.
+      // onPage/onPageSize repaint from the already-loaded rows, so neither hits the server.
+      clear(footerHost);
       if (allRows.length) {
-        pagerHost.append(pager(page, pageCount, allRows.length, (p) => { page = p; paint(); }));
+        footerHost.append(tableFooter({
+          page,
+          pageCount,
+          total: allRows.length,
+          pageSize,
+          sizes: OLDEST_PAGE_SIZES,
+          onPage: (p) => { page = p; paint(); },
+          onPageSize: (size, nextPage) => { pageSize = size; page = nextPage; paint(); },
+        }));
       }
     }
 
     ensure();
     return el("div", { class: "chart-card" },
       el("h3", {}, "Oldest open findings"),
-      toggle, tableHost, pagerHost, caption);
+      toggle, tableHost, footerHost, caption);
   }
 
   /** Ranked table of individual oldest open findings (CVE · Asset · Subscription · Severity · Age). */
   function oldestFindingsTable(rows) {
     if (!rows || !rows.length) return emptyState("No open findings to rank.");
-    const body = el("tbody", {});
-    for (const r of rows) {
-      const cve = r.cve && r.cve !== "(none)"
+    // The dashes are absent(): a finding with no CVE, asset or subscription recorded is a
+    // finding the scan told us nothing about for that column, and a dash in the same ink as
+    // the values beside it claims otherwise.
+    const columns = [
+      { key: "cve", label: "CVE", cell: (r) => (r.cve && r.cve !== "(none)"
         ? el("a", { href: nvdUrl(r.cve), target: "_blank", rel: "noopener" }, r.cve)
-        : (r.cve || "—");
-      body.append(el("tr", {},
-        el("td", {}, cve),
-        el("td", {}, r.asset || "—"),
-        el("td", {}, r.subscription || "—"),
-        el("td", {}, el("span", { class: "sev-dot", "aria-hidden": "true",
+        : (r.cve || absent())) },
+      { key: "asset", label: "Asset", cell: (r) => r.asset || absent() },
+      { key: "subscription", label: "Subscription", cell: (r) => r.subscription || absent() },
+      // Severity is the dot AND the word — never the colour alone.
+      { key: "severity", label: "Severity", cell: (r) => [
+        el("span", { class: "sev-dot", "aria-hidden": "true",
           style: `background:${boot.palette.colors[r.severity] || "var(--text-3)"}` }),
-          sevTitle(r.severity)),
-        el("td", { class: "num" }, fmtDays(r.ageDays)),
-      ));
-    }
-    return el("div", { class: "table-wrap" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          ...["CVE", "Asset", "Subscription", "Severity", "Age"].map((h) => el("th", { scope: "col" }, h)))),
-        body));
+        sevTitle(r.severity),
+      ] },
+      { key: "age", label: "Age", className: "num", cell: (r) => fmtAgeDays(r.ageDays) },
+    ];
+    return dataTable({ columns, rows });
   }
 
   /** Ranked table of the 90+ day open backlog per group (Group [· extras] · 90+ days · Open ·
-   *  Oldest). extraCols ([{ header, get }]) render right after the group-name column — the
-   *  Assets view uses them for Subscription / Domain; other group views pass none. */
+   *  Oldest). extraCols is a dataTable column spec spliced in right after the group-name
+   *  column — the Assets view uses it for Subscription / Domain; other group views pass none.
+   *
+   *  The column list therefore varies between views, which is fine here and would not be
+   *  everywhere: the whole table is rebuilt on each paint (paint() clears tableHost), so
+   *  nothing holds a stale header. */
   function oldestGroupTable(rows, dimLabel, extraCols = []) {
     if (!rows || !rows.length) return emptyState("No open findings to rank.");
-    const body = el("tbody", {});
-    for (const g of rows) {
-      body.append(el("tr", {},
-        el("td", {}, el("strong", {}, g.key)),
-        ...extraCols.map((c) => el("td", {}, c.get(g))),
-        el("td", { class: "num" }, g.agedCount.toLocaleString()),
-        el("td", { class: "num" }, g.openCount.toLocaleString()),
-        el("td", { class: "num" }, fmtDays(g.oldestDays)),
-      ));
-    }
-    return el("div", { class: "table-wrap" },
-      el("table", { class: "data" },
-        el("thead", {}, el("tr", {},
-          el("th", { scope: "col" }, dimLabel),
-          ...extraCols.map((c) => el("th", { scope: "col" }, c.header)),
-          el("th", { scope: "col" }, "90+ days"),
-          el("th", { scope: "col" }, "Open"),
-          el("th", { scope: "col" }, "Oldest"))),
-        body));
+    const columns = [
+      { key: "key", label: dimLabel, cell: (g) => el("strong", {}, g.key) },
+      ...extraCols,
+      { key: "aged", label: "90+ days", className: "num",
+        cell: (g) => g.agedCount.toLocaleString() },
+      { key: "open", label: "Open", className: "num",
+        cell: (g) => g.openCount.toLocaleString() },
+      { key: "oldest", label: "Oldest", className: "num",
+        cell: (g) => fmtAgeDays(g.oldestDays) },
+    ];
+    return dataTable({ columns, rows });
   }
 
   // ---------------------------------------------------------------------- movement
@@ -716,13 +758,15 @@ export async function renderOverview(main, params, ctx) {
       card.append(el("div", { class: "chart-box" }, canvas));
       card.append(el("p", { class: "chart-caption muted" },
         "Total open findings at each saved scan."));
-      requestAnimationFrame(() => {
-        // trendLine reads {x, y} on a proportional epoch-day axis — NOT {date, value}.
-        const points = trend.map((p) => ({
-          x: p.date,
-          y: Object.values(p.bySev || {}).reduce((a, b) => a + (b || 0), 0),
-        }));
-        trendLine(canvas, points, { yLabel: "Open findings" });
+      // trendLine reads {x, y} on a proportional epoch-day axis — NOT {date, value}.
+      const points = trend.map((p) => ({
+        x: p.date,
+        y: Object.values(p.bySev || {}).reduce((a, b) => a + (b || 0), 0),
+      }));
+      loadCharts().then((charts) => {
+        charts.trendLine(canvas, points, { yLabel: "Open findings" });
+      }).catch(() => {
+        chartUnavailable(canvas);
       });
     } else {
       card.append(el("p", { class: "muted small" }, "Trend appears after the second scan."));
@@ -846,7 +890,9 @@ export async function renderOverview(main, params, ctx) {
       canvas.style.display = "";
     }
     function showMsg(canvas, msg, text) {
-      destroyChart(canvas);
+      // Fire-and-forget: nothing to destroy if Chart.js never loaded (nothing was ever
+      // drawn), and the message swap below doesn't wait on it either way.
+      loadCharts().then((charts) => charts.destroyChart(canvas)).catch(() => {});
       canvas.style.display = "none";
       msg.textContent = text;
       msg.style.display = "";
@@ -878,7 +924,11 @@ export async function renderOverview(main, params, ctx) {
           slices.push({ label: "Other", value: tailOpen, color: colors.get("Other") });
         }
         showChart(pieCanvas, pieMsg);
-        requestAnimationFrame(() => groupPie(pieCanvas, slices));
+        loadCharts().then((charts) => {
+          charts.groupPie(pieCanvas, slices);
+        }).catch(() => {
+          chartUnavailable(pieCanvas);
+        });
       }
 
       // Line: ledger-replay trend for the same top groups.
@@ -908,7 +958,11 @@ export async function renderOverview(main, params, ctx) {
           showMsg(lineCanvas, lineMsg, "Trend appears after the second scan.");
         } else {
           showChart(lineCanvas, lineMsg);
-          requestAnimationFrame(() => groupTrendLines(lineCanvas, td.points, series));
+          loadCharts().then((charts) => {
+            charts.groupTrendLines(lineCanvas, td.points, series);
+          }).catch(() => {
+            chartUnavailable(lineCanvas);
+          });
         }
       };
       loadTrend();
@@ -937,9 +991,15 @@ export async function renderOverview(main, params, ctx) {
             .map(([v, label]) => el("option", { value: v, selected: v === key || null }, label)),
         );
         sel.addEventListener("change", () => { groupKeys[i] = sel.value; syncAndReload(); });
+        // The "×" is the whole label, so what it removes has to be said somewhere: the
+        // aria-label says it to assistive technology and a `title` used to say it to a mouse.
+        // el() throws on `title` now, and `tip` on a button attaches in place — no second
+        // control inside the one the reader sees, and no duplicate announcement, because an
+        // in-place tip is visual only where an aria-label is already carrying the name.
         const remove = groupKeys.length > 1
-          ? el("button", { class: "linklike danger", title: "Remove this level", "aria-label": "Remove grouping level",
-              onclick: () => { groupKeys.splice(i, 1); syncAndReload(); } }, "×")
+          ? tip(el("button", { class: "linklike danger", "aria-label": "Remove grouping level",
+              onclick: () => { groupKeys.splice(i, 1); syncAndReload(); } }, "×"),
+            ["Remove this level"])
           : null;
         controls.append(el("div", { class: "field" },
           el("label", { class: "field-label" }, i === 0 ? "Group by" : "then by"),
@@ -974,7 +1034,23 @@ export async function renderOverview(main, params, ctx) {
   }
 
   /** Render a nested GroupNode[] into the Top-CVEs-style table.data, with expandable
-   *  rows: the top level is open, deeper levels collapsed until their parent expands. */
+   *  rows: the top level is open, deeper levels collapsed until their parent expands.
+   *
+   *  STILL HAND-BUILT, and dataTable is the reason rather than the omission. Three things it
+   *  cannot express, each load-bearing here:
+   *
+   *    - a TREE. Its only disclosure primitive is `rowDetail`, one full-width colspan row
+   *      after a trigger. This is N levels of same-shaped rows whose visibility is toggled by
+   *      `display` on a `<tr>` the caller kept a handle on; dataTable builds its own `<tr>`s
+   *      and hands back none, so the only route is repainting through `setRows` — which
+   *      destroys the caret the keyboard reader just pressed and drops focus to the body.
+   *    - a per-ROW cell class. `td.clickable` (pages.css) puts the pointer cursor on the
+   *      group cell of a row that HAS children and leaves a leaf alone; `col.className` is
+   *      per column, so every row would claim to expand.
+   *    - a per-row cell style. Depth is drawn as `padding-left: depth * 20 + 8px` on that
+   *      same `<td>`, and there is nowhere in the column spec to put it.
+   *
+   *  Converting it would trade a working tree for a flat table that lies about focus. */
   function renderTree(host, groups) {
     clear(host);
     if (!groups.length) {
@@ -1080,7 +1156,10 @@ export async function renderOverview(main, params, ctx) {
         el("td", {},
           el("div", { class: "mix-cell" },
             mixStrip(node.sevCounts),
-            el("span", { class: "mix-text small muted num" }, mixText(node.sevCounts) || "—"))),
+            // absent() rather than a typed dash: a group with no severity counts had none
+            // reported, which is not the same as a group whose mix is empty by measurement.
+            el("span", { class: "mix-text small muted num" },
+              mixText(node.sevCounts) || absent()))),
         el("td", { class: "num" }, node.assets.toLocaleString()),
         el("td", { class: "num" }, node.total.toLocaleString()),
         el("td", { class: "num" }, node.open.toLocaleString()),

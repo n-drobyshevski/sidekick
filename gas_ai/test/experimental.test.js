@@ -7,12 +7,32 @@
 // `!== "0"` idiom the collapsed rail uses, and exactly the kind of inversion that gets
 // "simplified" back the wrong way by someone matching the neighbouring code.
 //
-// The module reads localStorage once at import and caches, so each case re-imports against
-// its own stub (vi.resetModules + dynamic import) rather than sharing one instance.
+// The module reads localStorage once and caches, so each case re-imports against its own stub
+// (vi.resetModules + dynamic import) rather than sharing one instance.
+//
+// IT IS `gas_shared/shell/experimental.js` BEHIND THE SEAM NOW, and two things follow.
+//
+// First, `load()` configures the manifest. That is not a workaround for the test: the shared
+// module composes its key from `MANIFEST.storagePrefix`, and `appConfig()` THROWS on an unset
+// manifest by design (an unset one cannot be defaulted without silently giving one app another
+// app's key). `vi.resetModules()` throws away the manifest along with everything else, so it
+// has to be set inside `load()`, after the reset and before the first read.
+//
+// Second, that would make the key assertions below tautological on their own — the prefix
+// this file hands over is the one they then check for. So `composes the key from the
+// manifest's prefix` configures a DIFFERENT prefix and reads the key back: that is the case
+// that actually holds the composition, and the `sidekickai.` ones hold the stored values
+// against what this fork wrote before the promotion, i.e. that no reader loses the flag.
+//
+// The read caches LAZILY now rather than at import, which is forced rather than chosen:
+// appConfig.js's rule 2 forbids a shared module reading the manifest at module top level,
+// because under esbuild's bundling order that runs before app.js's configureApp().
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 const MODULE = "../src/client/js/experimental.js";
+/** gas_ai's real MANIFEST.storagePrefix — the value app.js hands over at runtime. */
+const PREFIX = "sidekickai.";
 
 /** A localStorage stand-in over a plain object — there is no jsdom in this suite. */
 function stubStorage(initial) {
@@ -33,8 +53,13 @@ function stubDeniedStorage() {
   };
 }
 
-async function load() {
+async function load(prefix) {
   vi.resetModules();
+  // A LITERAL SPECIFIER, not a `const` holding the path: vite rewrote `import(CONFIG)` to an
+  // absolute `/gas_shared/appConfig.js` and could not find it — a dynamic import outside this
+  // package's root only resolves when the transform can see the string.
+  const { configureApp } = await import("../../gas_shared/appConfig.js");
+  configureApp({ storagePrefix: prefix === undefined ? PREFIX : prefix });
   return import(MODULE);
 }
 
@@ -80,6 +105,25 @@ describe("showExperimental", () => {
     delete globalThis.localStorage;
     const { showExperimental } = await load();
     expect(showExperimental()).toBe(false);
+  });
+
+  // THE SEAM, AND THE ONLY CASE THAT IS NOT TAUTOLOGICAL. Every assertion above hands over
+  // `sidekickai.` and then looks for `sidekickai.showExperimental`; this one hands over a
+  // prefix no app uses and requires the key to follow it. The two forks this replaced wrote
+  // the prefix out as a literal, which is exactly what MANIFEST.storagePrefix exists to stop:
+  // "two sidekicks served from the same origin must not share a key".
+  it("composes the key from the manifest's prefix, never from a literal", async () => {
+    stubStorage({ "zz.showExperimental": "1", "sidekickai.showExperimental": "0" });
+    const { showExperimental } = await load("zz.");
+    expect(showExperimental(), "the shared gate is reading a hardcoded prefix").toBe(true);
+  });
+
+  it("writes back under the manifest's prefix too", async () => {
+    const store = stubStorage({});
+    const { setShowExperimental } = await load("zz.");
+    setShowExperimental(true);
+    expect(store["zz.showExperimental"]).toBe("1");
+    expect(store["sidekickai.showExperimental"]).toBe(undefined);
   });
 });
 

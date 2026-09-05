@@ -22,7 +22,7 @@ import {
   visibleEntries,
 } from "../src/client/js/helpContent.js";
 import { ROUTE_ICONS } from "../src/client/js/routeIcons.js";
-import { KIND_LABELS } from "../src/client/js/icons.js";
+import { KIND_LABELS } from "../../gas_shared/icons.js";
 import { lookupGap } from "../src/client/js/codebook.js";
 // The real rule, not a hand-written copy of it. A fixture that spells `bands` its own way
 // asserts against a fiction — which is exactly how the band-threshold resolver shipped

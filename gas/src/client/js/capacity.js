@@ -8,7 +8,7 @@
 // with one thin accent bar per row: the reader's job there is "which tab is biggest", a
 // magnitude comparison, so every bar is the same hue and the numbers stay authoritative.
 
-import { el, usageMeter } from "./ui.js";
+import { el, num, usageMeter } from "./ui.js";
 
 // Warn at the Settings panel's long-standing 6M-of-10M line; bad once so little headroom is
 // left that the next large scan could hit the wall mid-persist.
@@ -41,13 +41,19 @@ const NOTES = {
  * them, so the breakdown and headroom collapse to null rather than rendering zeroes.
  */
 export function capacityView(stats) {
-  const used = Number(stats?.cellCount ?? 0);
-  const total = Number(stats?.cellLimit ?? 0);
+  // `num(v, 0)` rather than a bare `Number()`. Every figure below is a MEASURE OF A GRID —
+  // a tab the payload never mentioned really does occupy no cells — so "missing means zero"
+  // is the intended reading here, and it is stated at each call site instead of arriving
+  // through `Number(undefined ?? 0)`. What the bare cast could not refuse is a value that
+  // was never a number at all: `Number("n/a")` is NaN, and a NaN `used` propagates through
+  // `pct`, `free` and every bar width to render the whole section as "NaN".
+  const used = num(stats?.cellCount, 0);
+  const total = num(stats?.cellLimit, 0);
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
   const state = capacityState(used, total);
   const free = Math.max(0, total - used);
 
-  const rowCells = Number(stats?.ledgerRowCells ?? 0);
+  const rowCells = num(stats?.ledgerRowCells, 0);
   // Deliberately in vulnerabilities, not cells: "3.9M cells free" is not a number anyone can
   // act on, and one more tracked vulnerability is exactly one more ledger row.
   const headroomVulns = rowCells > 0 ? Math.floor(free / rowCells) : null;
@@ -56,10 +62,10 @@ export function capacityView(stats) {
   const tabs = raw
     .map((t) => ({
       name: String(t?.name ?? ""),
-      rows: Number(t?.rows ?? 0),
-      cols: Number(t?.cols ?? 0),
-      cells: Number(t?.cells ?? 0),
-      share: used > 0 ? (Number(t?.cells ?? 0) / used) * 100 : 0,
+      rows: num(t?.rows, 0),
+      cols: num(t?.cols, 0),
+      cells: num(t?.cells, 0),
+      share: used > 0 ? (num(t?.cells, 0) / used) * 100 : 0,
     }))
     .sort((a, b) => b.cells - a.cells);
   // Bars are read against the biggest tab, not against the 10M ceiling: at a few percent of

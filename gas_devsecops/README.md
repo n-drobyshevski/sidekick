@@ -10,49 +10,40 @@ bright-yellow brand (`#ffcb13`) instead of Signal Blue or crimson — the severi
 deliberately identical across all three, so a severity means the same thing wherever you
 read it.
 
-## Status: Phase 2 — collecting. The battery runs, six routes read what it writes.
+## Status: Phase 2 complete — all ten pages lit, never deployed
 
-**What is real:** the shell, the navigation, all ten routes, access control, the settings
-store, the ledger schema, the build and the dev harness — and now the ledger itself. Three
-normalizers (`src/domain/normalize.ts`, `src/domain/secretsLedger.ts`), a cross-scan
-reconciler with per-scope disappearance (`src/domain/reconcile.ts`), the derived clocks
-(`src/domain/ledgerCore.ts`), censoring-aware remediation statistics
-(`src/domain/remediation.ts`), Sheet persistence (`src/server/ledgerStore.ts`) and a scan
-runner (`src/server/sync.ts`). **Executive, MTTR & SLA, and the three registers are wired to real
-numbers** — six of the ten routes. **Settings is real too** — four task tabs (Register / Deadlines / Access / System) over one
-batched save bar, in `gas_ai/`'s shape: the allowlist and admin tier are editable in the app
-rather than by hand in Script Properties, the severity gate and SLA windows are knobs, and the
-System tab stays read-only because credentials and project scope decide which population every
-register measures.
-`npm run check` is green.
+**What is real:** everything from the shell to the screen. The domain layer (19 modules
+ported from `brick/devsecops/` against golden fixtures), the transport, the archives, the
+journaled ledger commit, the sync battery, eight read models behind twenty RPCs, the standing
+triggers, and all ten pages rendering real figures. `test/pagesLit.test.js` is the phase's
+exit gate — seven criteria, and it passes.
 
-**The sync battery collects.** `src/server/wizClient.ts` is the transport — the only file in
-`src/` that touches the network, so `wizQueries.ts` stays importable under plain Node and
-`probe.mjs` keeps being evidence about this battery rather than about an approximation of it.
-`src/server/scanJobs.ts` walks each collected register across executions: pages spill to Drive
-as they arrive, the cursor checkpoints to the jobs tab, and a one-shot `trigger_continueScan`
-resumes where the budget expired.
+The battery has been **exercised against the live tenant** (secrets and sast; `sca` skipped
+as ~38 pages against a production API), with Sheets and Drive in memory: 1,931 secrets nodes
+folded to 1,324 ledger rows, SAST's `createdAt` on 127/127 rows, and a second immediate sync
+reporting new/resolved/reopened of 0/0/0. See [PROBE_FINDINGS.md](PROBE_FINDINGS.md) §12.
 
-**The one rule everything else follows: the `scans` row is the COMMIT RECORD and it lands
-last.** A scan that dies mid-walk appends no row, so it never becomes a `prevScanId`, so the
-next scan still measures against the last complete scan of that scope. That is the shape of
-the thing rather than a check — and it matters here more than in either sibling, because
-`reconcile` resolves by ABSENCE, so a partial population is indistinguishable from a
-remediated one. Two mutation tests price it on the dev fixture's 94 SCA findings: commit the
-in-flight step on the failure path and a scan row appears reading `total: 32`; let the archive
-reader skip a page it cannot read and 47 findings close as fixes with `resolved_count: 47` and
-no error anywhere.
+**What is not, and each is written down rather than implied:**
 
-`liveSource()` still refuses, and still earns its place: what it forbids is not the Wiz call
-but an unbudgeted, unresumable fetch inside the one function that also commits.
-
-Four routes still render their composition — Coverage & efficiency (which needs the P2P
-domain port), Repositories, Scan history and Storage — and say plainly that no data is
-connected. A page drawing a plausible empty chart would be claiming a pipeline that does
-not exist.
+- **It has never been deployed.** There is no `.clasp.json` in this repo — the `scriptId`
+  belongs to whoever deploys. Nothing has ever run inside Apps Script, against a real Google
+  Sheet, or under the real quotas. The Setup section below is untested in that sense.
+- **The secrets ledger key is an open question, not a decision.** The live fold showed 2.87
+  occurrences per duplicated key where the repo-versus-branch twin model predicts 2. If the
+  excess is the same credential-line in *different repositories*, the key merges genuine
+  findings. PROBE_FINDINGS §12.2 names the read-only measurement that settles it.
+- **UUID stability across Wiz's own rescans is still inferred**, not measured — the
+  idempotency result above only covers an unchanged upstream.
+- **The commit hash is fetched and discarded.** `Q_SAST` selects `commitHash` and `Q_SECRETS`
+  `initialCommitHash`; `LEDGER_COLUMNS` has no column for either. That needs a schema bump.
+- Several page sections are **honestly empty** because the read models do not publish the
+  data: repos ownership (nothing aggregates `owner_project`), the history open-past-SLA trend,
+  and per-severity KM curves. Each page says which figure it cannot draw instead of drawing a
+  zero.
 
 **The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
-`src/server/registers.ts` caches the full filtered set and slices it per request: `page` and
+`src/server/readModels.ts`'s `registerRowsModel` (through `serverCache.ts`'s durable, 1-hour
+memo) derives the full filtered/sorted set once and slices it per request: `page` and
 `pageSize` are deliberately not in the cache key, while anything selecting which rows exist
 is. The rule is the sibling's, and its reason is the same — without it every Next click
 re-runs the whole pass to throw all but one page away.
@@ -84,7 +75,18 @@ arithmetic says 9.
 ## Pages
 
 Three lanes and a chrome tail. The IA lives in exactly one place — `PAGES` in
-`src/client/js/app.js` — and `test/navGroups.test.js` forbids a second list.
+`src/client/js/app.js` — and `test/shared.test.js` forbids a second list.
+
+**A sync is the act; a scan is the record it wrote.** You *run a sync*; it touches three
+registers and saves *one scan per register*; you *browse scans*. So "Scan history", "Saved
+scans", "Delete scans" and "first scan / last scan" are right — they name records — and "run
+a scan" is wrong, because a scan is not a thing that runs. The control is the **Run sync**
+button in the rail; the rail area around it is the sync zone, and nothing a reader sees calls
+it a scan zone. Wiz's own detectors are a third thing — **the scanner** — never "the scan" on
+its own. A lower bound is written the same way everywhere: prose says "at least N", a numeric
+cell or tile says "≥ N", and ">" is never used for a bound, because "at least" is inclusive.
+This paragraph is the only place the rule is written; `src/client/js/pages/history.js` points
+here and `test/vocabulary.test.js` holds the copy to it.
 
 | Route | Title | Lane | The one question |
 |---|---|---|---|
@@ -124,8 +126,11 @@ about at least two of them, and the clock is the product.
    `scriptId` belongs to whoever deploys, not to the repo).
 3. `npm run push`
 4. In the Apps Script editor, run `setup()` once. It creates the ledger spreadsheet and the
-   Drive archive folder, ensures every tab and header, seeds `ALLOWED_USERS` with the owner,
-   and installs the daily scan trigger (03:00, deduplicated by handler name).
+   Drive archive folder, ensures every tab and header, and seeds `ALLOWED_USERS` with the
+   owner. It also installs the standing triggers — one daily sync plus three staggered
+   read-model warms — and records their schedule as a signature so a second `setup()` on an
+   unchanged schedule adds nothing rather than accumulating duplicates against the 20-trigger
+   quota. Budget: 4 standing + up to 2 transient (continuation and watchdog) = 6 of 20.
 5. Set `WIZ_API_TOKEN`, or `WIZ_CLIENT_ID` + `WIZ_CLIENT_SECRET`, in Project Settings. Then
    open Settings → System and press **Test connection**: `hasCredentials` only means three
    Script Properties are non-empty, and the button is what turns that into a token exchange
@@ -154,7 +159,7 @@ about at least two of them, and the clock is the product.
       failed.
    3. **Deploy → Manage deployments → Edit → New version.** `clasp push` changes the code the
       editor runs; the `/exec` URL keeps serving the version it was pinned to.
-   4. Check the daily scan trigger still fires. A scope change is the one thing that can
+   4. Check the daily sync trigger still fires. A scope change is the one thing that can
       suspend an installable trigger with nothing in the UI to say so.
 6. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
    rather than stopping at the first failure. `wizDiagnostic()` is its network-touching
@@ -277,10 +282,17 @@ for the value itself. `test/wizQueries.test.js` holds it.
 
 `npm run dev` runs the **real server bundle** in the browser against in-memory fakes for
 SpreadsheetApp, DriveApp, Properties, Lock and Cache (`dev/gas-shims.js`), so no Google
-account is needed. It SEEDS: three scans across three scopes, replayed through the
-real normalizers, the real reconcile and the real Sheet writes, so the MTTR page opens
-with numbers that came from a ledger which actually accumulated. `?noseed` leaves the
-store empty, which is how the empty state gets exercised.
+account is needed. It **does** seed now: `dev/sampleData.dev.ts` generates raw Wiz-shaped
+nodes — 400 sca, 40 sast, 120 secrets including 6 twin pairs, over three synthetic scans — and
+`devSeed.seedSampleLedger()` pushes them through the REAL `slimRecord` -> `persistSync` path,
+so what the harness renders is what the battery produces rather than hand-written rows. Add
+`?noseed` for an empty store, or `?dry` to force the sample dataset when credentials are
+present. Note that with credentials in `.env.local` a plain page load runs a **real sync
+against the tenant**; the banner on startup says which mode you are in.
+
+`src/server/sampleData.ts` is the production counterpart and ships **empty** on purpose — a
+register that can fabricate findings cannot be trusted to report that it has none. A test
+reads that file as text and fails on any non-empty array literal.
 
 ### Constraints worth knowing
 

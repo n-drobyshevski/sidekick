@@ -20,8 +20,12 @@ export function clientBuild() {
  *
  * "dev" means "built with no define step" — vitest, or a harness that skipped it — which
  * is the absence of a stamp rather than the name of a build, so it reads as unknown.
+ *
+ * NOW A RE-EXPORT, not a second implementation. `gas_shared/ui/diagnostics.js` draws the Build
+ * card for all three registers and has to turn a stamp into text to do it, so the rule lives
+ * there; a copy here would be the fork the parity contract exists to catch, one tier below
+ * where it looks. `clientBuild()` above stays, because reading `__BUILD_ID__` is genuinely this
+ * bundle's own business. The name is kept so test/buildInfo.test.ts keeps asserting the same
+ * five cases against the same rule.
  */
-export function describeBuild(info) {
-  const id = info && info.id;
-  return id && id !== "dev" ? id : "unknown";
-}
+export { describeStamp as describeBuild } from "../../../../gas_shared/ui/diagnostics.js";

@@ -1,0 +1,10 @@
+{
+  "name": "@wiz-sidekick/design-system",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Shared-core design system of the Wiz Sidekick registers (gas_ai + gas_devsecops), adapted for React consumption.",
+  "type": "module",
+  "module": "src/index.jsx",
+  "types": "dist/index.d.ts",
+  "peerDependencies": { "react": ">=18", "react-dom": ">=18" }
+}

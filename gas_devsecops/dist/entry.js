@@ -59,20 +59,29 @@ function timedApi_(name, params) {
 function api_bootstrap(p) { return timedApi_("bootstrap", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_putSettings(p) { return timedApi_("putSettings", p); }
+function api_setProjectView(p) { return timedApi_("setProjectView", p); }
 function api_getChartsBundle(p) { return timedApi_("getChartsBundle", p); }
-function api_runSampleSync(p) { return timedApi_("runSampleSync", p); }
-function api_getMttr(p) { return timedApi_("getMttr", p); }
-function api_getRegister(p) { return timedApi_("getRegister", p); }
-function api_getExecutive(p) { return timedApi_("getExecutive", p); }
+function api_getExecutivePage(p) { return timedApi_("getExecutivePage", p); }
+function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
+function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
+function api_getRegisterPage(p) { return timedApi_("getRegisterPage", p); }
+function api_getSecretsPage(p) { return timedApi_("getSecretsPage", p); }
+function api_getRegisterRows(p) { return timedApi_("getRegisterRows", p); }
+function api_getReposPage(p) { return timedApi_("getReposPage", p); }
+function api_getScanHistory(p) { return timedApi_("getScanHistory", p); }
+function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
+function api_runSync(p) { return timedApi_("runSync", p); }
+function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
+function api_cancelSync(p) { return timedApi_("cancelSync", p); }
+function api_deleteScans(p) { return timedApi_("deleteScans", p); }
+function api_compact(p) { return timedApi_("compact", p); }
+function api_resetLedger(p) { return timedApi_("resetLedger", p); }
+function api_getExportCsv(p) { return timedApi_("getExportCsv", p); }
+function api_getRecentErrors(p) { return timedApi_("getRecentErrors", p); }
+function api_testWizConnection(p) { return timedApi_("testWizConnection", p); }
 function api_getAccess(p) { return timedApi_("getAccess", p); }
 function api_saveAccess(p) { return timedApi_("saveAccess", p); }
 function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }
-function api_setSettings(p) { return timedApi_("setSettings", p); }
-function api_getDiagnostic(p) { return timedApi_("getDiagnostic", p); }
-function api_runScan(p) { return timedApi_("runScan", p); }
-function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
-function api_cancelScan(p) { return timedApi_("cancelScan", p); }
-function api_testWizConnection(p) { return timedApi_("testWizConnection", p); }
 
 /* ------------------------------------------------------- editor-run, not RPC */
 /* Gated: these run as whoever opened the editor, which is not necessarily the owner. */
@@ -100,34 +109,45 @@ function wizDiagnostic() {
 }
 
 /* ----------------------------------------------------------------- triggers */
-
-/**
- * The scan battery's handlers. UNGATED, and that is required rather than an oversight.
+/*
+ * THESE FOUR ARE UNGATED, AND THAT IS THE WHOLE POINT.
  *
- * An installable trigger runs with NO ACTIVE USER — `Session.getActiveUser().getEmail()`
- * returns "" — so an access check here would deny every firing, silently, in a log nobody
- * reads. A multi-hop scan would stop dead at its first budget expiry and look exactly like a
- * hang. `test/entryPoints.test.js` asserts these carry no `denyResult`, because the
- * "helpful" refactor that makes them match the api_ delegators is the failure.
+ * An installable trigger runs as the project OWNER with NO ACTIVE USER —
+ * `Session.getActiveUser().getEmail()` is "" inside one. `Server.access.denyResult` fails
+ * closed on an unidentifiable caller, so putting a check here would deny every firing, once a
+ * day, forever, with nothing on screen and nothing in the log to say the sync had stopped
+ * running. That is the failure mode `test/entryPoints.test.js` pins with its own case: the
+ * gate must be ABSENT, not merely correct.
  *
- * Nothing is exposed by making them reachable: neither takes a caller-supplied argument that
- * selects work, and both refuse to do anything unless a job row already exists.
+ * They are safe ungated because none of them takes an argument that selects what to do. Each
+ * is a fixed verb over server-side state — resume the one active job, reap a dead persist, run
+ * the scheduled battery, warm the read models — with no filename, no id and no user input
+ * anywhere in the call. `include(filename)` is gated for exactly the opposite reason.
+ *
+ * THE NAMES ARE FIXED ELSEWHERE AND ARE COPIED HERE, NEVER CHOSEN HERE.
+ * `jobsStore.CONTINUE_HANDLERS.sync` / `WATCHDOG_HANDLERS.sync` are what `scanJobs` installs
+ * and clears one-shots by, and `setup.ts` installs the standing daily and warm triggers by
+ * name. A rename on either side points a live trigger at a function that does not exist, which
+ * fails silently on a schedule.
  */
-function trigger_continueScan(e) {
-  return Server.jobs.continueJob(e);
-}
 
-function trigger_dailyScan(e) {
-  return Server.jobs.dailyScan(e);
-}
+/** jobsStore.CONTINUE_HANDLERS.sync — resume the active sync's next hop. */
+function trigger_continueSync(e) { return Server.scanJobs.continueJob(e); }
 
-/* ------------------------------------------------------- editor-run, not RPC */
+/** jobsStore.WATCHDOG_HANDLERS.sync — notice a persist whose execution never came back. */
+function trigger_watchdogSync(e) { return Server.scanJobs.watchdogSync(e); }
+
+/** setup.ts's standing daily trigger — the scheduled full battery. */
+function trigger_dailySync() { return Server.scanJobs.dailySync(); }
+
+/** setup.ts's three standing warm triggers — precompute the landing-page read models. */
+function trigger_warmReadModels() { return Server.readModels.warmReadModels(); }
 
 /**
  * Last resort when a job is wedged: jobs are single-flight, so one non-terminal row with no
- * live execution behind it blocks every future scan and the daily trigger with it.
+ * live execution behind it blocks every future sync and the daily trigger with it.
  */
 function resetStuckJob() {
   Server.access.assertAllowed("resetStuckJob");
-  return Server.jobs.resetStuckJob();
+  return Server.scanJobs.resetStuckJob();
 }

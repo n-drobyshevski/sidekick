@@ -25,10 +25,11 @@
 // The two view functions below are pure and exported so the claims they encode are testable in
 // node — the split scanProgress.js and capacity.js already use, and for the same reason.
 
-import { bootstrap, swrCall } from "../store.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, el, emptyState, fmtDateTime, fmtDays, helpTip, scopeBar, sectionLabel,
-  skeleton, statusPill,
+  absent, clear, dataTable, el, emptyState, errorState, fmtDateTime, fmtSpan, glossaryTip,
+  heroLines,
+  num, pageHeader, scopeBar, sectionLabel, skeleton, statusPill, tip, tipAnchor,
 } from "../ui.js";
 
 // A play triangle for the Run scan button — inlined stroke/fill SVG (the GAS/CSP sandbox
@@ -49,14 +50,21 @@ function nice(s) {
 // Kaplan–Meier median formatter (mirrors pages/mttr.js fmtKmMedian — the client bundle can't
 // import the TS domain module): the exact day count, "> X d" when the curve never drops to 50%
 // within the observed window (heavy censoring, so the true median is at least that far out), or
-// "—" when there's no KM result at all (a stale pre-KM cached payload).
+// the muted em dash when there's no KM result at all (a stale pre-KM cached payload).
+//
+// THE MISSING CASE IS A NODE HERE AND A STRING IN mttr.js, and the divergence is deliberate.
+// This copy has exactly one call site — the hero value, a Node child position — while mttr.js's
+// copy is also interpolated into `latencyLine`'s sentence, where a Node cannot go, so that one
+// keeps returning a string and hands the Node case to a separate cell helper. What `absent()`
+// fixes is that a hand-typed "—" arrives in the same ink and the same 2rem weight as a measured
+// median, which asserts a measurement nobody made.
 function fmtKmMedian(km) {
-  if (!km) return "—";
-  if (km.median !== null && km.median !== undefined) return fmtDays(km.median);
+  if (!km) return absent();
+  if (km.median !== null && km.median !== undefined) return fmtSpan(km.median);
   if (km.medianLowerBound !== null && km.medianLowerBound !== undefined) {
-    return `> ${fmtDays(km.medianLowerBound)}`;
+    return `> ${fmtSpan(km.medianLowerBound)}`;
   }
-  return "—";
+  return absent();
 }
 
 // Small week-over-week trend badge for the hero: a ↑/↓ arrow + magnitude coloured by whether the KM
@@ -67,7 +75,12 @@ function fmtKmMedian(km) {
 // a censored endpoint simply shows nothing.
 function weekTrendBadge(wt) {
   if (!wt) return null;
-  const delta = Number(wt.deltaDays);
+  // `num`, NOT `Number`. `Number(null)` is 0 and 0 IS finite, so a weekTrend object that
+  // carried no delta at all sailed through the guard below and drew a confident "±0 · vs last
+  // week" — the page asserting that MTTR had not moved when nothing had been measured. `num`
+  // refuses null/undefined/""/[]/false before the cast, so the unmeasured case now reaches the
+  // "no badge" branch the header paragraph already promised it would.
+  const delta = num(wt.deltaDays);
   if (!Number.isFinite(delta)) return null;
   const note = el("span", { class: "exec-trend-note" }, "vs last week");
   if (delta === 0) {
@@ -76,13 +89,17 @@ function weekTrendBadge(wt) {
       note);
   }
   const worse = delta > 0; // MTTR up = slower remediation = worse
-  const mag = fmtDays(Math.abs(delta));
+  const mag = fmtSpan(Math.abs(delta));
   const label = `MTTR ${worse ? "up" : "down"} ${mag} versus last week`;
-  return el("span", { class: "exec-trend" },
-    el("span", { class: `chg ${worse ? "up" : "down"}`, title: label, "aria-label": label },
-      el("span", { class: "exec-trend-arrow", "aria-hidden": "true" }, worse ? "↑" : "↓"),
-      mag),
-    note);
+  const chip = el("span", { class: `chg ${worse ? "up" : "down"}`, "aria-label": label },
+    el("span", { class: "exec-trend-arrow", "aria-hidden": "true" }, worse ? "↑" : "↓"),
+    mag);
+  // `title` was a native tooltip: unreachable by keyboard, absent on touch, half a second late.
+  // `tipAnchor` rather than `tip` because the chip is not a control and must not become one —
+  // it already carries the same sentence as its aria-label, so a screen reader has it and a
+  // pointer reader now gets it from the app's own hover card instead of the OS's.
+  tipAnchor(chip, () => [label]);
+  return el("span", { class: "exec-trend" }, chip, note);
 }
 
 // Shown in a tile whose count is still in flight. Only reachable under a scope: unscoped, the
@@ -209,7 +226,16 @@ export async function renderExecutive(main, _params, ctx) {
   );
 
   const page = el("div", { class: "exec" });
-  page.append(el("h1", {}, "Security posture"));
+  page.append(pageHeader({
+    route: "executive",
+    // TWO LINES, both carried word for word: the page's old hero VALUE was "Security posture"
+    // — a subtitle, not a figure — and its sub-line was the sentence below it. The h1 is the
+    // route's PAGES title now, so the subtitle drops one level rather than being deleted.
+    lede: heroLines(
+      "Security posture",
+      "The one number this register exists to state, and what moved it.",
+    ),
+  }));
   // Echoed inside `.exec` rather than in `main`, so the chip stays in the centered 720px column
   // with the figures it qualifies. Null when nothing is scoped.
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
@@ -235,9 +261,15 @@ export async function renderExecutive(main, _params, ctx) {
     try {
       fn();
     } catch (e) {
-      // eslint-disable-next-line no-console
       console.error("[executive] " + label + " render failed:", e);
-      if (host) clear(host).append(emptyState("Couldn't render " + label + "."));
+      // errorState, NOT emptyState. A section that THREW is a defect in the app; an empty
+      // section is a state the register is legitimately in. They were the same dashed box
+      // in the same role="status" here, which announced a crash to a screen reader as calm
+      // news and dropped the exception on the floor. The disclosure keeps it.
+      if (host) {
+        clear(host).append(errorState("Couldn't render " + label + ".",
+          { detail: String((e && e.message) || e) }));
+      }
     }
   }
 
@@ -255,16 +287,18 @@ export async function renderExecutive(main, _params, ctx) {
   try {
     paint(await execData);
   } catch (e) {
-    // eslint-disable-next-line no-console
     console.error("[executive] getExecutivePage failed:", e);
-    clear(heroHost).append(emptyState(
-      "Couldn't load remediation data.",
-      "Try running a scan or reloading the page.",
-    ));
+    clear(heroHost).append(errorState("Couldn't load remediation data.", {
+      detail: String((e && e.message) || e),
+      onRetry: () => ctx.refresh(),
+    }));
     // Unscoped, the tiles already hold bootstrap's numbers and those are still true — leave them.
     // Scoped, they hold the pending placeholder, and falling back to the register-wide tally
     // would be exactly the lie this page was rewired to stop telling.
-    if (scoped) clear(sevHost).append(emptyState("Couldn't load counts for this scope."));
+    if (scoped) {
+      clear(sevHost).append(errorState("Couldn't load counts for this scope.",
+        { detail: String((e && e.message) || e) }));
+    }
   }
 
   function renderHeroSkeleton() {
@@ -297,20 +331,18 @@ export async function renderExecutive(main, _params, ctx) {
     // register's when it isn't. The chip above says the same thing for the page as a whole; this
     // says it for the figure, which is the part that gets screenshotted out of context.
     const scopeSuffix = domain ? ` — ${domain}` : supportGroup ? ` — ${supportGroup}` : "";
-    const metric = helpTip(
+    // THE SENTENCE USED TO BE WRITTEN OUT HERE AND AGAIN IN pages/mttr.js, and the two copies
+    // had already drifted a word apart ("at least that many days out" against "at least that
+    // far out"). It is helpContent.js's `km-median` entry now, and `glossaryTip` is the shape
+    // for "the book already says it": the card shows the entry's first two lines and Enter
+    // opens the whole definition on the key sheet. `tip(content, lines, { term })` is the other
+    // shape, for a trigger that says something sharper in place than the book does.
+    const metric = glossaryTip(
       [
         el("div", { class: "label" }, `Median MTTR (Kaplan–Meier)${scopeSuffix}`),
         el("div", { class: "exec-hero-value num" }, fmtKmMedian(km)),
       ],
-      [
-        "Kaplan–Meier median days from first detection to remediation. Still-open findings " +
-          "count as censored observations instead of being ignored, so a wave of fresh open " +
-          "findings can't bias this down.",
-        "\"> X d\" means the curve never dropped to 50% within the observed window — over " +
-          "half of tracked findings are still open, so the true median is at least that many " +
-          "days out.",
-      ],
-      { className: "hero-metric" },
+      "km-median",
     );
     // The metric sits in an inline row with the week-over-week badge to its bottom-right (a small
     // arrow + number, red when MTTR rose, green when it fell). The badge is a sibling, not a child
@@ -403,25 +435,28 @@ export async function renderExecutive(main, _params, ctx) {
     if (!view.show) return;
 
     byDomainHost.append(sectionLabel(view.title));
-    const table = el("table", { class: "data" },
-      el("thead", {}, el("tr", {},
-        el("th", { scope: "col" }, view.columnHeader),
-        el("th", { scope: "col" },
-          helpTip("Median MTTR (KM)",
-            ["Kaplan–Meier median time-to-remediation for this group — still-open findings " +
-              "censored, so it isn't biased low by fresh fast-patched vulns."],
-            { className: "help-label" })),
-        el("th", { scope: "col" }, "Open"))),
-    );
-    const tbody = el("tbody", {});
-    for (const r of view.rows) {
-      tbody.append(el("tr", {},
-        el("td", {}, r.name),
-        el("td", { class: "num num--key" }, fmtDays(r.kmMedian)),
-        el("td", { class: "num" }, r.open.toLocaleString()),
-      ));
-    }
-    table.append(tbody);
-    byDomainHost.append(el("div", { class: "table-wrap exec-by-domain" }, table));
+    // `dataTable` rather than a hand-rolled `<table class="data">`: the column list is static,
+    // there is no group header and no colspan, so nothing here needed the hand-built version —
+    // and the hand-built one had drifted in two ways the shared component fixes for free. The
+    // column definition lands on the <th> as well as the cells, so the two numeric headings now
+    // sit over their own figures (`table.data th.num` in tables.css) instead of adrift to the
+    // left; and every cell gets a truncTip, so a long domain name clipped by the 320px cell cap
+    // can still be read. It returns the `.table-wrap` itself — do not wrap it again.
+    byDomainHost.append(dataTable({
+      className: "exec-by-domain",
+      columns: [
+        { key: "name", label: view.columnHeader, cell: (r) => r.name },
+        {
+          key: "kmMedian",
+          label: "Median MTTR (KM)",
+          className: "num num--key",
+          help: ["Kaplan–Meier median time-to-remediation for this group — still-open findings " +
+            "censored, so it isn't biased low by fresh fast-patched vulns."],
+          cell: (r) => fmtSpan(r.kmMedian),
+        },
+        { key: "open", label: "Open", className: "num", cell: (r) => r.open.toLocaleString() },
+      ],
+      rows: view.rows,
+    }));
   }
 }

@@ -17,13 +17,13 @@
 // and is mirrored into the hash. That is what fixes the old bug where a background SWR
 // revalidation called paint(fresh) and silently collapsed the table you had open.
 
-import { bootstrap, navigate, setParams, swrCall } from "../store.js";
+import { bootstrap, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets.js";
-import { kindIconSvg, kindLabel, categoryOf } from "../icons.js";
+import { kindIconSvg, kindLabel, categoryOf } from "../../../../../gas_shared/icons.js";
 import {
   absent,
   clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,
-  outcomeLabel, pager, plural, sectionLabel, select, statRow,
+  outcomeLabel, plural, sectionLabel, select, statRow, tableFooter,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
   togglePills,
 } from "../ui.js";
@@ -117,13 +117,20 @@ const CONDITION_TERM = {
 
 export async function renderCombos(main, params) {
   const boot = await bootstrap();
-  main.append(
-    el("h1", {}, "Toxic Combinations"),
-    el("p", { class: "page-sub" },
-      "Multi-condition risk patterns on AI assets: privileged access, sensitive data and " +
+  // `pageHeader({ route })`, not a bare `el("h1", ...)` and not a title in the hero VALUE —
+  // see `pages/compliance.js`'s own note for the reasoning. F3 put "Risk" (this route's PAGES
+  // lane) in the h1 and "Toxic Combinations" in the 2rem hero slot, and reported the cost in
+  // its own visual verdict: two 32px values ninety pixels apart, the page's name tying the
+  // figure it should sit under. The lane is the eyebrow now, the h1 is the route's PAGES title
+  // at the 1.5rem ceiling, and "Open issues" below is the page's only figure at the hero step.
+  main.append(pageHeader({
+    route: "combos",
+    // The page's own sentence, carried over word for word — this was a header sweep, not a
+    // copy rewrite.
+    lede: "Multi-condition risk patterns on AI assets: privileged access, sensitive data and " +
       "missing guardrails combined. Wiz severity is shown beside the adjusted severity " +
-      "this register adds, never replaced by it."),
-  );
+      "this register adds, never replaced by it.",
+  }));
 
   if (!boot.latestSync) {
     main.append(emptyState(
@@ -207,6 +214,8 @@ export async function renderCombos(main, params) {
     }
     if (totals.inProgress) openParts.push(totals.inProgress + " in progress");
     return pageHeader({
+      // NO `route`, SO NO h1: the page's heading is in the header above this one. This used
+      // to need `{ heading: "div" }` on heroStat; heroStat renders no heading at all now.
       hero: heroStat("Open issues", String(totals.totalOpen), openParts.join(" · ")),
       stats: [
       statRow("Assets affected", String(totals.assetsAffected),
@@ -667,10 +676,15 @@ export async function renderCombos(main, params) {
     mount.append(
       issueFilterBar(group, mount, rows, options, filtered.length, rows.length),
       issueTable(mount, group, slice),
-      pager(view.page, pageCount, sorted.length, (next) => {
-        view.page = next;
-        persist();
-        renderIssues(group, mount, rows);
+      tableFooter({
+        page: view.page,
+        pageCount,
+        total: sorted.length,
+        onPage: (next) => {
+          view.page = next;
+          persist();
+          renderIssues(group, mount, rows);
+        },
       }),
     );
   }

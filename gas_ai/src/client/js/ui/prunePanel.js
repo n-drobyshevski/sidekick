@@ -13,13 +13,13 @@
 // and one leaf project inside it is orders of magnitude of register: a difference visible in
 // the census and in nothing else an operator can see beforehand.
 
-import { el } from "./dom.js";
-import { dataTable } from "./data.js";
-import { filterCombobox } from "./combobox.js";
+import { el } from "../../../../../gas_shared/ui/dom.js";
+import { dataTable } from "../../../../../gas_shared/ui/data.js";
+import { filterCombobox } from "../../../../../gas_shared/ui/combobox.js";
 import { scopeOptions } from "./projectScope.js";
-import { pluralize } from "./format.js";
-import { confirmDialog, skeletonStack, toast } from "./feedback.js";
-import { statusPill } from "./controls.js";
+import { pluralize } from "../../../../../gas_shared/ui/format.js";
+import { confirmDialog, skeletonStack, toast } from "../../../../../gas_shared/ui/feedback.js";
+import { statusPill } from "../../../../../gas_shared/ui/controls.js";
 
 const nf = new Intl.NumberFormat();
 

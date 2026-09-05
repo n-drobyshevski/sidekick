@@ -1,250 +1,670 @@
-// The dev dataset: three scans, three scopes, generated rather than typed out.
+// The dev harness's realistic register — H2 of the Phase 2 plan.
 //
-// A SEQUENCE, NOT A SNAPSHOT, and that is the whole point. One scan exercises nothing in
-// reconcile — no disappearance, no reopen, no first_seen that had to be held still, and an
-// MTTR page fed by it would have nothing but open rows. Three scans a week apart give the
-// ledger something to have learned.
+// WHAT THIS FILE IS FOR. `dev/boot.js` needs a register a page can actually render against,
+// without a tenant. The esbuild alias in `dev/serve.mjs` resolves the specifier `./sampleData`
+// to THIS file on every dev build (`dev-sample-data` plugin, `buildDevServer`), which is why
+// the file has to keep existing and keep the `SAMPLE_FINDINGS` export name even though nothing
+// under `src/server` imports that specifier yet — the alias is forward-looking infrastructure
+// inherited from the gas_ai fork, and activating it (wiring a dry-run import into
+// `scanJobs.ts`/`src/server/index.ts`) is explicitly NOT this package's file to touch: it is
+// "S7 wires it into api.ts" (scanJobs.ts's own header) and outside this package's file list.
 //
-// The shapes are the ones the three queries return (wizQueries.ts), so this exercises the
-// real normalizers rather than a convenient parallel format. Everything is deterministic:
-// no Math.random, no Date.now, so two dev runs produce byte-identical ledgers and a number
-// that moves on screen moved for a reason.
+// THE DATA IS RAW WIZ-SHAPED NODES, NOT LEDGER ROWS. Every node below carries exactly the
+// fields `scanJobs.SLIM_FIELDS` / `SLIM_NESTED` / `SLIM_LISTS` know how to keep for its scope,
+// so `scanJobs.slimRecord(scope, node)` produces a non-null column for every field
+// `domain/reconcile.ts` reads — the same three-site contract `test/scanJobs.test.ts` pins.
+// Nothing here is pre-reduced to a ledger row: the row shapes, the twin fold and the KM
+// population all come from feeding these nodes through the REAL `slimRecord` ->
+// `domain/reconcile.reconcile` (or `ledgerStore.persistSync`) pipeline, which is exactly what
+// `test/sampleData.test.ts` does, and is the only place in this dev harness today that can
+// execute that pipeline — `dev/boot.js` runs unbundled, plain browser JS, dispatching only
+// into whatever `src/server/index.ts` re-exports onto the global `Server` (doGet, include,
+// access, welcome, setup, deploymentDiagnostic, api), which does not include `scanJobs` or
+// `ledgerStore` yet. See `dev/boot.js`'s own header for the honest state of that gap.
 //
-// NOT REAL DATA. The tenant figures live in PROBE_FINDINGS.md; these are shaped to make the
-// page's honest qualifiers visible — heavy censoring, a truncated RMST, an aged backlog past
-// SLA, a vendor-fix gap, and a secrets twin — at a size a browser can draw.
+// DETERMINISM. One seeded PRNG (mulberry32), no `Math.random()` anywhere below, so two dev
+// boots — and two test runs — agree bit for bit on every generated field.
 
+import { CWE_TOP_25_2024, type Scope } from "../src/domain/config";
 import type { Rec } from "../src/domain/util";
-import type { SampleScan } from "../src/server/sampleData";
 
-const SEVERITIES = ["CRITICAL", "HIGH", "MEDIUM", "LOW"] as const;
-const LANGUAGES = ["JAVA", "PYTHON", "GO", "TYPESCRIPT"] as const;
-const REPOS = [
-  "dktunited/prodcom-api", "dktunited/prodcom-jdbc-kafka-connect",
-  "dktunited/checkout-web", "dktunited/inventory-sync",
-] as const;
+/* ------------------------------------------------------------------------------- PRNG */
 
-/** A deterministic small integer from a string — a stand-in for the randomness we refuse. */
-function hashInt(s: string, mod: number): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h % mod;
+function mulberry32(seed: number): () => number {
+  let s = seed >>> 0;
+  return () => {
+    s = (s + 0x6d2b79f5) | 0;
+    let t = Math.imul(s ^ (s >>> 15), 1 | s);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
 
-const DAY = 86_400_000;
-const iso = (ms: number): string => new Date(ms).toISOString().replace(".000Z", "Z");
+const rng = mulberry32(0xd5eed17);
 
-// The three scan times, and a birth-date origin far enough back that the aged backlog is
-// genuinely aged.
-const SCAN_TS = [
-  Date.parse("2026-06-15T02:00:00Z"),
-  Date.parse("2026-07-15T02:00:00Z"),
-  Date.parse("2026-08-15T02:00:00Z"),
+function pick<T>(arr: readonly T[]): T {
+  return arr[Math.floor(rng() * arr.length) % arr.length]!;
+}
+
+function range01(): number {
+  return rng();
+}
+
+/* -------------------------------------------------------------------------- calendar */
+
+const DAY_MS = 86_400_000;
+const DAY1_A = "2026-06-01T08:00:00.000Z";
+const DAY1_B = "2026-06-01T20:00:00.000Z";
+const DAY2_C = "2026-06-15T08:00:00.000Z";
+
+function isoBefore(anchorIso: string, minDays: number, maxDays: number): string {
+  const anchor = Date.parse(anchorIso);
+  const span = maxDays - minDays;
+  const days = minDays + Math.floor(range01() * span);
+  return new Date(anchor - days * DAY_MS).toISOString();
+}
+
+/* -------------------------------------------------------------------------------- pools */
+
+interface RepoSpec {
+  id: string;
+  name: string; // owner/repo
+  branch: string;
+  cloudPlatform: string;
+  language: string;
+}
+
+const REPO_POOL: readonly RepoSpec[] = [
+  { id: "repo-1", name: "dktunited/retbox-front", branch: "main", cloudPlatform: "GitHub", language: "JAVASCRIPT" },
+  { id: "repo-2", name: "dktunited/tattoo-idp", branch: "main", cloudPlatform: "GitHub", language: "JAVA" },
+  { id: "repo-3", name: "dktunited/checkout-svc", branch: "release", cloudPlatform: "GitHub", language: "PYTHON" },
+  { id: "repo-4", name: "dktunited/payments-api", branch: "main", cloudPlatform: "GitHub", language: "GO" },
+  { id: "repo-5", name: "dktunited/inventory-core", branch: "develop", cloudPlatform: "GitHub", language: "JAVA" },
+  { id: "repo-6", name: "dktunited/notifications", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" },
+  { id: "repo-7", name: "dktunited/auth-gateway", branch: "main", cloudPlatform: "GitHub", language: "GO" },
+  { id: "repo-8", name: "dktunited/reporting-etl", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" },
 ];
 
-/**
- * One SCA node.
- *
- * `fixDate` is absent for one finding in three, which is what puts rows into
- * `awaiting_vendor_fix` — the state the whole second clock exists to name.
- */
-function scaNode(i: number, scanIdx: number): Rec {
-  const key = `sca-${i}`;
-  const sev = SEVERITIES[hashInt(key, 4)]!;
-  const bornDaysAgo = 20 + hashInt(`${key}-born`, 300);
-  const born = SCAN_TS[0]! - bornDaysAgo * DAY;
-  const hasFix = hashInt(`${key}-fix`, 3) !== 0;
-  const repo = REPOS[hashInt(key, REPOS.length)]!;
+interface ProjectSpec {
+  folder: string;
+  folderSlug: string;
+  leaf: string;
+  leafSlug: string;
+}
+
+const PROJECT_POOL: readonly ProjectSpec[] = [
+  { folder: "VALUE-CHAIN", folderSlug: "value-chain", leaf: "product-tattoo-idp", leafSlug: "tattoo-idp" },
+  { folder: "CE-TRANSPORT", folderSlug: "ce-transport", leaf: "checkout-svc", leafSlug: "checkout-svc" },
+  { folder: "PLATFORM", folderSlug: "platform", leaf: "payments-core", leafSlug: "payments-core" },
+  { folder: "GROWTH", folderSlug: "growth", leaf: "notifications-team", leafSlug: "notifications-team" },
+];
+
+function projectsFor(idx: number): Rec[] {
+  const p = PROJECT_POOL[idx % PROJECT_POOL.length]!;
+  return [
+    { id: `proj-folder-${idx % PROJECT_POOL.length}`, name: p.folder, isFolder: true, slug: p.folderSlug },
+    { id: `proj-leaf-${idx % PROJECT_POOL.length}`, name: p.leaf, isFolder: false, slug: p.leafSlug },
+  ];
+}
+
+const SCA_PACKAGES: readonly string[] = [
+  "lodash", "requests", "log4j-core", "spring-core", "openssl", "jackson-databind",
+  "urllib3", "express", "django", "netty-codec", "commons-text", "axios", "flask",
+  "protobuf-java", "guava",
+];
+
+/* ------------------------------------------------------------------------------------ sca */
+//
+// ~400 sca findings, split into five lifecycle buckets so the three synthetic scans below
+// exercise every clock the SLA/MTTR/KM pages read: STAYS (censored, open the whole window),
+// EARLY_GONE / LATE_GONE (resolved by disappearance, at scan B and scan C respectively),
+// API_RESOLVED (a real event: `status`/`resolvedAt` set directly, not inferred from absence),
+// and NEW_AT_C (growth — first seen only at the last scan, so the trend series has more than
+// one point). fixDate on exactly 60% (240/400, `idx % 5 < 3`) and hasCisaKevExploit on exactly
+// 5% (20/400, `idx % 20 === 0`) are deterministic rules rather than a coin flip, so the counts
+// this file claims are counts, not expectations.
+
+type ScaBucket = "STAYS" | "EARLY_GONE" | "LATE_GONE" | "API_RESOLVED" | "NEW_AT_C";
+
+const SCA_TOTAL = 400;
+const SCA_BUCKET_BOUNDS: ReadonlyArray<[ScaBucket, number]> = [
+  ["STAYS", 250], ["EARLY_GONE", 300], ["LATE_GONE", 340], ["API_RESOLVED", 370], ["NEW_AT_C", 400],
+];
+function scaBucketFor(idx: number): ScaBucket {
+  for (const [bucket, upper] of SCA_BUCKET_BOUNDS) if (idx < upper) return bucket;
+  return "NEW_AT_C";
+}
+
+const SCA_SEVERITY_WEIGHTS: ReadonlyArray<[string, number]> = [
+  ["CRITICAL", 5], ["HIGH", 20], ["MEDIUM", 35], ["LOW", 30], ["INFO", 10],
+];
+function weightedPick(weights: ReadonlyArray<readonly [string, number]>): string {
+  const total = weights.reduce((s, [, w]) => s + w, 0);
+  let r = range01() * total;
+  for (const [v, w] of weights) {
+    r -= w;
+    if (r <= 0) return v;
+  }
+  return weights[weights.length - 1]![0];
+}
+
+interface ScaSpec {
+  idx: number;
+  id: string;
+  name: string;
+  detailedName: string;
+  severity: string;
+  bucket: ScaBucket;
+  firstDetectedAt: string;
+  hasFixDate: boolean;
+  fixDate: string | null;
+  fixedVersion: string | null;
+  hasExploit: boolean;
+  hasCisaKevExploit: boolean;
+  epssProbability: number;
+  repo: RepoSpec;
+}
+
+function buildScaSpecs(): ScaSpec[] {
+  const specs: ScaSpec[] = [];
+  for (let idx = 0; idx < SCA_TOTAL; idx++) {
+    const bucket = scaBucketFor(idx);
+    const repo = REPO_POOL[idx % REPO_POOL.length]!;
+    const hasFixDate = idx % 5 < 3; // 60%
+    const hasCisaKevExploit = idx % 20 === 0; // 5%
+    const firstDetectedAt =
+      bucket === "NEW_AT_C" ? isoBefore(DAY2_C, 1, 10) : isoBefore(DAY1_A, 10, 200);
+    specs.push({
+      idx,
+      id: `sca-${idx + 1}`,
+      name: `CVE-2025-${(4000 + idx).toString().padStart(4, "0")}`,
+      detailedName: pick(SCA_PACKAGES),
+      severity: weightedPick(SCA_SEVERITY_WEIGHTS),
+      bucket,
+      firstDetectedAt,
+      hasFixDate,
+      fixDate: hasFixDate ? isoBefore(DAY2_C, 0, 60) : null,
+      fixedVersion: hasFixDate ? `${1 + (idx % 4)}.${idx % 10}.${idx % 7}` : null,
+      hasExploit: range01() < 0.15,
+      hasCisaKevExploit,
+      epssProbability: Math.round(range01() * range01() * 10_000) / 10_000, // skewed low
+      repo,
+    });
+  }
+  return specs;
+}
+
+const SCA_SPECS = buildScaSpecs();
+
+/** One raw sca node, shaped exactly like a `vulnerabilityFindings` connection node. */
+function scaRawNode(spec: ScaSpec, scanTs: string, resolved: boolean): Rec {
   return {
-    id: key,
-    name: `CVE-2026-${1000 + i}`,
-    detailedName: `pkg-${hashInt(key, 40)} ${1 + hashInt(key, 3)}.${hashInt(key, 20)}.0`,
-    severity: sev,
-    status: "OPEN",
-    firstDetectedAt: iso(born),
-    lastDetectedAt: iso(SCAN_TS[scanIdx]!),
-    resolvedAt: null,
-    fixDate: hasFix ? iso(born + (2 + hashInt(`${key}-fd`, 30)) * DAY) : null,
-    fixedVersion: hasFix ? `${1 + hashInt(key, 3)}.${hashInt(key, 20)}.9` : null,
-    // Tri-state on purpose: one row in four is left unevaluated, so the page has to keep
-    // "not assessed" distinct from "assessed, and the answer was no".
-    hasExploit: hashInt(`${key}-ex`, 4) === 0 ? null : hashInt(`${key}-ex`, 3) === 0,
-    hasCisaKevExploit: hashInt(`${key}-kev`, 4) === 0 ? null : hashInt(`${key}-kev`, 9) === 0,
-    epssProbability: hashInt(`${key}-ep`, 5) === 0 ? null : hashInt(`${key}-ep`, 100) / 100,
+    id: spec.id,
+    name: spec.name,
+    detailedName: spec.detailedName,
+    severity: spec.severity,
+    status: resolved ? "RESOLVED" : "OPEN",
+    firstDetectedAt: spec.firstDetectedAt,
+    lastDetectedAt: scanTs,
+    resolvedAt: resolved ? DAY1_B : null,
+    fixDate: spec.fixDate,
+    fixedVersion: spec.fixedVersion,
+    hasExploit: spec.hasExploit,
+    hasCisaKevExploit: spec.hasCisaKevExploit,
+    epssProbability: spec.epssProbability,
     vulnerableAsset: {
-      id: `${repo}#main`, type: "REPOSITORY_BRANCH", name: `${repo}/main`, cloudPlatform: "GitHub",
+      id: spec.repo.id,
+      type: "REPOSITORY_BRANCH",
+      name: `${spec.repo.name}/${spec.repo.branch}`,
+      cloudPlatform: spec.repo.cloudPlatform,
+      subscriptionName: null,
+      subscriptionExternalId: null,
+      tags: { team: spec.repo.name.split("/")[1] ?? "platform" },
     },
-    artifactType: { codeLibraryLanguage: LANGUAGES[hashInt(key, 4)] },
+    artifactType: { codeLibraryLanguage: spec.repo.language },
+    projects: projectsFor(spec.idx),
   };
 }
 
-function sastNode(i: number, scanIdx: number): Rec {
-  const key = `sast-${i}`;
-  const repo = REPOS[hashInt(key, REPOS.length)]!;
-  const born = SCAN_TS[0]! - (10 + hashInt(`${key}-born`, 200)) * DAY;
+/** Which sca nodes a given synthetic scan actually returns, per its lifecycle bucket. */
+function scaNodesForScan(scanIndex: 0 | 1 | 2, scanTs: string): Rec[] {
+  const out: Rec[] = [];
+  for (const spec of SCA_SPECS) {
+    const { bucket } = spec;
+    if (bucket === "STAYS") { out.push(scaRawNode(spec, scanTs, false)); continue; }
+    if (bucket === "EARLY_GONE") { if (scanIndex === 0) out.push(scaRawNode(spec, scanTs, false)); continue; }
+    if (bucket === "LATE_GONE") { if (scanIndex <= 1) out.push(scaRawNode(spec, scanTs, false)); continue; }
+    if (bucket === "API_RESOLVED") { out.push(scaRawNode(spec, scanTs, scanIndex >= 1)); continue; }
+    if (bucket === "NEW_AT_C") { if (scanIndex === 2) out.push(scaRawNode(spec, scanTs, false)); continue; }
+  }
+  return out;
+}
+
+/**
+ * Every generated sca finding exactly once, at its own first appearance — the canonical
+ * population (400) a scan-by-scan view never shows in full, since NEW_AT_C is absent from
+ * scan A and STAYS/EARLY_GONE/LATE_GONE/API_RESOLVED are absent from... nothing, they are all
+ * present at scan A. Used for the flat exports below, not for any one scan's battery.
+ */
+function scaCanonicalNodes(): Rec[] {
+  return SCA_SPECS.map((spec) =>
+    scaRawNode(spec, spec.bucket === "NEW_AT_C" ? DAY2_C : DAY1_A, false),
+  );
+}
+
+/* ----------------------------------------------------------------------------------- sast */
+//
+// ~40 sast findings. `aiAnalysis` is `null` on every node — this tenant's own measured
+// behaviour (CLAUDE.md's gas_devsecops entry) — and CWEs are drawn from three pools so the
+// register exercises all three ways `ruleForScope`'s classifier can see a weakness: a literal
+// CWE_TOP_25_2024 id, a child CWE mapped through `CWE_ANCESTORS`, and a CWE outside both.
+
+type SastBucket = "STAYS" | "GONE_AT_B" | "NEW_AT_C" | "GONE_AT_C";
+
+const SAST_TOTAL = 40;
+const SAST_BUCKET_BOUNDS: ReadonlyArray<[SastBucket, number]> = [
+  ["STAYS", 25], ["GONE_AT_B", 33], ["NEW_AT_C", 38], ["GONE_AT_C", 40],
+];
+function sastBucketFor(idx: number): SastBucket {
+  for (const [bucket, upper] of SAST_BUCKET_BOUNDS) if (idx < upper) return bucket;
+  return "GONE_AT_C";
+}
+
+// Ancestor-mapped children of a CWE_TOP_25_2024 entry (config.ts's CWE_ANCESTORS keys) — a
+// CWE outside the literal top-25 LIST that still classifies "high" once ancestor-mapped.
+const CWE_ANCESTOR_CHILDREN: readonly string[] = ["CWE-611", "CWE-88", "CWE-91", "CWE-1321"];
+// Genuinely outside both the top-25 list and CWE_ANCESTORS.
+const CWE_OUTSIDE: readonly string[] = ["CWE-601", "CWE-354", "CWE-330", "CWE-1004"];
+
+interface SastSpec {
+  idx: number;
+  id: string;
+  name: string;
+  severity: string;
+  bucket: SastBucket;
+  filePath: string;
+  startLine: number;
+  language: string;
+  origin: string;
+  createdAt: string;
+  cwe: string;
+  repo: RepoSpec;
+}
+
+const SAST_SEVERITY_WEIGHTS: ReadonlyArray<[string, number]> = [
+  ["CRITICAL", 5], ["HIGH", 30], ["MEDIUM", 40], ["LOW", 20], ["INFO", 5],
+];
+const SAST_ORIGINS: readonly string[] = ["SEMGREP", "CODEQL"];
+
+function cweForIdx(idx: number): string {
+  // Roughly a third each: literal top-25, ancestor-mapped child, fully outside.
+  const bucket = idx % 3;
+  if (bucket === 0) return CWE_TOP_25_2024[idx % CWE_TOP_25_2024.length]!;
+  if (bucket === 1) return CWE_ANCESTOR_CHILDREN[idx % CWE_ANCESTOR_CHILDREN.length]!;
+  return CWE_OUTSIDE[idx % CWE_OUTSIDE.length]!;
+}
+
+function buildSastSpecs(): SastSpec[] {
+  const specs: SastSpec[] = [];
+  for (let idx = 0; idx < SAST_TOTAL; idx++) {
+    const bucket = sastBucketFor(idx);
+    const repo = REPO_POOL[(idx + 3) % REPO_POOL.length]!;
+    const createdAt = bucket === "NEW_AT_C" ? isoBefore(DAY2_C, 1, 10) : isoBefore(DAY1_A, 5, 180);
+    const cwe = cweForIdx(idx);
+    specs.push({
+      idx,
+      id: `sast-${idx + 1}`,
+      name: `Weakness ${cwe}`,
+      severity: weightedPick(SAST_SEVERITY_WEIGHTS),
+      bucket,
+      filePath: `src/${repo.name.split("/")[1]}/handler_${idx % 12}.${repo.language === "PYTHON" ? "py" : repo.language === "GO" ? "go" : repo.language === "JAVA" ? "java" : "js"}`,
+      startLine: 8 + (idx % 240),
+      language: repo.language,
+      origin: SAST_ORIGINS[idx % SAST_ORIGINS.length]!,
+      createdAt,
+      cwe,
+      repo,
+    });
+  }
+  return specs;
+}
+
+const SAST_SPECS = buildSastSpecs();
+
+function sastRawNode(spec: SastSpec, scanTs: string): Rec {
   return {
-    id: key,
-    name: ["Hardcoded credential", "SQL injection", "Path traversal", "Weak hash"][hashInt(key, 4)],
-    // SAST never reports a resolution (§2), so the status is always OPEN and every SAST
-    // death in the ledger comes from disappearing between two of these scans.
+    id: spec.id,
+    name: spec.name,
     status: "OPEN",
-    severity: SEVERITIES[hashInt(`${key}-s`, 4)],
-    filePath: `src/main/${LANGUAGES[hashInt(key, 4)]!.toLowerCase()}/Mod${hashInt(key, 30)}.src`,
-    startLine: 10 + hashInt(`${key}-l`, 400),
-    codeLibraryLanguage: LANGUAGES[hashInt(key, 4)],
-    origin: "WIZ",
+    severity: spec.severity,
+    originalSeverity: null,
+    filePath: spec.filePath,
+    startLine: spec.startLine,
+    codeLibraryLanguage: [spec.language],
+    origin: spec.origin,
     resolutionReason: null,
-    createdAt: iso(born),
-    updatedAt: iso(SCAN_TS[scanIdx]!),
-    firstDetectedAtSource: iso(born + DAY),
-    resource: { id: repo, name: repo, type: "REPOSITORY" },
-    weaknesses: [{ id: `cwe-${hashInt(key, 900)}`, name: `CWE-${hashInt(key, 900)}` }],
-    projects: [{ id: "p1", name: "VALUE-CHAIN", isFolder: false, slug: "value-chain" }],
-    vcsDetails: { commitHash: `c${hashInt(key, 100000).toString(16)}` },
-    aiAnalysis: { verdict: null },
+    createdAt: spec.createdAt,
+    updatedAt: scanTs,
+    firstDetectedAtSource: null,
+    resource: { id: spec.repo.id, name: `${spec.repo.name}/${spec.repo.branch}`, type: "REPOSITORY_BRANCH" },
+    weaknesses: [{ id: spec.cwe, name: spec.name }],
+    projects: projectsFor(spec.idx + 1),
+    vcsDetails: { commitHash: `c${(spec.idx + 1).toString(16).padStart(7, "0")}` },
+    // This tenant's measured reality (CLAUDE.md): every node's aiAnalysis is null.
+    aiAnalysis: null,
   };
 }
 
-/**
- * One secrets node, in its REPOSITORY form.
- *
- * Every third one also gets a REPOSITORY_BRANCH twin below, carrying a DIFFERENT externalId
- * and an earlier firstSeenAt — the §10.6/§10.7 shape, so the fold and the spread column are
- * exercised by the dev run rather than only by the unit tests.
- */
-function secretNode(i: number, scanIdx: number, branchTwin = false): Rec {
-  const key = `sec-${i}`;
-  const repo = REPOS[hashInt(key, REPOS.length)]!;
-  const path = `config/app-${hashInt(key, 25)}.properties`;
-  const line = 3 + hashInt(`${key}-l`, 90);
-  const born = SCAN_TS[0]! - (5 + hashInt(`${key}-born`, 320)) * DAY;
-  // The twin is EARLIER, in the direction §10.7 measured as the more common one (branch
-  // earlier in 135 of 187).
-  const twinBorn = born - (1 + hashInt(`${key}-gap`, 120)) * DAY;
-  const kind = ["PASSWORD", "SAAS_API_KEY", "PRIVATE_KEY", "CERTIFICATE", "CLOUD_KEY"][hashInt(key, 5)];
-  const validated = hashInt(`${key}-v`, 12);
-  return {
-    id: branchTwin ? `${key}-branch` : key,
-    externalId: branchTwin
-      ? `github.com##${repo}##main##/${path}##h${hashInt(key, 9999)}##${line}`
-      : `github.com##${repo}##${path}##h${hashInt(key, 9999)}##${line}`,
-    secretDataId: `sd-${key}`,
-    name: `${kind} in ${path}`,
-    type: kind,
-    confidence: ["HIGH", "MEDIUM"][hashInt(key, 2)],
-    // Severity grades a DETECTION here, not whether the credential is live — which is why
-    // the register has no severity gate on this scope (§9.2).
-    severity: ["HIGH", "MEDIUM", "LOW", "INFORMATIONAL"][hashInt(`${key}-sev`, 4)],
-    path,
-    lineNumber: line,
-    status: "OPEN",
-    resolvedAt: null,
-    // 0.38% of the live register is validated (§3), so almost all of these are UNKNOWN and
-    // the page has to publish rotation as mostly-unmeasured rather than mostly-unrotated.
-    validationStatus: validated === 0 ? "INVALID" : validated === 1 ? "VALID" : "UNKNOWN",
-    lastValidatedAt: validated < 2 ? iso(SCAN_TS[scanIdx]! - 3 * DAY) : null,
-    firstSeenAt: iso(branchTwin ? twinBorn : born),
-    lastSeenAt: iso(SCAN_TS[scanIdx]!),
-    lastUpdatedAt: iso(SCAN_TS[scanIdx]!),
-    codeToCloudPipelineStage: "CODE",
-    vcsDetails: { initialCommitHash: `c${hashInt(key, 100000).toString(16)}` },
-    resource: branchTwin
-      ? { id: `${repo}#main`, name: `${repo}/main`, type: "REPOSITORY_BRANCH", externalId: `${repo}/main`, nativeType: "branch", cloudPlatform: "GitHub" }
-      : { id: repo, name: repo, type: "REPOSITORY", externalId: repo, nativeType: "repository", cloudPlatform: "GitHub" },
-    projects: [{ id: "p1", name: "VALUE-CHAIN", isFolder: false, slug: "value-chain" }],
-  };
+function sastNodesForScan(scanIndex: 0 | 1 | 2, scanTs: string): Rec[] {
+  const out: Rec[] = [];
+  for (const spec of SAST_SPECS) {
+    const { bucket } = spec;
+    if (bucket === "STAYS") { out.push(sastRawNode(spec, scanTs)); continue; }
+    if (bucket === "GONE_AT_B") { if (scanIndex === 0) out.push(sastRawNode(spec, scanTs)); continue; }
+    if (bucket === "NEW_AT_C") { if (scanIndex === 2) out.push(sastRawNode(spec, scanTs)); continue; }
+    if (bucket === "GONE_AT_C") { if (scanIndex <= 1) out.push(sastRawNode(spec, scanTs)); continue; }
+  }
+  return out;
 }
 
-/**
- * How many findings each scope carries in each scan.
- *
- * The counts FALL, and the drop is what the register measures: a finding present in scan 1
- * and absent in scan 2 is resolved by disappearance, dated at scan 2. That is the only way
- * SAST ever resolves, and it is most of how secrets does.
- *
- * SCA additionally closes a handful through the API, so both resolution routes appear in the
- * ledger and `resolution_src` has something to distinguish.
- */
-const COUNTS = {
-  sca: [90, 78, 70],
-  sast: [40, 34, 31],
-  secrets: [36, 33, 30],
+/** Every generated sast finding exactly once, at its own first appearance — see scaCanonicalNodes. */
+function sastCanonicalNodes(): Rec[] {
+  return SAST_SPECS.map((spec) => sastRawNode(spec, spec.bucket === "NEW_AT_C" ? DAY2_C : DAY1_A));
+}
+
+/* -------------------------------------------------------------------------------- secrets */
+//
+// 120 raw secrets nodes: 108 with a unique (secretDataId, path, lineNumber) key, plus 6 key
+// COLLISIONS — the same key returned once as a `REPOSITORY` resource and once as
+// `REPOSITORY_BRANCH`, each with its own `firstSeenAt` — so `domain/reconcile.foldSecretTwins`
+// has something real to fold. 120 nodes over 114 keys folds to 114 ledger rows, not 120; that
+// arithmetic is the whole reason the twins are here, and `test/sampleData.test.ts` pins it.
+//
+// Every `type` the API returns appears at least once. Validation state is 4 INVALID / 8 VALID
+// / 108 UNKNOWN across the 120 nodes — this tenant's measured shape (CLAUDE.md: 99.6% never
+// validated). Severity follows the measured per-type shape (CLAUDE.md's gas_devsecops entry):
+// CERTIFICATE is entirely INFO, PASSWORD never exceeds MEDIUM, and nothing anywhere is
+// CRITICAL — secrets severity grades a detection, not liveness, and putting a certificate at
+// CRITICAL would make a page that segments by validation_state/confidence look right for the
+// wrong reason.
+
+const SECRET_TYPES = [
+  "CERTIFICATE", "CLOUD_KEY", "DB_CONNECTION_STRING", "GIT_CREDENTIAL",
+  "PASSWORD", "PRIVATE_KEY", "SAAS_API_KEY",
+] as const;
+type SecretType = (typeof SECRET_TYPES)[number];
+
+interface SecretSingleSpec {
+  type: SecretType;
+  severity: string;
+}
+
+// Exact per-type severity lists for the 108 SINGLE-key nodes — 108 total, matching the
+// scaled-down measured shape (§ header comment). Deterministic lists, not a weighted draw, so
+// the type/severity counts this file claims are exact rather than "close on average".
+function repeat(sev: string, n: number): string[] { return Array.from({ length: n }, () => sev); }
+
+const SINGLE_SEVERITY_BY_TYPE: Record<SecretType, string[]> = {
+  CERTIFICATE: repeat("INFO", 10),
+  PASSWORD: [...repeat("MEDIUM", 6), ...repeat("LOW", 1), ...repeat("INFO", 4)], // 11, never above MEDIUM
+  SAAS_API_KEY: [...repeat("HIGH", 18), ...repeat("MEDIUM", 3), ...repeat("LOW", 36), ...repeat("INFO", 7)], // 64
+  CLOUD_KEY: [...repeat("HIGH", 9), ...repeat("LOW", 2)], // 11
+  PRIVATE_KEY: repeat("HIGH", 8), // 8
+  DB_CONNECTION_STRING: ["HIGH", "LOW", "INFO"], // 3
+  GIT_CREDENTIAL: ["HIGH"], // 1
 };
 
-/** A gated scan cannot hand back a row its gate excludes. */
-function gated(nodes: Rec[], scanIdx: number, scope: string): Rec[] {
-  const gate = GATES[scanIdx]![scope];
-  if (!gate) return nodes;
-  return nodes.filter((n) => gate.includes(String(n["severity"])));
+const SINGLE_SPECS: SecretSingleSpec[] = SECRET_TYPES.flatMap((type) =>
+  SINGLE_SEVERITY_BY_TYPE[type].map((severity) => ({ type, severity })),
+);
+// 10 + 11 + 64 + 11 + 8 + 3 + 1 = 108
+
+// 6 twin pairs — SAME (secretDataId, path, lineNumber), different resource form and
+// firstSeenAt. Types chosen to also broaden the physical-node type distribution above (each
+// pair contributes 2 nodes of its type).
+const TWIN_TYPES: readonly SecretType[] = [
+  "SAAS_API_KEY", "SAAS_API_KEY", "CLOUD_KEY", "PRIVATE_KEY", "PASSWORD", "DB_CONNECTION_STRING",
+];
+const TWIN_SEVERITY: readonly string[] = ["HIGH", "LOW", "HIGH", "HIGH", "MEDIUM", "LOW"];
+
+const SECRETS_SINGLE_COUNT = SINGLE_SPECS.length; // 108
+const SECRETS_TWIN_PAIRS = TWIN_TYPES.length; // 6
+const SECRETS_TOTAL = SECRETS_SINGLE_COUNT + SECRETS_TWIN_PAIRS * 2; // 120
+
+// Validation plan over the 120 physical nodes: 4 INVALID, 8 VALID, spread evenly by index;
+// everything else UNKNOWN. Matches the measured tenant shape almost exactly never leaves it.
+const VALIDATION_MEASURED = 12; // 4 invalid + 8 valid
+const INVALID_INDEXES = new Set<number>();
+const VALID_INDEXES = new Set<number>();
+for (let k = 0; k < VALIDATION_MEASURED; k++) {
+  const at = Math.floor((k * SECRETS_TOTAL) / VALIDATION_MEASURED);
+  if (k < 4) INVALID_INDEXES.add(at); else VALID_INDEXES.add(at);
+}
+function validationStateFor(physicalIndex: number): string {
+  if (INVALID_INDEXES.has(physicalIndex)) return "INVALID";
+  if (VALID_INDEXES.has(physicalIndex)) return "VALID";
+  return "UNKNOWN";
 }
 
-function nodesFor(scanIdx: number): SampleScan {
-  const sca: Rec[] = [];
-  for (let i = 0; i < COUNTS.sca[scanIdx]!; i++) sca.push(scaNode(i, scanIdx));
-  // A few SCA findings close through the API rather than by vanishing, so the page can show
-  // both resolution sources. They stay in the payload carrying a resolvedAt, which is how
-  // Wiz reports a remediation it was told about.
-  if (scanIdx > 0) {
-    for (let i = 0; i < 4; i++) {
-      const closed = scaNode(200 + i, scanIdx);
-      // Forced into the gate: DEFAULT_FETCH_SEVERITIES.sca is CRITICAL,HIGH, so a real
-      // gated fetch could never hand back a LOW row at all, closed or open.
-      closed["severity"] = i % 2 === 0 ? "CRITICAL" : "HIGH";
-      closed["status"] = "RESOLVED";
-      closed["resolvedAt"] = iso(SCAN_TS[scanIdx]! - (1 + i) * DAY);
-      sca.push(closed);
-    }
-  } else {
-    for (let i = 0; i < 4; i++) {
-      const born = scaNode(200 + i, scanIdx);
-      born["severity"] = i % 2 === 0 ? "CRITICAL" : "HIGH";
-      sca.push(born);
-    }
-  }
+// Secrets nodes dropped after scan A (indices into SINGLE_SPECS only, so the twin fold stays
+// simple) — the disappearance population resolved-by-disappearance has to fold over.
+const SECRETS_DROPPED_AFTER_A = new Set([3, 15, 27, 39, 51, 63, 75, 87]);
 
-  const sast: Rec[] = [];
-  for (let i = 0; i < COUNTS.sast[scanIdx]!; i++) sast.push(sastNode(i, scanIdx));
+interface SecretRawSpec {
+  physicalIndex: number;
+  id: string;
+  externalId: string;
+  secretDataId: string;
+  type: SecretType;
+  severity: string;
+  confidence: string;
+  path: string;
+  lineNumber: number;
+  firstSeenAt: string;
+  validationStatus: string;
+  lastValidatedAt: string | null;
+  resourceType: "REPOSITORY" | "REPOSITORY_BRANCH";
+  repo: RepoSpec;
+  dropAfterA: boolean;
+}
 
-  const secrets: Rec[] = [];
-  for (let i = 0; i < COUNTS.secrets[scanIdx]!; i++) {
-    secrets.push(secretNode(i, scanIdx));
-    if (i % 3 === 0) secrets.push(secretNode(i, scanIdx, true));
-  }
-
+function secretRawNode(spec: SecretRawSpec, scanTs: string): Rec {
   return {
-    sca: gated(sca, scanIdx, "sca"),
-    sast: gated(sast, scanIdx, "sast"),
-    secrets: gated(secrets, scanIdx, "secrets"),
+    id: spec.id,
+    externalId: spec.externalId,
+    secretDataId: spec.secretDataId,
+    name: `${spec.type} in ${spec.repo.name}`,
+    type: spec.type,
+    confidence: spec.confidence,
+    severity: spec.severity,
+    path: spec.path,
+    lineNumber: spec.lineNumber,
+    status: "OPEN",
+    resolvedAt: null,
+    validationStatus: spec.validationStatus,
+    lastValidatedAt: spec.lastValidatedAt,
+    firstSeenAt: spec.firstSeenAt,
+    lastSeenAt: scanTs,
+    lastUpdatedAt: scanTs,
+    codeToCloudPipelineStage: "CODE",
+    resource: {
+      id: spec.repo.id,
+      name: spec.resourceType === "REPOSITORY_BRANCH" ? `${spec.repo.name}/${spec.repo.branch}` : spec.repo.name,
+      type: spec.resourceType,
+      externalId: `gh-${spec.repo.id}`,
+      nativeType: "Repository",
+      cloudPlatform: spec.repo.cloudPlatform,
+    },
+    vcsDetails: { initialCommitHash: `s${(spec.physicalIndex + 1).toString(16).padStart(7, "0")}` },
+    projects: projectsFor(spec.physicalIndex + 2),
   };
 }
 
+function buildSecretSpecs(): SecretRawSpec[] {
+  const specs: SecretRawSpec[] = [];
+  let physicalIndex = 0;
+
+  // 108 singles.
+  SINGLE_SPECS.forEach((single, i) => {
+    const repo = REPO_POOL[i % REPO_POOL.length]!;
+    specs.push({
+      physicalIndex,
+      id: `secret-${i + 1}`,
+      externalId: `ext-secret-${i + 1}`,
+      secretDataId: `sd-${i + 1}`,
+      type: single.type,
+      severity: single.severity,
+      confidence: single.severity === "HIGH" ? "HIGH" : single.severity === "INFO" ? "LOW" : "MEDIUM",
+      path: `config/${single.type.toLowerCase()}-${i}.env`,
+      lineNumber: 1 + (i % 40),
+      firstSeenAt: isoBefore(DAY1_A, 5, 200),
+      validationStatus: validationStateFor(physicalIndex),
+      lastValidatedAt: validationStateFor(physicalIndex) === "UNKNOWN" ? null : isoBefore(DAY1_A, 1, 30),
+      resourceType: "REPOSITORY_BRANCH",
+      repo,
+      dropAfterA: SECRETS_DROPPED_AFTER_A.has(i),
+    });
+    physicalIndex += 1;
+  });
+
+  // 6 twin pairs — 12 more nodes, keys collide 2-for-1.
+  TWIN_TYPES.forEach((type, k) => {
+    const repo = REPO_POOL[(k + 4) % REPO_POOL.length]!;
+    const secretDataId = `sd-twin-${k + 1}`;
+    const path = `services/${repo.name.split("/")[1]}/config/secret-${k + 1}.yml`;
+    const lineNumber = (k + 1) * 7;
+    const severity = TWIN_SEVERITY[k]!;
+    const branchFirstSeen = isoBefore(DAY1_A, 40, 180); // branch twin: earlier (measured majority)
+    const repoFirstSeen = isoBefore(DAY1_A, 5, 39); // repository twin: later
+
+    const branchIdx = physicalIndex;
+    specs.push({
+      physicalIndex: branchIdx,
+      id: `secret-twin-${k + 1}-branch`,
+      externalId: `ext-secret-twin-${k + 1}-branch`,
+      secretDataId, type, severity,
+      confidence: severity === "HIGH" ? "HIGH" : "MEDIUM",
+      path, lineNumber,
+      firstSeenAt: branchFirstSeen,
+      validationStatus: validationStateFor(branchIdx),
+      lastValidatedAt: validationStateFor(branchIdx) === "UNKNOWN" ? null : isoBefore(DAY1_A, 1, 30),
+      resourceType: "REPOSITORY_BRANCH",
+      repo,
+      dropAfterA: false,
+    });
+    physicalIndex += 1;
+
+    const repoIdx = physicalIndex;
+    specs.push({
+      physicalIndex: repoIdx,
+      id: `secret-twin-${k + 1}-repo`,
+      externalId: `ext-secret-twin-${k + 1}-repo`,
+      secretDataId, type, severity,
+      confidence: severity === "HIGH" ? "HIGH" : "MEDIUM",
+      path, lineNumber,
+      firstSeenAt: repoFirstSeen,
+      validationStatus: validationStateFor(repoIdx),
+      lastValidatedAt: validationStateFor(repoIdx) === "UNKNOWN" ? null : isoBefore(DAY1_A, 1, 30),
+      resourceType: "REPOSITORY",
+      repo,
+      dropAfterA: false,
+    });
+    physicalIndex += 1;
+  });
+
+  return specs;
+}
+
+const SECRET_SPECS = buildSecretSpecs();
+
+/** All 120 raw secrets nodes as they read at scan A — the canonical set the twin-fold test uses. */
+function secretsNodesForScan(scanIndex: 0 | 1 | 2, scanTs: string): Rec[] {
+  const out: Rec[] = [];
+  for (const spec of SECRET_SPECS) {
+    if (scanIndex > 0 && spec.dropAfterA) continue; // resolved by disappearance at scan B, stays gone at C
+    out.push(secretRawNode(spec, scanTs));
+  }
+  return out;
+}
+
+/* ---------------------------------------------------------------------------- public shape */
+
 /**
- * The severity gate each scan applied, per scope.
- *
- * THE FIRST SCAN IS WIDE AND THE LATER TWO ARE NARROW, which is what a settings change looks
- * like and is the only shape that makes this fixture coherent. The register's SCA and SAST
- * default is CRITICAL/HIGH — so a scan stamped with that gate cannot have returned MEDIUM and
- * LOW rows, and one that did would put the ledger and its own scan log in contradiction.
- *
- * Modelling the change rather than deleting the rows is the better fixture in both
- * directions: the MEDIUM and LOW rows are legitimately in the ledger (a wider scan put them
- * there), and they then exercise the disappearance guard exactly as it will be exercised in
- * production — absent from every later scan, and correctly never resolved for it.
+ * Every raw node this file generates, all scopes, flattened — kept as `SAMPLE_FINDINGS` /
+ * `unknown[]` because that is the export name and shape `dev/serve.mjs`'s esbuild alias and
+ * the file's own history commit to. 400 sca + 40 sast + 120 secrets = 560.
  */
-const GATES: readonly Record<string, readonly string[] | null>[] = [
-  { sca: null, sast: null, secrets: null },
-  { sca: ["CRITICAL", "HIGH"], sast: ["CRITICAL", "HIGH"], secrets: null },
-  { sca: ["CRITICAL", "HIGH"], sast: ["CRITICAL", "HIGH"], secrets: null },
+export const SAMPLE_FINDINGS: unknown[] = [
+  ...scaCanonicalNodes(),
+  ...sastCanonicalNodes(),
+  ...secretsNodesForScan(0, DAY1_A),
 ];
 
-export const SAMPLE_SCANS: readonly {
-  id: string;
-  ts: string;
-  nodes: SampleScan;
-  gates: Record<string, readonly string[] | null>;
-}[] = SCAN_TS.map((ts, i) => ({
-  id: `sample-${i + 1}`,
-  ts: iso(ts),
-  nodes: nodesFor(i),
-  gates: GATES[i]!,
-}));
+/** The same population, split by scope — every generated finding exactly once. */
+export const SAMPLE_RAW_NODES: Record<Scope, Rec[]> = {
+  sca: scaCanonicalNodes(),
+  sast: sastCanonicalNodes(),
+  secrets: secretsNodesForScan(0, DAY1_A),
+};
+
+/** The exact generated node counts, so a claim about the dataset is a lookup, not an assertion. */
+export const SAMPLE_COUNTS = {
+  sca: SCA_TOTAL,
+  sast: SAST_TOTAL,
+  secrets: SECRETS_TOTAL,
+  secretsSingles: SECRETS_SINGLE_COUNT,
+  secretsTwinPairs: SECRETS_TWIN_PAIRS,
+} as const;
+
+/**
+ * One scope's step of a synthetic sync battery — shaped like `ledgerStore.ScopePersist` minus
+ * `records`, which a caller fills in AFTER running `scanJobs.slimRecord` over `rawRecords`
+ * (these are raw Wiz-shaped nodes, not the slimmed payload `ScopePersist.records` expects).
+ */
+export interface SampleScopeBattery {
+  scope: Scope;
+  rawRecords: Rec[];
+  mode: string;
+  scannedSeverities: string[] | null;
+}
+
+export interface SampleSync {
+  syncId: string;
+  scopes: SampleScopeBattery[];
+}
+
+/**
+ * Three synthetic scans over two calendar dates (2026-06-01 twice, 2026-06-15 once), so a
+ * trend series has more than one point and resolve-by-disappearance has something to fold: a
+ * finding present in an earlier scan and absent from a later one produces a resolved row.
+ *
+ * `rawRecords` on each entry are RAW nodes. Feed them through `scanJobs.slimRecord(scope, n)`
+ * before handing them to `ledgerStore.persistSync` — `test/sampleData.test.ts` does exactly
+ * that, in order, and is the executable proof this battery reconciles the way it claims to.
+ */
+export const SAMPLE_SYNCS: readonly SampleSync[] = [
+  {
+    syncId: DAY1_A,
+    scopes: [
+      { scope: "sca", rawRecords: scaNodesForScan(0, DAY1_A), mode: "sample", scannedSeverities: null },
+      { scope: "sast", rawRecords: sastNodesForScan(0, DAY1_A), mode: "sample", scannedSeverities: null },
+      { scope: "secrets", rawRecords: secretsNodesForScan(0, DAY1_A), mode: "sample", scannedSeverities: null },
+    ],
+  },
+  {
+    syncId: DAY1_B,
+    scopes: [
+      { scope: "sca", rawRecords: scaNodesForScan(1, DAY1_B), mode: "sample", scannedSeverities: null },
+      { scope: "sast", rawRecords: sastNodesForScan(1, DAY1_B), mode: "sample", scannedSeverities: null },
+      { scope: "secrets", rawRecords: secretsNodesForScan(1, DAY1_B), mode: "sample", scannedSeverities: null },
+    ],
+  },
+  {
+    syncId: DAY2_C,
+    scopes: [
+      { scope: "sca", rawRecords: scaNodesForScan(2, DAY2_C), mode: "sample", scannedSeverities: null },
+      { scope: "sast", rawRecords: sastNodesForScan(2, DAY2_C), mode: "sample", scannedSeverities: null },
+      { scope: "secrets", rawRecords: secretsNodesForScan(2, DAY2_C), mode: "sample", scannedSeverities: null },
+    ],
+  },
+];

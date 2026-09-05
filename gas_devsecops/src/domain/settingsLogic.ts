@@ -6,10 +6,37 @@
 // with nothing behind it is the thing this product does not do.
 
 import {
-  DEFAULT_FETCH_SEVERITIES, SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope,
+  DEFAULT_FETCH_SEVERITIES, DEFAULT_RETENTION_DAYS, SCOPES, SEVERITY_ORDER, SLA_TARGETS,
+  type Scope,
 } from "./config";
+import { RETENTION_MIN_DAYS } from "./maintenance";
 import type { Rec } from "./util";
 
+/**
+ * Default hour-of-day (0-23, script-local — Europe/Paris per the manifest) the daily sync
+ * trigger is requested to fire at. `server/setup.ts` imports this rather than hardcoding its
+ * own literal, so the installed trigger and this field's default can never drift apart even
+ * though (see `syncSchedule` below) setup() does not read the field yet.
+ */
+export const DEFAULT_SYNC_HOUR = 5;
+
+/**
+ * TWO PROJECT SCOPES, TWO HOMES — DO NOT MERGE THEM.
+ *
+ * FETCH scope decides what a sync COLLECTS from Wiz. It is `WIZ_PROJECT_ID_V2`, an operator
+ * Script Property (`props.projectScope`) already folded into `serverCache.configStamp` so
+ * that changing it invalidates every derived read model. It stays a Script Property and MUST
+ * NOT be added here: putting a `wizProjectId` field on `Settings` would give that one value
+ * two homes, and the failure that produces is not a conflict anyone sees — it is a cache
+ * stamped from one home while the query is built from the other, which reads as a register
+ * that will not refresh. That argument is unchanged and still governs the fetch scope.
+ *
+ * VIEW scope decides what the pages SHOW of whatever the ledger already holds — it never
+ * touches `configStamp` and never changes what a sync requests. That is `projectView` below,
+ * and it belongs on `Settings` for the opposite reason `wizProjectId` does not: it is a
+ * display filter read by page renderers, not a fetch parameter folded into a cache stamp, so
+ * there is only one home for it to have and this is that home.
+ */
 export interface Settings {
   /** Which registers the sync battery collects. At least one, always. */
   scopes: Scope[];
@@ -23,16 +50,53 @@ export interface Settings {
   fetchSeverities: Record<Scope, string[]>;
   /** Remediation windows, in days, by severity. */
   slaTargets: Record<string, number>;
+  /** Show routes flagged experimental in the nav. */
+  showExperimental: boolean;
+  /**
+   * Hour-of-day (0-23, script-local) the daily sync trigger is requested to fire at.
+   *
+   * STILL CAPTURED AND NOT WIRED, and S7 looked at it and left it on purpose. The blocker is
+   * NOT the Sheets read an earlier revision of this comment named — `setup()` calls
+   * `ensureTabs` before its trigger block, so the tab exists and an empty one cleans to this
+   * same default. It is the RECONCILE: the daily trigger is deduplicated by handler name alone,
+   * so a setting read once at install and never again would let an operator change the hour,
+   * watch setup() report "already installed", and keep firing at the old time. Converging needs
+   * a recorded signature the way `warmTriggerSchedule()` has one, which means a new
+   * `PROP_KEYS` entry and a `test/setup.test.ts` case. `server/setup.ts` carries the full
+   * statement of this beside `DAILY_SYNC_HOUR`.
+   */
+  syncSchedule: number;
+  /**
+   * Whether ledger compaction runs automatically after each committed sync.
+   *
+   * WIRED (S7). `server/scanJobs.ts::autoCompactIfDue()` reads this field and `retentionDays`
+   * below, and the `AUTO_COMPACT_DAYS` Script Property it used to gate on is GONE — not kept
+   * as a fallback, because a second home for one value is the failure the `wizProjectId` note
+   * above this interface describes: an operator changes the setting, the Data page agrees, and
+   * compaction keeps running on whatever the property said.
+   *
+   * THE DEFAULT DID NOT MOVE ACROSS THAT REWIRE, and that is the property worth keeping: the
+   * old gate was an unset Script Property (= off) and this one is `false`, so a fresh install
+   * and every existing deployment behave identically until an operator opts in.
+   */
+  autoCompact: boolean;
+  /** Compaction retention window, in days. Read only once `autoCompact` is true. */
+  retentionDays: number;
+  /**
+   * The VIEW scope — which project's rows the pages show, out of everything the ledger holds.
+   * `""` means no scope: show the whole register, every project the fetch scope ever collected.
+   *
+   * Holds a project SLUG, not a Wiz object id, and is deliberately NOT validated against any
+   * catalogue of known projects. A stale slug naming a project the register no longer holds
+   * must stay clearable — an operator who renamed or retired a project should be able to clear
+   * this field and see the whole register again — rather than becoming a trap that some
+   * validation step refuses to save because the name it once matched is gone.
+   *
+   * Mutually exclusive with nothing: this register has exactly one scope dimension, so there
+   * is no second view-scope field for this one to conflict with.
+   */
+  projectView: string;
 }
-
-// `showExperimental` USED TO LIVE HERE and was removed rather than wired up: nothing read it.
-// The rail, the router and the help sheet all consult `showExperimental()` in
-// src/client/js/experimental.js, which is localStorage — and that module's own header says why
-// ("LOCAL, not a settings-tab key. This is chrome, not data: it changes what one reader can
-// open and never what anything computes"). The chassis fork brought both, so the stored field
-// was written to the sheet on every save and consulted by nobody. A settings key that decides
-// nothing is worse than no key: the next reader wires a control to it and the control does
-// nothing.
 
 export const DEFAULT_SETTINGS: Settings = {
   scopes: [...SCOPES],
@@ -42,6 +106,11 @@ export const DEFAULT_SETTINGS: Settings = {
     secrets: [...DEFAULT_FETCH_SEVERITIES.secrets],
   },
   slaTargets: { ...SLA_TARGETS },
+  showExperimental: false,
+  syncSchedule: DEFAULT_SYNC_HOUR,
+  autoCompact: false,
+  retentionDays: DEFAULT_RETENTION_DAYS,
+  projectView: "",
 };
 
 function asList(v: unknown, allowed: readonly string[]): string[] | null {
@@ -86,6 +155,56 @@ function cleanFetchSeverities(raw: unknown): Record<Scope, string[]> {
 }
 
 /**
+ * A finite number, or null for anything that is not one — including `null`/`undefined`
+ * themselves and arrays/objects. `Number(null) === 0` and `Number([]) === 0`: naive
+ * `Number(v)` coercion would read "not provided" as the valid value zero, so junk has to be
+ * screened BEFORE Number() runs, not after.
+ */
+function numericOrNull(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/** Coerce an hour-of-day into range, falling back to `fallback` on anything else. */
+function cleanHourOfDay(v: unknown, fallback: number): number {
+  const n = numericOrNull(v);
+  if (n === null) return fallback;
+  return Number.isInteger(n) && n >= 0 && n <= 23 ? n : fallback;
+}
+
+/**
+ * Coerce a retention window, floored at `RETENTION_MIN_DAYS` — the same floor
+ * `maintenance.ts`'s `compactLedgerCore` enforces server-side, so a value this stage lets
+ * through can never be rejected downstream for being too small. Junk (not a number at all)
+ * falls back to the default window; an in-range-but-too-small number is CLAMPED rather than
+ * defaulted, same distinction `cleanFetchSeverities` draws between "missing" and "explicitly
+ * empty" — a operator who typed 1 asked for the shortest window they could, not for 180.
+ */
+function cleanRetentionDays(v: unknown): number {
+  const n = numericOrNull(v);
+  if (n === null) return DEFAULT_RETENTION_DAYS;
+  return Math.max(Math.floor(n), RETENTION_MIN_DAYS);
+}
+
+/**
+ * Coerce the stored view-scope slug into a trimmed string, refusing anything that is not
+ * ALREADY a string BEFORE any cast runs — the same trap `numericOrNull` above guards against,
+ * on the string side of it. `String(null)` is `"null"`, `String(undefined)` is `"undefined"`,
+ * `String(0)` is `"0"`, `String(false)` is `"false"`, and `String({})` is `"[object Object]"`:
+ * every one of those would read as a real (if odd) project slug instead of "no scope stored"
+ * if the value were cast before being checked. Only a genuine string is trimmed and kept;
+ * anything else — null, undefined, a number, an array, a plain object — collapses to `""`,
+ * the same value a missing field produces.
+ */
+function cleanProjectView(v: unknown): string {
+  return typeof v === "string" ? v.trim() : "";
+}
+
+/**
  * Stage one: coerce whatever is stored into shape. NEVER throws and never reports — a
  * settings tab edited by hand must not be able to take the app down. Stage two
  * (`validateSettings`) is what tells a human they typed something wrong.
@@ -109,6 +228,13 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     scopes: scopes.length ? scopes : [...SCOPES],
     fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
     slaTargets: sla,
+    showExperimental: r.showExperimental === true,
+    syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
+    // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
+    // only a literal boolean true turns compaction on.
+    autoCompact: r.autoCompact === true,
+    retentionDays: cleanRetentionDays(r.retentionDays),
+    projectView: cleanProjectView(r.projectView),
   };
 }
 
@@ -125,6 +251,14 @@ export function validateSettings(s: Settings): string[] {
     if (!Number.isFinite(days) || days <= 0) {
       errs.push(`The SLA target for ${sev} must be a positive number of days.`);
     }
+  }
+  if (!Number.isInteger(s.syncSchedule) || s.syncSchedule < 0 || s.syncSchedule > 23) {
+    errs.push("The sync schedule hour must be a whole number between 0 and 23.");
+  }
+  // cleanSettings always clamps to this floor; this branch only fires on a hand-built Settings
+  // that skipped stage one, same relationship validateSettings has with every other field.
+  if (!Number.isFinite(s.retentionDays) || s.retentionDays < RETENTION_MIN_DAYS) {
+    errs.push(`The retention window must be at least ${RETENTION_MIN_DAYS} days.`);
   }
   return errs;
 }

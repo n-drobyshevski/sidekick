@@ -164,9 +164,23 @@
 .lat-cell.is-lit { box-shadow: 0 0 0 2px var(--ink); z-index: 1; }
 .lat-cell:hover { box-shadow: 0 0 0 2px var(--text-3); z-index: 1; }
 .lat-cell:focus-visible { z-index: 2; }
+/* THE TRACED RING SITS AT 2, NOT 3, AND THAT IS A REAL (SMALL) CHANGE. These four states
+   stack inside one grid — a 3px ring overhangs its cell, so adjacent cells' rings overlap
+   and the order decides which one is whole. The lattice wanted four levels: lit/hover (1),
+   focus (2), traced (3). The shared z scale allows exactly two literals for stacking WITHIN
+   a component (gas_shared/test/contracts/zscale.js), and it refuses a token for this on
+   purpose: a --z-* name is an APP LAYER, and spending one on a within-grid ordering would
+   make "--z-appbar is below --z-scrim" stop being the only thing the scale says.
+
+   So traced joins focus at 2. It still outranks a lit or hovered cell, which is the
+   ordering that carries information — a trace is a pinned answer and a hover is a passing
+   one. Against a cell that is focused but NOT traced the two now tie and DOM order decides;
+   that pair can only occur while a reader has tabbed into the grid with the tracer open,
+   and either ring winning reads correctly. This is the one place in gas_ai that wanted a
+   third component-local level; see the handback. */
 .lat-cell.is-traced {
   box-shadow: 0 0 0 3px var(--accent);
-  z-index: 3;
+  z-index: 2;
   animation: lat-pulse 1.1s var(--ease-loop) infinite;
 }
 @keyframes lat-pulse {
@@ -418,7 +432,7 @@ table.data tr.rule-won > td:first-child {
 .lat-icicle rect.is-receded { opacity: 0.18; }
 .lat-icicle rect.is-lit { stroke: var(--ink); stroke-width: 2; }
 .lat-icicle rect.is-traced { stroke: var(--accent); stroke-width: 3; }
-.lat-icicle .lat-leaf:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.lat-icicle .lat-leaf:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
 .lat-icicle.is-diverged rect { fill: rgba(0, 0, 0, 0.05); }
 
 /* A row that fires perfectly well over a tenant that happens to carry nothing it matches.
@@ -455,7 +469,7 @@ table.data tr.is-lit > td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
    nothing in either dimension and sits directly above the labels it explains. */
 .lat-ax {
   margin-right: var(--space-1);
-  color: var(--accent);
+  color: var(--accent-text);
   font-weight: 700;
 }
 .lat-key {
@@ -475,4 +489,4 @@ table.data tr.is-lit > td:first-child { box-shadow: inset 2px 0 0 var(--ink); }
 .lat-key__line b { color: var(--ink); font-weight: 700; }
 /* The arrow says which way to read the axis, and is aria-hidden: a screen reader gets the
    whole vector in words from every cell's own label, where direction is not a concept. */
-.lat-key__dir { margin-right: var(--space-1); font-weight: 400; color: var(--accent); }
+.lat-key__dir { margin-right: var(--space-1); font-weight: 400; color: var(--accent-text); }

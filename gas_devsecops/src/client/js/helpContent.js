@@ -9,6 +9,31 @@
 
 const ENTRIES = [
   {
+    id: "sync",
+    term: "Sync",
+    lines: [
+      "The act: one run reads all three registers from Wiz and saves what it found.",
+      "Started from the Run sync button in the rail. One sync saves one scan per register, so a sync and a scan are never the same thing.",
+    ],
+  },
+  {
+    id: "scan",
+    term: "Scan",
+    lines: [
+      "The record a sync wrote for one register: what was asked for, when, and how many findings came back.",
+      "Three per sync — dependencies, code and secrets — unless a sweep covered fewer. You run a sync; you browse scans.",
+      "Wiz's own detectors are a third thing, called the scanner.",
+    ],
+  },
+  {
+    id: "lower-bound",
+    term: "Lower bound",
+    lines: [
+      "A duration the curve never reached: more than half of what was tracked is still open, so the median is at least this far out and cannot be read exactly.",
+      "Prose says \"at least N days\" and a figure says \"≥ N\" — one notation per context, and inclusive either way, which is why \"more than\" would be a different claim.",
+    ],
+  },
+  {
     id: "half-life",
     term: "Remediation half-life",
     lines: [
@@ -90,6 +115,97 @@ const ENTRIES = [
     lines: [
       "Of everything that was remediated, the share that deserved it.",
       "Always published beside coverage.",
+    ],
+  },
+  {
+    id: "validation-state",
+    term: "Validation state",
+    lines: [
+      "Whether Wiz has confirmed a detected credential still works: UNKNOWN, VALID, INVALID or ERROR.",
+      "VALID means live, INVALID means confirmed dead — UNKNOWN and ERROR mean nobody has checked, which is neither.",
+      "393,443 of 394,927 secret instances in this tenant read UNKNOWN, so folding that into \"not rotated\" would misprice 99.6% of the register.",
+    ],
+  },
+  {
+    id: "rotated",
+    term: "Rotated",
+    lines: [
+      "The credential was observed dead: validation state read INVALID and the ledger stamped the date it first did.",
+      "Not the same as the secret leaving the code — see Removed.",
+    ],
+  },
+  {
+    id: "removed",
+    term: "Removed",
+    lines: [
+      "The secret's string left the repository's HEAD.",
+      "Removed is not rotated: the credential is live until Rotated says otherwise, and it is still readable in git history.",
+    ],
+  },
+  {
+    id: "time-to-revoke",
+    term: "Time to revoke",
+    lines: [
+      "The clock from detection to confirmed-invalid, reported as median, P90 and share within SLA.",
+      "A secret that was never validated is excluded, not censored — it supports no claim about whether it is still alive.",
+      "The excluded count is published beside the figure so the denominator can be checked.",
+    ],
+  },
+  {
+    id: "foothold",
+    term: "Foothold",
+    lines: [
+      "An asset — a repository or a language group — carrying at least one open high-risk finding.",
+      "One is enough: a foothold is a yes/no property of the asset, not a count.",
+    ],
+  },
+  {
+    id: "capacity",
+    term: "Capacity",
+    lines: [
+      "Whether remediation is keeping up with new findings arriving, read month by month.",
+      "A month is gaining, keeping up, or falling behind, judged by closures against openings against a dead band around zero.",
+    ],
+  },
+  {
+    id: "mmcr",
+    term: "Monthly mean closure rate",
+    lines: [
+      "Each month's close rate — closings divided by what was already open at the start of that month — averaged across the months actually observed.",
+      "Not closings over new arrivals, and not closings over the whole register: the denominator is that month's starting backlog.",
+    ],
+  },
+  {
+    id: "reconstructed",
+    term: "Reconstructed month",
+    lines: [
+      "A month whose figures were rebuilt rather than directly observed, because it ends before this register started watching.",
+      "Marked so it is not read as measured — the backlog it describes is real, but nobody was looking in real time.",
+    ],
+  },
+  {
+    id: "unclassified",
+    term: "Unclassified",
+    lines: [
+      "A finding the risk rule could not place as high-risk or not — most often a secret, which this register refuses to score by severity.",
+      "Reported outside the 2×2 rather than folded into a corner, so it can never be mistaken for a quadrant.",
+    ],
+  },
+  {
+    id: "cwe-top-25",
+    term: "CWE Top 25",
+    lines: [
+      "MITRE's 2024 list of the most dangerous software weakness classes, which the SAST risk rule scores against.",
+      "A child weakness folds onto its Top-25 ancestor first — CWE-23 counts as CWE-22, CWE-80 as CWE-79 — because scanners report leaves and the list is mostly interior nodes.",
+    ],
+  },
+  {
+    id: "twin",
+    term: "Twin",
+    lines: [
+      "One secret at one line, reported once against its repository and once against a branch of it.",
+      "The ledger keys on (secret, path, line) and keeps the earlier of the two birth dates — 187 keys in this tenant span both, a median 19.9 days apart.",
+      "Keying on Wiz's externalId instead would look unique and quietly double the register.",
     ],
   },
 ];

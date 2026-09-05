@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "80f95a45cc60" : "dev";
+  var BUILD_ID = true ? "8077748f9c01" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -2161,6 +2161,7 @@ var Server = (() => {
     exportMigrationBundle: () => exportMigrationBundle,
     getAccess: () => getAccess,
     getAttribution: () => getAttribution,
+    getChartsBundle: () => getChartsBundle,
     getDomains: () => getDomains3,
     getExecutivePage: () => getExecutivePage,
     getExportCoverageCsv: () => getExportCoverageCsv,
@@ -8412,6 +8413,17 @@ var Server = (() => {
       hasCredentials: hasWizCredentials(),
       activeJob: activeJobSummary()
     }));
+  }
+  function getChartsBundle(_p) {
+    return run(() => {
+      const html = HtmlService.createHtmlOutputFromFile("js_charts").getContent();
+      const start = html.indexOf("<script");
+      const open = start < 0 ? -1 : html.indexOf(">", start);
+      const close = html.lastIndexOf("<\/script>");
+      const src = open < 0 || close < open ? "" : html.slice(open + 1, close).trim();
+      if (!src) throw new Error("js_charts is missing or empty in this deployment");
+      return src;
+    });
   }
   function bootstrapCore() {
     var _a, _b, _c, _d, _e, _f, _g, _h;
