@@ -134,6 +134,121 @@ default scan scope, so its disappearance is exactly what the guard exists to cat
 first-half truncation already drops 14 HIGH/OPEN and 7 CRITICAL/OPEN findings, both inside the
 default scope, so disappearance fires either way.
 
+## Open the notebooks locally
+
+The shipped notebooks (`brick/notebooks/*.ipynb`, `brick/devsecops/notebooks/*.ipynb`) reference
+four things a Databricks cluster provides for free and a laptop Jupyter kernel does not:
+`dbutils`, `spark`, `display`/`displayHTML`, and the `%sql` magic. `devlake/notebook.py` supplies
+all four **with no edit to any shipped notebook** — `dbx.get_dbutils()`
+(`brick/dbx.py:23-39`) already falls back to `get_ipython().user_ns["dbutils"]` when it is not on
+Databricks, and this module is what puts a fake `dbutils` there, plus `spark`, `display`,
+`displayHTML`, and a `%sql` input transformer that rewrites a `%sql`-led cell into
+`display(spark.sql("""..."""))` using the exact same rule
+`brick/tests/test_notebooks.py::sql_cells` uses (`devlake.notebook.split_sql_cell` — pinned
+against every shipped `.ipynb` in both forks by
+`devlake/tests/test_notebook_shims.py::test_the_sql_transformer_splits_exactly_as_the_notebook_test_does`).
+
+**Why a kernel *startup* file, not a documented first cell.** Every notebook's own cell 2 (the
+boot cell) calls `panels.context(spark, ...)` with `spark` as a bare, unguarded name — so
+anything that installs the shim from *inside* a notebook cell is already too late; cell 2 raises
+`NameError` before it would run. `devlake/kernel_startup.py` is written to be dropped into
+`<IPYTHONDIR>/profile_default/startup/`, which IPython executes while it boots the shell — before
+the kernel accepts its first cell. It is a no-op unless `DEVLAKE_LAKE` is set, so the same
+profile works for an ordinary IPython session that has nothing to do with this lake.
+
+**The kernel's working directory is the notebook's, not the repo's, and that broke the shim
+entirely until it searched for itself.** A real Jupyter deployment starts the kernel with `cwd`
+set to wherever the open `.ipynb` lives (`brick/notebooks`, following the recipe below) — measured,
+`cd brick/notebooks && python3 -c "import devlake"` raises `ModuleNotFoundError`, so
+`kernel_startup.py`'s own `from devlake import notebook` failed the same way there, and IPython's
+`_run_startup_files` swallowed it into one unhelpful log line with **no traceback anywhere**
+(`showtraceback()` runs after ipykernel has already redirected `sys.stderr` to its zmq `OutStream`,
+so the traceback is published on IOPub before any client has subscribed and is lost — the classic
+PUB/SUB slow-joiner). The practical effect: `dbutils`/`spark`/`display`/`displayHTML` were silently
+never defined, and every cell failed with a plain `NameError` that looked identical to the one
+real notebook bug below. `kernel_startup.py` now searches upward from the kernel's own `cwd` for
+the directory holding `devlake/__init__.py` (an explicit `DEVLAKE_REPO_ROOT` env var overrides the
+search) before importing `devlake`, and writes any remaining failure straight to `sys.__stderr__`
+— the original, pre-redirect stderr object — so a future failure is not silently invisible again.
+
+```bash
+# 1. Build a lake to point the notebooks at (see "Run a fake scan" above).
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=os --scans=2 --lake=/tmp/lakecheck
+
+# 2. Wire the startup file into a throwaway IPython profile.
+mkdir -p /tmp/devlake-ipython/profile_default/startup
+cp devlake/kernel_startup.py /tmp/devlake-ipython/profile_default/startup/00-devlake.py
+
+# 3. Point Jupyter's kernel at the lake and start it up. WIDGET_<NAME> seeds a widget's value
+#    exactly as if you had typed it into the notebook's own widget bar -- catalog has no
+#    default (panels.BASE_WIDGETS), so it (and schema/scope) need to be set here or in cell 1.
+export IPYTHONDIR=/tmp/devlake-ipython
+export DEVLAKE_LAKE=/tmp/lakecheck
+export DEVLAKE_SCHEMA=wiz
+export DEVLAKE_FORK=brick        # or devsecops
+export SPARK_LOCAL_IP=127.0.0.1
+export WIDGET_CATALOG=spark_catalog
+export WIDGET_SCHEMA=wiz
+export WIDGET_SCOPE=os
+jupyter lab brick/notebooks
+```
+
+Open any notebook and run cells top to bottom — no widget dialog needed the first time, since
+`WIDGET_*` seeded them before the kernel booted (Databricks' own rule applies from here on: a
+widget that already exists keeps its value, so change a filter through the widget bar, not by
+re-exporting the env var, once the kernel is running).
+
+Equivalently, from a running kernel that already has `spark` some other way (or one you built by
+hand), `%load_ext devlake.notebook` reads the same `DEVLAKE_LAKE` / `DEVLAKE_SCHEMA` /
+`DEVLAKE_FORK` env vars, builds the session, reregisters the lake, and installs the shim —
+`devlake.kernel_startup` is a one-line wrapper around exactly this call, run automatically at
+IPython startup instead of by hand.
+
+**Measured, and it does NOT pass**: `brick/notebooks/00_security_posture.ipynb`, run this way
+against a two-scan lake via `nbclient.NotebookClient` in a real `ipykernel` subprocess (its own
+JVM — see `devlake/tests/test_notebook_shims.py::test_a_shipped_notebook_executes_top_to_bottom`,
+currently red), fails on cell 2 — the shared boot cell every page notebook uses — with
+`NameError: name 'panels' is not defined`. The cell's own first line reads
+`PAGE = {"group_by": ("subscription_name", panels.GROUP_DIMENSIONS)}`, referencing `panels`
+*before* the `import panels, figures, tiles` line further down the same cell. This is a defect in
+the shipped notebook's own source, not a gap in this shim: the shim's job is to fake the four
+Databricks-only globals (`dbutils`, `spark`, `display`/`displayHTML`) and the `%sql` magic, all of
+which are present and working by the time cell 2 runs (`dbx.get_dbutils()` resolves, `spark` is
+bound) — `panels` itself is a plain `import` the cell issues for itself, two lines below the line
+that already needs it. No environment can make that name resolve before its own `import`
+statement executes; a fresh Databricks cluster attach would hit the identical `NameError` on this
+exact cell. `01_mttr_sla.ipynb` — the one notebook with a `%sql` cell over `v_mttr` — was also
+measured and fails on the same line for the same reason (see
+`devlake/tests/test_notebook_shims.py::test_measure_mttr_sla_notebook_also_runs`, which reports it
+as a skip rather than a hard failure since it is explicitly informational). Neither notebook has
+been edited to fix this — that is a `brick/notebooks/` change, out of scope here — so both
+findings stand as reported.
+
+## Query the lake with DuckDB
+
+DuckDB's `delta` extension reads a Delta table straight off disk, no Spark involved — including
+the deletion-vector-enabled, `CLUSTER BY`-clustered ledger table this pipeline writes:
+
+```bash
+python3 -c "
+import duckdb
+con = duckdb.connect()
+con.execute('INSTALL delta')
+con.execute('LOAD delta')
+print(con.execute(\"SELECT count(*) FROM delta_scan('file:///tmp/lakecheck/wiz.db/wiz_os_vuln_ledger')\").fetchone())
+print(con.execute(\"SELECT count(*) FROM delta_scan('file:///tmp/lakecheck/wiz.db/wiz_os_vuln_ledger') WHERE status='OPEN'\").fetchone())
+"
+```
+
+**Measured** (`duckdb 1.5.5`, this container): both queries above return the exact same row
+counts DuckDB reads directly off disk as Spark reports from its own `.count()` over the same
+table, and the same is true of the append-only `scans` log (no deletion vectors at all) — see
+`devlake/tests/test_notebook_shims.py::test_duckdb_reads_the_clustered_ledger_with_deletion_vectors`,
+which asserts both and fails with the DuckDB version and the exact exception if either stops
+matching, naming which half (deletion vectors, or `delta_scan` itself) is responsible. No
+`CLUSTERING` knob was needed in `run_pipeline.py` to make this work — the ledger's
+`delta.enableDeletionVectors=true` table read correctly as shipped.
+
 ## Running the tests
 
 `devlake/` is intentionally outside the root `pyproject.toml`'s `testpaths = ["tests"]`, so run
@@ -144,10 +259,15 @@ SPARK_LOCAL_IP=127.0.0.1 python3 -m pytest devlake/tests -q
 ```
 
 Needs `pyspark` and `delta-spark` installed (from either fork's `requirements.txt`) plus
-`devlake/requirements.txt`'s own deps for the later steps (`duckdb`, `ipykernel`, `nbclient`,
-`pyyaml`; `jupyterlab` only if you want `jupyter lab brick/notebooks` for interactive use — no
-test imports it). Tests `importorskip` both `pyspark` and `delta` and skip cleanly if either is
-missing.
+`devlake/requirements.txt`'s own deps for the notebook/DuckDB steps (`duckdb`, `ipykernel`,
+`nbclient`, `pyyaml`; `jupyterlab` only if you want `jupyter lab brick/notebooks` for interactive
+use — no test imports it). Tests `importorskip` both `pyspark` and `delta` and skip cleanly if
+either is missing; the notebook-execution tests additionally `importorskip` `nbformat`/`nbclient`
+(`nbformat` arrives as `nbclient`'s own transitive dependency, so installing `nbclient` is
+enough).
 
 Never run more than one Spark JVM at a time on a small box — check nothing else is mid-suite
-(`pgrep -f "pytest brick"`) before starting these.
+(`pgrep -f "pytest brick"`) before starting these. The notebook-execution test starts a
+**second** JVM of its own (a real `ipykernel` subprocess, separate from the one this test file's
+own fixtures use) — its lake-building fixture stops its Spark session before that subprocess
+boots for exactly this reason.
