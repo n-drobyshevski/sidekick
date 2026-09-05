@@ -70,6 +70,70 @@ Delta directory on disk untouched; on the original managed table it would have d
 too. Nothing here relies on either behaviour — it is a caveat for anyone who runs `DROP TABLE`
 by hand against a restarted lake.
 
+## Run a fake scan
+
+`devlake/fakewiz.py` and `devlake/run.py` let a fork's real `run_pipeline.main()` run end to
+end against a fake Wiz GraphQL server, with no network call and no credentials -- ingest,
+`ensure_schema`, `recorded_scan`, `clear_scan`, MERGE and the four gold tables all run exactly as
+a Databricks Job would run them.
+
+```bash
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=os --scans=2 --lake=/tmp/lakecheck
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=devsecops --scope=sca --scans=2 --lake=/tmp/lakecheck
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=devsecops --scope=sast --scans=2 --lake=/tmp/lakecheck
+```
+
+Each runs `--scans` scans a day apart, starting `2026-06-01T00:00:00Z`, through the fork's
+committed fixture (`devlake.run.default_fixture`), then prints the `scans` log and the
+`resolution_src` split. Measured on the committed fixtures:
+
+```
+-- scans --                                          -- resolution_src split (ledger) --
+scan_id  scope  total  new_count  resolved_count      resolution_src  count
+scan-1   os     4      4          2                   NULL            1
+scan-2   os     3      0          1                   api             2
+                                                        disappeared     1
+
+scan-1   sca    54     54         12                  NULL            21
+scan-2   sca    27     0          21                   api             12
+                                                        disappeared     21
+
+scan-1   sast   40     40         0                    (sast: 0 resolved either scan --
+scan-2   sast   40     0          0                     the committed capture has no
+                                                         resolvedAt and this run's scan 2 is
+                                                         the same 40 nodes again)
+```
+
+**The seam is `ingest._post`.** `devlake.fakewiz.FakeWiz` replaces it with an in-memory,
+paginated server that answers under the right connection (`vulnerabilityFindings` for
+`os`/`sca`, `sastFindings` for `sast`) and, before answering, validates that `filterBy` is
+shaped the way *this scope's* filter type actually wants it -- reading
+`config.OBJECT_FILTERS` when the fork has one (devsecops) and the equivalent single-connection
+table when it does not (brick). A mismatch (SAST's `severity` sent SCA's way, or vice versa)
+raises the same `RuntimeError` `ingest._post` itself raises on a live HTTP 400, formatted
+through the fork's own `describe_errors` -- so a wrong shape is loud, the way it would be
+against the real tenant, rather than a silent empty page. `devlake.run.scan(fork, scope, nodes,
+...)` is the one-call harness around it: it puts the requested fork on `sys.path` (switching
+away from whichever fork was there before, if any), precreates the tables
+`create_clustered`'s builder cannot parse a three-level name for (`lake.precreate_clustered`
+for `ledger`/`bronze`, the new `lake.precreate_silver` for `silver` -- see its docstring for why
+`silver` needs its own precreation step), installs the fake, and calls `run_pipeline.main()`
+with `sys.argv` patched to the parameters a Job would pass.
+
+**The OS fixture's scan-2 slice is not a first-half truncation, and that is measured, not
+stylistic.** `os_vulns_response_exemple.json`'s four findings are, in file order, CRITICAL/OPEN,
+HIGH/RESOLVED, MEDIUM/OPEN, LOW/RESOLVED. Keeping the first half and dropping the second --
+the obvious slice, and the one `brick/tests/test_catalog_mode.py`'s own fixture uses -- resolves
+**nothing** by disappearance: the dropped MEDIUM/OPEN finding's severity is outside the default
+`CRITICAL,HIGH` scan scope, so `ledger.reconcile`'s guard correctly declines to resolve-by-
+disappearance a severity that was never scanned, and the dropped LOW/RESOLVED finding was
+already resolved by the API in scan 1, so its absence resolves nothing either. `default_fixture`
+instead drops **index 0**, the CRITICAL/OPEN finding, for scan 2 -- CRITICAL is inside the
+default scan scope, so its disappearance is exactly what the guard exists to catch, and
+`test_end_to_end.py` asserts on it directly. The `sca` fixture needs no such care: a plain
+first-half truncation already drops 14 HIGH/OPEN and 7 CRITICAL/OPEN findings, both inside the
+default scope, so disappearance fires either way.
+
 ## Running the tests
 
 `devlake/` is intentionally outside the root `pyproject.toml`'s `testpaths = ["tests"]`, so run

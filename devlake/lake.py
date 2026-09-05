@@ -23,6 +23,7 @@ deleted outright. Nothing here relies on either behaviour; it is a caveat for wh
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -153,3 +154,53 @@ def precreate_clustered(spark: "SparkSession", run_pipeline_module, tables) -> l
         )
         created.append(table)
     return created
+
+
+def precreate_silver(spark: "SparkSession", run_pipeline_module, table: str, scope: str) -> bool:
+    """Create the one clustered table :func:`precreate_clustered` cannot: ``silver``.
+
+    Silver has no declared schema anywhere in either fork -- it is whatever
+    ``metrics.silver_findings`` projects for a given scan's rows (see ``precreate_clustered``'s
+    docstring). But that projection does not actually depend on the *rows*, only on the
+    *columns* ``run_pipeline.BRONZE_TABLE_SCHEMA`` declares -- ``silver_findings`` is a
+    ``from_json``/``select`` pipeline over a fixed node schema, so its output ``StructType`` is
+    the same whether ``bronze`` holds zero rows or a million. This runs it over an **empty**
+    frame of that schema, purely to read the ``StructType`` back off the result, then
+    ``CREATE TABLE``s from it exactly the way :func:`precreate_clustered` does for ``ledger``
+    and ``bronze``.
+
+    ``scope`` matters for one fork and not the other. ``brick.metrics.silver_findings(bronze)``
+    takes one argument; ``brick/devsecops.metrics.silver_findings(bronze, scope)`` takes a
+    second, because that fork's two scopes read different API connections and therefore
+    dispatch to a different projection (``silver_sast`` vs. the default). Both projections are
+    documented to emit the **same** silver columns, so passing the wrong scope would likely not
+    even change the schema -- but there is no reason to rely on that when the real scope is
+    sitting right there, so it is passed whenever the installed ``silver_findings`` accepts it.
+    Detected by parameter count, not by fork name, for the same reason the rest of this package
+    stays fork-agnostic: a third fork with the same shape needs no change here.
+
+    Returns ``True`` if it created the table, ``False`` if it already existed (mirroring
+    :func:`precreate_clustered`'s per-table bookkeeping).
+    """
+    if run_pipeline_module.table_exists(spark, table):
+        return False
+
+    metrics_mod = run_pipeline_module.metrics
+    empty_bronze = spark.createDataFrame([], run_pipeline_module.BRONZE_TABLE_SCHEMA)
+    silver_findings_params = inspect.signature(metrics_mod.silver_findings).parameters
+    if len(silver_findings_params) >= 2:
+        silver_raw = metrics_mod.silver_findings(empty_bronze, scope)
+    else:
+        silver_raw = metrics_mod.silver_findings(empty_bronze)
+
+    rule_for_scope = getattr(run_pipeline_module, "rule_for_scope", None)
+    rule = rule_for_scope(scope) if rule_for_scope is not None else run_pipeline_module.DEFAULT_RISK_RULE
+    silver_schema = metrics_mod.classify_risk(silver_raw, rule).schema
+
+    cluster_by, deletion_vectors = run_pipeline_module.CLUSTERING["silver"]
+    spark.sql(
+        f"CREATE TABLE IF NOT EXISTS {table} ({_render_ddl(silver_schema)}) USING DELTA "
+        f"CLUSTER BY ({cluster_by}) TBLPROPERTIES "
+        f"(delta.enableDeletionVectors = {'true' if deletion_vectors else 'false'})"
+    )
+    return True
