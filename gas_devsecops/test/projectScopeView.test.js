@@ -398,12 +398,23 @@ describe("app.js: the header mounts the scope control and owns the pick round-tr
   // kind (`scopeKinds`), the chrome around it, and the view it asserts. The claim is the same
   // one, restated against the seam it now crosses: the header must mount the shared control,
   // built from THIS register's kinds, and hand the pick back through `pickProjectScope`.
-  it("mounts the shared scope control in renderAppbar, built from this app's kinds", () => {
+  // AND THE FUNCTION IS `appbarScope` NOW, not `renderAppbar`. This read
+  // `APP_SRC.indexOf("function renderAppbar")`, which returned -1 once the header itself moved
+  // to `gas_shared/shell/appbar.js` — the slice then started at the end of the file and matched
+  // an empty string, so the test failed rather than passing vacuously, which is the right
+  // failure. The claim it encoded is unchanged and is still this app's: the shared appbar takes
+  // a NODE and knows nothing about scopes, so the one function that builds that node has to be
+  // here, has to build it from THIS register's kinds, and has to hand the pick back through
+  // `pickProjectScope`. Only the name of the function carrying it moved.
+  it("builds the shared scope control in appbarScope, from this app's kinds", () => {
     expect(APP_SRC).toMatch(/import \{ scopeControl \} from "[./]*gas_shared\/ui\/scopeControl\.js";/);
     expect(APP_SRC).toMatch(
       /import \{ projectScopeView, scopeChrome, scopeKinds \} from ".\/ui\/projectScope\.js";/,
     );
-    const fn = APP_SRC.slice(APP_SRC.indexOf("function renderAppbar"));
+    const at = APP_SRC.indexOf("function appbarScope");
+    expect(at, "app.js has no appbarScope() — the slice below would be vacuous")
+      .toBeGreaterThan(-1);
+    const fn = APP_SRC.slice(at);
     const body = fn.slice(0, fn.indexOf("\n}\n"));
     expect(body).toMatch(/scopeControl\(/);
     expect(body).toMatch(/projectScopeView\(data\)/);

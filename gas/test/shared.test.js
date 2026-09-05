@@ -5,11 +5,17 @@
 // shared contract cannot be a test, it has to be a function this file calls with vitest's
 // own describe/it/expect and this app's specifics.
 //
-// FIVE of the six are registered here. `brandMark` is the sixth and is still absent: it
-// reads `src/client/index.html`, which P4 does not own — the manifest half it checks
-// (`MANIFEST.productName` / `MANIFEST.openingNoun` reaching the splash from app.js) is
-// already in place, so registering it is a one-line change for whichever package takes
-// index.html.
+// ALL SIX ARE REGISTERED HERE NOW. `brandMark` was the one that was not: its banner said it
+// reads `src/client/index.html`, which P4 did not own, and that "registering it is a one-line
+// change for whichever package takes index.html". P5 took index.html — there is no per-app
+// copy of it any more, just `gas_shared/shell/index.template.html` rendered from this app's
+// MANIFEST — so it is registered below, and this register's splash mark is held to the
+// module's geometry for the first time.
+//
+// The two claims gas's own `test/brandMark.test.js` made that the contract did not (the two
+// stroke widths, and pageShell's mark staying decorative) were promoted INTO the contract
+// rather than dropped, so all three registers gained them and this app lost nothing. That
+// file is deleted with the local `brandMark.js` fork it imported.
 //
 // `parity`, `emptyStates` and `navGroups` arrived with P4, when ui.js became a barrel over
 // `gas_shared/ui/index.js` and api.js / store.js were deleted in favour of the shared pair.
@@ -17,10 +23,11 @@
 // where a claim about THIS register lives.
 
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, afterAll, beforeAll } from "vitest";
 
 import { SEVERITY_COLORS, SLA_TARGETS } from "../src/domain/config";
 
+import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
@@ -34,6 +41,15 @@ import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 const base = { describe, it, expect, appRoot: APP_ROOT, app: "os" };
+
+// What the splash is held to. Written out here rather than read from app.js, which is the
+// point: the contract compares these against the MANIFEST and against the rendered markup, so
+// a rename that touched only one of the two fails.
+const PRODUCT_NAME = "Wiz Sidekick OS";
+// P8 settles the final copy for this word. Whatever it becomes, the manifest and the rendered
+// splash cannot disagree about it — renderIndex.js fills the template FROM the manifest — so
+// this line is the only place a change has to be mirrored.
+const OPENING_NOUN = "ledger";
 
 /** The @import specifiers of src/client/styles.css, in cascade order. */
 export const SHEET_ORDER = [
@@ -181,6 +197,13 @@ registerNavGroupContract({
     "executive", "mttr", "program", "overview", "data", "history", "attribution", "settings",
   ],
   defaultRoute: "executive",
+  // No `panelBlocksModule`: this register's nav panels list page links and nothing else, so
+  // there is no app-side file that may name a lane. See MANIFEST.panelBlocks in app.js for
+  // which candidates were considered and why each was rejected.
+});
+
+registerBrandMarkContract({
+  ...base, beforeAll, afterAll, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN,
 });
 
 // =========================================================================================

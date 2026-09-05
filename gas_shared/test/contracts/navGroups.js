@@ -57,6 +57,11 @@ export function parsePages(appSrc) {
  *                                 so a lane with two pages that happens to be listed here
  *                                 still passes (it is no longer a singleton, it just was
  *                                 never required not to be one).
+ * @param {string}   [ctx.panelBlocksModule]  app-relative path to this register's nav-panel
+ *                                 block builder, if it has one (gas_ai's
+ *                                 `src/client/js/navPanels.js`). It is the only app-side file
+ *                                 allowed to name a lane, so it is scanned alongside the
+ *                                 shared nav model. Omit for an app with no builder.
  * @param {boolean}  [ctx.frontDoorIsFirst]  Default `true`: the manifest's defaultRoute must
  *                                 be `PAGES[0]`. When `false`, that position coupling is not
  *                                 asserted; instead the defaultRoute must exist in PAGES (as
@@ -177,49 +182,72 @@ export function registerNavGroupContract(ctx) {
     });
   });
 
-  describe(app + ": navModel.js names no lane that PAGES does not compose", () => {
+  // WHERE A LANE ID CAN LEGITIMATELY LIVE, now that navModel.js is shared.
+  //
+  // The rail's arithmetic moved to `gas_shared/shell/navModel.js`, which takes PAGES as an
+  // argument and knows no lane names at all — so scanning it for a hardcoded id is a guard
+  // that bites on the PACKAGE rather than on one app: the moment anyone writes
+  // `item.id === "Landscape"` into shared, the two registers that have no Landscape lane fail
+  // here. The only app-side file that may name a lane is a nav-panel block builder, named by
+  // `ctx.panelBlocksModule` — today gas_ai's navPanels.js, the only one that exists. Both are
+  // read as TEXT rather than imported, so an id is caught even where it sits in dead code no
+  // runtime path reaches.
+  const laneSources = [
+    ["gas_shared/shell/navModel.js",
+      fileURLToPath(new URL("../../shell/navModel.js", import.meta.url))],
+    ...(ctx.panelBlocksModule
+      ? [[ctx.panelBlocksModule, resolve(root, ctx.panelBlocksModule)]]
+      : []),
+  ];
+
+  describe(app + ": the nav model names no lane that PAGES does not compose", () => {
     it("every quoted lane id it compares against is a real PAGES group", () => {
-      // Read navModel.js as text, the same way parsePages reads app.js as text rather than
-      // importing it — navModel.js is DOM-free and could be imported, but the point is to
-      // catch a hardcoded lane id even if it sits in dead code no runtime path reaches.
-      const NAV = readFileSync(resolve(root, "src/client/js/navModel.js"), "utf8");
-      // A lane/group id is capitalized ("Program", "Registers", "Data" — as opposed to the
-      // lowercase `kind` values "lane"/"page" this file also compares with `===`), so filter
-      // on that shape rather than name specific properties, which is what let a
-      // fork-inherited id like "Landscape" or "Risk" go unnoticed here before.
-      const laneLiterals = [...NAV.matchAll(/[=!]==\s*["']([A-Z][A-Za-z]*)["']/g)].map((m) => m[1]);
       const groups = new Set(PAGES.map((p) => p.group).filter(Boolean));
-      for (const lit of laneLiterals) {
-        expect(groups.has(lit),
-          'navModel.js compares against "' + lit + '", which is not a PAGES group').toBe(true);
+      for (const [label, path] of laneSources) {
+        const NAV = readFileSync(path, "utf8");
+        // A lane/group id is capitalized ("Program", "Registers", "Data" — as opposed to the
+        // lowercase `kind` values "lane"/"page" these files also compare with `===`), so
+        // filter on that shape rather than name specific properties, which is what let a
+        // fork-inherited id like "Landscape" or "Risk" go unnoticed here before.
+        const lits = [...NAV.matchAll(/[=!]==\s*["']([A-Z][A-Za-z]*)["']/g)].map((m) => m[1]);
+        for (const lit of lits) {
+          expect(groups.has(lit),
+            label + ' compares against "' + lit + '", which is not a PAGES group').toBe(true);
+        }
       }
     });
   });
 
-  describe(app + ": navModel.js mentions no module that does not exist", () => {
+  describe(app + ": the nav model mentions no module that does not exist", () => {
     // A parent-app fork left navModel.js citing `prunePanelView.js` (never ported) and a
     // "Risk"/"Assurance" example describing lanes the app never had — stale comments a reader
-    // would take as documentation of the current app. Every `whatever.js` this file names in
-    // prose is checked against the files that actually ship, in the same places a bare import
-    // would resolve it: alongside navModel.js itself, in the app's test/, or in the shared
-    // package's ui/ (which is where most of those modules live now).
+    // would take as documentation of the current app. Every `whatever.js` these files name in
+    // prose is checked against the files that actually ship, in the places a bare import
+    // would resolve one: beside the app's own client modules, in its test/, or in the shared
+    // package's root, ui/ or shell/ (which is where most of them live now).
     it("every *.js name it cites resolves to a real file", () => {
       const here = resolve(root, "src/client/js") + "/";
       const testDir = resolve(root, "test") + "/";
       const sharedDir = fileURLToPath(new URL("../../", import.meta.url));
-      const NAV = readFileSync(here + "navModel.js", "utf8");
-      const names = [...new Set([...NAV.matchAll(/\b[A-Za-z0-9_.]+\.js\b/g)].map((m) => m[0]))];
-      expect(names.length, "no .js name found — the pattern below would vacuously pass")
-        .toBeGreaterThan(0);
-      for (const name of names) {
-        const candidates = name.endsWith(".test.js")
-          ? [testDir + name]
-          : [here + name, here + "ui/" + name, testDir + name,
-             sharedDir + name, sharedDir + "ui/" + name];
-        expect(
-          candidates.some((c) => existsSync(c)),
-          'navModel.js names "' + name + '", which exists at none of: ' + candidates.join(", "),
-        ).toBe(true);
+      for (const [label, path] of laneSources) {
+        const NAV = readFileSync(path, "utf8");
+        const names = [...new Set([...NAV.matchAll(/\b[A-Za-z0-9_.]+\.js\b/g)].map((m) => m[0]))];
+        expect(names.length, label + " names no .js file — the check would be vacuous")
+          .toBeGreaterThan(0);
+        for (const name of names) {
+          const candidates = name.endsWith(".test.js")
+            ? [testDir + name]
+            : [here + name, here + "ui/" + name, testDir + name,
+               sharedDir + name, sharedDir + "ui/" + name, sharedDir + "shell/" + name,
+               // The shared nav model cites the contract that pins its lane rules by name, and
+               // a spec factory is not a `.test.js` — it lives here. Missing from the search
+               // path, an accurate citation read as a dangling one.
+               sharedDir + "test/contracts/" + name];
+          expect(
+            candidates.some((c) => existsSync(c)),
+            label + ' names "' + name + '", which exists at none of: ' + candidates.join(", "),
+          ).toBe(true);
+        }
       }
     });
   });

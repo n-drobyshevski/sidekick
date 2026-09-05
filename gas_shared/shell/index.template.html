@@ -8,9 +8,15 @@
   <body>
     <div id="app">
       <!-- Boot splash: static first paint so there's no blank flash while api_bootstrap
-           resolves. app.js's boot()/refresh() replace this with the live shell, and
-           bootSplash()/hideBootSplash() in app.js recreate/remove it on every reload —
-           keep this markup in sync with bootSplash() in app.js.
+           resolves. gas_shared/shell/appShell.js's boot()/refresh() replace this with the
+           live shell, and gas_shared/shell/bootSplash.js recreates/removes it on every
+           reload — keep this markup in sync with bootSplash() there.
+
+           ONE TEMPLATE FOR THREE APPS. The three copies of this file were byte-identical
+           apart from two words, both of which are already in each app's MANIFEST, so the
+           two are placeholders here and gas_shared/shell/renderIndex.js substitutes them
+           at build time into dist/index.html. That is why the splash can no longer say it
+           is opening something the app is not.
 
            The brand mark below is the ONE copy of it that is markup rather than
            geometry in ui/brandMark.js, because it has to paint before any script has
@@ -18,7 +24,7 @@
            test/shared.test.js fails if the two ever drift. Inline SVG in an HTML
            document needs no xmlns, which is what keeps this free of a bare `//` — the
            hazard esbuild.config.mjs's middlebox guard covers for the bundle, and that
-           this file, copied through verbatim, is not scanned for. -->
+           this file, rendered through verbatim, is not scanned for. -->
       <div class="boot-splash" role="status" aria-live="polite">
         <div class="boot-splash-inner">
           <div class="boot-brand">
@@ -81,15 +87,15 @@
               <path class="mark-knockout" fill="none" stroke="#ffffff" stroke-width="3.04"
                     stroke-linecap="round" stroke-linejoin="round" d="M42.3 48.81 46.19 52.7 54.89 43.99"/>
             </svg>
-            <span class="boot-brand-label">Wiz Sidekick AI</span>
+            <span class="boot-brand-label">{{productName}}</span>
           </div>
           <div class="boot-splash-bar progress-track indeterminate" role="progressbar"
-               aria-valuemin="0" aria-valuemax="100" aria-label="Opening the graph">
+               aria-valuemin="0" aria-valuemax="100" aria-label="Opening the {{openingNoun}}">
             <div class="progress-fill"></div>
           </div>
-          <p class="boot-splash-note">Opening the graph…</p>
+          <p class="boot-splash-note">Opening the {{openingNoun}}…</p>
         </div>
-        <noscript>Wiz Sidekick AI requires JavaScript.</noscript>
+        <noscript>{{productName}} requires JavaScript.</noscript>
       </div>
     </div>
     <?!= include('js_app'); ?>

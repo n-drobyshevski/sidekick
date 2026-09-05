@@ -130,6 +130,13 @@ registerNavGroupContract({
   // `problems`, not PAGES[0] (`graph`) — see the file banner above for both.
   singletonLanes: ["Labs"],
   frontDoorIsFirst: false,
+  // THE ONE APP-SIDE FILE THAT MAY NAME A LANE. navModel.js is `gas_shared/shell/navModel.js`
+  // now and knows no lane ids at all; the two blocks this register's panels list (saved
+  // graph/inventory views under Landscape, combination patterns under Risk) are its own domain
+  // knowledge and live here, so this is where the "no lane PAGES does not compose" scan has to
+  // point. Without it that check would only ever read the shared file and could not catch a
+  // renamed lane on this side.
+  panelBlocksModule: "src/client/js/navPanels.js",
 });
 
 registerBrandMarkContract({ ...base, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN });
