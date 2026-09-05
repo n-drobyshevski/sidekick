@@ -25,7 +25,7 @@ import { call } from "../../../../../gas_shared/api.js";
 import {
   clear, confirmDialog, dataTable, denomNote, downloadText, el, emptyState, errorState,
   firstRunNotice,
-  fmtCount, fmtDateTime, heroStat, kpiCard, num, pageHeader, pct1, registerWideNote,
+  fmtCount, fmtDateTime, kpiCard, num, pageHeader, pct1, registerWideNote,
   sectionLabel, skeletonStack, statusPill, toast,
 } from "../ui.js";
 
@@ -149,11 +149,8 @@ export async function confirmedAction(confirm, action) {
 
 export async function renderData(host, _params, ctx) {
   host.append(pageHeader({
-    hero: heroStat(
-      "Data",
-      "Storage",
-      "The register's storage: what it occupies, what can be exported, what can be reset.",
-    ),
+    route: "data",
+    lede: "The register's storage: what it occupies, what can be exported, what can be reset.",
   }));
 
   const noticeHost = el("div", {});

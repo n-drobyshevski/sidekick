@@ -9,21 +9,25 @@
 // Each stub names the metrics its page will own, so the composition can be reviewed on its
 // merits before a single query is written.
 
-import { el, heroStat, pageHeader } from "../ui.js";
+import { el, pageHeader } from "../ui.js";
 
 /**
  * Render one not-yet-wired page.
  *
- * The hero slot is for a NUMBER — "the number is the product" is the first design
- * principle, and `.hero-value` is sized for one. A stub has no number, so it puts the page
- * TITLE there and the question the page answers underneath, rather than setting a sentence
- * at 32px. The lane name rides the eyebrow, which is what it is for.
+ * The hero slot is for a NUMBER — "the number is the product" is the first design principle,
+ * and `.hero-value` is sized for one. A stub has no number, so it renders the header's title
+ * block alone: `pageHeader({ route })` reads the page's own name and lane out of PAGES, and
+ * the question the page answers rides the lede rather than being set at 32px.
+ *
+ * NOTHING IMPORTS THIS ANY MORE — `test/pagesLit.test.js` asserts exactly that, route by
+ * route, and `test/pagesData.test.js` again per page. It is kept as the Phase 1 record and is
+ * updated with the component it calls so it cannot rot into an example of an API that is gone.
  *
  * @param {HTMLElement} host  the content pane
- * @param {object}      spec  { lane, title, lede, sections: string[], note?: string }
+ * @param {object}      spec  { route, lede, sections: string[], note?: string }
  */
 export function renderStub(host, spec) {
-  host.append(pageHeader({ hero: heroStat(spec.lane, spec.title, spec.lede) }));
+  host.append(pageHeader({ route: spec.route, lede: spec.lede }));
 
   const card = el("section", { class: "card stub" });
   card.append(el("h2", { class: "section-label" }, "What this page will answer"));

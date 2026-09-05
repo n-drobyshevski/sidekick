@@ -3,8 +3,8 @@
 import { call, } from "../../../../../gas_shared/api.js";
 import { bootstrap, bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, appendAll, clear, confirmDialog, dataTable, el, emptyState, errorState,
-  firstRunNotice, fmtDateTime, heroStat, pageHeader,
+  absent, appendAll, clear, confirmDialog, dataTable, el, emptyState, errorState, heroLines,
+  firstRunNotice, fmtDateTime, pageHeader,
   prunePanel, registerWideNote, statRow,
   sectionLabel, skeleton, statusPill, toast,
 } from "../ui.js";
@@ -19,8 +19,13 @@ function fmtBytes(n) {
 export async function renderData(main, _params, ctx) {
   main.append(
     pageHeader({
-      hero: heroStat("Data", "Sync history and storage",
-        "What has been read, what it occupies, and what can be reset."),
+      route: "data",
+      // "Sync history and storage" was the hero VALUE — a subtitle, not a figure. It keeps
+      // its words one level down, under the h1 the route's PAGES title supplies.
+      lede: heroLines(
+        "Sync history and storage",
+        "What has been read, what it occupies, and what can be reset.",
+      ),
     }),
   );
 

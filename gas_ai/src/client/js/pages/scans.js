@@ -36,7 +36,7 @@ import { svgEl } from "../../../../../gas_shared/icons.js";
 import { openAreaSheet } from "./scanSheet.js";
 import {
   absent, clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
-  appendAll, heroStat, pageHeader,
+  appendAll, pageHeader,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
@@ -61,8 +61,8 @@ export async function renderScans(main, params, ctx) {
       // Counted, not typed. This sentence said "nine" while the page rendered ten areas —
       // the exact class of drift the rest of this page exists to refuse, and it only takes
       // one area being added anywhere for a hand-typed number to start lying.
-      hero: heroStat("Assurance", "Wiz Scans",
-        "Every figure traces back to one of " + SCAN_AREAS.length + " Wiz scan areas."),
+      route: "scans",
+      lede: "Every figure traces back to one of " + SCAN_AREAS.length + " Wiz scan areas.",
     }),
     el("p", { class: "page-sub" },
       "What each one is asked for, what it reported, and where the answer lands."),

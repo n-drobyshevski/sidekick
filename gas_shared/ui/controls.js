@@ -1,11 +1,12 @@
 // Interactive and labelled chrome: status pills, KPI tiles, stat rows, toggle groups,
 // labelled fields, and the applied-filter chip row.
 
+import { appConfig } from "../appConfig.js";
 import { absent } from "./cells.js";
 import { clear, el } from "./dom.js";
 import { meter } from "./data.js";
 import { absentText } from "./figures.js";
-import { tip, tipAnchor, tipLabel } from "./tip.js";
+import { glossaryTip, tip, tipAnchor, tipLabel, tipMark } from "./tip.js";
 
 /**
  * The one promotion `dataTable` already does for a cell (`ui/data.js`), missing here until
@@ -326,66 +327,173 @@ export function filterChipRow({
  * a name (.cov-hero, .inv-hero, .help-hero, the .comp-header hero). This is that block, so
  * the next page does not make a fifth.
  *
- * THE LABEL IS THE PAGE'S `<h1>`, and until this package no page in gas or gas_devsecops had
- * one at all. Measured: 24 of the three apps' 30 routes rendered this block and NO heading
- * element — `pageHeader` is a `div`, `heroStat` was three more, and the first heading a
- * screen reader met was the rail's `h2` or a section's `h3`. WCAG 2.1's heading-order
- * requirement is not the whole of it: `ui/sheet.js:230` already reaches for
- * `document.querySelector("h1")` and found nothing in two of the three apps. gas's own
- * `pages/mttr.js:1312` carries a comment working AROUND the gap ("so the page has no h1 → h3
- * heading skip"), which is the shape of a defect being routed around rather than fixed.
+ * THIS IS A METRIC, AND NOTHING IN IT IS A HEADING ANY MORE. P4b made the LABEL the page's
+ * `<h1>`, which closed a real defect — 24 of the three apps' 30 routes rendered this block and
+ * NO heading element at all, so the first heading a screen reader met was the rail's `h2` or a
+ * section's `h3`, and `ui/sheet.js:230` reached for `document.querySelector("h1")` and found
+ * nothing in two of the three apps — by putting the wrong string in it.
  *
- * WHY THE LABEL AND NOT THE VALUE. The value is a MEASUREMENT — `String(total)`,
- * `view.coverage.text`, a half-life — and a number is not a page name. The label is the only
- * slot in this block that is a name. It also means no page markup and no page copy changes,
- * which is what keeps this a heading-level fix rather than a redesign.
+ * WHY THE LABEL WAS WRONG, measured across all 32 call sites: it is used two ways. On some
+ * pages it is a LANE kicker ("Data", "Landscape", "Assurance", "Registers · Code"); on others a
+ * METRIC name ("Remediation half-life", "Failing controls", "Open problems"). Neither is the
+ * page's NAME. After F3, three gas_ai routes all announced "Risk" as their primary heading, so
+ * a reader navigating by heading could not tell Priorities from Toxic Combinations from Cloud
+ * Configuration. And the workaround for the pages whose label is a metric was to put the page
+ * TITLE in the 2rem `hero-value` slot instead, against DESIGN.md's own hierarchy: "only ever a
+ * data value, never a heading; headings keep the 1.5rem display ceiling."
  *
- * AND NO PIXEL MOVES. `styles/base.css` gives a bare `h1` the `--fs-display` step at 600 with
- * a bottom margin; `.kpi-label` beats it on font-size, weight, letter-spacing, transform and
- * colour by specificity, and the two properties it did NOT name — `line-height` and `margin`
- * — are now written into it explicitly at the values a `div` already inherited. So the rule
- * change is a no-op for every `.kpi-label` that is still a div (the KPI tiles) and makes this
- * one render exactly as it did.
+ * The page's name is `pageHeader`'s job now (see below), and this component went back to being
+ * what its doc comment always said it was: one figure, its name, and the line saying what it
+ * counts. `opts.heading` IS GONE WITH THE REASON FOR IT — there is no heading here to opt out
+ * of, so the four `{ heading: "div" }` escape hatches (combos, config, problems ×2) are
+ * deleted rather than left as a knob that no longer switches anything.
  *
- * `opts.heading` is the opt-out, and it is for a SECOND heroStat on a page that already has
- * one. gas_ai's `problems`, `combos` and `config` each draw a `pageHeader` hero at the top
- * (that is their h1) and a second one further down carrying a figure; the second passes
- * `{ heading: "div" }` so the page keeps exactly one h1. This used to read that those three
- * "own a page-level h1 above their header" — they did, as bare `el("h1", …)`, until F3
- * converted all three onto this component. The opt-out survives the conversion because the
- * reason for it did: two heroes, one heading.
- *
- * `test/contracts/pageHeader.js` is the rule that keeps the FIRST hero from regressing back
- * into a hand-rolled title: a route may render its own `el("h1")` only if its PAGES entry
- * declares `fullBleed: true`.
+ * `label` IS OPTIONAL. A register page whose h1 already names the figure ("Code" over the
+ * count of open weaknesses, with the sub-line saying "open weaknesses of 1,234 in the
+ * register") would only restate itself, so passing null draws the value with no eyebrow above
+ * it. `help` needs a label to hang from — DESIGN.md: "a definition is a control", and the
+ * control is the label — so asking for one without the other throws rather than silently
+ * dropping the definition. A term that defines the PAGE goes on `pageHeader({ help })`.
  */
-export function heroStat(label, value, sub, help, opts) {
-  const heading = (opts && opts.heading) || "h1";
+export function heroStat(label, value, sub, help) {
+  if (help && !label) {
+    // NO BACKTICKS IN A RUNTIME STRING. `esbuild.config.mjs`'s middlebox guard throws on a
+    // backtick surviving minification in the client bundle, and a quoted one in a thrown
+    // message survives just as well as a template literal does.
+    throw new Error("heroStat(): help needs a label to hang from — a definition is a control, "
+      + "and with no label there is no control for a reader to reach it through. If the term "
+      + "defines the PAGE rather than this figure, pass it as pageHeader({ help }).");
+  }
   return el("div", { class: "page-hero" },
-    el(heading, { class: "kpi-label" }, tipLabel(label, help)),
+    label ? el("div", { class: "kpi-label" }, tipLabel(label, help)) : null,
     el("div", { class: "hero-value num" }, valueOrAbsent(value)),
     sub ? el("div", { class: "page-hero-sub" }, sub) : null,
   );
 }
 
 /**
- * The header those four pages share: a borderless grid closed by a hairline, reading in
- * three levels rather than as a row of equal tiles. `hero` is the subject, `aside` is the
- * one thing that qualifies it (a distribution strip, a small curve), and `stats` are the
- * supporting facts as a full-width strip divided by hairlines.
+ * A sub-line carrying more than one sentence, as blocks rather than as a wrap.
  *
- * Every slot is optional and el() drops the empty ones, so a page that only has a hero gets
- * a hero.
+ * `secrets` built this inline for the two lines its alarm needs — the figure's own sentence,
+ * then the validity split it sits inside — and the six pages whose old hero VALUE was a
+ * subtitle rather than a figure ("Scan scope, risk, attribution, retention", over Settings)
+ * need the same shape now that the subtitle has moved under the h1. `.hero-line`
+ * (components.css) is what makes the second line read as a second statement rather than as a
+ * continuation of the first. No copy was rewritten to move it; it is the same string, one
+ * level down.
  */
-export function pageHeader({ hero, aside, stats } = {}) {
+export function heroLines(...lines) {
+  return el("span", {},
+    ...lines.filter(Boolean).map((line) => el("span", { class: "hero-line" }, line)));
+}
+
+/**
+ * THE PAGE HEADER, and the page's `<h1>` is here because the page's NAME is here.
+ *
+ * A borderless grid closed by a hairline, reading in levels rather than as a row of equal
+ * tiles. `hero` is the subject figure, `aside` is the one thing that qualifies it (a
+ * distribution strip, a small curve), and `stats` are the supporting facts as a full-width
+ * strip divided by hairlines. Every slot is optional and el() drops the empty ones, so a page
+ * that only has a hero gets a hero.
+ *
+ * `route` IS THE PAGES KEY, NOT A TITLE STRING, and that is the whole point. The title and the
+ * lane are read out of `appConfig().PAGES[route]` — the route table CLAUDE.md already names as
+ * the only IA list — so a page cannot keep a second copy of its own name, and cannot drift
+ * from the name the rail draws, the one `document.title` sets, or the one
+ * `test/contracts/pageHeader.js` asserts. A route key is an identifier; a title is copy. Only
+ * the identifier is repeated.
+ *
+ * THE THREE LEVELS, and which one is a heading:
+ *
+ *   .kpi-label      the LANE, from PAGES `group`. Orientation at the 12px label step, and a
+ *                   `div`, never an h*: "Registers" is where the page lives, not what it is,
+ *                   and three pages in one lane sharing one heading string is the defect P4b
+ *                   shipped. Omitted for the chrome tail (`group: null`), which has no lane.
+ *   h1.page-title   the PAGE, from PAGES `title`, at the 1.5rem display step `base.css`
+ *                   already gives a bare `h1` — DESIGN.md's stated heading ceiling, and
+ *                   gas_ai/DESIGN.md's "h1 at the display step, and nothing else at that
+ *                   step". A page title is not a data value, so it never takes the 2rem hero
+ *                   step again: that is what left `compliance` rendering its own name and its
+ *                   posture percentage at the same 32px, and `combos` with two 32px values
+ *                   ninety pixels apart.
+ *   .page-hero-sub  the LEDE, the page's own sentence, carried word for word from the `sub`
+ *                   each of those heroes already passed. `heroLines` is how a page that also
+ *                   had a subtitle keeps both.
+ *
+ * `help` puts a definition BESIDE the h1, never inside it, for a register page whose glossary
+ * term defines the PAGE rather than a figure on it (`sast`, `sca`). Inside was measured and it
+ * is wrong: `tip()` renders its spoken copy as an `.sr-only` sibling of the trigger, so a
+ * `tipLabel(page.title, help)` folds the whole definition into the HEADING's accessible name —
+ * `<h1>` textContent on `sast` came back as "Code" followed by fifty words about CWEs, which is
+ * what a screen reader's heading list would then read out. The heading is the name; the `?` is a
+ * control beside it, which is exactly DESIGN.md's "a definition is a control; a value is not".
+ * A term defining the FIGURE belongs on `heroStat`'s label instead — `secrets` puts
+ * "secret-resolved" on "Removed, not rotated", which is the metric it actually defines.
+ *
+ * NO `route` MEANS NO h1, and that is what replaced `{ heading: "div" }`. gas_ai's `problems`,
+ * `combos` and `config` each draw a second header further down the page carrying a figure and
+ * its stat strip; those pass no `route`, so they get no heading and the page keeps exactly one
+ * h1. The opt-out is the absence of an input rather than a flag, so there is nothing to forget.
+ *
+ * `test/contracts/pageHeader.js` holds all of it: only a `fullBleed` route may render its own
+ * `el("h1")`, every other route's module passes its OWN route key here, and no `heroStat`
+ * value slot anywhere in the app carries a string that is a PAGES title.
+ */
+export function pageHeader({ route, help, lede, hero, aside, stats } = {}) {
   // Without an aside the two-column grid leaves the hero in a narrow column with a thousand
   // empty pixels beside it, which is where its sub-line starts wrapping for no reason. The
   // modifier widens the one column that is actually carrying anything.
   return el("div", { class: "page-header" + (aside ? "" : " page-header--solo") },
+    route ? pageTitles(route, help, lede) : null,
     hero || null,
     aside || null,
     stats && stats.length ? el("div", { class: "stat-list" }, ...stats) : null,
   );
+}
+
+/**
+ * The lane / name / lede block, read from the app's own route table.
+ *
+ * `appConfig()` is called INSIDE the function, never at module top level — appConfig.js's rule
+ * 2. A top-level read executes during import, which under esbuild's bundling order happens
+ * before app.js's body has handed the manifest over, and throws on a correctly wired app.
+ *
+ * Both throws are deliberate and neither is defensive coding. A route this table does not hold
+ * would otherwise render a header with no heading in it at all — the exact defect this
+ * component exists to end — and would do it silently, which is the failure mode CLAUDE.md's
+ * "a zero has to prove it looked" is about.
+ */
+function pageTitles(route, help, lede) {
+  const pages = appConfig().PAGES;
+  if (!pages) {
+    throw new Error("pageHeader({ route }): this app's manifest carries no PAGES — hand it to "
+      + "configureApp() so the header can read the route's own title and lane.");
+  }
+  const page = pages[route];
+  if (!page || !page.title) {
+    throw new Error('pageHeader({ route: "' + route + '" }): no such route in PAGES, or it '
+      + "carries no title. The h1 IS the PAGES title; there is no second place to keep it.");
+  }
+  const heading = el("h1", { class: "page-title" }, page.title);
+  return el("div", { class: "page-titles" },
+    page.group ? el("div", { class: "kpi-label" }, page.group) : null,
+    help ? el("div", { class: "page-title-row" }, heading, titleTip(page, help)) : heading,
+    lede ? el("div", { class: "page-hero-sub" }, lede) : null,
+  );
+}
+
+/**
+ * The page's definition as a `?` control beside its name.
+ *
+ * A bare `?` is `aria-hidden`, so without an explicit `label` the button `tip()` builds around
+ * it has NO accessible name at all — `problems.js`'s own `glossaryTip(tipMark(), …)` in a hero
+ * sub-line has carried that hole since it was written. Named from the page here, so the control
+ * announces what it is about rather than announcing nothing and hoping the description carries.
+ */
+function titleTip(page, help) {
+  const label = "About " + page.title;
+  if (help.term && !help.lines) return glossaryTip(tipMark(), help.term, { label });
+  return tip(tipMark(), help.lines || help, { label, term: help.term || null });
 }
 
 export function kpiCard(label, value, sub, chip, help) {

@@ -28,7 +28,8 @@
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   absent, clear, dataTable, el, emptyState, errorState, fmtDateTime, fmtSpan, glossaryTip,
-  heroStat, num, pageHeader, scopeBar, sectionLabel, skeleton, statusPill, tip, tipAnchor,
+  heroLines,
+  num, pageHeader, scopeBar, sectionLabel, skeleton, statusPill, tip, tipAnchor,
 } from "../ui.js";
 
 // A play triangle for the Run scan button — inlined stroke/fill SVG (the GAS/CSP sandbox
@@ -226,8 +227,11 @@ export async function renderExecutive(main, _params, ctx) {
 
   const page = el("div", { class: "exec" });
   page.append(pageHeader({
-    hero: heroStat(
-      "Security",
+    route: "executive",
+    // TWO LINES, both carried word for word: the page's old hero VALUE was "Security posture"
+    // — a subtitle, not a figure — and its sub-line was the sentence below it. The h1 is the
+    // route's PAGES title now, so the subtitle drops one level rather than being deleted.
+    lede: heroLines(
       "Security posture",
       "The one number this register exists to state, and what moved it.",
     ),

@@ -14,7 +14,7 @@ import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   PAGE_SIZES, absent, bookTip, clear, dataTable, downloadText, el, emptyState, errorState,
-  fmtDate, glossaryTip, heroStat, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge,
+  fmtDate, glossaryTip, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge,
   skeleton, statusPill, tableFooter, tip, toast,
 } from "../ui.js";
 
@@ -141,12 +141,9 @@ export async function renderProgram(main, _params, ctx) {
   const dataPromise = swrCall("api_getProgramPage", params, (fresh) => paint && paint(fresh));
 
   main.append(pageHeader({
-    hero: heroStat(
-      "Security",
-      "Program performance",
-      "Whether remediation effort lands on the findings that matter. Coverage and efficiency "
-        + "pull against each other, so neither means anything alone.",
-    ),
+    route: "program",
+    lede: "Whether remediation effort lands on the findings that matter. Coverage and "
+      + "efficiency pull against each other, so neither means anything alone.",
   }));
 
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });

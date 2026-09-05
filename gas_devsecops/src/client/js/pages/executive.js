@@ -565,7 +565,17 @@ export async function renderExecutive(host, params, _ctx) {
   const sevHost = el("div", {});
   const registerHost = el("div", {});
   const scanHost = el("div", {});
-  host.append(noticeHost, heroHost, fixHost, sevHost, registerHost, scanHost);
+  // THE TITLE BLOCK IS STATIC, AND THE h1 DOES NOT WAIT ON AN RPC. The metric header below is
+  // built inside `renderHero`, which runs only once the fetch resolves — so the loading
+  // skeleton, the fetch-failure errorState and (on Coverage & efficiency) the no-figures empty
+  // state each rendered a page with NO `<h1>` in it at all. Appended here instead, once, ahead
+  // of every host: the page's name is not a function of its data. Two stacked `.page-header`
+  // blocks is the shape gas_ai's `problems` / `combos` / `config` already have — a title
+  // header, then the figure and its stat strip.
+  host.append(
+    pageHeader({ route: "executive" }),
+    noticeHost, heroHost, fixHost, sevHost, registerHost, scanHost,
+  );
 
   // One failing section must never blank the front door.
   function guard(label, target, fn) {
@@ -647,6 +657,7 @@ export async function renderExecutive(host, params, _ctx) {
       ),
     ];
 
+    // NO `route`: the h1 is in the title block appended once at the top of renderExecutive.
     heroHost.append(pageHeader({
       hero: heroStat(
         "Remediation half-life",

@@ -16,8 +16,7 @@
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  absent, clear, dataTable, el, emptyState, firstRunNotice, fmtDate, glossaryTip, heroStat,
-  kpiCard, pageHeader, settingsPanel, statusPill, tableFooter, tip,
+  absent, clear, dataTable, el, emptyState, firstRunNotice, fmtDate, glossaryTip, kpiCard, pageHeader, settingsPanel, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -76,13 +75,10 @@ export async function renderAttribution(main, params, ctx) {
   let pageSize = 50;
 
   main.append(pageHeader({
-    hero: heroStat(
-      "Data",
-      "Attribution",
-      "How every finding maps onto the manual groups and support groups, across the whole "
-        + "register. The header scope switcher is deliberately not applied here — this "
-        + "page audits the mapping itself.",
-    ),
+    route: "attribution",
+    lede: "How every finding maps onto the manual groups and support groups, across the whole "
+      + "register. The header scope switcher is deliberately not applied here — this "
+      + "page audits the mapping itself.",
   }));
 
   if (!boot.latestScan) {

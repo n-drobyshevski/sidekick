@@ -834,7 +834,11 @@ function paintSca(host, vm, filters) {
   // not by an empty rectangle.
   const heroSevs = sevEntries(vm.counts, vm.severityOrder);
   host.append(pageHeader({
-    hero: heroStat("Registers · Dependencies", vm.hero.value, vm.hero.sub, { term: "sca" }),
+    // See sast.js: the lane is the eyebrow, the h1 is the page's PAGES title, and the term
+    // defines the register rather than the count under it.
+    route: "sca",
+    help: { term: "sca" },
+    hero: heroStat(null, vm.hero.value, vm.hero.sub),
     aside: el("div", { class: "page-strip" },
       heroSevs.length
         ? [

@@ -40,10 +40,12 @@ import { findEntry } from "./helpContent.js";
 //
 // The shared modules cannot reach sideways into an app: `gas_shared/ui/tip.js` has no
 // `../helpContent.js` to import and `gas_shared/store.js` cannot know which route is this
-// register's front door. Those answers travel as data instead. `configureApp()` is
-// DELIBERATELY THE FIRST STATEMENT of the module body — imports run before it, but no shared
-// module reads the manifest at import time (see appConfig.js's rule 2), so the first read of
-// it can only happen after this line.
+// register's front door. Those answers travel as data instead, handed over by the
+// `configureApp()` call BELOW THE PAGES TABLE — the manifest now carries PAGES, which is
+// declared after it, and everything between the two is a declaration rather than a call. That
+// is what appConfig.js's rule 1 is actually about: nothing may READ the manifest before it is
+// set, and no shared module reads it at import time (rule 2), so the first possible read is
+// still after `configureApp` runs.
 const MANIFEST = {
   productName: "Wiz Sidekick OS",
   // What the boot splash says it is opening. "ledger", not "register": devsecops already
@@ -101,8 +103,6 @@ const MANIFEST = {
   //     be the rail re-asserting the thing the header was built to take off it.
   // When a saved-view store lands, this key is the one line that changes.
 };
-configureApp(MANIFEST);
-
 // THE ONE SOURCE for both the router and the nav. Order matters twice over: pages are drawn
 // in this insertion order, LANES ARE THE CONTIGUOUS RUNS OF ONE `group` (navModel.railItems
 // walks it once and joins a page to the item still open, so a lane split in two would draw
@@ -145,6 +145,17 @@ const PAGES = {
   help: { title: "Key sheet", group: "Data", render: renderHelp },
   settings: { title: "Settings", group: null, render: renderSettings },
 };
+
+// PAGES JOINS THE MANIFEST, AND THAT IS WHY THIS CALL MOVED DOWN A TABLE.
+// `gas_shared/ui/controls.js`'s `pageHeader({ route })` reads a route's own title and lane out
+// of `appConfig().PAGES`, so the `<h1>` on every page IS the PAGES title by construction
+// rather than by a second copy of the string sitting in the page module. PAGES is declared
+// below the manifest, so it is spread in here instead of named inside it.
+//
+// STILL BEFORE ANY SHARED FUNCTION RUNS, which is the rule appConfig.js's rule 1 actually
+// protects: everything between the manifest literal and this line is a declaration or an
+// object literal — no call — and no shared module reads the manifest at import time (rule 2).
+configureApp({ ...MANIFEST, PAGES });
 
 // Old bookmarks and links to the two pages that were merged into Data keep working. This was
 // `ROUTE_ALIASES` inside gas's own store.js; the shared store cannot carry one app's aliases,

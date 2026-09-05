@@ -88,25 +88,22 @@ function actionsSkeleton() {
 
 export async function renderProblems(main, params) {
   const boot = await bootstrap();
-  // `pageHeader`/`heroStat`, not a bare `el("h1", ...)` — the same conversion
-  // `pages/compliance.js` made, on the same reasoning: "Risk" (this route's own PAGES lane,
-  // app.js) is the kicker and the page's `<h1>`; "Priorities" is the hero VALUE, a title
-  // string rather than a number, which `heroStat` carries fine. The two `heroStat` calls
-  // further down this file keep `{ heading: "div" }` for the reason they always had — the
-  // page owns exactly one h1, and it is now this one.
+  // `pageHeader({ route })`, not a bare `el("h1", ...)` and not a title in the hero VALUE —
+  // the same conversion `pages/compliance.js` made, and the same correction. F3 put "Risk"
+  // (this route's PAGES lane) in the h1 and "Priorities" in the 2rem hero slot, which left
+  // three pages of this lane all announcing "Risk" as their heading. The lane is the eyebrow
+  // and the h1 is the route's PAGES title now; the two `heroStat` calls further down carry
+  // figures and no `route`, so the page still owns exactly one h1.
   main.append(pageHeader({
-    hero: heroStat(
-      "Risk",
-      "Priorities",
-      // NINE WORDS, unchanged by the conversion. The cascade this page ranks by — Wiz's
-      // severity, then how soon it is due, then how long it has been open — is a
-      // definition, and DESIGN.md is explicit that a definition belongs in the tip that
-      // routes to its Help entry rather than in a paragraph above the thing it describes.
-      // An ARRAY, not a string: `el()` flattens its children, so the sentence and the tip
-      // that follows it land in the one `.page-hero-sub` line they used to share as a `<p>`.
-      ["Every open issue and finding, ranked on one scale.",
-        glossaryTip(tipMark(), "priorities-rank")],
-    ),
+    route: "problems",
+    // NINE WORDS, unchanged by either conversion. The cascade this page ranks by — Wiz's
+    // severity, then how soon it is due, then how long it has been open — is a definition,
+    // and DESIGN.md is explicit that a definition belongs in the tip that routes to its Help
+    // entry rather than in a paragraph above the thing it describes. An ARRAY, not a string:
+    // `el()` flattens its children, so the sentence and the tip that follows it land in the
+    // one `.page-hero-sub` line they used to share as a `<p>`.
+    lede: ["Every open issue and finding, ranked on one scale.",
+      glossaryTip(tipMark(), "priorities-rank")],
   }));
 
   if (!boot.latestSync) {
@@ -267,10 +264,9 @@ export async function renderProblems(main, params) {
     // anti-references reject, and it left the two modes of one page looking like two
     // different pages. Each level keeps the tip it already carried.
     return pageHeader({
-      hero: heroStat("Open problems", String(total), "issues ∪ findings, the whole union",
-        // This page already owns the route's <h1> ("Priorities", above the header), so the
-        // hero label stays a div. Two h1s is the defect the shared default fixes, inverted.
-        null, { heading: "div" }),
+      // NO `route`, SO NO h1: the page's heading is in the header above this one. This used
+      // to need `{ heading: "div" }` on heroStat; heroStat renders no heading at all now.
+      hero: heroStat("Open problems", String(total), "issues ∪ findings, the whole union"),
       stats,
     });
   }
@@ -573,8 +569,9 @@ export async function renderProblems(main, params) {
     // The count is the hero, the curve is what qualifies it, the other two are the strip:
     // three levels of emphasis instead of four blocks saying one thing.
     return pageHeader({
-      hero: heroStat("Open problems", String(problems), "issues ∪ findings, the whole union",
-        null, { heading: "div" }),
+      // NO `route`, so no h1 — see the header above.
+      hero: heroStat("Open problems", String(problems),
+        "issues ∪ findings, the whole union"),
       aside,
       stats: [
         statRow("Collapse to", String(actions), "distinct remediation actions"),

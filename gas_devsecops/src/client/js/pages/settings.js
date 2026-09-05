@@ -53,7 +53,7 @@ import { call } from "../../../../../gas_shared/api.js";
 import { bootstrapCached } from "../../../../../gas_shared/store.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import {
-  clear, diagnosticsPanel, el, errorState, fmtDateTime, glossaryTip, heroStat, pageHeader,
+  clear, diagnosticsPanel, el, errorState, fmtDateTime, glossaryTip, heroLines, pageHeader,
   skeletonStack, statusPill, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
@@ -305,8 +305,10 @@ export function accessFieldView(canEditAccess) {
 
 export async function renderSettings(host, params, ctx) {
   host.append(pageHeader({
-    hero: heroStat(
-      "Settings",
+    route: "settings",
+    // "Register, deadlines, access, system" was the hero VALUE — the contents list, not a
+    // figure. Same words, one level down, under the h1 the route's PAGES title supplies.
+    lede: heroLines(
       "Register, deadlines, access, system",
       "One save bar covers the register, the deadlines and the maintenance schedule. Access "
         + "and the show-experimental preference save themselves, on their own controls.",

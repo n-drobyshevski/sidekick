@@ -39,9 +39,15 @@
  *                                   Resolve a glossary term to its help entry, or null.
  *                                   The app owns its own vocabulary; `ui/tip.js` only asks.
  *
+ * @property {object}  [PAGES]        The route table — the only IA list (see app.js). Read by
+ *                                   `ui/controls.js`'s `pageHeader({ route })`, which takes a
+ *                                   route's `title` for the page's `<h1>` and its `group` for
+ *                                   the lane eyebrow above it. This is the one manifest key
+ *                                   declared AFTER `configureApp` in each app.js, so it is
+ *                                   spread into the call rather than named inside MANIFEST.
+ *
  * Reserved, declared here so the shape is one document rather than a scatter of additions,
  * and consumed by later packages rather than by this one:
- * @property {object}  [PAGES]        The route table — the only IA list (see app.js).
  * @property {object}  [LANE_ICONS]   Lane mark per nav lane.
  * @property {object}  [ROUTE_ICONS]  Route mark per route.
  * @property {string[]} [scopeKinds]  The register's scopes ("sca" / "sast" / "secrets").

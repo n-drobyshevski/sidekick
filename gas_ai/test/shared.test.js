@@ -146,14 +146,19 @@ registerNavGroupContract({
 
 registerBrandMarkContract({ ...base, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN });
 
-// ONE h1 PER PAGE, AND ONLY A fullBleed ROUTE MAY WRITE ITS OWN. This register is the only
-// one the rule bites in today: `graph` and `aars` render `h1.workbench-title` inside a
-// `.workbench-bar` — a full-width toolbar carrying search, tabs and actions beside the title
-// — and both are exactly the routes PAGES declares `fullBleed: true`. The other three that
-// used to hand-roll a title (`problems`, `combos`, `config`) now call
-// `pageHeader({ hero: heroStat("Risk", <title>, <sub>) })` like `compliance` does, so the
-// exception is no longer a judgement recorded in prose. No skipReason: every route here has
-// a module at pages/<route>.js and the sweep runs.
+// ONE h1 PER PAGE, IT SAYS WHICH PAGE, AND ONLY A fullBleed ROUTE MAY WRITE ITS OWN. This
+// register is the only one the fullBleed half bites in today: `graph` and `aars` render
+// `h1.workbench-title` inside a `.workbench-bar` — a full-width toolbar carrying search, tabs
+// and actions beside the title — and both are exactly the routes PAGES declares
+// `fullBleed: true`.
+//
+// AND IT IS THE REGISTER F4's HALF WAS WRITTEN FOR. F3 converted `problems`, `combos` and
+// `config` off their hand-rolled titles onto `pageHeader({ hero: heroStat("Risk", <title>,
+// <sub>) })` — which gave all three, plus `compliance`, an h1 reading "Risk" or "Assurance"
+// rather than the page's name, and put the name itself in the 2rem hero slot. All four pass
+// their own route key now. No sharedHeaderRoutes: this register keeps a LOCAL help page (see
+// gas_shared/README.md, "The one page that is not shared"), so `help` obeys the rule like
+// every other route. No skipReason either: every route has a module at pages/<route>.js.
 registerPageHeaderContract(base);
 
 registerParityContract({

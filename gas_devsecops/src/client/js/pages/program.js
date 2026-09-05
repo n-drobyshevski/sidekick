@@ -412,7 +412,17 @@ export async function renderProgram(host, params, _ctx) {
   const sensitivityHost = el("div", {});
   const capacityHost = el("div", {});
   const trendHost = el("div", {});
-  host.append(noticeHost, heroHost, matrixHost, signalHost, sensitivityHost, capacityHost, trendHost);
+  // THE TITLE BLOCK IS STATIC, AND THE h1 DOES NOT WAIT ON AN RPC. The metric header below is
+  // built inside `renderHero`, which runs only once the fetch resolves — so the loading
+  // skeleton, the fetch-failure errorState and (on Coverage & efficiency) the no-figures empty
+  // state each rendered a page with NO `<h1>` in it at all. Appended here instead, once, ahead
+  // of every host: the page's name is not a function of its data. Two stacked `.page-header`
+  // blocks is the shape gas_ai's `problems` / `combos` / `config` already have — a title
+  // header, then the figure and its stat strip.
+  host.append(
+    pageHeader({ route: "program" }),
+    noticeHost, heroHost, matrixHost, signalHost, sensitivityHost, capacityHost, trendHost,
+  );
 
   let live = true;
   onPageTeardown(() => { live = false; });
@@ -494,6 +504,7 @@ export async function renderProgram(host, params, _ctx) {
             : "Nothing was remediated under a classification, so there is no rate to take."),
       denominatorNode(view.efficiency));
 
+    // NO `route`: the h1 is in the title block appended once at the top of renderProgram.
     heroHost.append(pageHeader({
       hero: heroStat(
         "Remediation coverage",

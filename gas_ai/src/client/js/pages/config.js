@@ -64,16 +64,14 @@ export async function renderConfigFindings(main, params, ctx) {
   };
 
   // `pageHeader`/`heroStat`, not a bare `el("h1", ...)` — see `pages/compliance.js`'s own
-  // note for the reasoning. "Risk" (this route's PAGES lane) is the kicker and the page's
-  // `<h1>`; "Cloud Configuration" is the hero VALUE. The `heroStat` further down keeps
-  // `{ heading: "div" }`: the page owns one h1 and it is now this one.
+  // note for the reasoning. "Risk" (this route's PAGES lane) is the eyebrow and "Cloud
+  // Configuration" — the route's own PAGES title — is the `<h1>`, at the 1.5rem heading
+  // ceiling rather than in the 2rem hero slot F3 put it in. The `heroStat` further down
+  // carries a figure and no `route`, so the page still owns exactly one h1.
   main.append(pageHeader({
-    hero: heroStat(
-      "Risk",
-      "Cloud Configuration",
-      "Wiz configuration findings for the AI security framework — what is failing, " +
+    route: "config",
+    lede: "Wiz configuration findings for the AI security framework — what is failing, " +
       "grouped by the control that failed.",
-    ),
   }));
 
   const headHost = el("div", {});
@@ -216,10 +214,9 @@ export async function renderConfigFindings(main, params, ctx) {
         }));
     }
     headHost.append(pageHeader({
+      // NO `route`, SO NO h1: the page's heading is in the header above this one.
       hero: heroStat("Failing controls", String(totals.gaps ?? 0),
-        plural(totals.controls ?? 0, "distinct control"),
-        // The route's <h1> is "Cloud Configuration", rendered above this header.
-        null, { heading: "div" }),
+        plural(totals.controls ?? 0, "distinct control")),
       aside: strip,
       stats: headerStats,
     }));

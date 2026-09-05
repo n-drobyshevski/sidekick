@@ -58,7 +58,7 @@
 
 import { setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, dataTable, el, emptyState, errorState, filterCombobox, heroStat, meter,
+  absent, clear, dataTable, el, emptyState, errorState, filterCombobox, meter,
   pageHeader, plural, sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
@@ -101,19 +101,17 @@ export async function renderCompliance(main, params, ctx) {
     expanded: new Set(String(params.open || "").split(",").filter(Boolean)),
   };
 
-  // `pageHeader`/`heroStat`, not a bare `el("h1", ...)` — this page was the one route left
-  // rendering its own title beside the shared component every other hero-style page in this
-  // app now uses. "Assurance" (this route's own PAGES lane, app.js) is the kicker/h1, the way
-  // "Data" is on `pages/data.js`'s hero; "Compliance Posture" is the hero VALUE — a title
-  // string, not a number, which `heroStat` already carries fine for that page.
+  // `pageHeader({ route })`, not a bare `el("h1", ...)` and not a title in the hero VALUE.
+  // P8 converted this page's hand-rolled title onto the shared component by putting
+  // "Compliance Posture" in the 2rem hero slot — which left the page's name and its posture
+  // percentage (`.comp-hero-value`, also --fs-hero) reading at the same size, in a register
+  // whose first design principle is that the number is the product. The name is the h1 now, at
+  // the 1.5rem ceiling, and the percentage is the only thing on the page at the hero step.
   main.append(pageHeader({
-    hero: heroStat(
-      "Assurance",
-      "Compliance Posture",
-      // Nine words. The three grains it used to enumerate (category, subcategory, policy)
-      // are the page's own structure, and the reader meets all three by scrolling.
-      "How this landscape scores against the frameworks Wiz tracks.",
-    ),
+    route: "compliance",
+    // Nine words. The three grains it used to enumerate (category, subcategory, policy)
+    // are the page's own structure, and the reader meets all three by scrolling.
+    lede: "How this landscape scores against the frameworks Wiz tracks.",
   }));
 
   const host = el("div", {});

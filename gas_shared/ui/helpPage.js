@@ -44,7 +44,7 @@
 import { setParams } from "../store.js";
 import { clear, el, motionOk } from "./dom.js";
 import { emptyState } from "./feedback.js";
-import { heroStat, pageHeader } from "./controls.js";
+import { pageHeader } from "./controls.js";
 import { plural } from "./format.js";
 import { debounce, onPageTeardown } from "./timing.js";
 
@@ -154,23 +154,22 @@ function isEditable(node) {
  * The page. `opts.entries` is the app's whole book, resolved by the caller so this module
  * never imports sideways.
  *
- * THE HERO SAYS "Data" BECAUSE BOTH CONSUMERS PUT THIS ROUTE IN THE DATA LANE, and that is
- * held rather than assumed: `gas_shared/test/contracts/help.js` asserts `help` sits in the
- * `Data` lane of each app's `PAGES` and is the last page of it. A third consumer that filed
- * the route somewhere else would fail that assertion before this eyebrow could lie about it,
- * which is why the lane is a literal here and not a fourth option nobody would ever pass.
+ * THE EYEBROW AND THE TITLE ARE NOT LITERALS HERE ANY MORE, and that is a strictly better
+ * answer than the one this comment used to defend. It read: the hero says "Data" because both
+ * consumers file this route in the Data lane, and `test/contracts/help.js` asserts the lane so
+ * the literal cannot lie. True, and it still asserts it — but a literal that has to be policed
+ * by a test is a second copy of the route table. `pageHeader({ route: "help" })` reads the lane
+ * AND the title out of `appConfig().PAGES` instead, so a third consumer that filed the route
+ * elsewhere, or spelled its title differently, gets its own words with nothing to keep in step.
  */
 export async function renderHelpPage(host, params, _ctx, opts) {
   const entries = (opts && opts.entries) || [];
   const wantedTerm = normalize(params && params.term);
 
   host.append(pageHeader({
-    hero: heroStat(
-      "Data",
-      "Key sheet",
-      "What every word and mark in this register means, written once and reached from " +
-        "anywhere a definition trigger names it.",
-    ),
+    route: "help",
+    lede: "What every word and mark in this register means, written once and reached from " +
+      "anywhere a definition trigger names it.",
   }));
 
   const label = el("label", { class: "field-label", for: "help-search" }, "Search terms");
