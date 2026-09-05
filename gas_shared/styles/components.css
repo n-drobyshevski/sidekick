@@ -1287,3 +1287,17 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
 .filter-chip.is-default .filter-chip-value { font-weight: 500; }
 
 .filter-clear-all { font-size: var(--fs-label); }
+
+/* Capacity meter (ui/usageMeter.js): caption over a track/fill bar reusing .progress-track.
+   The warn/bad state recolors the fill AND the note text — meaning never rides on colour
+   alone (the number and note carry it too). */
+.usage-meter__head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3);
+  margin-bottom: 6px;
+}
+.usage-meter__caption { font-size: var(--fs-label); color: var(--text-2); }
+.usage-meter__track.warn .progress-fill { background: var(--warn); }
+.usage-meter__track.bad .progress-fill { background: var(--bad); }
+.usage-meter__note { margin: var(--space-2) 0 0; color: var(--text-2); }
+.usage-meter__note.warn { color: var(--warn); }
+.usage-meter__note.bad { color: var(--bad); }

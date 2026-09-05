@@ -15,10 +15,11 @@ read the tree as `"type": "module"`.
 | `api.js` | the `google.script.run` bridge and the `{ok,data}` envelope |
 | `store.js` | the bootstrap cache, the SWR RPC cache and hash routing |
 | `icons.js` | node-kind SVG (512 lines; only `ui/nodeCell.js` and `ui/uiIcons.js` reach it) |
-| `ui/` | 29 component modules plus `index.js`, the one import surface |
+| `ui/` | 31 component modules plus `index.js`, the one import surface |
 | `styles/` | nine stylesheets: `tokens.base.css` first, `overrides.css` last |
-| `test/contracts/` | seven spec factories the apps register from their own test files |
+| `test/contracts/` | eight spec factories the apps register from their own test files |
 | `test/testConfig.js` | a manifest fixture, for tests that reach a module reading one |
+| `test/domStub.js` | a DOM small enough to render a component into, for a repo with no jsdom |
 
 ## What does NOT live here
 
@@ -104,6 +105,48 @@ Three rules the shape encodes:
   because the grouping a reader sees is not the kind — gas_ai and devsecops both split ONE kind
   across "Business units" / "Support groups" / "Projects". A kind-level heading layered on top
   would give a single-kind app a heading it does not have.
+
+## The diagnostics seam
+
+`ui/diagnostics.js` draws the Settings -> System read-outs for all three registers, and it is
+the one shared control whose contract is **that its sections are optional**. Not "configurable":
+optional. The three System tabs do not show the same facts and this module does not make them.
+
+| | storage | recent errors | product | build | credentials | last sync |
+|---|---|---|---|---|---|---|
+| `gas` | ✅ meter | ✅ full log, with Clear | — | one stamp | — | — |
+| `gas_ai` | — | — | — | **two** stamps + mismatch | ✅ `neutral` when missing | — |
+| `gas_devsecops` | — | — | ✅ | one stamp | ✅ `bad` when missing | ✅ |
+
+Every gap in that table is a fact about a register, not a backlog item:
+
+- **`gas_ai` has no error log AT ALL** — no tab, no RPC — so it draws no card. An empty-state
+  card there would claim a log exists and happens to be quiet, which is the opposite of true.
+- **Storage is in Settings only in `gas`.** The other two show cell usage on their Data page,
+  and `gas_ai` could not draw a meter anyway: its `getStorageStats` publishes no `cellLimit`, so
+  there is no ratio. That is a missing FIGURE, not a missing widget.
+- **`gas_devsecops` gets no client-vs-server mismatch card.** It has the identical
+  `buildInfo.js` module gas_ai uses for that comparison sitting in its client, imported by
+  nothing. Passing no `client` stamp is what selects the one-stamp form; wiring the second one
+  up would be a new deployment claim about that register.
+- **`missingTone` has no default and the module throws without it.** gas_ai draws a missing
+  credential `neutral` (dry-run against sample data is a legitimate mode there) and
+  gas_devsecops draws it `bad`. Those are different claims about the same boolean, so the
+  refusal is the same shape as `appConfig()`'s.
+
+`test/contracts/diagnostics.js` holds both halves: the renderer's promises, asserted against a
+real tree in `test/domStub.js`, and the SET of sections each app asked for, read out of that
+app's own `pages/settings.js`. The second half is the one that matters — the failure this
+package guards against is a well-meaning drive-by giving one register a section a sibling has.
+
+Two things stay per app on purpose. The **sentences** are the register's (gas counts "tracked
+vulnerabilities", a code register counts findings), passed in as data the way `scopeKinds` is.
+And the **caching** is: gas folds `BUILD_ID` into its server cache key, gas_ai keeps `build`
+outside the cached core, `gas_devsecops`'s `bootstrap()` is uncached — three mechanisms, and
+each hands this module the result rather than a promise.
+
+The class prefix is `.health-`, not `.diag-`, because `gas_ai/src/client/js/ui/diagList.js`
+already owns `.diag-list` / `.diag-row` / `.diag-warn` for an unrelated concept.
 
 ## The five-token accent contract
 
@@ -203,6 +246,7 @@ registerTokenContract({ describe, it, expect, appRoot: new URL("../", import.met
 | `parity.js` | nothing shared has been forked back into an app; the stylesheet index is in cascade order |
 | `scope.js` | the kinds an app declares, the value encoding, and the exact object a pick puts on the wire |
 | `zscale.js` | every app layer is a `--z-*` token |
+| `diagnostics.js` | the Settings -> System read-outs: what the shared renderer promises, and the exact SET of sections each app asked it for. Half of it renders into `test/domStub.js`; half reads that app's own `pages/settings.js` |
 
 `gas_devsecops/test/shared.test.js` is the worked example.
 

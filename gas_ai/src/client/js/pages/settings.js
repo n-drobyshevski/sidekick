@@ -24,15 +24,15 @@
 import { call } from "../../../../../gas_shared/api.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams, swrCall } from "../../../../../gas_shared/store.js";
-import { clientBuild, describeBuild } from "../buildInfo.js";
+import { clientBuild } from "../buildInfo.js";
 import {
   changeCountText, changeSummary, changedFields, dirtyTabs, draftWarnings, normalizeTab,
   SETTINGS_TABS, settingsDraft, settingsPatch, validateDraft,
 } from "../settingsModel.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import {
-  clear, confirmDialog, debounce, disclosure, el, emptyState, errorState, heroStat,
-  pageHeader, saveBar, settingRow,
+  clear, confirmDialog, debounce, diagnosticsPanel, disclosure, el, emptyState, errorState,
+  heroStat, pageHeader, saveBar, settingRow,
   settingsPanel, sevBadge, skeleton, statusPill, switchToggle, tabList, toast,
 } from "../ui.js";
 
@@ -484,18 +484,71 @@ export async function renderSettings(main, params, ctx) {
   }
 
   // =============================================================================== SYSTEM TAB
-  const connectionPanel = settingsPanel({
-    title: "Wiz connection",
-    description: "Whether this workbook is reading a live tenant or the bundled sample data.",
-    body: [
-      settings.hasCredentials
-        ? statusPill("ok", "Credentials loaded — live sync enabled")
-        : statusPill("neutral", "Dry-run — no credentials configured"),
-      el("p", { class: "small muted", style: "margin:10px 0 0" },
-        "Credentials are Script Properties (WIZ_API_URL plus WIZ_API_TOKEN, or WIZ_CLIENT_ID "
+  // TWO of the three panels on this tab are diagnostics and go through
+  // gas_shared/ui/diagnostics.js; the experimental toggle between them is a preference and
+  // stays exactly where it is, on its own self-saving control. So this app takes the shared
+  // module's `sections` rather than its `node` — the grid would put the two cards side by side
+  // and push the toggle below both, which is a different page.
+  //
+  // `titleTag: "h2"` because these two panels each carried an h2 title. A read-out card labels
+  // itself with a span by default (gas has one h2 above its whole grid instead); taking the
+  // default here would silently delete two headings a screen-reader user navigates by.
+  //
+  // WHAT THIS APP DOES NOT PASS: no storage section (its `getStorageStats` publishes no
+  // `cellLimit`, so there is no ratio to draw a meter from, and what it does publish is on the
+  // Data page), no last-sync line (the field exists but only the nav rail reads it), and — the
+  // one that matters most — NO ERRORS SECTION. This app has no recent-errors mechanism at all,
+  // and an empty-state card would claim a log exists and happens to be quiet.
+  const diagnostics = diagnosticsPanel({
+    titleTag: "h2",
+    credentials: {
+      label: "Wiz connection",
+      description: "Whether this workbook is reading a live tenant or the bundled sample data.",
+      present: settings.hasCredentials,
+      okLabel: "Credentials loaded — live sync enabled",
+      missingLabel: "Dry-run — no credentials configured",
+      // NEUTRAL, NOT BAD. Running this workbook against the bundled sample data is a
+      // legitimate mode, not a fault — gas_devsecops draws the same boolean `bad` because a
+      // register with nothing to sync there really is broken. The shared section refuses to
+      // default this, so the difference has to be stated rather than inherited.
+      missingTone: "neutral",
+      note: "Credentials are Script Properties (WIZ_API_URL plus WIZ_API_TOKEN, or WIZ_CLIENT_ID "
         + "+ WIZ_CLIENT_SECRET), set in the Apps Script editor under Project Settings. They are "
-        + "never entered or shown here. Run wizDiagnostic() in the editor to validate them."),
-    ],
+        + "never entered or shown here. Run wizDiagnostic() in the editor to validate them.",
+    },
+    /**
+     * Which build is actually running.
+     *
+     * An Apps Script deployment can be stale three ways at once — an old file in the project, a
+     * web app pinned to an old VERSION so `clasp push` changes nothing at /exec, or a
+     * copy-paste deploy that updated some files and not others. None of it is visible from the
+     * running app, so this states it outright. Client and server are stamped separately
+     * because they ship as separate files: a project holding a new client and an old server
+     * looks healthy right up until an RPC answers a shape the client no longer expects.
+     *
+     * PASSING BOTH STAMPS is what selects the comparison form and the mismatch warning. The two
+     * apps that publish one stamp pass only `server` and get the id, with no comparison and no
+     * warning — gas_devsecops has this identical buildInfo.js module in its client, imported by
+     * nothing, and wiring it up from here would be a new claim about that register rather than
+     * the same claim expressed once. The shared section also refuses to compare a "dev" stamp
+     * against a real one: "dev" means "built without the define step" (vitest, or a dev server
+     * that skipped it), not "a different build", and treating it as a mismatch reported a
+     * deployment fault that did not exist.
+     */
+    build: {
+      label: "Build",
+      description: "A content hash of the source each bundle was built from — the same source "
+        + "always gives the same stamp.",
+      client: clientBuild(),
+      server: (boot && boot.build) || null,
+      mismatchNote: "The client and server bundles came from different builds. The Apps Script "
+        + "project has js_app.html and server.js from different pushes — re-deploy everything in "
+        + "dist/, then create a NEW version so /exec serves it.",
+      note: "To turn a stamp into commits, run npm run which-build with the id above; it replays "
+        + "the hash across history and names every commit that produces this build. Remember "
+        + "that clasp push updates the code but not the deployed version: /exec keeps serving "
+        + "the version it was pinned to until you deploy a new one.",
+    },
   });
 
   // The one control on this page that saves nothing to the ledger, and the reason it keeps
@@ -535,50 +588,6 @@ export async function renderSettings(main, params, ctx) {
     ],
   });
 
-  const buildPanel = buildPanelNode();
-
-  /**
-   * Which build is actually running.
-   *
-   * An Apps Script deployment can be stale three ways at once — an old file in the project, a
-   * web app pinned to an old VERSION so `clasp push` changes nothing at /exec, or a copy-paste
-   * deploy that updated some files and not others. None of it is visible from the running app,
-   * so this states it outright. Client and server are stamped separately because they ship as
-   * separate files: a project holding a new client and an old server looks healthy right up
-   * until an RPC answers a shape the client no longer expects.
-   */
-  function buildPanelNode() {
-    const client = clientBuild();
-    const server = (boot && boot.build) || null;
-    // Only compare two REAL stamps. "dev" means "built without the define step" (vitest, or a
-    // dev server that skipped it), not "a different build" — treating it as a mismatch reported
-    // a deployment fault that did not exist.
-    const stamped = (b) => !!b && !!b.id && b.id !== "dev";
-    const mismatch = stamped(client) && stamped(server) && client.id !== server.id;
-
-    return settingsPanel({
-      title: "Build",
-      description: "A content hash of the source each bundle was built from — the same source "
-        + "always gives the same stamp.",
-      body: [
-        el("dl", { class: "kv" },
-          el("dt", {}, "Client"), el("dd", {}, describeBuild(client)),
-          el("dt", {}, "Server"), el("dd", {}, server ? describeBuild(server) : "unavailable")),
-        mismatch
-          ? el("p", { class: "small", style: "margin:10px 0 0; color:var(--bad)" },
-            "The client and server bundles came from different builds. The Apps Script project "
-            + "has js_app.html and server.js from different pushes — re-deploy everything in "
-            + "dist/, then create a NEW version so /exec serves it.")
-          : null,
-        el("p", { class: "small muted", style: "margin:10px 0 0" },
-          "To turn a stamp into commits, run npm run which-build with the id above; it replays "
-          + "the hash across history and names every commit that produces this build. Remember "
-          + "that clasp push updates the code but not the deployed version: /exec keeps serving "
-          + "the version it was pinned to until you deploy a new one."),
-      ],
-    });
-  }
-
   // ================================================================ tabs, save bar, assembly
   function tabPanel(key, ...children) {
     return el("div", {
@@ -590,7 +599,9 @@ export async function renderSettings(main, params, ctx) {
   const panels = {
     graph: tabPanel("graph", graphPanel, expandPanel),
     compliance: tabPanel("compliance", fiveRsHost),
-    system: tabPanel("system", connectionPanel, experimentalPanel, buildPanel),
+    system: tabPanel(
+      "system", diagnostics.sections.credentials, experimentalPanel, diagnostics.sections.build,
+    ),
   };
   // THE ONE SECTION THAT MAY LEGITIMATELY VANISH. renderAccessPanel() answers null both for a
   // reader who may not edit the roster and for a failed fetch, and its own rule is that a

@@ -39,6 +39,10 @@
 //   axisBar.js    what one dimension actually read across the register
 //   rowReorder.js the cascade grip: drag as the shortcut, the row's arrows as the control
 //   settings.js   the settings form: panel, labelled row, switch, tab strip, one save bar
+//   diagnostics.js the Settings -> System read-outs: a grid of read-out cards, and the six
+//                 facts the three registers publish between them. Every section is optional
+//   usageMeter.js one ratio against a HARD ceiling: a used/total numeral caption plus warn
+//                 and bad states, which neither meter() nor progressBar() carries
 //   figures.js    the register vocabulary's numeric core: num, fmtCount, days1, pct1,
 //                 denomNote, fmtDays, boundedDays — refuse-before-cast, so an absent figure
 //                 never renders as a confident 0
@@ -90,5 +94,10 @@ export { rowDrag, ruleGrip } from "./rowReorder.js";
 export {
   disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList,
 } from "./settings.js";
+export {
+  DIAGNOSTIC_SECTIONS, buildMismatch, describeStamp, diagnosticCard, diagnosticsPanel,
+  errorCountBadge, errorLogBody, normalizeErrorLog, storageBody,
+} from "./diagnostics.js";
+export { usageMeter } from "./usageMeter.js";
 export { encodeScope, parseScope, scopePayload, scopeView } from "./scopeModel.js";
 export { scopeControl, scopeSwitch } from "./scopeControl.js";

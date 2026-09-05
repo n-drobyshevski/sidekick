@@ -55,6 +55,7 @@ import {
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
+import { registerDiagnosticsContract } from "../../gas_shared/test/contracts/diagnostics.js";
 import { registerParityContract } from "../../gas_shared/test/contracts/parity.js";
 import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js";
 import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
@@ -254,4 +255,23 @@ registerScopeContract({
     { kind: "domain", id: "Payments", payload: { domainView: "Payments" } },
   ],
   resetPayload: { projectView: "" },
+});
+
+// =========================================================================================
+//  The Settings -> System read-outs
+// =========================================================================================
+registerDiagnosticsContract({
+  ...base,
+  // TWO SECTIONS, AND THE MISSING ONE THAT MATTERS IS `errors`. This app has NO recent-errors
+  // mechanism at all — no errorLog tab, no api_getRecentErrors, nothing — so it draws no card
+  // rather than an empty one, which would claim a log exists and happens to be quiet. No
+  // storage either: getStorageStats publishes no `cellLimit`, so there is no ratio to meter,
+  // and what it does publish is on the Data page. No last-sync line: the field exists, and
+  // only the nav rail reads it.
+  //
+  // The experimental toggle sits BETWEEN these two cards on the tab and is not a diagnostic,
+  // which is why this app places the sections itself instead of appending the grid.
+  sections: ["credentials", "build"],
+  // Dry-run against the bundled sample data is a legitimate way to run this workbook.
+  credentialsTone: "neutral",
 });
