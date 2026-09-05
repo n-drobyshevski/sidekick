@@ -24,8 +24,7 @@ import {
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, dataTable, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
-  kpiCard, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter, tip,
+  absent, clear, dataTable, el, emptyState, errorState, fmtDate, glossaryTip, kpiCard, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter, tip,
   tipAnchor, tipLabel,
 } from "../ui.js";
 
@@ -130,11 +129,8 @@ export async function renderOverview(main, params, ctx) {
     : [...boot.palette.selectable];
 
   main.append(pageHeader({
-    hero: heroStat(
-      "Security",
-      "OS vulnerabilities",
-      "What is exploitable, where risk concentrates, and what to fix next.",
-    ),
+    route: "overview",
+    lede: "What is exploitable, where risk concentrates, and what to fix next.",
   }));
   // The route out stays a paragraph rather than joining the lede: a link inside the hero
   // sub-line would be the only interactive thing in a block that is otherwise a statement.

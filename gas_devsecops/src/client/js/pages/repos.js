@@ -28,7 +28,7 @@ import { swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el, emptyState,
-  errorState, fmtCount, glossaryTip, heroStat, kpiCard, num, onPageTeardown, pageHeader, pct1,
+  errorState, fmtCount, glossaryTip, kpiCard, num, onPageTeardown, pageHeader, pct1,
   sectionLabel, skeletonStack,
 } from "../ui.js";
 
@@ -176,11 +176,8 @@ const VERDICT_LABEL = {
 
 export async function renderRepos(host, _params, _ctx) {
   host.append(pageHeader({
-    hero: heroStat(
-      "Data",
-      "Repositories",
-      "Where the backlog sits, which repositories offer a foothold, and who owns them.",
-    ),
+    route: "repos",
+    lede: "Where the backlog sits, which repositories offer a foothold, and who owns them.",
   }));
 
   const densityHost = el("div", { class: "kpi-row" });

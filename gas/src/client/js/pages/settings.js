@@ -18,7 +18,8 @@ import {
 } from "../settingsReadouts.js";
 import {
   absent, clear, confirmDialog, diagnosticsPanel, disclosure, el, errorCountBadge, errorLogBody,
-  fmtDateTime, heroStat, normalizeErrorLog, openSheet, pageHeader, saveBar, settingRow,
+  heroLines,
+  fmtDateTime, normalizeErrorLog, openSheet, pageHeader, saveBar, settingRow,
   settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor, toast,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
@@ -29,8 +30,10 @@ export async function renderSettings(main, params, ctx) {
   const accessPanelNode = await renderAccessPanel();
 
   main.append(pageHeader({
-    hero: heroStat(
-      "Settings",
+    route: "settings",
+    // The old hero VALUE was the contents list, not a figure; it keeps its words one level
+    // down, under the h1 the route's PAGES title now supplies.
+    lede: heroLines(
       "Scan scope, risk, attribution, retention",
       "One save bar covers every panel below it; access and the system readouts save "
         + "themselves, on their own controls.",

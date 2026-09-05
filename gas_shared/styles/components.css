@@ -56,6 +56,26 @@
 /* The hero column itself needs nothing but permission to shrink inside the grid. */
 .page-hero { min-width: 0; }
 
+/* THE PAGE'S NAME, and the lane it sits in. Spans the full header so the hero/aside pair
+   below it keeps the two-column row it already had — the title is not a third column, it is
+   the line above them both.
+
+   The h1 needs NO size rule of its own: base.css already gives a bare `h1` the --fs-display
+   step at 600 with line-height 1.2 and letter-spacing -0.02em, which is exactly DESIGN.md's
+   heading ceiling. Only the margin moves, from `0 0 var(--space-1)` to a half-step ABOVE and
+   nothing below, so the lane eyebrow sits as close to the name as .kpi-value sits under a
+   .kpi-label and the lede's own margin-top is not doubled. P4b's `.kpi-label` was carrying the
+   h1 and had to write `line-height`/`margin` out to hide it; the class is back to being a div
+   label everywhere, so that pair is gone from it again. */
+.page-titles { grid-column: 1 / -1; min-width: 0; }
+.page-title { margin: var(--space-half) 0 0; }
+/* The page's definition rides BESIDE the name, never inside the h1 — a `?` folded into the
+   heading puts the whole glossary entry into the heading's accessible name. Baseline-aligned so
+   the mark sits on the name's baseline rather than centring on a 24px cap height. */
+.page-title-row { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+/* The lede is running text, so it breaks at a readable length rather than at header width. */
+.page-titles .page-hero-sub { max-width: var(--measure); }
+
 /* The stat strip always spans the full header, whichever page it is on. */
 .page-header > .stat-list, .cov-header .stat-list, .inv-header .stat-list { grid-column: 1 / -1; }
 
@@ -80,15 +100,15 @@
    these pages already does. */
 .card-pair > * { min-width: 0; }
 @media (min-width: 1100px) { .card-pair { grid-template-columns: 1fr 1fr; align-items: start; } }
-/* `line-height` and `margin` are written out because heroStat renders this class on an
-   <h1> (the page's only one) as well as on the KPI tiles' divs. base.css gives a bare h1
-   1.2 and a bottom margin; a div inherits the body line-height and has none. Naming both
-   here is a no-op for every div that already carried the class and is what makes the h1
-   render at the same pixels it did as a div. */
+/* A LABEL, ON A DIV, EVERYWHERE. P4b briefly rendered this class on an `<h1>` (heroStat's
+   label was the page heading) and had to write `line-height: inherit; margin: 0` out to hide
+   the bare-h1 rule underneath; F4 moved the heading to `h1.page-title` above, so the class is
+   only ever on a div again — the KPI tiles, the stat strip, the lane eyebrow — and needs
+   neither. `margin: 0` stays as a floor, so dropping the class onto a `<p>` or a `<figcaption>`
+   later cannot import a browser default margin into a header. */
 .kpi-label {
   font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em;
-  text-transform: uppercase; color: var(--text-3);
-  line-height: inherit; margin: 0;
+  text-transform: uppercase; color: var(--text-3); margin: 0;
 }
 .kpi-value { font-size: var(--fs-display); font-weight: 600; letter-spacing: -0.02em; line-height: 1.2; margin-top: var(--space-half); }
 .kpi-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-half); }

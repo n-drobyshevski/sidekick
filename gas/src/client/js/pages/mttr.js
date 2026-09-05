@@ -7,7 +7,7 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import {
   absent, changeChip, clear, dataTable, el, emptyState, errorState, fmtSpan, glossaryTip,
-  heroStat, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge, skeleton, tip,
+  openSheet, pageHeader, scopeBar, sectionLabel, sevBadge, skeleton, tip,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -297,12 +297,9 @@ export async function renderMttr(main, _params, ctx) {
     : [...boot.palette.selectable];
 
   main.append(pageHeader({
-    hero: heroStat(
-      "Security",
-      "MTTR & SLA",
-      "How fast risk gets closed, measured over observed lifecycles. The SLA clock starts "
-        + "once a vendor fix is available.",
-    ),
+    route: "mttr",
+    lede: "How fast risk gets closed, measured over observed lifecycles. The SLA clock starts "
+      + "once a vendor fix is available.",
   }));
 
   const scopeChips = scopeBar({

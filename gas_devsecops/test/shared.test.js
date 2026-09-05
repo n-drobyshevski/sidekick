@@ -90,10 +90,15 @@ registerNavGroupContract({
 
 registerBrandMarkContract({ ...base, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN });
 
-// ONE h1 PER PAGE, AND ONLY A fullBleed ROUTE MAY WRITE ITS OWN — see gas_ai's registration
-// for the rule and gas's for why an app with neither half populated still runs it rather
-// than skipping. Both halves are empty here too.
-registerPageHeaderContract(base);
+// ONE h1 PER PAGE, IT SAYS WHICH PAGE, AND ONLY A fullBleed ROUTE MAY WRITE ITS OWN — see
+// gas_ai's registration for the rule and gas's for why an app with neither fullBleed half
+// populated still runs it rather than skipping. Both are empty here too.
+registerPageHeaderContract({
+  ...base,
+  sharedHeaderRoutes: {
+    help: "the header is drawn by gas_shared/ui/helpPage.js, which passes route: \"help\" itself; this app's pages/help.js is one line of wiring that hands over helpContent.js and nothing else",
+  },
+});
 
 registerParityContract({
   ...base,

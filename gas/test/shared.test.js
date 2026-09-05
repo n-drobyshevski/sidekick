@@ -223,13 +223,18 @@ registerBrandMarkContract({
   ...base, beforeAll, afterAll, productName: PRODUCT_NAME, openingNoun: OPENING_NOUN,
 });
 
-// ONE h1 PER PAGE, AND ONLY A fullBleed ROUTE MAY WRITE ITS OWN — the same rule the sibling
-// registers run, derived from THIS app's PAGES rather than from a list. Both halves are
-// empty here (no route declares fullBleed, no page renders its own h1: every one of the nine
-// takes its heading from `pageHeader`/`heroStat`), which is not a reason to skip it — it is
-// what keeps that true. A hand-rolled title landing in any of them fails here rather than
-// being noticed a wave later, the way gas_ai's five were.
-registerPageHeaderContract(base);
+// ONE h1 PER PAGE, IT SAYS WHICH PAGE, AND ONLY A fullBleed ROUTE MAY WRITE ITS OWN — the
+// same rule the sibling registers run, derived from THIS app's PAGES rather than from a list.
+// The fullBleed halves are both empty here (no route declares it, no page renders its own h1),
+// which is not a reason to skip it — it is what keeps that true. The F4 half bites hardest in
+// this register: all nine routes are title-only headers, so every one of them names its own
+// route key to pageHeader and gets its h1 from PAGES.
+registerPageHeaderContract({
+  ...base,
+  sharedHeaderRoutes: {
+    help: "the header is drawn by gas_shared/ui/helpPage.js, which passes route: \"help\" itself; this app's pages/help.js is one line of wiring that hands over helpContent.js and nothing else",
+  },
+});
 
 // =========================================================================================
 //  This app's brand, pinned by value

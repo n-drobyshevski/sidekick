@@ -49,9 +49,13 @@
    shell gets a max-width, centered container — every other page is full-bleed against the
    left rail. Leadership landing page, so hierarchy is dominated by one big number. */
 .exec { max-width: 720px; margin: 0 auto; text-align: center; }
-/* The page's own <h1> + .page-sub pair is a pageHeader({hero: heroStat(...)}) now, so the
-   centered column has to centre the hero block rather than a paragraph under it. */
+/* The page's own <h1> + .page-sub pair is a pageHeader({ route: "executive" }) now, so the
+   centered column has to centre the header's own blocks rather than a paragraph under it.
+   `text-align` inherits, so `.page-titles` is centred by the rule on `.page-header` above it —
+   what does NOT centre is the lede, which is a max-width block and would sit hard-left inside
+   a wider cell. */
 .exec .page-header, .exec .page-hero { text-align: center; }
+.exec .page-titles .page-hero-sub { margin-left: auto; margin-right: auto; }
 /* .scope-bar is a flex row, so it ignores .exec's text-align and would sit hard-left in an
    otherwise centered column. The chip qualifies these figures — it centers with them. */
 .exec .scope-bar { justify-content: center; }

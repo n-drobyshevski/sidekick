@@ -80,7 +80,7 @@ import { CATEGORY_LABELS, kindIcon, svgEl } from "../../../../../gas_shared/icon
 import { ROUTE_ICONS } from "../routeIcons.js";
 import { bootstrap, bootstrapCached, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, debounce, el, fmtDateTime, heroStat, motionOk, onPageTeardown,
+  clear, debounce, el, fmtDateTime, heroLines, motionOk, onPageTeardown,
   pageHeader, plural, sectionLabel,
   statusPill, tip, uiIcon,
 } from "../ui.js";
@@ -163,8 +163,11 @@ export async function renderHelp(main, params, _ctx) {
 
   doc.append(
     pageHeader({
-      hero: heroStat("Help", "Key sheet",
-        "What every word and mark means, and how much of each this tenant holds."),
+      route: "help",
+      lede: heroLines(
+        "Key sheet",
+        "What every word and mark means, and how much of each this tenant holds.",
+      ),
     }),
   );
 

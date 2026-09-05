@@ -117,20 +117,19 @@ const CONDITION_TERM = {
 
 export async function renderCombos(main, params) {
   const boot = await bootstrap();
-  // `pageHeader`/`heroStat`, not a bare `el("h1", ...)` — see `pages/compliance.js`'s own
-  // note for the reasoning. "Risk" (this route's PAGES lane) is the kicker and the page's
-  // `<h1>`; "Toxic Combinations" is the hero VALUE. The `heroStat` further down keeps
-  // `{ heading: "div" }`: the page owns one h1 and it is now this one.
+  // `pageHeader({ route })`, not a bare `el("h1", ...)` and not a title in the hero VALUE —
+  // see `pages/compliance.js`'s own note for the reasoning. F3 put "Risk" (this route's PAGES
+  // lane) in the h1 and "Toxic Combinations" in the 2rem hero slot, and reported the cost in
+  // its own visual verdict: two 32px values ninety pixels apart, the page's name tying the
+  // figure it should sit under. The lane is the eyebrow now, the h1 is the route's PAGES title
+  // at the 1.5rem ceiling, and "Open issues" below is the page's only figure at the hero step.
   main.append(pageHeader({
-    hero: heroStat(
-      "Risk",
-      "Toxic Combinations",
-      // The page's own sentence, carried over word for word — this was a header sweep, not
-      // a copy rewrite.
-      "Multi-condition risk patterns on AI assets: privileged access, sensitive data and " +
+    route: "combos",
+    // The page's own sentence, carried over word for word — this was a header sweep, not a
+    // copy rewrite.
+    lede: "Multi-condition risk patterns on AI assets: privileged access, sensitive data and " +
       "missing guardrails combined. Wiz severity is shown beside the adjusted severity " +
       "this register adds, never replaced by it.",
-    ),
   }));
 
   if (!boot.latestSync) {
@@ -215,9 +214,9 @@ export async function renderCombos(main, params) {
     }
     if (totals.inProgress) openParts.push(totals.inProgress + " in progress");
     return pageHeader({
-      hero: heroStat("Open issues", String(totals.totalOpen), openParts.join(" · "),
-        // The route's <h1> is "Toxic Combinations", rendered above this header.
-        null, { heading: "div" }),
+      // NO `route`, SO NO h1: the page's heading is in the header above this one. This used
+      // to need `{ heading: "div" }` on heroStat; heroStat renders no heading at all now.
+      hero: heroStat("Open issues", String(totals.totalOpen), openParts.join(" · ")),
       stats: [
       statRow("Assets affected", String(totals.assetsAffected),
         "distinct across every pattern"),

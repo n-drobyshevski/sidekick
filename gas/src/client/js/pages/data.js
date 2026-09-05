@@ -13,7 +13,7 @@ import { bootstrap } from "../../../../../gas_shared/store.js";
 import { purgeStatusView } from "../purgeStatus.js";
 import {
   clear, confirmDialog, downloadText, el, emptyState, errorState, fmtDateTime, fmtSpan,
-  heroStat, pageHeader, progressBar, scopeBar, sectionLabel, settingRow, settingsPanel,
+  pageHeader, progressBar, scopeBar, sectionLabel, settingRow, settingsPanel,
   switchToggle, toast,
 } from "../ui.js";
 
@@ -31,7 +31,8 @@ export async function renderData(main, params, ctx) {
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
   main.append(pageHeader({
-    hero: heroStat("Data", "Data", "Reports out, raw data out, legacy history in."),
+    route: "data",
+    lede: "Reports out, raw data out, legacy history in.",
   }));
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);

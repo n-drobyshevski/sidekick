@@ -204,9 +204,24 @@ export function registerHelpContract(ctx) {
     it("is the last page in the " + lane + " lane — the hero eyebrow names that lane", () => {
       const laneRoutes = pages.filter((p) => p.group === lane).map((p) => p.route);
       expect(laneRoutes[laneRoutes.length - 1]).toBe("help");
-      // Not a free-floating literal: renderHelpPage's heroStat says this word, and the whole
-      // reason it is allowed to be hardcoded there is that this assertion holds here.
-      expect(SHARED_SRC).toContain('heroStat(\n      "' + lane + '",');
+    });
+
+    /**
+     * THE CLAIM THIS REPLACED, AND WHY IT NO LONGER APPLIES. This block used to assert
+     * `SHARED_SRC` contains `heroStat(\n      "Data",` — the lane spelled as a literal in
+     * `renderHelpPage`, policed here so it could not lie about where the route is filed. The
+     * literal is GONE: F4 made `pageHeader({ route })` read the lane AND the title out of
+     * `appConfig().PAGES`, so the eyebrow is the lane by construction and there is no second
+     * copy left to keep in step. Asserting the old text now would be asserting the defect.
+     *
+     * What is still worth holding is that the shared page reaches PAGES the derived way rather
+     * than growing a fresh literal — so this checks the derivation, and checks that no
+     * hardcoded lane came back.
+     */
+    it("takes its eyebrow and title from PAGES rather than from a literal", () => {
+      expect(SHARED_SRC).toContain('pageHeader({\n    route: "help",');
+      expect(SHARED_SRC, "renderHelpPage hardcodes a lane name again")
+        .not.toMatch(/heroStat\(\s*\n?\s*"/);
     });
 
     it("app.js imports renderHelp from ./pages/help.js", () => {

@@ -60,7 +60,7 @@
 import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
   absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
-  glossaryTip, heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow,
+  glossaryTip, heroLines, heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow,
   survivalTableModel, uiIcon,
 } from "../ui.js";
 import {
@@ -561,16 +561,19 @@ export function renderSecrets(host) {
 
 function paintSecrets(host, vm) {
   host.append(pageHeader({
+    route: "secrets",
     hero: heroStat(
-      "Registers · Secrets",
+      // `vm.hero.label` — "Removed, not rotated" — is what this figure actually is, and the
+      // model has carried the string since the page was written while the call site passed
+      // the lane instead. The lane is the header's eyebrow now, so the metric gets its own
+      // name back, and "secret-resolved" defines THAT rather than the register.
+      vm.hero.label,
       vm.hero.value,
       // TWO LINES, and the order is the argument: the alarm the figure counts, then the
       // validity split it sits inside. On a first run `validitySentence` is null and the
       // hero falls back to the one line, so the empty state is unchanged.
       vm.hero.validitySentence
-        ? el("span", {},
-          el("span", { class: "hero-line" }, vm.hero.sentence),
-          el("span", { class: "hero-line" }, vm.hero.validitySentence))
+        ? heroLines(vm.hero.sentence, vm.hero.validitySentence)
         : vm.hero.sentence,
       { term: "secret-resolved" },
     ),

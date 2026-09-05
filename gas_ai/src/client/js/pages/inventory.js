@@ -31,7 +31,7 @@ import {
 } from "../assetQuery.js";
 import {
   absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
-  emptyState, errorState, heroStat, pageHeader,
+  emptyState, errorState, pageHeader,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtDate, kpiCard, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
@@ -171,8 +171,8 @@ export async function renderInventory(main, params) {
     // the one line saying what the rows are. It replaces a bare h1 and the paragraph under
     // it — same two facts, in the shape the rest of the app already reads in.
     pageHeader({
-      hero: heroStat("Landscape", "AI Inventory",
-        "Every AI asset from the last sync, ranked by what is open on it."),
+      route: "inventory",
+      lede: "Every AI asset from the last sync, ranked by what is open on it.",
     }),
   );
 

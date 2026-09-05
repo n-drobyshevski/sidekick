@@ -7,8 +7,7 @@ import { call } from "../../../../../gas_shared/api.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, confirmDialog, dataTable, el, emptyState, fmtDateTime, fmtSpan, heroStat,
-  kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
+  absent, clear, confirmDialog, dataTable, el, emptyState, fmtDateTime, fmtSpan, kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
 } from "../ui.js";
 
 // The rows-per-page the table OPENS on. It is no longer the only size available: the footer
@@ -82,11 +81,8 @@ export async function renderHistory(main, _params, ctx) {
   });
 
   main.append(pageHeader({
-    hero: heroStat(
-      "Data",
-      "Scan History",
-      "Every saved scan retained in the durable ledger, with remediation trends.",
-    ),
+    route: "history",
+    lede: "Every saved scan retained in the durable ledger, with remediation trends.",
   }));
 
   const freshLine = el("p", { class: "section-note" });

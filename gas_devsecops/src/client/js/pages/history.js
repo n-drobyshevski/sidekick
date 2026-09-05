@@ -47,7 +47,7 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   DEFAULT_PAGE_SIZE, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
   emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDateTime, glossaryTip,
-  heroStat, kpiCard, num,
+  kpiCard, num,
   onPageTeardown, pageHeader, pageOf, registerWideNote, sectionLabel, skeletonStack, sortRows,
   tableFooter,
 } from "../ui.js";
@@ -206,11 +206,9 @@ export function perScopeView(perScope) {
 export async function renderHistory(host, _params, _ctx) {
   const boot = await bootstrap();
   host.append(pageHeader({
-    hero: heroStat(
-      "Data",
-      "Scan history",
-      "What was actually measured and when, and how the register moved between measurements.",
-    ),
+    route: "history",
+    lede: "What was actually measured and when, and how the register moved between "
+      + "measurements.",
   }));
 
   // A DIV, not a <p>: on the first run this slot holds the shared first-run notice, which is

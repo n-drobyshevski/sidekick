@@ -66,8 +66,8 @@ export {
 export { absent, triCell } from "./cells.js";
 export { nameCell } from "./nodeCell.js";
 export {
-  field, filterChipRow, heroStat, kpiCard, pageHeader, segmented, select, selectField,
-  statRow, statusPill, togglePills,
+  field, filterChipRow, heroLines, heroStat, kpiCard, pageHeader, segmented, select,
+  selectField, statRow, statusPill, togglePills,
 } from "./controls.js";
 export {
   confirmDialog, emptyState, errorState, firstRunNotice, skeleton, skeletonStack, syncCaption,

@@ -32,15 +32,19 @@ import {
 import { renderAccessPanel } from "./accessEditor.js";
 import {
   clear, confirmDialog, debounce, diagnosticsPanel, disclosure, el, emptyState, errorState,
-  heroStat, pageHeader, saveBar, settingRow,
+  heroLines,
+  pageHeader, saveBar, settingRow,
   settingsPanel, sevBadge, skeleton, statusPill, switchToggle, tabList, toast,
 } from "../ui.js";
 
 export async function renderSettings(main, params, ctx) {
   main.append(
     pageHeader({
-      hero: heroStat("Settings", "Graph, compliance, access, system",
-        "Grouped by task; one save bar covers the tabs that share a draft."),
+      route: "settings",
+      lede: heroLines(
+        "Graph, compliance, access, system",
+        "Grouped by task; one save bar covers the tabs that share a draft.",
+      ),
     }),
   );
 

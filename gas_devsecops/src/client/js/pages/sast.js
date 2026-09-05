@@ -194,7 +194,13 @@ function paintSast(host, vm, filters) {
   // segment; a zero total renders neither the bar nor the key.
   const heroSevs = sevEntries(vm.counts, vm.severityOrder);
   host.append(pageHeader({
-    hero: heroStat("Registers · Code", vm.hero.value, vm.hero.sub, { term: "sast" }),
+    // `route`, so the h1 is "Code" and the eyebrow is "Registers" — the two halves the old
+    // "Registers · Code" eyebrow carried as one string, now a lane and a page name. The
+    // glossary term defines the REGISTER rather than the figure, so it rides the h1; the
+    // figure needs no label of its own, because its sub-line already names what it counts.
+    route: "sast",
+    help: { term: "sast" },
+    hero: heroStat(null, vm.hero.value, vm.hero.sub),
     aside: el("div", { class: "page-strip" },
       heroSevs.length
         ? [
