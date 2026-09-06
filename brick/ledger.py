@@ -58,9 +58,11 @@ from pyspark.sql.types import (
 
 from config import (
     DISAPPEARANCE_RESOLUTION,
+    HAS_VENDOR_FIX,
     LEDGER_COLUMNS,
     RESOLUTION_API,
     RESOLUTION_DISAPPEARED,
+    SCOPES_PINNING_HAS_FIX,
     STATUS_OPEN,
     STATUS_RESOLVED,
 )
@@ -266,6 +268,50 @@ def _merge_peak(new: Column, old: Column) -> Column:
     return F.when(new.isNotNull() & (old.isNull() | (new > old)), new).otherwise(old)
 
 
+#: How many offending rows the guard collects before it names them. A refusal has to say WHICH
+#: population it was handed, and one row can only name one scope; three names every scope either
+#: fork has while keeping the check a LIMIT -- no shuffle, no full scan, no aggregate.
+_FOREIGN_SCOPE_SAMPLE = 3
+
+
+def _refuse_foreign_scope(prior: DataFrame, current: DataFrame, scope: str) -> None:
+    """Refuse a prior ledger or an observation that belongs to another population.
+
+    Disappearance-resolution reads absence as remediation, so a ledger from another scope is not
+    a mislabelled input: it is a register that resolves itself. Every row of scope A is missing
+    from a scan of scope B **by construction**, so reconciling one against the other marks the
+    whole prior remediated, with real resolution dates and a plausible-looking delta. The failure
+    is not an error, it is a remediation programme that never happened.
+
+    Today each scope writes its own tables (``default_table_prefix``), so the prior is per-scope
+    by construction and this can only fire on a caller that hand-assembles frames. That is the
+    point. ``gas_devsecops`` keeps three scopes in ONE tab and had to filter the prior itself; the
+    lesson it wrote down is that reconcile must not trust a calling convention for this, because
+    the convention is invisible at the call site and its violation is silent.
+
+    NULL is not foreign, and neither is silence: the golden ``reconcile.json`` prior states no
+    scope, and a frame with no ``scope`` column at all is making no claim about its population.
+    Only a stated, differing scope is refused.
+    """
+    for side, df in (("prior", prior), ("observation", current)):
+        if "scope" not in df.columns:
+            continue
+        found = (
+            df.select("scope")
+            .filter(F.col("scope").isNotNull() & (F.col("scope") != F.lit(scope)))
+            .limit(_FOREIGN_SCOPE_SAMPLE)
+            .collect()
+        )
+        if found:
+            names = ", ".join(sorted({str(r["scope"]) for r in found}))
+            raise RuntimeError(
+                f"reconcile(scope={scope!r}) was handed {side} rows carrying scope {names!r}. "
+                f"Absence is remediation here, and every {names!r} row is absent from a "
+                f"{scope!r} scan by construction, so this would resolve them all as fixed. "
+                f"Filter the {side} to scope {scope!r} before reconciling it."
+            )
+
+
 def reconcile(
     prior: DataFrame,
     current: DataFrame,
@@ -291,7 +337,8 @@ def reconcile(
         current: this scan's findings from ``observed()`` -- one row per ``vuln_key``.
         scan_id / scan_ts: identity and timestamp of this scan.
         scope: the vulnerability population (``os`` / ``all``), stamped on every row so it stays
-            self-describing after a UNION.
+            self-describing after a UNION -- and refused, rather than assumed, when the prior or
+            the observations state a different one (``_refuse_foreign_scope``).
         prev_scan_id: the immediately-previous scan, or None for the very first scan (in which
             case nothing can have disappeared, because there is no "before" to vanish from).
         prev_scan_ts: needed only for ``disappearance="midpoint"``.
@@ -301,7 +348,13 @@ def reconcile(
         scanned_severities: this scan's severity scope, or None for unscoped. Out-of-scope OPEN
             rows are exempt from disappearance -- see the guard below.
         disappearance: ``"scan_ts"`` or ``"midpoint"``.
+
+    Raises:
+        RuntimeError: if any prior row or any observation states a scope other than ``scope``.
+            Before the join, because the join is where the damage happens.
     """
+    _refuse_foreign_scope(prior, current, scope)
+
     now = F.lit(scan_ts).cast("timestamp")
     prev_ts = F.lit(prev_scan_ts).cast("timestamp") if prev_scan_ts else now
 
@@ -513,6 +566,26 @@ def empty_ledger(spark: SparkSession) -> DataFrame:
 # ------------------------------------------------------------------------- metric contract
 
 
+def _scope_in(scopes) -> Column:
+    """A per-ROW scope predicate over ``config``'s scope sets, never NULL.
+
+    Per row rather than per call, and that is a decision rather than a convenience.
+    ``run_pipeline.build_metrics`` hands ``lifecycle_frame`` the whole ledger table without
+    narrowing it, and every ledger row already carries the ``scope`` column that exists
+    precisely so a row stays self-describing after a UNION. Reading the column keeps the answer
+    right for a frame holding more than one population -- which is what a UNIONed read of two
+    registers would be -- and it cannot be passed a scope that disagrees with the rows it is
+    applied to.
+
+    ``isin`` returns NULL for a NULL scope, so it is coalesced: ``awaiting_vendor_fix`` is a
+    published boolean, and a NULL there would read as "not awaiting" in some SQL and as
+    "unknown" in the rest.
+    """
+    if not scopes:
+        return F.lit(False)
+    return F.coalesce(F.col("scope").isin(*sorted(scopes)), F.lit(False))
+
+
 def lifecycle_frame(ledger: DataFrame, now_ts: str) -> DataFrame:
     """Project the ledger into the column contract ``metrics.py`` already consumes.
 
@@ -532,12 +605,56 @@ def lifecycle_frame(ledger: DataFrame, now_ts: str) -> DataFrame:
     construction: the ledger never records a resolution without a date. The snapshot path cannot
     promise that (a finding can be status-RESOLVED with no timestamp), which is one more way the
     two disagree in v1's favour.
+
+    Five more columns carry the **actionable clock**: ``fix_available_at``,
+    ``actionable_from``, ``mttr_actionable_days``, ``actionable_age_days`` and
+    ``awaiting_vendor_fix``. ``mttr_days`` above answers "how long did this finding live";
+    these answer "how long could anybody have done something about it", which is the question
+    an SLA is actually about. The two differ by however long the register waited on a vendor,
+    and they are published side by side rather than one replacing the other -- the gap is the
+    part of the exposure the remediation programme never owned. ``config.HAS_VENDOR_FIX`` and
+    ``config.SCOPES_PINNING_HAS_FIX`` hold the reasoning; the derivation is below.
     """
     now = F.lit(now_ts).cast("timestamp")
     mttr_days = (
         F.unix_timestamp("resolved_at") - F.unix_timestamp("first_seen")
     ) / SECONDS_PER_DAY
     age_days = (F.unix_timestamp(now) - F.unix_timestamp(F.col("first_seen"))) / SECONDS_PER_DAY
+
+    # ---- the second clock ----------------------------------------------------------------
+    # Which scopes these two predicates cover, and why they are two rather than one, is
+    # written down in `config.HAS_VENDOR_FIX` / `config.SCOPES_PINNING_HAS_FIX`.
+    vendor = _scope_in(HAS_VENDOR_FIX)
+    # A blank fix clock inside a `hasFix`-pinned population is evidence of an OLD fix, not of
+    # a missing one: the filter would not have returned the row otherwise. It is a
+    # construction rather than a guess, and one-sided -- see config.SCOPES_PINNING_HAS_FIX --
+    # so it lands on the harsh side: the actionable clock collapses onto the exposure clock
+    # for these rows instead of inventing a later start nothing can evidence.
+    pinned_fix = F.when(_scope_in(SCOPES_PINNING_HAS_FIX), F.col("first_seen"))
+    # `fix_observed_at` is the fallback and not an equal: it is the scan that first SAW a fix
+    # exist, which is an upper bound on when the fix appeared. Preferring `fix_date` and
+    # falling back to it keeps the actionable clock conservative -- it never credits a team
+    # with time it did not have.
+    fix_available_at = F.when(
+        vendor, F.coalesce(F.col("fix_date"), F.col("fix_observed_at"), pinned_fix)
+    )
+    # The clamp, and it is the whole reason this is `greatest` and not a coalesce: a fix that
+    # shipped before we ever saw the finding does not start the clock in the past. `greatest`
+    # ignores NULLs, so a row with no `first_seen` starts at the fix.
+    actionable_from = F.when(
+        fix_available_at.isNotNull(), F.greatest(F.col("first_seen"), fix_available_at)
+    )
+    mttr_actionable_days = (
+        F.unix_timestamp("resolved_at") - F.unix_timestamp(actionable_from)
+    ) / SECONDS_PER_DAY
+    actionable_age_days = (
+        F.unix_timestamp(now) - F.unix_timestamp(actionable_from)
+    ) / SECONDS_PER_DAY
+    # Open, in a scope that HAS a vendor, with no fix available yet. All three conjuncts are
+    # load-bearing; dropping the middle one is the mutation `tests/test_ledger.py` prices.
+    awaiting_vendor_fix = F.coalesce(
+        (F.col("status") == STATUS_OPEN) & vendor & fix_available_at.isNull(), F.lit(False)
+    )
 
     return ledger.select(
         F.col("vuln_key"),
@@ -566,4 +683,9 @@ def lifecycle_frame(ledger: DataFrame, now_ts: str) -> DataFrame:
         F.col("epss"),
         mttr_days.alias("mttr_days"),
         F.when(F.col("resolved_at").isNull(), age_days).alias("age_days"),
+        fix_available_at.alias("fix_available_at"),
+        actionable_from.alias("actionable_from"),
+        mttr_actionable_days.alias("mttr_actionable_days"),
+        F.when(F.col("resolved_at").isNull(), actionable_age_days).alias("actionable_age_days"),
+        awaiting_vendor_fix.alias("awaiting_vendor_fix"),
     )

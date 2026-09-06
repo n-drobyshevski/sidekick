@@ -142,6 +142,15 @@ export const MARK_CHECK_WIDTH = 3.04;
  * everywhere it appears, and announcing the picture as well as the name would say it
  * twice. Pass `label` at the ONE place the wordmark is hidden (the collapsed rail), where
  * the mark is the only identity on screen.
+ *
+ * `pathLength: 1` GOES ON THE ORBIT AND THE CHECK UNCONDITIONALLY, including on the 22px
+ * compact glyph where nothing animates. It re-parameterises the path so a dash length of 1
+ * means "the whole stroke", which is what lets base.css trace both of them on the boot
+ * splash; it is inert without a dasharray, and it costs twelve bytes in the header glyph.
+ * The static copy in shell/index.template.html carries it too, and it is the RUNTIME copy
+ * that needs it most: refresh() rebuilds the splash through this function, so without it the
+ * ring would render dotted there — and only there, which is the kind of defect nobody
+ * reproduces on the page they first saw it on.
  */
 export function brandMark(size = 96, opts = {}) {
   const compact = !!opts.compact;
@@ -163,7 +172,7 @@ export function brandMark(size = 96, opts = {}) {
   }
   svg.append(svgEl("path", {
     class: "mark-ink", d: MARK_ORBIT, fill: "none", stroke: "#0a0a0a",
-    "stroke-width": MARK_ORBIT_WIDTH, "stroke-linecap": "round",
+    "stroke-width": MARK_ORBIT_WIDTH, "stroke-linecap": "round", pathLength: 1,
   }));
   for (const [cx, cy, r] of MARK_NODES) {
     svg.append(svgEl("circle", { class: "mark-ink-fill", cx, cy, r, fill: "#0a0a0a" }));
@@ -172,6 +181,7 @@ export function brandMark(size = 96, opts = {}) {
   svg.append(svgEl("path", {
     class: "mark-knockout", d: MARK_CHECK, fill: "none", stroke: "#ffffff",
     "stroke-width": MARK_CHECK_WIDTH, "stroke-linecap": "round", "stroke-linejoin": "round",
+    pathLength: 1,
   }));
   return svg;
 }
@@ -181,4 +191,65 @@ function dots(d, cls, stroke) {
     class: cls, d, fill: "none", stroke,
     "stroke-width": MARK_DOT_WIDTH, "stroke-linecap": "round",
   });
+}
+
+/**
+ * How many phase groups the alert dots are dealt into. base.css phases the `bm-alert` loop
+ * by `--i` at -0.6s per group over a 3.6s cycle, so six groups is exactly one cycle: any
+ * more and two groups share a phase.
+ */
+export const ALERT_GROUPS = 6;
+
+/**
+ * Deal the warm ("alert") dots into `groups` paths, shuffled, so the splash's alert loop has
+ * something to phase.
+ *
+ * ONE PATH IS THE RIGHT MARKUP AND THE WRONG ANIMATION. The 97 warm dots are a single
+ * `<path>` for the reason the module's header gives — 307 `<circle>` elements is three
+ * hundred DOM nodes and three times the bytes — but a CSS animation cannot phase parts of
+ * one element. So the path stays one path in BOTH hand-kept copies of the markup (the
+ * contract's "five path constants, in order" is still true of what ships), and it is split
+ * at runtime, on the copy the reader actually sees.
+ *
+ * RANDOM PER LOAD, ON PURPOSE. A seeded shuffle baked into the constants would be one
+ * arrangement for the life of the product; dealing here makes the alerts surface in a
+ * different pattern every time the app opens, which is what stops a loop that runs for a
+ * fraction of a second from reading as a fixed decoration.
+ *
+ * The twin of this lives inline in `shell/index.template.html`, because that copy paints
+ * before this module exists. `test/contracts/brandMark.js` runs the two against one stubbed
+ * `random` and requires the same six path strings in the same order — the only way two
+ * hand-kept implementations of a shuffle stay one shuffle.
+ *
+ * Returns the svg, so a call site can wrap `brandMark(112)` rather than needing a temporary
+ * — which is what keeps `bootSplash()`'s own copy of that call reading as one expression.
+ *
+ * @param {*} svg       a mark from brandMark(); a compact one has no warm path and is left
+ *                      alone rather than treated as an error
+ * @param {number} groups
+ * @param {Function} random  injectable for the contract; never seeded in production
+ */
+export function dealAlerts(svg, groups = ALERT_GROUPS, random = Math.random) {
+  const warm = svg && svg.querySelector(".mark-map--warm");
+  if (!warm) return svg;
+  const dots = String(warm.getAttribute("d") || "").match(/M[^M]+/g) || [];
+  // Fisher-Yates, and the loop bounds are part of the contract: the twin script runs the
+  // identical sequence of random() draws, so a "tidier" rewrite here silently breaks parity
+  // rather than breaking a render.
+  for (let i = dots.length - 1; i > 0; i--) {
+    const j = Math.floor(random() * (i + 1));
+    const t = dots[i]; dots[i] = dots[j]; dots[j] = t;
+  }
+  const parts = [];
+  for (let i = 0; i < groups; i++) parts.push("");
+  for (let i = 0; i < dots.length; i++) parts[i % groups] += dots[i];
+  const parent = warm.parentNode;
+  for (let i = 0; i < groups; i++) {
+    parent.insertBefore(svgEl("path", {
+      class: "mark-map mark-map--warm", d: parts[i], fill: "none", stroke: "#f32b2b",
+      "stroke-width": MARK_DOT_WIDTH, "stroke-linecap": "round", style: "--i:" + i,
+    }), warm);
+  }
+  parent.removeChild(warm);
+  return svg;
 }

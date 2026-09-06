@@ -324,35 +324,150 @@ def test_a_source_that_cannot_filter_severity_filters_it_here_instead():
     assert ingest._severity_gate([]) is None
 
 
-def test_asking_sast_for_resolved_findings_would_report_zero_day_mttr(spark):
-    """**Why ``config.SAST_FETCH_RESOLVED`` is off, measured rather than asserted.**
+# ------------------------------------------------------- the filter shapes are per type
 
-    A SAST finding has a status -- `sast_request.py` selects it and `resolutionReason` sits
-    beside it -- so the API can almost certainly be asked for RESOLVED ones. The reason not to
-    is that ``ingest.SAST_QUERY`` selects no timestamps, so an already-resolved finding is born
-    and closed in the same instant:
 
-        first_seen  = least(coalesce(firstDetectedAt, now), now) = now
-        resolved_at = coalesce(resolvedAt, now)                  = now
+def test_sast_severity_goes_on_the_wire_as_an_object_and_sca_as_a_bare_list():
+    """The same field name, two kinds, and getting it wrong empties the register silently.
 
-    Every historical resolved finding would land at exactly zero days and drag the
-    Kaplan-Meier median down with it. "No MTTR yet" is a state a reader can act on; "MTTR is
-    0 days" is a confident lie, and this test is what stands between the two.
-
-    Turn the flag on in the same change that adds a timestamp to the query -- not before.
+    ``VulnerabilityFindingFilters.severity`` is ``[VulnerabilitySeverity!]``, a bare list;
+    ``SASTFindingFilters.severity`` is a ``SASTSeverityFilter``, which takes ``{equals: [...]}``.
+    Sending the SCA convention to the SAST type is refused with HTTP 400
+    `VALIDATION_INVALID_TYPE_VARIABLE` -- so the run fetches **zero rows** and reads as an empty
+    register rather than as an error. This fork sent the bare list to both until now.
     """
-    import ledger as ledger_mod
-    from config import SAST_FETCH_RESOLVED
+    assert ingest.build_filter("sca", ["CRITICAL", "HIGH"])["severity"] == ["CRITICAL", "HIGH"]
+    assert ingest.build_filter("sast", ["CRITICAL", "HIGH"])["severity"] == {
+        "equals": ["CRITICAL", "HIGH"]
+    }
+    # The project restriction inverts the pairing, which is the point of a table over a rule:
+    # SCA wraps it (`VulnerabilityFindingProjectFilter`), SAST does not (`[String!]`).
+    assert ingest.build_filter("sca", project_id="p")["projectIdV2"] == {"equals": ["p"]}
+    assert ingest.build_filter("sast", project_id="p")["projectId"] == ["p"]
 
+
+@pytest.mark.parametrize("scope", sorted(ingest.SCOPES))
+def test_every_list_valued_base_key_goes_through_the_shape_table(scope, monkeypatch):
+    """A shape table covering only part of the filter is worse than none.
+
+    The mutation: for every list-valued key the emitted filter carries, add it to (or remove it
+    from) ``OBJECT_FILTERS`` and demand the wire shape MOVES. A key that does not move is a
+    literal that bypassed the table -- which is exactly how the sibling register shipped
+    `codeToCloudPipelineStage` as a bare list while its own table said it was an object: adding
+    the key to the table changed nothing, and nothing failed.
+
+    Both directions, because a one-way test passes against a function that only ever wraps.
+    """
+    table = {k: tuple(v) for k, v in ingest.OBJECT_FILTERS.items()}
+    baseline = ingest.build_filter(scope, ["CRITICAL", "HIGH"], project_id="p")
+    listish = {
+        key: value
+        for key, value in baseline.items()
+        if isinstance(value, list)
+        or (isinstance(value, dict) and set(value) == {"equals"} and isinstance(value["equals"], list))
+    }
+    # Guard the guard: a scope whose filter grew no list-valued keys would pass vacuously.
+    assert listish, f"{scope} emitted no list-valued keys -- this test measured nothing"
+
+    for key, value in listish.items():
+        flipped = dict(table)
+        entry = set(flipped[scope])
+        entry.symmetric_difference_update({key})
+        flipped[scope] = tuple(sorted(entry))
+        monkeypatch.setattr(ingest, "OBJECT_FILTERS", flipped)
+        got = ingest.build_filter(scope, ["CRITICAL", "HIGH"], project_id="p")[key]
+        assert got != value, (
+            f"{scope}.{key} is unchanged by OBJECT_FILTERS -- it bypassed the table, so the "
+            f"table does not describe what goes on the wire"
+        )
+        # And it moved to the *other* convention rather than to something else entirely.
+        expected = value["equals"] if isinstance(value, dict) else {"equals": list(value)}
+        assert got == expected
+        monkeypatch.setattr(ingest, "OBJECT_FILTERS", table)
+
+
+def test_the_resolved_status_flag_would_ship_the_right_shape(monkeypatch):
+    """``SAST_FETCH_RESOLVED`` is off, which makes `status` a mine under a future flag flip.
+
+    ``SASTFindingFilters.status`` is a ``SASTStatusFilter``, not a list -- and the branch that
+    would add it (``config``'s ``if SAST_FETCH_RESOLVED``) writes a plain list into ``SCOPES``,
+    on purpose: ``SCOPES`` is written in one convention and ``_shape_base`` decides the wire
+    form. Flipping the flag must therefore not re-introduce the 400 this commit removed.
+    """
+    import copy as _copy
+
+    scopes = _copy.deepcopy(ingest.SCOPES)
+    scopes["sast"]["status"] = ["OPEN", "RESOLVED"]
+    monkeypatch.setattr(ingest, "SCOPES", scopes)
+    assert ingest.build_filter("sast")["status"] == {"equals": ["OPEN", "RESOLVED"]}
+    # `sca` reaches the same branch through `_BASE` and must stay bare on the same key.
+    assert ingest.build_filter("sca")["status"] == ["OPEN", "RESOLVED"]
+
+
+def sast_node(**over):
+    """A minimal ``sastFindings`` node -- the fields ``silver_sast`` reads and nothing else."""
     node = {
-        "id": "f-resolved",
+        "id": "f-1",
         "name": "SQL Injection",
-        "status": "RESOLVED",
+        "status": "OPEN",
         "severity": "HIGH",
         "filePath": "a/B.java",
         "weaknesses": [{"id": "CWE-89"}],
         "resource": {"id": "r1", "name": "org/repo/main", "type": "REPOSITORY_BRANCH"},
     }
+    node.update(over)
+    return node
+
+
+def test_the_sast_query_selects_the_birth_date():
+    """``createdAt`` has to be in BOTH places or it reads NULL and nothing complains.
+
+    Two independent halves: the GraphQL document decides whether the field arrives in bronze,
+    and ``SAST_NODE_SCHEMA`` decides whether ``from_json`` keeps it. Drop either and
+    ``first_detected_at`` is silently NULL for every SAST row -- the ledger falls back to
+    observation, every figure still renders, and the register quietly goes back to dating its
+    findings from when we happened to look.
+    """
+    assert "createdAt" in ingest.SAST_QUERY
+    assert "createdAt" in metrics.SAST_NODE_SCHEMA.fieldNames()
+
+
+def test_asking_sast_for_resolved_findings_would_report_its_age_as_its_mttr(spark):
+    """**Why ``config.SAST_FETCH_RESOLVED`` is off, measured rather than asserted.**
+
+    This test used to be named ``..._would_report_zero_day_mttr`` and it encoded a claim that
+    has since been falsified. The claim was that ``ingest.SAST_QUERY`` selects no timestamps,
+    so an already-resolved finding is born and closed in the same instant and reports exactly
+    0.0 days. A live probe against the tenant (2026-08-27, recorded in the repo's CLAUDE.md)
+    found ``SASTFinding.createdAt`` -- a non-null ``DateTime!``, filterable and sortable -- and
+    the query now selects it, so the old arithmetic no longer runs.
+
+    The conclusion survives; the number moves, and moves in the worse direction. There is still
+    no ``resolvedAt`` on the type, so an API-resolved finding lands:
+
+        first_seen  = least(coalesce(createdAt, now), now) = createdAt
+        resolved_at = coalesce(NULL, now)                  = now
+        mttr_days   = now - createdAt = the finding's AGE at the moment we first looked
+
+    A flat 0.0 at least looks broken. This looks like a measurement: a weakness fixed within a
+    day two years ago reports 730 days, and the Kaplan-Meier median is set by the register's own
+    start date rather than by any remediation programme. One end is measured, the other is
+    fabricated, and the difference between them measures neither.
+
+    (The second live reason is not visible from here: ``status: RESOLVED`` returns zero rows
+    against this tenant, so the filter would not even deliver the population it appears to ask
+    for. Both reasons are in ``config.SAST_FETCH_RESOLVED``.)
+
+    Turn the flag on if a ``resolvedAt`` appears on the type -- not before.
+    """
+    import datetime as dt
+
+    import ledger as ledger_mod
+    from config import SAST_FETCH_RESOLVED
+
+    # 30 days before SCAN_TS, which is 2026-08-01.
+    created_at = "2026-07-02T00:00:00Z"
+    node = sast_node(id="f-resolved", status="RESOLVED", createdAt=created_at)
     silver = metrics.silver_findings(bronze(spark, [node], "sast"), "sast")
     touched = ledger_mod.reconcile(
         ledger_mod.empty_ledger(spark),
@@ -363,17 +478,158 @@ def test_asking_sast_for_resolved_findings_would_report_zero_day_mttr(spark):
     )
     row = touched.first()
     assert row["status"] == "RESOLVED"
-    # Born and closed at the same instant -- and `api`, so nothing downstream even flags it as
-    # an inference a reader might discount.
-    assert row["first_seen"] == row["resolved_at"]
+    # The birth date is the API's. The death date is this scan, because there is nothing else
+    # to read -- and `api`, so nothing downstream flags it as an inference a reader might
+    # discount.
+    assert row["first_seen"] == dt.datetime(2026, 7, 2)
+    assert row["resolved_at"] == dt.datetime(2026, 8, 1)
     assert row["resolution_src"] == "api"
 
     ledger_rows = touched.select(*ledger_mod.LEDGER_SCHEMA.fieldNames())
-    assert ledger_mod.lifecycle_frame(ledger_rows, SCAN_TS).first()["mttr_days"] == 0.0
+    mttr = ledger_mod.lifecycle_frame(ledger_rows, SCAN_TS).first()["mttr_days"]
+    # 30 days: the age, not a remediation time, and emphatically not the old 0.0.
+    assert mttr == pytest.approx(30.0)
+    assert mttr != 0.0
 
     # ...which is why the register does not ask for these findings in the first place.
     assert SAST_FETCH_RESOLVED is False
     assert "status" not in ingest.build_filter("sast")
+
+
+def test_sast_first_seen_prefers_the_api_birth_date_over_the_scan(spark):
+    """**The payoff.** A SAST finding resolved by disappearance now reports a real MTTR.
+
+    Two scans a day apart, over a finding the API says was created 30 days before the first.
+    The second scan does not return it, so ``reconcile`` resolves it by absence. If
+    ``first_seen`` came from observation -- the old behaviour, when the query selected no
+    timestamps -- this would report ~1 day: the scan interval, and nothing about the weakness.
+    It reports ~31 instead, which is the 30 days the finding existed before anybody looked plus
+    the interval within which it went away.
+
+    The death date is still an upper bound whose error is the scan interval, which is what
+    ``resolution_src = 'disappeared'`` is for. The birth date is not an estimate at all.
+    """
+    import datetime as dt
+
+    import ledger as ledger_mod
+
+    created_at = "2026-07-02T00:00:00Z"  # 30 days before scan 1
+    scan_2_ts = "2026-08-02T00:00:00Z"  # one day after scan 1
+
+    node = sast_node(createdAt=created_at)
+    silver = metrics.silver_findings(bronze(spark, [node], "sast"), "sast")
+    after_1 = ledger_mod.reconcile(
+        ledger_mod.empty_ledger(spark),
+        ledger_mod.observed(silver),
+        scan_id="scan-1",
+        scan_ts=SCAN_TS,
+        scope="sast",
+    ).select(*ledger_mod.LEDGER_SCHEMA.fieldNames())
+
+    first = after_1.first()
+    assert first["first_seen"] == dt.datetime(2026, 7, 2)
+    assert first["status"] == "OPEN"
+
+    # Scan 2 sees nothing at all -- the truncation that makes the disappearance pass fire.
+    empty = metrics.silver_findings(bronze(spark, [], "sast"), "sast")
+    after_2 = ledger_mod.reconcile(
+        after_1,
+        ledger_mod.observed(empty),
+        scan_id="scan-2",
+        scan_ts=scan_2_ts,
+        scope="sast",
+        prev_scan_id="scan-1",
+    )
+    row = after_2.first()
+    assert row["status"] == "RESOLVED"
+    assert row["resolution_src"] == "disappeared"
+    # Not re-derived from the second scan: the birth date the API gave us, unchanged.
+    assert row["first_seen"] == dt.datetime(2026, 7, 2)
+    assert row["resolved_at"] == dt.datetime(2026, 8, 2)
+
+    ledger_rows = after_2.select(*ledger_mod.LEDGER_SCHEMA.fieldNames())
+    mttr = ledger_mod.lifecycle_frame(ledger_rows, scan_2_ts).first()["mttr_days"]
+    assert mttr == pytest.approx(31.0)
+
+
+def test_a_sast_node_with_no_created_at_still_lands(spark):
+    """The committed capture predates the column, and that is the retroactivity case.
+
+    Bronze holds only the fields the query asked for, so a scan taken before ``createdAt`` was
+    selected -- and every node in ``sast_response.json`` -- projects ``first_detected_at`` as
+    NULL. Nothing may break on that: the ledger falls back to the observation date, exactly as
+    it did before this column existed. If this test ever fails it means the projection started
+    requiring a field that half the register's history does not have.
+    """
+    import ledger as ledger_mod
+
+    nodes = sast_nodes()
+    silver = metrics.silver_findings(bronze(spark, nodes, "sast"), "sast")
+    assert silver.count() == len(nodes)
+    # Every one of them, not merely "some": the fixture has no `createdAt` anywhere in it, so
+    # this also pins the gold built from it as unmoved by this change.
+    assert silver.where(F.col("first_detected_at").isNotNull()).count() == 0
+
+    touched = ledger_mod.reconcile(
+        ledger_mod.empty_ledger(spark),
+        ledger_mod.observed(silver),
+        scan_id="scan-1",
+        scan_ts=SCAN_TS,
+        scope="sast",
+    )
+    assert touched.count() == len(nodes)
+    # Observation, because there is nothing better to fall back to.
+    assert touched.where(F.col("first_seen") != F.lit(SCAN_TS).cast("timestamp")).count() == 0
+
+
+# ------------------------------------------------------- static analysis has no vendor
+
+
+def test_static_analysis_is_never_awaiting_a_vendor_fix(spark, monkeypatch):
+    """The scope guard on the actionable clock, and the mutation that prices it.
+
+    "Open, with no fix available" is true of every SAST finding that has ever existed and
+    always will be: nobody vendors a fix for code you wrote yourself. So ``sast`` is absent
+    from ``config.HAS_VENDOR_FIX``, the whole actionable clock is NULL for its rows, and
+    ``awaiting_vendor_fix`` is False rather than True-forever.
+
+    Without that guard every open SAST row drops out of ``mttr_actionable_days`` and
+    ``actionable_age_days`` while staying in every open and exposure count -- so the two
+    halves of a page disagree by exactly this population, and the difference reads as broken
+    arithmetic rather than as the category error it is. The sibling register measured the same
+    shape on live data: 2,085 rows (127 SAST + 1,958 secrets) awaiting a vendor permanently.
+    The number below is this fork's committed capture, run through the real ledger.
+    """
+    import ledger as ledger_mod
+    from config import HAS_VENDOR_FIX, scope_has_vendor_fix
+
+    assert not scope_has_vendor_fix("sast")
+
+    silver = metrics.silver_findings(bronze(spark, sast_nodes(), "sast"), "sast")
+    rows = ledger_mod.reconcile(
+        ledger_mod.empty_ledger(spark),
+        ledger_mod.observed(silver),
+        scan_id="scan-1",
+        scan_ts=SCAN_TS,
+        scope="sast",
+    ).select(*ledger_mod.LEDGER_SCHEMA.fieldNames()).cache()
+
+    frame = ledger_mod.lifecycle_frame(rows, SCAN_TS).cache()
+    open_rows = frame.filter("is_open").count()
+    assert open_rows == 40, "the committed sast capture, one open lifecycle per node"
+    # No vendor, so no clock at all -- and, the load-bearing half, nothing waiting on one.
+    assert frame.filter(F.col("fix_available_at").isNotNull()).count() == 0
+    assert frame.filter(F.col("actionable_from").isNotNull()).count() == 0
+    assert frame.filter("awaiting_vendor_fix").count() == 0
+
+    # The mutation: put `sast` back in the vendor set, which is the guard removed.
+    monkeypatch.setattr(ledger_mod, "HAS_VENDOR_FIX", HAS_VENDOR_FIX | {"sast"})
+    flipped = ledger_mod.lifecycle_frame(rows, SCAN_TS).filter("awaiting_vendor_fix").count()
+    assert flipped == open_rows, (
+        f"{flipped} of {open_rows} open SAST findings sit awaiting a vendor fix forever "
+        "with the scope guard removed -- out of every actionable clock, still in every "
+        "exposure count, and waiting on a vendor that does not exist"
+    )
 
 
 def test_each_scope_queries_its_own_connection():

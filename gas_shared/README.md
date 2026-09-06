@@ -1,8 +1,14 @@
 # gas_shared — the Wiz Sidekick design system
 
-One copy of the component base, the stylesheets and the design tokens that `gas/`, `gas_ai/`
-and `gas_devsecops/` all draw with. Not a build artifact and not an npm package: plain ES
-modules and plain CSS, imported by relative path and bundled by each app's own esbuild step.
+One copy of the component base, the stylesheets and the design tokens that `gas/`, `gas_ai/`,
+`gas_devsecops/` and `gas_hub/` all draw with. Not a build artifact and not an npm package:
+plain ES modules and plain CSS, imported by relative path and bundled by each app's own
+esbuild step.
+
+Three of the four are REGISTERS — each measures one population and publishes figures about it.
+`gas_hub/` is a LAUNCHER: a 2x2 grid of tiles over the three registers' `/exec` URLs, no data
+of its own. Where a rule below reads differently for it, that is why, and it is said in place
+rather than left as an omission.
 
 There is no build here, no dependency and nothing to install. `package.json` exists so tools
 read the tree as `"type": "module"`.
@@ -142,6 +148,7 @@ optional. The three System tabs do not show the same facts and this module does 
 | `gas` | ✅ meter | ✅ full log, with Clear | — | one stamp | — | — |
 | `gas_ai` | — | — | — | **two** stamps + mismatch | ✅ `neutral` when missing | — |
 | `gas_devsecops` | — | — | ✅ | one stamp | ✅ `bad` when missing | ✅ |
+| `gas_hub` | — | — | ✅ | one stamp | — | — |
 
 Every gap in that table is a fact about a register, not a backlog item:
 
@@ -158,6 +165,13 @@ Every gap in that table is a fact about a register, not a backlog item:
   credential `neutral` (dry-run against sample data is a legitimate mode there) and
   gas_devsecops draws it `bad`. Those are different claims about the same boolean, so the
   refusal is the same shape as `appConfig()`'s.
+- **`gas_hub` draws two cards and could not honestly draw the other four.** It calls no
+  third-party API and stores no secret, so there is no credential whose presence it could
+  report — and with no credentials card there is no `missingTone` to choose, which its
+  registration asserts in as many words. It runs no scan and no sync (no last-sync line), owns
+  no spreadsheet (no storage meter) and has no job that could fail (no error log). What is
+  left — which product this is, and which build is serving it — is exactly what a launcher can
+  say about its own deployment.
 
 `test/contracts/diagnostics.js` holds both halves: the renderer's promises, asserted against a
 real tree in `test/domStub.js`, and the SET of sections each app asked for, read out of that
@@ -195,12 +209,23 @@ makes a shared rule correct in all three:
 | `gas` | `#2563eb` | `#1d4ed8` | `#2563eb` | `transparent` | `#ffffff` |
 | `gas_ai` | `#be123c` | `#9f1239` | `#be123c` | `transparent` | `#ffffff` |
 | `gas_devsecops` | `#ffcb13` | `#ebb800` | `#7c4a0a` | `rgba(0,0,0,.40)` | `#171717` |
+| `gas_hub` | `#0a0a0a` | `#27272a` | `#0a0a0a` | `transparent` | `#fafafa` |
 
-| measured | gas | gas_ai | gas_devsecops |
-|---|---|---|---|
-| `--accent-text` on white | 5.17 | 6.29 | 7.39 |
-| `--on-accent` on `--accent` | 5.17 | 6.29 | 11.78 |
-| `--accent` on white (fill, 3:1 floor) | 5.17 | 6.29 | **1.52** |
+| measured | gas | gas_ai | gas_devsecops | gas_hub |
+|---|---|---|---|---|
+| `--accent-text` on white | 5.17 | 6.29 | 7.39 | 19.80 |
+| `--on-accent` on `--accent` | 5.17 | 6.29 | 11.78 | 18.97 |
+| `--accent` on white (fill, 3:1 floor) | 5.17 | 6.29 | **1.52** | 19.80 |
+
+**`gas_hub`'s accent is the one that is not a hue.** The hub belongs to no register, so
+borrowing one register's colour would say it did; graphite `#0a0a0a` is `--graphite`, the
+primary-button colour `styles/base.css` already gives every app, reused as an identity. It
+clears every floor unaided by the widest margin in the table, which is why its `--accent-text`
+may point at the accent and its `--accent-edge` may be `transparent`. It carries a SECOND
+vocabulary no sibling has — `--tile-os` / `--tile-ai` / `--tile-dso` / `--tile-soon`, the four
+launcher tiles — and those are the three registers' own identity colours borrowed onto the
+hub's front door, plus a border for the unbuilt fourth. They are not part of this contract and
+nothing outside `ui/tile.js` may reach for one; `gas_hub/DESIGN.md` holds their measured table.
 
 Two apps can point `--accent-text` at the accent itself and leave `--accent-edge`
 transparent, because their accents clear both floors on their own. `gas_devsecops` cannot:
@@ -274,7 +299,7 @@ registerTokenContract({ describe, it, expect, appRoot: new URL("../", import.met
 | `diagnostics.js` | the Settings -> System read-outs: what the shared renderer promises, and the exact SET of sections each app asked it for. Half of it renders into `test/domStub.js`; half reads that app's own `pages/settings.js` |
 | `help.js` | `ui/helpPage.js`'s behaviour: the search field, the `?term=` deep link, `/` to focus, Escape to clear, and the pure `helpModel()` underneath it all. Registered by `gas/` and `gas_devsecops/`; `gas_ai/` keeps its own bespoke lexicon page and does not register this one — see "The one page that IS shared" above |
 | `relativeAge.js` | the one clock-relative label ("3 hours ago") — refuses null/undefined/blank/`[]`/`false` BEFORE any `Number()`/`Date.parse()` cast, with a perturbation proving the tempting cast-first rewrite fails on exactly those inputs |
-| `syncCaption.js` | the rail's freshness sentence — that `app.js` calls the shared `syncCaption()` rather than growing its own `Math.floor(Date.now() - Date.parse(...))` day-count back |
+| `syncCaption.js` | the rail's freshness sentence — that `app.js` calls the shared `syncCaption()` rather than growing its own `Math.floor(Date.now() - Date.parse(...))` day-count back. `ctx.railHasSyncZone: false` (only `gas_hub`, which hands `createAppShell` no `railFooter` and has no freshness sentence at all) turns the first half into a NAMED skip and leaves the `Math.floor` prohibition running — a prohibition is exactly the kind of rule an app with no caption today can still break tomorrow |
 
 `gas_devsecops/test/shared.test.js` is the worked example.
 

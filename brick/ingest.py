@@ -301,6 +301,17 @@ def build_filter(
     Pure and separately testable, because this dict decides which population every downstream
     metric is computed over -- a wrong key here is not an error, it is a plausible-looking
     number about the wrong thing.
+
+    **Every filter here is a `VulnerabilityFindingFilters`, which is why the shapes are written
+    inline.** `brick/devsecops/` reads a second filter type and cannot do that: the same field
+    name carries a different KIND across the two -- `severity` is a bare
+    `[VulnerabilitySeverity!]` here and a `SASTSeverityFilter` (`{equals: [...]}`) there -- and
+    a mismatch is refused with HTTP 400 `VALIDATION_INVALID_TYPE_VARIABLE`, which fetches zero
+    rows while looking like an empty register. That fork holds the asymmetry as data in
+    `config.OBJECT_FILTERS` and routes every list-valued key through it. Here a table would be
+    theatre: one filter type, one convention, nothing to disagree with. **It stops being
+    theatre the moment this register reads a second connection** -- port the table then rather
+    than adding a shape branch beside it.
     """
     if scope not in SCOPES:
         raise RuntimeError(f"unknown scope {scope!r} -- expected one of {sorted(SCOPES)}")
@@ -310,6 +321,7 @@ def build_filter(
     if api_severities:
         filter_by["severity"] = api_severities
     if project_id:
+        # `VulnerabilityFindingProjectFilter`, an object -- the one wrapped key on this type.
         filter_by["projectIdV2"] = {"equals": [project_id]}
     return filter_by
 

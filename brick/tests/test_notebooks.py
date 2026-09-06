@@ -151,11 +151,30 @@ def test_the_first_markdown_cell_states_the_one_question(notebook):
 # ------------------------------------------------------------------------------- cell 1
 
 
+#: The line that binds `panels`, and the only stable landmark in the boot cell.
+BOOT_IMPORT = "import panels, figures, tiles"
+
+
 def boot_cell(doc):
+    """The cell that puts the modules on ``sys.path``, declares the widgets and builds ``ctx``.
+
+    Found by its import line rather than by a leading ``PAGE = ``. The literal used to open the
+    cell and cannot: three pages build it from ``panels.GROUP_DIMENSIONS``, and the import that
+    binds ``panels`` is fifteen lines further down the SAME cell, so the notebook raised
+    ``NameError`` on its own first statement and no page below it ever ran. This locator
+    encoded the position that made that possible.
+    """
     for cell in cells(doc, "code"):
-        if source(cell).startswith("PAGE = "):
+        if BOOT_IMPORT in source(cell):
             return source(cell)
     raise AssertionError("no boot cell")
+
+
+def without_page(body):
+    """The boot cell minus its ``PAGE`` literal -- the part every page must share verbatim."""
+    start = body.index("PAGE = ")
+    end = body.index("panels.declare_widgets(", start)
+    return body[:start] + body[end:]
 
 
 def test_every_notebook_boots_the_same_way():
@@ -166,7 +185,7 @@ def test_every_notebook_boots_the_same_way():
     bodies = {}
     for name in PAGES:
         body = boot_cell(load(NOTEBOOK_DIR / f"{name}.ipynb"))
-        bodies[name] = body[body.index("\n\nimport os, sys") :]
+        bodies[name] = without_page(body)
     assert len(set(bodies.values())) == 1, (
         "boot cells differ beyond their PAGE literal: "
         + ", ".join(sorted(bodies))

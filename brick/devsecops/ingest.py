@@ -26,12 +26,13 @@ import requests
 import dbx
 from config import (
     API_SEVERITY_VALUES,
-    DEFAULT_FETCH_SEVERITIES,
     DEFAULT_SCOPE,
     FETCH_ASSET_FIELDS,
+    OBJECT_FILTERS,
     SCOPE_ASSET_MEMBERS,
     SCOPES,
     SOURCES,
+    default_fetch_severities,
 )
 
 # Wiz's shared auth endpoint. Tenants on a dedicated region override it via a job parameter.
@@ -194,18 +195,26 @@ QUERY = build_query()
 # more here than it does for the query above, because this one is the only evidence available
 # that a given selection actually validates against the tenant.
 #
-# **There are no timestamps in it, and that is not an oversight.** The reference query selects
-# none, so none is known to exist on ``SASTFinding``. The consequence is that every SAST
-# lifetime is dated from observation: `first_seen` is the scan that first returned the finding
-# and `resolved_at` is the scan that stopped returning it. MTTR is therefore meaningless until
-# the register has run for a while, and reads as near-zero before then -- the same failure the
-# README's backfill section describes for a ledger started today.
+# **A SAST finding has a birth date and no death date, and that is enough.** This comment used
+# to read "there are no timestamps in it, and that is not an oversight", on the reasoning that
+# the reference query selects none so none is known to exist. A live probe against the tenant
+# (2026-08-27, recorded in the repo's CLAUDE.md) falsified it: ``SASTFinding.createdAt`` is a
+# non-null ``DateTime!``, both filterable and sortable, and it is selected below. It is also
+# what the captured response's `endCursor` was always hinting at -- that cursor decodes to a
+# sort key of `finding_severityOrder = "4_2026-07-02T23:39:17.79412Z"`.
 #
-# The captured response's `endCursor` decodes to a sort key of
-# `finding_severityOrder = "4_2026-07-02T23:39:17.79412Z"`, so a timestamp does exist server
-# side. If it turns out to be selectable, add it here and to ``SAST_NODE_SCHEMA``; nothing else
-# has to change, because `metrics.silver_sast` already reads the column and the ledger already
-# prefers an API date over an observed one.
+# What the same probe did NOT find is a death date. There is no ``resolvedAt`` on the type, and
+# `status: RESOLVED` returns zero rows -- which is why ``config.SAST_FETCH_RESOLVED`` stays off,
+# for those two reasons rather than the old one. So the clock is half-measured and half-
+# inferred: `first_seen` is the API's own `createdAt` (the ledger prefers an API date over an
+# observed one), and `resolved_at` is the scan that stopped returning the finding. That is a
+# genuine MTTR once two scans exist, not the near-zero age metric a purely observed lifetime
+# gives, and `resolution_src` reads `disappeared` so the reader can see which half is which.
+#
+# It cannot be applied retroactively: bronze holds only the fields the query asked for, so
+# `--rebuild_ledger` over scans taken before this line existed still reads NULL and falls back
+# to observation. That fallback is exercised by the committed capture, which predates the
+# column.
 _SAST_QUERY_TEMPLATE = """
 query DevSecOpsSastFindings(
   $filterBy: SASTFindingFilters
@@ -217,6 +226,7 @@ query DevSecOpsSastFindings(
       id
       name
       status
+      createdAt
       severity
       originalSeverity
       filePath
@@ -415,9 +425,41 @@ def describe_errors(body: str, limit: int = 2000) -> str:
     return "\n".join(lines)[:limit]
 
 
+def _list_filter(scope: str, key: str, values: Sequence[str]) -> Any:
+    """A list-valued filter, shaped the way THIS scope's filter type wants it.
+
+    One answer per (scope, key), read off ``config.OBJECT_FILTERS`` -- see that table for the
+    schema types and for why the shapes are not interchangeable.
+    """
+    if key in OBJECT_FILTERS.get(scope, ()):
+        return {"equals": list(values)}
+    return list(values)
+
+
+def _shape_base(scope: str, filter_by: Dict[str, Any]) -> Dict[str, Any]:
+    """Route EVERY list-valued key of a scope's base filter through ``_list_filter``.
+
+    ``config.SCOPES`` is written in one convention -- plain lists -- and the shape table decides
+    what goes on the wire. Without this pass a literal in ``SCOPES`` bypasses the table
+    completely, which is exactly how the sibling register shipped `codeToCloudPipelineStage`
+    as a bare list while its table said it was an object: adding the key to the table changed
+    nothing, because the value never went through the shaping function. **A shape table that
+    covers only part of the filter is worse than none**, because it reads as though it covers
+    all of it.
+
+    Non-list values pass through untouched, which is what leaves `sast`'s nested
+    ``resource: {isDefaultBranch: {equals: True}}`` and `sca`'s ``hasFix: True`` alone -- a
+    nested filter object is not a list needing a convention.
+    """
+    return {
+        key: _list_filter(scope, key, value) if isinstance(value, list) else value
+        for key, value in filter_by.items()
+    }
+
+
 def build_filter(
     scope: str = DEFAULT_SCOPE,
-    severities: Sequence[str] = DEFAULT_FETCH_SEVERITIES,
+    severities: Optional[Sequence[str]] = None,
     project_id: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The GraphQL ``filterBy`` for a scope.
@@ -425,23 +467,34 @@ def build_filter(
     Pure and separately testable, because this dict decides which population every downstream
     metric is computed over -- a wrong key here is not an error, it is a plausible-looking
     number about the wrong thing.
+
+    Every list-valued key -- the base's, the severity gate's and the project restriction's --
+    goes through ``config.OBJECT_FILTERS``. That is the whole design: the two filter types
+    spell the same field names with different KINDS, and a mismatch is refused with HTTP 400
+    `VALIDATION_INVALID_TYPE_VARIABLE`, which fetches zero rows while looking like an empty
+    register rather than like an error.
     """
     if scope not in SCOPES:
         raise RuntimeError(f"unknown scope {scope!r} -- expected one of {sorted(SCOPES)}")
-    filter_by: Dict[str, Any] = copy.deepcopy(SCOPES[scope])
+    # None means "whatever this scope pulls by default", and the default is a property of the
+    # POPULATION -- so it can only be read once the scope is known, which is why it is resolved
+    # here rather than in the signature. See config.default_fetch_severities.
+    if severities is None:
+        severities = default_fetch_severities(scope)
+    filter_by: Dict[str, Any] = _shape_base(scope, copy.deepcopy(SCOPES[scope]))
     source = SOURCES[scope]
 
     api_severities = severity_filter(severities)
     if api_severities and source.severity_filter:
-        filter_by["severity"] = api_severities
+        filter_by["severity"] = _list_filter(scope, "severity", api_severities)
     if project_id:
         # The two filter types spell the project restriction differently, and the reference
         # scripts are the evidence for each: sca_request.py passes
         # `projectIdV2: {equals: [...]}` and sast_request.py passes a bare `projectId: [...]`.
-        if source.kind == "sast":
-            filter_by["projectId"] = [project_id]
-        else:
-            filter_by["projectIdV2"] = {"equals": [project_id]}
+        # The NAME is chosen here; the SHAPE comes from the same table every other list-valued
+        # key goes through, because an inline literal is how a key bypasses the table.
+        key = "projectId" if source.kind == "sast" else "projectIdV2"
+        filter_by[key] = _list_filter(scope, key, [project_id])
     return filter_by
 
 
@@ -469,7 +522,7 @@ def fetch_findings(
     token: str,
     *,
     scope: str = DEFAULT_SCOPE,
-    severities: Sequence[str] = DEFAULT_FETCH_SEVERITIES,
+    severities: Optional[Sequence[str]] = None,
     project_id: Optional[str] = None,
     page_size: int = DEFAULT_PAGE_SIZE,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
@@ -489,6 +542,10 @@ def fetch_findings(
     ``ledger.observed``'s first-wins de-duplication -- so fetching pages concurrently would not
     merely be hard, it would change which duplicate wins.
     """
+    # `build_filter` resolves a None gate to this scope's default; reading it back keeps the
+    # node-side `_severity_gate` below applying the same list the API was asked for.
+    if severities is None:
+        severities = default_fetch_severities(scope)
     filter_by = build_filter(scope, severities, project_id)
     query = query_for(scope)
     source = SOURCES[scope]

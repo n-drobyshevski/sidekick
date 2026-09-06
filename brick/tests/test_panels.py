@@ -596,6 +596,67 @@ def test_the_lifecycle_frame_is_built_as_of_the_scan_not_wall_clock(spark_, ctx)
     assert as_of_later > as_of_scan
 
 
+def test_the_actionable_clock_reaches_gold_without_disturbing_the_first(spark_, ctx):
+    """The second clock is in the published table, and the join that put it there moved
+    nothing that was already in the row.
+
+    Two silent failure modes, asserted rather than reasoned about. A left join onto a frame
+    with a different severity set DROPS rows; a join onto one with a duplicated key
+    MULTIPLIES them. Either leaves a gold table that still reads perfectly plausibly -- one
+    severity quietly missing from every page, or every count doubled -- so both are compared
+    against the frame the pipeline joined into, over the real register rather than a
+    synthetic one.
+
+    ``write_append`` passes ``mergeSchema``, which is what lets these columns land in a
+    ``metrics_mttr`` an earlier version created. That is a property of the writer; what is
+    checked here is the only thing a test can see, which is that they arrived.
+    """
+    import ledger as ledger_mod
+    from pyspark.sql import functions as F
+
+    ACTIONABLE = [
+        "mttr_actionable_mean", "mttr_actionable_median", "actionable_resolved",
+        "actionable_age_p50", "actionable_age_p90", "awaiting_vendor_fix_count",
+        "actionable_sla_compliant", "actionable_sla_pct",
+    ]
+
+    gold = spark_.table(ctx.tables.mttr).where(
+        (F.col("scan_id") == ctx.scan_id) & (F.col("scope") == ctx.scope)
+    )
+    published = {r["severity"]: r.asDict() for r in gold.collect()}
+    assert len(published) == gold.count(), "a severity is published twice"
+    for column in ACTIONABLE:
+        assert column in gold.columns, f"{column} never reached the gold table"
+
+    ledger = spark_.table(ctx.tables.ledger).where(F.col("scope") == ctx.scope)
+    lifecycles = ledger_mod.lifecycle_frame(ledger, ctx.scan_ts)
+
+    # The frame the join was made against: same severities, one row each, or the join was
+    # never safe in the first place.
+    actionable = metrics.actionable_mttr_by_severity(lifecycles).collect()
+    assert len({r["severity"] for r in actionable}) == len(actionable)
+    assert {r["severity"] for r in actionable} == set(published)
+
+    # And nothing that was already there moved. Compared column by column against the
+    # unjoined frame, so a join that silently replaced a value fails here by name.
+    base = {r["severity"]: r.asDict() for r in metrics.mttr_by_severity(lifecycles).collect()}
+    assert set(base) == set(published)
+    for severity, row in base.items():
+        for column, value in row.items():
+            got = published[severity][column]
+            if isinstance(value, float):
+                assert got == pytest.approx(value, abs=1e-6), (severity, column)
+            else:
+                assert got == value, (severity, column)
+
+    # The register is not empty of the thing being measured: every row here was ingested
+    # under `hasFix: true`, so the second clock has something to say about all of them.
+    overall = published[OVERALL]
+    assert overall["actionable_resolved"] == overall["resolved"]
+    assert overall["awaiting_vendor_fix_count"] == 0
+    assert overall["mttr_actionable_median"] <= overall["mttr_median"]
+
+
 def test_scan_pin_check_agrees_across_the_gold_tables(spark_, ctx):
     rows = {r["source"]: r["scan_id"] for r in panels.scan_pin_check(spark_, ctx).collect()}
     gold = {rows[k] for k in ("context", "metrics_mttr", "metrics_program", "metrics_capacity")}

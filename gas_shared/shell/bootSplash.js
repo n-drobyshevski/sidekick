@@ -10,11 +10,16 @@
 // It reuses the indeterminate progress bar rather than drawing its own, so the splash reads as
 // the same loader family as the route overlay — and inherits that bar's reduced-motion striped
 // fallback for free.
+//
+// AND IT DEALS THE ALERT DOTS, exactly as the template's inline script does to the copy the
+// browser painted first. Without that call this splash would still animate — but with all 97
+// alerts in one phase group, so the mark refresh() rebuilds would move differently from the
+// one the reader saw two seconds earlier, on the same page, for no reason they could name.
 
 import { appConfig } from "../appConfig.js";
 import { progressBar } from "../ui/data.js";
 import { el } from "../ui/dom.js";
-import { brandMark } from "../ui/brandMark.js";
+import { brandMark, dealAlerts } from "../ui/brandMark.js";
 
 /** The splash, as a detached node. Keep this markup in sync with the HTML template. */
 export function bootSplash() {
@@ -22,12 +27,15 @@ export function bootSplash() {
   const bar = progressBar(null);
   bar.classList.add("boot-splash-bar");
   bar.setAttribute("aria-label", "Opening the " + openingNoun);
+  // dealAlerts() wraps the mark rather than taking a temporary: base.css phases the alert
+  // loop by --i, a phase needs an element to sit on, and keeping `brandMark(112)` inside the
+  // tree is what keeps this function one expression the contract can read.
   return el(
     "div",
     { class: "boot-splash", role: "status", "aria-live": "polite" },
     el("div", { class: "boot-splash-inner" },
       el("div", { class: "boot-brand" },
-        brandMark(112),
+        dealAlerts(brandMark(112)),
         el("span", { class: "boot-brand-label" }, productName)),
       bar,
       el("p", { class: "boot-splash-note" }, "Opening the " + openingNoun + "…")),

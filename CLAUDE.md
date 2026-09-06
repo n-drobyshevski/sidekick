@@ -14,6 +14,24 @@ scan history, and — in the GAS rebuild — Prioritization-to-Prediction progra
 analytics for SAST / SCA / secrets findings in source repositories, with `brick/devsecops/`
 as its behavioural spec.
 
+`gas_hub/` is the fourth GAS app and the only one that is NOT a register: a launcher whose whole
+job is to open the right sidekick. One page, a 2x2 grid of tiles — OS Patching, AI security,
+DevSecOps, and a bordered "coming soon (maybe)" placeholder — plus a Settings page holding the
+access roster and the three sibling URLs. **It reads no register's data.** There is no
+cross-app call, no ledger, no scan, no sync, no chart, no scope dimension, no help route and no
+welcome gate (each sibling runs its own "signed in as X, Continue"; two interstitials in one
+journey answer the same question twice). Its only state is five Script Properties: the two allowlists, and
+`URL_OS` / `URL_AI` / `URL_DEVSECOPS` — the siblings' `/exec` URLs, which **cannot be derived**
+(`ScriptApp.getService().getUrl()` answers for the calling deployment only and has flipped
+between the `/dev` and `/exec` forms across runtime changes), so somebody pastes them once and
+`src/server/urls.ts` is the one place that reads, writes and vets them. A blank property renders
+that tile as "not configured", never as a broken link; the only other legal form is
+`http://localhost:<port>/`, so the four dev harnesses can run side by side (gas 8787, gas_ai
+8788, gas_devsecops 8789, gas_hub 8790). Brand is **graphite `#0a0a0a`** — the hub belongs to no
+register, so it wears the neutral every sibling's primary button already does rather than
+borrowing one register's hue. Its tiles are a stated exception to root `DESIGN.md`'s
+Whisper-Or-Lift rule; see `gas_hub/DESIGN.md`.
+
 `gas/` holds a full Google Apps Script rebuild of the same product (Google Sheets ledger +
 Drive archives + HtmlService SPA). The Python `wiz_dashboard/domain/` layer is its behavioral
 spec: `gas/test/export_*.py` generate golden fixtures by running this code, and the TypeScript
@@ -21,7 +39,7 @@ ports are tested against them — after changing the Python domain layer, regene
 and run `cd gas && npm run check`. See `gas/README.md`.
 
 `gas_shared/` is the one copy of the component base, stylesheets and design tokens that
-`gas/`, `gas_ai/` and `gas_devsecops/` all draw with — plain ES modules and plain CSS,
+`gas/`, `gas_ai/`, `gas_devsecops/` and `gas_hub/` all draw with — plain ES modules and plain CSS,
 imported by relative path, bundled by each app's own esbuild step, nothing installed. It
 holds `ui/` (components, `index.js` the one barrel, `helpPage.js` a page and deliberately
 not in the barrel), `shell/` (`app.js`'s shell — nav rail, appbar, boot splash, the flyout
@@ -177,6 +195,68 @@ because they are in this file.
   re-resolved). They fail differently: presence looks like an empty register, absence looks
   like a remediation programme. Name the kind in the `describe`.
 
+## brick / devlake — the Databricks register
+
+`brick/` (OS vulnerabilities, scopes `os`/`all`) and `brick/devsecops/` (`sca`/`sast`) are the
+PySpark + Delta surface over the same registers: bronze → silver → a `MERGE`d ledger → the
+`scans` commit row → gold tables. They are deliberate FORKS with identical module names and
+exactly one may be on `sys.path`. `devlake/` at the repo root is the dev-only harness that runs
+either of them on a laptop; it is never deployed.
+
+- **A three-level name is fine locally; a NAMED catalog is not, and the README had it
+  backwards.** It claimed `saveAsTable` on `catalog.schema.table` "needs Unity Catalog — a local
+  Spark can only write two-level names". Measured (Spark 3.5.9 / delta-spark 3.3.3): the session
+  installs `DeltaCatalog` **as** `spark_catalog`, so `spark_catalog.<schema>` is writable and
+  `saveAsTable`, `MERGE INTO`, `CREATE TABLE … CLUSTER BY`, `DELETE`, `OPTIMIZE`, `table_exists`
+  and `databaseExists` all take three parts. The single exception is delta-spark's own Python
+  builder: `DeltaTable.createIfNotExists().tableName("a.b.c")` parses a two-part identifier and
+  dies on the second dot with `[PARSE_SYNTAX_ERROR] … pos 22` before any catalog is consulted —
+  so `create_clustered` is the one call needing SQL DDL locally, which is what
+  `devlake/lake.py::precreate_clustered` is. An unregistered catalog never reports "not found":
+  `databaseExists` returns `False` silently, `CREATE SCHEMA` dies in Spark's own error formatter
+  (`_LEGACY_ERROR_TEMP_1055`) and `ensure_schema` re-raises it as a *grant* problem it is not.
+  Pinned in `brick/tests/test_catalog_mode.py` and its devsecops mirror.
+- **THE JAR DECIDES, not the pip package, and one test found it the long way.** `conftest`
+  sends `--packages io.delta:delta-spark_2.12:<v>` to spark-submit; pip had resolved 3.3.3 while
+  that string still said 3.3.2. Spark 3.5.6 changed RTAS to emit `OverwriteByExpression`, and
+  only 3.3.3's `StagedDeltaTableV2` advertises `TRUNCATE`/`OVERWRITE_BY_FILTER` — so
+  `csvstore.restore`'s `mode("overwrite").saveAsTable(<catalog name>)` failed with *"does not
+  support truncate in batch mode"*, an `AnalysisException` deep inside a restore rather than a
+  version error. `test_pins.py` now asserts `importlib.metadata.version("delta-spark")` EQUALS
+  the pinned jar; a floor is not enough, because the two must be one release.
+- **`DRIVER_MEMORY` was computed in the wrong process, and it read as an OOM.** `conftest`
+  keyed on `PYTEST_XDIST_WORKER_COUNT`, which is unset in the xdist CONTROLLER where conftest is
+  imported first; `os.environ.setdefault` then froze the single-process 4g into
+  `PYSPARK_SUBMIT_ARGS` and every worker inherited it, so `-n 3` meant three 4g JVMs against a
+  ~13 GiB cgroup. The cascade of 17 failures and 11 errors that produced was entirely one
+  worker's JVM dying; re-running the same ids serially passed. Key on `PYTEST_XDIST_WORKER` in
+  `pytest_configure`, which runs per process.
+- **Java 21 runs the whole suite, though Spark 3.5's docs say 8/11/17.** Measured here — session
+  start, Delta write/read, and `OPTIMIZE` on a single-column `CLUSTER BY` table. No guard was
+  added: blocking a setup that measurably works would be the docs overriding the measurement.
+- **`hasFix: true` in a scope's filter is a fact about the POPULATION, and the actionable clock
+  turns on it.** `_BASE` pins it for `os`/`all`/`sca` and never for `sast`, so those registers
+  hold only findings that already had a fix when ingested. A row of such a scope with a blank
+  fix clock therefore has a fix whose DATE is missing, not a missing fix: `fix_available_at`
+  falls back to `first_seen`. GAS's `fix_date ?? fix_observed_at ?? null` copied verbatim would
+  mark it `awaiting_vendor_fix` inside a population defined by having one — the same category
+  error as letting SAST await a vendor it does not have, reached from the other side.
+  `config.SCOPES_PINNING_HAS_FIX` is DERIVED from `SCOPES` at import, so dropping `hasFix` from a
+  filter corrects it rather than leaving it asserting a guarantee that is gone.
+- **The page notebooks could never run, and no test could see it.** Their boot cell opened with
+  `PAGE = {... panels.GROUP_DIMENSIONS ...}` while `import panels` sat fifteen lines below it in
+  the SAME cell — `NameError` on the notebook's first statement, in six notebooks, on any
+  machine including a fresh cluster. `tests/test_notebooks.py` READS the Python cells (it
+  executes only the `%sql` ones), so nothing caught it until `devlake` launched a real kernel.
+  The literal now sits below the import in every page notebook, `boot_cell` finds the cell by
+  its import line, and `without_page` keeps the sameness test saying what it said.
+- **A fake Wiz must validate the SHAPE, not just serve rows.** `devlake/fakewiz.py` patches
+  `ingest._post` (keeping the real `build_filter`, cursor walk and `seq` order) and answers a
+  GraphQL 400 when a scope's filter arrives in the wrong kind — which is what turns the
+  bare-list-vs-`{equals:[…]}` asymmetry into a loud failure instead of an empty register. Patch
+  `get_token` on BOTH `ingest` and `run_pipeline`: the latter does `from ingest import get_token`
+  at import, so patching only the module leaves the real OAuth call bound.
+
 ## gas_devsecops — the code register
 
 A fourth register: MTTR and remediation analytics for **SAST, SCA and secrets** findings.
@@ -196,8 +276,6 @@ already implements the pipeline and is the behavioural spec (same relationship `
   survives anyway: the ledger prefers the API birth date and dates the death by
   DISAPPEARANCE, so SAST gets a genuine MTTR rather than an age metric once two scans exist
   (`brick/devsecops/ledger.py`, pinned by `test_mttr_is_measured_from_the_ledgers_own_dates`).
-  Caveat for the port: `brick`'s own `ingest.py:206` claims `silver_sast` already reads the
-  column; it does not — `metrics.py:371` hard-codes `null_ts`.
 - **The same field name carries DIFFERENT KINDS across filter types, and it has now cost the
   register twice.** `VulnerabilityFindingFilters.severity` is `[VulnerabilitySeverity!]`, a
   bare list; `SASTFindingFilters.severity` is `SASTSeverityFilter`, an object taking

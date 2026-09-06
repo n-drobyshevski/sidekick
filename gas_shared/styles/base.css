@@ -490,6 +490,14 @@
 @media (prefers-reduced-motion: reduce) {
   .progress-track.indeterminate .progress-fill {
     width: 100%;
+    /* `animation: none` FIRST, and it was missing here for the life of this rule. Without it
+       overrides.css's `* { animation-duration: .01ms !important }` leaves
+       progress-indeterminate RUNNING at 1e-05s on an infinite loop, so `margin-left` samples
+       an arbitrary keyframe phase on every frame and the `margin-left: 0` below never gets to
+       apply: measured -92.8px on one probe and -86.4px on another 700ms later, under reduced
+       motion, on the boot splash's own bar. A duration of nearly zero is not stillness — only
+       animation-name is, and that !important does not touch it. */
+    animation: none;
     margin-left: 0;
     /* Self-relative, not --accent-text: on gas and gas_ai --accent-text EQUALS --accent, so a
        stop pair built from it collapsed to one flat colour and the "working" stripe vanished.
@@ -658,7 +666,137 @@ main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
 }
 .boot-splash-bar { width: 100%; }
 .boot-splash-note { margin: 0; font-size: var(--fs-label); color: var(--text-2); }
-@media (prefers-reduced-motion: reduce) { .boot-splash { transition: none; } }
+/* THE MARK'S TIMELINE. Four picked variants — an orbit trace, a layered arrival, a globe
+   breath and the alert dots surfacing — composed into ONE timeline rather than four rule
+   sets, because `animation` is a SHORTHAND: a second rule naming the same element replaces
+   the first one's whole list instead of adding to it. So every element below gets one
+   explicit animation LIST (the `gs-node` idiom, gas_ai/src/client/styles/graph.css:187-195),
+   and a variant is a COLUMN of those lists, not a rule of its own.
+
+   SCOPED TO THE SPLASH, EVERY SELECTOR. The appbar wears the identical `.mark-*` classes —
+   shell/appbar.js:36 draws `brandMark(22, {compact: true})` — so an unscoped `.mark-ink`
+   rule would set a 22px header glyph breathing for the life of the session.
+
+   TEMPO. `--bm-tempo` multiplies every ENTRANCE duration and delay, so the base figures
+   below stay the ones the timeline was designed on (320ms rise, 60/140/220/300/380/460ms
+   stagger) and the 2.5x slow-down is one number to re-read. The LOOP periods are literal
+   1x: they are cycle lengths, not arrival timings, and 1.8s / 3.6s are already the house
+   loop periods (graph.css's `gs-breath`).
+
+   THE BASE RULE IS ALWAYS THE FINISHED MARK. Nothing here sets a not-yet-drawn state on an
+   element; those live inside the keyframes and are reached with `animation-fill-mode:
+   backwards`. A half-applied stylesheet, a browser that never runs the animation, and the
+   reduced-motion path below all show the complete mark rather than an empty frame — which
+   matters more here than anywhere else in the app, because this copy of the mark paints
+   from index.html before any script has run.
+
+   THE CHECK STARTS WHERE THE RING FINISHES: the ring traces 140 -> 460 (base ms) and the
+   check 460 -> 640, so the two reads as one stroke continuing rather than two strokes
+   racing.
+
+   AND THE PAGE NEVER WAITS FOR IT. appShell.js hides the splash two rAFs after bootstrap
+   resolves, so a fast boot CUTS this entrance part-way through. That is the expected case,
+   not a bug to time around. */
+.boot-splash .brand-mark { --bm-tempo: 2.5; }
+
+/* The blue globe: rises, then breathes. The breath's delay is the rise's own delay plus its
+   duration, so the later animation in the list takes over the opacity property exactly when
+   the earlier one stops holding it (fill-mode `both`) — one continuous motion, no handoff
+   frame. */
+.boot-splash .mark-map {
+  animation-name: bm-rise, bm-breath;
+  animation-duration: calc(320ms * var(--bm-tempo)), 1.8s;
+  animation-timing-function: var(--ease-out), var(--ease-loop);
+  animation-delay: 0ms, calc(320ms * var(--bm-tempo));
+  animation-iteration-count: 1, infinite;
+  animation-fill-mode: both, none;
+}
+
+/* The alert dots. Same rise and breath a beat later, plus the surfacing loop: they REST at
+   the globe blue and turn red in groups. One rule serves every dealt group — `--i` is the
+   group index, set as an inline style by dealAlerts() (ui/brandMark.js) and by the twin
+   inline script in shell/index.template.html — and a NEGATIVE delay is what phases them:
+   `calc(var(--i, 0) * -0.6s)` starts group n already 0.6n seconds into its own cycle rather
+   than waiting to begin, so the register looks alive on the first frame instead of 3.6s in.
+   The `, 0` fallback is load-bearing: with JavaScript off the warm path is never dealt,
+   there is no `--i` on it at all, and every alert simply pulses in phase.
+
+   Declared AFTER `.mark-map` on purpose. Both selectors are (0,2,0) and the warm path
+   carries both classes, so source order is what decides whose animation list wins. */
+.boot-splash .mark-map--warm {
+  animation-name: bm-rise, bm-breath, bm-alert;
+  animation-duration: calc(320ms * var(--bm-tempo)), 1.8s, 3.6s;
+  animation-timing-function: var(--ease-out), var(--ease-loop), var(--ease-loop);
+  animation-delay: calc(60ms * var(--bm-tempo)), calc(380ms * var(--bm-tempo)),
+                   calc(var(--i, 0) * -0.6s);
+  animation-iteration-count: 1, infinite, infinite;
+  animation-fill-mode: both, none, none;
+}
+
+/* The two orbit nodes and the shield, split by ELEMENT rather than by class: both wear
+   `.mark-ink-fill`, and the nodes belong to the ring's beat while the shield belongs to the
+   check's. `circle` vs `path` is the only thing that tells them apart without adding a class
+   to two hand-kept copies of the markup. */
+.boot-splash circle.mark-ink-fill {
+  animation: bm-rise calc(320ms * var(--bm-tempo)) var(--ease-out) calc(220ms * var(--bm-tempo)) both;
+}
+.boot-splash path.mark-ink-fill {
+  animation: bm-rise calc(320ms * var(--bm-tempo)) var(--ease-out) calc(300ms * var(--bm-tempo)) both;
+}
+
+/* The ring and the check draw themselves in. `bm-trace` works in PATH-LENGTH units, which is
+   why both paths carry `pathLength="1"` in both copies of the markup — without it a
+   `stroke-dasharray` of 1 is one user unit on a ~120-unit arc and the ring renders as a
+   dotted line. `backwards` rather than `both`: the finished state is the base rule's, so
+   there is nothing to hold afterwards, only a start state to reach back for. */
+.boot-splash .mark-ink {
+  animation: bm-trace calc(320ms * var(--bm-tempo)) var(--ease-out) calc(140ms * var(--bm-tempo)) backwards;
+}
+.boot-splash .mark-knockout {
+  animation: bm-trace calc(180ms * var(--bm-tempo)) var(--ease-out) calc(460ms * var(--bm-tempo)) backwards;
+}
+
+@keyframes bm-rise { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: none; } }
+@keyframes bm-breath { 0%, 100% { opacity: 1; } 50% { opacity: 0.62; } }
+@keyframes bm-trace {
+  from { stroke-dasharray: 1; stroke-dashoffset: 1; }
+  to { stroke-dasharray: 1; stroke-dashoffset: 0; }
+}
+/* Colour, not opacity: an alert that faded would read as the globe dimming. The dot spends
+   most of its cycle red and returns to the globe's own blue between alerts. */
+@keyframes bm-alert {
+  0%, 100% { stroke: var(--mark-map-blue); }
+  10%, 65% { stroke: var(--mark-map-red); }
+  78% { stroke: var(--mark-map-blue); }
+}
+
+/* ONE reduced-motion block for the whole splash, and the NAMED `animation: none` in it is
+   load-bearing rather than belt-and-braces. overrides.css's global
+   `* { animation-duration: .01ms !important }` does NOT zero `animation-delay` — a delayed
+   check would sit in its start state for its whole delay and then pop — and on an `infinite`
+   loop it samples an arbitrary phase every frame, which is flicker, not stillness.
+   `animation: none` sets `animation-name`, which that `!important` duration does not cover.
+   base.css already spells this out six times before this block for the same reason
+   (:329, :439, :456, :500, :536, :637) — and :500 is one of them only as of the round that
+   wrote this paragraph, which is the honest measure of how easy the omission is.
+
+   What a reader with reduced motion sees is the mark exactly as drawn: nothing here paints,
+   and only `bm-alert` ever sets an alert dot to blue, so every alert sits red. */
+@media (prefers-reduced-motion: reduce) {
+  .boot-splash { transition: none; }
+  /* THE SELECTORS BELOW ARE THE ANIMATING RULES' OWN, CHARACTER FOR CHARACTER, and the
+     element qualifiers are the reason. `.boot-splash .mark-ink-fill` is (0,2,0) while
+     `.boot-splash circle.mark-ink-fill` is (0,2,1), so a fallback written the tidy way LOSES
+     THE CASCADE to the rule it is supposed to stand down: measured in the browser against the
+     shipped bytes, the two nodes and the shield still reported animationName `bm-rise` under
+     reduced motion, and with overrides.css's 0.01ms duration and their 550/750ms delays they
+     sat INVISIBLE (fill-mode both, holding the `from` state) and then popped — precisely the
+     defect the paragraph above says this block prevents. Writing the same selector twice looks
+     redundant and is the only form that is correct. */
+  .boot-splash .mark-map, .boot-splash .mark-map--warm,
+  .boot-splash circle.mark-ink-fill, .boot-splash path.mark-ink-fill,
+  .boot-splash .mark-ink, .boot-splash .mark-knockout { animation: none; }
+}
 
 /* Skeleton placeholders: calm opacity pulse only — NO diagonal shimmer sweep (the SaaS tell
    DESIGN.md forbids). Reduced motion → a static hairline block. Blocks are aria-hidden. */

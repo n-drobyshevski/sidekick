@@ -104,28 +104,47 @@ Four things about this register are different, and none is a detail:
   and is **deliberately incomplete**. An unmapped child classifies `low`, so the gap costs
   coverage's numerator silently — `signal_breakdown` publishes `cwe_unmapped` as its size, and
   that is the number to read before quoting a SAST coverage figure.
-- **There are no timestamps.** `ingest.SAST_QUERY` selects none, because the reference query
-  selects none and nothing else is known to validate. Every SAST lifetime is therefore dated
-  from *observation*, so **MTTR is not readable until the register has run for a while** — and
-  findings that predate the first scan are under-measured permanently, because their
-  `first_seen` is pinned to that scan's date. The captured `endCursor` decodes to a sort key
-  containing a timestamp, so one exists server-side; if it is selectable, adding it here and to
-  `metrics.SAST_NODE_SCHEMA` is the whole change. **It cannot be applied retroactively** —
-  bronze only holds the fields the query asked for, so `--rebuild_ledger` cannot recover them.
-- **Every closure is inferred, by choice.** A SAST finding plainly has a status, so the API can
-  almost certainly be asked for resolved ones. `config.SAST_FETCH_RESOLVED` declines, and the
-  reason is the timestamps above: an already-resolved finding with no dates is born and closed
-  in the same instant, so `first_seen == resolved_at` and **`mttr_days` is exactly 0**. Every
-  historical resolved finding would land at zero days and drag the Kaplan–Meier median with it —
-  worse than the empty result it replaces, because "no MTTR yet" is a state a reader can act on
-  and "MTTR is 0 days" is a confident lie. `tests/test_devsecops.py` measures that zero. Turn
-  the flag on in the same change that adds a timestamp, not before.
-- **Two selections are unverified against the live tenant**: whether `SASTFindingFilters`
-  accepts `severity`, and what `aiAnalysis.verdict` actually spells. Every node in the captured
-  response has `aiAnalysis: null`, so the AI clause will never fire until the enum is confirmed
-  — quiet, which is why `ai_verdict_missing` is published beside it. If the severity filter
-  turns out not to exist, set `severity_filter=False` on `config.SAST_SOURCE` and
+- **There is a birth date and no death date.** This bullet used to say there were no timestamps
+  at all; a live probe (2026-08-27) falsified that. `SASTFinding.createdAt` is a non-null
+  `DateTime!`, filterable and sortable, and `ingest.SAST_QUERY` now selects it —
+  `metrics.silver_sast` reads it into `first_detected_at` and the ledger prefers it over the
+  scan that first saw the finding. There is still no `resolvedAt`, so a death date arrives only
+  when a later scan stops returning a finding. **SAST therefore has a genuine MTTR once two
+  scans exist**: a measured start, a disappearance-dated end carrying an error bar of one scan
+  interval, and `resolution_src = 'disappeared'` saying so. What remains under-measured is the
+  *end*, not the beginning — findings that predate the first scan now carry their real age.
+  **The column cannot be applied retroactively** — bronze holds only the fields the query asked
+  for, so `--rebuild_ledger` over older scans still reads NULL and falls back to observation.
+  The committed capture predates the column and exercises exactly that fallback.
+- **Every closure is inferred, by choice, and the reason has changed.**
+  `config.SAST_FETCH_RESOLVED` declines to ask for RESOLVED findings for two measured reasons:
+  the type has no `resolvedAt`, and `status: RESOLVED` returns **zero rows** against this
+  tenant. The old reason — "no timestamps at all" — is gone, but the arithmetic only moved. With
+  `createdAt` selected and no `resolvedAt` to read, an already-resolved finding lands
+  `first_seen = createdAt`, `resolved_at = now`, so **`mttr_days` is the finding's age at the
+  moment we first looked**. That is worse than the flat 0 it replaces, because it is plausible:
+  a weakness fixed within a day two years ago would report 730 days, and the Kaplan–Meier
+  median would be set by the register's own start date. `tests/test_devsecops.py` measures that
+  age. Turn the flag on if a `resolvedAt` appears, not before.
+- **The same field name carries a different KIND across the two filter types, and the shape is
+  now data.** `SASTFindingFilters` does accept `severity` — that bullet used to call it
+  unverified — but as a `SASTSeverityFilter`, an object taking `{equals: [...]}`, where
+  `VulnerabilityFindingFilters.severity` is a bare `[VulnerabilitySeverity!]`. Same for
+  `status` (`SASTStatusFilter`), and inverted for the project restriction: SCA's `projectIdV2`
+  is an object and SAST's `projectId` is a bare `[String!]`. A mismatch is refused with HTTP
+  400 `VALIDATION_INVALID_TYPE_VARIABLE`, which fetches **zero rows and reads as an empty
+  register**, not as an error — this fork sent the SCA convention to both scopes until the
+  shapes were tabled. `config.OBJECT_FILTERS` holds the asymmetry per scope and
+  `ingest._shape_base` routes **every** list-valued key of `config.SCOPES` through it, because
+  a table covering only part of the filter is worse than none: an inline literal bypasses it
+  and adding the key changes nothing. Copy new entries from `npm run probe -- --schema` in
+  `gas_devsecops/`; never infer one filter type's shape from another's.
+  `config.Source.severity_filter` answers a different question and stays — *whether the type
+  has the key at all*, not what shape it wants — and when it is False,
   `ingest._severity_gate` applies `--severities` to the returned nodes instead.
+- **What `aiAnalysis.verdict` spells is still unverified against the live tenant.** Every node
+  in the captured response has `aiAnalysis: null`, so the AI clause will never fire until the
+  enum is confirmed — quiet, which is why `ai_verdict_missing` is published beside it.
 
 ### Two silver projections, one column contract
 
@@ -238,6 +257,11 @@ To read the notebooks as well, four more files go on the same `sys.path`:
     └── 08_code_assets.ipynb
 ```
 
+**Catalog mode is the supported deployment.** Pass `--catalog` and `--schema` and the register
+is Delta tables in the lake; `brick/databricks.yml` deploys one Job per scope that way. The two
+CSV paragraphs below are the fallback for a principal with no schema it may create tables in —
+see [`brick/README.md`](../README.md), *Fallback storage* and *The CSV register (legacy)*.
+
 **`--csv_path` makes a workspace directory the register.** Delta is still involved — the ledger
 is `MERGE`d on every scan and read back to compute the gold tables, and a CSV cannot be merged
 into — but only as scratch for the length of one run: the CSV is restored into Delta before the
@@ -247,13 +271,33 @@ the lake. Set the `csv_path` widget (or the flag) to stay out of it — cell 1 o
 `06_run_and_verify` and its run cell both read that widget, so they cannot disagree about where
 the register is.
 
-Then run one scope at a time — they write separate tables and must never be blended:
+The two scopes write separate tables and must never be blended, and `ledger.reconcile` does not
+merely rely on that: a prior row or an observation stating a scope other than the one it was
+asked for is refused. Absence is remediation here, so a `sast` prior meeting a `sca` scan is not
+a mislabelled input — every one of its rows is missing from that scan *by construction*, and all
+of them would close as remediated, with real resolution dates.
+
+Then run one scope at a time — in the lake:
 
 ```bash
-python run_pipeline.py --scope=sca --severities=CRITICAL \
-  --csv_path=/Workspace/Users/<you>/wiz/devsecops_csv \
+python run_pipeline.py --scope=sca --severities=CRITICAL,HIGH \
+  --catalog=<your-catalog> --schema=<your-schema> \
   --wiz_api_url=https://api.<region>.app.wiz.io/graphql
 ```
+
+or, on the fallback, with `--csv_path=/Workspace/Users/<you>/wiz/devsecops_csv` in place of the
+catalog pair.
+
+To run either scope on a laptop against a local lake, with no tenant and no cluster:
+
+```bash
+python -m devlake.run --fork=devsecops --scope=sca  --scans=2 --lake=/tmp/lakecheck
+python -m devlake.run --fork=devsecops --scope=sast --scans=2 --lake=/tmp/lakecheck
+```
+
+The fake Wiz in front of it **validates the filter shape per scope**, so the asymmetry below
+(SAST wraps `severity`, bares `projectId`; SCA does the opposite) fails loudly rather than
+fetching zero rows. See [`devlake/README.md`](../../devlake/README.md).
 
 The first run has nothing to restore and says so; after it the directory is the register, and
 each later run reconciles against it. The scratch Delta side defaults to
@@ -264,9 +308,11 @@ by default, `--rebuild_ledger` has nothing to replay in this mode unless
 Read `resolved_count` in the first run's summary before anything else. A plausible day's
 remediation means the scope is right; a number close to the whole register means it is not.
 
-Everything else — parameters, retries, the ledger's lifecycle rules, the CSV register, table
-layout, `--rebuild_ledger` — works exactly as [`brick/README.md`](../README.md) describes, because
-it is the same code. Read that file for the detail; this one covers only what differs.
+Everything else — parameters, retries, the ledger's lifecycle rules, the actionable clock, the
+CSV register, table layout, `--rebuild_ledger` — works exactly as
+[`brick/README.md`](../README.md) describes, because it is the same code. One difference is
+load-bearing and lives there too: `awaiting_vendor_fix` is scope-guarded, because a weakness in
+your own code has no vendor, so `sast` is not in `config.HAS_VENDOR_FIX` and never awaits one. Read that file for the detail; this one covers only what differs.
 
 ## Tests
 
