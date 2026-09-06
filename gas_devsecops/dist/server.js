@@ -450,7 +450,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "5e4516c7f9e2" : "dev";
+  var BUILD_ID = true ? "f2ef767a598f" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -5683,10 +5683,125 @@ var Server = (() => {
     warmReadModels: () => warmReadModels
   });
 
-  // src/domain/assets.ts
+  // src/domain/movementDecomposition.ts
   var DAY_MS7 = 864e5;
-  var DAYS_PER_MONTH = 30.4375;
   function isOpen4(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function addCount(total, v, refused) {
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      refused.n += 1;
+      return total;
+    }
+    return total + v;
+  }
+  function inWindow(t, sinceMs, untilMs) {
+    return t !== null && t > sinceMs && t <= untilMs;
+  }
+  function movementDecomposition(rows, scans, window, scope) {
+    var _a;
+    const sinceMs = parseTs(window.since);
+    const untilMs = parseTs(window.until);
+    if (sinceMs === null || untilMs === null || !(sinceMs < untilMs)) {
+      throw new Error(
+        "movementDecomposition: the window endpoints must be two parseable instants, since before until \u2014 got " + JSON.stringify(window)
+      );
+    }
+    const refused = { n: 0 };
+    let arrivals = 0;
+    let reopened = 0;
+    let scansInWindow = 0;
+    let skippedScans = 0;
+    let newestTs = null;
+    let newestScan = null;
+    for (const s2 of scans) {
+      if (s2["scope"] !== scope) continue;
+      const t = parseTs(s2["ts"]);
+      if (t === null) {
+        skippedScans += 1;
+        continue;
+      }
+      if (!inWindow(t, sinceMs, untilMs)) continue;
+      scansInWindow += 1;
+      arrivals = addCount(arrivals, s2["new_count"], refused);
+      reopened = addCount(reopened, s2["reopened_count"], refused);
+      if (newestTs === null || t > newestTs) {
+        newestTs = t;
+        newestScan = s2;
+      }
+    }
+    const gate2 = newestScan ? parseSeverities(newestScan["severities"]) : null;
+    const gateSet = gate2 && gate2.length ? new Set(gate2) : null;
+    let observed = 0;
+    let bounded = 0;
+    let unattributed = 0;
+    let outsideGate = 0;
+    let openAtSince = 0;
+    let openAtUntil = 0;
+    let unplacedRows = 0;
+    for (const row of rows) {
+      if (row.scope !== scope) continue;
+      const first = parseTs(row.first_seen);
+      const resolved = parseTs(row.resolved_at);
+      if (inWindow(resolved, sinceMs, untilMs)) {
+        const src = String((_a = row.resolution_src) != null ? _a : "").trim().toLowerCase();
+        if (src === RESOLUTION_API) observed += 1;
+        else if (src === RESOLUTION_DISAPPEARED) bounded += 1;
+        else unattributed += 1;
+      }
+      if (gateSet && isOpen4(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
+        outsideGate += 1;
+      }
+      if (first === null) {
+        unplacedRows += 1;
+        continue;
+      }
+      if (first <= sinceMs && (resolved === null || resolved > sinceMs)) openAtSince += 1;
+      if (first <= untilMs && (resolved === null || resolved > untilMs)) openAtUntil += 1;
+    }
+    const netChange = openAtUntil - openAtSince;
+    const identityGap = netChange - (arrivals - observed - bounded + reopened);
+    return {
+      scope,
+      arrivals,
+      observed,
+      bounded,
+      reopened,
+      outsideGate,
+      netChange,
+      measured: observed,
+      administrative: bounded,
+      unattributed,
+      identityGap,
+      identityHolds: identityGap === 0,
+      scansInWindow,
+      skippedScans,
+      partialCounts: refused.n,
+      unplacedRows,
+      sinceMs,
+      untilMs
+    };
+  }
+  function movementWindowScans(scans, minDays, scope) {
+    const flat = scans.filter((s2) => s2["scope"] === scope).map((s2) => parseTs(s2["ts"])).filter((t) => t !== null).sort((a, b) => a - b);
+    if (!flat.length) return { since: null, until: null, days: null, reason: "noScans" };
+    const until = flat[flat.length - 1];
+    const spanDays = Math.round((until - flat[0]) / DAY_MS7 * 10) / 10;
+    if (flat.length === 1) return { since: null, until, days: 0, reason: "oneScan" };
+    const cutoff = until - minDays * DAY_MS7;
+    for (let i = flat.length - 2; i >= 0; i -= 1) {
+      const t = flat[i];
+      if (t <= cutoff) {
+        return { since: t, until, days: Math.round((until - t) / DAY_MS7 * 10) / 10, reason: null };
+      }
+    }
+    return { since: null, until, days: spanDays, reason: "tooClose" };
+  }
+
+  // src/domain/assets.ts
+  var DAY_MS8 = 864e5;
+  var DAYS_PER_MONTH = 30.4375;
+  function isOpen5(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function safePct(numerator, denominator) {
@@ -5729,7 +5844,7 @@ var Server = (() => {
         byKey.set(key, a);
       }
       if (a.label === null && !blank(row.repo_name)) a.label = String(row.repo_name);
-      const open = isOpen4(row.status);
+      const open = isOpen5(row.status);
       const high = risk === "high";
       if (open) a.density += 1;
       if (high && open) {
@@ -5824,7 +5939,7 @@ var Server = (() => {
     if (observedFrom !== null && windowStart === null) {
       throw new Error(`assetProfile: unparseable observedFrom (${JSON.stringify(observedFrom)})`);
     }
-    const windowMonths = windowStart === null ? null : Math.max((nowMs - windowStart) / (DAY_MS7 * DAYS_PER_MONTH), 1);
+    const windowMonths = windowStart === null ? null : Math.max((nowMs - windowStart) / (DAY_MS8 * DAYS_PER_MONTH), 1);
     let unclassifiedSecrets = 0;
     const classified = [];
     for (const row of rows) {
@@ -5891,7 +6006,7 @@ var Server = (() => {
   }
 
   // src/domain/secretsLifecycle.ts
-  var DAY_MS8 = 864e5;
+  var DAY_MS9 = 864e5;
   var MEASURED_STATES = /* @__PURE__ */ new Set(["VALID", "INVALID"]);
   var SEGMENT_NONE = "(none)";
   var DEFAULT_REVOKE_SLA_DAYS = 7;
@@ -5958,7 +6073,7 @@ var Server = (() => {
       }
       const died = parseTs(row.rotated_at);
       if (died !== null) {
-        const days = (died - born) / DAY_MS8;
+        const days = (died - born) / DAY_MS9;
         if (!Number.isFinite(days) || days < 0) {
           excludedNoClock += 1;
           continue;
@@ -5976,7 +6091,7 @@ var Server = (() => {
         excludedNoClock += 1;
         continue;
       }
-      const age = (opts.now - born) / DAY_MS8;
+      const age = (opts.now - born) / DAY_MS9;
       if (!Number.isFinite(age) || age < 0) {
         excludedNoClock += 1;
         continue;
@@ -6069,7 +6184,7 @@ var Server = (() => {
     3: "Critical code weakness"
   };
   var TIER_SCOPES = { 1: "secrets", 2: "sca", 3: "sast" };
-  function isOpen5(status) {
+  function isOpen6(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function pastSla(row, targets) {
@@ -6119,7 +6234,7 @@ var Server = (() => {
     let openTotal = 0;
     let ranked = 0;
     for (const row of rows) {
-      if (!isOpen5(row.status)) continue;
+      if (!isOpen6(row.status)) continue;
       openTotal += 1;
       const verdict = classify(row, targets);
       if ("reason" in verdict) {
@@ -6280,8 +6395,8 @@ var Server = (() => {
   }
 
   // src/server/readModels.ts
-  var DAY_MS9 = 864e5;
-  var WEEK_MS = 7 * DAY_MS9;
+  var DAY_MS10 = 864e5;
+  var WEEK_MS = 7 * DAY_MS10;
   var CLOCK_TTL_SEC = 3600;
   var OLDEST_TOP_N = 100;
   var WARM_BUDGET_MS = 27e4;
@@ -6340,7 +6455,7 @@ var Server = (() => {
     }
     return newest === null ? { asOf: Date.now(), asOfSource: "wallClock", observedFrom: earliestIso } : { asOf: newest, asOfSource: "scan", observedFrom: earliestIso };
   }
-  function isOpen6(status) {
+  function isOpen7(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function scopedRows(rows, n2) {
@@ -6368,10 +6483,10 @@ var Server = (() => {
   }
   function atLedgerClock(rows, asOf) {
     return rows.map((r) => {
-      if (!isOpen6(r.status)) return r;
+      if (!isOpen7(r.status)) return r;
       const first = parseTs(r.first_seen);
       if (first === null) return r;
-      return { ...r, age_days: Math.max(0, asOf - first) / DAY_MS9 };
+      return { ...r, age_days: Math.max(0, asOf - first) / DAY_MS10 };
     });
   }
   function coverageOf2(rows, applies, measured) {
@@ -6549,7 +6664,7 @@ var Server = (() => {
     const counts = {};
     let open = 0;
     for (const r of rows) {
-      if (!isOpen6(r.status)) continue;
+      if (!isOpen7(r.status)) continue;
       open += 1;
       const s2 = normalizeSeverity(r.severity);
       counts[s2] = ((_a = counts[s2]) != null ? _a : 0) + 1;
@@ -6561,8 +6676,8 @@ var Server = (() => {
         group: scope,
         dimension: "scope",
         total: sub.length,
-        open: sub.filter((r) => isOpen6(r.status)).length,
-        resolved: sub.filter((r) => !isOpen6(r.status)).length,
+        open: sub.filter((r) => isOpen7(r.status)).length,
+        resolved: sub.filter((r) => !isOpen7(r.status)).length,
         kmMedian: km.median,
         kmMedianLowerBound: km.medianLowerBound,
         awaiting: awaitingVendorFix(sub).overall
@@ -6646,7 +6761,7 @@ var Server = (() => {
     }
     let since = null;
     for (let i = instants.length - 2; i >= 0; i -= 1) {
-      if ((until.ms - instants[i].ms) / DAY_MS9 >= MOVEMENT_MIN_GAP_DAYS) {
+      if ((until.ms - instants[i].ms) / DAY_MS10 >= MOVEMENT_MIN_GAP_DAYS) {
         since = instants[i];
         break;
       }
@@ -6658,7 +6773,7 @@ var Server = (() => {
         syncs: instants.length,
         since: null,
         until: until.iso,
-        days: round12((until.ms - instants[0].ms) / DAY_MS9)
+        days: round12((until.ms - instants[0].ms) / DAY_MS10)
       };
     }
     const perScope = {};
@@ -6666,7 +6781,7 @@ var Server = (() => {
     let prevOpen = 0;
     for (const scope of scopes) {
       const sub = rows.filter((r) => r.scope === scope);
-      const nowOpen = sub.filter((r) => isOpen6(r.status)).length;
+      const nowOpen = sub.filter((r) => isOpen7(r.status)).length;
       const thenOpen = sub.filter((r) => openAsOf(r, since.ms)).length;
       perScope[scope] = { open: nowOpen, prevOpen: thenOpen, delta: nowOpen - thenOpen };
       open += nowOpen;
@@ -6678,7 +6793,7 @@ var Server = (() => {
       syncs: instants.length,
       since: since.iso,
       until: until.iso,
-      days: round12((until.ms - since.ms) / DAY_MS9),
+      days: round12((until.ms - since.ms) / DAY_MS10),
       perScope,
       total: { open, prevOpen, delta: open - prevOpen }
     };
@@ -6705,8 +6820,8 @@ var Server = (() => {
       severities: isSecrets ? null : n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen6(r.status)).length,
-      resolved: rows.filter((r) => !isOpen6(r.status)).length,
+      open: rows.filter((r) => isOpen7(r.status)).length,
+      resolved: rows.filter((r) => !isOpen7(r.status)).length,
       // The severity axis, or the reason there is not one.
       severityAxis: isSecrets ? { supported: false, reason: SEVERITY_AXIS_REFUSAL } : { supported: true },
       counts: isSecrets ? null : countsOf(rows),
@@ -6787,7 +6902,7 @@ var Server = (() => {
     const severities = severityFilterSupported ? n2.severities : null;
     const scoped = visibleRows(snap.rows, { ...n2, scope, severities });
     const status = normRowStatus(p == null ? void 0 : p.status);
-    const rows = status === "all" ? scoped : scoped.filter((r) => isOpen6(r.status) === (status === "open"));
+    const rows = status === "all" ? scoped : scoped.filter((r) => isOpen7(r.status) === (status === "open"));
     const def = REGISTER_ROW_DEFAULT_SORT[scope];
     const columns = registerRowColumns(scope);
     const asked = typeof (p == null ? void 0 : p.sort) === "string" ? p.sort : "";
@@ -6838,7 +6953,7 @@ var Server = (() => {
       // refusal is a property of the register, so that is all it states.
       severityAxis: { supported: false, reason: SEVERITY_AXIS_REFUSAL },
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen6(r.status)).length,
+      open: rows.filter((r) => isOpen7(r.status)).length,
       coverage: validationCoverage(secretRows),
       validity: postDetectionValidityRate(secretRows),
       timeToRevoke: timeToRevoke(secretRows, { now: snap.now }),
@@ -6960,6 +7075,20 @@ var Server = (() => {
     const n2 = norm(p);
     return durablyCached("dsRepos1", keyOf(n2), () => buildRepos(n2));
   }
+  var MOVEMENT_WINDOW_DAYS = 28;
+  function movementNoteFor(win) {
+    if (win.reason === "noScans") {
+      return "No scans are saved for this register yet \u2014 nothing to decompose.";
+    }
+    if (win.reason === "oneScan") {
+      return "One scan only \u2014 a movement is a difference between two of them.";
+    }
+    return `No scan of this register at least ${MOVEMENT_WINDOW_DAYS} days older than its latest` + (win.days === null ? "" : ` \u2014 its saved scans span ${win.days} days`) + ".";
+  }
+  function movementPopulation(rows, n2) {
+    const scoped = n2.project ? rows.filter((r) => inProject(parseProjects(r.projects_json), n2.project)) : rows;
+    return n2.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
+  }
   function buildHistory(n2) {
     var _a;
     const snap = baseSnapshot();
@@ -6968,6 +7097,19 @@ var Server = (() => {
     const scans = (n2.scope ? scansAll.filter((s2) => s2.scope === n2.scope) : scansAll).slice().reverse();
     const rows = visibleRows(snap.rows, n2);
     const { overall } = mttrFromLedger(rows, { now: snap.now });
+    const movementRows = movementPopulation(snap.rows, n2);
+    const movement2 = {};
+    const movementNote = {};
+    for (const scope of SCOPES) {
+      const win = movementWindowScans(scansAll, MOVEMENT_WINDOW_DAYS, scope);
+      movement2[scope] = win.reason === null ? movementDecomposition(
+        movementRows,
+        scansAll,
+        { since: win.since, until: win.until },
+        scope
+      ) : null;
+      movementNote[scope] = win.reason === null ? null : movementNoteFor(win);
+    }
     return {
       asOf: clock.asOf,
       asOfSource: clock.asOfSource,
@@ -6977,10 +7119,15 @@ var Server = (() => {
       showNoFix: n2.showNoFix,
       scans,
       perScope: perScopeScanStats(scansAll),
+      // One block per register, ALWAYS all three — a window and a gate are per-scope facts and
+      // this page draws the three side by side. Each block is keyed by the scope it measured and
+      // `movement[scope].scope` echoes it, so two registers' movement can never be read as one.
+      movement: movement2,
+      movementNote,
       kpis: {
         tracked: rows.length,
-        open: rows.filter((r) => isOpen6(r.status)).length,
-        resolvedAllTime: rows.filter((r) => !isOpen6(r.status)).length,
+        open: rows.filter((r) => isOpen7(r.status)).length,
+        resolvedAllTime: rows.filter((r) => !isOpen7(r.status)).length,
         // The KM median, NOT the naive closed-only one, and its lower bound beside it: where the
         // curve never reaches half there is no median to print and the bound is what is true.
         medianMttr: (_a = overall.mttr_median) != null ? _a : null,
@@ -7021,7 +7168,7 @@ var Server = (() => {
   }
   function historyModel(p) {
     const n2 = norm(p);
-    return durablyCached("dsHistory1", keyOf(n2), () => buildHistory(n2));
+    return durablyCached("dsHistory2", keyOf(n2), () => buildHistory(n2));
   }
   function cellsByTab() {
     const tabs = [];
@@ -8011,6 +8158,12 @@ var Server = (() => {
         // The scans tab narrowed to the ten columns the table draws — raw_ref / obs_ref are
         // Drive file ids and are not among them (pagePayload.ts's SCAN_ROW_KEYS).
         scans: scanRowsSlice(h["scans"]),
+        // What moved the open count over the last 28-day window, one block per register, plus
+        // the server's own words where there was no such window. ENUMERATED like the rest: the
+        // note is what the client prints in the empty branch, so shipping one without the other
+        // leaves that branch inventing a reason of its own.
+        movement: h["movement"],
+        movementNote: h["movementNote"],
         trends: historyTrendSlice(h),
         // `scans` and `perScope` above are per-scan/per-day facts with no project dimension —
         // see `readModels.ts::buildHistory`'s own comment. `kpis` and `trends` DO narrow to the

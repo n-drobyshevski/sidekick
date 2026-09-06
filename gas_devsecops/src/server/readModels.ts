@@ -151,6 +151,12 @@ import {
   type AnyRiskRule,
   type RiskRow,
 } from "../domain/program";
+import {
+  movementDecomposition,
+  movementWindowScans,
+  type MovementRow,
+  type MovementWindow,
+} from "../domain/movementDecomposition";
 import { assetProfilePopulations, type AssetRow } from "../domain/assets";
 import {
   SEVERITY_AXIS_REFUSAL,
@@ -1386,7 +1392,47 @@ export function reposModel(p?: ModelParams): Rec {
  * per UTC day, recorded before this package's project scope existed. `scanScopeApplies:
  * false` names exactly which three keys that covers, so a client cannot draw them as if they
  * had narrowed alongside the rest of this payload.
+ *
+ * `movement` / `movementNote` ARE PER SCOPE AND ALWAYS COVER ALL THREE. See
+ * `domain/movementDecomposition.ts` for the arithmetic and `movementPopulation` below for the
+ * one filter this block deliberately does NOT inherit from the KPI band.
  */
+
+// The movement window is 28 days wide and BOUNDED BY SCANS OF ONE SCOPE, not by calendar dates
+// — see `movementWindowScans` for why, and for why the scope filter is inside it. The COPY
+// lives here rather than in the domain: the domain answers with a reason code, and a reason a
+// reader can act on is a fact about this page ("run another sync"), not about the arithmetic.
+const MOVEMENT_WINDOW_DAYS = 28;
+
+function movementNoteFor(win: MovementWindow): string {
+  if (win.reason === "noScans") {
+    return "No scans are saved for this register yet — nothing to decompose.";
+  }
+  if (win.reason === "oneScan") {
+    return "One scan only — a movement is a difference between two of them.";
+  }
+  return `No scan of this register at least ${MOVEMENT_WINDOW_DAYS} days older than its latest`
+    + (win.days === null ? "" : ` — its saved scans span ${win.days} days`)
+    + ".";
+}
+
+/**
+ * The population the decomposition replays — the KPI band's, MINUS the severity filter.
+ *
+ * The project scope and the no-fix toggle DO apply: they narrow which findings are the
+ * reader's. The DISPLAY SEVERITY FILTER MUST NOT, and that is the one thing this function
+ * exists to say. `outsideGate` counts open rows whose severity the last scan never looked at;
+ * running it over a population a display filter had already narrowed to the same severities
+ * would report 0 — "nothing was hidden" — exactly when something was, which is the confusion
+ * the whole section was built to end.
+ */
+function movementPopulation(rows: BaseRow[], n: NormParams): MovementRow[] {
+  const scoped = n.project
+    ? rows.filter((r) => inProject(parseProjects(r.projects_json), n.project!))
+    : rows;
+  return n.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
+}
+
 function buildHistory(n: NormParams): Rec {
   const snap = baseSnapshot();
   const clock = ledgerClock(n.scope);
@@ -1398,6 +1444,22 @@ function buildHistory(n: NormParams): Rec {
   const rows = visibleRows(snap.rows, n);
   const { overall } = mttrFromLedger(rows as unknown as Rec[], { now: snap.now });
 
+  const movementRows = movementPopulation(snap.rows, n);
+  const movement: Rec = {};
+  const movementNote: Rec = {};
+  for (const scope of SCOPES) {
+    const win = movementWindowScans(scansAll, MOVEMENT_WINDOW_DAYS, scope);
+    movement[scope] = win.reason === null
+      ? movementDecomposition(
+        movementRows,
+        scansAll,
+        { since: win.since, until: win.until },
+        scope,
+      )
+      : null;
+    movementNote[scope] = win.reason === null ? null : movementNoteFor(win);
+  }
+
   return {
     asOf: clock.asOf,
     asOfSource: clock.asOfSource,
@@ -1407,6 +1469,11 @@ function buildHistory(n: NormParams): Rec {
     showNoFix: n.showNoFix,
     scans,
     perScope: perScopeScanStats(scansAll),
+    // One block per register, ALWAYS all three — a window and a gate are per-scope facts and
+    // this page draws the three side by side. Each block is keyed by the scope it measured and
+    // `movement[scope].scope` echoes it, so two registers' movement can never be read as one.
+    movement,
+    movementNote,
     kpis: {
       tracked: rows.length,
       open: rows.filter((r) => isOpen(r.status)).length,
@@ -1461,7 +1528,11 @@ function perScopeScanStats(scans: ScanRow[]): Record<string, Rec> {
 
 export function historyModel(p?: ModelParams): Rec {
   const n = norm(p);
-  return durablyCached("dsHistory1", keyOf(n), () => buildHistory(n));
+  // "dsHistory1" -> "dsHistory2": the payload gained `movement` / `movementNote`, one block
+  // per register. A warm dsHistory1 entry carries neither, and this page's new section would
+  // draw its empty state — "no movement decomposition in this payload" — over a window that is
+  // perfectly measurable, for up to a week of durable-store MAX_AGE.
+  return durablyCached("dsHistory2", keyOf(n), () => buildHistory(n));
 }
 
 // --------------------------------------------------------------------------------------- //

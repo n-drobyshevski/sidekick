@@ -51,6 +51,7 @@ import {
   onPageTeardown, pageHeader, pageOf, registerWideNote, sectionLabel, skeletonStack, sortRows,
   tableFooter,
 } from "../ui.js";
+import { movementBlocks } from "./historyModel.js";
 
 const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
 
@@ -217,6 +218,7 @@ export async function renderHistory(host, _params, _ctx) {
   const kpiHost = el("div", { class: "kpi-row" });
   const perScopeHost = el("div", {});
   const tableHost = el("div", {});
+  const movementHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid" });
 
   host.append(
@@ -229,6 +231,13 @@ export async function renderHistory(host, _params, _ctx) {
     perScopeHost,
     sectionLabel("Saved scans"),
     tableHost,
+    sectionLabel("What moved the number"),
+    el("p", { class: "section-note" },
+      "The change in each register's open count over the last 28-day window bounded by two of "
+      + "its own saved scans, split into the causes that moved it — and which of them are "
+      + "remediation the register actually observed. The window is per register: three scopes "
+      + "share one scan log, and a scan of one of them looked at none of the others."),
+    movementHost,
     sectionLabel("Trends"),
     chartsHost,
   );
@@ -251,6 +260,7 @@ export async function renderHistory(host, _params, _ctx) {
     renderKpis(payload, first);
     renderPerScope(payload, first);
     renderTable(payload);
+    renderMovement(payload, first);
     renderTrends(payload);
   };
 
@@ -425,6 +435,75 @@ export async function renderHistory(host, _params, _ctx) {
       }
     }
     draw();
+  }
+
+  // ---- what moved the number (see pages/historyModel.js for the reading, and
+  // domain/movementDecomposition.ts for the arithmetic).
+  //
+  // TWO TABLES PER REGISTER, NOT ONE TABLE WITH A COLUMN. The section exists to keep "the API
+  // said this was fixed" and "the scan stopped seeing it" apart; a single table sorted by count
+  // invites a total across them, and that total is precisely the number a narrowed severity
+  // gate inflates for free. On this register the administrative half is the majority case by
+  // construction for two of the three scopes — SAST has no resolved state to fetch and secrets
+  // has none either — so keeping the halves apart is not a corner case here.
+  const CAUSE_COLUMNS = [
+    { key: "cause", label: "Cause", cell: (r) => r.cause },
+    { key: "basis", label: "How the date was arrived at", cell: (r) => r.basis },
+    { key: "count", label: "Findings", className: "num", cell: (r) => r.count.toLocaleString() },
+  ];
+
+  function causeTable(title, rows) {
+    return el("div", { class: "chart-card" },
+      el("h3", { class: "section-label" }, title),
+      dataTable({ columns: CAUSE_COLUMNS, rows }));
+  }
+
+  function movementBlock(block) {
+    // No `class` on the wrapper: the shared stylesheets have no generic stack utility, and a
+    // class that matches nothing renders an unstyled block in silence (CLAUDE.md's own note on
+    // copying a page across this fork).
+    const host = el("section", { style: "margin-top:16px" },
+      el("h3", { class: "section-label" }, block.label));
+    if (block.view.empty) {
+      // The server's own words, verbatim: it is the only thing that knows WHY it declined for
+      // THIS register, and a reason invented here would print in the same ink as a measurement.
+      host.append(emptyState(
+        block.view.empty,
+        "The decomposition compares two of this register's own saved scans, at least 28 days"
+        + " apart.",
+      ));
+      return host;
+    }
+    host.append(
+      el("p", { class: "section-note" }, block.view.sentence),
+      el("div", { class: "chart-grid" },
+        causeTable("Measured remediation", block.view.measuredRows),
+        causeTable("Administrative", block.view.administrativeRows)),
+    );
+    if (block.view.asideRows.length) {
+      host.append(el("ul", { class: "small muted", style: "margin:12px 0 0; padding-left:18px" },
+        ...block.view.asideRows.map((r) => el("li", {},
+          `${r.label}: `, el("span", { class: "num" }, r.count.toLocaleString())))));
+    }
+    return host;
+  }
+
+  function renderMovement(payload, first) {
+    clear(movementHost);
+    // The page's own first-run gate, the same one the KPI band and the coverage strip use: a
+    // decomposition of a window that does not exist is four confident zeroes about a
+    // population nobody has looked at.
+    if (first) {
+      movementHost.append(emptyState(
+        "Nothing has moved yet, because nothing has been measured yet.",
+        "This section is a difference between two saved scans of the same register, so it"
+        + " fills in once one of them has two.",
+      ));
+      return;
+    }
+    for (const block of movementBlocks(payload, SCOPE_LABELS)) {
+      movementHost.append(movementBlock(block));
+    }
   }
 
   function renderTrends(payload) {
