@@ -150,15 +150,26 @@ function cssRules(css) {
   return out;
 }
 
+/** A rule's selectors, one per comma, trimmed. */
+function selectorsOf(rule) {
+  return rule.sel.split(",").map((x) => x.trim()).filter(Boolean);
+}
+
 /**
- * `.boot-splash circle.mark-ink-fill` and `.boot-splash .mark-ink-fill` are ONE selector for
- * the purpose of "is this covered by the reduced-motion block". The element qualifier exists
- * to split the two orbit nodes from the shield in the timeline (they wear the same class and
- * arrive on different beats) and means nothing to a fallback that turns both off. Drops a tag
- * name only where it sits directly against a class.
+ * Every selector inside a `prefers-reduced-motion` block of this sheet that a rule declaring
+ * `animation: none` carries. EXACT STRINGS, no normalisation — see the sweeps below for why
+ * that is the whole point.
  */
-function dropTagQualifier(sel) {
-  return sel.replace(/[a-zA-Z]+(?=\.)/g, "").replace(/\s+/g, " ").trim();
+function stoodDown(css) {
+  const out = new Set();
+  for (const block of cssRules(css)) {
+    if (!/^@media/.test(block.sel) || !/prefers-reduced-motion/.test(block.sel)) continue;
+    for (const rule of cssRules(block.body)) {
+      if (!/animation:\s*none/.test(rule.body)) continue;
+      for (const sel of selectorsOf(rule)) out.add(sel);
+    }
+  }
+  return out;
 }
 
 /**
@@ -585,32 +596,63 @@ export function registerBrandMarkContract(ctx) {
 
     // The named fallback is load-bearing rather than belt-and-braces: overrides.css's global
     // `* { animation-duration: .01ms !important }` does NOT zero `animation-delay` (a delayed
-    // check would hold its start state for its whole delay and then pop) and on an `infinite`
-    // loop it samples an arbitrary phase every frame, which is flicker rather than stillness.
-    // `animation: none` sets `animation-name`, which that !important duration does not cover.
-    it("turns every animated splash selector off under reduced motion", () => {
+    // element would hold its start state for its whole delay and then pop) and on an
+    // `infinite` loop it samples an arbitrary phase every frame, which is flicker rather than
+    // stillness. `animation: none` sets `animation-name`, which that !important does not cover.
+    //
+    // EXACT SELECTOR STRINGS, AND THAT IS THE FINDING. The first form of this assertion
+    // normalised a tag qualifier away — it treated `.boot-splash circle.mark-ink-fill` and
+    // `.boot-splash .mark-ink-fill` as one selector, on the reasoning that the qualifier only
+    // exists to give the nodes and the shield different beats and means nothing to a fallback
+    // that turns both off. It is true about intent and false about the CASCADE: (0,2,0) loses
+    // to (0,2,1), so the fallback did not stand the rules down at all, and Playwright against
+    // the shipped bytes found the two nodes and the shield still reporting animationName
+    // `bm-rise` under reduced motion — invisible, then popping. THE GUARD PASSED ON IT. A
+    // stand-down is only a stand-down if it is written the way the rule it answers is written,
+    // so the comparison is character-for-character and the duplication in base.css is the
+    // correct shape rather than the tidy one.
+    it("stands every animated splash selector down under reduced motion, exactly", () => {
       const animated = new Set();
       for (const rule of bmRules()) {
         if (!/animation[^;]*bm-/.test(rule.body)) continue;
-        for (const sel of rule.sel.split(",").map((x) => x.trim()).filter(Boolean)) {
-          animated.add(dropTagQualifier(sel));
-        }
+        for (const sel of selectorsOf(rule)) animated.add(sel);
       }
       expect(animated.size, "no bm- animation found for the fallback to answer for")
         .toBeGreaterThanOrEqual(5);
-
-      const stopped = new Set();
-      for (const block of cssRules(BASE_CSS)) {
-        if (!/^@media/.test(block.sel) || !/prefers-reduced-motion/.test(block.sel)) continue;
-        for (const rule of cssRules(block.body)) {
-          if (!/animation:\s*none/.test(rule.body)) continue;
-          for (const sel of rule.sel.split(",").map((x) => x.trim()).filter(Boolean)) {
-            stopped.add(dropTagQualifier(sel));
-          }
-        }
-      }
+      const stopped = stoodDown(BASE_CSS);
       const uncovered = [...animated].filter((sel) => !stopped.has(sel));
-      expect(uncovered, "animated with no `animation: none` under reduced motion")
+      expect(uncovered, "animated with no character-identical `animation: none`")
+        .toEqual([]);
+    });
+  });
+
+  describe(app + ": no infinite animation in base.css outlives reduced motion", () => {
+    // THE GENERAL FORM OF THE RULE ABOVE, and it exists because the specific form missed two
+    // defects in one sheet — one of them written in the same round as the guard, one of them
+    // years older. An infinite loop is the case where `animation-duration: .01ms !important`
+    // is actively WORSE than no fallback: the animation does not stop, it advances a whole
+    // cycle every frame, so the property it drives samples an arbitrary keyframe phase
+    // forever. Measured on the boot splash's own progress bar under reduced motion, before
+    // this sweep existed: `margin-left` read -92.8px on one probe and -86.4px on another 700ms
+    // later, on a bar whose reduced-motion rule sets `margin-left: 0` and never got to.
+    //
+    // Sheet-wide rather than splash-shaped, and it lives in this file because this is where
+    // the CSS reader is. Exact selector strings, for the reason the comment above gives.
+    it("names every infinite animation in a reduced-motion `animation: none`", () => {
+      const looping = new Set();
+      for (const rule of cssRules(BASE_CSS)) {
+        if (rule.sel.startsWith("@")) continue;
+        if (/^(from|to)$/.test(rule.sel) || /^[\d.]+%/.test(rule.sel)) continue;
+        if (!/animation(-iteration-count)?[^;]*\binfinite\b/.test(rule.body)) continue;
+        for (const sel of selectorsOf(rule)) looping.add(sel);
+      }
+      // Non-vacuity: base.css really does carry looping animations, and if it stops carrying
+      // them this assertion has to start failing rather than start passing for free.
+      expect(looping.size, "no infinite animation found in base.css at all")
+        .toBeGreaterThanOrEqual(6);
+      const stopped = stoodDown(BASE_CSS);
+      const uncovered = [...looping].filter((sel) => !stopped.has(sel));
+      expect(uncovered, "loops on forever at .01ms per cycle under reduced motion")
         .toEqual([]);
     });
   });

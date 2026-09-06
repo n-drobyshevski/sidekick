@@ -490,6 +490,14 @@
 @media (prefers-reduced-motion: reduce) {
   .progress-track.indeterminate .progress-fill {
     width: 100%;
+    /* `animation: none` FIRST, and it was missing here for the life of this rule. Without it
+       overrides.css's `* { animation-duration: .01ms !important }` leaves
+       progress-indeterminate RUNNING at 1e-05s on an infinite loop, so `margin-left` samples
+       an arbitrary keyframe phase on every frame and the `margin-left: 0` below never gets to
+       apply: measured -92.8px on one probe and -86.4px on another 700ms later, under reduced
+       motion, on the boot splash's own bar. A duration of nearly zero is not stillness — only
+       animation-name is, and that !important does not touch it. */
+    animation: none;
     margin-left: 0;
     /* Self-relative, not --accent-text: on gas and gas_ai --accent-text EQUALS --accent, so a
        stop pair built from it collapsed to one flat colour and the "working" stripe vanished.
@@ -768,15 +776,26 @@ main.full-bleed > .empty { margin: var(--space-6) var(--space-6); }
    check would sit in its start state for its whole delay and then pop — and on an `infinite`
    loop it samples an arbitrary phase every frame, which is flicker, not stillness.
    `animation: none` sets `animation-name`, which that `!important` duration does not cover.
-   base.css already spells this out five times before this block for the same reason
-   (:329, :439, :456, :528, :629).
+   base.css already spells this out six times before this block for the same reason
+   (:329, :439, :456, :500, :536, :637) — and :500 is one of them only as of the round that
+   wrote this paragraph, which is the honest measure of how easy the omission is.
 
    What a reader with reduced motion sees is the mark exactly as drawn: nothing here paints,
    and only `bm-alert` ever sets an alert dot to blue, so every alert sits red. */
 @media (prefers-reduced-motion: reduce) {
   .boot-splash { transition: none; }
-  .boot-splash .mark-map, .boot-splash .mark-map--warm, .boot-splash .mark-ink,
-  .boot-splash .mark-ink-fill, .boot-splash .mark-knockout { animation: none; }
+  /* THE SELECTORS BELOW ARE THE ANIMATING RULES' OWN, CHARACTER FOR CHARACTER, and the
+     element qualifiers are the reason. `.boot-splash .mark-ink-fill` is (0,2,0) while
+     `.boot-splash circle.mark-ink-fill` is (0,2,1), so a fallback written the tidy way LOSES
+     THE CASCADE to the rule it is supposed to stand down: measured in the browser against the
+     shipped bytes, the two nodes and the shield still reported animationName `bm-rise` under
+     reduced motion, and with overrides.css's 0.01ms duration and their 550/750ms delays they
+     sat INVISIBLE (fill-mode both, holding the `from` state) and then popped — precisely the
+     defect the paragraph above says this block prevents. Writing the same selector twice looks
+     redundant and is the only form that is correct. */
+  .boot-splash .mark-map, .boot-splash .mark-map--warm,
+  .boot-splash circle.mark-ink-fill, .boot-splash path.mark-ink-fill,
+  .boot-splash .mark-ink, .boot-splash .mark-knockout { animation: none; }
 }
 
 /* Skeleton placeholders: calm opacity pulse only — NO diagonal shimmer sweep (the SaaS tell
