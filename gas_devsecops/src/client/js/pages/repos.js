@@ -79,6 +79,33 @@ export function densityView(result) {
   };
 }
 
+/**
+ * The PAGE's own first-run decision — not `densityView().measured`.
+ *
+ * `assetProfile()` (src/domain/assets.ts) always pushes an OVERALL row, even a zeroed one, so
+ * `overallRow(result)` finds one and `measured` reads true on a ledger nobody has ever synced.
+ * That is the right answer for `densityView` itself (a row exists to read, however empty), and
+ * the wrong one for deciding whether to show this reader a page of "—" over four more empty
+ * section boxes — CLAUDE.md: "An unmeasured register is not a register of zeroes… Every page
+ * checks 'has this ever been scanned' before it checks 'how many'."
+ *
+ * So this page checks `assets` instead: a register that has been profiled has profiled AT
+ * LEAST ONE repository. `d.assets` is already `num(row.assets, 0)` — a plain finite number,
+ * never null/NaN — but the refusal is spelled out explicitly rather than trusted implicitly,
+ * the same "refuse before any cast" shape `usableDate` (gas_shared/ui/feedback.js) applies to
+ * a date, applied here to a count.
+ *
+ * A PROJECT-SCOPE FILTER MATCHING ZERO REPOSITORIES ON A SYNCED LEDGER LANDS ON THIS SAME
+ * NOTICE, and that is not a misreading: `firstRunNotice({synced:true, at})` words that case as
+ * "the last sync saved no findings, so there is nothing here to measure yet" — which is
+ * exactly true of a scoped population that happens to be empty, the same measured-empty-vs-
+ * never-measured split `renderGroupTable` below already draws for its own per-group rows.
+ */
+export function reposFirstRun(d) {
+  const assets = d && d.assets;
+  return !(typeof assets === "number" && Number.isFinite(assets) && assets > 0);
+}
+
 /** v5 Fig. 11: the share of repositories carrying at least one open high-risk finding. */
 export function footholdView(result) {
   const row = overallRow(result);
@@ -187,18 +214,27 @@ export async function renderRepos(host, _params, _ctx) {
   const repoHost = el("div", {});
   const langHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid" });
+  // ONE WRAPPER FOR EVERY SECTION BELOW THE DENSITY CARDS, so a first run can clear four
+  // headings and their content together in one call — the same "label lives with its box"
+  // shape history.js's own `sectionsHost`/`ensureSections()` use, for the same reason: these
+  // headings are static text appended once rather than something a renderX function draws.
+  const sectionsHost = el("div", {});
 
-  host.append(
-    densityHost,
-    sectionLabel("Ownership attribution"),
-    ownershipHost,
-    sectionLabel("By repository"),
-    repoHost,
-    sectionLabel("By language"),
-    langHost,
-    sectionLabel("Half-life"),
-    chartsHost,
-  );
+  function ensureSections() {
+    if (sectionsHost.childNodes.length) return;
+    sectionsHost.append(
+      sectionLabel("Ownership attribution"),
+      ownershipHost,
+      sectionLabel("By repository"),
+      repoHost,
+      sectionLabel("By language"),
+      langHost,
+      sectionLabel("Half-life"),
+      chartsHost,
+    );
+  }
+
+  host.append(densityHost, sectionsHost);
 
   densityHost.append(skeletonStack(3, { variant: "stat" }));
 
@@ -206,7 +242,20 @@ export async function renderRepos(host, _params, _ctx) {
   const promise = swrCall("api_getReposPage", {}, (fresh) => paint && paint(fresh));
 
   paint = (model) => {
-    renderDensity(model);
+    const result = model && model.byRepo && model.byRepo.all;
+    const d = densityView(result);
+    const first = reposFirstRun(d);
+    renderDensity(model, d, first);
+    // FIRST RUN STOPS HERE — one notice above (in `densityHost`), not four more section
+    // headings each over their own empty box. Clearing `sectionsHost` detaches its four
+    // headings AND the four content hosts nested inside it in one call; `ensureSections()`
+    // re-attaches them the next time this runs non-first (see history.js for the identical
+    // shape).
+    if (first) {
+      [ownershipHost, repoHost, langHost, chartsHost, sectionsHost].forEach(clear);
+      return;
+    }
+    ensureSections();
     renderOwnership();
     renderGroupTable(repoHost, model && model.byRepo && model.byRepo.all, "repository", "repositories");
     renderGroupTable(langHost, model && model.byLanguage && model.byLanguage.all, "language", "languages");
@@ -226,12 +275,11 @@ export async function renderRepos(host, _params, _ctx) {
     ));
   }
 
-  function renderDensity(model) {
+  function renderDensity(model, d, first) {
     const result = model && model.byRepo && model.byRepo.all;
-    const d = densityView(result);
     const f = footholdView(result);
     clear(densityHost);
-    if (!d.measured) {
+    if (first) {
       densityHost.append(firstRunNotice({
         synced: !!boot.latestSync,
         at: boot.latestSync ? boot.latestSync.ts : null,

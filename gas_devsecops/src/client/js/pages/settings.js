@@ -370,31 +370,31 @@ export async function renderSettings(host, params, ctx) {
   }
 
   // ONE FAILURE, NOT FOUR. This used to loop over every tab panel and put its own
-  // `errorState` in each — four identical red boxes for one fetch that failed once. `load()`
-  // is a function (not inlined into the top-level try/catch) so the retry button below can
-  // call the exact same fetch again rather than duplicating it.
-  async function load() {
-    try {
-      const settings = await call("api_getSettings", {});
-      saved = draftFromSettings(settings);
-      draft = draftFromSettings(settings);
-    } catch (e) {
-      console.error("[settings] api_getSettings failed:", e);
-      // The tab strip names sections there is nothing behind yet — hidden along with the
-      // panels themselves, rather than left standing over one shared error box.
-      tabHost.hidden = true;
-      clear(panelHost).append(errorState("Couldn't load settings.", {
-        detail: String((e && e.message) || e),
-        onRetry: load,
-      }));
-      return;
-    }
-    tabHost.hidden = false;
-    buildPanels();
+  // `errorState` in each — four identical red boxes for one fetch that failed once.
+  try {
+    const settings = await call("api_getSettings", {});
+    saved = draftFromSettings(settings);
+    draft = draftFromSettings(settings);
+  } catch (e) {
+    console.error("[settings] api_getSettings failed:", e);
+    // The tab strip names sections there is nothing behind yet — hidden along with the panels
+    // themselves, rather than left standing over one shared error box.
+    tabHost.hidden = true;
+    clear(panelHost).append(errorState("Couldn't load settings.", {
+      detail: String((e && e.message) || e),
+      // A FULL RE-RENDER, not a retry that reuses this closure's `panels`. An earlier draft
+      // retried by re-fetching and calling `buildPanels()` in place — but the `clear(panelHost)`
+      // above had already DETACHED `panels.register/deadlines/access/system` from the page, so
+      // a successful retry populated four now-invisible nodes while the error box stayed on
+      // screen, and everything past this catch (dirty tracking, the save bar) never ran because
+      // this function had already returned with `saved` left `undefined`. Re-running
+      // `renderSettings` from scratch rebuilds fresh panels attached to a fresh `panelHost`.
+      onRetry: () => { clear(host); renderSettings(host, params, ctx); },
+    }));
+    return;
   }
 
-  await load();
-  if (saved === undefined) return;
+  buildPanels();
 
   // ------------------------------------------------------------------------- dirty tracking
 
