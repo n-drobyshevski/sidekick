@@ -31,17 +31,42 @@ const INLINE_DAY_MATH = /Math\.floor\(\(Date\.now\(\)\s*-\s*Date\.parse\(/;
  * @param {Function} ctx.expect
  * @param {URL}      ctx.appRoot
  * @param {string}   ctx.app
+ * @param {boolean}  [ctx.railHasSyncZone]  Default `true`: this app's rail carries a
+ *   freshness sentence, so `app.js` must build it with the shared `syncCaption()`.
+ *
+ *   PASS `false` ONLY FOR AN APP WITH NO SYNC ZONE AT ALL — one that hands `createAppShell`
+ *   no `railFooter` and therefore has no freshness sentence to build, correctly or otherwise.
+ *   `gas_hub` is the case this was added for: a launcher over the three registers, it runs no
+ *   scan and no sync, reads no register's data, and has nothing whose age it could report. The
+ *   first assertion then becomes a NAMED skip so the run summary says why it did not run —
+ *   a silent pass would read as "this app calls syncCaption()", which is the opposite of true.
+ *
+ *   THE SECOND ASSERTION KEEPS RUNNING EITHER WAY, and that is the point of skipping only the
+ *   first. "Never grow your own Math.floor day-count" is a prohibition, and a prohibition is
+ *   exactly the kind of rule an app with no caption today can still break tomorrow — the
+ *   pre-P8 defect was an inline calculation appearing in an app.js, not a missing call.
  */
 export function registerSyncCaptionContract(ctx) {
   const { describe, it, expect, app } = ctx;
   const root = fileURLToPath(ctx.appRoot);
   const APP_SRC = code(readFileSync(resolve(root, "src/client/js/app.js"), "utf8"));
+  const railHasSyncZone = ctx.railHasSyncZone !== false;
 
   describe(app + ": the rail's freshness caption is the shared sentence, not a local copy", () => {
-    it("app.js calls syncCaption() rather than building the sentence by hand", () => {
-      expect(APP_SRC, "app.js never calls syncCaption() — see gas_shared/ui/feedback.js")
-        .toMatch(/\bsyncCaption\(/);
-    });
+    if (railHasSyncZone) {
+      it("app.js calls syncCaption() rather than building the sentence by hand", () => {
+        expect(APP_SRC, "app.js never calls syncCaption() — see gas_shared/ui/feedback.js")
+          .toMatch(/\bsyncCaption\(/);
+      });
+    } else {
+      it.skip(
+        app + " calls syncCaption() rather than building the sentence by hand — SKIPPED: this "
+        + "app passes createAppShell no railFooter and has no freshness sentence at all. It "
+        + "runs no scan and no sync and reads no register's data, so there is no last-read "
+        + "timestamp for a caption to date. The Math.floor prohibition below still runs.",
+        () => {},
+      );
+    }
 
     it("carries no reintroduced Math.floor day-count — the pre-P8 shape in all three apps", () => {
       expect(APP_SRC, "app.js has grown its own Date.now()/Date.parse() day-count again")

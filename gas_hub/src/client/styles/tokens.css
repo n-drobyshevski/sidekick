@@ -1,0 +1,100 @@
+/* THE BRAND, and nothing else. Every other token this app uses is in
+   gas_shared/styles/tokens.base.css, imported immediately above this file — see
+   gas_shared/README.md for the five-token accent contract and the two register siblings'
+   values. This file adds a SIXTH brand: the hub's own graphite, plus a second vocabulary
+   (--tile-*) the siblings have no use for, because none of them draws a launcher grid. */
+
+:root {
+  /* THE HUB'S OWN ACCENT, and the one brand in this contract that needs none of the split
+     the other three do. #0a0a0a is --graphite (base.css's primary-button colour) reused as
+     the identity colour rather than a fourth saturated hue — the hub opens a register, it is
+     not one, so it borrows the neutral every sibling's own primary action already wears.
+
+       --accent       identity FILLS only, same rule as every sibling.
+       --accent-hover the hover state of such a fill.
+       --accent-text  everything the accent carries as INK — links, focus rings, the active
+                      option. Pointed at the SAME hex as --accent, not a lighter shade,
+                      because graphite clears the text floor unaided (below).
+       --accent-edge  drawn under every accent fill so a pale accent still reads as a mark.
+                      TRANSPARENT here, same as gas's and gas_ai's: unlike gas_devsecops's
+                      #ffcb13 (1.52:1 on white), #0a0a0a needs no edge to be legible as a fill.
+       --on-accent    ink drawn ON an accent fill. #fafafa rather than pure #ffffff — the same
+                      near-white base.css's own dark surfaces use — so an accent fill and a
+                      dark chrome surface never disagree about what "white text" means here.
+
+     MEASURED (ratio() from test/contracts/tokens.js, the same function that holds the three
+     register brands):
+       --accent-text (#0a0a0a) on white             19.80:1  — clears both the 3:1 mark floor
+                                                                and the 4.5:1 text floor on
+                                                                its own, unaided by any edge.
+       --on-accent (#fafafa) on --accent (#0a0a0a)  18.97:1 — the fill's own ink, clear of
+                                                                every floor with room to spare.
+     Two more travel with the brand, same as every sibling: the wash a STANDING state wears
+     (never a hover alone). Carried at a low alpha — unlike gas_devsecops's yellow, graphite
+     does not need a strong tint to read against white. */
+  --accent: #0a0a0a;
+  --accent-hover: #27272a;
+  --accent-text: #0a0a0a;
+  --accent-edge: transparent;
+  --on-accent: #fafafa;
+  --accent-wash: rgba(0, 0, 0, 0.05);
+  --accent-wash-hover: rgba(0, 0, 0, 0.09);
+
+  /* THE TILE VOCABULARY, for the 2x2 launcher grid alone (styles/pages.css). Not the accent
+     contract above — the three fills are each ONE REGISTER'S identity colour, borrowed onto
+     the hub's own front door, and none of them may leak past the tile component: no chart, no
+     badge, no button anywhere in this app may reach for --tile-*. Values and the mandatory
+     edge below are the option board's own measured table, not re-derived here.
+
+     MEASURED (ratio(), white/black are the fixed ink here since a tile's ink is a design
+     decision per-brand, not this app's own --on-accent):
+       --on-tile-os   (#ffffff) on --tile-os   (#2563eb)   5.17:1  — clears 4.5:1 text.
+       --on-tile-ai   (#ffffff) on --tile-ai   (#be123c)   6.29:1  — clears 4.5:1 text.
+       --on-tile-dso  (#171717) on --tile-dso  (#ffcb13)  11.78:1  — clears 4.5:1 text.
+     The fourth tile has no ink token of its own, because it has no fill: `coming soon` is
+     drawn as a BORDERED CARD on the page's own ground (see .tile--soon in styles/pages.css),
+     so its words are --ink and --text-2, the same two the rest of the app writes with. An
+     unbuilt register must not carry the same visual weight as three real products, and a
+     fourth block of solid colour is exactly that weight.
+       --tile-soon    (#52525b) on white                   7.73:1  — a BORDER, not a fill:
+                                                                     it clears the 3:1
+                                                                     graphical-mark floor
+                                                                     with room to spare, and
+                                                                     as a 1px line that is
+                                                                     the only floor it owes.
+                                                                     (The option board's own
+                                                                     table said 6.4:1 for
+                                                                     white ON this grey; the
+                                                                     contract's ratio() makes
+                                                                     it 7.73:1. Re-measured
+                                                                     rather than copied, since
+                                                                     nothing tested the fill
+                                                                     while there was one.)
+     And the fill that does NOT clear a floor on its own, which is why its edge is mandatory
+     rather than optional:
+       --tile-dso     (#ffcb13) on white                   1.52:1  — well under even the 3:1
+                                                                      graphical-mark floor.
+     --tile-dso-edge is the SAME rgba(0,0,0,.40) gas_devsecops's own --accent-edge uses for
+     the identical reason (its styles/tokens.css measures it composited to #997a0b, 3.49:1 on
+     that app's track) — this file does not re-derive that number, it reuses the constant. The
+     edge lives on the tile's own CSS modifier (`.tile--dso`, styles/pages.css), never as a
+     class a DevSecOps tile could be drawn without. */
+  --tile-os: #2563eb;
+  --on-tile-os: #ffffff;
+  --tile-ai: #be123c;
+  --on-tile-ai: #ffffff;
+  --tile-dso: #ffcb13;
+  --on-tile-dso: #171717;
+  --tile-dso-edge: rgba(0, 0, 0, 0.40);
+  /* THE ONE --tile-* THAT IS A LINE RATHER THAN A FILL. It draws `.tile--soon`'s border and
+     that tile's offset echo, and nothing paints with it — which is why there is no
+     --on-tile-soon beside it: no surface is filled with this colour, so no ink has to be
+     chosen for one. It used to be a fill with white on it; see the measured block above. */
+  --tile-soon: #52525b;
+  /* The dashed ring an UNCONFIGURED tile wears (`.tile--unset`, styles/pages.css) — not the
+     offset outline, which takes each tile's OWN colour on its own modifier and needs no token
+     of its own. This one is a flat black at low alpha because it is drawn INSIDE a saturated
+     fill rather than on the page: it darkens whatever it sits on by the same amount on all
+     four, where a per-tile tint would disappear into the fill it was derived from. */
+  --tile-unset-ring: rgba(0, 0, 0, 0.16);
+}

@@ -1,0 +1,154 @@
+/* THIS APP'S PAGES, and nothing a sibling would want: the 2x2 launcher grid, and one rule
+   that hides a stray hairline the shared nav rail draws for a chrome tail this app does not
+   have. Imported after the shared sheets and before gas_shared/styles/overrides.css, which
+   must stay last.
+
+   var() ONLY, ZERO HEX — the token contract (gas_shared/README.md) reserves colour literals
+   for the two token files alone; every colour below names a --tile-* or a shared token
+   instead. */
+
+/* ------------------------------------------------------------------------- the tile grid
+   Two columns on a normal viewport, one below it — a reader on a phone scrolls a stack of
+   four rather than reading four compressed columns of wrapped copy. */
+.hub-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-5);
+}
+
+@media (max-width: 640px) {
+  .hub-grid { grid-template-columns: 1fr; }
+}
+
+/* ------------------------------------------------------------------------------ one tile
+   A full-colour fill and a decorative offset outline are a DELIBERATE EXCEPTION to root
+   DESIGN.md's Whisper-Or-Lift rule, granted to these four tiles alone and written down as
+   such in gas_hub/DESIGN.md — nowhere else in this app's chrome may reach for a --tile-*
+   token or an offset ::before. */
+.tile {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 200px;
+  padding: var(--space-5);
+  border-radius: var(--radius-xl);
+  text-decoration: none;
+  color: inherit;
+}
+
+/* The sketch's offset outline: a second box, translated behind the tile rather than dropped
+   as a shadow — an outline reads as a drawn line at any zoom; a shadow reads as elevation,
+   which is exactly what Whisper-Or-Lift is about not implying here. `pointer-events: none`
+   so the decoration can never intercept the tile's own click/hover, and NO z-index of its
+   own — the tile's real content is lifted to `z-index: 1` below, and a positioned pseudo
+   element at the default `auto` paints under that in DOM order without needing one. It
+   carried `z-index: 0` until gas_shared/test/contracts/zscale.js caught it: that contract
+   allows exactly two bare literals, `1` and `2`, for ordering WITHIN one component, and `0`
+   is neither those nor a --z-* app layer. It was also doing nothing — `0` and `auto` paint
+   in the same place here — except make this pseudo element its own stacking context.
+
+   THE OUTLINE IS THE TILE'S OWN COLOUR, not a neutral. Drawn in one flat grey it read as a
+   drop shadow that had lost its blur — four identical hairlines behind four different fills,
+   which is the elevation story the outline exists NOT to tell. In each register's own hue it
+   reads as what it is: the tile's edge, echoed. The colour therefore arrives with the
+   modifier (below) and this base rule declares a TRANSPARENT border rather than inheriting
+   `currentColor` — a tile that somehow reached the DOM without a modifier draws no stray
+   line at all instead of a hairline in the ink colour. */
+.tile::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-xl);
+  border: 1px solid transparent;
+  transform: translate(-8px, -8px);
+  pointer-events: none;
+}
+
+.tile > * {
+  position: relative;
+  z-index: 1;
+}
+
+.tile--os { background: var(--tile-os); color: var(--on-tile-os); }
+.tile--ai { background: var(--tile-ai); color: var(--on-tile-ai); }
+/* THE MANDATORY EDGE. #ffcb13 is 1.52:1 on white on its own (styles/tokens.css's own measured
+   table) — well under even the 3:1 graphical-mark floor — so this fill can never legally
+   stand alone. The edge lives ON THIS MODIFIER rather than as a class a DevSecOps tile could
+   be drawn without: there is no code path that reaches `.tile--dso` and skips it. */
+.tile--dso {
+  background: var(--tile-dso);
+  color: var(--on-tile-dso);
+  box-shadow: inset 0 0 0 1px var(--tile-dso-edge);
+}
+/* THE UNBUILT FOURTH IS SECONDARY, AND THAT IS THE WHOLE POINT OF THE ROW. Drawn as a solid
+   grey fill it carried the same visual weight as the three registers beside it — four blocks
+   of colour, one of which opens nothing. A bordered card on the page's own ground says
+   "planned" without a disabled control or a greyed-out label: the double-card motif survives
+   (its `::before` echo below still draws in --tile-soon), the tile is simply not a
+   destination. `cursor: default` because ui/tile.js renders this one as a <div>, never a
+   link — a pointer cursor over something that cannot be clicked is the affordance PRODUCT.md
+   forbids. */
+.tile--soon {
+  background: var(--page);
+  border: 1px solid var(--tile-soon);
+  color: var(--ink);
+  cursor: default;
+}
+
+/* The eyebrow and the scope line step back to the secondary ink; the headline keeps --ink.
+   On the three coloured tiles the eyebrow's `opacity: .78` does this job against a fill it
+   knows; on white that opacity would land somewhere unmeasured, so the token says it instead.
+   `.tile-footer` is the class ui/tile.js actually emits for the scope line. */
+.tile--soon .tile-eyebrow,
+.tile--soon .tile-footer { color: var(--text-2); opacity: 1; }
+
+/* Each tile's offset outline, in that tile's own colour. THE YELLOW IS THE ONE EXCEPTION AND
+   IT IS THE SAME EXCEPTION AS ABOVE: --tile-dso is 1.52:1 on white, so its own hairline on
+   the page background would be a line nobody can see. The echo takes --tile-dso-edge, the
+   composited edge colour that lifts it — the same token, and the same reason, as the inset
+   ring on the fill itself. */
+.tile--os::before { border-color: var(--tile-os); }
+.tile--ai::before { border-color: var(--tile-ai); }
+.tile--dso::before { border-color: var(--tile-dso-edge); }
+.tile--soon::before { border-color: var(--tile-soon); }
+
+/* A sibling whose URL Settings has not set yet: still that register's own colour and
+   headline (a reader should still be able to tell OS Patching apart from AI while it is
+   unset) with a dashed inner ring standing in for the solid tone-on-tone edge a real link
+   would otherwise have, so "not wired up yet" reads as a state rather than as a dead link. */
+.tile--unset {
+  outline: 1px dashed var(--tile-unset-ring);
+  outline-offset: -1px;
+}
+
+.tile-eyebrow {
+  font-size: var(--fs-label);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.78;
+}
+
+.tile-headline {
+  font-size: var(--fs-display-sm);
+  font-weight: 600;
+}
+
+.tile-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--fs-body);
+}
+
+/* --------------------------------------------------------------------------- the nav rail
+   FINDING 5 OF THE PLANNING PASS. navRail.js draws a leading `.nav-rule` in front of what it
+   expects to be an unlabelled CHROME TAIL following one or more labelled lanes (:127 for the
+   icon rail, :155 for the stacked list below 800px) — both sites key off `item.lane === null`
+   /`page.group === null` alone, with no check for "and something labelled came before it".
+   Every route in this app is `group: null` (see app.js: Registers and Settings are two
+   front-door pages, not a lane and a tail), so that same test is true of the very FIRST item
+   and both call sites open with a hairline above two links that have nothing to be separated
+   from. Fixed here rather than in the shared component: gas, gas_ai and gas_devsecops all
+   depend on that rule appearing in front of their own real chrome tail. */
+.sidebar > .nav-rule:first-child { display: none; }
