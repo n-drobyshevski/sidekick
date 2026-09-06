@@ -52,6 +52,19 @@ const ENTRIES = [
     ],
   },
   {
+    // The Code register's clock section. `censoring` next door is about a finding that is
+    // still OPEN; this is about one that has closed and whose closing DATE is an estimate —
+    // the opposite end of the same clock, and the two were being asked to share one entry.
+    // The page's own 85-word caveat leads the tip and this is what sits behind it.
+    id: "disappearance",
+    term: "Dated by disappearance",
+    lines: [
+      "A finding dated closed at the first scan that stopped returning it, because the API publishes no resolution date for it.",
+      "An upper bound whose error is the interval between two scans: \"gone by 12 Aug\", never \"resolved 12 Aug\".",
+      "Until two syncs have run and findings have begun to disappear between them, a register dated this way reads near-zero — an absence of observations, not a fast team.",
+    ],
+  },
+  {
     id: "sla-target",
     term: "SLA target",
     lines: [
@@ -173,6 +186,15 @@ const ENTRIES = [
     lines: [
       "Each month's close rate — closings divided by what was already open at the start of that month — averaged across the months actually observed.",
       "Not closings over new arrivals, and not closings over the whole register: the denominator is that month's starting backlog.",
+    ],
+  },
+  {
+    id: "signal-coverage",
+    term: "Signal coverage",
+    lines: [
+      "How much of the column a risk clause rests on was ever captured, over the rows that clause applies to.",
+      "A measured 0% is a measurement: it separates \u201cthe AI agreed with nothing\u201d from \u201cnobody asked the AI\u201d. \u201cNot applicable\u201d is a third statement \u2014 no row in scope has such a column at all.",
+      "The clauses are OR'd and overlap, so what each one fired on never sums to the high-risk count.",
     ],
   },
   {

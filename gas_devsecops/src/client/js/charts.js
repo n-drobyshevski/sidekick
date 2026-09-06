@@ -1346,6 +1346,162 @@ export function mttrImpactBars(canvas, rows, opts = {}) {
   });
 }
 
+// The two capacity series, and why neither is the brand accent's FILL. `--accent` (#ffcb13)
+// is 1.52:1 on the canvas ground and is a fill token with an edge, which a Chart.js bar
+// cannot carry; `--accent-text` (ACCENT, #7c4a0a) is the ink this register spends on data and
+// is what the closures take, because closures are the series a reader of this page is looking
+// for. Arrivals take a neutral zinc rather than a second hue: this chart already says
+// gaining / falling behind through the NET LABEL above each pair, and a red-versus-green pair
+// of bars would say it a second time in the one channel DESIGN.md rations hardest. Measured
+// on white: #71717a is 4.06:1, ACCENT 7.39:1 — both clear the 3:1 floor for a non-text mark
+// with room to spare.
+const ARRIVED_FILL = "#71717a";
+const CLOSED_FILL = ACCENT;
+
+/**
+ * The signed net above each month's PAIR of bars — the figure the two bars are a comparison
+ * of, direct-labelled so it never has to be inferred from two heights.
+ *
+ * Sibling of `divergingBarLabels`, and the same rule: the label sits at the outer end of the
+ * mark it belongs to, never on top of it. Here "outer" is above the TALLER of the two bars,
+ * because a label between them would read as belonging to whichever it happened to sit
+ * nearer. A group whose taller bar reaches the top of the plot area is skipped rather than
+ * drawn outside it — an unreadable label over the axis is worse than no label, and the table
+ * behind the chart carries every net anyway.
+ */
+function netGroupLabels(rows) {
+  return {
+    id: "netGroupLabels",
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea } = chart;
+      const arrived = chart.getDatasetMeta(0);
+      const closed = chart.getDatasetMeta(1);
+      if (!arrived || !closed || !chartArea) return;
+      ctx.save();
+      ctx.font = `600 10px ${FONT.family}`;
+      ctx.fillStyle = INK2;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      arrived.data.forEach((bar, i) => {
+        const other = closed.data[i];
+        const row = rows[i];
+        if (!other || !row) return;
+        const v = Number(row.net) || 0;
+        const y = Math.min(bar.y, other.y) - 5;
+        if (y < chartArea.top + 8) return;
+        ctx.fillText((v > 0 ? "+" : "") + localeNum(v), (bar.x + other.x) / 2, y);
+      });
+      ctx.restore();
+    },
+  };
+}
+
+/**
+ * Arrivals against closures, month by month — the capacity question as a shape.
+ *
+ * WHAT IT REPLACES: an eight-column table (open at start, arrived, closed, net, close rate
+ * with its interval and base, a verdict pill, and up to two more pills saying whether anybody
+ * was watching), one row per month. Every figure in it was right and the QUESTION the section
+ * asks — is remediation keeping up with what arrives — is a shape across the rows that no
+ * column answers. Two bars per month answer it at a glance; `chartCard`'s data table carries
+ * every one of those columns behind the canvas, from the same array.
+ *
+ * A MONTH NOBODY WATCHED IS HATCHED, and that is the only thing colour does not say here.
+ * `capacityView` marks a month `partial` (still running) or `reconstructed` (it ended before
+ * this register started watching, so its figures were rebuilt rather than observed) and sets
+ * `measured: false` for either; both of those bars are drawn in this design system's one mark
+ * for "this part is not a measurement" rather than in the flat fill a measured month gets.
+ * The hatch is `hatchPattern`, which has sat unexported and uncalled in this file since the
+ * port — this is the caller its `palette.fills`-shaped hook was left for.
+ *
+ * `hatchPattern` DEGRADES TO THE FLAT COLOUR when there is no 2d context to build a tile in
+ * (a headless test's fake canvas, a browser that refuses `createPattern`), which is why the
+ * `describe()` text below names every unobserved month in WORDS as well. A texture that may
+ * not render cannot be the only carrier of "not observed", and the table behind the chart
+ * says it a third time.
+ *
+ * `rows` is `capacityView(...).months` — the array the caller also hands `chartTableModel`.
+ */
+export function monthlyCapacityBars(canvas, months, opts = {}) {
+  destroyExisting(canvas);
+  const rows = Array.isArray(months) ? months : [];
+  const subject = opts.subject || "Findings arriving against findings closed, by month";
+  const signed = (v) => (v > 0 ? "+" : "") + localeNum(v);
+  const marks = (m) => (m.measured ? "" : ` (${(m.marks || []).join(", ")}, not observed)`);
+  describe(canvas, `${subject}: ` + (rows.map((m) => `${m.month}${marks(m)} `
+    + `${localeNum(m.opened)} arrived, ${localeNum(m.closed)} closed, net ${signed(m.net)}`)
+    .join("; ") || "none") + ".");
+
+  const opt = baseOptions("findings");
+  opt.scales.x.grid = { display: false };
+  opt.scales.y.grace = "12%"; // headroom so the net labels above the tallest pair aren't clipped
+  // THE LEGEND IS BUILT, NOT INFERRED, AND IT HAS THREE KEYS.
+  //
+  // Chart.js's default `generateLabels` reads `backgroundColor[0]` when a dataset's fill is
+  // per-bar, so a register whose OLDEST month happens to be reconstructed would show BOTH
+  // series keys hatched — this design system's mark for "not measured", applied to two series
+  // that are mostly measured. The two series keys take their own flat colour here, and the
+  // hatch gets a key of its own with the words that say what it means. That third key is the
+  // reason the mark can carry a fact at all (components.css: "a texture is not a fact, so
+  // nothing may be hatched without a word beside it saying what was not measured").
+  //
+  // `onClick` is stood down because every key here would be wrong to click: two of them are
+  // the halves of one comparison — hiding either leaves a bar chart that looks like a
+  // measurement and is half of one — and the third is not a dataset at all.
+  opt.plugins.legend = {
+    display: true,
+    onClick: () => {},
+    labels: {
+      font: FONT,
+      color: INK2,
+      boxWidth: 12,
+      generateLabels: () => [
+        { text: "Arrived", fillStyle: ARRIVED_FILL, strokeStyle: ARRIVED_FILL, lineWidth: 0 },
+        { text: "Closed", fillStyle: CLOSED_FILL, strokeStyle: CLOSED_FILL, lineWidth: 0 },
+        {
+          text: "Not observed \u2014 reconstructed or partial",
+          fillStyle: hatchPattern(canvas, INK2),
+          strokeStyle: HAIRLINE,
+          lineWidth: 1,
+        },
+      ],
+    },
+  };
+  opt.plugins.tooltip.callbacks.afterLabel = (ctx) => {
+    const m = rows[ctx.dataIndex];
+    if (!m) return "";
+    return ` net ${signed(m.net)}`
+      + (m.measured ? "" : ` · ${(m.marks || []).join(", ")} — rebuilt, not observed`);
+  };
+  // One fill per bar, so the hatch lands on the month rather than on the whole series.
+  const fills = (color) => rows.map((m) => (m.measured ? color : hatchPattern(canvas, color)));
+
+  return new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: rows.map((m) => m.month),
+      datasets: [
+        {
+          label: "Arrived",
+          data: rows.map((m) => m.opened),
+          backgroundColor: fills(ARRIVED_FILL),
+          borderRadius: 3,
+          maxBarThickness: 22,
+        },
+        {
+          label: "Closed",
+          data: rows.map((m) => m.closed),
+          backgroundColor: fills(CLOSED_FILL),
+          borderRadius: 3,
+          maxBarThickness: 22,
+        },
+      ],
+    },
+    options: opt,
+    plugins: [netGroupLabels(rows)],
+  });
+}
+
 /**
  * Coverage and efficiency over time — the P2P pair on one axis, both in percent.
  *

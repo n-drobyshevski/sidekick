@@ -298,3 +298,75 @@
 /* The meter must not be squeezed to nothing by the flex row when the denominator is long -
    `meter--stat` already fixes its basis, this stops the shrink. */
 .rate-with-meter .meter { flex: 0 0 52px; }
+
+/* ------------------------------------- Dependencies / Code: one signal, one bar (Wave B)
+   `signalRow` (pages/sca.js) draws a tri-state signal - evaluated / never evaluated / no such
+   column - as one `axisBar` per signal, replacing a five-column table whose last column was a
+   prose "Reading" and whose rows each carried a denominator paragraph underneath.
+
+   LAYOUT ONLY, AND DELIBERATELY SO. There is no new fill here and no new colour: the bar's
+   segments, its hatch and its legend are `components.css`'s `.axis-bar` rules, the state pill
+   is `.pill.ok/.warn/.neutral`, and both already carry whatever forced-colours treatment they
+   were given there. A rule that invented a fill for this block would be a fourth place the
+   severity-free monotone ramp is decided.
+
+   The `.axis-bar`'s own margin is `--space-3` over `--space-4`, tuned for one bar standing
+   alone on the AARS rules page. Three of them stacked in a card need the rhythm of a list
+   instead, so the gap belongs to the container and each bar keeps only the air between it and
+   its own legend. */
+.signal-rows { display: grid; gap: var(--space-4); }
+.signal-row__head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+}
+.signal-row__name { font-weight: 600; }
+/* The bar sits directly under the name it belongs to; `--measure` is kept from `.axis-bar` so
+   the legend beside it wraps at a readable width rather than at the card's own edge. */
+.signal-row .axis-bar { margin: var(--space-2) 0 0; }
+
+/* ------------------------------------------- Secrets: the validation-coverage headline
+   "Has anybody looked?" asks one question and a meter answers it, so the meter is the first
+   thing under the heading rather than a bar trailing three cards. Full width would make it a
+   1,100px rule across the page - a hero, not a stat - so it is capped at the width the three
+   cards under it occupy at 640px and given the 10px height a headline earns over the 6px a
+   `meter--stat` in a table cell takes.
+
+   The meter is NOT decorative here: it is the section's answer, and it carries its own
+   aria-label with both figures. The words above it and the percentage below it are what a
+   reader who cannot see the fill reads instead, which is why both are printed. */
+.coverage-headline { display: grid; gap: var(--space-1); margin: 0 0 var(--space-3); }
+.coverage-headline .meter { max-width: 28rem; height: 10px; }
+
+/* ------------------------------- Coverage & efficiency: the unclassified rows, hatched
+   The block the whole page's honesty rests on, and the only one whose subject is rows nobody
+   could measure. `.hatch` (components.css) is this design system's one mark for exactly that,
+   so the card carries a swatch of it beside the word - never instead of the word, because a
+   texture is not a fact. The count stays in ink: it IS a measurement, of how much was not. */
+.unclassified-card { display: grid; gap: var(--space-half); }
+.unclassified-swatch {
+  display: inline-block; width: 14px; height: 14px; margin-right: var(--space-2);
+  border: 1px solid var(--hairline); border-radius: 2px; vertical-align: -2px;
+}
+/* Forced colours keep the hatch (it is ink at an alpha, see the --hatch token) but drop the
+   hairline into the forced border colour, so the swatch stays a bordered square rather than
+   dissolving into the card. */
+@media (forced-colors: active) {
+  .unclassified-swatch { border-color: CanvasText; }
+}
+
+/* --------------------------------- Coverage & efficiency: the capacity verdict, as a word
+   Ported from gas_ai's `.cap-verdict` (inventory.css), rule and reasoning intact: the WORD is
+   the signal and the dot only repeats it. Three states told apart by hue alone survive
+   neither greyscale nor a dichromat, and this is the one figure on the card a reader takes
+   away. Sized and spaced like `.rail-status-dot` above, so the app has one dot vocabulary.
+
+   The dot takes the ok / neutral / bad tones the per-month pills used to carry, rather than a
+   second list keyed by verdict slug. */
+.verdict-mark { display: inline-flex; align-items: center; gap: var(--space-2); }
+.verdict-word { font-size: var(--fs-lead); font-weight: 650; }
+.verdict-dot {
+  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
+  background: var(--text-3);
+}
+.verdict-dot--ok { background: var(--ok); }
+.verdict-dot--neutral { background: var(--text-3); }
+.verdict-dot--bad { background: var(--bad); }

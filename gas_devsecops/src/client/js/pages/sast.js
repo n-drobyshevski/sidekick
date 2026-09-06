@@ -12,7 +12,12 @@
 // stopped seeing the finding. That OVERSTATES the duration by up to one scan interval, and a
 // freshly-started ledger reads near-zero until disappearances accrue. PRODUCT.md's rule is
 // that "No MTTR yet" is a state a reader can act on and "MTTR is 0 days" is a confident lie,
-// so the caveat is body copy on the page rather than a footnote in a commit message.
+// so the caveat is ON THE PAGE rather than a footnote in a commit message. It is no longer
+// BODY COPY: the density wave moved the 85-word sentence onto the clock section's heading as
+// its first tip line (with the `disappearance` glossary entry behind it), because the three
+// cards under that heading already say the same thing in six words each and the header's own
+// stat row reads "Resolved N — dated by disappearance". What a reader meets is unchanged;
+// what they have to read past to reach the figures is 85 words shorter.
 //
 // AI VERDICT COVERAGE IS 0% IN THIS TENANT and it is SHOWN, not hidden. `aiAnalysis` is null
 // on every captured node, so one of the SAST risk rule's three clauses has never fired. A
@@ -26,16 +31,16 @@
 import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import {
-  absent, absentText, closeActiveSheet, dataTable, days1, denomNote, el, emptyState,
+  absent, absentText, closeActiveSheet, dataTable, days1, el, emptyState,
   firstRunNotice, fmtCount, fmtDate, heroStat, meter, num, pageHeader, pct1, sevBadge,
-  sevEntries, sevKeyRow, sevSegmentBar, skeletonStack, statRow,
+  sevEntries, sevKeyRow, sevSegmentBar, skeletonStack, statRow, statusPill,
 } from "../ui.js";
 import {
-  RISK_TIER_LABELS, RISK_TIER_ORDER, SEVERITY_FALLBACK, agingModel, agingTableModel, chartCard,
-  concentrationModel, figureCard, filterEmptyNotice, funnelModel, movementCard, movementModel,
-  oldestFindingsModel, pagedTable, readRegisterParams, registerFirstRunView, registerRowsTable,
-  registerToolbar, renderRegisterPage, sectionCard, sevPalette, severityCountsTableModel,
-  signalFigure, textCell, tierModel,
+  RISK_TIER_LABELS, RISK_TIER_ORDER, SEVERITY_FALLBACK, agingModel, agingSurfaceNote,
+  agingTableModel, chartCard, concentrationModel, figureCard, filterEmptyNotice, funnelModel,
+  movementCard, movementModel, oldestFindingsModel, pagedTable, readRegisterParams,
+  registerFirstRunView, registerRowsTable, registerToolbar, renderRegisterPage, sectionCard,
+  sevPalette, severityCountsTableModel, signalFigure, signalRow, textCell, tierModel,
 } from "./sca.js";
 
 /**
@@ -213,6 +218,11 @@ function paintSast(host, vm, filters) {
     route: "sast",
     help: { term: "sast" },
     hero: heroStat(null, vm.hero.value, vm.hero.sub),
+    // THE PARAGRAPH IS GONE — same fate, same reason as `paintSca`'s. "A weakness class at a
+    // file and a line in our own source. There is no vendor: this one is fixed by changing the
+    // code." is the `sast` glossary entry restated ("a weakness class (CWE) at a file and
+    // line. / Fixed by changing the code, so there is no vendor to wait for"), under an h1
+    // that already carries that term. The bar and its key are the aside.
     aside: el("div", { class: "page-strip" },
       heroSevs.length
         ? [
@@ -220,9 +230,6 @@ function paintSast(host, vm, filters) {
           sevKeyRow(heroSevs),
         ]
         : null,
-      el("p", { class: "small muted" },
-        "A weakness class at a file and a line in our own source. There is no vendor: this "
-        + "one is fixed by changing the code."),
     ),
     // SUPPRESSED, not dashed — see sca.js's paintSca for the same convention.
     stats: vm.firstRun.show ? [] : [
@@ -267,8 +274,19 @@ function paintSast(host, vm, filters) {
   }));
 
   // ------------------------------------------------------------------ the one clock
-  host.append(sectionCard("Where this register's clock starts, and where it stops", "censoring",
-    el("p", {}, vm.clock.caveat),
+  //
+  // THE CAVEAT MOVED ONE LEVEL DOWN, AND THE THREE CARDS KEEP ITS CLAIM. 85 words of body
+  // copy opened this section — the longest single block on the page — saying that the clock
+  // starts at a measurement and stops at an estimate. The cards say exactly that in six
+  // words each ("createdAt … a real date" / "Disappearance … an estimate" / "Not
+  // applicable"), which is where a reader meets it; the caveat itself is the heading's first
+  // tip line, ahead of the `disappearance` entry it now routes to, and the stat row above
+  // still reads "Resolved N — dated by disappearance" on the surface. R2's DISCLOSE, with
+  // the honesty statement left where it was.
+  host.append(sectionCard("Where this register's clock starts, and where it stops", {
+    term: "disappearance",
+    lines: [vm.clock.caveat],
+  },
     el("div", { class: "kpi-row" },
       figureCard({
         label: "Clock starts",
@@ -300,8 +318,21 @@ function paintSast(host, vm, filters) {
 
   // ------------------------------------------------------------------ the rule
   const ruleRows = vm.tiers.rows.filter((r) => vm.rule.clauses.includes(r.tier) || r.count > 0);
-  host.append(sectionCard("The rule that calls a weakness high risk", "cwe-top-25",
-    el("p", {}, vm.rule.sentence),
+  // THE SENTENCE IS THE TABLE, so only one of them is drawn. `SAST_RULE_SENTENCE` names three
+  // clauses and the table below lists exactly those three, one per row, with each one's own
+  // count — 48 words restating the three rows under them. What the table CANNOT say is the
+  // quantifier, so that is the first line of the heading's tip and the `cwe-top-25` entry
+  // still sits behind it. The constant and `vm.rule.sentence` are untouched:
+  // `test/pagesRegisters.test.js` checks the sentence against `DEFAULT_SAST_RISK_RULE`'s own
+  // clause names, and that check is what keeps the three ROWS honest whether or not the
+  // sentence is drawn.
+  host.append(sectionCard("The rule that calls a weakness high risk", {
+    term: "cwe-top-25",
+    lines: [
+      "Any one clause is enough — they are not scored together.",
+      vm.tiers.denominator,
+    ],
+  },
     el("div", { class: "table-host" }, dataTable({
       columns: [
         { key: "label", label: "Clause", cell: (r) => r.label },
@@ -318,7 +349,6 @@ function paintSast(host, vm, filters) {
       rows: ruleRows,
       emptyText: "Nothing open to classify.",
     })),
-    denomNote(vm.tiers.denominator),
     // The rule's own three clause rows are always drawn (see `ruleRows` above), so a filter
     // that narrows the register to nothing still shows three rows of `0` rather than an empty
     // table — `vm.tiers.open` is what actually reads "nothing under this filter".
@@ -326,28 +356,30 @@ function paintSast(host, vm, filters) {
   ));
 
   // ----------------------------------------------------- ai_verdict coverage, shown
-  host.append(sectionCard("AI triage coverage", "sast",
-    el("p", { class: "small muted" },
-      "One of the rule's three clauses reads the scanner's own verdict. This is how much of "
-      + "the register that verdict was ever recorded for — shown rather than inferred from a "
-      + "clause that never fires."),
-    el("div", { class: "kpi-row" },
-      figureCard({
-        label: "Verdict recorded",
-        value: vm.aiVerdict.cells.measured,
-        sub: pct1(vm.aiVerdict.coveragePct) + " of applicable rows",
-        denominator: vm.aiVerdict.denominator,
-      }),
-      figureCard({
-        label: "Never evaluated",
-        value: vm.aiVerdict.missing > 0 ? fmtCount(vm.aiVerdict.missing) : "None",
-        sub: vm.aiVerdict.verdict,
-      }),
-    ),
+  //
+  // THE SAME PICTURE THE DEPENDENCIES REGISTER DRAWS FOR ITS THREE SIGNALS, for the one this
+  // register has. Two figure cards said the coverage twice — "None evaluated" beside "340",
+  // which are the two halves of one division — and the 30-word lede said which clause the
+  // verdict belongs to. `signalRow` (sca.js) draws the division, prints both counts in its
+  // legend and puts the reading and the denominator on the row's own label; the state pill
+  // beside it keeps "None evaluated" in words, on the surface, where a 0%-filled bar could
+  // otherwise be read as a measured absence rather than as nobody having looked.
+  host.append(sectionCard("AI triage coverage", {
+    term: "sast",
+    lines: [
+      "One of the rule's three clauses reads the scanner's own verdict; this is how much of"
+      + " the register that verdict was ever recorded for.",
+      "Shown rather than inferred from a clause that never fires — a rule whose clause cannot"
+      + " fire is a coverage gap to publish, not one to paper over.",
+    ],
+  },
+    el("div", { class: "signal-rows" },
+      signalRow(vm.aiVerdict, { unit: "code weaknesses" })),
   ));
 
   // ------------------------------------------------------------------ weakness mix
-  host.append(sectionCard("The weakness mix", "cwe-top-25",
+  host.append(sectionCard("The weakness mix",
+    { term: "cwe-top-25", denominator: vm.weaknessMix ? vm.weaknessMix.denominator : null },
     vm.weaknessMix && vm.weaknessMix.rows.length
       ? el("div", {},
         el("div", { class: "table-host" }, dataTable({
@@ -364,7 +396,6 @@ function paintSast(host, vm, filters) {
           rows: vm.weaknessMix.rows,
           emptyText: "No open weaknesses.",
         })),
-        denomNote(vm.weaknessMix.denominator),
       )
       : emptyState(
         "No weakness classes to rank.",
@@ -374,7 +405,9 @@ function paintSast(host, vm, filters) {
 
   // ------------------------------------------------------------------- aging + funnel
   host.append(el("div", { class: "chart-row" },
-    chartCard("Open weaknesses by age", vm.aging.denominator, (api, canvas) => {
+    // Both counts on the surface, the 25-word origin sentence on the heading — see
+    // `agingSurfaceNote` (sca.js) for why the undated count cannot move off the page.
+    chartCard("Open weaknesses by age", agingSurfaceNote(vm.open, vm.aging.totalOpen), (api, canvas) => {
       api.stackedAgeBar(
         canvas,
         vm.aging.labels,
@@ -386,7 +419,7 @@ function paintSast(host, vm, filters) {
       caption: "Every bar of the stack as a count: one row per age bucket, one column per"
         + " severity drawn.",
       model: agingTableModel(vm.aging.labels, vm.aging.perSev, vm.severityOrder),
-    }),
+    }, { denominator: vm.aging.denominator }),
     chartCard("Open weaknesses by severity", null, (api, canvas) => {
       api.severityBar(canvas, vm.counts, sevPalette(vm.severityOrder), null);
     }, {
@@ -395,7 +428,7 @@ function paintSast(host, vm, filters) {
     }),
   ));
 
-  host.append(sectionCard("Triage funnel", null,
+  host.append(sectionCard("Triage funnel", { denominator: vm.funnel.denominator },
     el("div", { class: "table-host" }, dataTable({
       columns: [
         { key: "label", label: "Step", cell: (r) => r.label },
@@ -412,14 +445,20 @@ function paintSast(host, vm, filters) {
       rows: vm.funnel.steps,
       emptyText: "Nothing open.",
     })),
-    denomNote(vm.funnel.denominator),
-    vm.funnel.note ? el("p", { class: "small muted" }, vm.funnel.note) : null,
+    // A PILL, NOT A PARAGRAPH — see `paintSca`'s own funnel for the reasoning. The claim
+    // ("two steps are missing, and they are not zeroes") stays on the surface in four words
+    // and a dot; the 38-word explanation of why a repository has no internet exposure is the
+    // pill's tip.
+    vm.funnel.note
+      ? el("p", { class: "small muted" },
+        statusPill("neutral", "Exposure and overdue: not applicable", { lines: [vm.funnel.note] }))
+      : null,
     filterEmptyNotice(vm.asOf, filters.severities.length > 0, vm.funnel.steps[0].count === 0),
   ));
 
   // ---------------------------------------------------------------------- breakdowns
   for (const dim of vm.concentration) {
-    host.append(sectionCard(dim.label, null,
+    host.append(sectionCard(dim.label, { denominator: dim.denominator },
       el("div", { class: "table-host" }, dataTable({
         columns: [
           { key: "key", label: "Group", cell: (r) => r.key },
@@ -429,7 +468,6 @@ function paintSast(host, vm, filters) {
         rows: dim.rows,
         emptyText: "No open weaknesses in this dimension.",
       })),
-      denomNote(dim.denominator),
       filterEmptyNotice(vm.asOf, filters.severities.length > 0, dim.rows.length === 0),
     ));
   }
@@ -466,11 +504,17 @@ function paintSast(host, vm, filters) {
   ));
 
   // ------------------------------------------------------------- every finding, server-paged
-  host.append(sectionCard("Every finding in the register", null,
-    el("p", { class: "small muted" },
-      "Open and resolved, server-paged and server-sorted — click a column to ask for a "
-      + "different order rather than re-sorting what is already on screen, and open a "
-      + "row for everything the register holds about that one finding."),
+  // ONE LINE, AND THE AFFORDANCE ON THE HEADING — see `paintSca` for the same fate applied to
+  // the same 44-word lede. This register has no `missingColumns` sentence to carry with it:
+  // `REGISTER_ROW_COLUMNS.sast` holds every column this page ever promised, which is what
+  // `sastModel`'s `missingColumns: null` records.
+  host.append(sectionCard("Every finding in the register", {
+    lines: [
+      "Click a column to ask the server for a different order rather than re-sorting what is"
+      + " already on screen; open a row for everything the register holds about that finding.",
+    ],
+  },
+    el("p", { class: "small muted" }, "Open and resolved, server-paged and server-sorted."),
     registerRowsTable({
       scope: "sast",
       severities: filters.severities,

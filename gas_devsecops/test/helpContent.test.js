@@ -42,6 +42,16 @@ const EXPECTED_IDS = [
   // list, and `sla-edge` what the six per-severity edge sentences under the age chart became
   // once the legend beside them started printing the targets themselves.
   "movement", "fix-next", "sla-edge",
+  // Wave B's, from the Code register: the 85-word caveat that opened its clock section is a
+  // tip line now, and the term behind it is what a closing date estimated from a finding no
+  // longer being returned is CALLED. Not a rename of the neighbouring censoring entry —
+  // that one is about a row that is still open.
+  "disappearance",
+  // Wave B's, from Coverage and efficiency: the signals table publishes three states in one
+  // column (a measured share, always-present, not-applicable) and a 72-word note under the
+  // table used to say which is which. The entry is where that reading lives now, and the
+  // meter beside each cell is drawn only for the first of the three.
+  "signal-coverage",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164

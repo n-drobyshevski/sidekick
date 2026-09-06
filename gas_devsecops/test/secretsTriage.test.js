@@ -237,15 +237,54 @@ describe("the validity spine is the By-validation-state table, read a second way
     for (const id of ["live", "unchecked", "dead"]) expect(at(id).alarm).toBe(false);
   });
 
+  /**
+   * THE EXACT SUB STRINGS CHANGED, AND THE CLAIM DID NOT. This case used to assert three
+   * literals of the form "3 of 41 open — the provider answered and the credential worked":
+   * the denominator, an em dash, and a clause saying what VALID means. The clause was the
+   * obsolete half. `figureCard` (the density wave's denominator contract) puts each card's
+   * `denominator` SENTENCE on the card's own label as the first tip line and writes it to
+   * `data-denominator`, and every one of those sentences already opens with the same reading
+   * the sub's clause carried — measured, at this fixture:
+   *
+   *   live      sub clause "the provider answered and the credential worked"
+   *             denominator "3 of 41 open findings read VALID: somebody asked the provider
+   *                          and the credential answered."
+   *   unchecked "nobody has asked the provider" / "…read UNKNOWN, ERROR or nothing at all —
+   *              neither live nor dead…"
+   *   dead      "the provider refused it" / "…read INVALID: the credential was observed
+   *              dead."
+   *
+   * So the page printed the reading twice, once under the figure and once behind its
+   * trigger. What this case exists to hold — that every card carries a denominator, and that
+   * the three open-register figures carry the OPEN one on their face — is asserted below
+   * without the duplicate, and strengthened: the reading has to still be in the sentence,
+   * and the sub has to no longer restate it.
+   */
   it("carries a denominator on every card, and the open one on the three that share it", () => {
     for (const f of TRIAGE.figures) {
       expect(typeof f.denominator, `${f.id} has no denominator`).toBe("string");
       expect(f.denominator.length).toBeGreaterThan(40);
       expect(typeof f.sub).toBe("string");
     }
-    expect(at("live").sub).toBe("3 of 41 open — the provider answered and the credential worked");
-    expect(at("unchecked").sub).toBe("38 of 41 open — nobody has asked the provider");
-    expect(at("dead").sub).toBe("0 of 41 open — the provider refused it");
+    expect(at("live").sub).toBe("3 of 41 open findings");
+    expect(at("unchecked").sub).toBe("38 of 41 open findings");
+    expect(at("dead").sub).toBe("0 of 41 open findings");
+    // The alarm's own denominator is the register, not the open rows, and its sub says so.
+    expect(at("removedNotRotated").sub).toBe("17 of 61 in the register");
+  });
+
+  it("moves each card's reading into the sentence rather than dropping it", () => {
+    // The half of the old assertion that was NOT obsolete: a reader still has to be able to
+    // find out what VALID, UNKNOWN and INVALID mean here. Drop the clause from the
+    // denominator as well as from the sub and this fails.
+    expect(at("live").denominator).toMatch(/somebody asked the provider/);
+    expect(at("unchecked").denominator).toMatch(/UNKNOWN, ERROR or nothing at all/);
+    expect(at("dead").denominator).toMatch(/observed dead/);
+    // And the sub does not say it a second time — the defect the change was made for.
+    for (const id of ["live", "unchecked", "dead"]) {
+      expect(at(id).sub, `${id}'s sub restates its reading`).not.toMatch(/provider/);
+      expect(at(id).sub).toMatch(/^\d+ of \d+ open findings?$/);
+    }
   });
 
   it("says null rather than zero when the validation axis was never computed", () => {

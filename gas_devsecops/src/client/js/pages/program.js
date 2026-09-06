@@ -33,11 +33,18 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absentText, chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState,
-  firstRunNotice, glossaryTip, heroStat, kpiCard,
-  onPageTeardown, pageHeader, pluralize, sectionLabel, skeleton, statRow, statusPill,
+  absent, absentText, chartTable, chartTableModel, clear, dataTable, disclosure, el, emptyState,
+  errorState, figureCard, firstRunNotice, heroStat, kpiCard, meter, num, onPageTeardown,
+  pageHeader, pluralize, quadModel, quadTable, sectionLabel, skeleton, statRow, statusPill,
+  tipLabel,
 } from "../ui.js";
 import { fmtCount, fmtDays } from "./mttr.js";
+// `chartCard` — the chart-card shell with its eager data-table alternative and its
+// bundle-refused fallback — is `pages/sca.js`'s, the same way `fmtCount`/`fmtDays` above are
+// `pages/mttr.js`'s. The capacity section is the first chart on this page that has a table
+// worth reading behind it, and re-typing the shell here would be the fourth copy of a
+// `.chart-card > h3 + note + chart-box + chartTable` block in this package.
+import { chartCard } from "./sca.js";
 
 // ---------------------------------------------------------------------------- formatting
 
@@ -61,6 +68,46 @@ const VERDICT_LABELS = {
 };
 
 const VERDICT_KINDS = { gaining: "ok", "keeping-up": "neutral", "falling-behind": "bad" };
+
+/**
+ * The percentage a signal's coverage meter may be filled to — or NULL, which draws no meter.
+ *
+ * PURE AND EXPORTED BECAUSE THE DECISION IS WHAT CAN BE WRONG, not the `<span>` around it.
+ * `signalBreakdownView` publishes THREE states and this page's own header insists they are
+ * drawn as three things:
+ *
+ *   "measured"        a share was taken over the rows the signal applies to — INCLUDING a
+ *                     real, measured 0%. `ai_verdict` reads 0% in this tenant and that IS
+ *                     the finding: it separates "the AI agreed with nothing" from "nobody
+ *                     asked the AI". A measured zero gets its meter, empty.
+ *   "always-present"  the clause rests on a column that is never missing, so there is no
+ *                     share to take at all.
+ *   "not-applicable"  no row in scope has such a column.
+ *
+ * The last two get NO meter. `ui/data.js`'s `meter(value)` opens with `Number(value) || 0`,
+ * so the one-line version — `meter(Number(row.coveragePct))` — draws an empty 0% track beside
+ * the words "always present", which is a picture asserting that nothing was captured on a
+ * clause that is never missing. The state is checked BEFORE the cast and the percentage is
+ * refused after it, in that order.
+ *
+ * @param {{coverageState?: string, coveragePct?: *}|null|undefined} row  a signalBreakdownView row
+ * @returns {number|null}
+ */
+export function signalMeterPct(row) {
+  if (!row || row.coverageState !== "measured") return null;
+  return num(row.coveragePct);
+}
+
+/**
+ * A net movement with its sign always shown — "+12", "0", "−7".
+ *
+ * `fmtCount` carries the locale's own minus sign, so only the plus has to be added. Refused
+ * before the cast: a null net is a zero the server declared, never `Number(undefined)`.
+ */
+function signedCount(v) {
+  const n = num(v, 0);
+  return (n > 0 ? "+" : "") + fmtCount(n);
+}
 
 // ------------------------------------------------------------------------- view models
 
@@ -220,6 +267,67 @@ export function confusionView(matrix) {
       ),
     },
   };
+}
+
+/**
+ * Which corner of the matrix is good news, which is bad, and which is neither.
+ *
+ * TONE IS THE THIRD CUE. `quadModel` refuses a toned corner with no label, and every one of
+ * these is paired with `confusionView`'s own reading — "Work that mattered", "Unremediated
+ * risk" — so the word carries the state and the wash only repeats it.
+ *
+ * `fp` IS "warn", NOT "bad". Effort spent on a finding the rule did not rate high is not a
+ * failure, it is the cost side of the pair this page publishes: efficiency is exactly that
+ * corner's share, and calling it an error in colour would make a verdict the arithmetic does
+ * not.
+ */
+const CONFUSION_TONES = { tp: "ok", fn: "bad", fp: "warn", tn: "neutral" };
+
+/**
+ * The confusion matrix as a `quadModel` — the 2x2 that used to be a three-column table.
+ *
+ * WHAT IT REPLACES. `dataTable` with a "Classified" column and two outcome columns, each cell
+ * a count with its reading appended as muted prose. Read left to right it is a table; read as
+ * a cross it is the thing it actually is, and only the cross makes the diagonal legible —
+ * `tp` and `tn` against `fn` and `fp` — which is the whole point of publishing coverage and
+ * efficiency together.
+ *
+ * THE SHARES ARE TAKEN AGAINST `classified`, NOT `total`, and that is the one arithmetic
+ * decision in this function. The four corners sum to `classified` by construction
+ * (`confusionView` asserts it and `test/pagesProgram.test.js` pins it); the unclassified rows
+ * are a SIBLING of the array, drawn beside the grid under a hatch, so passing `total` here
+ * would leave four shares summing to 75% with nothing on the grid explaining the missing
+ * quarter. The hatched note beside it is that explanation.
+ */
+export function confusionQuadModel(view) {
+  const cells = (view && view.cells) || [];
+  const at = (key) => cells.filter((c) => c.key === key)[0] || {};
+  const corner = (key, row, col) => {
+    const c = at(key);
+    // NO FALLBACK LABEL, and that is the point rather than an omission: `quadModel` REFUSES a
+    // corner with no word, and "tp" is a word only in the sense that it is a string — a
+    // toned cell reading "tp" would pass the refusal while defeating what it protects. A
+    // matrix missing a cell should throw here, where a test can see it, not render.
+    return {
+      row,
+      col,
+      count: c.value === undefined ? null : c.value,
+      label: c.label,
+      tone: CONFUSION_TONES[key] || "neutral",
+    };
+  };
+  return quadModel({
+    rows: { label: "Classified", yes: "High risk", no: "Not high risk" },
+    cols: { label: "Outcome", yes: "Remediated", no: "Still open" },
+    cells: [
+      corner("tp", true, true),
+      corner("fn", true, false),
+      corner("fp", false, true),
+      corner("tn", false, false),
+    ],
+    total: view && view.classified,
+    unit: "classified findings",
+  });
 }
 
 /**
@@ -484,28 +592,60 @@ export async function renderProgram(host, params, _ctx) {
     // that no longer draws its own copy of a card the shared module already owns.
     // `denominatorNode` is appended after, exactly as `mmcrMean`'s card does below, because
     // `kpiCard`'s own `sub` slot is the one line the bounds/measured sentence needs.
-    const aside = kpiCard(
-      glossaryTip("Remediation efficiency", "efficiency"),
-      view.efficiency.text,
-      view.efficiency.boundsText
-        ? "Bounds " + view.efficiency.boundsText
-        : (view.efficiency.measured
-          ? "No unclassified rows, so the point estimate is the whole interval."
-          : "Nothing was remediated under a classification, so there is no rate to take."),
-    );
-    aside.append(denominatorNode(view.efficiency));
+    // A `figureCard` NOW, so the sentence goes where R3 puts it: `data-denominator` on the
+    // card and the first line of the tip on its own label, rather than a `denominatorNode`
+    // appended under the value. The card is still `.page-header > .kpi-card`, so pages.css's
+    // 22rem cap still holds it under the hero beside it.
+    //
+    // THE VERDICT IS THE CARD'S CHIP. "Efficiency is at or below prevalence (12.5%), which is
+    // what a program selecting findings at random would score. That is a verdict on the rule,
+    // not on the team." was 32 words in a paragraph below the header — a verdict about THIS
+    // figure, drawn further from it than any other sentence on the page. A pill on the card
+    // says it in four words, with the whole sentence behind it; and it is drawn only when
+    // `beatsRandom` is FALSE, never when it is null, because "not prioritising" needs both
+    // halves of the comparison to have been measured.
+    const aside = figureCard({
+      label: "Remediation efficiency",
+      value: view.efficiency.text,
+      sub: rateSub(view.efficiency),
+      chip: view.beatsRandom === false
+        ? statusPill("warn", "At or below random", {
+          lines: [
+            "Efficiency is at or below prevalence (" + view.prevalenceText + "), which is"
+            + " what a program selecting findings at random would score.",
+            "That is a verdict on the rule, not on the team.",
+          ],
+        })
+        : null,
+      help: { term: "efficiency" },
+      denominator: view.efficiency.baseEmpty
+        ? "Not measured: " + view.efficiency.emptyLabel + "."
+        : "Of everything that was remediated under a classification, the share that deserved"
+          + " it — taken over " + view.efficiency.denominatorLabel + ".",
+    });
 
     // NO `route`: the h1 is in the title block appended once at the top of renderProgram.
     heroHost.append(pageHeader({
       hero: heroStat(
         "Remediation coverage",
         view.coverage.text,
-        view.coverage.boundsText
-          ? "Bounds " + view.coverage.boundsText + " — the width is the size of the doubt"
-          : (view.coverage.measured
-            ? "No unclassified rows, so the point estimate is the whole interval."
-            : "Nothing classified high risk, so there is no rate to take."),
-        { term: "coverage" },
+        rateSub(view.coverage),
+        // THE 48-WORD METHOD PARAGRAPH IS HERE. It printed both rates a second time — each
+        // with its own `denominatorNode` — under a header that had just drawn them, and then
+        // said why they are published together. The two figures are above; what a reader
+        // cannot get from them is the rule the pair enforces, and that is a definition.
+        {
+          term: "coverage",
+          lines: [
+            "Of everything that deserved remediation, the share that was remediated — taken"
+            + " over " + view.coverage.denominatorLabel + ".",
+            "The bounds are the two extreme re-labellings of the unclassified rows, so the"
+            + " WIDTH of the interval is the size of the doubt.",
+            "Coverage and efficiency are published together because either one alone can be"
+            + " bought by moving the rule — widen it and coverage climbs while efficiency"
+            + " falls.",
+          ],
+        },
       ),
       aside,
       // "Classified: not measured — 0 of 0 findings scored" is the same zero-glued-to-an
@@ -532,31 +672,46 @@ export async function renderProgram(host, params, _ctx) {
       ],
     }));
 
-    heroHost.append(el("p", { class: "small muted" },
-      "Coverage: ",
-      el("span", { class: "num" }, view.coverage.text),
-      " ",
-      denominatorNode(view.coverage),
-      ". Efficiency: ",
-      el("span", { class: "num" }, view.efficiency.text),
-      " ",
-      denominatorNode(view.efficiency),
-      ". The two are published together because either one alone can be bought by moving the"
-      + " rule — widen it and coverage climbs while efficiency falls."));
+    // AN EXCLUSION IS A STATE, so it is drawn as one. The 42-word paragraph said which
+    // population is outside every figure on this page and why the rule refuses to score it;
+    // the COUNT and the word "excluded" are what a reader has to see without hovering
+    // anything (R2's KEEP case), and the reason is a definition of the refusal.
+    const excluded = num(program.excludedSecrets, 0);
+    if (excluded > 0) {
+      heroHost.append(el("p", { class: "small muted" }, statusPill(
+        "neutral",
+        "Secrets excluded (" + fmtCount(excluded) + ")",
+        {
+          lines: [
+            fmtCount(excluded) + " secret " + pluralize(excluded, "finding")
+            + " are outside every figure on this page.",
+            "The risk rule refuses to score them rather than inventing a classification —"
+            + " severity on that register grades a detection, not whether a credential is"
+            + " live.",
+          ],
+        },
+      )));
+    }
+  }
 
-    if (view.beatsRandom === false) {
-      heroHost.append(el("p", { class: "small muted" },
-        "Efficiency is at or below prevalence (" + view.prevalenceText + "), which is what a"
-        + " program selecting findings at random would score. That is a verdict on the rule,"
-        + " not on the team."));
-    }
-    if (Number(program.excludedSecrets || 0)) {
-      heroHost.append(el("p", { class: "small muted" },
-        fmtCount(program.excludedSecrets) + " secret " + pluralize(Number(program.excludedSecrets), "finding")
-        + " are excluded from every figure on this page. The risk rule refuses to score them"
-        + " rather than inventing a classification — severity on that register grades a"
-        + " detection, not whether a credential is live."));
-    }
+  /**
+   * A bounded rate's one visible sub-line: the denominator short form, then the interval.
+   *
+   * R3's contract in one function, for the two figures the header carries. What was here
+   * before named only the interval ("Bounds 32.1% to 46.7% — the width is the size of the
+   * doubt") and left the base to a `denominatorNode` under the card or to a paragraph below
+   * the header; the base is the half a rate cannot be read without, so it leads. The
+   * explanation of what the width MEANS is one level down, on the label, where the rest of
+   * the method went — the two numbers themselves never leave the surface.
+   *
+   * A base of zero says what is missing rather than printing the zero beside "not measured",
+   * which is `boundedRateView`'s own rule and the reason `emptyLabel` exists.
+   */
+  function rateSub(rate) {
+    if (rate.baseEmpty) return rate.emptyLabel;
+    const base = "of " + rate.denominatorLabel;
+    if (rate.boundsText) return base + " · bounds " + rate.boundsText;
+    return base + " · no unclassified rows, so this point is the whole interval";
   }
 
   // -------------------------------------------------------------------- confusion matrix
@@ -570,52 +725,39 @@ export async function renderProgram(host, params, _ctx) {
     if (first) return;
     matrixHost.append(sectionLabel("The confusion matrix"));
     const view = confusionView(program.matrix);
-    const cell = (key) => view.cells.filter((c) => c.key === key)[0] || { value: 0, label: "" };
 
-    const rows = [
-      { risk: "High risk", remediated: cell("tp"), open: cell("fn") },
-      { risk: "Not high risk", remediated: cell("fp"), open: cell("tn") },
-    ];
-    matrixHost.append(dataTable({
-      columns: [
-        { key: "risk", label: "Classified", cell: (r) => r.risk },
-        {
-          key: "remediated",
-          label: "Remediated",
-          className: "num",
-          cell: (r) => el("span", {},
-            el("span", { class: "num" }, fmtCount(r.remediated.value)),
-            el("span", { class: "small muted" }, " " + r.remediated.label)),
-        },
-        {
-          key: "open",
-          label: "Still open",
-          className: "num",
-          cell: (r) => el("span", {},
-            el("span", { class: "num" }, fmtCount(r.open.value)),
-            el("span", { class: "small muted" }, " " + r.open.label)),
-        },
-      ],
-      rows,
+    matrixHost.append(quadTable(confusionQuadModel(view), {
+      ariaLabel: "Classified risk against remediation outcome, over "
+        + fmtCount(view.classified) + " classified findings",
     }));
 
-    // OUTSIDE the grid, in its own card, and labelled as what it is. This is the block the
-    // whole page's honesty rests on.
-    matrixHost.append(el("section", { class: "card" },
-      el("div", { class: "kpi-label" }, glossaryTip("Unclassified", "unclassified")),
+    // OUTSIDE the grid, and now MARKED as outside it. This is the block the whole page's
+    // honesty rests on, and it used to be a card carrying two paragraphs — one of figures,
+    // one 48-word explanation of what "outside" means. The explanation is the `unclassified`
+    // entry's own definition plus this page's two extra facts, so it rides on the label; the
+    // hatch is the mark this design system reserves for "this part is not a measurement",
+    // which is exactly what an unclassified row is. A texture is not a fact, so the word
+    // "Unclassified" sits beside it and the count is printed in ink.
+    matrixHost.append(el("section", { class: "card unclassified-card" },
+      el("div", { class: "kpi-label" },
+        el("i", { class: "hatch unclassified-swatch", "aria-hidden": "true" }),
+        tipLabel("Unclassified", {
+          term: "unclassified",
+          lines: [
+            "Held outside the four corners above, never folded into one: those sum to "
+            + fmtCount(view.cellTotal) + " classified findings, and these "
+            + fmtCount(view.unclassified.total) + " are the rows the rule could not place.",
+            "They are what the coverage and efficiency bounds are computed from — the two"
+            + " extreme re-labellings are of exactly these rows.",
+          ],
+        })),
       el("div", { class: "kpi-value num" }, fmtCount(view.unclassified.total)),
       el("p", { class: "small muted" },
         fmtCount(view.unclassified.remediated) + " remediated · "
-        + fmtCount(view.unclassified.open) + " still open — ",
+        + fmtCount(view.unclassified.open) + " still open · ",
         el("span", { class: "num" }, view.unclassified.share.text),
         " ",
-        denominatorNode(view.unclassified.share),
-        "."),
-      el("p", { class: "small muted" },
-        "Held outside the four cells above, not folded into a corner. The four cells sum to "
-        + fmtCount(view.cellTotal) + " classified findings; these "
-        + fmtCount(view.unclassified.total) + " are the ones the rule could not place, and"
-        + " they are what the coverage and efficiency bounds are computed from.")));
+        denominatorNode(view.unclassified.share))));
   }
 
   // -------------------------------------------------------------------- signal breakdown
@@ -629,23 +771,43 @@ export async function renderProgram(host, params, _ctx) {
     // twelve zeros here (or a heading with nothing under it) would make a third thing look
     // like one of the other two.
     if (first) return;
-    signalHost.append(sectionLabel("What the rule fired on"));
     const view = signalBreakdownView(program.signals, program.signalCoverage, program.rowCount);
+    // THE 72-WORD NOTE IS THE HEADING'S DEFINITION. It said three things and every one of
+    // them is about how to READ this table rather than about a figure in it: that the clauses
+    // overlap, that a measured 0% is a measurement, and that "not applicable" is a third
+    // state. `signal-coverage` is the book's entry for the column those three describe.
+    signalHost.append(sectionLabel("What the rule fired on", {
+      term: "signal-coverage",
+      lines: [
+        "The clauses are OR'd and overlap, so these do not sum to the " + fmtCount(view.anyOf)
+        + " " + pluralize(view.anyOf, "finding") + " classified high risk.",
+      ],
+    }));
     signalHost.append(dataTable({
       columns: [
         {
           key: "label",
           label: "Signal",
-          cell: (r) => (r.term ? glossaryTip(r.label, r.term) : r.label),
+          cell: (r) => (r.term ? tipLabel(r.label, { term: r.term }) : r.label),
         },
         { key: "fired", label: "Fired on", className: "num", cell: (r) => fmtCount(r.fired) },
         { key: "missing", label: "Never captured", className: "num", cell: (r) => fmtCount(r.missing) },
         {
           key: "coverage",
           label: "Coverage",
-          cell: (r) => el("span", {},
+          // THE THREE STATES ARE WHY THE METER IS CONDITIONAL — see `signalMeter`.
+          help: {
+            term: "signal-coverage",
+            lines: [
+              "How much of the column this clause rests on was ever captured, over the rows"
+              + " the signal applies to.",
+              "A bar is drawn only where a share was measured: \"always present\" and"
+              + " \"not applicable\" are not zeroes and get no track.",
+            ],
+          },
+          cell: (r) => el("span", { class: "rate-with-meter" },
             el("span", { class: "num" }, r.coverageText),
-            " ",
+            signalMeter(r),
             el("span", {
               class: "small muted",
               "data-denominator": r.denominator === null ? "none" : String(r.denominator),
@@ -654,26 +816,49 @@ export async function renderProgram(host, params, _ctx) {
       ],
       rows: view.rows,
     }));
-    signalHost.append(el("p", { class: "small muted" },
-      "The clauses are OR'd and overlap, so these do not sum to the "
-      + fmtCount(view.anyOf) + " " + pluralize(view.anyOf, "finding")
-      + " classified high risk. A coverage of 0% is a measurement — it says the signal was"
-      + " never captured on any row it applies to, which is what separates \"the AI agreed"
-      + " with nothing\" from \"nobody asked the AI\". \"Not applicable\" is a different"
-      + " statement again: no row in scope has such a column."));
+    // COMPRESSED TO ITS FIGURE. The 38-word sentence carried one number and a definition of
+    // what that number is the size OF; the number and the word stay, the definition moves.
     if (view.cweUnmapped) {
-      signalHost.append(el("p", { class: "small muted" },
-        fmtCount(view.cweUnmapped) + " " + pluralize(view.cweUnmapped, "finding")
-        + " carry a CWE that matched neither the Top 25 nor a documented ancestor of one."
-        + " Those classify low, so this is the size of the ancestry gap measured in findings."));
+      signalHost.append(el("p", { class: "small muted" }, tipLabel(
+        fmtCount(view.cweUnmapped) + " unmapped " + pluralize(view.cweUnmapped, "CWE"),
+        {
+          term: "cwe-top-25",
+          lines: [
+            fmtCount(view.cweUnmapped) + " " + pluralize(view.cweUnmapped, "finding")
+            + " carry a CWE that matched neither the Top 25 nor a documented ancestor of one.",
+            "Those classify low, so this is the size of the ancestry gap measured in findings.",
+          ],
+        },
+      )));
     }
+  }
+
+  /**
+   * The `meter--stat` beside a signal's coverage — the DOM half of `signalMeterPct`.
+   *
+   * `decorative`, because `r.coverageText` prints the figure right beside it. The decision
+   * about WHETHER there is a bar at all lives at module scope, pure: see that function.
+   */
+  function signalMeter(row) {
+    const pct = signalMeterPct(row);
+    return pct === null ? null : meter(pct, { className: "meter--stat", decorative: true });
   }
 
   // --------------------------------------------------------------------- rule sensitivity
 
   function renderSensitivity(program) {
     clear(sensitivityHost);
-    sensitivityHost.append(sectionLabel("Rule sensitivity"));
+    // THE 40-WORD CHART NOTE, LESS ITS ONE CLAUSE THAT IS A READING. What the axes are and
+    // which way is better stays under the canvas, in eleven words; what a POINT is, and that
+    // the rule in force is the direct-labelled one, is a definition of the whole section.
+    sensitivityHost.append(sectionLabel("Rule sensitivity", {
+      lines: [
+        "Every non-empty subset of that register's risk signals, scored exactly the way the"
+        + " headline pair above is — one point per candidate rule.",
+        "The rule actually in force is direct-labelled on the chart and marked “active” in"
+        + " the table behind it.",
+      ],
+    }));
     const view = sensitivityView(program && program.sensitivity);
     if (!view.show) {
       sensitivityHost.append(emptyState(
@@ -690,7 +875,16 @@ export async function renderProgram(host, params, _ctx) {
         sensitivityHost.append(el("p", { class: "small muted" },
           "Active rule: " + group.sentence));
       }
-      sensitivityHost.append(dataTable({
+      // THE SWEEP IS A DISCLOSURE, NOT A PAGE. On the dev seed this table is 4 rows per
+      // scope; on a register with all six signals it is 63, twice — 126 rows of coverage and
+      // efficiency between the chart above them and the capacity section below. The chart IS
+      // the reading (up and to the right), and the rows behind it are what a reader opens
+      // when they want the number for one particular subset. `disclosure`'s summary is the
+      // visible signifier R1 requires, and it names the count so nothing is hidden silently.
+      sensitivityHost.append(disclosure(
+        "All " + fmtCount(group.points.length) + " "
+        + pluralize(group.points.length, "subset") + ", as a table",
+        dataTable({
         columns: [
           {
             key: "label",
@@ -725,17 +919,18 @@ export async function renderProgram(host, params, _ctx) {
           },
         ],
         rows: group.points,
-      }));
+        }),
+      ));
 
       const canvas = el("canvas", {
         "aria-label": "Coverage against efficiency for every subset of the "
           + group.label + " risk signals",
       });
       sensitivityHost.append(el("section", { class: "chart-card" },
+        // One clause: which axis is which and which way is better. The rest is on the
+        // section's own heading above.
         el("p", { class: "chart-note" },
-          "Coverage on the x axis, efficiency on the y — up and to the right is better. Each"
-          + " point is one non-empty subset of the rule's signals; the active rule is"
-          + " direct-labelled like every other."),
+          "Coverage (x) against efficiency (y) — up and to the right is better."),
         el("div", { class: "chart-box" }, canvas),
         chartTable({
           canvas,
@@ -780,80 +975,162 @@ export async function renderProgram(host, params, _ctx) {
     }
 
     const row = el("div", { class: "kpi-row" });
-    row.append(kpiCard(
-      "Monthly mean closure rate",
-      view.mmcrMean.text,
-      view.monthsCounted
-        ? "averaged over " + fmtCount(view.monthsCounted) + " fully observed "
+    row.append(figureCard({
+      label: "Monthly mean closure rate",
+      value: view.mmcrMean.text,
+      sub: view.monthsCounted
+        ? "over " + fmtCount(view.monthsCounted) + " fully observed "
           + pluralize(view.monthsCounted, "month")
         : "no month was fully observed, so there is nothing to average",
-      null,
-      { term: "mmcr" },
-    ));
+      help: { term: "mmcr" },
+      // The "Mean close rate base:" line under this row was one denominator drawn as a
+      // sentence of its own; `figureCard` puts it on this card's label and into
+      // `data-denominator`, which is where every other denominator on this page now is.
+      denominator: view.mmcrMean.baseEmpty
+        ? "Not measured: " + view.mmcrMean.emptyLabel + "."
+        : "Averaged over " + view.mmcrMean.denominatorLabel
+          + ". Reconstructed and partial months are excluded by the server rather than"
+          + " averaged in, which is what makes this a rate over months anybody watched.",
+    }));
     row.append(kpiCard(
       "Roughly",
       view.oneInN === null ? absentText : "1 in " + Math.round(view.oneInN),
       "of what was open at the start of a month gets closed in it",
     ));
+    // THE VERDICT IS A WORD, AND THE DOT ONLY REPEATS IT — gas_ai's `.cap-verdict` rule,
+    // ported. Three states told apart by hue alone survive neither greyscale nor a dichromat,
+    // and this is the one figure on the card a reader takes away.
     row.append(kpiCard(
       "Verdict",
-      view.verdictLabel,
+      verdictMark(view.verdict, view.verdictLabel),
       "closures against arrivals, with a two-percent dead band around zero",
+      null,
+      { term: "capacity" },
     ));
     capacityHost.append(row);
-    capacityHost.append(el("p", { class: "small muted" },
-      "Mean close rate base: ", denominatorNode(view.mmcrMean), "."));
 
-    capacityHost.append(dataTable({
-      columns: [
-        { key: "month", label: "Month", cell: (m) => m.month },
-        { key: "openAtStart", label: "Open at start", className: "num", cell: (m) => fmtCount(m.openAtStart) },
-        { key: "opened", label: "Arrived", className: "num", cell: (m) => fmtCount(m.opened) },
-        { key: "closed", label: "Closed", className: "num", cell: (m) => fmtCount(m.closed) },
-        { key: "net", label: "Net", className: "num", cell: (m) => (m.net > 0 ? "+" : "") + fmtCount(m.net) },
-        { key: "mmcr", label: "Close rate", cell: (m) => rateCell(m.mmcr) },
-        {
-          key: "verdict",
-          label: "Verdict",
-          cell: (m) => statusPill(VERDICT_KINDS[m.verdict] || "neutral", m.verdictLabel),
-        },
-        {
-          key: "state",
-          label: "Measured",
-          // Asked once, on the heading, rather than once per row: a definition parked in
-          // every cell would add a tab stop per month for one sentence.
-          help: { term: "reconstructed" },
-          // The mark is the whole point of this column: a month nobody was watching must not
-          // read as a month that was measured and happened to look like this.
-          cell: (m) => {
-            if (m.measured) return el("span", { class: "small muted" }, "observed");
-            const wrap = el("span", { class: "pill-row" });
-            for (const mark of m.marks) {
-              wrap.append(mark === "reconstructed"
-                ? statusPill("warn", "Reconstructed — rebuilt, not observed")
-                : statusPill("neutral", "Partial — month still running"));
-            }
-            return wrap;
-          },
-        },
-      ],
-      rows: view.months,
-    }));
+    // THE EIGHT-COLUMN TABLE IS A CHART WITH THAT TABLE BEHIND IT.
+    //
+    // What was here: one row per month with Open at start, Arrived, Closed, Net, Close rate
+    // (a figure, an interval and a base), a Verdict pill and a Measured cell carrying up to
+    // two more pills — 8 columns over every month the register has, and the question the
+    // section asks ("is remediation keeping up with arrivals?") is a SHAPE across those rows
+    // that no column answers. Arrivals against closures per month is that shape.
+    //
+    // ONE ARRAY, TWO READINGS: `view.months` is handed to the wrapper and to
+    // `chartTableModel` in the same statement, which is `ui/chartTable.js`'s one rule — a
+    // table derived a second time from the payload is how a chart and its "equivalent" table
+    // start disagreeing. Every column the old table had is still in it.
+    const months = view.months;
+    capacityHost.append(chartCard(
+      "Arrivals against closures, by month",
+      "Net " + signedCount(view.netTotal) + " over " + fmtCount(months.length) + " "
+        + pluralize(months.length, "month"),
+      (api, canvas) => api.monthlyCapacityBars(canvas, months, {}),
+      {
+        caption: "Every month above as a row: what was open when it started, what arrived,"
+          + " what closed, the net movement, that month's own close rate against its starting"
+          + " backlog, its verdict, and whether anybody was watching at the time.",
+        model: chartTableModel({
+          columns: [
+            { key: "month", label: "Month", format: "text", align: "text" },
+            { key: "openAtStart", label: "Open at start", format: "count" },
+            { key: "opened", label: "Arrived", format: "count" },
+            { key: "closed", label: "Closed", format: "count" },
+            {
+              key: "net",
+              label: "Net",
+              format: "text",
+              value: (m) => signedCount(m.net),
+            },
+            {
+              key: "mmcr",
+              label: "Close rate",
+              format: "text",
+              value: (m) => m.mmcr.text,
+            },
+            { key: "verdict", label: "Verdict", format: "text", align: "text",
+              value: (m) => m.verdictLabel },
+            {
+              key: "state",
+              label: "Measured",
+              format: "text",
+              align: "text",
+              // The mark is the whole point of this column: a month nobody was watching must
+              // not read as a month that was measured and happened to look like this.
+              value: (m) => (m.measured ? "observed" : m.marks.join(", ")),
+            },
+          ],
+          rows: months,
+        }),
+      },
+      { term: "capacity" },
+    ));
+
+    // COMPRESSED TO ITS TWO FIGURES. 55 words said how many months were not observed, that
+    // they are out of the headline rate, and what each of the two marks means. The count and
+    // the words "reconstructed or partial" are the honesty statement and stay on the surface;
+    // the two definitions are the `reconstructed` entry's own job.
     capacityHost.append(el("p", { class: "small muted" },
       view.unmeasuredCount
-        ? fmtCount(view.unmeasuredCount) + " of " + fmtCount(view.months.length) + " "
-          + pluralize(view.months.length, "month") + " here were not directly observed and are"
-          + " excluded from the headline rate above. A reconstructed month ends before this"
-          + " register started watching, so its backlog is real but nobody was looking in real"
-          + " time; a partial month is simply not over yet."
+        ? tipLabel(
+          fmtCount(view.unmeasuredCount) + " of " + fmtCount(months.length) + " "
+          + pluralize(months.length, "month") + " reconstructed or partial",
+          {
+            term: "reconstructed",
+            lines: [
+              "Those months are excluded from the headline close rate above rather than"
+              + " averaged into it.",
+              "A reconstructed month ended before this register started watching, so its"
+              + " backlog is real but nobody was looking in real time; a partial month is"
+              + " simply not over yet.",
+            ],
+          },
+        )
         : "Every month here was directly observed."));
+  }
+
+  /**
+   * The capacity verdict as a dot AND a word — ported from gas_ai's `.cap-verdict`.
+   *
+   * The WORD is the signal and the dot is the redundancy, never the other way round. Three
+   * states (gaining / keeping up / falling behind) told apart by hue would be one hue doing
+   * all the work, which DESIGN.md's accessibility bar forbids outright; the dot is
+   * `aria-hidden` for the same reason — it says nothing the word beside it does not.
+   *
+   * A verdict of null still draws: `capacityView` renders `absentText` as the word, and a
+   * neutral dot beside an em dash is the honest picture of a verdict nobody could reach.
+   */
+  function verdictMark(verdict, word) {
+    // The dot takes the same ok / neutral / bad vocabulary the per-month pills used to, so
+    // there is one tone list on this page rather than a second one keyed by verdict slug.
+    const kind = VERDICT_KINDS[verdict] || "neutral";
+    return el("span", { class: "verdict-mark" },
+      el("span", { class: "verdict-dot verdict-dot--" + kind, "aria-hidden": "true" }),
+      // `kpiCard`'s own `valueOrAbsent` cannot reach an em dash wrapped in a node, so the
+      // absent case is resolved here: a verdict nobody could reach reads as this app's one
+      // absence mark rather than as a bare dash in the verdict's own weight.
+      el("span", { class: "verdict-word" }, word === absentText ? absent() : word));
   }
 
   // ------------------------------------------------------------- coverage over time
 
   function renderTrend(payload, program) {
     clear(trendHost);
-    trendHost.append(sectionLabel("Coverage and efficiency over time"));
+    // THE 48-WORD CHART NOTE, SPLIT THE WAY R2 SPLITS ONE. Two of its three clauses are
+    // method — why the pair shares an axis, and what the shaded band is — so they are on the
+    // heading. The third is an honesty statement about what a GAP in the line means, and a
+    // gap is the one thing on this chart a reader could take for a zero, so it stays on the
+    // surface with the reconstructed count beside it.
+    trendHost.append(sectionLabel("Coverage and efficiency over time", {
+      term: "reconstructed",
+      lines: [
+        "Both rates on one axis, because the trade-off between them is the story: a coverage"
+        + " line climbing while efficiency falls is legible only when they share a scale.",
+        "The shaded band marks the reconstructed prefix — one point per day of pre-scan"
+        + " history rebuilt from first-detection dates, where closures are under-counted.",
+      ],
+    }));
     if (program && program.trendSupported === false) {
       trendHost.append(emptyState(
         "No series under a secrets scope.",
@@ -876,15 +1153,15 @@ export async function renderProgram(host, params, _ctx) {
       "aria-label": "Remediation coverage and efficiency over time, in percent",
     });
     trendHost.append(el("section", { class: "chart-card" },
+      // The two figures and the one word a gap has to carry. "Drawn as a gap rather than as
+      // a zero" is R2's KEEP case in its purest form: the line's own absence is the claim,
+      // and a reader who takes it for a zero reads a failure that did not happen.
       el("p", { class: "chart-note" },
-        "Both rates on one axis, because the trade-off between them is the story."
-        + (reconstructed
-          ? " The first " + fmtCount(reconstructed) + " "
-            + pluralize(reconstructed, "point") + " " + (reconstructed === 1 ? "is" : "are")
-            + " reconstructed, where closures are under-counted — the shaded band marks them."
+        (reconstructed
+          ? fmtCount(reconstructed) + " of " + fmtCount(points.length) + " "
+            + pluralize(points.length, "point") + " reconstructed · "
           : "")
-        + " A gap is a date where nothing was high risk yet, drawn as a gap rather than as a"
-        + " zero."),
+        + "a gap is a date with nothing high risk, drawn as a gap and never as a zero"),
       el("div", { class: "chart-box" }, canvas),
       // `points` again — one array, plotted below and listed here.
       chartTable({
