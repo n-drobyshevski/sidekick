@@ -50,10 +50,11 @@ All four were called out explicitly. Steer away from every one:
 3. **Legible to both desks.** Every primary surface must work for the analyst scanning for the next fix and the leader reading posture. Density serves the analyst; an unambiguous top line serves the leader. Neither audience should have to translate.
 4. **Earned familiarity.** Use the conventions of best-in-class tools (Linear, Stripe, Notion-grade product UI) so the interface disappears into the task. Standard affordances, consistent component vocabulary screen to screen, no invented controls for standard jobs.
 5. **Honest state.** The dashboard runs in dry-run mode without credentials, keeps a last-known-good snapshot, and tracks scan freshness. The design must tell the truth about its data: what was scanned, when, whether it's sample or live, and what an empty or stale view actually means. Never imply confidence the data doesn't support.
+6. **The representation is not the work.** A posture score that improves while no guardrail was added or misconfiguration fixed is a finding, not a success. The register must be able to say why a number moved: a filter change, a coverage change and a remediation are three different causes with one shape on screen, and a figure that cannot tell them apart is producing a report about itself.
 
-### A sixth, specific to this register
+### A seventh, specific to this register
 
-6. **Absent is never zero.** Wiz returns `null` for a flag it never evaluated. Collapsing that to `false` is what once made an unassessed asset render as a clean Tier 1. Measured, unmeasured and not-applicable are three different states and the interface must show three different things. An empty section says so in a sentence rather than disappearing, because a section that vanishes reads identically to "we checked and it was clean."
+7. **Absent is never zero.** Wiz returns `null` for a flag it never evaluated. Collapsing that to `false` is what once made an unassessed asset render as a clean Tier 1. Measured, unmeasured and not-applicable are three different states and the interface must show three different things. An empty section says so in a sentence rather than disappearing, because a section that vanishes reads identically to "we checked and it was clean."
 
 ## Accessibility & Inclusion
 

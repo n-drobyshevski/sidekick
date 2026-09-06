@@ -101,7 +101,7 @@ always names why in the test summary rather than just not running.
 Before any UI or design work, read:
 
 - **[PRODUCT.md](PRODUCT.md)** — register, users (security analysts + leadership), purpose,
-  brand personality (precise, trustworthy, instrument-grade), anti-references, the five design
+  brand personality (precise, trustworthy, instrument-grade), anti-references, the six design
   principles, and the accessibility bar (WCAG 2.1 AA).
 - **[DESIGN.md](DESIGN.md)** — the visual system: tokens, color and severity palette,
   typography, elevation, and components.
