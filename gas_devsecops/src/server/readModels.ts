@@ -108,6 +108,7 @@ import {
   RESOLVED_STATUSES,
   SCOPES,
   SEVERITY_ORDER,
+  SLA_TARGETS,
   ruleForScope,
   type Scope,
 } from "../domain/config";
@@ -160,7 +161,7 @@ import {
   validationCoverage,
   type SecretRow,
 } from "../domain/secretsLifecycle";
-import { ageBuckets, agingDistribution, concentration, movement, oldestOpen, riskTierStats, severityStats, triageFunnel } from "../domain/insights";
+import { ageBuckets, agingDistribution, concentration, movement, oldestOpen, riskTierStats, severityStats, slaConsumedDeciles, triageFunnel } from "../domain/insights";
 import { kmMedianAsOf } from "../domain/trend";
 import { fixNext } from "./fixNext";
 import {
@@ -639,6 +640,21 @@ function buildMttr(n: NormParams): Rec {
        * that count rather than letting the bars quietly cover fewer rows than the hero does.
        */
       aging: agingDistribution(rows),
+      /**
+       * The SAME open rows, against their OWN deadline instead of the shared 7/30/90 edges:
+       * how much of each finding's SLA window it has consumed, in tenths.
+       *
+       * `aging` above it cannot be this chart. Its bucket edges are fixed while the target
+       * varies fivefold across severities, which is exactly why `slaEdge` is per severity
+       * and the page draws one hairline only when every severity in scope agrees on it. This
+       * normalises by the row's own window instead: every severity shares one axis, and the
+       * two populations that have no tenth to plot — past the window, and no window at all —
+       * are counted separately rather than folded into a bar.
+       *
+       * `SLA_TARGETS` is passed in from HERE rather than read inside `insights.ts`, which
+       * keeps that function pure over its arguments; the client never receives the table.
+       */
+      slaConsumed: slaConsumedDeciles(rows, SLA_TARGETS),
       awaiting: awaitingVendorFix(rows),
       /**
        * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
@@ -663,7 +679,11 @@ function buildMttr(n: NormParams): Rec {
 
 export function mttrModel(p?: ModelParams): Rec {
   const n = norm(p);
-  return cached("dsMttr1", keyOf(n), () => buildMttr(n), CLOCK_TTL_SEC);
+  // "dsMttr1" -> "dsMttr2": the payload gained `remediation.slaConsumed`; a warm dsMttr1
+  // entry has none of it, and the section would be missing entirely from a page whose other
+  // figures are drawn — a chart absent for a cache reason reads as a register with nothing
+  // inside its windows.
+  return cached("dsMttr2", keyOf(n), () => buildMttr(n), CLOCK_TTL_SEC);
 }
 
 // --------------------------------------------------------------------------------------- //

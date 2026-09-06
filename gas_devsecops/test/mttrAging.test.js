@@ -23,7 +23,7 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-import { agingView } from "../src/client/js/pages/mttr.js";
+import { agingView, slaConsumedCaption, slaConsumedView } from "../src/client/js/pages/mttr.js";
 
 const SRC = readFileSync(new URL("../src/client/js/pages/mttr.js", import.meta.url), "utf8");
 
@@ -252,11 +252,12 @@ describe("the section is wired the way the rest of the page's charts are", () =>
   it("creates exactly one canvas and one chartTable for the section", () => {
     const canvases = (SRC.match(/el\("canvas"/g) || []).length;
     const tables = (SRC.match(/\bchartTable\(\{/g) || []).length;
-    // Four on this page: the overall survival curve, the per-severity fan card, the
-    // half-life trend, and this one. `chartTable(` is counted with its opening brace to
-    // match the shape ui/chartTable.js is always called with.
-    expect(canvases).toBe(4);
-    expect(tables).toBe(4);
+    // Five on this page: the overall survival curve, the per-severity fan card, the
+    // half-life trend, this one, and the SLA-window-consumed deciles directly below it
+    // (4 -> 5; register-wide 10 -> 11 in test/chartTable.test.js). `chartTable(` is counted
+    // with its opening brace to match the shape ui/chartTable.js is always called with.
+    expect(canvases).toBe(5);
+    expect(tables).toBe(5);
     expect(SRC).toContain("charts.stackedAgeBar(");
   });
 
@@ -270,5 +271,117 @@ describe("the section is wired the way the rest of the page's charts are", () =>
     // DESIGN.md's Split-Accent Rule: #ffcb13 is 1.52:1 and carries fills only.
     expect(SRC).not.toContain("#ffcb13");
     expect(SRC).not.toContain("var(--accent)");
+  });
+});
+
+// =========================================================================================
+//  5. "SLA window consumed" — the section that names what its bars LEFT OUT
+// =========================================================================================
+//
+// The deciles chart draws ten bars and deliberately does not draw two populations: rows at or
+// past their window (no tenth left to plot) and rows with no age or no target (never
+// measurable against a deadline). NEITHER CAN BE READ OFF THE BARS — they would still add up,
+// to a smaller number — so the caption is the only place either fact appears, and a wrong
+// caption is a silent undercount rather than a visible one.
+//
+// The failure guarded here is the one CLAUDE.md names three times, arriving through a
+// different door: `Number(undefined)` is 0 and finite, so an older cached payload with no
+// `pastWindow` key would caption "0 past the window" over rows nobody counted.
+
+describe("slaConsumedCaption names the rows that are not drawn", () => {
+  const block = (over = {}) => ({
+    labels: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+    perSev: { CRITICAL: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    pastWindow: {}, noWindow: 0, totalOpen: 1, ...over,
+  });
+
+  it("sums pastWindow across severities", () => {
+    const text = slaConsumedCaption(block({
+      pastWindow: { CRITICAL: 1204, HIGH: 96, LOW: 3 }, noWindow: 12,
+    }));
+    expect(text).toBe(
+      "Bucket k is time used; 9−k is time left. 1,303 past the window are not drawn; "
+      + "12 carry no window.",
+    );
+  });
+
+  it("returns null on an absent block", () => {
+    // An older cached payload, or a page state with no remediation at all. A caption naming
+    // populations it never received would be a claim about nothing.
+    for (const v of [null, undefined, "", 0, false, 7]) {
+      expect(slaConsumedCaption(v), JSON.stringify(v)).toBeNull();
+    }
+  });
+
+  it("prints the em dash, never a zero, for a count that is not a number", () => {
+    // Number(null), Number(""), Number([]) and Number(false) are all 0 and all finite. A
+    // caption that cast first would state "0 carry no window" for a payload that carried no
+    // such measurement — the confident zero CLAUDE.md names three times.
+    for (const v of [null, undefined, "", [], false, {}]) {
+      const text = slaConsumedCaption(block({ noWindow: v }));
+      expect(text, `noWindow ${JSON.stringify(v)}`).toContain("— carry no window");
+      expect(text, `noWindow ${JSON.stringify(v)}`).not.toContain("0 carry no window");
+    }
+    // Same for the sum: a missing pastWindow block, and a present one holding an unmeasured
+    // severity. One non-number poisons the total rather than being added as a zero — the sum
+    // of a measurement and an absence is an absence.
+    expect(slaConsumedCaption(block({ pastWindow: undefined })))
+      .toContain("— past the window");
+    expect(slaConsumedCaption(block({ pastWindow: { CRITICAL: 4, HIGH: null } })))
+      .toContain("— past the window");
+    // An EMPTY pastWindow IS a measurement: rows were read and none were past. That is a 0.
+    expect(slaConsumedCaption(block({ pastWindow: {} }))).toContain("0 past the window");
+  });
+});
+
+// The view model beside it: which severities are drawn, and the difference between a payload
+// that measured nothing and one that measured a zero. `show` false is the FIRST — no block on
+// the wire — and it is the only case that costs the section its chart; a register whose whole
+// open backlog sits past its windows still has two counts to state.
+describe("slaConsumedView separates an absent block from a measured zero", () => {
+  const consumed = (over = {}) => ({
+    slaConsumed: {
+      labels: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+      perSev: {
+        CRITICAL: [2, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+        MEDIUM: [0, 0, 3, 0, 0, 0, 0, 0, 0, 0],
+      },
+      pastWindow: { CRITICAL: 9 }, noWindow: 4, totalOpen: 6, ...over,
+    },
+  });
+
+  it("draws only the severities the payload carries, in SEVERITY_ORDER", () => {
+    const vm = slaConsumedView(consumed(), ORDER);
+    expect(vm.show).toBe(true);
+    expect(vm.sevs).toEqual(["CRITICAL", "MEDIUM"]);
+    expect(vm.labels).toHaveLength(10);
+    expect(vm.drawn).toBe(6);
+    expect(vm.outside).toBe(13);
+  });
+
+  it("refuses to show a section for a payload that carries no block", () => {
+    // A warm dsMttr1 cache entry, or a fetch that failed before `remediation` existed.
+    for (const r of [null, undefined, {}, { slaConsumed: null }, { slaConsumed: {} }]) {
+      expect(slaConsumedView(r, ORDER).show, JSON.stringify(r)).toBe(false);
+    }
+  });
+
+  it("keeps the section for a measured zero, and counts what is outside the bars", () => {
+    // Rows WERE read; none of them landed inside a window. `drawn` is 0 and the section still
+    // has 13 findings to account for — dropping it would state that nothing was measured.
+    const vm = slaConsumedView(consumed({ perSev: {}, totalOpen: 0 }), ORDER);
+    expect(vm.show).toBe(true);
+    expect(vm.drawn).toBe(0);
+    expect(vm.outside).toBe(13);
+    expect(vm.sevs).toEqual([]);
+  });
+
+  it("a non-finite pastWindow entry does not silently shrink `outside`", () => {
+    // `outside` treats an unmeasurable past-window total as 0 for its own arithmetic — but it
+    // is only ever a "is there anything to say" test, and the CAPTION beside it is what
+    // states the numbers, in the em dash it owes an unmeasured population.
+    const vm = slaConsumedView(consumed({ pastWindow: { CRITICAL: null } }), ORDER);
+    expect(vm.outside).toBe(4);
+    expect(slaConsumedCaption(vm.block)).toContain("— past the window");
   });
 });

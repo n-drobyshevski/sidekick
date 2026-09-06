@@ -450,7 +450,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "1e36f0537ea5" : "dev";
+  var BUILD_ID = true ? "5e4516c7f9e2" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2369,6 +2369,40 @@ var Server = (() => {
       moreDim[dim] = Math.max(0, rowsRanked.length - topN);
     }
     return { perDim, moreDim };
+  }
+  var SLA_DECILE_LABELS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  function slaConsumedDeciles(rows, slaTargets) {
+    var _a, _b;
+    const out = {
+      labels: [...SLA_DECILE_LABELS],
+      perSev: {},
+      pastWindow: {},
+      noWindow: 0,
+      totalOpen: 0
+    };
+    for (const row of rows) {
+      if (!isOpen2(row.status)) continue;
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) {
+        out.noWindow += 1;
+        continue;
+      }
+      const s2 = normalizeSeverity(row.severity);
+      const w = slaTargets[s2];
+      if (typeof w !== "number" || !Number.isFinite(w) || w <= 0) {
+        out.noWindow += 1;
+        continue;
+      }
+      if (age >= w) {
+        out.pastWindow[s2] = ((_a = out.pastWindow[s2]) != null ? _a : 0) + 1;
+        continue;
+      }
+      const k = Math.min(9, Math.max(0, Math.floor(10 * age / w)));
+      const arr = (_b = out.perSev[s2]) != null ? _b : out.perSev[s2] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+      arr[k] += 1;
+      out.totalOpen += 1;
+    }
+    return out;
   }
 
   // src/domain/remediation.ts
@@ -6467,6 +6501,21 @@ var Server = (() => {
          * that count rather than letting the bars quietly cover fewer rows than the hero does.
          */
         aging: agingDistribution(rows),
+        /**
+         * The SAME open rows, against their OWN deadline instead of the shared 7/30/90 edges:
+         * how much of each finding's SLA window it has consumed, in tenths.
+         *
+         * `aging` above it cannot be this chart. Its bucket edges are fixed while the target
+         * varies fivefold across severities, which is exactly why `slaEdge` is per severity
+         * and the page draws one hairline only when every severity in scope agrees on it. This
+         * normalises by the row's own window instead: every severity shares one axis, and the
+         * two populations that have no tenth to plot — past the window, and no window at all —
+         * are counted separately rather than folded into a bar.
+         *
+         * `SLA_TARGETS` is passed in from HERE rather than read inside `insights.ts`, which
+         * keeps that function pure over its arguments; the client never receives the table.
+         */
+        slaConsumed: slaConsumedDeciles(rows, SLA_TARGETS),
         awaiting: awaitingVendorFix(rows),
         /**
          * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
@@ -6490,7 +6539,7 @@ var Server = (() => {
   }
   function mttrModel(p) {
     const n2 = norm(p);
-    return cached("dsMttr1", keyOf(n2), () => buildMttr(n2), CLOCK_TTL_SEC);
+    return cached("dsMttr2", keyOf(n2), () => buildMttr(n2), CLOCK_TTL_SEC);
   }
   function buildExecutive(n2) {
     var _a;

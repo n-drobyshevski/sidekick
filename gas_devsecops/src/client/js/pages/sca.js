@@ -538,14 +538,21 @@ export function registerRowsTable(spec) {
  * and no others. NO TOTAL COLUMN: a stacked total looks obvious and is not, because a null
  * bucket count would have to be summed as a zero to produce one, which is the exact move
  * `ui/figures.js` exists to refuse.
+ *
+ * `bucketLabel` NAMES THE X AXIS, and it is a parameter because this model outgrew age.
+ * `mttr.js`'s "SLA window consumed" hands it ten tenth-of-window labels; a first column
+ * headed "Age bucket" over "0".."9" would name a quantity the table does not hold, and this
+ * table is the non-visual reader's ONLY copy of the chart, so the wrong word there is the
+ * wrong figure rather than a cosmetic slip. Defaults to the age wording, so the two register
+ * pages that pass nothing are unchanged.
  */
-export function agingTableModel(labels, perSev, order) {
+export function agingTableModel(labels, perSev, order, bucketLabel = "Age bucket") {
   const buckets = Array.isArray(labels) ? labels : [];
   const perSevOf = perSev || {};
   const sevs = (order || []).filter((s) => perSevOf[s]);
   return chartTableModel({
     columns: [
-      { key: "bucket", label: "Age bucket", format: "text", value: (_row, i) => buckets[i] },
+      { key: "bucket", label: bucketLabel, format: "text", value: (_row, i) => buckets[i] },
       ...sevs.map((s) => ({
         key: s,
         label: s,

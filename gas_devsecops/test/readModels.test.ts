@@ -346,7 +346,12 @@ describe("the caching audit is per model, and the header states it", () => {
 
     // Clock models: age buckets, SLA arithmetic and open exposure all drift within a day.
     expect(layerOf("dsExecutive1")).toEqual(["cached"]);
-    expect(layerOf("dsMttr1")).toEqual(["cached"]);
+    // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
+    // `slaConsumed` block. The CLAIM this line encodes is the LAYER the model caches in, not
+    // the spelling of its namespace, and that is unchanged — a warm entry from the old
+    // namespace carries no deciles, and a section missing for a cache reason reads as a
+    // register with nothing inside its SLA windows.
+    expect(layerOf("dsMttr2")).toEqual(["cached"]);
     expect(layerOf("dsSecrets1")).toEqual(["cached"]);
     // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
     // `population` block. The CLAIM these three lines encode is the LAYER each model caches
@@ -914,7 +919,7 @@ describe("warmReadModels", () => {
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsHistory1", "dsProgram1", "dsRepos1", "dsStorage1",
-      "dsExecutive1", "dsMttr1", "dsSecrets1", "dsRegister2",
+      "dsExecutive1", "dsMttr2", "dsSecrets1", "dsRegister2",
     ]));
   });
 

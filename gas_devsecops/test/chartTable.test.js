@@ -170,8 +170,13 @@ describe("every chart canvas ships a data-table alternative", () => {
     // 9 -> 10 (W2, the open-findings-by-age stack). The tenth canvas is the aging bar in
     // mttr.js, under "Open findings by age" between the SLA table and the time-to-close
     // distribution — one `el("canvas"` literal, one drawn chart, one `chartTable` beside it.
+    //
+    // 10 -> 11 (the SLA-window-consumed deciles). The eleventh canvas is in mttr.js directly
+    // under the aging stack: the SAME open population measured against each finding's own
+    // deadline instead of the shared 7/30/90 edges, so it is a second chart rather than a
+    // reshape of the tenth. One `el("canvas"` literal, one `chartTable` beside it.
     const total = PAGE_FILES.reduce((n, f) => n + count(PAGE_CODE[f], /el\("canvas"/g), 0);
-    expect(total).toBe(10);
+    expect(total).toBe(11);
   });
 
   it("every chartTable call is handed the canvas it describes, so aria-details is wired", () => {

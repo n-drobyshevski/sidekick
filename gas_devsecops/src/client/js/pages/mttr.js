@@ -39,7 +39,7 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 // The severity palette is READ OFF THE STYLESHEET, never retyped — CLAUDE.md's "byte-identical
 // across all four surfaces" rule. `sevPalette` is defined once in `sca.js`; `sast.js` already
 // imports it from there, and this is the same import rather than a second copy.
-import { sevPalette } from "./sca.js";
+import { agingTableModel, sevPalette } from "./sca.js";
 import {
   chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState, firstRunNotice,
   fmtCount, fmtDays, heroStat, kpiCard, num, onPageTeardown, pageHeader, pluralize,
@@ -434,6 +434,91 @@ export function agingView(remediation, order) {
 }
 
 /**
+ * The SLA window consumed, in tenths — the same open population as `agingView`, measured
+ * against each finding's OWN deadline instead of the shared 7/30/90 bucket edges.
+ *
+ * WHY THIS IS A SECOND CHART AND NOT A RESHAPE OF THE FIRST. `agingView`'s edges are fixed
+ * while `SLA_TARGETS` runs 7/14/30/90/180, which is why it can usually draw no single SLA
+ * hairline at all (see `edgeAfter`): one rule cannot stand for five deadlines. Dividing by the
+ * row's own window removes the problem rather than hiding it — every severity shares one
+ * axis, and NO EDGE IS NEEDED BECAUSE EVERY DRAWN BAR IS INSIDE ITS WINDOW. Hence no
+ * `slaEdgeAfter` at the call site.
+ *
+ * `show` is false only for a payload that carries no block at all — an older cached entry, or
+ * a page state with no `remediation`. That is not the same as a measured zero: a register
+ * whose rows were read and none of which landed inside a window still has `pastWindow` /
+ * `noWindow` to state, and the section says so rather than disappearing.
+ */
+export function slaConsumedView(remediation, order) {
+  const block = (remediation && remediation.slaConsumed) || null;
+  const has = !!block && Array.isArray(block.labels) && block.labels.length > 0;
+  const perSev = (has && block.perSev) || {};
+  const labels = has ? block.labels.slice() : [];
+  // The same filter `stackedAgeBar` applies to its datasets (`palette.order.filter(...)`), so
+  // the table lists the bars that were drawn and no others. UNKNOWN is here for completeness
+  // and is never populated in practice: it has no SLA_TARGETS entry, so the domain files
+  // every UNKNOWN row under `noWindow` rather than in a bucket.
+  const sevs = (order || []).concat(["UNKNOWN"])
+    .filter((s, i, a) => a.indexOf(s) === i)
+    .filter((s) => perSev[s]);
+  const pastTotal = pastWindowTotal(block);
+  return {
+    show: has,
+    block,
+    labels,
+    perSev,
+    sevs,
+    // A MEASURED ZERO IS STILL A MEASUREMENT. `drawn === 0` with rows past the window or
+    // without one is a register whose whole open backlog is outside the bars; `drawn === 0`
+    // with neither is a register with no open findings. Both keep the section — only an
+    // absent block loses it.
+    drawn: num(block && block.totalOpen, 0),
+    outside: (pastTotal === null ? 0 : pastTotal) + num(block && block.noWindow, 0),
+  };
+}
+
+/**
+ * `pastWindow` summed across severities, or null when any part of it was never measured.
+ *
+ * A non-finite entry is an UNMEASURED severity, not a zero one, so it poisons the total
+ * rather than being added as 0 — `fmtCount` then prints the em dash for the whole sum. And a
+ * payload written before this block existed carries no `pastWindow` at all:
+ * `Object.values(undefined)` throws, while `Number(undefined)` would have quietly printed a
+ * confident "0 past the window" over a population nobody counted.
+ */
+function pastWindowTotal(slaConsumed) {
+  const past = slaConsumed && slaConsumed.pastWindow;
+  if (!past || typeof past !== "object") return null;
+  let total = 0;
+  for (const v of Object.values(past)) {
+    const n = num(v);
+    if (n === null) return null;
+    total += n;
+  }
+  return total;
+}
+
+/**
+ * The caption under the SLA-window-consumed chart: the sentence naming what the bars mean and
+ * WHAT THEY LEAVE OUT — or null when there is no block to caption.
+ *
+ * Two populations sit outside the bars and neither can be inferred from them. A finding at or
+ * past its window has no tenth left to plot, so it is counted and not drawn; a finding with no
+ * age or no target for its severity was never measurable against a deadline at all. Both would
+ * otherwise be invisible — the bars would still add up, to a smaller number, and nothing on
+ * screen would say so.
+ *
+ * Both counts go through `fmtCount`, which refuses null/undefined/""/[]/false BEFORE the cast
+ * and renders the em dash instead of a zero nobody measured.
+ */
+export function slaConsumedCaption(slaConsumed) {
+  if (!slaConsumed || typeof slaConsumed !== "object") return null;
+  return "Bucket k is time used; 9−k is time left. "
+    + fmtCount(pastWindowTotal(slaConsumed)) + " past the window are not drawn; "
+    + fmtCount(slaConsumed.noWindow) + " carry no window.";
+}
+
+/**
  * SLA per severity: the share met, the overdue count, and how old the open backlog is.
  *
  * TWO DIFFERENT DENOMINATORS SIT IN ONE ROW and mixing them is the mistake this shape stops.
@@ -621,6 +706,7 @@ export async function renderMttr(host, params, _ctx) {
   const sevHost = el("div", {});
   const slaHost = el("div", {});
   const agingHost = el("div", {});
+  const slaConsumedHost = el("div", {});
   const bucketHost = el("div", {});
   const clockHost = el("div", {});
   const trendHost = el("div", {});
@@ -633,8 +719,8 @@ export async function renderMttr(host, params, _ctx) {
   // header, then the figure and its stat strip.
   host.append(
     pageHeader({ route: "mttr" }),
-    noticeHost, heroHost, curveHost, sevHost, slaHost, agingHost, bucketHost, clockHost,
-    trendHost,
+    noticeHost, heroHost, curveHost, sevHost, slaHost, agingHost, slaConsumedHost,
+    bucketHost, clockHost, trendHost,
   );
 
   let live = true;
@@ -670,6 +756,7 @@ export async function renderMttr(host, params, _ctx) {
     guard("the per-severity clock", sevHost, () => renderSeverity(mttr));
     guard("SLA by severity", slaHost, () => renderSla(mttr));
     guard("open findings by age", agingHost, () => renderAging(mttr));
+    guard("the SLA window consumed", slaConsumedHost, () => renderSlaConsumed(mttr));
     guard("the time-to-close distribution", bucketHost, () => renderBuckets(mttr));
     guard("the two clocks", clockHost, () => renderClocks(mttr));
     guard("the half-life trend", trendHost, () => renderTrend(payload && payload.trends));
@@ -971,11 +1058,13 @@ export async function renderMttr(host, params, _ctx) {
   function renderAging(mttr) {
     const vm = agingView(mttr && mttr.remediation, SEVERITY_ORDER);
     clear(agingHost);
-    // THE BAND, NOT THE WALL. "SLA by severity" above reads the deadline per severity
-    // (term: "sla-target", still there and unchanged); this chart is the same deadline read
-    // as a DISTRIBUTION — how much of the window each open finding has consumed and how many
-    // are already past it — which is what "sla-band" defines.
-    agingHost.append(sectionLabel("Open findings by age", { term: "sla-band" }));
+    // NO GLOSSARY TERM HERE ANY MORE. "sla-band" rode this label until the section below it
+    // existed: its two lines are "how much of the window each open finding has consumed, and
+    // how many are already past it", which is a description of the deciles chart and not of
+    // this one — these bars are fixed at 7/30/90 days and consume no window at all. It has
+    // moved to "SLA window consumed", where the words and the figure agree. "sla-target"
+    // stays where it was, on the "SLA by severity" table above.
+    agingHost.append(sectionLabel("Open findings by age"));
     if (!vm.show) {
       agingHost.append(emptyState(
         "No open findings to age yet.",
@@ -1044,6 +1133,94 @@ export async function renderMttr(host, params, _ctx) {
         vm.edgeAfter === null
           ? {}
           : { slaEdgeAfter: vm.edgeAfter, slaEdgeLabel: "SLA" },
+      );
+    }).catch(() => {
+      if (!live) return;
+      chartUnavailable(canvas);
+    });
+  }
+
+  // -------------------------------------------------- SLA window consumed, in tenths
+
+  /**
+   * The same open findings as the section above, against their OWN deadline.
+   *
+   * Bucket k is the k-th tenth of the window that has been used and 9-k is what is left, so
+   * a 3-day CRITICAL (7-day window) and a 39-day LOW (90-day window) stand in the same bar
+   * while the age chart above puts them three buckets apart. NO `slaEdgeAfter` IS PASSED, and
+   * that is the point rather than an omission: every bar drawn is inside its window, so there
+   * is no edge left on this axis to mark.
+   *
+   * The two populations that are counted and NOT drawn reach the reader in the caption, which
+   * is the only place either appears — a finding at or past its window has no tenth left to
+   * plot, and one with no age or no target was never measurable against a deadline. Neither
+   * is a zeroth tenth.
+   *
+   * The stack is by SEVERITY because severity is what picks the denominator: the colour names
+   * the deadline each bar was measured against.
+   */
+  function renderSlaConsumed(mttr) {
+    const vm = slaConsumedView(mttr && mttr.remediation, SEVERITY_ORDER);
+    clear(slaConsumedHost);
+    // THE BAND, NOT THE WALL — "SLA by severity" above reads the deadline per severity
+    // (term: "sla-target"); this is the same deadline read as a DISTRIBUTION, which is what
+    // "sla-band" defines.
+    slaConsumedHost.append(sectionLabel("SLA window consumed", { term: "sla-band" }));
+    // NO SECTION BODY AT ALL rather than an empty state: "no open findings with a window"
+    // would be a measurement, and a payload with no block never measured anything. Mirrors
+    // renderAging's `vm.show` gate, which is also what covers the first run.
+    if (!vm.show) {
+      slaConsumedHost.append(emptyState(
+        "No SLA windows measured yet.",
+        "This chart needs open findings with a readable age and an SLA target for their"
+          + " severity.",
+      ));
+      return;
+    }
+    // A MEASURED ZERO, unlike the case above: rows were read and none of them landed inside
+    // a window. The caption still has both counts to state, so it is printed rather than
+    // dropped with the chart.
+    if (!vm.drawn) {
+      slaConsumedHost.append(emptyState(
+        "No open findings are still inside their SLA window.",
+        slaConsumedCaption(vm.block) || undefined,
+      ));
+      return;
+    }
+
+    const canvas = el("canvas", {
+      "aria-label": "Open findings by tenth of their SLA window consumed",
+    });
+    slaConsumedHost.append(el("section", { class: "chart-card" },
+      el("p", { class: "chart-note" },
+        fmtCount(vm.drawn) + " open " + pluralize(vm.drawn, "finding")
+        + " still inside " + (vm.drawn === 1 ? "its" : "their") + " window, placed by the"
+        + " tenth of it " + (vm.drawn === 1 ? "it has" : "they have") + " consumed and split"
+        + " by severity."),
+      el("div", { class: "chart-box" }, canvas),
+      chartTable({
+        canvas,
+        caption: "Every bar of the stack as a count: one row per tenth of the SLA window"
+          + " consumed, one column per severity drawn.",
+        // The SAME `vm.labels` / `vm.perSev` the chart wrapper is handed, named once here —
+        // `ui/chartTable.js`'s one rule. `agingTableModel` is generic over its label array;
+        // the header word is passed because these labels are tenths, not age buckets.
+        model: agingTableModel(vm.labels, vm.perSev, vm.sevs, "Tenth of window consumed"),
+      }),
+    ));
+    slaConsumedHost.append(el("p", { class: "small muted" }, slaConsumedCaption(vm.block)));
+
+    loadCharts().then((charts) => {
+      if (!live) return;
+      onPageTeardown(() => charts.destroyChart(canvas));
+      charts.stackedAgeBar(
+        canvas,
+        vm.labels,
+        vm.perSev,
+        sevPalette(vm.sevs),
+        "Open findings by tenth of their SLA window consumed, stacked by severity.",
+        // No `slaEdgeAfter`: every bar here is inside its window, so there is no edge.
+        {},
       );
     }).catch(() => {
       if (!live) return;

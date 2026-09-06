@@ -698,6 +698,102 @@ export function openAgeMedian(rowsIn: Pick<BaseRow, "status" | "age_days" | "sco
   return lo === hi ? ages[lo] : (ages[lo] + ages[hi]) / 2;
 }
 
+// ==================================================== SLA window consumed, in tenths
+//
+// THE AGE BUCKETS ANSWER "HOW OLD"; THIS ANSWERS "HOW LATE", and on a mixed-severity
+// register those are different questions. A 20-day CRITICAL and a 20-day LOW sit in the same
+// 8-30d bar while one is nearly three windows past its deadline and the other has used less
+// than a quarter of its own. Dividing the age by the row's OWN target puts every severity on
+// one axis: bucket k is the k-th tenth of the window that has been used, and 9-k is what is
+// left.
+//
+// THREE POPULATIONS LEAVE THE BARS, and each leaves for a different reason, so each is
+// counted separately rather than folded into one "other":
+//
+//   - `pastWindow` — age >= the target. Measured, and deliberately NOT drawn: a tenth is a
+//     fraction of a window, and a finding past its window has no tenth left to plot. Drawing
+//     it in bucket 9 would make the last bar mean two things at once ("in its final tenth"
+//     and "past the deadline by any amount"), which is exactly the reading the chart exists
+//     to separate. It is per severity because the breaches are not evenly spread across them.
+//   - `noWindow` — no finite age, or no finite positive target for the row's severity.
+//     UNKNOWN has no entry in SLA_TARGETS, so a row whose severity never normalized has no
+//     deadline to be measured against; neither has a row with no `age_days`. Both are
+//     unmeasured, and an unmeasured row is never a zeroth tenth (CLAUDE.md, "The Outside").
+//   - resolved rows, which are not open findings at all.
+//
+// `Number(null)` is 0 AND FINITE, so both the age and the target are refused BEFORE any cast:
+// a `Number(row.age_days)` first would read null, "", [] and false as a brand-new finding in
+// bucket 0 — the most reassuring bucket on the chart — and a `Number(targets[sev])` first
+// would read a missing target as 0 and then divide by it.
+//
+// `slaTargets` is a PARAMETER rather than a read of config's SLA_TARGETS, so the function
+// stays pure over its arguments and a test can state the window it means. The call site
+// (readModels.ts's `buildMttr`) imports the constant.
+//
+// DIVERGENCE FROM THIS FILE'S SCOPE CONVENTION (header, "SCOPE FILTER"): this is the one
+// function here with no trailing `scope?: Scope`. Nothing stops a third parameter — the
+// reason is that the body below is then byte-identical to gas/'s, and the argument would
+// never be passed: the only caller (`buildMttr`) hands it rows `visibleRows` has ALREADY
+// narrowed, which is the same `rows` array `agingDistribution(rows)` is given one line above
+// it, also with no scope. A caller wanting one register filters before the call, exactly as
+// that one does.
+
+export const SLA_DECILE_LABELS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
+
+export interface SlaConsumed {
+  /** Tenth-of-window labels, "0".."9" — bucket k is time used, 9-k is time left. */
+  labels: string[];
+  /** severity -> ten counts, one per tenth. Only severities with a drawn row appear. */
+  perSev: Record<string, number[]>;
+  /** severity -> open findings at or past their window. Counted, never drawn. */
+  pastWindow: Record<string, number>;
+  /** Open findings with no finite age, or no finite positive target. Not a zero. */
+  noWindow: number;
+  /** Rows actually drawn — the sum of every `perSev` array. */
+  totalOpen: number;
+}
+
+export function slaConsumedDeciles(
+  rows: Pick<BaseRow, "severity" | "status" | "age_days">[],
+  slaTargets: Record<string, number>,
+): SlaConsumed {
+  const out: SlaConsumed = {
+    labels: [...SLA_DECILE_LABELS],
+    perSev: {},
+    pastWindow: {},
+    noWindow: 0,
+    totalOpen: 0,
+  };
+  for (const row of rows) {
+    if (!isOpen(row.status)) continue;
+    const age = row.age_days;
+    // Refused before any cast: Number(null) is 0 and finite, and bucket 0 is a claim.
+    if (typeof age !== "number" || !Number.isFinite(age)) {
+      out.noWindow += 1;
+      continue;
+    }
+    const s = normalizeSeverity(row.severity);
+    const w = slaTargets[s];
+    // Same refusal for the denominator, plus `w <= 0`: a zero window is not a deadline
+    // everything has missed, it is an absent one, and dividing by it yields Infinity.
+    if (typeof w !== "number" || !Number.isFinite(w) || w <= 0) {
+      out.noWindow += 1;
+      continue;
+    }
+    if (age >= w) {
+      out.pastWindow[s] = (out.pastWindow[s] ?? 0) + 1;
+      continue;
+    }
+    // age < w and w > 0, so the quotient is in [0, 1) and the floor is in 0..9 already; the
+    // clamp holds against a float landing one ULP high at the top of the range.
+    const k = Math.min(9, Math.max(0, Math.floor((10 * age) / w)));
+    const arr = out.perSev[s] ?? (out.perSev[s] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    arr[k] += 1;
+    out.totalOpen += 1;
+  }
+  return out;
+}
+
 // Re-exported so the many `from "./insights"` importers this table's users expect keep
 // resolving (gas/'s insights.ts re-exports it from config for the same reason).
 export { EPSS_PRIORITY_THRESHOLD };

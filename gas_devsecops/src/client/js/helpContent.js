@@ -209,8 +209,11 @@ const ENTRIES = [
     ],
   },
   {
-    // pages/mttr.js's "Open findings by age" section label — the SLA read as a distribution,
+    // pages/mttr.js's "SLA window consumed" section label — the SLA read as a distribution,
     // beside the "SLA by severity" table that reads it per severity (term: "sla-target").
+    // It rode "Open findings by age" until that section existed: the two lines below describe
+    // the DECILES chart (window consumed, and how many are past it), while the age bars are
+    // fixed at 7/30/90 days and normalise by nothing.
     id: "sla-band",
     term: "SLA band",
     lines: [
