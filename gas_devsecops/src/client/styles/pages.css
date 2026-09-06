@@ -228,3 +228,36 @@
 @media (max-width: 640px) {
   .page-header { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------------------------- the register toolbars (W4)
+   A toolbar is one flex row of controls (`components.css` .toolbar), and its label spans sat
+   loose in that row: at 640px "Severity", its pills, "Findings table" and its segment could
+   wrap so a label led a control that was not its own. A group keeps each label with what it
+   labels and lets the GROUPS wrap instead. */
+.toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+/* The finding sheet's copy actions. `.sheet-actions` (sheet.css) is the FOOTER arrangement —
+   right-aligned, because a footer's job is to hold the commit — and these sit at the top of
+   the body where the reader's eye is still at the left edge. Same gap, no justification. */
+.finding-actions {
+  display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3);
+}
+/* The code block inside a `.kv` value is a whole line of its own, not an inline run: without
+   this it keeps the 0 margin `pre` gets everywhere else and collides with the row beneath. */
+.kv dd > .code-block { margin: 0; }
+
+/* ONE LIST, ONE AFFORDANCE. `.tip-trigger--term` (components.css) underlines a GLOSSARY
+   trigger and nothing else, which is right where a definition is the only kind of tip on the
+   surface. The finding sheet mixes both in one `<dl>`: "Fix available" and "Awaiting a vendor"
+   are glossary terms and carry the dotted rule, while "Last seen", "Age", "On KEV", "Known
+   exploit" and "EPSS" have a plain sentence behind them — a focusable button with a tooltip
+   and nothing on screen saying so, three rows below three that do say so. Measured at 1280 in
+   the seeded harness. The underline is scoped to `.kv dt` rather than raised anywhere shared:
+   on a stat name or a kpi label the tip is the only one in view and the inconsistency this
+   fixes does not arise. */
+.kv dt .tip-trigger {
+  text-decoration: underline dotted rgba(0, 0, 0, .32);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+}
+.kv dt .tip-trigger:hover { text-decoration-color: currentColor; }

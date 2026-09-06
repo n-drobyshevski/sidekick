@@ -57,16 +57,18 @@
 // `sca.js` no longer hosts a second copy of those five, only the register-shaped helpers
 // built on top of them.
 
-import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, absentText, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount,
-  fmtDate, glossaryTip, heroLines, heroStat, meter, num, pageHeader, pct1, skeletonStack,
-  statRow, survivalTableModel, uiIcon,
+  bootstrapCached, listJoin, listSplit, navigate, swrCall,
+} from "../../../../../gas_shared/store.js";
+import {
+  absent, absentText, closeActiveSheet, dataTable, days1, denomNote, el, emptyState,
+  firstRunNotice, fmtCount, fmtDate, glossaryTip, heroLines, heroStat, meter, num, pageHeader,
+  pct1, skeletonStack, statRow, survivalTableModel, uiIcon,
 } from "../ui.js";
 import {
   boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
-  movementModel, oldestReposModel, pagedTable, registerFirstRunView, registerRowsTable,
-  renderRegisterPage, sectionCard, textCell,
+  movementModel, oldestReposModel, pagedTable, pillFilterRow, registerFirstRunView,
+  registerRowsTable, renderRegisterPage, sectionCard, statusSegment, textCell,
 } from "./sca.js";
 import { populationLine } from "./registerModel.js";
 
@@ -564,23 +566,143 @@ export function bucketTotals(aging) {
 //  The page
 // =========================================================================================
 
+/**
+ * The four credential states this register can be filtered by, and the words they get.
+ *
+ * The VALUES are the ledger's (`domain/secretsLifecycle.ts`: VALID and INVALID are the two
+ * that constitute a measurement; UNKNOWN and ERROR are both "nobody knows"), the LABELS are
+ * what a reader is entitled to see — "Never checked" rather than UNKNOWN, because a blank
+ * validation state is the register's normal condition and not an error, and "Check failed"
+ * rather than ERROR, because the difference between the two is who failed.
+ */
+/**
+ * Worst first, the way every other graded list in this app is ordered — and only a SORT.
+ * The grades offered are still whatever the register returned; this decides where each one
+ * sits, and an unrecognised grade keeps its measured place at the end rather than being
+ * dropped. `SecretInstanceConfidence` is the tenant's vocabulary, so a name not on this
+ * ladder is a grade this app has not met, not an error.
+ */
+const CONFIDENCE_ORDER = ["HIGH", "MEDIUM", "LOW"];
+
+export const CREDENTIAL_FILTER_OPTIONS = [
+  { value: "VALID", label: "Live" },
+  { value: "INVALID", label: "Dead" },
+  { value: "UNKNOWN", label: "Never checked" },
+  { value: "ERROR", label: "Check failed" },
+];
+
+/**
+ * The three filters this page carries in the hash, normalised.
+ *
+ * IN THE URL, so a narrowed register is a link somebody can send — the same rule
+ * `readRegisterParams` follows for the other two registers. All three narrow the per-finding
+ * table only: `api_getSecretsPage`'s aggregates are computed over the whole register and are
+ * not refetched, which is why the toolbar says "Findings table" above the controls.
+ */
+export function readSecretsParams(params) {
+  const p = params || {};
+  const status = String(p.status || "").toLowerCase();
+  return {
+    status: status === "open" || status === "resolved" ? status : "",
+    validation: listSplit(p.validation).map((v) => v.trim().toUpperCase()).filter(Boolean),
+    confidence: listSplit(p.confidence).map((v) => v.trim().toUpperCase()).filter(Boolean),
+  };
+}
+
+/** Membership toggled in a list, kept in the order the options are offered. */
+function toggledIn(list, value, order) {
+  const on = new Set(list);
+  if (on.has(value)) on.delete(value);
+  else on.add(value);
+  return order.filter((v) => on.has(v));
+}
+
+/**
+ * The toolbar this register never had.
+ *
+ * NO SEVERITY CONTROL, and there is nothing to add one from: `DEFAULT_FETCH_SEVERITIES` is
+ * empty for this scope, `secretsModel` ignores severities outright and `registerRowsModel`
+ * refuses them. What a reader triages on here is whether the credential is LIVE and how
+ * confident the detector was, so those are the two axes — the same two `bySegment` publishes.
+ *
+ * THE CONFIDENCE VALUES ARE MEASURED, NOT LISTED. They come off the confidence segment rows
+ * this page already draws, so the pills offer exactly the grades this tenant returned; a
+ * hard-coded HIGH/MEDIUM/LOW would be a second vocabulary free to disagree with the table
+ * below it, and would offer a filter for a grade nobody has.
+ */
+function secretsToolbar(vm, filters) {
+  const bar = el("div", { class: "toolbar" });
+  const onChange = (patch) => navigate("secrets", {
+    status: filters.status,
+    validation: listJoin(filters.validation),
+    confidence: listJoin(filters.confidence),
+    ...patch,
+  });
+
+  bar.append(statusSegment(filters.status, onChange));
+
+  const stateOrder = CREDENTIAL_FILTER_OPTIONS.map((o) => o.value);
+  bar.append(pillFilterRow({
+    label: "Credential",
+    options: CREDENTIAL_FILTER_OPTIONS,
+    selected: filters.validation,
+    ariaLabel: "Findings table: credential state",
+    onToggle: (v) => onChange({ validation: listJoin(toggledIn(filters.validation, v, stateOrder)) }),
+  }));
+
+  const axis = (vm.segments || []).find((s) => s.axis === "confidence");
+  // MEASURED SET, IMPOSED ORDER. Which grades exist is the tenant's answer and is read off
+  // the page's own segment rows — a hard-coded list would offer a filter for a grade nobody
+  // has. The ORDER is not the tenant's: the segment table is sorted by row count, so the
+  // pills came out MEDIUM, HIGH, LOW, which reads as a ranking and is not one. Anything the
+  // ladder does not name keeps its measured position, after the ones it does.
+  const grades = (axis && axis.rows ? axis.rows : [])
+    .map((r) => String(r.segment || "").toUpperCase())
+    .filter((v) => v && v !== "(NONE)")
+    .sort((a, b) => {
+      const rank = (g) => {
+        const i = CONFIDENCE_ORDER.indexOf(g);
+        return i === -1 ? CONFIDENCE_ORDER.length : i;
+      };
+      return rank(a) - rank(b);
+    });
+  if (grades.length) {
+    bar.append(pillFilterRow({
+      label: "Confidence",
+      options: grades,
+      selected: filters.confidence,
+      ariaLabel: "Findings table: detector confidence",
+      onToggle: (v) => onChange({ confidence: listJoin(toggledIn(filters.confidence, v, grades)) }),
+    }));
+  }
+  return bar;
+}
+
 /** Credentials in the repository — a lifecycle of its own. */
-export function renderSecrets(host) {
+export function renderSecrets(host, params) {
   const boot = bootstrapCached();
   const synced = !!(boot && boot.latestSync);
   const at = boot && boot.latestSync ? boot.latestSync.ts : null;
+  const filters = readSecretsParams(params);
 
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
     // NO SEVERITIES PARAMETER. `secretsModel` ignores it and its cache key omits it, so
     // sending one would mint an argument that changes nothing and imply a filter that does
     // not exist. `showNoFix` is likewise omitted: it cannot bite on a non-dependency row.
+    // The three toolbar filters are not sent here either — they narrow the per-finding table
+    // and nothing else, so they ride on `api_getRegisterRows` alone.
     fetch: () => swrCall("api_getSecretsPage", {}),
-    paint: (payload) => paintSecrets(host, secretsModel(payload, { synced, at })),
+    paint: (payload) => paintSecrets(host, secretsModel(payload, { synced, at }), filters),
   });
 }
 
-function paintSecrets(host, vm) {
+function paintSecrets(host, vm, filters) {
+  // Same rule as `paintSca`: the toolbar below rewrites this route's own query params, and
+  // the shared sheet closes itself only on a change of route NAME — so a filter change would
+  // repaint the page under a finding sheet still wired to the previous fetch's rows.
+  closeActiveSheet();
+
   host.append(pageHeader({
     route: "secrets",
     hero: heroStat(
@@ -640,6 +762,12 @@ function paintSecrets(host, vm) {
     }));
     return;
   }
+
+  // THE TOOLBAR SITS DIRECTLY AFTER THE FIRST-RUN RETURN, before the validity spine — a
+  // control over a register nobody has read yet would be three filters against zero rows.
+  // `test/secretsTriage.test.js` pins the spine as the first thing under the hero among the
+  // BLOCKS that draw figures; this is chrome above them, not a block.
+  host.append(secretsToolbar(vm, filters));
 
   host.append(denomNote(vm.hero.denominator));
 
@@ -905,12 +1033,19 @@ function paintSecrets(host, vm) {
   host.append(sectionCard("Every finding in the register", null,
     el("p", { class: "small muted" },
       "Open and resolved, server-paged and server-sorted — click a column to ask for a "
-      + "different order rather than re-sorting what is already on screen. No severity "
+      + "different order rather than re-sorting what is already on screen, and open a "
+      + "row for everything the register holds about that one finding. No severity "
       + "column: severity here grades a detection, not whether a credential is live."),
     // NO severities PARAMETER, for the same reason the aggregate fetch above sends none:
     // `secretsModel` and `registerRowsModel` both ignore it for this scope outright.
     registerRowsTable({
       scope: "secrets",
+      status: filters.status,
+      validation: filters.validation,
+      confidence: filters.confidence,
+      at: vm.asOf,
+      emptySentence: "Nothing matched the current filters — the credential state and the "
+        + "detector confidence are the two axes this register filters on.",
       defaultSort: "first_seen",
       defaultDir: "asc",
       emptyText: "Nothing in this register.",

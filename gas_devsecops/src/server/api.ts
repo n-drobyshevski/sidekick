@@ -740,6 +740,11 @@ export function getRegisterRows(p?: unknown): ApiResult {
       sort: r["sort"],
       dir: r["dir"],
       status: r["status"],
+      // SECRETS-ONLY, and forwarded for every scope on purpose: `registerRowsModel` is the
+      // one place that decides a scope cannot carry them, exactly as it decides `severities`
+      // cannot bite on secrets. Vetting here as well would put that rule in two files.
+      validation: r["validation"],
+      confidence: r["confidence"],
     };
     const model = readModels.registerRowsModel(scope, params);
     return { ...model, rows: registerRowsSlice(model["rows"], scope) };

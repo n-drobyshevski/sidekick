@@ -26,9 +26,9 @@
 import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import {
-  absent, absentText, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount,
-  fmtDate, heroStat, meter, num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow,
-  sevSegmentBar, skeletonStack, statRow,
+  absent, absentText, closeActiveSheet, dataTable, days1, denomNote, el, emptyState,
+  firstRunNotice, fmtCount, fmtDate, heroStat, meter, num, pageHeader, pct1, sevBadge,
+  sevEntries, sevKeyRow, sevSegmentBar, skeletonStack, statRow,
 } from "../ui.js";
 import {
   RISK_TIER_LABELS, RISK_TIER_ORDER, SEVERITY_FALLBACK, agingModel, agingTableModel, chartCard,
@@ -196,6 +196,11 @@ export function renderSast(host, params) {
 }
 
 function paintSast(host, vm, filters) {
+  // Same rule as `paintSca`: a toolbar change repaints this same route, and the shared
+  // sheet only closes itself on a change of route NAME — so an open finding sheet would
+  // survive a filter change still wired to the rows of the previous fetch.
+  closeActiveSheet();
+
   // Same defect, same fix as `paintSca`: the hero bar carried severity in colour alone and
   // drew an empty bordered box over an empty ledger. The key row names and counts every
   // segment; a zero total renders neither the bar nor the key.
@@ -258,6 +263,7 @@ function paintSast(host, vm, filters) {
     // NOT OFFERED. A "has a fixed version" switch over a register with no vendor is a control
     // that cannot change the answer, which is the one thing this app's chrome never ships.
     offerNoFix: false,
+    status: filters.status,
   }));
 
   // ------------------------------------------------------------------ the one clock
@@ -463,11 +469,14 @@ function paintSast(host, vm, filters) {
   host.append(sectionCard("Every finding in the register", null,
     el("p", { class: "small muted" },
       "Open and resolved, server-paged and server-sorted — click a column to ask for a "
-      + "different order rather than re-sorting what is already on screen."),
+      + "different order rather than re-sorting what is already on screen, and open a "
+      + "row for everything the register holds about that one finding."),
     registerRowsTable({
       scope: "sast",
       severities: filters.severities,
+      status: filters.status,
       at: vm.asOf,
+      emptySentence: "Nothing matched the current filters.",
       defaultSort: "age_days",
       defaultDir: "desc",
       emptyText: "Nothing in this register.",

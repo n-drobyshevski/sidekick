@@ -26,8 +26,9 @@
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { pagedTable } from "./sca.js";
 import {
-  absentText, boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
+  absentText, boundedDays, chartTable, chartTableModel, clear, days1, denomNote, el,
   emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, kpiCard, num, onPageTeardown,
   pageHeader, pct1, sectionLabel, skeletonStack,
 } from "../ui.js";
@@ -161,7 +162,7 @@ export function ownershipView() {
   };
 }
 
-/** One row of the per-repo / per-language table, formatted for `dataTable`. */
+/** One row of the per-repo / per-language table, formatted for `pagedTable`'s columns. */
 export function tableRow(row) {
   const foothold = num(row.assets_with_high_risk_pct);
   return {
@@ -353,8 +354,27 @@ export async function renderRepos(host, _params, _ctx) {
         cell: (r) => (r.verdict ? VERDICT_LABEL[r.verdict] : absentText),
       },
     );
-    target.append(dataTable({ columns, rows, emptyText: `No ${plural} measured yet.` }));
-    target.append(denomNote(`${rows.length.toLocaleString()} ${rows.length === 1 ? singular : plural} shown.`));
+    // PAGED, like every other unbounded table in this app. `rows` is one row per repository
+    // (or per language) and the estate is not small: the whole list was rendered at once
+    // here, so a reader met several hundred rows with no footer, no page size and nothing
+    // saying how many there were beyond the count line below. `pagedTable` (sca.js) sorts
+    // and pages client-side, which is right for a list the page already holds in full —
+    // unlike the per-finding register, which is server-paged because it is 18,800 rows.
+    //
+    // THE SORT IS THE ONE THIS TABLE ALREADY HAD: most open findings first, tie-broken on
+    // the group key so equal counts do not reshuffle between paints. `rows` arrives sorted
+    // that way and `sortRows` re-states it rather than changing it.
+    target.append(pagedTable({
+      columns,
+      rows,
+      sortSpec: { value: (r) => r.openFindings, descending: true, tiebreak: (r) => r.key },
+      emptyText: `No ${plural} measured yet.`,
+    }));
+    // "MEASURED", NOT "SHOWN", NOW THAT THE TABLE PAGES. The count is the whole set this
+    // page holds; the pager above it states which slice of that set is on screen. Leaving
+    // the old word would have the two lines disagree — "312 repositories shown" directly
+    // under a footer reading 1-25 of 312.
+    target.append(denomNote(`${fmtCount(rows.length)} ${rows.length === 1 ? singular : plural} measured.`));
   }
 
   function renderHalfLifeChart(model) {

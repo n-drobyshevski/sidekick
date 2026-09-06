@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "8e1065a5f115" : "dev";
+  var BUILD_ID = true ? "e27a7037945c" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -6931,6 +6931,21 @@ var Server = (() => {
     const s2 = String(v != null ? v : "").toLowerCase();
     return s2 === "open" || s2 === "resolved" ? s2 : "all";
   }
+  var SECRET_VALIDATION_STATES = ["VALID", "INVALID", "UNKNOWN", "ERROR"];
+  function normFilterList(v) {
+    const raw = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
+    const out = [];
+    for (const item of raw) {
+      if (item === null || item === void 0) continue;
+      const s2 = String(item).trim().toUpperCase();
+      if (s2 && !out.includes(s2)) out.push(s2);
+    }
+    return out;
+  }
+  function rowValidationState(v) {
+    const s2 = String(v != null ? v : "").trim().toUpperCase();
+    return s2 === "" ? "UNKNOWN" : s2;
+  }
   function registerRowsModel(scope, p) {
     var _a;
     const n2 = norm(p);
@@ -6939,7 +6954,21 @@ var Server = (() => {
     const severities = severityFilterSupported ? n2.severities : null;
     const scoped = visibleRows(snap.rows, { ...n2, scope, severities });
     const status = normRowStatus(p == null ? void 0 : p.status);
-    const rows = status === "all" ? scoped : scoped.filter((r) => isOpen7(r.status) === (status === "open"));
+    const byStatus = status === "all" ? scoped : scoped.filter((r) => isOpen7(r.status) === (status === "open"));
+    const isSecrets = scope === "secrets";
+    const validation = isSecrets ? normFilterList(p == null ? void 0 : p.validation).filter((v) => SECRET_VALIDATION_STATES.includes(v)) : [];
+    const grades = isSecrets ? Array.from(new Set(scoped.map((r) => {
+      var _a2;
+      return String((_a2 = r.confidence) != null ? _a2 : "").trim().toUpperCase();
+    }))).filter((v) => v !== "") : [];
+    const confidence = isSecrets ? normFilterList(p == null ? void 0 : p.confidence).filter((v) => grades.includes(v)) : [];
+    const rows = validation.length || confidence.length ? byStatus.filter((r) => {
+      var _a2;
+      if (validation.length && !validation.includes(rowValidationState(r.validation_state))) {
+        return false;
+      }
+      return !confidence.length || confidence.includes(String((_a2 = r.confidence) != null ? _a2 : "").trim().toUpperCase());
+    }) : byStatus;
     const def = REGISTER_ROW_DEFAULT_SORT[scope];
     const columns = registerRowColumns(scope);
     const asked = typeof (p == null ? void 0 : p.sort) === "string" ? p.sort : "";
@@ -6974,6 +7003,12 @@ var Server = (() => {
       status,
       severities,
       severityFilterSupported,
+      // Null, not [], for "no filter applied" — and null on the two scopes that cannot carry
+      // one at all, the same shape `severities` takes above. An empty array would read as a
+      // filter that matched nothing.
+      validation: validation.length ? validation : null,
+      confidence: confidence.length ? confidence : null,
+      secretFiltersSupported: isSecrets,
       showNoFix: n2.showNoFix
     };
   }
@@ -8178,7 +8213,12 @@ var Server = (() => {
         pageSize: r["pageSize"],
         sort: r["sort"],
         dir: r["dir"],
-        status: r["status"]
+        status: r["status"],
+        // SECRETS-ONLY, and forwarded for every scope on purpose: `registerRowsModel` is the
+        // one place that decides a scope cannot carry them, exactly as it decides `severities`
+        // cannot bite on secrets. Vetting here as well would put that rule in two files.
+        validation: r["validation"],
+        confidence: r["confidence"]
       };
       const model = registerRowsModel(scope, params);
       return { ...model, rows: registerRowsSlice(model["rows"], scope) };
