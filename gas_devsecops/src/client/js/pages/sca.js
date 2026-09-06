@@ -28,12 +28,13 @@
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
+import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, absentText, boundedDays, chartTable, chartTableModel, dataTable,
-  days1, denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, heroStat,
-  kpiCard, measuredEmpty, meter, num, onPageTeardown, pageHeader, pageOf, pct1, segmented,
-  sevBadge, sevEntries, sevKeyRow, sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter,
-  togglePills, fmtDate, triCell,
+  DEFAULT_PAGE_SIZE, absent, absentText, boundedDays, chartTable, chartTableModel,
+  closeActiveSheet, dataTable, days1, denomNote, el, emptyState, errorState, firstRunNotice,
+  fmtCount, glossaryTip, heroStat, kpiCard, measuredEmpty, meter, num, onPageTeardown,
+  pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
+  skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate, triCell,
 } from "../ui.js";
 
 // =========================================================================================
@@ -426,9 +427,12 @@ export function missingColumnsNote(fields) {
  * because whether a given section's emptiness even CAN be explained by the severity filter is
  * a per-call-site decision (secrets' toolbar covers validation/confidence too, not severity).
  */
-export function filterEmptyNotice(asOf, filterOn, empty) {
+export function filterEmptyNotice(asOf, filterOn, empty, sentence) {
   if (!empty || !filterOn) return null;
-  return measuredEmpty("Nothing matched the current severity filter.", { at: asOf });
+  // `sentence` names WHICH filter narrowed it, because the secrets toolbar filters on the
+  // credential's state and its detector confidence and never on severity — a shared string
+  // reading "the current severity filter" would name a control that register does not have.
+  return measuredEmpty(sentence || "Nothing matched the current severity filter.", { at: asOf });
 }
 
 // ------------------------------------------------------------------------ shared DOM bits
@@ -487,13 +491,21 @@ export function pagedTable(spec) {
  *   defaultSort/defaultDir  the scope's own opening order — mirrors
  *                `REGISTER_ROW_DEFAULT_SORT` so the FIRST paint's header already reflects
  *                what the server actually sent, with no flash of the wrong arrow
+ *   status       "open" | "resolved", or "" for the whole register — the one row param that
+ *                has always existed on the server and that no page sent until this wave
+ *   validation   secrets only: credential states to keep (VALID/INVALID/UNKNOWN/ERROR)
+ *   confidence   secrets only: detector grades to keep, measured off the page's own segments
  *   at           `vm.asOf` — dates the `filterEmptyNotice` this table draws below itself when
- *                a severity filter narrows a server page to zero rows; `undefined` on secrets,
- *                where `severities` is `undefined` too and the notice never fires
+ *                a filter narrows a server page to zero rows. All three registers pass it
+ *                now: secrets has no severity filter but it does have the other three, so
+ *                "nothing matched" is a reachable state there too
+ *   emptySentence  which filters that notice names. The default names the severity one, and
+ *                secrets does not have it — a shared string would point at a missing control
  */
 export function registerRowsTable(spec) {
   const {
     scope, columns, severities, showNoFix, defaultSort, defaultDir, emptyText, at,
+    status, validation, confidence, emptySentence,
   } = spec;
   const state = {
     page: 0, pageSize: DEFAULT_PAGE_SIZE, sort: defaultSort, dir: defaultDir || "desc",
@@ -507,6 +519,14 @@ export function registerRowsTable(spec) {
     };
     if (severities !== undefined) params.severities = severities.length ? severities : undefined;
     if (showNoFix !== undefined) params.showNoFix = showNoFix;
+    // THE THREE ROW-LEVEL FILTERS, and they are sent only when they are ON. `status` is
+    // "open" | "resolved" and anything else means all — `registerRowsModel` normalises it —
+    // so an absent key and "all" are the same request rather than two. `validation` and
+    // `confidence` are secrets-only server-side (ignored, and echoed back as null, on the
+    // other two scopes), which is why these pages pass them only where they exist.
+    if (status) params.status = status;
+    if (validation && validation.length) params.validation = validation;
+    if (confidence && confidence.length) params.confidence = confidence;
     swrCall("api_getRegisterRows", params)
       .then((data) => paint(data || {}))
       .catch((e) => {
@@ -528,6 +548,12 @@ export function registerRowsTable(spec) {
     const table = dataTable({
       columns,
       rows,
+      // THE DRILL-DOWN, and `rows` is exactly the server page in hand — prev/next inside the
+      // sheet walks these fifty and no more, because these are the rows the reader can see.
+      // A sheet reads the row and nothing else (pages/findingSheet.js), so opening one costs
+      // no call and can show no figure this table could not.
+      onRowOpen: (r) => openFindingSheet(scope, r, { rows }),
+      rowLabel: (r) => findingRowLabel(scope, r),
       sort: { key: state.sort, descending: state.dir === "desc" },
       onSort: (key) => {
         state.dir = state.sort === key && state.dir === "desc" ? "asc" : "desc";
@@ -546,7 +572,9 @@ export function registerRowsTable(spec) {
       onPage: (p) => { state.page = p; load(); },
       onPageSize: (size, nextPage) => { state.pageSize = size; state.page = nextPage; load(); },
     });
-    const notice = filterEmptyNotice(at, !!(severities && severities.length), rows.length === 0);
+    const filterOn = !!(severities && severities.length) || !!status
+      || !!(validation && validation.length) || !!(confidence && confidence.length);
+    const notice = filterEmptyNotice(at, filterOn, rows.length === 0, emptySentence);
     host.replaceChildren(table, footer, ...(notice ? [notice] : []));
   }
 
@@ -645,13 +673,13 @@ export function chartCard(title, note, draw, table = null) {
  * nothing. `showNoFix` is offered on sca only, for the same reason — `baseRowNoFix` is false
  * on every non-sca row by construction.
  */
-export function registerToolbar({ route, severities, order, showNoFix, offerNoFix }) {
+export function registerToolbar({ route, severities, order, showNoFix, offerNoFix, status }) {
   const bar = el("div", { class: "toolbar" });
   // `navigate`, not `setParams`: `history.replaceState` fires no `hashchange`, so the
   // filter would rewrite the URL and leave the page showing the previous fetch. Going
   // through the hash re-enters `route()`, which is the one place a register refetches.
   const onChange = (patch) => {
-    const next = { sev: listJoin(severities), nofix: showNoFix ? "" : "0" };
+    const next = { sev: listJoin(severities), nofix: showNoFix ? "" : "0", status: status || "" };
     navigate(route, { ...next, ...patch });
   };
   const pills = togglePills({
@@ -665,7 +693,19 @@ export function registerToolbar({ route, severities, order, showNoFix, offerNoFi
       onChange({ sev: listJoin([...next]) });
     },
   });
-  bar.append(el("span", { class: "small muted" }, "Severity"), pills);
+  // GROUPED, like the state segment below it. The label and its pills used to sit loose in
+  // the flex row beside "Findings table" and its own segment, so at 640px the row wrapped
+  // between a label and the control it names — measured on the seeded harness at 640, where
+  // this toolbar carries three labelled controls. `.toolbar-group` (pages.css) wraps the
+  // GROUPS instead, which is the only wrap that cannot mislabel a control.
+  bar.append(el("div", { class: "toolbar-group" },
+    el("span", { class: "small muted" }, "Severity"), pills));
+
+  // THE STATE SEGMENT NARROWS ONE TABLE, AND IT SAYS SO. `status` is a parameter of
+  // `api_getRegisterRows` only: the aggregates above are computed over the whole register
+  // and are not refetched by it. A control that silently changed some figures and not
+  // others would be worse than no control, so its own label names what it narrows.
+  bar.append(statusSegment(status, onChange));
 
   if (offerNoFix) {
     bar.append(segmented({
@@ -685,14 +725,75 @@ export function registerToolbar({ route, severities, order, showNoFix, offerNoFi
   return bar;
 }
 
+/**
+ * The Open / Resolved / All choice, as one control the three registers share.
+ *
+ * SERVER-SIDE, AND IT ALWAYS WAS: `RowPageParams.status` has existed since the row endpoint
+ * was written and no page ever sent it, so every register opened on the whole ledger with no
+ * way to ask for just what is still outstanding. "All" is the empty param rather than the
+ * literal string, so a default view is a bare URL and a shared link never carries a filter
+ * nobody chose.
+ */
+export function statusSegment(status, onChange) {
+  return el("div", { class: "toolbar-group" },
+    el("span", { class: "small muted" }, "Findings table"),
+    segmented({
+      options: [
+        {
+          value: "open", label: "Open",
+          title: "Only findings still in the register, in the table at the foot of this page.",
+        },
+        {
+          value: "resolved", label: "Resolved",
+          title: "Only findings that have left the register. Read the state word beside each "
+            + "one: a resolution can be an observed event or a scan that stopped seeing it.",
+        },
+        {
+          value: "all", label: "All",
+          title: "Open and resolved together — the whole register, which is how it opens.",
+        },
+      ],
+      value: status === "open" || status === "resolved" ? status : "all",
+      ariaLabel: "Findings table: state",
+      onChange: (v) => onChange({ status: v === "all" ? "" : v }),
+    }),
+  );
+}
+
+/**
+ * A labelled row of NEUTRAL toggle pills — the multi-select filter shape without the
+ * severity vocabulary that `registerToolbar` above is built on.
+ *
+ * IT EXISTS SO `secrets.js` NEVER HAS TO NAME ONE. `togglePills` defaults to
+ * `pillClass: "sev-pill"` and `sevClass: true`, which would stamp a `sev-VALID` class onto a
+ * credential-state filter and put a `sev`-shaped identifier in the one page file that is
+ * swept for exactly that (`test/pagesLit.test.js`'s gate 4 — no severity class, badge or
+ * helper anywhere in the secrets page's executable code). `kind-pill` is the shared neutral
+ * pill: the same base as a severity pill, accent-washed when pressed, with no level tint —
+ * which is also the honest mark here, because a credential being LIVE is not a severity.
+ */
+export function pillFilterRow({ label, options, selected, ariaLabel, onToggle }) {
+  return el("div", { class: "toolbar-group" },
+    el("span", { class: "small muted" }, label),
+    togglePills({
+      options, selected, ariaLabel, onToggle, pillClass: "kind-pill", sevClass: false,
+    }),
+  );
+}
+
 /** The filter params these register pages read out of the hash, in one place. */
 export function readRegisterParams(params) {
   const p = params || {};
+  const status = String(p.status || "").toLowerCase();
   return {
     severities: listSplit(p.sev),
     // `showNoFix` defaults TRUE, matching `modelParams` on the server: the register is the
     // whole population until a reader narrows it.
     showNoFix: p.nofix !== "0",
+    // Normalised HERE and not at the control: a hand-edited hash is the one place an
+    // unexpected value arrives, and the server would fall back to "all" silently. Reading it
+    // back as "" keeps the toolbar and the URL agreeing about what is on.
+    status: status === "open" || status === "resolved" ? status : "",
   };
 }
 
@@ -871,6 +972,13 @@ export function renderSca(host, params) {
 }
 
 function paintSca(host, vm, filters) {
+  // A SHEET OUTLIVES THE PAINT THAT OPENED IT. `openSheet`'s own hook closes on a change of
+  // ROUTE NAME only (gas_shared/ui/sheet.js), and every control in the toolbar below rewrites
+  // this route's query params — so a filter change repaints the page under an open finding
+  // sheet still wired to the previous render's rows. Closing here, at the top of the repaint,
+  // is the gas_ai pattern and the one place that covers both paths.
+  closeActiveSheet();
+
   // THE HERO BAR WAS COLOUR AND NOTHING ELSE. Five segments, no key, no counts — the one
   // thing DESIGN.md rules out outright — and on an empty ledger it degraded to an empty
   // bordered box that read as a broken widget rather than as "nothing open". `sevKeyRow`
@@ -938,6 +1046,7 @@ function paintSca(host, vm, filters) {
     order: vm.severityOrder,
     showNoFix: filters.showNoFix,
     offerNoFix: true,
+    status: filters.status,
   }));
 
   // ------------------------------------------------------------------- the two clocks
@@ -1119,12 +1228,15 @@ function paintSca(host, vm, filters) {
   host.append(sectionCard("Every finding in the register", null,
     el("p", { class: "small muted" },
       "Open and resolved, server-paged and server-sorted — click a column to ask for a "
-      + "different order rather than re-sorting what is already on screen."),
+      + "different order rather than re-sorting what is already on screen, and open a "
+      + "row for everything the register holds about that one finding."),
     registerRowsTable({
       scope: "sca",
       severities: filters.severities,
       showNoFix: filters.showNoFix,
+      status: filters.status,
       at: vm.asOf,
+      emptySentence: "Nothing matched the current filters.",
       defaultSort: "age_days",
       defaultDir: "desc",
       emptyText: "Nothing in this register.",

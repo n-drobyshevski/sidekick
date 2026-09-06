@@ -107,9 +107,11 @@ describe("a death date is not always a measurement", () => {
 });
 
 describe("the live sca/sast status columns render provenance(), not raw status", () => {
-  // registerModel.js used to be read only by the orphan pages/register.js — the live tables
-  // (sca.js:1073, sast.js:462) rendered `textCell(r.status)` and a reopened row printed the
-  // same word as one that had never left. A text assertion over the source, in the style of
+  // registerModel.js used to be read only by an orphan page module (pages/register.js, since
+  // deleted — its detail sheet was the design reference for pages/findingSheet.js and nothing
+  // ever imported the file) while the live tables rendered `textCell(r.status)`, so a
+  // reopened row printed the same word as one that had never left. A text assertion over
+  // the source, in the style of
   // gas_shared/test/contracts/*.js, so the live tables cannot drift back to raw status
   // silently — a unit test on registerModel.js alone would never notice that regression.
   const src = (rel) => readFileSync(

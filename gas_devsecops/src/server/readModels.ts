@@ -1047,6 +1047,10 @@ export interface RowPageParams extends ModelParams {
   dir?: unknown;
   /** "open" | "resolved" | anything else = "all". */
   status?: unknown;
+  /** SECRETS ONLY: credential states to keep (VALID/INVALID/UNKNOWN/ERROR). */
+  validation?: unknown;
+  /** SECRETS ONLY: detector confidence grades to keep, matched against what the rows carry. */
+  confidence?: unknown;
 }
 
 export type RowStatusFilter = "all" | "open" | "resolved";
@@ -1054,6 +1058,42 @@ export type RowStatusFilter = "all" | "open" | "resolved";
 function normRowStatus(v: unknown): RowStatusFilter {
   const s = String(v ?? "").toLowerCase();
   return s === "open" || s === "resolved" ? s : "all";
+}
+
+/** The four values `validation_state` can carry, per `domain/secretsLifecycle.ts`. */
+const SECRET_VALIDATION_STATES = ["VALID", "INVALID", "UNKNOWN", "ERROR"] as const;
+
+/**
+ * A requested filter list, uppercased and de-duplicated, from an array or a comma string.
+ *
+ * Refuses null/undefined/blank BEFORE any cast — `String(null)` is `"null"`, which would
+ * become a filter value matching nothing and narrow a register to zero rows while looking
+ * like a measurement.
+ */
+function normFilterList(v: unknown): string[] {
+  const raw: unknown[] = Array.isArray(v)
+    ? v
+    : typeof v === "string" ? v.split(",") : [];
+  const out: string[] = [];
+  for (const item of raw) {
+    if (item === null || item === undefined) continue;
+    const s = String(item).trim().toUpperCase();
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * A row's credential state for filtering: BLANK IS UNKNOWN, not a fourth thing.
+ *
+ * `secretsLifecycle.ts`'s rule 2 is that UNKNOWN, ERROR, null and blank are all UNMEASURED;
+ * the ledger stores whichever of them Wiz sent. A "Never checked" filter that matched only
+ * the literal string UNKNOWN would silently drop every row whose column is empty — which on
+ * this tenant is most of the register.
+ */
+function rowValidationState(v: unknown): string {
+  const s = String(v ?? "").trim().toUpperCase();
+  return s === "" ? "UNKNOWN" : s;
 }
 
 /**
@@ -1096,9 +1136,48 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
   const scoped = visibleRows(snap.rows, { ...n, scope, severities });
 
   const status = normRowStatus(p?.status);
-  const rows = status === "all"
+  const byStatus = status === "all"
     ? scoped
     : scoped.filter((r) => isOpen(r.status) === (status === "open"));
+
+  // TWO SECRETS-ONLY FILTERS, APPLIED AFTER THE STATUS ONE — and refused everywhere else the
+  // way `severities` is refused HERE. Severity is this register's non-axis (it grades a
+  // detection, not whether a credential is live); the axes that answer the question a reader
+  // came with are the credential's own state and the detector's confidence, and until now
+  // neither could be asked for on the per-finding table.
+  //
+  // THE CONFIDENCE ALLOW-LIST IS MEASURED, NOT WRITTEN DOWN. `SecretInstanceConfidence` is
+  // the tenant's vocabulary, not this app's — the live tenant spells it "High" while the dev
+  // fixture spells it "HIGH" — so the accepted values are the DISTINCT VALUES THE SCOPED
+  // POPULATION ACTUALLY CARRIES, uppercased. A hard-coded list would refuse a grade this
+  // tenant uses, or accept one it does not and quietly return an empty register.
+  //
+  // AN UNRECOGNISED VALUE FALLS BACK TO NO FILTER rather than to an empty page, matching the
+  // `sort` fallback directly above: a hand-edited hash is where these arrive, and answering
+  // a typo with "0 findings" states a measurement about a population nobody asked for. The
+  // applied lists are echoed back in the payload, so the client can see what actually bit.
+  const isSecrets = scope === "secrets";
+  const validation = isSecrets
+    ? normFilterList(p?.validation)
+      .filter((v) => (SECRET_VALIDATION_STATES as readonly string[]).includes(v))
+    : [];
+  const grades = isSecrets
+    ? Array.from(new Set(scoped.map((r) => String(r.confidence ?? "").trim().toUpperCase())))
+      .filter((v) => v !== "")
+    : [];
+  const confidence = isSecrets
+    ? normFilterList(p?.confidence).filter((v) => grades.includes(v))
+    : [];
+
+  const rows = validation.length || confidence.length
+    ? byStatus.filter((r) => {
+      if (validation.length && !validation.includes(rowValidationState(r.validation_state))) {
+        return false;
+      }
+      return !confidence.length
+        || confidence.includes(String(r.confidence ?? "").trim().toUpperCase());
+    })
+    : byStatus;
 
   const def = REGISTER_ROW_DEFAULT_SORT[scope]!;
   const columns = registerRowColumns(scope);
@@ -1140,6 +1219,12 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
     status,
     severities,
     severityFilterSupported,
+    // Null, not [], for "no filter applied" — and null on the two scopes that cannot carry
+    // one at all, the same shape `severities` takes above. An empty array would read as a
+    // filter that matched nothing.
+    validation: validation.length ? validation : null,
+    confidence: confidence.length ? confidence : null,
+    secretFiltersSupported: isSecrets,
     showNoFix: n.showNoFix,
   };
 }

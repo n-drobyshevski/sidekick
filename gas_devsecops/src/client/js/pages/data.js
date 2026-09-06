@@ -25,7 +25,7 @@ import { call } from "../../../../../gas_shared/api.js";
 import {
   absentText, clear, confirmDialog, dataTable, denomNote, downloadText, el, emptyState,
   errorState, firstRunNotice,
-  fmtCount, fmtDateTime, kpiCard, num, pageHeader, registerWideNote,
+  fmtCount, fmtDateTime, glossaryTip, kpiCard, num, pageHeader, registerWideNote,
   sectionLabel, skeletonStack, statusPill, toast,
 } from "../ui.js";
 import { usageMeter } from "../../../../../gas_shared/ui/usageMeter.js";
@@ -186,7 +186,11 @@ export async function renderData(host, _params, ctx) {
     storageHost,
     sectionLabel("Export"),
     exportHost,
-    sectionLabel("Compaction"),
+    // THE THREE WORDS THIS PAGE RUNS ON, each now defined where it is used rather than
+    // three sections later. "Compaction" is the act, "sealed" is the state it leaves a saved
+    // scan in, and an "episode" is what a finding's row becomes — the page used all three as
+    // if they were plain English.
+    sectionLabel("Compaction", { term: "compaction" }),
     compactHost,
     sectionLabel("Delete scans"),
     deleteHost,
@@ -292,7 +296,8 @@ export async function renderData(host, _params, ctx) {
     }
     kpiRow.append(
       kpiCard("Tracked findings", fmtCount(ledger.trackedFindings)),
-      kpiCard("Saved scans", fmtCount(ledger.scanCount), `${fmtCount(ledger.sealedCount)} sealed`),
+      kpiCard("Saved scans", fmtCount(ledger.scanCount),
+        el("span", {}, `${fmtCount(ledger.sealedCount)} `, glossaryTip("sealed", "sealed"))),
     );
     storageHost.append(kpiRow);
 
@@ -400,9 +405,9 @@ export async function renderData(host, _params, ctx) {
       runBtn.disabled = false;
       previewHost.append(
         el("p", {},
-          `Would seal ${fmtCount(v.scansSealed)} scan(s) into `
-          + `${fmtCount(v.episodesCreated)} episode(s), pruning `
-          + `${fmtCount(v.observationsPruned)} observation(s).`),
+          `Would seal ${fmtCount(v.scansSealed)} scan(s) into ${fmtCount(v.episodesCreated)} `,
+          glossaryTip("episode", "episode"),
+          `(s), pruning ${fmtCount(v.observationsPruned)} observation(s).`),
         denomNote(
           `Frees at least ${fmtCount(v.archiveBytesFreed)} archive byte(s) and `
           + `${fmtCount(v.dbBytesFreed)} spreadsheet byte(s) — a lower bound, because the `

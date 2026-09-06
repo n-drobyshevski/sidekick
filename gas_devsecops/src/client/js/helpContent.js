@@ -238,6 +238,33 @@ const ENTRIES = [
     ],
   },
   {
+    // The Storage page's three words. Compaction is the act, a sealed scan is what it leaves
+    // behind, and an episode is what a finding's row becomes once its scan is sealed — three
+    // names for one mechanism, and the page used all three before any of them was defined.
+    id: "compaction",
+    term: "Compaction",
+    lines: [
+      "Folding the oldest saved scans into episodes: their per-finding observations are pruned and the scan's own totals are kept.",
+      "It reclaims spreadsheet cells and archive bytes. The most recent scans are never candidates, and the dry run states what would go before anything goes.",
+    ],
+  },
+  {
+    id: "sealed",
+    term: "Sealed",
+    lines: [
+      "A saved scan whose per-finding observations compaction has already pruned. Its totals stay; the detail behind them is gone.",
+      "A sealed scan cannot be deleted from the Storage page — the archive it pointed at was reclaimed when it was sealed.",
+    ],
+  },
+  {
+    id: "episode",
+    term: "Episode",
+    lines: [
+      "One finding's settled lifetime — first seen, how it ended, when — kept after the scan that carried it was sealed.",
+      "The clock survives compaction; the per-scan observations behind it do not. A finding seen again after its episode begins a new one.",
+    ],
+  },
+  {
     id: "returned",
     term: "Returned",
     lines: [

@@ -28,6 +28,14 @@ const EXPECTED_IDS = [
   // (mttr.js's age distribution) and what the rail's one status dot is summarising
   // (history.js's per-register coverage table).
   "sla-band", "rail-status",
+  // The Storage page's own three words, which it used before any of them was defined here:
+  // Compaction is its section heading, sealed qualifies the saved-scan count and the delete
+  // picker's refusal, and an episode is the unit the compaction dry run reports in. pagesLit's
+  // gate 6 checks that the ids a page REACHES FOR exist; nothing checked the reverse — that a
+  // word the page leans on is defined at all — so these three were reachable prose with no
+  // entry behind them. (No quoted ids in this comment: test/pagesHelp.test.js reads this
+  // array as TEXT and would take one for a fourth entry.)
+  "compaction", "sealed", "episode",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164
