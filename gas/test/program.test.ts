@@ -14,6 +14,9 @@ import {
   confusionMatrix,
   DEFAULT_RISK_RULE,
   firedSignals,
+  movementDecomposition,
+  movementWindowScans,
+  type MovementRow,
   ruleSensitivity,
   RISK_TIER_ORDER,
   riskTier,
@@ -709,5 +712,303 @@ describe("riskTier", () => {
     expect(tiers.length).toBe(rows.length);
     expect(new Set(tiers).size).toBeLessThanOrEqual(RISK_TIER_ORDER.length);
     for (const t of tiers) expect(RISK_TIER_ORDER).toContain(t);
+  });
+});
+
+describe("movementDecomposition", () => {
+  // A HAND-BUILT WIDE-THEN-NARROW FIXTURE. The dev fixture cannot serve here: it carries no
+  // `scans` rows at all (verified), and every figure below is a difference between two scans.
+  //
+  // The shape is the one this metric exists for — a register whose gate narrowed mid-window:
+  //
+  //   T1  2026-01-10  flat, gate CRITICAL/HIGH/MEDIUM   <- the window's `since` endpoint
+  //   T2  2026-02-10  flat, gate CRITICAL/HIGH          <- the gate narrowed here
+  //   T3  2026-03-10  flat, gate CRITICAL/HIGH          <- the window's `until` endpoint
+  //
+  // and five lifecycles, worked out in full so this block is the audit trail:
+  //
+  //   #1 MEDIUM, open, born 01-05   in the gate at T1, OUTSIDE it at T3. Never resolved, so it
+  //                                 is in neither resolution bucket — it is open and unmeasured.
+  //   #2 HIGH,   born 01-05, resolved 02-15 by "api"          -> observed
+  //   #3 HIGH,   born 01-06, resolved 03-01 by "disappeared"  -> bounded
+  //   #4 CRITICAL, born 2025-12-01, resolved 01-05 by "api"   -> BEFORE the window; not counted
+  //   #5 HIGH,   born 02-20, still open                       -> the window's one arrival
+  //
+  //   open at T1 (since) = #1, #2, #3                     = 3
+  //   open at T3 (until) = #1, #5                         = 2
+  //   netChange                                           = 2 - 3 = -1
+  //   arrivals 1 - observed 1 - bounded 1 + reopened 0    = -1     -> identityGap 0
+  //
+  // The T1 scan carries `new_count: 99` and `reopened_count: 7` on purpose: the window is
+  // half-open (since < ts <= until), so the scan that OPENS the window describes the period
+  // before it, and counting it would blow the identity by 106 rather than by a rounding.
+  const T1 = "2026-01-10T00:00:00Z";
+  const T2 = "2026-02-10T00:00:00Z";
+  const T3 = "2026-03-10T00:00:00Z";
+  const WINDOW = { since: T1, until: T3 };
+  // The stored form, NOT "CRITICAL,HIGH": scans.severities is the JSON `serializeSeverities`
+  // writes, and `parseSeverities` answers null for anything JSON.parse refuses — a
+  // comma-string gate would read as NO gate and quietly zero outsideGate.
+  const WIDE = '["CRITICAL", "HIGH", "MEDIUM"]';
+  const NARROW = '["CRITICAL", "HIGH"]';
+
+  type MoveScan = {
+    ts?: unknown; shape?: unknown; severities?: unknown;
+    new_count?: unknown; reopened_count?: unknown;
+  };
+
+  const scans = (): MoveScan[] => [
+    { ts: T1, shape: "flat", severities: WIDE, new_count: 99, reopened_count: 7 },
+    { ts: T2, shape: "flat", severities: NARROW, new_count: 0, reopened_count: 0 },
+    { ts: T3, shape: "flat", severities: NARROW, new_count: 1, reopened_count: 0 },
+  ];
+
+  const mrow = (o: Partial<MovementRow>): MovementRow => ({
+    severity: "HIGH", status: "OPEN", first_seen: null, resolved_at: null,
+    resolution_src: null, ...o,
+  });
+
+  const rows: MovementRow[] = [
+    mrow({ severity: "MEDIUM", first_seen: "2026-01-05T00:00:00Z" }),
+    mrow({
+      status: "RESOLVED", first_seen: "2026-01-05T00:00:00Z",
+      resolved_at: "2026-02-15T00:00:00Z", resolution_src: "api",
+    }),
+    mrow({
+      status: "RESOLVED", first_seen: "2026-01-06T00:00:00Z",
+      resolved_at: "2026-03-01T00:00:00Z", resolution_src: "disappeared",
+    }),
+    mrow({
+      severity: "CRITICAL", status: "RESOLVED", first_seen: "2025-12-01T00:00:00Z",
+      resolved_at: "2026-01-05T00:00:00Z", resolution_src: "api",
+    }),
+    mrow({ first_seen: "2026-02-20T00:00:00Z" }),
+  ];
+
+  const out = movementDecomposition(rows, scans(), WINDOW);
+
+  it("a MEDIUM row outside the narrowed gate is counted as unmeasured, not as resolved", () => {
+    // The whole point of the figure: this row did not go anywhere. The last scan simply
+    // stopped asking about its severity, and a headline that improved for that reason has to
+    // say so in a different word from the one it uses for a fix.
+    expect(out.outsideGate).toBe(1);
+    expect(out.observed).toBe(1);
+    expect(out.bounded).toBe(1);
+    expect(out.unattributed).toBe(0);
+    // Still open, still in the replay at both ends — it cancels out of netChange entirely.
+    expect(out.netChange).toBe(-1);
+  });
+
+  it("a null gate contributes zero to outsideGate, not the whole register", () => {
+    // Four spellings of "no gate was applied" and all four reach here: a column never
+    // written, an older row carrying the empty string, a serialized empty list, and a value
+    // JSON.parse refuses. `parseSeverities` answers null to all four, and null must mean
+    // every severity was in scope — never that every open row is outside it.
+    for (const gate of [null, undefined, "", "[]", "CRITICAL,HIGH"]) {
+      const ungated = scans().map((s) =>
+        s["ts"] === T1 ? s : { ...s, severities: gate });
+      const m = movementDecomposition(rows, ungated, WINDOW);
+      expect(m.outsideGate, `gate ${JSON.stringify(gate)}`).toBe(0);
+      // ...and nothing else moved: the gate decides one field and only one.
+      expect(m.observed).toBe(1);
+      expect(m.netChange).toBe(-1);
+    }
+    // The register has five rows and two of them are open; a "gate matches nothing"
+    // implementation would report 2 here, not 0.
+    expect(rows.filter((r) => r.status === "OPEN").length).toBe(2);
+  });
+
+  it("a grouped scan's new_count is not an arrival", () => {
+    // A grouped scan is counts-only — it carries no per-finding rows, so its deltas cannot be
+    // reconciled against a replay of rows. Same exclusion capacityByMonth makes.
+    const withGrouped = [
+      ...scans(),
+      { ts: "2026-02-20T00:00:00Z", shape: "grouped", severities: NARROW,
+        new_count: 500, reopened_count: 500 },
+    ];
+    const m = movementDecomposition(rows, withGrouped, WINDOW);
+    expect(m.arrivals).toBe(1);
+    expect(m.reopened).toBe(0);
+    expect(m.scansInWindow).toBe(2);
+    expect(m.identityHolds).toBe(true);
+  });
+
+  it("a resolution before the window is not in the window", () => {
+    // #4 was resolved on 01-05, five days before `since`. It is in neither bucket here...
+    expect(out.observed + out.bounded + out.unattributed).toBe(2);
+    // ...and it is not a hidden zero either: widen the window back over it and it appears.
+    const wider = movementDecomposition(rows, scans(), {
+      since: "2025-12-15T00:00:00Z", until: T3,
+    });
+    expect(wider.observed).toBe(2);
+  });
+
+  it("the identity holds on the wide-then-narrow fixture", () => {
+    // Hand-computed above: open 3 at T1, open 2 at T3.
+    expect(out.netChange).toBe(-1);
+    expect(out.arrivals).toBe(1);
+    expect(out.reopened).toBe(0);
+    expect(out.arrivals - out.observed - out.bounded + out.reopened).toBe(-1);
+    expect(out.identityGap).toBe(0);
+    expect(out.identityHolds).toBe(true);
+    expect(out.scansInWindow).toBe(2);
+    expect(out.skippedScans).toBe(0);
+    expect(out.partialCounts).toBe(0);
+    expect(out.unplacedRows).toBe(0);
+  });
+
+  it("publishes the gap rather than balancing the books", () => {
+    // Perturbation: the T3 scan forgets the one finding that clearly arrived (#5 is in the
+    // rows with first_seen 02-20, and the replay counts it). The two sides now disagree by
+    // exactly one finding, and the figure has to SAY so rather than deriving one side from
+    // the other.
+    const forgetful = scans().map((s) => (s["ts"] === T3 ? { ...s, new_count: 0 } : s));
+    const m = movementDecomposition(rows, forgetful, WINDOW);
+    expect(m.netChange).toBe(-1); // the replay is untouched
+    expect(m.arrivals).toBe(0);
+    expect(m.identityGap).toBe(-1 - (0 - 1 - 1 + 0));
+    expect(m.identityGap).toBe(1);
+    expect(m.identityHolds).toBe(false);
+  });
+
+  it("a non-finite new_count is refused and reported, not read as zero", () => {
+    // `undefined` is in the list but NOT in the claim below, and the difference is the
+    // finding: `Number(undefined)` is NaN, which `Number.isFinite` would have caught. The
+    // other four cast to a finite 0 — that is the set a cast-then-isFinite guard reads as a
+    // measured "nothing arrived", and the reason the type test has to come first.
+    for (const bad of [null, "", [], false]) {
+      expect(Number(bad as never), `Number(${JSON.stringify(bad)})`).toBe(0);
+      expect(Number.isFinite(Number(bad as never))).toBe(true);
+      const broken = scans().map((s) => (s["ts"] === T3 ? { ...s, new_count: bad } : s));
+      const m = movementDecomposition(rows, broken, WINDOW);
+      expect(m.arrivals, `new_count ${JSON.stringify(bad)}`).toBe(0);
+      expect(m.partialCounts).toBe(1);
+      // ...and the refusal shows up as a gap rather than as a confident total.
+      expect(m.identityHolds).toBe(false);
+      expect(m.identityGap).toBe(1);
+    }
+    // An absent key takes the same path, for a different reason at the cast (NaN, not 0).
+    const missing = scans().map((s) => (s["ts"] === T3 ? { ts: T3, shape: "flat" } : s));
+    const m = movementDecomposition(rows, missing, WINDOW);
+    expect(m.arrivals).toBe(0);
+    expect(m.reopened).toBe(0);
+    expect(m.partialCounts).toBe(2); // new_count AND reopened_count, both refused
+  });
+
+  it("outsideGate is not summed into administrative", () => {
+    // PERTURBATION (run 2026-09-06, reverted): folding the stock into the flow —
+    //     administrative: bounded + outsideGate,
+    // in src/domain/program.ts. Observed, whole suite — 1 failed | 1329 passed | 1 skipped:
+    //   FAIL  |pure| test/program.test.ts > movementDecomposition > outsideGate is not summed
+    //         into administrative
+    //         AssertionError: expected 2 to be 1 // Object.is equality
+    // ONE test, and the second one predicted did NOT fire, which is worth recording:
+    // test/historyModel.test.js builds its own payload and so cannot see a domain defect at
+    // all. The view's sentence is pinned there; the arithmetic is pinned only here.
+    // The arithmetic reason it must not: outsideGate is a STOCK — those rows stay outside the
+    // gate on every window until someone widens it — so summing it in re-charges the same
+    // rows as fresh administrative movement every time the page is opened, and breaks the
+    // identity that makes the two halves reconcilable with netChange.
+    expect(out.administrative).toBe(out.bounded);
+    expect(out.administrative).toBe(1);
+    expect(out.administrative).not.toBe(out.bounded + out.outsideGate);
+    expect(out.measured + out.administrative).toBe(2);
+    expect(out.outsideGate).toBe(1);
+  });
+
+  it("a scan whose ts will not parse sits in no window and is counted", () => {
+    const broken = [...scans(), { ts: "not a date", shape: "flat", new_count: 40 }];
+    const m = movementDecomposition(rows, broken, WINDOW);
+    expect(m.skippedScans).toBe(1);
+    expect(m.arrivals).toBe(1);
+    expect(m.scansInWindow).toBe(2);
+  });
+
+  it("a resolution with no usable provenance is unattributed, not administrative", () => {
+    // Neither measured nor administrative: nothing recorded HOW the date was arrived at, and
+    // filing it under either heading would be an invention.
+    const odd = [...rows, mrow({
+      status: "RESOLVED", first_seen: "2026-01-08T00:00:00Z",
+      resolved_at: "2026-02-01T00:00:00Z", resolution_src: "manual",
+    })];
+    const m = movementDecomposition(odd, scans(), WINDOW);
+    expect(m.unattributed).toBe(1);
+    expect(m.observed).toBe(1);
+    expect(m.bounded).toBe(1);
+    // It moved the replay by one and is in neither side of the identity, so it is exactly
+    // the gap — which is the honest place for it.
+    expect(m.identityGap).toBe(-1);
+  });
+
+  it("refuses an unparseable or inverted window rather than returning a zeroed movement", () => {
+    // A Movement of all zeroes reads as "nothing happened", which is a measurement; no
+    // measurement was made.
+    expect(() => movementDecomposition(rows, scans(), { since: "nope", until: T3 })).toThrow();
+    expect(() => movementDecomposition(rows, scans(), { since: T3, until: T1 })).toThrow();
+  });
+});
+
+describe("movementWindowScans — the endpoints are scans, not calendar dates", () => {
+  const D = (iso: string) => Date.parse(iso);
+  const flat = (iso: string) => ({ ts: iso, shape: "flat" });
+
+  it("takes the newest scan and the newest one at least 28 days older", () => {
+    // Four scans; the qualifying pair is the SHORTEST window that still clears 28 days, so
+    // the figure describes the most recent 28 days of scanning rather than the whole ledger.
+    const w = movementWindowScans([
+      flat("2026-01-01T00:00:00Z"),
+      flat("2026-02-01T00:00:00Z"),
+      flat("2026-02-20T00:00:00Z"),
+      flat("2026-03-21T00:00:00Z"),
+    ], 28);
+    expect(w.reason).toBeNull();
+    expect(w.since).toBe(D("2026-02-20T00:00:00Z")); // 29 days back, not 48 and not 78
+    expect(w.until).toBe(D("2026-03-21T00:00:00Z"));
+    expect(w.days).toBe(29);
+  });
+
+  it("refuses a pair closer than the minimum, and publishes the span it does have", () => {
+    // The reader learns "this register has only been saving scans for 9 days" — a fact about
+    // the register — rather than the bare "no comparison", which reads as a defect.
+    const w = movementWindowScans([
+      flat("2026-03-12T00:00:00Z"), flat("2026-03-18T00:00:00Z"), flat("2026-03-21T00:00:00Z"),
+    ], 28);
+    expect(w.reason).toBe("tooClose");
+    expect(w.since).toBeNull();
+    expect(w.until).toBe(D("2026-03-21T00:00:00Z"));
+    expect(w.days).toBe(9);
+  });
+
+  it("names the one-scan and no-scan cases apart", () => {
+    expect(movementWindowScans([], 28).reason).toBe("noScans");
+    expect(movementWindowScans([flat("2026-03-21T00:00:00Z")], 28).reason).toBe("oneScan");
+    // ...and a ledger of nothing but grouped scans is a ledger of no usable scans: a
+    // counts-only scan carries no per-finding rows for the decomposition to replay against.
+    const grouped = [
+      { ts: "2026-01-01T00:00:00Z", shape: "grouped" },
+      { ts: "2026-03-21T00:00:00Z", shape: "grouped" },
+    ];
+    expect(movementWindowScans(grouped, 28).reason).toBe("noScans");
+  });
+
+  it("a scan whose ts will not parse is not an endpoint", () => {
+    const w = movementWindowScans([
+      { ts: "", shape: "flat" },
+      { ts: null, shape: "flat" },
+      flat("2026-01-01T00:00:00Z"),
+      flat("2026-03-21T00:00:00Z"),
+    ], 28);
+    expect(w.reason).toBeNull();
+    expect(w.since).toBe(D("2026-01-01T00:00:00Z"));
+    expect(w.days).toBe(79);
+  });
+
+  it("accepts scans in any stored order — the ledger tab is not sorted by contract", () => {
+    const shuffled = [
+      flat("2026-03-21T00:00:00Z"), flat("2026-01-01T00:00:00Z"), flat("2026-02-20T00:00:00Z"),
+    ];
+    const w = movementWindowScans(shuffled, 28);
+    expect(w.until).toBe(D("2026-03-21T00:00:00Z"));
+    expect(w.since).toBe(D("2026-02-20T00:00:00Z"));
   });
 });

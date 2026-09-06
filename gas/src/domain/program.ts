@@ -34,6 +34,7 @@
 // and drive the published bounds (see `Rate`) whose width IS the size of the doubt.
 // ---------------------------------------------------------------------------------------
 
+import { parseSeverities } from "./compaction";
 import { EPSS_PRIORITY_THRESHOLD, RESOLVED_STATUSES, SEVERITY_ORDER } from "./config";
 import type { BaseRow } from "./ledgerCore";
 import { normalizeSeverity } from "./severity";
@@ -647,4 +648,286 @@ export function observationWindowDays(rows: Pick<BaseRow, "first_seen">[], now?:
   const firsts = rows.map((r) => parseTs(r.first_seen)).filter((t): t is number => t !== null);
   if (!firsts.length) return null;
   return (nowMs - minNum(firsts)) / DAY_MS;
+}
+
+// ----------------------------------------------------------------------- movement
+
+/**
+ * WHAT MOVED THE OPEN COUNT, and which half of it was work.
+ *
+ * PRODUCT.md principle 6 — "the representation is not the work" — has a specific failure in
+ * mind here. The open count can fall for two completely different reasons: findings were
+ * fixed, or the register stopped looking at them. A scan whose severity gate narrowed from
+ * CRITICAL/HIGH/MEDIUM to CRITICAL/HIGH sheds every MEDIUM finding at once, and the headline
+ * improves exactly as it would after a remediation wave. Nothing on a trend line distinguishes
+ * the two. So this decomposes the change over a window into its named causes and LABELS them:
+ *
+ *   measured        `observed`  — the API itself said the finding was resolved.
+ *   administrative  `bounded`   — the finding stopped appearing and was dated by the scan that
+ *                                 first missed it. An upper bound on the death date, not a
+ *                                 measurement of one (CLAUDE.md: "a death date is not always a
+ *                                 measurement"). It is the honest half of a remediation figure
+ *                                 to report separately, because a withdrawn population, a
+ *                                 renamed asset and a real fix all look like this.
+ *
+ * `outsideGate` IS REPORTED BESIDE THEM AND NEVER SUMMED IN, and that is the one arithmetic
+ * decision in this file worth arguing about. It is a STOCK — how many open findings currently
+ * sit outside the gate the last scan applied — not a FLOW over the window. Adding it to
+ * `administrative` would double-count every one of those rows on every subsequent window
+ * (they stay outside the gate until someone widens it), and would make `administrative +
+ * measured` stop reconciling with the identity below. The gate exclusion is a fact about what
+ * the last scan COULD have seen; the flows are facts about what it DID see.
+ *
+ * THE IDENTITY, AND WHY THE RESIDUAL IS PUBLISHED RATHER THAN ABSORBED:
+ *
+ *     netChange  ==  arrivals - observed - bounded + reopened
+ *
+ * The left side is replayed from the durable rows (`first_seen` / `resolved_at`); the right
+ * side is read off the scan rows reconcile wrote plus the rows' own resolution provenance.
+ * They are two independent measurements of the same movement, and in live data they will not
+ * always agree — `new_count` counts findings NEW TO A SCAN while the replay counts findings
+ * BORN in the window, and Wiz's `firstDetectedAt` can predate the scan that first saw it; a
+ * reopen clears `resolved_at` and resets `first_seen`, so a reopened finding leaves the replay
+ * looking like an arrival. Each of those is a real gap between two real numbers. `identityGap`
+ * publishes it. Tuning it to zero — by deriving one side from the other, or by folding the
+ * residual into a bucket — would produce books that always balance and never measure anything.
+ *
+ * WHAT IS REFUSED RATHER THAN CAST (CLAUDE.md: `Number(null)` is 0, and it is finite):
+ *   - a scan whose `ts` will not parse is in no window at all       -> `skippedScans`
+ *   - a `new_count` / `reopened_count` that is not a finite number contributes NOTHING and is
+ *     counted, so a half-measured window cannot print a confident total -> `partialCounts`
+ *   - a row whose `first_seen` will not parse cannot be replayed    -> `unplacedRows`
+ *   - a resolved row whose `resolution_src` is neither "api" nor "disappeared" is neither
+ *     measured nor administrative                                   -> `unattributed`
+ * Every one of those also widens `identityGap`, which is the point: the gap is where the
+ * unmeasurable part of the window shows up.
+ */
+export interface Movement {
+  /** Sum of `new_count` over the FLAT scans in the window. Grouped scans carry no findings. */
+  arrivals: number;
+  /** Resolutions the API itself reported, dated in the window. Measured remediation. */
+  observed: number;
+  /** Resolutions dated by disappearance. An upper bound on the date; administrative. */
+  bounded: number;
+  /** Sum of `reopened_count` over the same scans — risk that came back. */
+  reopened: number;
+  /**
+   * OPEN rows whose severity is not in the gate the newest in-window scan applied. A STOCK,
+   * not a flow: reported beside the movement, never added to it. 0 when that scan carried no
+   * gate — "no gate" means every severity was in scope, never "everything is outside".
+   */
+  outsideGate: number;
+  /** Replayed from the rows: open at `until` minus open at `since`. */
+  netChange: number;
+  /** The half of the movement that is a measured remediation. */
+  measured: number;
+  /** The half that is administrative — dated by absence rather than by an API statement. */
+  administrative: number;
+  /** Resolved in the window with no usable provenance. In neither half; published. */
+  unattributed: number;
+  /** netChange - (arrivals - observed - bounded + reopened). Published, never tuned away. */
+  identityGap: number;
+  identityHolds: boolean;
+  scansInWindow: number;
+  /** Non-grouped scans whose `ts` could not be parsed, so they sit in no window. */
+  skippedScans: number;
+  /** In-window `new_count` / `reopened_count` values that were not finite numbers. */
+  partialCounts: number;
+  /** Rows whose `first_seen` could not be parsed, so the replay could not place them. */
+  unplacedRows: number;
+  /** The window as parsed, echoed so a caller cannot mislabel the figure. */
+  sinceMs: number;
+  untilMs: number;
+}
+
+export type MovementRow = Pick<
+  BaseRow,
+  "severity" | "status" | "first_seen" | "resolved_at" | "resolution_src"
+>;
+
+type MovementScan = {
+  ts?: unknown;
+  shape?: unknown;
+  severities?: unknown;
+  new_count?: unknown;
+  reopened_count?: unknown;
+};
+
+/**
+ * Add a scan count into a running total, refusing anything that is not already a number.
+ *
+ * `Number(null)`, `Number("")`, `Number([])` and `Number(false)` are all 0 and all finite, so a
+ * cast-then-`isFinite` guard reads every one of them as a measured zero. The type test comes
+ * FIRST and nothing is cast at all.
+ */
+function addCount(total: number, v: unknown, refused: { n: number }): number {
+  if (typeof v !== "number" || !Number.isFinite(v)) {
+    refused.n += 1;
+    return total;
+  }
+  return total + v;
+}
+
+/** The window test for a resolution or a scan: half-open, so an endpoint scan is counted once. */
+function inWindow(t: number | null, sinceMs: number, untilMs: number): boolean {
+  return t !== null && t > sinceMs && t <= untilMs;
+}
+
+/**
+ * Decompose the change in the open count between two instants into its causes.
+ *
+ * The endpoints are SCANS, not calendar dates (the caller picks them; see api.scanHistoryData),
+ * for the reason gas_devsecops/test/movement.test.ts states for its own week-over-week figure:
+ * a register only learns something on the days it looks, so a window bounded by dates it did
+ * not look on attributes another period's arrivals to this one.
+ *
+ * Refuses an unparseable or inverted window rather than returning a zeroed decomposition — a
+ * Movement of all zeroes reads as "nothing happened", which is a measurement, and no
+ * measurement was made.
+ */
+export function movementDecomposition(
+  rows: MovementRow[],
+  scans: MovementScan[],
+  window: { since: string | number; until: string | number },
+): Movement {
+  const sinceMs = parseTs(window.since);
+  const untilMs = parseTs(window.until);
+  if (sinceMs === null || untilMs === null || !(sinceMs < untilMs)) {
+    throw new Error(
+      "movementDecomposition: the window endpoints must be two parseable instants, " +
+        "since before until — got " + JSON.stringify(window),
+    );
+  }
+
+  // ---- the scan side: arrivals, reopenings, and the gate the last scan in the window applied.
+  const refused = { n: 0 };
+  let arrivals = 0;
+  let reopened = 0;
+  let scansInWindow = 0;
+  let skippedScans = 0;
+  let newestTs: number | null = null;
+  let newestScan: MovementScan | null = null;
+  for (const s of scans) {
+    // Grouped scans are counts-only: they carry no per-finding rows, so their deltas describe
+    // nothing this decomposition can reconcile against. Excluded exactly as capacityByMonth
+    // excludes them.
+    if (s["shape"] === "grouped") continue;
+    const t = parseTs(s["ts"]);
+    if (t === null) {
+      skippedScans += 1;
+      continue;
+    }
+    if (!inWindow(t, sinceMs, untilMs)) continue;
+    scansInWindow += 1;
+    arrivals = addCount(arrivals, s["new_count"], refused);
+    reopened = addCount(reopened, s["reopened_count"], refused);
+    if (newestTs === null || t > newestTs) {
+      newestTs = t;
+      newestScan = s;
+    }
+  }
+
+  // The gate as the NEWEST in-window scan applied it — the one whose population the register
+  // is currently showing. `parseSeverities` answers null for absent, empty, full and
+  // unparseable alike, and all four mean the same thing: nothing was gated out.
+  const gate = newestScan ? parseSeverities(newestScan["severities"]) : null;
+  const gateSet = gate && gate.length ? new Set(gate) : null;
+
+  // ---- the row side: resolutions by provenance, the replay, and what could not be placed.
+  let observed = 0;
+  let bounded = 0;
+  let unattributed = 0;
+  let outsideGate = 0;
+  let openAtSince = 0;
+  let openAtUntil = 0;
+  let unplacedRows = 0;
+  for (const row of rows) {
+    const first = parseTs(row.first_seen);
+    const resolved = parseTs(row.resolved_at);
+
+    if (inWindow(resolved, sinceMs, untilMs)) {
+      const src = String(row.resolution_src ?? "").trim().toLowerCase();
+      if (src === "api") observed += 1;
+      else if (src === "disappeared") bounded += 1;
+      else unattributed += 1;
+    }
+
+    // The stock, not a flow: what is open NOW and outside what the last scan looked at.
+    if (gateSet && isOpen(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
+      outsideGate += 1;
+    }
+
+    if (first === null) {
+      unplacedRows += 1;
+      continue;
+    }
+    if (first <= sinceMs && (resolved === null || resolved > sinceMs)) openAtSince += 1;
+    if (first <= untilMs && (resolved === null || resolved > untilMs)) openAtUntil += 1;
+  }
+
+  const netChange = openAtUntil - openAtSince;
+  const identityGap = netChange - (arrivals - observed - bounded + reopened);
+
+  return {
+    arrivals,
+    observed,
+    bounded,
+    reopened,
+    outsideGate,
+    netChange,
+    measured: observed,
+    administrative: bounded,
+    unattributed,
+    identityGap,
+    identityHolds: identityGap === 0,
+    scansInWindow,
+    skippedScans,
+    partialCounts: refused.n,
+    unplacedRows,
+    sinceMs,
+    untilMs,
+  };
+}
+
+/**
+ * The window's two endpoints: the newest flat scan, and the newest flat scan at least
+ * `minDays` older than it.
+ *
+ * THE ENDPOINTS ARE SCANS, NOT CALENDAR DATES, and that is the whole rule. A register only
+ * learns something on the days it looks, so a window running from "28 days ago" to "now"
+ * attributes to this window every arrival a scan happened to first see inside it — including
+ * findings born in a stretch nobody scanned. gas_devsecops/test/movement.test.ts states the
+ * same rule for its week-over-week figure.
+ *
+ * `reason` rather than a sentence: the copy belongs to the surface that prints it. On
+ * `tooClose` the SPAN the log actually offers travels too, so the reader learns "this register
+ * has only been saving scans for 9 days" rather than the bare "no comparison".
+ */
+export type MovementWindow =
+  | { since: number; until: number; days: number; reason: null }
+  | { since: null; until: number | null; days: number | null; reason: "noScans" | "oneScan" | "tooClose" };
+
+export function movementWindowScans(
+  scans: { ts?: unknown; shape?: unknown }[],
+  minDays: number,
+): MovementWindow {
+  const flat = scans
+    .filter((s) => s["shape"] !== "grouped")
+    .map((s) => parseTs(s["ts"]))
+    .filter((t): t is number => t !== null)
+    .sort((a, b) => a - b);
+  if (!flat.length) return { since: null, until: null, days: null, reason: "noScans" };
+  const until = flat[flat.length - 1] as number;
+  const spanDays = Math.round(((until - (flat[0] as number)) / DAY_MS) * 10) / 10;
+  if (flat.length === 1) return { since: null, until, days: 0, reason: "oneScan" };
+  const cutoff = until - minDays * DAY_MS;
+  // Newest-first, so the window is the SHORTEST one that still clears the minimum — the most
+  // recent 28 days of scanning, not the whole ledger.
+  for (let i = flat.length - 2; i >= 0; i -= 1) {
+    const t = flat[i] as number;
+    if (t <= cutoff) {
+      return { since: t, until, days: Math.round(((until - t) / DAY_MS) * 10) / 10, reason: null };
+    }
+  }
+  return { since: null, until, days: spanDays, reason: "tooClose" };
 }

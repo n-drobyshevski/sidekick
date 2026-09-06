@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "88329e33a4fd" : "dev";
+  var BUILD_ID = true ? "725f80210f05" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -1392,6 +1392,65 @@ var Server = (() => {
     return counts;
   }
 
+  // src/domain/compaction.ts
+  var CHECKPOINT_VERSION = 1;
+  function serializeSeverities(sevs) {
+    if (sevs === null || sevs === void 0) return null;
+    const vals = /* @__PURE__ */ new Set();
+    for (const s of sevs) {
+      if (typeof s === "string") {
+        const n = normalizeSeverity(s);
+        if (SELECTABLE_SEVERITIES.includes(n)) vals.add(n);
+      }
+    }
+    if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;
+    const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
+    return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
+  }
+  function parseSeverities(text) {
+    if (typeof text !== "string" || !text) return null;
+    let vals;
+    try {
+      vals = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(vals)) return null;
+    const chosen = new Set(
+      vals.filter((v) => typeof v === "string").map(normalizeSeverity)
+    );
+    const out = SEVERITY_ORDER.filter((s) => chosen.has(s));
+    return out.length ? out : null;
+  }
+  function selectSealCandidates(rows, cutoffMs) {
+    const flatIds = rows.filter((r) => r.shape === "flat").map((r) => r.scan_id);
+    const protectedIds = new Set(flatIds.slice(-MIN_UNSEALED_FLAT_SCANS));
+    const candidates = [];
+    for (const r of rows) {
+      if (protectedIds.has(r.scan_id)) break;
+      const ts = parseTs(r.ts);
+      if (ts === null || ts > cutoffMs) break;
+      candidates.push(r);
+    }
+    return candidates;
+  }
+  function statsEqual(a, b) {
+    if (isMissing(a) && isMissing(b)) return true;
+    if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+      const ka = Object.keys(a);
+      const kb = Object.keys(b);
+      if (ka.length !== kb.length || !ka.every((k) => kb.includes(k))) return false;
+      return ka.every((k) => statsEqual(a[k], b[k]));
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+      return a.length === b.length && a.every((x, i) => statsEqual(x, b[i]));
+    }
+    return a === b;
+  }
+  function isMissing(v) {
+    return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
+  }
+
   // src/domain/program.ts
   var DAY_MS = 864e5;
   function isOpen(status) {
@@ -1670,6 +1729,113 @@ var Server = (() => {
     const firsts = rows.map((r) => parseTs(r.first_seen)).filter((t) => t !== null);
     if (!firsts.length) return null;
     return (nowMs - minNum(firsts)) / DAY_MS;
+  }
+  function addCount(total, v, refused) {
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      refused.n += 1;
+      return total;
+    }
+    return total + v;
+  }
+  function inWindow(t, sinceMs, untilMs) {
+    return t !== null && t > sinceMs && t <= untilMs;
+  }
+  function movementDecomposition(rows, scans, window) {
+    var _a;
+    const sinceMs = parseTs(window.since);
+    const untilMs = parseTs(window.until);
+    if (sinceMs === null || untilMs === null || !(sinceMs < untilMs)) {
+      throw new Error(
+        "movementDecomposition: the window endpoints must be two parseable instants, since before until \u2014 got " + JSON.stringify(window)
+      );
+    }
+    const refused = { n: 0 };
+    let arrivals = 0;
+    let reopened = 0;
+    let scansInWindow = 0;
+    let skippedScans = 0;
+    let newestTs = null;
+    let newestScan = null;
+    for (const s of scans) {
+      if (s["shape"] === "grouped") continue;
+      const t = parseTs(s["ts"]);
+      if (t === null) {
+        skippedScans += 1;
+        continue;
+      }
+      if (!inWindow(t, sinceMs, untilMs)) continue;
+      scansInWindow += 1;
+      arrivals = addCount(arrivals, s["new_count"], refused);
+      reopened = addCount(reopened, s["reopened_count"], refused);
+      if (newestTs === null || t > newestTs) {
+        newestTs = t;
+        newestScan = s;
+      }
+    }
+    const gate2 = newestScan ? parseSeverities(newestScan["severities"]) : null;
+    const gateSet = gate2 && gate2.length ? new Set(gate2) : null;
+    let observed = 0;
+    let bounded = 0;
+    let unattributed = 0;
+    let outsideGate = 0;
+    let openAtSince = 0;
+    let openAtUntil = 0;
+    let unplacedRows = 0;
+    for (const row of rows) {
+      const first = parseTs(row.first_seen);
+      const resolved = parseTs(row.resolved_at);
+      if (inWindow(resolved, sinceMs, untilMs)) {
+        const src = String((_a = row.resolution_src) != null ? _a : "").trim().toLowerCase();
+        if (src === "api") observed += 1;
+        else if (src === "disappeared") bounded += 1;
+        else unattributed += 1;
+      }
+      if (gateSet && isOpen(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
+        outsideGate += 1;
+      }
+      if (first === null) {
+        unplacedRows += 1;
+        continue;
+      }
+      if (first <= sinceMs && (resolved === null || resolved > sinceMs)) openAtSince += 1;
+      if (first <= untilMs && (resolved === null || resolved > untilMs)) openAtUntil += 1;
+    }
+    const netChange = openAtUntil - openAtSince;
+    const identityGap = netChange - (arrivals - observed - bounded + reopened);
+    return {
+      arrivals,
+      observed,
+      bounded,
+      reopened,
+      outsideGate,
+      netChange,
+      measured: observed,
+      administrative: bounded,
+      unattributed,
+      identityGap,
+      identityHolds: identityGap === 0,
+      scansInWindow,
+      skippedScans,
+      partialCounts: refused.n,
+      unplacedRows,
+      sinceMs,
+      untilMs
+    };
+  }
+  function movementWindowScans(scans, minDays) {
+    const flat = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => a - b);
+    if (!flat.length) return { since: null, until: null, days: null, reason: "noScans" };
+    const until = flat[flat.length - 1];
+    const spanDays = Math.round((until - flat[0]) / DAY_MS * 10) / 10;
+    if (flat.length === 1) return { since: null, until, days: 0, reason: "oneScan" };
+    const cutoff = until - minDays * DAY_MS;
+    for (let i = flat.length - 2; i >= 0; i -= 1) {
+      const t = flat[i];
+      if (t <= cutoff) {
+        return { since: t, until, days: Math.round((until - t) / DAY_MS * 10) / 10, reason: null };
+      }
+    }
+    return { since: null, until, days: spanDays, reason: "tooClose" };
   }
 
   // src/domain/settingsLogic.ts
@@ -3008,65 +3174,6 @@ var Server = (() => {
       resolved: parseTs(r["resolved_at"])
     }));
     return summarize(work, opts.now);
-  }
-
-  // src/domain/compaction.ts
-  var CHECKPOINT_VERSION = 1;
-  function serializeSeverities(sevs) {
-    if (sevs === null || sevs === void 0) return null;
-    const vals = /* @__PURE__ */ new Set();
-    for (const s of sevs) {
-      if (typeof s === "string") {
-        const n = normalizeSeverity(s);
-        if (SELECTABLE_SEVERITIES.includes(n)) vals.add(n);
-      }
-    }
-    if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;
-    const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
-    return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
-  }
-  function parseSeverities(text) {
-    if (typeof text !== "string" || !text) return null;
-    let vals;
-    try {
-      vals = JSON.parse(text);
-    } catch {
-      return null;
-    }
-    if (!Array.isArray(vals)) return null;
-    const chosen = new Set(
-      vals.filter((v) => typeof v === "string").map(normalizeSeverity)
-    );
-    const out = SEVERITY_ORDER.filter((s) => chosen.has(s));
-    return out.length ? out : null;
-  }
-  function selectSealCandidates(rows, cutoffMs) {
-    const flatIds = rows.filter((r) => r.shape === "flat").map((r) => r.scan_id);
-    const protectedIds = new Set(flatIds.slice(-MIN_UNSEALED_FLAT_SCANS));
-    const candidates = [];
-    for (const r of rows) {
-      if (protectedIds.has(r.scan_id)) break;
-      const ts = parseTs(r.ts);
-      if (ts === null || ts > cutoffMs) break;
-      candidates.push(r);
-    }
-    return candidates;
-  }
-  function statsEqual(a, b) {
-    if (isMissing(a) && isMissing(b)) return true;
-    if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
-      const ka = Object.keys(a);
-      const kb = Object.keys(b);
-      if (ka.length !== kb.length || !ka.every((k) => kb.includes(k))) return false;
-      return ka.every((k) => statsEqual(a[k], b[k]));
-    }
-    if (Array.isArray(a) && Array.isArray(b)) {
-      return a.length === b.length && a.every((x, i) => statsEqual(x, b[i]));
-    }
-    return a === b;
-  }
-  function isMissing(v) {
-    return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
   }
 
   // src/domain/remediation.ts
@@ -9761,15 +9868,35 @@ var Server = (() => {
       severityCounts: cachedExecutiveSeverityCounts(p)
     }));
   }
+  var MOVEMENT_WINDOW_DAYS = 28;
+  function movementNoteFor(win) {
+    if (win.reason === "noScans") {
+      return "No per-finding scans are saved yet \u2014 nothing to decompose.";
+    }
+    if (win.reason === "oneScan") {
+      return "One scan only \u2014 a movement is a difference between two of them.";
+    }
+    return `No scan at least ${MOVEMENT_WINDOW_DAYS} days older than the latest one` + (win.days === null ? "" : ` \u2014 the saved scans span ${win.days} days`) + ".";
+  }
   function scanHistoryData() {
     var _a;
-    const scans = loadScanRows().slice().reverse();
+    const scanRows = loadScanRows();
+    const scans = scanRows.slice().reverse();
     const base = visibleBase(loadBaseRows());
     const open = base.filter((r) => r.status === "OPEN").length;
     const resolved = base.filter((r) => r.status === "RESOLVED").length;
     const { overall } = mttrFromLedger(base);
+    const win = movementWindowScans(scanRows, MOVEMENT_WINDOW_DAYS);
+    const movement2 = win.since !== null ? movementDecomposition(
+      base,
+      scanRows,
+      { since: win.since, until: win.until }
+    ) : null;
     return {
       scans,
+      movement: movement2,
+      movementWindow: win,
+      movementNote: movement2 ? null : movementNoteFor(win),
       kpis: {
         tracked: base.length,
         open,
@@ -9781,7 +9908,9 @@ var Server = (() => {
   var cachedScanHistoryData = () => (
     // "scanHistory" → "scanHistory2": the KPI band now drops no-fix findings when the toggle is
     // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
-    durablyCached("scanHistory2", { showNoFix: getShowNoFix2() }, scanHistoryData)
+    // "scanHistory2" → "scanHistory3": the payload carries the movement decomposition now, and a
+    // stale entry would serve the section's empty state over a window that is measurable.
+    durablyCached("scanHistory3", { showNoFix: getShowNoFix2() }, scanHistoryData)
   );
   function getScanHistory(_p) {
     return run(() => {

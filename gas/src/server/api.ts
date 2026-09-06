@@ -1872,16 +1872,48 @@ export function getExecutivePage(p?: unknown): ApiResult {
 
 // --------------------------------------------------------------------- scan history
 
+// The movement window is 28 days wide and BOUNDED BY SCANS, not by calendar dates — see
+// program.movementWindowScans for why. The COPY lives here rather than in the domain: the
+// domain answers with a reason code, and a reason a reader can act on is a fact about this
+// page ("run another scan"), not about the arithmetic.
+const MOVEMENT_WINDOW_DAYS = 28;
+
+function movementNoteFor(win: program.MovementWindow): string {
+  if (win.reason === "noScans") {
+    return "No per-finding scans are saved yet — nothing to decompose.";
+  }
+  if (win.reason === "oneScan") {
+    return "One scan only — a movement is a difference between two of them.";
+  }
+  return `No scan at least ${MOVEMENT_WINDOW_DAYS} days older than the latest one`
+    + (win.days === null ? "" : ` — the saved scans span ${win.days} days`)
+    + ".";
+}
+
 function scanHistoryData(): Rec {
-  const scans = ledgerStore.loadScanRows().slice().reverse(); // newest first
+  const scanRows = ledgerStore.loadScanRows();
+  const scans = scanRows.slice().reverse(); // newest first
   // KPI band only: drop no-fix findings when the toggle is off, so tracked/open/resolved/
   // median match the rest of the dashboard. The scans table (+ delete flow) stays unfiltered.
   const base = visibleBase(ledgerStore.loadBaseRows() as unknown as Rec[]) as unknown as BaseRow[];
   const open = base.filter((r) => r.status === "OPEN").length;
   const resolved = base.filter((r) => r.status === "RESOLVED").length;
   const { overall } = mttrFromLedger(base as unknown as Rec[]);
+  // The decomposition runs over the SAME `base` the KPI band counts, so "the open count moved
+  // N" and "Currently open" cannot describe two different populations on one page.
+  const win = program.movementWindowScans(scanRows as unknown as Rec[], MOVEMENT_WINDOW_DAYS);
+  const movement = win.since !== null
+    ? program.movementDecomposition(
+      base as unknown as program.MovementRow[],
+      scanRows as unknown as Rec[],
+      { since: win.since, until: win.until },
+    )
+    : null;
   return {
     scans,
+    movement,
+    movementWindow: win,
+    movementNote: movement ? null : movementNoteFor(win),
     kpis: {
       tracked: base.length,
       open,
@@ -1894,7 +1926,9 @@ function scanHistoryData(): Rec {
 const cachedScanHistoryData = () =>
   // "scanHistory" → "scanHistory2": the KPI band now drops no-fix findings when the toggle is
   // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
-  durablyCached("scanHistory2", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
+  // "scanHistory2" → "scanHistory3": the payload carries the movement decomposition now, and a
+  // stale entry would serve the section's empty state over a window that is measurable.
+  durablyCached("scanHistory3", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
 
 export function getScanHistory(_p?: unknown): ApiResult {
   return run(() => {
