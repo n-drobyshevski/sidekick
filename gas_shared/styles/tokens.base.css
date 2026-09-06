@@ -199,6 +199,24 @@
   /* Fully rounded: chips, dots and meter tracks. Was a bare 999px in ~30 places. */
   --radius-pill: 999px;
 
+  /* THE ONE "NOT MEASURED" FILL, as a `background-image`.
+     Three hatches had grown here independently — `.axis-bar__hatch` (a white 45-degree comb
+     over a monotone segment), `.sevbar-seg--empty` (the same comb over the severity track)
+     and the AARS gain/cap ramps in the point rail — each spelling its own angle, its own
+     period and its own alpha for the same claim: THIS PART IS NOT A MEASUREMENT. Three
+     spellings of one meaning is exactly the drift a token ends.
+
+     Ink at an alpha, not a hue: an achromatic fill is the one kind forced-colors inverts
+     toward the forced foreground while KEEPING its alpha (see components.css's forced-colors
+     note for the measurement), so a hatch drawn this way survives High Contrast without
+     `forced-color-adjust: none` pinning near-black onto a possibly-black ground.
+
+     NEW WORK ONLY. The three hatches above keep their own rules — repointing them is a
+     visual change to shipped pictures and belongs in its own measured round, not in the
+     commit that introduces the token. */
+  --hatch: repeating-linear-gradient(
+    45deg, transparent, transparent 3px, rgba(0, 0, 0, 0.14) 3px, rgba(0, 0, 0, 0.14) 6px);
+
   /* The neutral wash under a meter/bar track, and the one under a hovered flat control.
      Both were open-coded per component and had drifted across five alpha values
      (0.03…0.05 for hover), which is five slightly different answers to one question. */

@@ -1,0 +1,400 @@
+#!/usr/bin/env node
+// A Playwright walker over the DevSecOps SPA's OWN routes — the rendered-page complement of
+// gas_shared/measure.mjs. That script measures the SOURCE (line counts, greps, a scorecard).
+// This one measures what a reader actually SEES when a route settles: words, bare numbers,
+// table cells, pictures — the wave's whole claim ("less text, fewer simultaneous figures,
+// information carried visually") is a claim about THIS, not about source line counts, and
+// nothing in this repo checked it before R6.
+//
+// USAGE
+//   node dev/density.mjs --port 8789 [--viewports 1280,640,360] [--routes a,b] [--noseed]
+//                         [--out file.json] [--playwright <module path>]
+//   node dev/density.mjs --diff before.json after.json
+//
+// ROUTES COME FROM app.js's OWN PAGES TABLE (densityModel.mjs's `parsePages`, the exact regex
+// test/pagesLit.test.js's own parser uses), never hand-typed here — a renamed or added route
+// shows up next run with no second list to forget.
+//
+// EVERY COUNT IS DERIVED, NOT TYPED (gas_shared/measure.mjs's own rule) — every figure below
+// comes from walking the ACTUAL rendered DOM of the actual dev server, every run.
+//
+// PLAYWRIGHT IS NEVER INSTALLED BY THIS SCRIPT. Chromium is preinstalled here
+// (`PLAYWRIGHT_BROWSERS_PATH=/opt/pw-browsers`) and `playwright install` is a network call
+// this tool must never make. Loading the PACKAGE is separate from loading the BROWSER:
+// `--playwright <path>` points this script at a `playwright` install off gas_devsecops's own
+// node_modules chain (a global install, or a scratch one); the browser binary is found via
+// the environment variable above regardless of which package loads it.
+//
+// WHAT THIS FILE MUST NOT DO: decide what counts as a word, a number, a prose block, or a
+// diff — those are pure questions with pure answers, and densityModel.mjs holds them so
+// vitest can pin them with no browser. This file's job is opening pages, waiting for them to
+// settle, and pulling raw material (a serialized DOM subtree, a scrollWidth, which triggers
+// opened on focus) out of a live Chromium.
+
+import { execFileSync } from "node:child_process";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+
+import {
+  countNumericTokens, countVisible, countWords, collectProseBlocks, diffReport, extractText,
+  formatDiffTable, formatTable, isIconSvg, overflowSummary, parsePages, PROSE_MIN_WORDS,
+} from "./densityModel.mjs";
+
+const HERE = dirname(fileURLToPath(import.meta.url)); // …/gas_devsecops/dev
+const APP_ROOT = dirname(HERE); // …/gas_devsecops
+const DEFAULT_VIEWPORTS = [1280, 640, 360];
+const SETTLE_MS = 350; // short settle after skeletons clear: chart draw, one layout tick
+const SKELETON_TIMEOUT_MS = 8000;
+
+// ---- CLI ----
+
+function usage() {
+  return [
+    "Usage:",
+    "  node dev/density.mjs --port <n> [--viewports 1280,640,360] [--routes a,b] [--noseed]",
+    "                        [--out file.json] [--playwright <module path>]",
+    "  node dev/density.mjs --diff before.json after.json",
+  ].join("\n");
+}
+
+function parseArgs(argv) {
+  const out = { viewports: DEFAULT_VIEWPORTS, noseed: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === "--port") out.port = Number(argv[++i]);
+    else if (a === "--viewports") out.viewports = argv[++i].split(",").map(Number);
+    else if (a === "--routes") out.routes = argv[++i].split(",").map((s) => s.trim());
+    else if (a === "--noseed") out.noseed = true;
+    else if (a === "--out") out.out = argv[++i];
+    else if (a === "--playwright") out.playwright = argv[++i];
+    else if (a === "--diff") { out.diff = [argv[++i], argv[++i]]; }
+    else { console.error(`Unrecognised argument: ${a}\n\n${usage()}`); process.exit(2); }
+  }
+  return out;
+}
+
+// ---- Loading Playwright — never `playwright install`, see the header ----
+
+/** A package DIRECTORY -> its ESM entry, via its own package.json — so `--playwright`
+ *  accepts a package dir (a global install) or an exact entry file, caller's choice. */
+function resolveEntry(path) {
+  if (!existsSync(path)) return path;
+  if (!statSync(path).isDirectory()) return path;
+  const pkgPath = join(path, "package.json");
+  if (!existsSync(pkgPath)) return path;
+  const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
+  const exp = pkg.exports && pkg.exports["."];
+  const entry = (exp && (exp.import || exp.default)) || pkg.module || pkg.main || "index.js";
+  return join(path, entry);
+}
+
+async function loadPlaywright(pathArg) {
+  const isPathLike = pathArg && (isAbsolute(pathArg) || pathArg.startsWith(".") || existsSync(pathArg));
+  const target = pathArg ? resolveEntry(pathArg) : "playwright";
+  try {
+    return isPathLike ? await import(pathToFileURL(target).href) : await import(target);
+  } catch (e) {
+    console.error(`Could not load Playwright (${target}): ${e.message}`);
+    console.error('Install it with "npm i -D playwright" (a scratch directory is fine — this '
+      + "script never installs it itself), or pass --playwright <package dir or entry file>. "
+      + "Chromium is already at PLAYWRIGHT_BROWSERS_PATH; only the npm package must be reachable.");
+    process.exit(2);
+  }
+}
+
+/** Falls back to the preinstalled binary's exact path on a version mismatch — never a
+ *  `playwright install` retry, per the header. */
+async function launchChromium(chromium) {
+  try {
+    return await chromium.launch({ headless: true });
+  } catch (e) {
+    console.error(`Default Chromium launch failed (${e.message}); retrying with the exact `
+      + "preinstalled binary path.");
+    return chromium.launch({ headless: true, executablePath: "/opt/pw-browsers/chromium" });
+  }
+}
+
+// ---- Serializing a live page into the plain-object tree densityModel.mjs's pure functions read ----
+
+/** Runs INSIDE the page (page.evaluate). Self-contained on purpose — no reference to any
+ *  module-level helper — because page.evaluate() ships this function's SOURCE TEXT into the
+ *  browser and re-declares it there; a closure over this file's imports would simply be
+ *  undefined on the other side. */
+function serializeMain() {
+  function serialize(node) {
+    if (node.nodeType === 3) {
+      const t = node.nodeValue;
+      return t && t.trim() ? t : null;
+    }
+    if (node.nodeType !== 1) return null;
+    const tag = node.tagName;
+    const classes = Array.from(node.classList || []);
+    const out = { tag, classes, hidden: node.hasAttribute("hidden"), children: [] };
+    if (tag === "DETAILS") out.open = node.hasAttribute("open");
+    if (tag === "SVG" || tag === "CANVAS") {
+      const r = node.getBoundingClientRect();
+      out.rect = { width: r.width, height: r.height };
+    }
+    for (const child of node.childNodes) {
+      const c = serialize(child);
+      if (c !== null) out.children.push(c);
+    }
+    return out;
+  }
+  const root = document.querySelector("main") || document.querySelector("#app");
+  return root ? { tag: root.tagName, root: true, tree: serialize(root) } : null;
+}
+
+// ---- One route, one viewport ----
+
+function buildUrl(port, route, noseed) {
+  const q = noseed ? "?dry&noseed" : "?dry";
+  return `http://localhost:${port}/${q}#/${route}`;
+}
+
+/** One list, not two: the fallback "nothing rendered" shape below is DERIVED from this same
+ *  list rather than a second hand-typed object, so a visual class added here cannot drift out
+ *  of sync with the all-zero shape a failed route falls back to. */
+const VISUAL_PREDICATES = [
+  ["canvas", (n) => n.tag === "CANVAS"],
+  ["svg", (n) => n.tag === "SVG" && !isIconSvg(n)],
+  ["meter", (n) => n.classes.includes("meter")],
+  ["sevbar", (n) => n.classes.includes("sevbar")],
+  ["axisBar", (n) => n.classes.includes("axis-bar")],
+  ["isotype", (n) => n.classes.includes("isotype")],
+  ["quad", (n) => n.classes.includes("quad")],
+  ["spark", (n) => n.classes.includes("spark")],
+];
+
+function countVisuals(tree) {
+  const visuals = { total: 0 };
+  for (const [name, pred] of VISUAL_PREDICATES) {
+    visuals[name] = tree ? countVisible(tree, pred) : 0;
+    visuals.total += visuals[name];
+  }
+  return visuals;
+}
+
+/** Tab to every VISIBLE `.tip-trigger` and ask whether the shared `.tip` card (one node,
+ *  portaled — see gas_shared/ui/tip.js's own header) opens on focus. Reported by TRIGGER
+ *  TEXT, not just a count, so a failure names the tip a keyboard user actually cannot reach.
+ *
+ *  `:visible`, not a bare `.tip-trigger`: a settings TAB panel this page is not showing right
+ *  now (`[hidden]`, see densityModel.mjs's own header) still has real `.tip-trigger` buttons
+ *  in the DOM, and `.focus()` on one sitting under a `display:none` ancestor is a silent
+ *  browser no-op — the first live run of this walker reported that as a keyboard-
+ *  reachability FAILURE, which was a bug in the walker counting an off-screen tab, not a bug
+ *  in the page. */
+async function measureTips(page) {
+  const triggers = page.locator(".tip-trigger:visible");
+  const count = await triggers.count();
+  const failures = [];
+  for (let i = 0; i < count; i++) {
+    const trigger = triggers.nth(i);
+    const label = ((await trigger.textContent()) || "").trim().replace(/\s+/g, " ") || `#${i}`;
+    await trigger.focus();
+    // Focus is the zero-delay path in tipPlace.js's tipDelay() — no cold-open wait needed —
+    // but a settle margin is cheap and keeps this off a real race with the open transition.
+    await page.waitForTimeout(60);
+    const open = await page.locator(".tip.open").count();
+    if (open === 0) failures.push(label);
+    await page.evaluate(() => { if (document.activeElement) document.activeElement.blur(); });
+  }
+  return { tips: count, tipsReachable: count - failures.length, tipFailures: failures };
+}
+
+async function measureRoute(page, port, route, viewportWidth, noseed) {
+  const url = buildUrl(port, route, noseed);
+  const consoleErrors = [];
+  const onConsole = (msg) => { if (msg.type() === "error") consoleErrors.push(msg.text()); };
+  const onPageError = (err) => consoleErrors.push(String(err));
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+
+  let settled = true;
+  try {
+    await page.goto(url, { waitUntil: "networkidle", timeout: 20000 });
+  } catch {
+    // networkidle can fail to quiesce on a page holding an open long-poll or a timer this
+    // dev harness legitimately keeps running; the skeleton check right below is the real
+    // settle gate, so a networkidle timeout alone does not fail the route.
+  }
+  try {
+    await page.waitForFunction(
+      () => document.querySelectorAll(".skeleton").length === 0,
+      { timeout: SKELETON_TIMEOUT_MS },
+    );
+  } catch {
+    settled = false;
+  }
+  await page.waitForTimeout(SETTLE_MS);
+  const skeletonsLeft = await page.locator(".skeleton").count();
+  if (skeletonsLeft > 0) settled = false;
+
+  const serialized = await page.evaluate(serializeMain);
+  const scrollWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+  const tips = await measureTips(page);
+
+  page.off("console", onConsole);
+  page.off("pageerror", onPageError);
+
+  if (!serialized) {
+    return {
+      settled: false, error: "no <main> or #app found", scrollWidth, viewportWidth,
+      words: 0, proseBlocks: 0, proseWords: 0, numbers: 0, tableCells: 0, tables: 0,
+      visuals: countVisuals(null), ...tips, consoleErrors,
+    };
+  }
+
+  const tree = serialized.tree;
+  const prose = collectProseBlocks(tree, PROSE_MIN_WORDS);
+  return {
+    settled,
+    words: countWords(extractText(tree, { excludeTables: true })),
+    proseBlocks: prose.length,
+    proseWords: prose.reduce((s, p) => s + p.words, 0),
+    numbers: countNumericTokens(extractText(tree, { excludeTables: false })),
+    tableCells: countVisible(tree, (n) => n.tag === "TD"),
+    tables: countVisible(tree, (n) => n.tag === "TABLE"),
+    visuals: countVisuals(tree),
+    scrollWidth,
+    viewportWidth,
+    ...tips,
+    consoleErrors,
+  };
+}
+
+// ---- Reporting ----
+
+const MAIN_COLUMNS = [
+  ["route", (r) => r.route],
+  ["words", (r) => r.words],
+  ["proseBlocks", (r) => r.proseBlocks],
+  ["proseWords", (r) => r.proseWords],
+  ["numbers", (r) => r.numbers],
+  ["tableCells", (r) => r.tableCells],
+  ["visuals", (r) => r.visuals.total],
+  ["tips", (r) => r.tips],
+  ["tipsReachable", (r) => r.tipsReachable],
+  ["scrollWidth", (r) => r.scrollWidth],
+];
+
+function printMainTable(routeRows) {
+  const headers = MAIN_COLUMNS.map(([k]) => k);
+  const rows = routeRows.map((r) => MAIN_COLUMNS.map(([, get]) => get(r)));
+  console.log(formatTable(headers, rows));
+}
+
+function gitSha() {
+  try {
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: APP_ROOT, encoding: "utf8" }).trim();
+  } catch {
+    return null;
+  }
+}
+
+// ---- Diff mode ----
+
+function runDiff(beforePath, afterPath) {
+  const before = JSON.parse(readFileSync(beforePath, "utf8"));
+  const after = JSON.parse(readFileSync(afterPath, "utf8"));
+  const rows = diffReport(before, after, "1280");
+  console.log(`\n${before.meta && before.meta.label ? before.meta.label : beforePath}`
+    + ` -> ${after.meta && after.meta.label ? after.meta.label : afterPath} (viewport 1280)\n`);
+  console.log(formatDiffTable(rows));
+  const unmoved = rows.filter((r) => Object.values(r.diff).every((d) => d.delta === 0));
+  if (unmoved.length) {
+    console.log(`\n${unmoved.length} route(s) moved on NOT ONE metric: `
+      + `${unmoved.map((r) => r.route).join(", ")} — a finding, per CLAUDE.md, not a pass.`);
+  }
+}
+
+// ---- Measure mode ----
+
+async function runMeasure(args) {
+  if (!args.port) {
+    console.error(`--port is required for a measurement run.\n\n${usage()}`);
+    process.exit(2);
+  }
+  const appSrc = readFileSync(join(APP_ROOT, "src/client/js/app.js"), "utf8");
+  const allRoutes = parsePages(appSrc).map((p) => p.route);
+  if (!allRoutes.length) {
+    console.error("parsePages() found no routes in app.js's PAGES table — refusing to report "
+      + "an empty walk as a measurement.");
+    process.exit(1);
+  }
+  const routes = args.routes && args.routes.length
+    ? allRoutes.filter((r) => args.routes.includes(r))
+    : allRoutes;
+  const missing = (args.routes || []).filter((r) => !allRoutes.includes(r));
+  if (missing.length) {
+    console.error(`--routes named route(s) not in app.js's PAGES table: ${missing.join(", ")}`);
+    process.exit(2);
+  }
+
+  const pw = await loadPlaywright(args.playwright);
+  const browser = await launchChromium(pw.chromium);
+
+  const doc = {
+    meta: {
+      sha: gitSha(), when: new Date().toISOString(), port: args.port,
+      viewports: args.viewports, noseed: args.noseed,
+    },
+    routes: {},
+  };
+
+  try {
+    for (const width of args.viewports) {
+      const context = await browser.newContext({ viewport: { width, height: 900 } });
+      const page = await context.newPage();
+      for (const route of routes) {
+        const result = await measureRoute(page, args.port, route, width, args.noseed);
+        doc.routes[route] = doc.routes[route] || {};
+        doc.routes[route][String(width)] = result;
+        const tag = `${route} @ ${width}px`;
+        if (!result.settled) console.error(`WARNING: ${tag} did not settle (a .skeleton `
+          + "was still present after the wait) — its counts are suspect, not a measurement.");
+        if (result.consoleErrors.length) console.error(`WARNING: ${tag} logged console `
+          + `error(s): ${result.consoleErrors.join(" | ")}`);
+      }
+      await context.close();
+    }
+  } finally {
+    await browser.close();
+  }
+
+  if (args.out) {
+    writeFileSync(args.out, JSON.stringify(doc, null, 2));
+    console.log(`Wrote ${args.out}`);
+  }
+
+  const primary = String(args.viewports[0]);
+  const mainRows = routes.map((route) => {
+    const r = doc.routes[route][primary];
+    return { route, ...r };
+  });
+  const suspicious = mainRows.filter((r) => r.words === 0);
+  console.log(`\n== gas_devsecops density @ ${primary}px `
+    + `(sha ${doc.meta.sha ? doc.meta.sha.slice(0, 12) : "unknown"}, ${doc.meta.when}) ==\n`);
+  printMainTable(mainRows);
+  if (suspicious.length) {
+    console.log(`\nSUSPECT: 0 words at ${primary}px on ${suspicious.map((r) => r.route).join(", ")}`
+      + " — investigate before trusting this run (a page with visible prose reading 0 means "
+      + "the walker missed something, not that the page is silent).");
+  }
+  console.log("");
+  for (const width of args.viewports) {
+    const rows = routes.map((route) => ({ route, scrollWidth: doc.routes[route][String(width)].scrollWidth }));
+    console.log(`  ${width}px: ${overflowSummary(rows, width)}`);
+  }
+}
+
+// ---- Entry ----
+
+const args = parseArgs(process.argv.slice(2));
+if (args.diff) {
+  runDiff(args.diff[0], args.diff[1]);
+} else {
+  await runMeasure(args);
+}

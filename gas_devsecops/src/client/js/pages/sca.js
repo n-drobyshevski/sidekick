@@ -31,10 +31,11 @@ import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import {
   DEFAULT_PAGE_SIZE, absent, absentText, boundedDays, chartTable, chartTableModel,
-  closeActiveSheet, dataTable, days1, denomNote, el, emptyState, errorState, firstRunNotice,
-  fmtCount, glossaryTip, heroStat, kpiCard, measuredEmpty, meter, num, onPageTeardown,
-  pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
-  skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate, triCell,
+  closeActiveSheet, dataTable, days1, denomNote, el, emptyState, errorState, figureCard,
+  firstRunNotice, fmtCount, glossaryTip, heroStat, kpiCard, measuredEmpty, meter, num,
+  onPageTeardown, pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries, sevKeyRow,
+  sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter, tipLabel, togglePills,
+  fmtDate, triCell,
 } from "../ui.js";
 
 // =========================================================================================
@@ -50,7 +51,14 @@ import {
 //
 // This file re-exports `pct1` and `boundedDays` because `test/pagesRegisters.test.js` —
 // which this package may not edit — still imports both from here by name.
-export { boundedDays, pct1 };
+//
+// `figureCard` JOINS THEM, and for a different reason: it is no longer this page's, either.
+// It was a four-line wrapper over `kpiCard` that appended a `denomNote` paragraph, and the
+// paragraph is what this wave is removing from the surface — 22 of them were on these three
+// register pages at once. `gas_shared/ui/figures.js` owns the shape now: the same card, the
+// denominator sentence PREPENDED to the tip on the label and written to `data-denominator`,
+// no paragraph. `sast.js` and `secrets.js` import the name from here, so the name stays here.
+export { boundedDays, figureCard, pct1 };
 
 /**
  * The first-run decision, shared by sca.js, sast.js and secrets.js.
@@ -106,19 +114,29 @@ export function yesNo(v) {
   return v ? "Yes" : "No";
 }
 
-/** A card whose figure is a rate or a count, with its denominator sentence beneath it. */
-export function figureCard({ label, value, sub, help, denominator, chip }) {
-  const card = kpiCard(label, value, sub || "", chip || null, help || null);
-  if (denominator) card.append(denomNote(denominator));
-  return card;
-}
-
-/** A `.card` with its section label, in the one arrangement every block here uses. */
+/**
+ * A `.card` with its section label, in the one arrangement every block here uses.
+ *
+ * `help` TAKES EVERY tipLabel SHAPE NOW, and the string case is the one that could NOT be
+ * routed through `tipLabel` — there, a bare string is literal tip COPY, and here it has
+ * always meant a glossary id. So a string still goes to `glossaryTip` (unchanged behaviour,
+ * and `test/pagesLit.test.js`'s gate 6/7 reads exactly those string literals to check every
+ * id is defined); an object goes to `tipLabel`, which is what lets a section heading carry
+ * `{lines}` — the method paragraph that used to be printed under it — or `{lines, term}`,
+ * the paragraph plus the route to the book. Object shapes are invisible to gate 6/7's regex,
+ * which is correct: there is no literal id in them to check.
+ */
 export function sectionCard(title, help, ...kids) {
   return el("section", { class: "card" },
-    el("h2", { class: "section-label" }, help ? glossaryTip(title, help) : title),
+    el("h2", { class: "section-label" }, sectionHeading(title, help)),
     ...kids,
   );
+}
+
+function sectionHeading(title, help) {
+  if (!help) return title;
+  if (typeof help === "string") return glossaryTip(title, help);
+  return tipLabel(title, help);
 }
 
 /**
