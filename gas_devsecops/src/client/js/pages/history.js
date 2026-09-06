@@ -273,7 +273,6 @@ function spiralSvg(layout) {
     focusable: "false",
     "aria-label": `Open findings per scan on a quarterly spiral; ${n} ${pluralize(n, "scan")}, `
       + `${layout.turns} ${pluralize(layout.turns, "quarter")}`,
-    style: "width: 100%; max-width: 360px; height: auto; display: block",
   });
   for (const q of layout.quarters) {
     svg.append(svgEl("circle", {
@@ -317,7 +316,7 @@ export async function renderHistory(host, _params, _ctx) {
   // `renderSpiral`, not here, so that an off toggle leaves nothing behind at all — a host div
   // with no children renders as nothing.
   const spiralHost = el("div", {});
-  const chartsHost = el("div", { class: "chart-grid" });
+  const chartsHost = el("div", { class: "chart-row" });
   // ONE WRAPPER FOR EVERY SECTION BELOW THE KPI ROW, so a first run can clear four headings
   // and their content together in one call rather than leaving them standing over an empty
   // box — the same "label lives with its box" shape mttr.js/executive.js's own `paint` use,
@@ -602,7 +601,7 @@ export async function renderHistory(host, _params, _ctx) {
     }
     host.append(
       el("p", { class: "section-note" }, block.view.sentence),
-      el("div", { class: "chart-grid" },
+      el("div", { class: "chart-row chart-row--pair" },
         causeTable("Measured remediation", block.view.measuredRows),
         causeTable("Administrative", block.view.administrativeRows)),
     );

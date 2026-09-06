@@ -95,3 +95,136 @@
    side by side, so capping the card here is exactly as correct there as at 1280px, and an
    unconditional rule is simpler than a breakpoint nothing else in the header respects. */
 .page-header > .kpi-card { max-width: 22rem; }
+
+/* --------------------------------------------------------------------- chart-row pairs
+   `.chart-row` (tables.css) is `repeat(auto-fit, minmax(420px, 1fr))` - right for a page's
+   two independent charts, too wide for Scan history's pair of small movement-cause tables,
+   which have nothing to plot and read fine well under 420px. `--pair` is the same idea at a
+   floor measured against a cause table's own content instead of a chart's. */
+.chart-row--pair { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+
+/* ------------------------------------------------------------------------ .section-note
+   The line under a section heading that is prose, not a chart caption (`.chart-note` is the
+   canvas's own version of this same idea, in tables.css) - what a table below is scoped to,
+   or the one sentence a movement block earns instead of five. Pulled up half a step toward
+   its heading, the way a caption reads as belonging to what is above it rather than what
+   follows; capped at `--measure` so a wide viewport does not stretch a sentence edge to edge. */
+.section-note {
+  margin: calc(-1 * var(--space-1)) 0 var(--space-3);
+  font-size: var(--fs-label); color: var(--text-2); max-width: var(--measure);
+}
+
+/* --------------------------------------------------------------------------- .scan-scopes
+   The Executive front door's "what that sync covered" list - one register per line, muted
+   against the paragraphs around it. A bare `<ul>` carries the browser's own 40px indent and
+   paragraph-height gaps, which is print-era default styling this app never uses anywhere
+   else; `display: grid` gives it the same row rhythm as `.movement-rows` beside it, and
+   `::marker` (the same idiom `.fixnext-item` above already uses) lets the bullet itself go
+   muted without a `list-style: none` + hand-drawn dot detour. */
+.scan-scopes {
+  display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; padding-left: 1.1em;
+}
+.scan-scopes li::marker { color: var(--text-3); }
+
+/* ------------------------------------------------------------------------------ .spiral
+   Scan history's quarterly spiral (history.js, spiralSvg). The sizing used to be an inline
+   `style` on the element itself; a rule here is the one every other sized SVG in this app
+   already gets (the isotype marks above are the HTML-background version of the same
+   problem). */
+.spiral { width: 100%; max-width: 360px; height: auto; display: block; margin: 0 auto var(--space-3); }
+/* Forced colours drop an SVG `fill` the same way base.css's isotype comment already found
+   for a plain `background`: a filled circle or square resolves to Canvas, the page's own
+   ground, and the scan marks disappear against it while the quarter rings (already
+   `fill: none`, stroke only) survive untouched. `stroke` is not discarded the way `fill` is
+   - same asymmetry the isotype fix relies on - so every mark gets an explicit CanvasText
+   outline beside its (now invisible) fill, the same fallback beside the isotype one above. */
+@media (forced-colors: active) {
+  .spiral circle, .spiral rect { stroke: CanvasText; stroke-width: 1px; }
+}
+
+/* ------------------------------------------------------------------- rail status dot
+   `.rail-status-dot` (gas_shared/styles/base.css) is a 9px mark - all the colour a scan's
+   state needs, but nine pixels of hit target and, until app.js's own fix, a span wearing
+   `aria-hidden` AND `tabindex=0` (a contradiction axe calls aria-hidden-focus). It is a real
+   `<button>` now (app.js), so this is chrome, not colour: WCAG 2.2 SC 2.5.8 wants 24x24px of
+   TARGET even though the mark painted inside it stays 9px - `padding` plus
+   `background-clip: content-box` grows the hit box without growing the dot, and the negative
+   margin keeps the surrounding rail layout exactly as tight as it was when this was a span.
+   The state colours (`.ok`/`.warn`/`.bad`/`.neutral`/`.scanning`, base.css) keep painting the
+   9px content box unchanged - only the box the pointer and the focus ring measure grows. */
+.sidebar .rail-status-dot {
+  width: 24px; height: 24px; padding: 7.5px; box-sizing: border-box;
+  background-clip: content-box; margin: -7.5px auto;
+}
+/* Reset of the generic `button` chrome (base.css: border, box-shadow, min-height) a dot
+   never wanted - it is a mark with a tip and a destination, not a bordered control sitting
+   in the icon rail beside the Run sync button. */
+.sidebar button.rail-status-dot { border: none; box-shadow: none; min-height: 0; cursor: pointer; }
+
+/* --------------------------------------------------------------- .settings-panel__head
+   Ported from gas (src/client/styles/pages.css:520-522) rather than left un-set: a panel
+   with no description sits its body a touch tighter under the title. Under the CURRENT token
+   scale both cases resolve to the same `--space-3`, so this is a no-op today (gas's own copy
+   already is, per gas_shared/styles/settings.css's comment) - kept anyway for the same reason
+   gas kept it, so the two apps' settings panels do not silently diverge the day either one's
+   spacing tokens move. Flagged as a `gas_shared/styles/settings.css` candidate rather than
+   promoted here, because promoting a no-op needs its own measured round, not a side effect
+   of this one. */
+.settings-panel__head:not(:has(.settings-panel__desc)) + .settings-panel__body {
+  margin-top: var(--space-3);
+}
+
+/* ---------------------------------------------------------------------------- responsive
+   `.sev-fan` (MTTR's per-severity survival curves) and `.chart-row--pair` (Scan history's
+   movement-cause tables) both use `auto-fit` with a floor - 280px and 300px - that two
+   columns can still clear on a narrow phone before the text inside each card starts
+   crowding. Below 640px a single column reads better than two cramped ones.
+
+   `.chart-row` itself (tables.css: `repeat(auto-fit, minmax(420px, 1fr))`) joins the same
+   query for a different reason than its two relatives above: its 420px floor is not too
+   CROWDED at 360px, it is simply wider than the viewport - measured, every route that draws
+   one (Dependencies, Code, Repositories, Scan history) rendered exactly 420 + 16px of page
+   padding regardless of how many cards it holds, because `auto-fit` never lets a track
+   shrink below its `minmax` floor even down to a single column. `1fr` alone (no floor)
+   collapses it to the real available width instead, the same fix already applied to
+   `.page-header` below for the same class of overflow. */
+@media (max-width: 640px) {
+  .sev-fan, .chart-row--pair, .chart-row { grid-template-columns: 1fr; }
+}
+
+/* --------------------------------------------------------------------- horizontal overflow
+   Measured at 640px and 360px on the seeded fixture (`overflow.mjs` in the scratchpad):
+   Coverage & efficiency, Code, Dependencies and Secrets rendered 888/978/1201/1145px wide at
+   a 640px viewport, and DESIGN.md/the artifact rules are the same rule stated twice - wide
+   content scrolls inside its own container, the page body never does.
+
+   THE TABLE WAS NEVER THE PROBLEM - `.table-wrap` (tables.css) already clips its `table.data`
+   with `overflow-x: auto`, and the visible table stayed inside its box at every width tested.
+   What escaped is `.sr-only` (base.css: `position: absolute`, no `top`/`left` of its own) -
+   every `tip()` call drops one of these beside its trigger for the description a screen
+   reader needs (gas_shared/ui/tip.js:377), and a register row's severity/status cells anchor
+   several. `.table-wrap` itself is never `position`ed, so an absolutely-positioned
+   description with no positioned ancestor between it and the document root takes its STATIC
+   POSITION - computed from where the WIDE, un-scrolled table would have placed it, a column
+   or two past the visible edge - and resolves that position against the document's own
+   un-clipped flow instead of `.table-wrap`'s scrollport. The description is 1x1px and
+   invisible either way; the bug is that its LAYOUT BOX still counts toward
+   `document.documentElement.scrollWidth`, which is what actually measures 1201px on
+   Dependencies while every visible pixel on the page sits inside 640. Giving `.table-wrap`
+   `position: relative` makes it the containing block instead, which puts the very same
+   description back inside the box that already clips its table - measured: this alone takes
+   all four routes from 888/978/1201/1145 to exactly 640 (the viewport) with nothing else
+   touched. gas_shared owns both `.table-wrap` and `.sr-only`; positioning the wrap is the
+   one-line, app-local answer, so this is not a shared-file change. */
+.table-wrap { position: relative; }
+
+/* The second, independent overflow, only visible once the one above stops masking it: at a
+   360px viewport `.page-header`'s two columns (`gas_shared/styles/components.css`:
+   `minmax(160px, 0.5fr) minmax(320px, 2fr)`, no media query anywhere in that file) cannot
+   both clear their own minimums - measured, the row's min-content floor is 512px regardless
+   of which page's hero/aside content is in it. `.page-header > .kpi-card`'s cap above already
+   noted there is no shared breakpoint to lean on; collapsing to one column here is the same
+   answer at the width where capping a card's own width stops being enough. */
+@media (max-width: 640px) {
+  .page-header { grid-template-columns: 1fr; }
+}

@@ -23,7 +23,7 @@
 
 import { configureApp } from "../../../../gas_shared/appConfig.js";
 import { call } from "../../../../gas_shared/api.js";
-import { bootstrapCached, swrCall } from "../../../../gas_shared/store.js";
+import { bootstrapCached, navigate, swrCall } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { openSyncDetails, renderSyncCard, shouldContinuePolling } from "./syncProgress.js";
 import {
@@ -227,6 +227,11 @@ function renderSyncZone(data) {
   const runBtn = el("button", {
     class: "primary",
     disabled: !hasCreds,
+    // The icon rail (`.sidebar .btn-label { display: none }` above 800px, base.css) hides
+    // the text this button's accessible name would otherwise come from, leaving an icon-only
+    // control axe flags as button-name — measured on every route at 1280px. The tip already
+    // carries the disabled reason; this is the name for the enabled state too.
+    "aria-label": "Run sync",
     onclick: () => startSync(runBtn),
   }, iconSpan(SYNC_ICON), el("span", { class: "btn-label" }, "Run sync"));
   // A button that fails on click is worse than no button (PRODUCT.md, principle 5: honest
@@ -259,10 +264,17 @@ function renderSyncZone(data) {
         : status.state === "ok" ? "ok" : "neutral",
       status.label,
     )),
-    tipAnchor(el("span", {
+    // A REAL BUTTON, not a span wearing aria-hidden + tabindex=0 — axe's aria-hidden-focus
+    // flagged the old markup (a focusable node hidden from the accessibility tree, which is
+    // a contradiction axe treats as a violation) and WCAG 2.2 SC 2.5.8 wants 24px of target
+    // even for a 9px mark. Scan history is the page `rail-status`'s glossary entry
+    // summarises, and app.js's own header already forbids a control with nothing behind it —
+    // so it navigates there rather than only opening its tip.
+    tipAnchor(el("button", {
+      type: "button",
       class: `rail-status-dot ${status.state}`,
-      "aria-hidden": "true",
-      tabindex: "0",
+      "aria-label": status.label,
+      onclick: () => navigate("history"),
     }), [status.label, status.detail].filter(Boolean).join(" — ")),
     ...(status.detail ? [el("div", { class: "scan-caption" }, status.detail)] : []),
     // `syncCaption` (gas_shared/ui/feedback.js), unified across all three apps: "Last <noun>

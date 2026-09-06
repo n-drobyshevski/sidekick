@@ -25,9 +25,19 @@ import { call } from "../../../../../gas_shared/api.js";
 import {
   absentText, clear, confirmDialog, dataTable, denomNote, downloadText, el, emptyState,
   errorState, firstRunNotice,
-  fmtCount, fmtDateTime, kpiCard, num, pageHeader, pct1, registerWideNote,
+  fmtCount, fmtDateTime, kpiCard, num, pageHeader, registerWideNote,
   sectionLabel, skeletonStack, statusPill, toast,
 } from "../ui.js";
+import { usageMeter } from "../../../../../gas_shared/ui/usageMeter.js";
+
+// Warn/bad thresholds for the register's own 10M-cell ceiling — gas/src/client/js/capacity.js
+// holds the identical pair (WARN_AT = 0.6, BAD_AT = 0.85) so its Data page and Settings panel
+// can never disagree; this register shows the meter on Data only (Settings carries no storage
+// section here — gas_shared/README.md's diagnostics table), so the two constants live here,
+// the one place a ratio against this ceiling is computed. usageMeter.js's own header says
+// where thresholds live: "not here… `state` arrives already decided."
+export const CELLS_WARN_AT = 0.6;
+export const CELLS_BAD_AT = 0.85;
 
 // ---------------------------------------------------------------------------- formatting
 //
@@ -75,6 +85,15 @@ export function cellsSummary(model) {
     other: num(model && model.cellsOther, 0),
     pctUsed: limit !== null && limit > 0 ? (total / limit) * 100 : null,
   };
+}
+
+/** "" | "warn" | "bad" for a used/limit ratio, against this module's own CELLS_*_AT pair. */
+export function cellsState(pctUsed) {
+  if (pctUsed === null) return "";
+  const ratio = pctUsed / 100;
+  if (ratio >= CELLS_BAD_AT) return "bad";
+  if (ratio >= CELLS_WARN_AT) return "warn";
+  return "";
 }
 
 /** The ledger's own scan/finding counts — what is stored, not what it costs. */
@@ -248,13 +267,30 @@ export async function renderData(host, _params, ctx) {
     const tabs = tabCellsView(model && model.cellsByTab);
     clear(storageHost);
 
+    // A real ceiling gets the shared capacity meter (gas_shared/ui/usageMeter.js) rather than
+    // a bare KPI card and a caption below it — the same widget gas/Settings draws over its
+    // own 10M-cell ceiling, so a reader who has seen one sidekick's Storage page recognises
+    // this one. No published ceiling (a stale pre-rollout cache, or a tenant this app has
+    // never measured against) keeps the KPI-card fallback: a meter with no denominator would
+    // draw an empty track, which reads as "0% used" rather than as "not measured".
+    const state = cellsState(cells.pctUsed);
+    const note = state === "bad"
+      ? "Past 85% of the 10M-cell ceiling. A spreadsheet refuses new rows once it is reached, "
+        + "so a sync would fail mid-save. Compact sealed scans below to reclaim room."
+      : state === "warn"
+        ? "Past 60% of the 10M-cell ceiling. Compacting sealed scans below reclaims room."
+        : null;
     const kpiRow = el("div", { class: "kpi-row" });
-    const headroom = kpiCard("Cells in use", fmtCount(cells.total));
-    headroom.append(denomNote(
-      cells.limit === null ? "No published ceiling." : `${pct1(cells.pctUsed)} of ${fmtCount(cells.limit)} cells.`,
-    ));
+    if (cells.limit === null) {
+      const headroom = kpiCard("Cells in use", fmtCount(cells.total));
+      headroom.append(denomNote("No published ceiling."));
+      kpiRow.append(headroom);
+    } else {
+      storageHost.append(usageMeter({
+        used: cells.total, total: cells.limit, label: "Cells in use", state, note,
+      }));
+    }
     kpiRow.append(
-      headroom,
       kpiCard("Tracked findings", fmtCount(ledger.trackedFindings)),
       kpiCard("Saved scans", fmtCount(ledger.scanCount), `${fmtCount(ledger.sealedCount)} sealed`),
     );
@@ -423,7 +459,11 @@ export async function renderData(host, _params, ctx) {
     clear(tableHost).append(dataTable({
       columns: [
         {
-          key: "sel", label: "",
+          // An empty `<th>` reads as "empty-table-header" to axe — the column carries a
+          // control (the checkbox), but nothing names what it is FOR, sighted or not. The
+          // visible header stays blank (a bordered checkbox column reads fine at a glance);
+          // the name rides in an `.sr-only` span so a screen reader gets one anyway.
+          key: "sel", label: el("span", { class: "sr-only" }, "Select"),
           cell: (r) => {
             const cb = el("input", { type: "checkbox", "aria-label": `Select scan ${fmtDateTime(r.ts)}` });
             cb.checked = selected.has(r.scanId);
