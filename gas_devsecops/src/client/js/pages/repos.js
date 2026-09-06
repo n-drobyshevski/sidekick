@@ -213,7 +213,7 @@ export async function renderRepos(host, _params, _ctx) {
   const ownershipHost = el("div", {});
   const repoHost = el("div", {});
   const langHost = el("div", {});
-  const chartsHost = el("div", { class: "chart-grid" });
+  const chartsHost = el("div", { class: "chart-row" });
   // ONE WRAPPER FOR EVERY SECTION BELOW THE DENSITY CARDS, so a first run can clear four
   // headings and their content together in one call — the same "label lives with its box"
   // shape history.js's own `sectionsHost`/`ensureSections()` use, for the same reason: these
