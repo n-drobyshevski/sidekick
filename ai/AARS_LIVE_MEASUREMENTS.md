@@ -569,6 +569,16 @@ graph-fed terms together should not outweigh the two already measured to separat
 them (§3) — and nothing more. They move on this section's own numbers once it has any, never
 on taste.
 
+**Capacity is scored on the same windows, and waits on the same two syncs** (2026-09-06).
+`rankEval.ts` now publishes the third P2P figure beside precision: the pooled share of the rows
+open at each evaluated sync that were gone by `t + horizon` (30 days by default — P2P vol. 3's
+monthly close rate, whose benchmark is about one in ten), bracketed by the rows whose outcome
+is still unknown, plus a net verdict against arrivals and a derived cut `precision@capacityK`
+(k = the mean rows that left per window). It is a PER-HORIZON figure; the Inventory page's
+readout from the ledger deltas is PER SYNC, and the two differ by design. Its precondition is
+the evaluation's own — one comparable pair — so on this tenant it is not yet possible either,
+and its first number lands here when the second same-scope sync does.
+
 **Status: NOT YET POSSIBLE.**
 
 ---

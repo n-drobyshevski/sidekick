@@ -68,7 +68,7 @@ import {
   tokenList,
   uiIcon,
 } from "../ui.js";
-import { rankEvalHonesty, rankEvalRows } from "../rankEvalModel.js";
+import { precisionLabel, rankEvalCapacity, rankEvalHonesty, rankEvalRows } from "../rankEvalModel.js";
 import { bootstrapCached } from "../../../../../gas_shared/store.js";
 import { POSTURE_LATTICE, PROBLEM_LATTICE, toneForKey } from "../lattice.js";
 import {
@@ -4483,6 +4483,13 @@ export async function renderAarsRules(main, _params, ctx) {
     }
     section.append(facts);
 
+    // CAPACITY SITS BETWEEN THE CAVEATS AND THE TABLE, in both states. It is a fact about the
+    // programme rather than about any one ordering, so it is a block and not a column — and
+    // it is what turns the table's precision figures into an argument: a better ordering at
+    // low capacity beats more capacity at a worse one (P2P vol. 8), which a reader can only
+    // weigh with both numbers in view.
+    section.append(buildCapacity(report));
+
     if (!report || !report.computed) {
       // NOT AN EMPTY TABLE. Four bases of em-dashes would state four facts about a question
       // nobody has been able to ask yet; the sentence says which one it is waiting on.
@@ -4508,10 +4515,14 @@ export async function renderAarsRules(main, _params, ctx) {
       },
       ...ks.map((k, i) => ({
         key: "p" + k,
-        label: "precision@" + k,
+        label: precisionLabel(k, report.capacityK),
         className: "num",
         help: "Of the top " + k + " rows whose outcome is known, the share that left the "
-          + "register within the horizon. Averaged over the evaluated syncs.",
+          + "register within the horizon. Averaged over the evaluated syncs."
+          + (k === report.capacityK
+            ? " This k is the programme's own capacity: the mean number of rows that left "
+              + "per horizon, so it asks whether the next month's worth of work is the right work."
+            : ""),
         cell: (r) => (r.precision[i] ? r.precision[i].text : ""),
       })),
       {
@@ -4564,6 +4575,68 @@ export async function renderAarsRules(main, _params, ctx) {
       ),
     );
     return pane;
+  }
+
+  /**
+   * Remediation capacity — the third P2P figure, on the same windows as the first two.
+   *
+   * The word carries the verdict and the dot repeats it (`.cap-dot`, shared with the
+   * inventory readout so the three colours mean the same thing on both surfaces). The unit
+   * is in the text because the Inventory page's readout is per SYNC and this one is per
+   * horizon: two numbers, one register, and only the words tell them apart.
+   */
+  function buildCapacity(report) {
+    const view = rankEvalCapacity(report);
+    const block = el("div", { class: "rank-eval__capacity" });
+    block.append(
+      el("h3", { class: "rank-eval__subhead" }, "Remediation capacity"),
+      el(
+        "p",
+        { class: "rank-eval__lede" },
+        "How much of the open register the programme clears " + view.unitNote + ", and "
+        + "whether that outpaces what arrives. The research benchmark is that a typical "
+        + "organisation closes about one in ten open findings a month, largely regardless of size.",
+      ),
+    );
+    if (!view.present) {
+      block.append(el("p", { class: "rank-eval__note" }, view.detail));
+      return block;
+    }
+    const dotClass = view.verdictKey ? "cap-dot cap-dot--" + view.verdictKey : "cap-dot";
+    const facts = el("dl", { class: "rank-eval__honesty" },
+      el("div", { class: "rank-eval__fact" },
+        el("dt", {}, "Close rate"),
+        el("dd", {}, view.closeRateText),
+        el("p", { class: "rank-eval__fact-note" }, view.unitNote + "; the bracket is the unknown outcomes")),
+      el("div", { class: "rank-eval__fact" },
+        el("dt", {}, "That is"),
+        el("dd", {}, view.oneInNText)),
+      el("div", { class: "rank-eval__fact" },
+        el("dt", {}, "Rows cleared " + view.unitNote),
+        el("dd", {}, view.capacityKText),
+        el("p", { class: "rank-eval__fact-note" },
+          isNumber(report.capacityK)
+            ? "Scored below as precision@" + report.capacityK
+            : "Too few to name a cut")),
+      el("div", { class: "rank-eval__fact" },
+        el("dt", {}, "Net flow"),
+        el("dd", { class: "rank-eval__verdict" },
+          el("span", { class: dotClass, "aria-hidden": "true" }),
+          el("span", {}, view.verdictWord)),
+        el("p", { class: "rank-eval__fact-note" },
+          "Rows gone against rows arrived, " + view.unitNote + ", with a two-percent dead band")),
+    );
+    block.append(
+      facts,
+      el("p", { class: "rank-eval__note" },
+        view.detail + " Per-sync capacity, at the ledger's own cadence, is on Inventory → "
+        + "Posture over time."),
+    );
+    return block;
+  }
+
+  function isNumber(v) {
+    return typeof v === "number" && Number.isFinite(v);
   }
 
   // --------------------------------------------------------------------- first paint

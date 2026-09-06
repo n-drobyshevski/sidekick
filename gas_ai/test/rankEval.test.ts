@@ -421,3 +421,166 @@ describe("the baselines", () => {
     expect(cut.ci!.hi).toBeGreaterThanOrEqual(cut.mean!);
   });
 });
+
+// The third P2P figure, measured on the same windows as the first two.
+//
+// Two failures again. A close rate is a share of the population that LEFT, so an unknown
+// outcome must widen its bracket and never move its point — the same rule the matrix keeps.
+// And an arrival count is only a count once a sync has looked at the whole horizon; before
+// that it is a lower bound, and publishing it as 0 would grade every young window "falling
+// behind" against work nobody has seen arrive.
+describe("capacity", () => {
+  const args = {
+    ledger: twentyRows(),
+    syncs: [sync("s1", 0), sync("s2", 10)],
+    rule: weightRule({ "R-FIX": 1, "R-STAY": 0 }),
+    horizonDays: 10,
+    ks: KS,
+  };
+
+  it("is the pooled share of the population that left, with no bracket when nothing is unknown", () => {
+    const report = evaluateRank(args);
+    const cap = report.capacity!;
+    expect(cap.points).toHaveLength(1);
+    expect(cap.points[0]!.population).toBe(20);
+    expect(cap.points[0]!.resolved).toBe(10);
+    expect(cap.closeRate).toEqual({ point: 0.5, lo: 0.5, hi: 0.5 });
+    expect(cap.oneInN).toBe(2);
+    expect(cap.horizonDays).toBe(10);
+  });
+
+  it("widens the bracket by the unknown rows and leaves the point alone", () => {
+    // Ten departures dated inside the horizon; the other ten run past the last sync that
+    // looked, so they are unknown. Of the LABELLED rows every one left — the point is 1 —
+    // and the bracket says the truth could be as low as half.
+    const report = evaluateRank({ ...args, horizonDays: 30 });
+    const cap = report.capacity!;
+    expect(cap.points[0]!.unknown).toBe(10);
+    expect(cap.closeRate).toEqual({ point: 1, lo: 0.5, hi: 1 });
+  });
+
+  it("failure of presence: a row first seen at t is population, one seen after t is an arrival", () => {
+    const report = evaluateRank({
+      ...args,
+      ledger: [
+        ...twentyRows(),
+        { ...row("late-1", "R-STAY"), firstSeenSync: "s1b", firstSeenAt: day(3) },
+        { ...row("late-2", "R-STAY"), firstSeenSync: "s1b", firstSeenAt: day(3) },
+        // Past the horizon: neither population nor an arrival of THIS window.
+        { ...row("later", "R-STAY"), firstSeenSync: "s2", firstSeenAt: day(11) },
+      ],
+    });
+    const point = report.capacity!.points[0]!;
+    expect(point.population).toBe(20);
+    expect(point.arrived).toBe(2);
+    // (10 resolved - 2 arrived) / 20 open at t
+    expect(point.netRate).toBeCloseTo(0.4, 12);
+    expect(point.verdict).toBe("gaining");
+  });
+
+  it("a zero has to prove it looked: arrivals are null, not 0, until a sync covers t+h", () => {
+    // Horizon 30 with the last sync at day 10: no sync has looked at the whole window, so
+    // the arrival count is a lower bound and the net flow is unmeasured.
+    const report = evaluateRank({ ...args, horizonDays: 30 });
+    const point = report.capacity!.points[0]!;
+    expect(point.arrived).toBeNull();
+    expect(point.netRate).toBeNull();
+    // Perturbation this guards: a default of "keeping-up" here would grade a window nobody
+    // finished observing as level.
+    expect(point.verdict).toBeNull();
+    expect(report.capacity!.verdict).toBeNull();
+  });
+
+  it("grades net flow with the dead band, in both directions", () => {
+    const arrivals = [1, 2, 3, 4, 5].map((i) =>
+      ({ ...row(`new-${i}`, "R-STAY"), firstSeenAt: day(3) }));
+    // Nothing leaves, five arrive on a population of ten: net -0.5.
+    const behind = evaluateRank({
+      ...args,
+      ledger: [...twentyRows().filter((r) => r.ruleId === "R-STAY"), ...arrivals],
+    });
+    expect(behind.capacity!.points[0]!.verdict).toBe("falling-behind");
+    // Ten leave, ten arrive on a population of twenty: net exactly 0 sits inside the band.
+    const level = evaluateRank({
+      ...args,
+      ledger: [
+        ...twentyRows(),
+        ...[6, 7, 8, 9, 10].map((i) => ({ ...row(`new-${i}`, "R-STAY"), firstSeenAt: day(3) })),
+        ...arrivals,
+      ],
+    });
+    expect(level.capacity!.points[0]!.netRate).toBe(0);
+    expect(level.capacity!.points[0]!.verdict).toBe("keeping-up");
+  });
+
+  it("gives an overall verdict only once two windows have a measured net", () => {
+    const one = evaluateRank(args);
+    expect(one.capacity!.netMeasuredPoints).toBe(1);
+    expect(one.capacity!.verdict).toBeNull();
+
+    // A third sync closes the second window: ten still-open rows, nothing leaving, nothing
+    // arriving — net 0 — beside the first window's +0.5. Mean 0.25: gaining.
+    const two = evaluateRank({ ...args, syncs: [sync("s1", 0), sync("s2", 10), sync("s3", 20)] });
+    expect(two.capacity!.points.map((p) => p.netRate)).toEqual([0.5, 0]);
+    expect(two.capacity!.netMeasuredPoints).toBe(2);
+    expect(two.capacity!.verdict).toBe("gaining");
+  });
+
+  it("derives k from the mean departures per window and rides it through the cuts", () => {
+    // Ten rows leave per window; k = 10 was already asked for, so it is not duplicated.
+    const asked = evaluateRank(args);
+    expect(asked.capacity!.capacityK).toBe(10);
+    expect(asked.capacityK).toBe(10);
+    expect(asked.ks).toEqual([5, 10]);
+
+    // Not asked for: appended, sorted, and answered like any other cut.
+    const appended = evaluateRank({ ...args, ks: [5] });
+    expect(appended.ks).toEqual([5, 10]);
+    const cut = appended.candidate!.points[0]!.precisionAtK.find((c) => c.k === 10)!;
+    expect(cut.applicable).toBe(true);
+    expect(cut.precision).toBe(1);
+  });
+
+  it("refuses the derived k on a window smaller than it, like any other k", () => {
+    // Twenty rows all leave by day 10. Window one: 20 rows, 20 gone. Window two (drawn at
+    // day 10): every row has already left, so the population is 0. k = round((20 + 0) / 2)
+    // = 10, which the second window cannot answer.
+    const report = evaluateRank({
+      ledger: [...Array(20)].map((_, i) => row(`fix-${i}`, "R-FIX", { goneDay: 10 })),
+      syncs: [sync("s1", 0), sync("s2", 10), sync("s3", 20)],
+      rule: weightRule({ "R-FIX": 1 }),
+      horizonDays: 10,
+      ks: [5],
+    });
+    expect(report.capacityK).toBe(10);
+    const second = report.candidate!.points[1]!;
+    expect(second.population).toBe(0);
+    expect(second.precisionAtK.find((c) => c.k === 10)).toMatchObject({
+      applicable: false, precision: null,
+    });
+  });
+
+  it("has no k when fewer than half a row leaves per window on average", () => {
+    const standing = twentyRows().map((r) => ({ ...r, disappearedAt: null, resolutionSrc: null }));
+    const report = evaluateRank({ ...args, ledger: standing });
+    expect(report.capacity!.closedPerHorizonMean).toBe(0);
+    expect(report.capacity!.capacityK).toBeNull();
+    expect(report.capacityK).toBeNull();
+    expect(report.ks).toEqual(KS);
+  });
+
+  it("is null with no comparable window, and present with a null point when nothing is labelled", () => {
+    const single = evaluateRank({ ...args, syncs: [sync("s1", 0)] });
+    expect(single.capacity).toBeNull();
+    expect(single.capacityK).toBeNull();
+
+    // A window exists, but every outcome is still being observed: the rate has no point and
+    // the whole 0..1 bracket, which is strictly more than "unmeasured" alone.
+    const standing = twentyRows().map((r) => ({ ...r, disappearedAt: null, resolutionSrc: null }));
+    const unlabelled = evaluateRank({ ...args, ledger: standing, horizonDays: 60 });
+    expect(unlabelled.computed).toBe(false);
+    expect(unlabelled.capacity).not.toBeNull();
+    expect(unlabelled.capacity!.closeRate).toEqual({ point: null, lo: 0, hi: 1 });
+    expect(unlabelled.capacity!.capacityK).toBeNull();
+  });
+});

@@ -644,6 +644,16 @@ ul.axis-steps > .axis-step::before {
   font-size: var(--fs-label); color: var(--text-3); white-space: normal;
 }
 .rank-eval__table table.data td { font-variant-numeric: tabular-nums; }
+/* The capacity block reuses the honesty grid: four facts of the same weight, one of which is
+   a verdict. `.cap-dot` comes from inventory.css so the three verdict colours are the same
+   three on both surfaces. */
+.rank-eval__capacity { margin: 0 0 var(--space-4); }
+.rank-eval__subhead { margin: 0 0 var(--space-1); font-size: var(--fs-lead); font-weight: 650; }
+.rank-eval__lede {
+  margin: 0 0 var(--space-3); max-width: var(--measure);
+  font-size: var(--fs-label); color: var(--text-3); line-height: 1.5;
+}
+.rank-eval__verdict { display: flex; align-items: center; gap: var(--space-2); font-size: var(--fs-lead); }
 .rank-eval__note {
   margin: var(--space-3) 0 0; max-width: var(--measure);
   font-size: var(--fs-label); color: var(--text-3); line-height: 1.5;

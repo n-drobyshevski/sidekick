@@ -466,7 +466,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "717cd780f54c" : "dev";
+  var BUILD_ID = true ? "11040f3aaa39" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12638,6 +12638,12 @@ var Server = (() => {
     m.labelCoverage = frac(m.labelled, m.total);
     return m;
   }
+  var NET_CAPACITY_BAND = 0.02;
+  var MIN_NET_POINTS = 2;
+  function verdictOf2(netRate) {
+    if (Math.abs(netRate) <= NET_CAPACITY_BAND) return "keeping-up";
+    return netRate > 0 ? "gaining" : "falling-behind";
+  }
   var SEVERITY_ONLY_NOTE = "Not measured: the lifecycle ledger freezes the rank inputs only, and Wiz's severity is not one of them. Ranking by severity would need a ledger column that does not exist yet.";
   function ms(iso) {
     if (!iso) return null;
@@ -12720,9 +12726,15 @@ var Server = (() => {
       const covered = (_d = coverEnd[scope]) != null ? _d : null;
       const rows = [];
       const labels = [];
+      const arrivalsComplete = covered !== null && covered >= horizonEndMs;
+      let arrived = 0;
       for (const row of ledger) {
         const first = ms(row.firstSeenAt);
-        if (first === null || first > atMs) continue;
+        if (first === null) continue;
+        if (first > atMs) {
+          if (first <= horizonEndMs) arrived += 1;
+          continue;
+        }
         const gone = ms(row.disappearedAt);
         if (gone !== null && gone <= atMs) continue;
         rows.push(row);
@@ -12730,7 +12742,15 @@ var Server = (() => {
         else if (covered !== null && covered >= horizonEndMs) labels.push("open");
         else labels.push("unknown");
       }
-      windows.push({ sync, nextSyncId: next.syncId, atMs, horizonEndMs, rows, labels });
+      windows.push({
+        sync,
+        nextSyncId: next.syncId,
+        atMs,
+        horizonEndMs,
+        rows,
+        labels,
+        arrived: arrivalsComplete ? arrived : null
+      });
     }
     return { windows, scopeChanges, unknownScopePairs, ordered };
   }
@@ -12912,11 +12932,70 @@ var Server = (() => {
       };
     });
   }
+  function capacityFrom(windows, horizonDays) {
+    if (!windows.length) return null;
+    const points = [];
+    let sumResolved = 0;
+    let sumLabelled = 0;
+    let sumUnknown = 0;
+    const netRates = [];
+    for (const w of windows) {
+      let resolved = 0;
+      let open = 0;
+      let unknown = 0;
+      for (const l of w.labels) {
+        if (l === "resolved") resolved += 1;
+        else if (l === "open") open += 1;
+        else unknown += 1;
+      }
+      const labelled = resolved + open;
+      const population = labelled + unknown;
+      sumResolved += resolved;
+      sumLabelled += labelled;
+      sumUnknown += unknown;
+      const netRate = w.arrived !== null && population > 0 ? (resolved - w.arrived) / population : null;
+      if (netRate !== null) netRates.push(netRate);
+      points.push({
+        syncId: w.sync.syncId,
+        at: w.sync.finishedAt,
+        population,
+        resolved,
+        open,
+        unknown,
+        closeRate: {
+          point: frac(resolved, labelled),
+          lo: frac(resolved, labelled + unknown),
+          hi: frac(resolved + unknown, labelled + unknown)
+        },
+        arrived: w.arrived,
+        netRate,
+        verdict: netRate === null ? null : verdictOf2(netRate)
+      });
+    }
+    const closeRate = {
+      point: frac(sumResolved, sumLabelled),
+      lo: frac(sumResolved, sumLabelled + sumUnknown),
+      hi: frac(sumResolved + sumUnknown, sumLabelled + sumUnknown)
+    };
+    const closedPerHorizonMean = mean(points.map((p) => p.resolved));
+    const rounded = closedPerHorizonMean === null ? 0 : Math.round(closedPerHorizonMean);
+    const netMean = netRates.length >= MIN_NET_POINTS ? mean(netRates) : null;
+    return {
+      points,
+      closeRate,
+      oneInN: closeRate.point !== null && closeRate.point > 0 ? 1 / closeRate.point : null,
+      closedPerHorizonMean,
+      capacityK: rounded >= 1 ? rounded : null,
+      verdict: netMean === null ? null : verdictOf2(netMean),
+      netMeasuredPoints: netRates.length,
+      horizonDays
+    };
+  }
   function evaluateRank(input) {
     var _a5, _b, _c;
     const ledger = ((_a5 = input == null ? void 0 : input.ledger) != null ? _a5 : []).filter((r) => r && r.issueId);
     const horizonDays = Number.isFinite(input == null ? void 0 : input.horizonDays) && input.horizonDays > 0 ? input.horizonDays : 30;
-    const ks = cleanKs(input == null ? void 0 : input.ks);
+    const requestedKs = cleanKs(input == null ? void 0 : input.ks);
     const seed = Number.isFinite(input == null ? void 0 : input.seed) ? Number(input.seed) : DEFAULT_EVAL_SEED;
     const rule = (_b = input == null ? void 0 : input.rule) != null ? _b : DEFAULT_RANK_RULE;
     const { windows, scopeChanges, unknownScopePairs, ordered } = comparableWindows((_c = input == null ? void 0 : input.syncs) != null ? _c : [], ledger, horizonDays);
@@ -12937,6 +13016,9 @@ var Server = (() => {
         }
       }
     }
+    const capacity = capacityFrom(windows, horizonDays);
+    const capacityK = capacity ? capacity.capacityK : null;
+    const ks = capacityK === null ? requestedKs : cleanKs([...requestedKs, capacityK]);
     const lastSync = ordered.length ? ordered[ordered.length - 1] : null;
     const base = {
       computed: false,
@@ -12953,6 +13035,8 @@ var Server = (() => {
       labelledRows,
       unknownRows: evaluatedRows - labelledRows,
       lastSyncAt: lastSync ? lastSync.finishedAt : null,
+      capacity,
+      capacityK,
       candidate: null,
       baselines: { rankV1: null, dueAtOnly: null, random: null, severityOnly: null },
       severityOnlyNote: SEVERITY_ONLY_NOTE
