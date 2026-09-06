@@ -24,7 +24,17 @@
            test/shared.test.js fails if the two ever drift. Inline SVG in an HTML
            document needs no xmlns, which is what keeps this free of a bare `//` — the
            hazard esbuild.config.mjs's middlebox guard covers for the bundle, and that
-           this file, rendered through verbatim, is not scanned for. -->
+           this file, rendered through verbatim, is not scanned for.
+
+           pathLength="1" ON THE ORBIT AND THE CHECK IS LOAD-BEARING. base.css traces
+           both with a stroke-dasharray of 1; without the attribute that 1 is one USER
+           unit on a ~120-unit arc and the ring renders dotted. brandMark() carries it
+           too. The <script> after the mark is that module's dealAlerts() written a
+           second time, for the copy that paints before any module exists.
+
+           NOTE THAT COMMENTS HERE SHIP. This file is substituted, never minified, so
+           every byte of prose in it is first-paint latency in three apps. Keep it short;
+           the long-form reasoning belongs in the modules, which are minified. -->
       <div class="boot-splash" role="status" aria-live="polite">
         <div class="boot-splash-inner">
           <div class="boot-brand">
@@ -78,6 +88,7 @@
                      M61.24 68.13h0M18.56 71.23h0M21.91 71.29h0M64.64 71.39h0M61.24 71.46h0M18.64 74.47h0M21.99 74.54h0
                      M25.38 74.61h0M61.22 74.74h0M18.79 77.7h0M22.12 77.8h0M18.93 80.89h0M19.07 84.02h0"/>
               <path class="mark-ink" fill="none" stroke="#0a0a0a" stroke-width="2.41" stroke-linecap="round"
+                    pathLength="1"
                     d="M47.64 80.58A32.1 32.1 0 0 1 17.83 52.04M19.82 36.92A32.1 32.1 0 0 1 54.21 16.76"/>
               <circle class="mark-ink-fill" cx="17.22" cy="44.33" r="4.41" fill="#0a0a0a"/>
               <circle class="mark-ink-fill" cx="45.96" cy="16.55" r="7.56" fill="#0a0a0a"/>
@@ -85,8 +96,26 @@
                     d="
                      M48.56 29.88C52.79 34.78 58.69 37.87 64.33 37.81C64.44 45.48 63.64 48.51 62.11 51.96C61.32 54.62 56.36 61.55 48.56 64.18C40.76 61.55 35.8 54.62 35.01 51.96C33.48 48.51 32.68 45.48 32.79 37.81C38.43 37.87 44.33 34.78 48.56 29.88Z"/>
               <path class="mark-knockout" fill="none" stroke="#ffffff" stroke-width="3.04"
-                    stroke-linecap="round" stroke-linejoin="round" d="M42.3 48.81 46.19 52.7 54.89 43.99"/>
+                    stroke-linecap="round" stroke-linejoin="round" pathLength="1"
+                    d="M42.3 48.81 46.19 52.7 54.89 43.99"/>
             </svg>
+            <!-- Deals the 97 warm dots into six shuffled groups so base.css can phase the
+                 alert loop by --i; a phase needs an element to sit on, and one path cannot
+                 carry six. The twin of dealAlerts() in ui/brandMark.js, held to it by
+                 test/contracts/brandMark.js against one stubbed random. With scripting off
+                 the single path keeps its own animation and every alert pulses in phase.
+                 Reads the namespace off the node (no bare double slash: nothing scans this
+                 file), no template literal, ES2019 - nothing lowers it. -->
+            <script>
+(function(){var w=document.querySelector(".boot-splash .mark-map--warm");if(!w)return;
+var n=6,p=w.parentNode,a=w.attributes,d=w.getAttribute("d").match(/M[^M]+/g),g=[],i,j,t,e;
+for(i=d.length;--i>0;){j=Math.floor(Math.random()*(i+1));t=d[i];d[i]=d[j];d[j]=t}
+for(i=0;i<n;i++)g[i]="";for(i=0;i<d.length;i++)g[i%n]+=d[i];
+for(i=0;i<n;i++){e=document.createElementNS(w.namespaceURI,"path");
+for(j=0;j<a.length;j++)e.setAttribute(a[j].name,a[j].value);
+e.setAttribute("d",g[i]);e.setAttribute("style","--i:"+i);p.insertBefore(e,w)}
+p.removeChild(w)})()
+            </script>
             <span class="boot-brand-label">Wiz Sidekick DevSecOps</span>
           </div>
           <div class="boot-splash-bar progress-track indeterminate" role="progressbar"

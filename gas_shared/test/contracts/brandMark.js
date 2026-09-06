@@ -18,6 +18,18 @@
 // are the source, and the assertions below require the rendered markup to carry them
 // verbatim. A duplication forced by the platform, pinned by a test rather than by a comment.
 //
+// AND THE MARK NOW MOVES, which adds a third thing to keep in lockstep. base.css animates the
+// splash copy with one composed `bm-*` timeline; the ring and the check are traced in
+// path-length units, so BOTH copies of the markup have to carry `pathLength="1"` or the
+// runtime one renders a dotted ring on refresh() and only there; and the 97 alert dots are
+// dealt into six phase groups at runtime by TWO hand-kept implementations — `dealAlerts()` in
+// ui/brandMark.js and an inline script in the template, because that copy paints before the
+// module exists. So this file also holds, below: the attribute in both copies, that every
+// `bm-` rule is scoped under `.boot-splash ` (the appbar wears the same classes) and named in
+// the reduced-motion block, that the two dealers produce the SAME six paths from one stubbed
+// random, and that the inline script cannot carry the middlebox hazard the bundle's own guard
+// covers and this file's bytes escape.
+//
 // AND THE SPLASH COPY, which is the half no app was checking. The splash says the product's
 // name and what it is opening, in three places (the static markup twice, bootSplash() once),
 // and gas_devsecops shipped "Opening the graph…" for its whole life — inherited from the
@@ -30,16 +42,19 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
+import { runInNewContext } from "node:vm";
 import { renderIndexHtml } from "../../shell/renderIndex.js";
+import { stylesheetClosure } from "./tokens.js";
+import { code } from "./emptyStates.js";
+import { SVG_NS } from "../../icons.js";
 import {
-  MARK_CHECK, MARK_CHECK_WIDTH, MARK_COMPACT_RATIO, MARK_COMPACT_VIEWBOX, MARK_DOTS_BLUE,
-  MARK_DOTS_RED, MARK_NODES, MARK_ORBIT, MARK_ORBIT_WIDTH, MARK_SHIELD, MARK_VIEWBOX,
-  brandMark,
+  ALERT_GROUPS, MARK_CHECK, MARK_CHECK_WIDTH, MARK_COMPACT_RATIO, MARK_COMPACT_VIEWBOX,
+  MARK_DOTS_BLUE, MARK_DOTS_RED, MARK_DOT_WIDTH, MARK_NODES, MARK_ORBIT, MARK_ORBIT_WIDTH,
+  MARK_SHIELD, MARK_VIEWBOX, brandMark, dealAlerts,
 } from "../../ui/brandMark.js";
 
 /**
- * A four-method stand-in for `document`, because vitest runs in node here and these apps
- * have no jsdom.
+ * A stand-in for `document`, because vitest runs in node here and these apps have no jsdom.
  *
  * That is not a workaround — it is the right instrument. What is worth pinning about
  * `brandMark()` is the ATTRIBUTES it sets: the sizing contract, and which copy carries the
@@ -47,16 +62,114 @@ import {
  * dependency to the whole suite; the pixels are checked in the dev harness. `svgEl`
  * stringifies every value before setting it, so the shim stores strings and `getAttribute`
  * returns null for what was never set — the two behaviours the assertions lean on.
+ *
+ * IT GREW FOR THE DEALER, and only by what the dealer touches: `parentNode` /
+ * `insertBefore` / `removeChild` (dealAlerts splices six paths in where one was),
+ * `attributes` and `namespaceURI` (the template's inline twin copies the original's
+ * attributes and reads the namespace off the node rather than spelling the URL, which is
+ * what keeps a bare double slash out of a file nothing scans), and a class-aware
+ * `querySelector`. `querySelectorAll`'s existing semantics are untouched — DIRECT CHILDREN
+ * ONLY, which is what three path-count assertions lean on and the reason nothing in the mark
+ * may be wrapped in a `<g>`.
  */
-function makeNode(tag) {
+function matchesSel(node, sel) {
+  if (sel.startsWith(".")) {
+    return String(node.attrs["class"] || "").split(/\s+/).includes(sel.slice(1));
+  }
+  return node.tag === sel;
+}
+
+function makeNode(tag, ns) {
   return {
-    tag, attrs: {}, children: [],
+    tag, ns, attrs: {}, children: [], parentNode: null,
+    get namespaceURI() { return this.ns; },
+    // A NamedNodeMap only as far as the inline dealer reads one: `.length`, `.name`, `.value`.
+    get attributes() {
+      return Object.keys(this.attrs).map((name) => ({ name, value: this.attrs[name] }));
+    },
     setAttribute(k, v) { this.attrs[k] = String(v); },
     getAttribute(k) { return k in this.attrs ? this.attrs[k] : null; },
-    append(...kids) { this.children.push(...kids); },
-    querySelectorAll(sel) { return this.children.filter((c) => c.tag === sel); },
-    querySelector(sel) { return this.children.find((c) => c.tag === sel) || null; },
+    append(...kids) {
+      for (const kid of kids) { kid.parentNode = this; this.children.push(kid); }
+    },
+    insertBefore(node, ref) {
+      const at = this.children.indexOf(ref);
+      node.parentNode = this;
+      this.children.splice(at === -1 ? this.children.length : at, 0, node);
+      return node;
+    },
+    removeChild(node) {
+      const at = this.children.indexOf(node);
+      if (at !== -1) this.children.splice(at, 1);
+      node.parentNode = null;
+      return node;
+    },
+    querySelectorAll(sel) { return this.children.filter((c) => matchesSel(c, sel)); },
+    querySelector(sel) { return this.children.find((c) => matchesSel(c, sel)) || null; },
   };
+}
+
+/**
+ * A seeded generator standing in for `Math.random`, so the two dealers can be compared at
+ * all. Numerical Recipes' LCG: the specific constants do not matter, being REPLAYABLE does.
+ */
+function lcg(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (Math.imul(state, 1664525) + 1013904223) >>> 0;
+    return state / 4294967296;
+  };
+}
+
+/**
+ * CSS with its comments already gone, flattened into `{ sel, body }` pairs — the nested rules
+ * of an at-rule included, and the at-rule itself kept too.
+ *
+ * Hand-rolled rather than a parser dependency: the two sweeps below ask only "which selectors
+ * carry this declaration", and a real parser would be a build dependency in three apps to
+ * answer it.
+ */
+function cssRules(css) {
+  const out = [];
+  let i = 0;
+  while (i < css.length) {
+    const open = css.indexOf("{", i);
+    if (open === -1) break;
+    const sel = css.slice(i, open).trim();
+    let depth = 1;
+    let j = open + 1;
+    while (j < css.length && depth > 0) {
+      if (css[j] === "{") depth++;
+      else if (css[j] === "}") depth--;
+      j++;
+    }
+    out.push({ sel, body: css.slice(open + 1, j - 1) });
+    if (sel.startsWith("@")) out.push(...cssRules(css.slice(open + 1, j - 1)));
+    i = j;
+  }
+  return out;
+}
+
+/** A rule's selectors, one per comma, trimmed. */
+function selectorsOf(rule) {
+  return rule.sel.split(",").map((x) => x.trim()).filter(Boolean);
+}
+
+/**
+ * Every selector inside a `prefers-reduced-motion` block of this sheet that a rule declaring
+ * `animation: none` carries. EXACT STRINGS, no normalisation — see the sweeps below for why
+ * that is the whole point.
+ */
+function stoodDown(css) {
+  const out = new Set();
+  for (const block of cssRules(css)) {
+    if (!/^@media/.test(block.sel) || !/prefers-reduced-motion/.test(block.sel)) continue;
+    for (const rule of cssRules(block.body)) {
+      if (!/animation:\s*none/.test(rule.body)) continue;
+      for (const sel of selectorsOf(rule)) out.add(sel);
+    }
+  }
+  return out;
 }
 
 /**
@@ -97,10 +210,37 @@ export function registerBrandMarkContract(ctx) {
     fileURLToPath(new URL("../../shell/appbar.js", import.meta.url)), "utf8",
   );
 
+  // The base.css THIS APP ACTUALLY IMPORTS, followed through src/client/styles.css rather
+  // than named — the sheets live in two trees now and a hard-coded path would quietly stop
+  // covering the one that ships. The match is anchored on a path separator because
+  // `tokens.base.css` also ends in "base.css" and carries none of these rules.
+  const SHEETS = stylesheetClosure(resolve(root, "src/client/styles.css"));
+  const BASE_ENTRY = SHEETS.find(([spec]) => /(^|\/)base\.css$/.test(spec));
+  if (!BASE_ENTRY) throw new Error(app + ": no base.css in the stylesheet closure");
+  const BASE_CSS = BASE_ENTRY[1].replace(/\/\*[\s\S]*?\*\//g, "");
+
+  // The template's inline dealer, as the build emits it. Located by the splash mark's own
+  // </svg> so a script added elsewhere in the document could never answer for it.
+  const INLINE = (() => {
+    const after = INDEX.slice(INDEX.indexOf("</svg>"));
+    const m = after.match(/<script>([\s\S]*?)<\/script>/);
+    return m ? m[1] : null;
+  })();
+
+  /** Every `<path …>` tag in the rendered index, keyed by its normalised `d`. */
+  const staticPathTags = () => {
+    const byPath = new Map();
+    for (const [tag] of INDEX.matchAll(/<path[^>]*>/g)) {
+      const d = tag.match(/\sd="([^"]*)"/);
+      if (d) byPath.set(normPath(d[1]), tag);
+    }
+    return byPath;
+  };
+
   let realDocument;
   beforeAll(() => {
     realDocument = globalThis.document;
-    globalThis.document = { createElementNS: (_ns, tag) => makeNode(tag) };
+    globalThis.document = { createElementNS: (ns, tag) => makeNode(tag, ns) };
   });
   afterAll(() => {
     globalThis.document = realDocument;
@@ -190,6 +330,23 @@ export function registerBrandMarkContract(ctx) {
       const body = INDEX.slice(INDEX.indexOf("<body>")).replace(/<!--[\s\S]*?-->/g, "");
       expect(body.includes("/" + "/")).toBe(false);
     });
+
+    // The sweep above now has a `<script>` inside it to cover, and that script is the one
+    // piece of executable JavaScript in this document esbuild never sees: renderIndex.js
+    // substitutes two words and passes the file through, so neither the bundle's middlebox
+    // guard nor its template-literal lowering applies to it. Both constraints are therefore
+    // assertions rather than build steps. The namespace is the specific hazard — the SVG
+    // namespace URL IS a bare double slash — which is why the script reads it off the node it
+    // is splitting instead of spelling it.
+    it("ships an inline dealer that carries neither hazard", () => {
+      expect(INLINE, "no inline dealing script after the splash mark").toBeTruthy();
+      expect(INLINE.includes("/" + "/"), "the inline dealer spells a bare double slash")
+        .toBe(false);
+      expect(INLINE, "the inline dealer uses a template literal esbuild never lowers")
+        .not.toContain(String.fromCharCode(96));
+      expect(INLINE, "the inline dealer spells the SVG namespace rather than reading it")
+        .toContain("namespaceURI");
+    });
   });
 
   describe(app + ": the dot globe", () => {
@@ -254,6 +411,24 @@ export function registerBrandMarkContract(ctx) {
 
     it("is never focusable — it is a picture, not a control", () => {
       expect(brandMark(96).getAttribute("focusable")).toBe("false");
+    });
+
+    it("still draws five paths BEFORE the alert dots are dealt, ten after", () => {
+      // The 5 above is the count of what SHIPS in either copy of the markup — the warm dots
+      // are one path in both, which is what keeps the five-constants assertion at the top of
+      // this file true. Dealing is a RUNTIME split of that one path into six, so the only
+      // place the number is 10 is after dealAlerts() has run.
+      const mark = brandMark(112);
+      expect(mark.querySelectorAll("path").length).toBe(5);
+      expect(dealAlerts(mark, ALERT_GROUPS, lcg(1))).toBe(mark);
+      expect(mark.querySelectorAll("path").length).toBe(5 - 1 + ALERT_GROUPS);
+      expect(mark.querySelectorAll(".mark-map--warm").length).toBe(ALERT_GROUPS);
+    });
+
+    it("leaves a compact mark alone — it has no globe to deal", () => {
+      const compact = brandMark(20, { compact: true });
+      expect(dealAlerts(compact, ALERT_GROUPS, lcg(1))).toBe(compact);
+      expect(compact.querySelectorAll("path").length).toBe(3);
     });
   });
 
@@ -345,6 +520,233 @@ export function registerBrandMarkContract(ctx) {
 
     it("puts the compact crop in the header, where 307 dots would be noise", () => {
       expect(APPBAR).toMatch(/brandMark\(22,\s*\{\s*compact:\s*true\s*\}\)/);
+    });
+
+    it("deals the alert dots on the copy it rebuilds, as the static copy deals itself", () => {
+      // Without this call the rebuilt splash still animates — with all 97 alerts in ONE phase
+      // group, so refresh() would produce a visibly different mark from the one the reader saw
+      // on the same page a moment earlier, and nothing would fail.
+      //
+      // READ THROUGH code(), and that is a finding rather than a precaution: the first form of
+      // this assertion swept the RAW source, and deleting the call outright left it passing on
+      // the word "dealAlerts()" in the comment that explains the call. A sweep for a call site
+      // has to look at code.
+      expect(code(SPLASH), "bootSplash() no longer deals the alert dots")
+        .toMatch(/dealAlerts\(/);
+    });
+  });
+
+  describe(app + ": the traced ring and check carry pathLength in BOTH copies", () => {
+    // `bm-trace` animates a stroke-dasharray of 1, which means "the whole stroke" only because
+    // pathLength re-parameterises the path to length 1. Without the attribute that 1 is one
+    // USER unit on a ~120-unit arc and the ring renders dotted. The two copies fail
+    // DIFFERENTLY, which is why they are two assertions: the static one is wrong on first
+    // paint, and the module's one is wrong only on the splash refresh() rebuilds — the copy
+    // nobody reproduces on the page they first saw the defect on.
+    it("carries it in the rendered index, on the orbit and the check", () => {
+      const tags = staticPathTags();
+      for (const [name, d] of [["orbit", MARK_ORBIT], ["check", MARK_CHECK]]) {
+        const tag = tags.get(normPath(d));
+        expect(tag, "no <path> in the rendered index draws the " + name).toBeTruthy();
+        expect(tag, "the static " + name + " carries no pathLength")
+          .toContain('pathLength="1"');
+      }
+    });
+
+    it("carries it in brandMark(), on the same two paths", () => {
+      const paths = brandMark(112).querySelectorAll("path");
+      for (const [name, d] of [["orbit", MARK_ORBIT], ["check", MARK_CHECK]]) {
+        const node = paths.find((n) => n.getAttribute("d") === d);
+        expect(node, "brandMark() draws no " + name).toBeTruthy();
+        expect(node.getAttribute("pathLength"), "the module's " + name + " carries none")
+          .toBe("1");
+      }
+    });
+  });
+
+  describe(app + ": the splash timeline cannot escape the splash", () => {
+    const bmRules = () =>
+      cssRules(BASE_CSS).filter((r) => (
+        !r.sel.startsWith("@")
+        && !/^(from|to)$/.test(r.sel)
+        && !/^[\d.]+%/.test(r.sel)
+        && r.body.includes("bm-")
+      ));
+
+    // THE APPBAR WEARS THE SAME CLASSES — shell/appbar.js draws brandMark(22, {compact: true})
+    // — so an unscoped `.mark-ink` rule would leave a 22px header glyph breathing for the life
+    // of the session, on every page, in three apps. Every selector naming a `bm-` animation
+    // (or the tempo the timeline reads) has to sit under `.boot-splash `.
+    it("scopes every bm- rule under .boot-splash", () => {
+      const offenders = [];
+      for (const rule of bmRules()) {
+        for (const sel of rule.sel.split(",").map((x) => x.trim()).filter(Boolean)) {
+          if (!sel.startsWith(".boot-splash ")) offenders.push(sel);
+        }
+      }
+      expect(offenders, "bm- rules that reach outside the splash").toEqual([]);
+    });
+
+    it("is not a vacuous sweep — the timeline is really in this sheet", () => {
+      // The assertion above passes trivially against a stylesheet with no animation in it at
+      // all, which is exactly what a botched merge would leave behind.
+      expect(bmRules().length, "no bm- rules found in base.css").toBeGreaterThanOrEqual(5);
+      expect(BASE_CSS, "no bm- keyframes in base.css").toMatch(/@keyframes\s+bm-/);
+    });
+
+    // The named fallback is load-bearing rather than belt-and-braces: overrides.css's global
+    // `* { animation-duration: .01ms !important }` does NOT zero `animation-delay` (a delayed
+    // element would hold its start state for its whole delay and then pop) and on an
+    // `infinite` loop it samples an arbitrary phase every frame, which is flicker rather than
+    // stillness. `animation: none` sets `animation-name`, which that !important does not cover.
+    //
+    // EXACT SELECTOR STRINGS, AND THAT IS THE FINDING. The first form of this assertion
+    // normalised a tag qualifier away — it treated `.boot-splash circle.mark-ink-fill` and
+    // `.boot-splash .mark-ink-fill` as one selector, on the reasoning that the qualifier only
+    // exists to give the nodes and the shield different beats and means nothing to a fallback
+    // that turns both off. It is true about intent and false about the CASCADE: (0,2,0) loses
+    // to (0,2,1), so the fallback did not stand the rules down at all, and Playwright against
+    // the shipped bytes found the two nodes and the shield still reporting animationName
+    // `bm-rise` under reduced motion — invisible, then popping. THE GUARD PASSED ON IT. A
+    // stand-down is only a stand-down if it is written the way the rule it answers is written,
+    // so the comparison is character-for-character and the duplication in base.css is the
+    // correct shape rather than the tidy one.
+    it("stands every animated splash selector down under reduced motion, exactly", () => {
+      const animated = new Set();
+      for (const rule of bmRules()) {
+        if (!/animation[^;]*bm-/.test(rule.body)) continue;
+        for (const sel of selectorsOf(rule)) animated.add(sel);
+      }
+      expect(animated.size, "no bm- animation found for the fallback to answer for")
+        .toBeGreaterThanOrEqual(5);
+      const stopped = stoodDown(BASE_CSS);
+      const uncovered = [...animated].filter((sel) => !stopped.has(sel));
+      expect(uncovered, "animated with no character-identical `animation: none`")
+        .toEqual([]);
+    });
+  });
+
+  describe(app + ": no infinite animation in base.css outlives reduced motion", () => {
+    // THE GENERAL FORM OF THE RULE ABOVE, and it exists because the specific form missed two
+    // defects in one sheet — one of them written in the same round as the guard, one of them
+    // years older. An infinite loop is the case where `animation-duration: .01ms !important`
+    // is actively WORSE than no fallback: the animation does not stop, it advances a whole
+    // cycle every frame, so the property it drives samples an arbitrary keyframe phase
+    // forever. Measured on the boot splash's own progress bar under reduced motion, before
+    // this sweep existed: `margin-left` read -92.8px on one probe and -86.4px on another 700ms
+    // later, on a bar whose reduced-motion rule sets `margin-left: 0` and never got to.
+    //
+    // Sheet-wide rather than splash-shaped, and it lives in this file because this is where
+    // the CSS reader is. Exact selector strings, for the reason the comment above gives.
+    it("names every infinite animation in a reduced-motion `animation: none`", () => {
+      const looping = new Set();
+      for (const rule of cssRules(BASE_CSS)) {
+        if (rule.sel.startsWith("@")) continue;
+        if (/^(from|to)$/.test(rule.sel) || /^[\d.]+%/.test(rule.sel)) continue;
+        if (!/animation(-iteration-count)?[^;]*\binfinite\b/.test(rule.body)) continue;
+        for (const sel of selectorsOf(rule)) looping.add(sel);
+      }
+      // Non-vacuity: base.css really does carry looping animations, and if it stops carrying
+      // them this assertion has to start failing rather than start passing for free.
+      expect(looping.size, "no infinite animation found in base.css at all")
+        .toBeGreaterThanOrEqual(6);
+      const stopped = stoodDown(BASE_CSS);
+      const uncovered = [...looping].filter((sel) => !stopped.has(sel));
+      expect(uncovered, "loops on forever at .01ms per cycle under reduced motion")
+        .toEqual([]);
+    });
+  });
+
+  describe(app + ": the two alert dealers are one dealer", () => {
+    // `dealAlerts()` and the template's inline script are two hand-written implementations of
+    // one shuffle, and they have to be: one of them runs before the module holding the other
+    // exists. Nothing about the RENDERED result would reveal a divergence — six paths of
+    // shuffled dots look like six paths of shuffled dots, on both copies of a splash that is
+    // on screen for 400ms — so the only way they stay one dealer is to run both against one
+    // replayable random and compare the strings.
+    const SEED = 20260906;
+    const dots = (d) => d.match(/M[^M]+/g) || [];
+
+    /** The warm path as the inline dealer will meet it: one node, inside a parent. */
+    const warmFixture = () => {
+      const svg = makeNode("svg", SVG_NS);
+      const warm = makeNode("path", SVG_NS);
+      warm.setAttribute("class", "mark-map mark-map--warm");
+      warm.setAttribute("fill", "none");
+      warm.setAttribute("stroke", "#f32b2b");
+      warm.setAttribute("stroke-width", MARK_DOT_WIDTH);
+      warm.setAttribute("stroke-linecap", "round");
+      warm.setAttribute("d", MARK_DOTS_RED);
+      svg.append(warm);
+      return { svg, warm };
+    };
+
+    /** The template's script, executed against that fixture and a stubbed Math.random. */
+    const runInline = (rng) => {
+      const { svg, warm } = warmFixture();
+      const asked = [];
+      const math = Object.create(Math);
+      math.random = rng;
+      runInNewContext(INLINE, {
+        document: {
+          querySelector(sel) {
+            asked.push(sel);
+            return /mark-map--warm/.test(sel) ? warm : null;
+          },
+          createElementNS: (ns, tag) => makeNode(tag, ns),
+        },
+        Math: math,
+      });
+      return { svg, asked };
+    };
+
+    it("deals MARK_DOTS_RED into six phased groups, losing and inventing nothing", () => {
+      const mark = brandMark(112);
+      dealAlerts(mark, ALERT_GROUPS, lcg(SEED));
+      const groups = mark.querySelectorAll(".mark-map--warm");
+      expect(groups.length).toBe(ALERT_GROUPS);
+      // The phase index is what the whole exercise is for: base.css reads --i and starts each
+      // group 0.6s further into the 3.6s alert cycle.
+      expect(groups.map((g) => g.getAttribute("style")))
+        .toEqual([...Array(ALERT_GROUPS).keys()].map((i) => "--i:" + i));
+      // A MULTISET, not a concatenation: round-robin dealing after a shuffle reorders the
+      // dots, and it may not drop or duplicate one.
+      const dealt = dots(groups.map((g) => g.getAttribute("d")).join(""));
+      expect(dealt.length).toBe(97);
+      expect([...dealt].sort()).toEqual([...dots(MARK_DOTS_RED)].sort());
+    });
+
+    it("reaches the SPLASH mark, not the appbar's", () => {
+      const { asked } = runInline(lcg(SEED));
+      expect(asked.length).toBe(1);
+      expect(asked[0], "the inline dealer would also deal a header glyph")
+        .toContain(".boot-splash ");
+    });
+
+    it("produces the same six groups from the module and from the inline script", () => {
+      const mark = brandMark(112);
+      dealAlerts(mark, ALERT_GROUPS, lcg(SEED));
+      const fromModule = mark.querySelectorAll(".mark-map--warm")
+        .map((g) => g.getAttribute("d"));
+
+      const { svg } = runInline(lcg(SEED));
+      const fromInline = svg.querySelectorAll(".mark-map--warm")
+        .map((g) => g.getAttribute("d"));
+
+      expect(fromInline.length, "the inline dealer deals a different number of groups")
+        .toBe(fromModule.length);
+      expect(fromInline, "the two dealers disagree — one shuffle, written twice")
+        .toEqual(fromModule);
+    });
+
+    it("copies the original path's attributes onto every group", () => {
+      const { svg } = runInline(lcg(SEED));
+      for (const g of svg.querySelectorAll(".mark-map--warm")) {
+        expect(g.getAttribute("stroke")).toBe("#f32b2b");
+        expect(g.getAttribute("stroke-width")).toBe(String(MARK_DOT_WIDTH));
+        expect(g.getAttribute("stroke-linecap")).toBe("round");
+        expect(g.getAttribute("fill")).toBe("none");
+      }
     });
   });
 }
