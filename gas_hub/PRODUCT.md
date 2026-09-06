@@ -11,7 +11,7 @@ data of its own to be right or wrong about.
 
 **Open the right sidekick.** A reader arrives — usually from a bookmark, a Slack link or a
 wiki page — knowing which register they want. The app's whole surface is a 2×2 grid of large
-tiles: OS Patching, AI, DevSecOps, and a placeholder for a fourth register that does not exist
+tiles: OS Patching, AI security, DevSecOps, and a placeholder for a fourth register that does not exist
 yet. One click and they are in the register, in the same tab. Success is measured in seconds
 and in nothing else.
 
@@ -90,7 +90,7 @@ The five in the root `PRODUCT.md` govern. Three of them decide most of this app:
 
 1. **Honest state.** A tile with no URL says so, in a sentence naming where to set it. It never
    renders as a link that goes nowhere, and it never disappears — a missing tile would read as
-   "that register does not exist". The unbuilt fourth register says "coming soon" and is not a
+   "that register does not exist". The unbuilt fourth register says "coming soon (maybe)" and is not a
    disabled control: it is a bordered card, plain text, no pointer cursor. **A control that
    fails on click is worse than no control.**
 2. **Severity is signal, not theater** — applied to colour generally. The tiles are the only

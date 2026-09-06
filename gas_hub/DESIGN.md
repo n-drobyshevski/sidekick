@@ -90,9 +90,9 @@ settings panels, the save bar — is the shared system unmodified.
 | Tile | Fill | Ink | Edge | Measured |
 |---|---|---|---|---|
 | OS Patching | `--tile-os` `#2563eb` | `--on-tile-os` `#ffffff` | none | 5.17:1 |
-| AI | `--tile-ai` `#be123c` | `--on-tile-ai` `#ffffff` | none | 6.29:1 |
+| AI security | `--tile-ai` `#be123c` | `--on-tile-ai` `#ffffff` | none | 6.29:1 |
 | DevSecOps | `--tile-dso` `#ffcb13` | `--on-tile-dso` `#171717` | **`--tile-dso-edge` `rgba(0,0,0,.40)`, mandatory** | 11.78:1 |
-| Coming soon | — (the page's own ground) | `--ink` `#171717`, with `--text-2` on the eyebrow and scope line | `--tile-soon` `#52525b`, 1px border | 7.73:1 for the border on white |
+| Coming soon (maybe) | — (the page's own ground) | `--ink` `#171717`, with `--text-2` on the eyebrow and scope line | `--tile-soon` `#52525b`, 1px border | 7.73:1 for the border on white |
 
 Each tile's **offset outline takes its own colour** — `.tile--os::before` draws in
 `--tile-os`, and so on. Drawn in one flat neutral it read as a drop shadow that had lost its

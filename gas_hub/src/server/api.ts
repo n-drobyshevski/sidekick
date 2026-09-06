@@ -92,7 +92,7 @@ const TILE_COPY: Array<{ key: string; productName: string; headline: string; sco
   {
     key: "ai",
     productName: "Wiz Sidekick AI",
-    headline: "AI",
+    headline: "AI security",
     scope: "Agents · models · posture",
   },
   {
@@ -104,7 +104,7 @@ const TILE_COPY: Array<{ key: string; productName: string; headline: string; sco
   {
     key: "soon",
     productName: "Wiz Sidekick",
-    headline: "Coming soon",
+    headline: "Coming soon (maybe)",
     scope: "Not yet built",
   },
 ];

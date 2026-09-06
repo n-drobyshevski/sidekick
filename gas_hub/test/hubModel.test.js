@@ -26,7 +26,7 @@ const BOOT = {
     {
       key: "ai",
       productName: "Wiz Sidekick AI",
-      headline: "AI",
+      headline: "AI security",
       scope: "Agents · models · posture",
       url: "http://localhost:8788/",
     },
@@ -40,7 +40,7 @@ const BOOT = {
     {
       key: "soon",
       productName: "Wiz Sidekick",
-      headline: "Coming soon",
+      headline: "Coming soon (maybe)",
       scope: "Not yet built",
       url: null,
     },

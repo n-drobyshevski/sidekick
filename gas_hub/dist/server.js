@@ -324,7 +324,7 @@ var Server = (() => {
   });
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "535b2f4092b1" : "dev";
+  var BUILD_ID = true ? "18ccb237c60d" : "dev";
 
   // src/server/urls.ts
   var TILE_ORDER = ["os", "ai", "devsecops"];
@@ -386,7 +386,7 @@ var Server = (() => {
     {
       key: "ai",
       productName: "Wiz Sidekick AI",
-      headline: "AI",
+      headline: "AI security",
       scope: "Agents \xB7 models \xB7 posture"
     },
     {
@@ -398,7 +398,7 @@ var Server = (() => {
     {
       key: "soon",
       productName: "Wiz Sidekick",
-      headline: "Coming soon",
+      headline: "Coming soon (maybe)",
       scope: "Not yet built"
     }
   ];

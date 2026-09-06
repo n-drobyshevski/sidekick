@@ -3,7 +3,8 @@
 // hub.js only draws it. DOM-free, so test/hubModel.test.js exercises it directly in node.
 //
 // TILE_ORDER IS FIXED, NOT DERIVED FROM THE SERVER'S ARRAY. The grid always draws OS
-// Patching, AI, DevSecOps, Coming soon in that order and in that position on the page,
+// Patching, AI security, DevSecOps, Coming soon (maybe) in that order and in that position on
+// the page,
 // whatever order api.ts's `bootstrap()` happens to list `tiles` in — a launcher whose own
 // grid reflowed between reloads would be a worse product than the SPA it replaces.
 export const TILE_ORDER = ["os", "ai", "devsecops", "soon"];

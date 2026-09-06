@@ -202,7 +202,7 @@ describe("hub: the four tile colours carry their ink", () => {
   // The colour's real obligation now is the 3:1 graphical-mark floor, asserted below.
   const PAIRS = [
     ["OS Patching", "on-tile-os", "tile-os"],
-    ["AI", "on-tile-ai", "tile-ai"],
+    ["AI security", "on-tile-ai", "tile-ai"],
     ["DevSecOps", "on-tile-dso", "tile-dso"],
   ];
 

@@ -29,7 +29,7 @@ import { urlPlaceholder, urlProblem } from "./urlsModel.js";
 
 const URL_FIELDS = [
   { key: "os", label: "OS Patching" },
-  { key: "ai", label: "AI" },
+  { key: "ai", label: "AI security" },
   { key: "devsecops", label: "DevSecOps" },
 ];
 

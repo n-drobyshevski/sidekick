@@ -15,12 +15,12 @@ analytics for SAST / SCA / secrets findings in source repositories, with `brick/
 as its behavioural spec.
 
 `gas_hub/` is the fourth GAS app and the only one that is NOT a register: a launcher whose whole
-job is to open the right sidekick. One page, a 2x2 grid of tiles — OS Patching, AI, DevSecOps,
-and a bordered "coming soon" placeholder — plus a Settings page holding the access roster and
-the three sibling URLs. **It reads no register's data.** There is no cross-app call, no
-ledger, no scan, no sync, no chart, no scope dimension, no help route and no welcome gate (each
-sibling runs its own "signed in as X, Continue"; two interstitials in one journey answer the
-same question twice). Its only state is five Script Properties: the two allowlists, and
+job is to open the right sidekick. One page, a 2x2 grid of tiles — OS Patching, AI security,
+DevSecOps, and a bordered "coming soon (maybe)" placeholder — plus a Settings page holding the
+access roster and the three sibling URLs. **It reads no register's data.** There is no
+cross-app call, no ledger, no scan, no sync, no chart, no scope dimension, no help route and no
+welcome gate (each sibling runs its own "signed in as X, Continue"; two interstitials in one
+journey answer the same question twice). Its only state is five Script Properties: the two allowlists, and
 `URL_OS` / `URL_AI` / `URL_DEVSECOPS` — the siblings' `/exec` URLs, which **cannot be derived**
 (`ScriptApp.getService().getUrl()` answers for the calling deployment only and has flipped
 between the `/dev` and `/exec` forms across runtime changes), so somebody pastes them once and
