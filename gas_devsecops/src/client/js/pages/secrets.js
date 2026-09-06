@@ -59,9 +59,9 @@
 
 import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
-  glossaryTip, heroLines, heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow,
-  survivalTableModel, uiIcon,
+  absent, absentText, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount,
+  fmtDate, glossaryTip, heroLines, heroStat, meter, num, pageHeader, pct1, skeletonStack,
+  statRow, survivalTableModel, uiIcon,
 } from "../ui.js";
 import {
   boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
@@ -79,14 +79,25 @@ import { populationLine } from "./registerModel.js";
  * the register while misdating 135 of those 187 by a median of three weeks. The dev seed
  * folds about six. The number is not in the payload, so the note states the mechanism and
  * names the tenant figure as a measurement rather than printing it as a live count.
+ *
+ * IT IS A DATED, ONE-OFF MEASUREMENT — NOT A LIVE FIGURE THIS PAGE RECOMPUTES. The 187/135/
+ * 19.9-day numbers came from one read of one tenant and stay fixed here whether or not this
+ * scan's own population still spans that many twins; the fold itself IS applied fresh every
+ * sync (`reconcile.ts`'s `foldSecretTwins`), only its own SIZE is not re-measured on screen.
+ * The real fix is to ship the scan row's `twins` (`TwinStats`, already on the server —
+ * `ledgerStore.ts`) onto `secretsModel` and render `twinAudit().sentence` here instead of a
+ * frozen string; CLAUDE.md's own entry on this fold names the per-row auditability that is
+ * still missing (`twin_count` / `twin_first_seen_spread_days` on each row). Flagged as a
+ * follow-up, not done in this package.
  */
 export const TWIN_NOTE =
   "One secret at one line is reported twice by Wiz — once against the repository and once "
   + "against a branch of it — with a different external id each time. The ledger keys on "
   + "(secret, path, line) and keeps the earlier of the two birth dates, so the two rows fold "
-  + "into one finding with the older clock. Measured in this tenant: 187 keys spanned both "
-  + "forms, the branch copy carried the earlier date in 135 of them, median gap 19.9 days. "
-  + "That fold is already applied to every count on this page.";
+  + "into one finding with the older clock. Measured once, in this tenant, on a dated pass — "
+  + "not recomputed on every sync: 187 keys spanned both forms, the branch copy carried the "
+  + "earlier of the two birth dates in 135 of them, median gap 19.9 days. That fold is already "
+  + "applied to every count on this page; only this sentence's own numbers are a snapshot.";
 
 /**
  * The 2x2's four cells, named by the two independent axes rather than by a quality grade.
@@ -177,7 +188,7 @@ export function secretsModel(payload, opts) {
     // nobody has read is a confident claim about a corner nobody has looked at yet.
     hero: {
       label: "Removed, not rotated",
-      value: firstRun.show ? "—" : fmtCount(rvr.removedNotRotated),
+      value: firstRun.show ? absentText : fmtCount(rvr.removedNotRotated),
       sentence: firstRun.show
         ? "Nothing has been measured for this register yet."
         : `${fmtCount(rvr.removedNotRotated)} secrets left the code and nobody has `

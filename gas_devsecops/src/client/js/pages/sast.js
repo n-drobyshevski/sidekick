@@ -26,19 +26,17 @@
 import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import {
-  absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
-  heroStat, meter, num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
-  skeletonStack, statRow,
+  absent, absentText, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount,
+  fmtDate, heroStat, meter, num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow,
+  sevSegmentBar, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  RISK_TIER_LABELS, RISK_TIER_ORDER, agingModel, agingTableModel, chartCard,
-  concentrationModel, figureCard, funnelModel, movementCard, movementModel, oldestFindingsModel,
-  pagedTable, readRegisterParams, registerFirstRunView, registerRowsTable, registerToolbar,
-  renderRegisterPage, sectionCard, sevPalette, severityCountsTableModel, signalFigure, textCell,
-  tierModel,
+  RISK_TIER_LABELS, RISK_TIER_ORDER, SEVERITY_FALLBACK, agingModel, agingTableModel, chartCard,
+  concentrationModel, figureCard, filterEmptyNotice, funnelModel, movementCard, movementModel,
+  oldestFindingsModel, pagedTable, readRegisterParams, registerFirstRunView, registerRowsTable,
+  registerToolbar, renderRegisterPage, sectionCard, sevPalette, severityCountsTableModel,
+  signalFigure, textCell, tierModel,
 } from "./sca.js";
-
-const SEVERITY_FALLBACK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
 /**
  * The disappearance-dating caveat, as one string.
@@ -114,7 +112,7 @@ export function sastModel(payload, opts) {
     // module's comment. `rowCount`/`open`/`resolved` above stay the real numbers.
     hero: {
       label: "Code",
-      value: firstRun.show ? "—" : fmtCount(p.open),
+      value: firstRun.show ? absentText : fmtCount(p.open),
       sub: firstRun.show
         ? "Nothing has been measured for this register yet."
         : `open weaknesses of ${fmtCount(p.rowCount)} in the register — `
@@ -295,6 +293,7 @@ function paintSast(host, vm, filters) {
   ));
 
   // ------------------------------------------------------------------ the rule
+  const ruleRows = vm.tiers.rows.filter((r) => vm.rule.clauses.includes(r.tier) || r.count > 0);
   host.append(sectionCard("The rule that calls a weakness high risk", "cwe-top-25",
     el("p", {}, vm.rule.sentence),
     el("div", { class: "table-host" }, dataTable({
@@ -310,10 +309,14 @@ function paintSast(host, vm, filters) {
           }),
         },
       ],
-      rows: vm.tiers.rows.filter((r) => vm.rule.clauses.includes(r.tier) || r.count > 0),
+      rows: ruleRows,
       emptyText: "Nothing open to classify.",
     })),
     denomNote(vm.tiers.denominator),
+    // The rule's own three clause rows are always drawn (see `ruleRows` above), so a filter
+    // that narrows the register to nothing still shows three rows of `0` rather than an empty
+    // table — `vm.tiers.open` is what actually reads "nothing under this filter".
+    filterEmptyNotice(vm.asOf, filters.severities.length > 0, vm.tiers.open === 0),
   ));
 
   // ----------------------------------------------------- ai_verdict coverage, shown
@@ -405,6 +408,7 @@ function paintSast(host, vm, filters) {
     })),
     denomNote(vm.funnel.denominator),
     vm.funnel.note ? el("p", { class: "small muted" }, vm.funnel.note) : null,
+    filterEmptyNotice(vm.asOf, filters.severities.length > 0, vm.funnel.steps[0].count === 0),
   ));
 
   // ---------------------------------------------------------------------- breakdowns
@@ -420,6 +424,7 @@ function paintSast(host, vm, filters) {
         emptyText: "No open weaknesses in this dimension.",
       })),
       denomNote(dim.denominator),
+      filterEmptyNotice(vm.asOf, filters.severities.length > 0, dim.rows.length === 0),
     ));
   }
 
@@ -462,6 +467,7 @@ function paintSast(host, vm, filters) {
     registerRowsTable({
       scope: "sast",
       severities: filters.severities,
+      at: vm.asOf,
       defaultSort: "age_days",
       defaultDir: "desc",
       emptyText: "Nothing in this register.",

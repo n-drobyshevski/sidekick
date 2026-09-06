@@ -165,22 +165,42 @@ describe("repos: foothold, half-life and capacity read the published fields, not
 });
 
 describe("repos: ownership coverage — honestly absent, not a fabricated unowned count", () => {
+  // WAVE 1, ITEM 1.1 CHANGED BOTH ASSERTIONS BELOW, AND THE CLAIM THEY PIN IS UNCHANGED: an
+  // honest gap is not a fabricated number. What moved is HOW that gap reaches the screen.
+  //
+  // `v.reason` no longer names `assetProfile` or `owner_project` as identifiers, on purpose —
+  // it used to read as developer trace ("assetProfile() … AssetProfileRow's 17 published
+  // columns") reaching a reader who has no way to act on either name. The trace itself still
+  // exists, moved into `ownershipView`'s own code comment in repos.js; `v.reason` is reader
+  // prose now, and this test drops the two identifier checks rather than gaming them into
+  // still matching leftover jargon.
+  //
+  // The render-path check moved from `errorState` to `emptyState(..., {variant:"notice"})`.
+  // `errorState`'s `role="alert"` red box drew on EVERY visit to this page for a permanent,
+  // known gap — CLAUDE.md's audit names this defect by name ("Repositories draws a red
+  // role=\"alert\" error box on every visit for a permanent, known data gap"). An absence
+  // that renders correctly every time is not a failure, so it does not belong on `errorState`.
   it("reports unavailable rather than inventing a coverage percentage or an unowned count", () => {
     const v = ownershipView();
     expect(v.available).toBe(false);
     expect(v.unownedCount).toBeNull();
-    expect(v.reason).toMatch(/owner_project/);
-    expect(v.reason).toMatch(/assetProfile/);
+    expect(v.reason).toMatch(/owned\/unowned split/i);
+    // Reader prose, not developer trace — the identifiers a reader cannot act on moved into
+    // repos.js's own code comment above `ownershipView`.
+    expect(v.reason).not.toMatch(/assetProfile/);
+    expect(v.reason).not.toMatch(/owner_project/);
   });
 
-  it("the render path draws the honest-absence state (errorState), not a percentage", () => {
-    // Source-as-text: renderOwnership() must branch on `!view.available` and reach for
-    // errorState() there — a perturbation that rendered a bare number instead is exactly
-    // what CLAUDE.md's "invent no numbers" rule exists to catch.
+  it("the render path draws the honest-absence state (emptyState, not errorState)", () => {
+    // Source-as-text: renderOwnership() must reach for emptyState with the "notice" variant —
+    // a perturbation that rendered a bare number instead is exactly what CLAUDE.md's "invent
+    // no numbers" rule exists to catch, and a perturbation that reached for errorState instead
+    // is exactly the alert-box defect this item fixed.
     const fn = REPOS_SRC.slice(REPOS_SRC.indexOf("function renderOwnership"));
     const body = fn.slice(0, fn.indexOf("\n  }\n"));
-    expect(body).toMatch(/!view\.available/);
-    expect(body).toMatch(/errorState\(/);
+    expect(body).toMatch(/emptyState\(/);
+    expect(body).toMatch(/variant: "notice"/);
+    expect(body).not.toMatch(/errorState\(/);
   });
 });
 
@@ -275,7 +295,11 @@ describe("history: KPIs, KM points and the SLA-trend gap", () => {
   });
 
   it("states, in the rendered text, that the open-past-SLA trend is not in this payload", () => {
-    expect(HISTORY_SRC).toMatch(/open-past-SLA trend is not in this page's payload/);
+    // WORDING CHANGED (Wave 1, item 1.4): "payload" is developer jargon reaching the screen.
+    // The claim this test pins is unchanged — the open-past-SLA series is not published on
+    // this page, it is on MTTR & SLA — only the reader-facing sentence moved from "is not in
+    // this page's payload" to "is not published on this page".
+    expect(HISTORY_SRC).toMatch(/open-past-SLA series is not published on this page/);
   });
 });
 

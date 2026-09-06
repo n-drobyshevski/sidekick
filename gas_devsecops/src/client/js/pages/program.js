@@ -28,21 +28,18 @@
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+// `fmtPct`, `denominatorNode`, `rateCell` and `scopeParam` used to be DEFINED here — see
+// `./_rates.js`'s header for why one copy now serves this page and mttr.js both.
+import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
+import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState, firstRunNotice,
-  glossaryTip, heroStat, kpiCard,
+  absentText, chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState,
+  firstRunNotice, glossaryTip, heroStat, kpiCard,
   onPageTeardown, pageHeader, pluralize, sectionLabel, skeleton, statRow, statusPill,
 } from "../ui.js";
 import { fmtCount, fmtDays } from "./mttr.js";
 
 // ---------------------------------------------------------------------------- formatting
-
-function fmtPct(p) {
-  const n = Number(p);
-  return (Math.round(n * 10) / 10) + "%";
-}
-
-const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
 
 /** The six risk clauses, in the order `domain/program.ts` fixes them, with their labels and
  *  the `signalCoverage` key each one rests on. `cwe` and `critical` rest on columns that are
@@ -305,7 +302,7 @@ export function capacityView(capacity) {
       closed: Number(m.closed || 0),
       net: Number(m.net || 0),
       verdict: m.verdict || null,
-      verdictLabel: VERDICT_LABELS[m.verdict] || "—",
+      verdictLabel: VERDICT_LABELS[m.verdict] || absentText,
       marks,
       measured: marks.length === 0,
       scanClosed: m.scanClosed === null || m.scanClosed === undefined ? null : Number(m.scanClosed),
@@ -329,7 +326,7 @@ export function capacityView(capacity) {
     oneInN: c.oneInN === null || c.oneInN === undefined ? null : Number(c.oneInN),
     netTotal: Number(c.netTotal || 0),
     verdict: c.verdict || null,
-    verdictLabel: VERDICT_LABELS[c.verdict] || "—",
+    verdictLabel: VERDICT_LABELS[c.verdict] || absentText,
     unmeasuredCount: months.filter((m) => !m.measured).length,
   };
 }
@@ -365,34 +362,9 @@ export function sensitivityView(sensitivity) {
 }
 
 // ----------------------------------------------------------------------------- the page
-
-function scopeParam(params) {
-  const s = params && params.scope;
-  return s === "sca" || s === "sast" || s === "secrets" ? s : null;
-}
-
-/**
- * A `[data-denominator]` node — every rate on this page is followed by one of these.
- *
- * The ATTRIBUTE always carries the number, a zero included. The visible text does not restate
- * a zero base beside "not measured" — see `rateView` in mttr.js, which this page's rates come
- * from, for why that pairing is the failure and not the disclosure.
- */
-function denominatorNode(rate) {
-  return el("span", {
-    class: "small muted",
-    "data-denominator": rate.denominator === null ? "none" : String(rate.denominator),
-  }, rate.baseEmpty ? "— " + rate.emptyLabel : rate.denominatorLabel);
-}
-
-/** The figure, its interval, and its base — the three things a rate is never published
- *  without on this page. */
-function rateCell(rate) {
-  return el("span", {},
-    el("span", { class: "num" }, rate.text),
-    rate.boundsText ? el("span", { class: "small muted" }, " (" + rate.boundsText + ") ") : " ",
-    denominatorNode(rate));
-}
+//
+// `scopeParam`, `denominatorNode` and `rateCell` moved to `./_rates.js` (imported above) —
+// `rateCell` there renders a `boundsText` when present, exactly as this page's copy did.
 
 export async function renderProgram(host, params, _ctx) {
   const boot = await bootstrap();
@@ -453,6 +425,16 @@ export async function renderProgram(host, params, _ctx) {
     guard("coverage and efficiency", heroHost, () => renderHero(program, first));
     guard("the confusion matrix", matrixHost, () => renderMatrix(program, first));
     guard("the signal breakdown", signalHost, () => renderSignals(program, first));
+    // FIRST RUN STOPS HERE — one notice above (`renderFirstRun`), not a page of section
+    // headings each over their own "nothing yet". `renderMatrix`/`renderSignals` already gate
+    // themselves to nothing on `first` (see their own `if (first) return;`); sensitivity,
+    // capacity and the trend used to reach this point regardless and print their OWN generic
+    // empty message ("No sweep yet.", "No monthly capacity yet.", "Not enough history…") —
+    // three more sentences beside the one at the top of the page, for the same fact.
+    if (first) {
+      [sensitivityHost, capacityHost, trendHost].forEach(clear);
+      return;
+    }
     guard("rule sensitivity", sensitivityHost, () => renderSensitivity(program));
     guard("monthly capacity", capacityHost, () => renderCapacity(program));
     guard("the coverage trend", trendHost, () => renderTrend(payload, program));
@@ -485,7 +467,10 @@ export async function renderProgram(host, params, _ctx) {
   function renderHero(program, first) {
     clear(heroHost);
     if (!program) {
-      heroHost.append(emptyState("No programme figures yet."));
+      heroHost.append(emptyState(
+        "No programme figures yet.",
+        "They appear once a sync has saved findings for the risk rule to score.",
+      ));
       return;
     }
     const view = coverageEfficiencyView(program.matrix);
@@ -493,17 +478,22 @@ export async function renderProgram(host, params, _ctx) {
     // Efficiency rides in the header's aside slot rather than in a second hero: DESIGN.md
     // allows one hero per page, and the point of this pair is that neither figure means
     // anything alone. Coverage leads because it is the P2P convention, not because it wins.
-    const aside = el("div", { class: "page-strip" },
-      el("div", { class: "kpi-label" },
-        glossaryTip("Remediation efficiency", "efficiency")),
-      el("div", { class: "kpi-value num" }, view.efficiency.text),
+    //
+    // A `kpiCard` NOW, not a hand-built `.page-strip` of `.kpi-label`/`.kpi-value` divs — the
+    // same component this page already uses for every other figure, so this is the one figure
+    // that no longer draws its own copy of a card the shared module already owns.
+    // `denominatorNode` is appended after, exactly as `mmcrMean`'s card does below, because
+    // `kpiCard`'s own `sub` slot is the one line the bounds/measured sentence needs.
+    const aside = kpiCard(
+      glossaryTip("Remediation efficiency", "efficiency"),
+      view.efficiency.text,
       view.efficiency.boundsText
-        ? el("div", { class: "small muted" }, "Bounds " + view.efficiency.boundsText)
-        : el("div", { class: "small muted" },
-          view.efficiency.measured
-            ? "No unclassified rows, so the point estimate is the whole interval."
-            : "Nothing was remediated under a classification, so there is no rate to take."),
-      denominatorNode(view.efficiency));
+        ? "Bounds " + view.efficiency.boundsText
+        : (view.efficiency.measured
+          ? "No unclassified rows, so the point estimate is the whole interval."
+          : "Nothing was remediated under a classification, so there is no rate to take."),
+    );
+    aside.append(denominatorNode(view.efficiency));
 
     // NO `route`: the h1 is in the title block appended once at the top of renderProgram.
     heroHost.append(pageHeader({
@@ -573,23 +563,12 @@ export async function renderProgram(host, params, _ctx) {
 
   function renderMatrix(program, first) {
     clear(matrixHost);
+    // GATED WHOLESALE, HEADING INCLUDED — one notice already covers this page (see `paint`'s
+    // own gate below `renderSignals`); a heading with nothing under it is a dangling section,
+    // and `!program` is unreachable past this point (it implies `first`, since `first` reads
+    // `program && program.rowCount`).
+    if (first) return;
     matrixHost.append(sectionLabel("The confusion matrix"));
-    if (!program) {
-      matrixHost.append(emptyState("No matrix yet."));
-      return;
-    }
-    // The SECTION STAYS, its figures do not. Four cells of `0` and an `Unclassified 0` beside
-    // them describe a rule that has been run against nothing — and a reader cannot tell that
-    // apart from a rule that placed every row. The heading is kept so the page is not
-    // silently shorter than itself.
-    if (first) {
-      matrixHost.append(emptyState(
-        "The rule has not been run against a finding yet.",
-        "Each of the four cells counts findings by what the rule said and what happened to"
-        + " them, so all four wait on the first sync that saves a row.",
-      ));
-      return;
-    }
     const view = confusionView(program.matrix);
     const cell = (key) => view.cells.filter((c) => c.key === key)[0] || { value: 0, label: "" };
 
@@ -643,23 +622,14 @@ export async function renderProgram(host, params, _ctx) {
 
   function renderSignals(program, first) {
     clear(signalHost);
+    // GATED WHOLESALE, HEADING INCLUDED — same shape as `renderMatrix` above. "Fired on 0 ·
+    // Never captured 0" is a VERDICT on a clause, and this page argues in its own caption that
+    // a coverage of 0% is a measurement — it separates "the AI agreed with nothing" from
+    // "nobody asked the AI". Neither of those is true over an unread ledger, and printing
+    // twelve zeros here (or a heading with nothing under it) would make a third thing look
+    // like one of the other two.
+    if (first) return;
     signalHost.append(sectionLabel("What the rule fired on"));
-    if (!program) {
-      signalHost.append(emptyState("No signal breakdown yet."));
-      return;
-    }
-    // "Fired on 0 · Never captured 0" is a VERDICT on a clause, and this page argues in its
-    // own caption that a coverage of 0% is a measurement — it separates "the AI agreed with
-    // nothing" from "nobody asked the AI". Neither of those is true over an unread ledger,
-    // and printing twelve zeros here would make a third thing look like both.
-    if (first) {
-      signalHost.append(emptyState(
-        "No clause has had a finding to fire on.",
-        "Each row here is a clause of the risk rule; the counts beside it appear once a sync"
-        + " has saved findings for the rule to read.",
-      ));
-      return;
-    }
     const view = signalBreakdownView(program.signals, program.signalCoverage, program.rowCount);
     signalHost.append(dataTable({
       columns: [
@@ -822,7 +792,7 @@ export async function renderProgram(host, params, _ctx) {
     ));
     row.append(kpiCard(
       "Roughly",
-      view.oneInN === null ? "—" : "1 in " + Math.round(view.oneInN),
+      view.oneInN === null ? absentText : "1 in " + Math.round(view.oneInN),
       "of what was open at the start of a month gets closed in it",
     ));
     row.append(kpiCard(

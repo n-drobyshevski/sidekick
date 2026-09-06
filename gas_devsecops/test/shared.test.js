@@ -70,14 +70,20 @@ registerEmptyStateContract({
     "data", "executive", "history", "mttr", "program", "repos", "settings",
   ],
   guardedRoutes: ["executive", "mttr", "program"],
-  // All seven pages that carry firstRunNotice(). `firstRunBootstrapRoutes` stays the
-  // original four: sca/sast/secrets read `bootstrapCached()`, not `await bootstrap()` —
-  // safe only because `gas_shared/shell/appShell.js`'s own boot() already awaits bootstrap()
-  // once before any route mounts, which is a guarantee those three pages take rather than
-  // repeat, so widening the seven-route list must not also widen the literal-text check for
-  // a fresh await that only the other four pages actually make.
-  firstRunRoutes: ["mttr", "program", "history", "data", "sca", "sast", "secrets"],
-  firstRunBootstrapRoutes: ["mttr", "program", "history", "data"],
+  // EIGHT pages now (Wave 1, item 1.1 added "repos" — it was the one page below the front
+  // door that never stated its origin: `renderDensity`'s "no repository profile yet" empty
+  // state used to say nothing about WHEN, or whether, a sync had ever run). `repos` reads
+  // `await bootstrap()` itself, the same fresh await mttr/program/history/data make, so it
+  // joins `firstRunBootstrapRoutes` too rather than `firstRunRoutes` alone.
+  //
+  // `firstRunBootstrapRoutes` is otherwise the original four: sca/sast/secrets read
+  // `bootstrapCached()`, not `await bootstrap()` — safe only because
+  // `gas_shared/shell/appShell.js`'s own boot() already awaits bootstrap() once before any
+  // route mounts, which is a guarantee those three pages take rather than repeat, so widening
+  // the eight-route list must not also widen the literal-text check for a fresh await that
+  // only the other five pages actually make.
+  firstRunRoutes: ["mttr", "program", "history", "data", "sca", "sast", "secrets", "repos"],
+  firstRunBootstrapRoutes: ["mttr", "program", "history", "data", "repos"],
   // "data" renders its notice only inside the branch where latestSync is already known
   // falsy (see pages/data.js's comment at the call site) — synced is a literal `false`
   // there, never a derived value, so there is never a date to carry.

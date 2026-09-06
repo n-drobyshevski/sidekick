@@ -53,16 +53,15 @@ import { svgEl } from "../../../../../gas_shared/icons.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { showExperimental, subscribeExperimental } from "../experimental.js";
 import {
-  DEFAULT_PAGE_SIZE, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
-  emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDateTime, glossaryTip,
-  kpiCard, num,
+  DEFAULT_PAGE_SIZE, absentText, chartTable, chartTableModel, clear, dataTable,
+  denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDateTime,
+  fmtDays, glossaryTip, kpiCard, num,
   onPageTeardown, pageHeader, pageOf, pluralize, registerWideNote, sectionLabel, skeletonStack,
   sortRows, tableFooter,
 } from "../ui.js";
+import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import { movementBlocks } from "./historyModel.js";
 import { spiralLayout } from "./spiralLayout.js";
-
-const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
 
 // ---------------------------------------------------------------------------- formatting
 //
@@ -113,7 +112,7 @@ export function scanRowsView(scans) {
     scanId: s.scan_id,
     ts: s.ts,
     scope: s.scope,
-    scopeLabel: SCOPE_LABELS[s.scope] || String(s.scope || "—"),
+    scopeLabel: SCOPE_LABELS[s.scope] || String(s.scope || absentText),
     mode: s.mode,
     total: num(s.total, 0),
     newCount: num(s.new_count, 0),
@@ -319,28 +318,41 @@ export async function renderHistory(host, _params, _ctx) {
   // with no children renders as nothing.
   const spiralHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid" });
+  // ONE WRAPPER FOR EVERY SECTION BELOW THE KPI ROW, so a first run can clear four headings
+  // and their content together in one call rather than leaving them standing over an empty
+  // box — the same "label lives with its box" shape mttr.js/executive.js's own `paint` use,
+  // adapted here because these headings are static text appended once rather than something a
+  // renderX function draws itself. `ensureSections()` (re)populates it the first time a paint
+  // call is NOT a first run; `paint`'s own first-run branch clears it, which detaches
+  // `perScopeHost`/`tableHost`/`movementHost`/`spiralHost`/`chartsHost` from the DOM (their
+  // own children survive the detach, but `ensureSections()` re-attaches them before the next
+  // non-first paint repopulates those children).
+  const sectionsHost = el("div", {});
 
-  host.append(
-    observedHost,
-    kpiHost,
-    // The table the rail's one status dot is a summary of: a "Last scan" of "—" here is the
-    // never-measured state that outranks every stale one on the dot. `rail-status` is where
-    // that precedence is written down.
-    sectionLabel("Coverage by register", { term: "rail-status" }),
-    perScopeHost,
-    sectionLabel("Saved scans"),
-    tableHost,
-    sectionLabel("What moved the number"),
-    el("p", { class: "section-note" },
-      "The change in each register's open count over the last 28-day window bounded by two of "
-      + "its own saved scans, split into the causes that moved it — and which of them are "
-      + "remediation the register actually observed. The window is per register: three scopes "
-      + "share one scan log, and a scan of one of them looked at none of the others."),
-    movementHost,
-    spiralHost,
-    sectionLabel("Trends"),
-    chartsHost,
-  );
+  function ensureSections() {
+    if (sectionsHost.childNodes.length) return;
+    sectionsHost.append(
+      // The table the rail's one status dot is a summary of: a "Last scan" of "—" here is the
+      // never-measured state that outranks every stale one on the dot. `rail-status` is where
+      // that precedence is written down.
+      sectionLabel("Coverage by register", { term: "rail-status" }),
+      perScopeHost,
+      sectionLabel("Saved scans"),
+      tableHost,
+      sectionLabel("What moved the number"),
+      el("p", { class: "section-note" },
+        "The change in each register's open count over the last 28-day window bounded by two "
+        + "of its own saved scans, split into the causes that moved it — and which of them are "
+        + "remediation the register actually observed. The window is per register: three "
+        + "scopes share one scan log, and a scan of one of them looked at none of the others."),
+      movementHost,
+      spiralHost,
+      sectionLabel("Trends"),
+      chartsHost,
+    );
+  }
+
+  host.append(observedHost, kpiHost, sectionsHost);
 
   kpiHost.append(skeletonStack(4, { variant: "stat" }));
 
@@ -365,10 +377,22 @@ export async function renderHistory(host, _params, _ctx) {
     lastPayload = payload;
     lastFirst = first;
     renderObserved(payload);
-    renderKpis(payload, first);
-    renderPerScope(payload, first);
+    // FIRST RUN STOPS HERE — one notice above (`renderObserved`), not five below it: a KPI
+    // row of zeros, "No register has a saved scan yet.", "No scans saved yet.", "Nothing has
+    // moved yet…" and a heading over an empty trends chart used to print separately, each in
+    // its own words, for the one fact `renderObserved`'s notice already states. Clearing
+    // `sectionsHost` detaches its headings AND the five content hosts nested inside it in one
+    // call; `ensureSections()` re-attaches them the next time this runs non-first.
+    if (first) {
+      [kpiHost, perScopeHost, tableHost, movementHost, spiralHost, chartsHost, sectionsHost]
+        .forEach(clear);
+      return;
+    }
+    ensureSections();
+    renderKpis(payload);
+    renderPerScope(payload);
     renderTable(payload);
-    renderMovement(payload, first);
+    renderMovement(payload);
     renderSpiral(payload, first);
     renderTrends(payload);
   };
@@ -414,20 +438,9 @@ export async function renderHistory(host, _params, _ctx) {
     }));
   }
 
-  function renderKpis(payload, first) {
+  function renderKpis(payload) {
     const v = kpiView(payload && payload.kpis);
     clear(kpiHost);
-    // SUPPRESSED, not dashed — the convention the Program lane already uses. "Tracked
-    // (all-time) 0" over a register that has never been read is the same confident zero the
-    // front door was printing, and this page is where a reader comes to check that.
-    if (first) {
-      kpiHost.append(emptyState(
-        "Nothing has been tracked yet.",
-        "These four are all-time counts over saved scans, so the first sync is what starts"
-        + " them.",
-      ));
-      return;
-    }
     kpiHost.append(
       kpiCard("Tracked (all-time)", fmtCount(v.tracked)),
       kpiCard("Currently open", fmtCount(v.open)),
@@ -436,32 +449,26 @@ export async function renderHistory(host, _params, _ctx) {
         card.append(denomNote(
           v.resolvedSharePct === null
             ? "No findings tracked yet."
-            : `${v.resolvedSharePct.toFixed(1)}% of ${v.tracked.toLocaleString()} tracked.`,
+            : `${v.resolvedSharePct.toFixed(1)}% of ${fmtCount(v.tracked)} tracked.`,
         ));
         return card;
       })(),
-      kpiCard(glossaryTip("Median MTTR", "half-life"), days1(v.medianMttr)),
+      // KPI TILE, NOT A TABLE CELL — `fmtDays` is the prose/KPI-tile duration format
+      // ("93 days"), `days1` the table-cell one ("92.8 d"); this card had the two crossed.
+      kpiCard(glossaryTip("Median MTTR", "half-life"), fmtDays(v.medianMttr)),
     );
   }
 
-  function renderPerScope(payload, first) {
+  function renderPerScope(payload) {
     const rows = perScopeView(payload && payload.perScope);
     clear(perScopeHost);
-    if (first) {
-      perScopeHost.append(emptyState(
-        "No register has a saved scan yet.",
-        "This table is the record of what each register was asked for and when, so it fills"
-        + " in one row per register per sync.",
-      ));
-      return;
-    }
     perScopeHost.append(dataTable({
       columns: [
         { key: "label", label: "Register", cell: (r) => r.label },
-        { key: "scans", label: "Scans", className: "num", cell: (r) => r.scans.toLocaleString() },
-        { key: "sealed", label: "Sealed", className: "num", cell: (r) => r.sealed.toLocaleString() },
-        { key: "first", label: "First scan", cell: (r) => (r.firstScanTs ? fmtDateTime(r.firstScanTs) : "—") },
-        { key: "last", label: "Last scan", cell: (r) => (r.lastScanTs ? fmtDateTime(r.lastScanTs) : "—") },
+        { key: "scans", label: "Scans", className: "num", cell: (r) => fmtCount(r.scans) },
+        { key: "sealed", label: "Sealed", className: "num", cell: (r) => fmtCount(r.sealed) },
+        { key: "first", label: "First scan", cell: (r) => (r.firstScanTs ? fmtDateTime(r.firstScanTs) : absentText) },
+        { key: "last", label: "Last scan", cell: (r) => (r.lastScanTs ? fmtDateTime(r.lastScanTs) : absentText) },
         { key: "total", label: "Last total", className: "num", cell: (r) => fmtCount(r.lastTotal) },
       ],
       rows,
@@ -505,10 +512,10 @@ export async function renderHistory(host, _params, _ctx) {
               ? el("span", {}, "All severities", el("span", { class: "domain-chip" }, "gate off"))
               : r.severitiesText),
           },
-          { key: "total", label: "Findings", className: "num", sortable: true, cell: (r) => r.total.toLocaleString() },
-          { key: "new", label: "+New", className: "num", cell: (r) => r.newCount.toLocaleString() },
-          { key: "resolved", label: "−Resolved", className: "num", cell: (r) => r.resolvedCount.toLocaleString() },
-          { key: "reopened", label: "Reopened", className: "num", cell: (r) => r.reopenedCount.toLocaleString() },
+          { key: "total", label: "Findings", className: "num", sortable: true, cell: (r) => fmtCount(r.total) },
+          { key: "new", label: "+New", className: "num", cell: (r) => fmtCount(r.newCount) },
+          { key: "resolved", label: "−Resolved", className: "num", cell: (r) => fmtCount(r.resolvedCount) },
+          { key: "reopened", label: "Reopened", className: "num", cell: (r) => fmtCount(r.reopenedCount) },
           { key: "sealed", label: "Sealed", cell: (r) => (r.sealed ? "Sealed" : "") },
         ],
         rows: cut.rows,
@@ -568,7 +575,7 @@ export async function renderHistory(host, _params, _ctx) {
   const CAUSE_COLUMNS = [
     { key: "cause", label: "Cause", cell: (r) => r.cause },
     { key: "basis", label: "How the date was arrived at", cell: (r) => r.basis },
-    { key: "count", label: "Findings", className: "num", cell: (r) => r.count.toLocaleString() },
+    { key: "count", label: "Findings", className: "num", cell: (r) => fmtCount(r.count) },
   ];
 
   function causeTable(title, rows) {
@@ -602,24 +609,13 @@ export async function renderHistory(host, _params, _ctx) {
     if (block.view.asideRows.length) {
       host.append(el("ul", { class: "small muted", style: "margin:12px 0 0; padding-left:18px" },
         ...block.view.asideRows.map((r) => el("li", {},
-          `${r.label}: `, el("span", { class: "num" }, r.count.toLocaleString())))));
+          `${r.label}: `, el("span", { class: "num" }, fmtCount(r.count))))));
     }
     return host;
   }
 
-  function renderMovement(payload, first) {
+  function renderMovement(payload) {
     clear(movementHost);
-    // The page's own first-run gate, the same one the KPI band and the coverage strip use: a
-    // decomposition of a window that does not exist is four confident zeroes about a
-    // population nobody has looked at.
-    if (first) {
-      movementHost.append(emptyState(
-        "Nothing has moved yet, because nothing has been measured yet.",
-        "This section is a difference between two saved scans of the same register, so it"
-        + " fills in once one of them has two.",
-      ));
-      return;
-    }
     for (const block of movementBlocks(payload, SCOPE_LABELS)) {
       movementHost.append(movementBlock(block));
     }
@@ -633,7 +629,11 @@ export async function renderHistory(host, _params, _ctx) {
     // flipping it off empties the host rather than leaving the last drawing behind.
     if (!showExperimental()) return;
     // The page's first-run gate, the same one every section above uses: a spiral over a
-    // register nobody has scanned is a picture of a population nobody has looked at.
+    // register nobody has scanned is a picture of a population nobody has looked at. `paint`'s
+    // own top-level gate already keeps this function from ever being CALLED with `first: true`
+    // during the initial paint (`spiralHost` is not even attached to the page until
+    // `ensureSections()` runs); this is the backstop for the toggle subscription below, which
+    // can still fire while a first-run page is on screen.
     if (first) return;
 
     const layout = spiralLayout((payload && payload.scans) || [],
@@ -693,7 +693,7 @@ export async function renderHistory(host, _params, _ctx) {
       // section and not on this chart, and a reader comparing the two counts is owed the
       // reason.
       card.append(el("p", { class: "small muted" },
-        `${layout.skipped.toLocaleString()} scan `
+        `${fmtCount(layout.skipped)} scan `
         + `${pluralize(layout.skipped, "row")} could not be placed — no usable timestamp or no `
         + "count saved. They are unplaced, not zero."));
     }
@@ -783,8 +783,8 @@ export async function renderHistory(host, _params, _ctx) {
         + "the median honest as of each replayed date."));
     }
     chartsHost.append(el("p", { class: "small muted", style: "grid-column:1/-1" },
-      "The open-past-SLA trend is not in this page's payload — historyTrendSlice ships date, "
-      + "reconstructed, open, resolved and km_median_days only. It is on the MTTR & SLA page."));
+      "The open-past-SLA series is not published on this page — this trend ships date, "
+      + "reconstructed, open, resolved and the KM median only. It is on the MTTR & SLA page."));
 
     loadCharts()
       .then((api) => {

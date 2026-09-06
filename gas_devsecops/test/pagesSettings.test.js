@@ -22,7 +22,10 @@ import {
 import {
   DEFAULT_SETTINGS, cleanSettings, validateSettings, withSettings,
 } from "../src/domain/settingsLogic";
-import { DEFAULT_FETCH_SEVERITIES, SCOPES, SEVERITY_ORDER, SLA_TARGETS } from "../src/domain/config";
+import {
+  DEFAULT_FETCH_SEVERITIES, SCOPES, SCOPE_LABELS as DOMAIN_SCOPE_LABELS, SEVERITY_ORDER,
+  SLA_TARGETS,
+} from "../src/domain/config";
 import { RETENTION_MIN_DAYS } from "../src/domain/maintenance";
 
 const SRC = readFileSync(new URL("../src/client/js/pages/settings.js", import.meta.url), "utf8");
@@ -432,5 +435,12 @@ describe("cross-checks against the domain layer's own validation", () => {
 
   it("SCOPE_LABELS has an entry for every scope the domain layer declares", () => {
     for (const scope of SCOPES) expect(SCOPE_LABELS[scope], `${scope} has no label`).toBeTruthy();
+  });
+
+  // settings.js's own header says the client never imports domain/*.ts, so SCOPE_LABELS is a
+  // literal copy of config.ts's SCOPE_LABELS rather than a read of it — two copies are allowed
+  // to exist only while a test holds them byte-equal, which is what this pins.
+  it("SCOPE_LABELS is byte-equal to domain/config.ts's own SCOPE_LABELS", () => {
+    expect(SCOPE_LABELS).toEqual(DOMAIN_SCOPE_LABELS);
   });
 });

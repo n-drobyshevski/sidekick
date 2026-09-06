@@ -224,14 +224,30 @@ describe("no sentence glues \"not measured\" to a count", () => {
     expect(measured.text).toBe("22.5%");
   });
 
-  it("every denominator node on the two program-lane pages honours baseEmpty", () => {
+  // WAVE 2 RE-POINTED THIS ASSERTION. `denominatorNode` used to be declared, byte-for-byte,
+  // in both mttr.js and program.js — the check below read each page's OWN source because
+  // that was where the conditional lived. Wave 2's "one vocabulary for figures" moved the one
+  // implementation to `pages/_rates.js` (imported by both), so the conditional is built once
+  // rather than copy-pasted twice; asserting it against mttr.js/program.js source would now be
+  // vacuous (neither file contains it any more) — the rule "an empty base never restates its
+  // zero" is checked against the one place it is built, and the non-vacuity half confirms
+  // neither page re-declared its own `denominatorNode` instead of importing the shared one.
+  it("the shared rate helper (_rates.js) honours baseEmpty, and mttr/program import it "
+    + "rather than re-declaring it", () => {
+    const ratesSrc = code(readFileSync(
+      new URL("_rates.js", PAGES_DIR), "utf8",
+    ));
+    expect(
+      ratesSrc,
+      "pages/_rates.js prints a rate's denominator label without checking baseEmpty — "
+      + "on an empty base that renders as \"not measured 0 resolved\"",
+    ).toMatch(/baseEmpty \? [^;]*rate\.emptyLabel : rate\.denominatorLabel/);
+
     for (const route of ["mttr", "program"]) {
-      expect(
-        CODE[route],
-        `pages/${route}.js prints a rate's denominator label without checking baseEmpty — `
-        + "on an empty base that renders as \"not measured 0 resolved\"",
-      ).toMatch(/baseEmpty \? [^;]*rate\.emptyLabel : rate\.denominatorLabel/);
+      expect(CODE[route], `pages/${route}.js re-declares its own denominatorNode instead of `
+        + "importing the one in _rates.js").not.toMatch(/function denominatorNode\(/);
     }
+
     // executive.js builds its share cell inline rather than through a helper, so it carries
     // the same conditional in its own words.
     expect(CODE.executive).toMatch(/share\.baseEmpty \?/);

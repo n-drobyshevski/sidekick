@@ -53,14 +53,23 @@ import { call } from "../../../../../gas_shared/api.js";
 import { bootstrapCached, invalidateBootstrap } from "../../../../../gas_shared/store.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import {
-  clear, diagnosticCard, diagnosticsPanel, el, errorState, fmtDateTime, glossaryTip, heroLines,
-  pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
+  clear, diagnosticCard, diagnosticsPanel, el, errorState, fmtCount, fmtDateTime, glossaryTip,
+  heroLines, pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { TAB_FIELDS, tabStatus } from "../settingsModel.js";
 
 // ============================================================================ vocabulary
 
+// A PLAIN LITERAL, NOT DERIVED AT RUNTIME — an earlier draft of this line read
+// `Object.assign({...}, (bootstrapCached() || {}).scopeLabels)`, which never did anything:
+// this is module top-level code, evaluated at import time, before app.js's boot() has ever
+// called bootstrap() — so `bootstrapCached()` is always null here and the literal always won.
+// "A guard that fires on nothing is a finding, not a pass" (CLAUDE.md). This duplicates
+// `src/domain/config.ts`'s SCOPE_LABELS BY VALUE (the short form the server ships,
+// "Dependencies"/"Code"/"Secrets") rather than reading it — the client never imports
+// domain/*.ts (this file's own header states that rule) — so the two copies are held equal by
+// a test instead: test/pagesSettings.test.js asserts this literal against the domain export.
 export const SCOPE_LABELS = { sca: "Dependencies", sast: "Code", secrets: "Secrets" };
 // secrets has no matching glossary entry of its own (its terms — validation-state, rotated,
 // removed — describe the lifecycle, not the register as a whole), so it gets a plain label.
@@ -369,17 +378,28 @@ export async function renderSettings(host, params, ctx) {
     if (message) errors[field] = message; else delete errors[field];
   }
 
+  // ONE FAILURE, NOT FOUR. This used to loop over every tab panel and put its own
+  // `errorState` in each — four identical red boxes for one fetch that failed once.
   try {
     const settings = await call("api_getSettings", {});
     saved = draftFromSettings(settings);
     draft = draftFromSettings(settings);
   } catch (e) {
     console.error("[settings] api_getSettings failed:", e);
-    for (const key of Object.keys(panels)) {
-      clear(panels[key]).append(
-        errorState("Couldn't load settings.", { detail: String((e && e.message) || e) }),
-      );
-    }
+    // The tab strip names sections there is nothing behind yet — hidden along with the panels
+    // themselves, rather than left standing over one shared error box.
+    tabHost.hidden = true;
+    clear(panelHost).append(errorState("Couldn't load settings.", {
+      detail: String((e && e.message) || e),
+      // A FULL RE-RENDER, not a retry that reuses this closure's `panels`. An earlier draft
+      // retried by re-fetching and calling `buildPanels()` in place — but the `clear(panelHost)`
+      // above had already DETACHED `panels.register/deadlines/access/system` from the page, so
+      // a successful retry populated four now-invisible nodes while the error box stayed on
+      // screen, and everything past this catch (dirty tracking, the save bar) never ran because
+      // this function had already returned with `saved` left `undefined`. Re-running
+      // `renderSettings` from scratch rebuilds fresh panels attached to a fresh `panelHost`.
+      onRetry: () => { clear(host); renderSettings(host, params, ctx); },
+    }));
     return;
   }
 
@@ -621,7 +641,7 @@ export async function renderSettings(host, params, ctx) {
             paint({ ok: true, at: res.at });
             toast(res.rows === null
               ? "The tenant answered."
-              : `The tenant answered — ${res.rows.toLocaleString()} finding(s) in scope.`);
+              : `The tenant answered — ${fmtCount(res.rows)} finding(s) in scope.`);
             // The stored timestamp moved, so the next reader of this page sees it too.
             invalidateBootstrap();
           } catch (e) {
@@ -765,7 +785,7 @@ export async function renderSettings(host, params, ctx) {
     // `scans` row per register, and the diagnostic used to name whichever sorted first.
     const scan = boot.latestSync;
     const scanLine = scan
-      ? `${fmtDateTime(scan.ts)} · ${Number(scan.total || 0).toLocaleString()} finding(s) across `
+      ? `${fmtDateTime(scan.ts)} · ${fmtCount(Number(scan.total || 0))} finding(s) across `
         + scan.scopes.map((s) => SCOPE_LABELS[s.scope] || s.scope).join(", ")
       : null;
 
@@ -779,10 +799,11 @@ export async function renderSettings(host, params, ctx) {
     // `api_getRecentErrors` covers job failures only and is rendered on the Data page. Nothing
     // moved between pages here.
     //
-    // NO `client` STAMP EITHER, so no client-vs-server mismatch card. This app has the identical
-    // `buildInfo.js` module that gas_ai uses for that comparison sitting in src/client/js/,
-    // imported by NOTHING; wiring it up while passing through would be a new deployment claim
-    // for this register rather than the same claim expressed once.
+    // NO `client` STAMP EITHER, so no client-vs-server mismatch card. This app used to carry
+    // the identical `buildInfo.js` module gas_ai uses for that comparison, imported by
+    // NOTHING — dead weight rather than a half-wired feature, and deleted with the rest of
+    // Wave 2's dead modules. Wiring the comparison back up is still a new deployment claim for
+    // this register, not the same claim expressed once, so it stays undone rather than restored.
     const diagnostics = diagnosticsPanel({
       heading: "Deployment",
       product: { value: boot.product },

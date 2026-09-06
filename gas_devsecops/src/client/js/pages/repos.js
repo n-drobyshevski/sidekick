@@ -24,12 +24,12 @@
 // is explicit that a fabricated number is worse than an honest absence, and "a zero has to
 // prove it looked" applies just as hard to a percentage nobody computed.
 
-import { swrCall } from "../../../../../gas_shared/store.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el, emptyState,
-  errorState, fmtCount, glossaryTip, kpiCard, num, onPageTeardown, pageHeader, pct1,
-  sectionLabel, skeletonStack,
+  absentText, boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
+  emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, kpiCard, num, onPageTeardown,
+  pageHeader, pct1, sectionLabel, skeletonStack,
 } from "../ui.js";
 
 const OVERALL = "OVERALL";
@@ -79,6 +79,33 @@ export function densityView(result) {
   };
 }
 
+/**
+ * The PAGE's own first-run decision — not `densityView().measured`.
+ *
+ * `assetProfile()` (src/domain/assets.ts) always pushes an OVERALL row, even a zeroed one, so
+ * `overallRow(result)` finds one and `measured` reads true on a ledger nobody has ever synced.
+ * That is the right answer for `densityView` itself (a row exists to read, however empty), and
+ * the wrong one for deciding whether to show this reader a page of "—" over four more empty
+ * section boxes — CLAUDE.md: "An unmeasured register is not a register of zeroes… Every page
+ * checks 'has this ever been scanned' before it checks 'how many'."
+ *
+ * So this page checks `assets` instead: a register that has been profiled has profiled AT
+ * LEAST ONE repository. `d.assets` is already `num(row.assets, 0)` — a plain finite number,
+ * never null/NaN — but the refusal is spelled out explicitly rather than trusted implicitly,
+ * the same "refuse before any cast" shape `usableDate` (gas_shared/ui/feedback.js) applies to
+ * a date, applied here to a count.
+ *
+ * A PROJECT-SCOPE FILTER MATCHING ZERO REPOSITORIES ON A SYNCED LEDGER LANDS ON THIS SAME
+ * NOTICE, and that is not a misreading: `firstRunNotice({synced:true, at})` words that case as
+ * "the last sync saved no findings, so there is nothing here to measure yet" — which is
+ * exactly true of a scoped population that happens to be empty, the same measured-empty-vs-
+ * never-measured split `renderGroupTable` below already draws for its own per-group rows.
+ */
+export function reposFirstRun(d) {
+  const assets = d && d.assets;
+  return !(typeof assets === "number" && Number.isFinite(assets) && assets > 0);
+}
+
 /** v5 Fig. 11: the share of repositories carrying at least one open high-risk finding. */
 export function footholdView(result) {
   const row = overallRow(result);
@@ -118,18 +145,19 @@ export function capacityView(result) {
  *
  * `owner_project` never reaches `assetProfile()`'s output columns (see the module header),
  * so there is no owned/unowned split to render. `available: false` is the whole answer;
- * `reason` is what a reader — or this file's own report — needs to file it as a real gap
- * rather than a rendering bug.
+ * `reason` is reader prose for `renderOwnership` below — an absence stated in the register's
+ * own vocabulary rather than the trace a developer would want, which is this comment instead:
+ * `owner_project` is written to every ledger row and reaches the per-register concentration
+ * tables, but `assetProfile()` (src/domain/assets.ts) — the function that builds THIS page's
+ * data — does not read it. None of `AssetProfileRow`'s 17 published columns names an owner.
  */
 export function ownershipView() {
   return {
     available: false,
     unownedCount: null,
-    reason: "Ownership is not in reposModel's payload. owner_project is written to every "
-      + "ledger row and reaches the per-register concentration tables, but assetProfile() "
-      + "(src/domain/assets.ts) — the function that builds this page's data — does not read "
-      + "it: none of AssetProfileRow's 17 published columns names an owner. So this section "
-      + "cannot show a coverage percentage or an unowned count without inventing one.",
+    reason: "Every finding is captured with the project that owns it, but that field does not "
+      + "reach this page's data — so there is no owned/unowned split to show here without "
+      + "inventing one.",
   };
 }
 
@@ -143,7 +171,7 @@ export function tableRow(row) {
     openFindings: num(row.open_findings, 0),
     densityP50: num(row.density_p50),
     footholdPct: foothold,
-    footholdText: foothold === null ? "—" : (foothold >= 100 ? "Yes" : foothold <= 0 ? "No" : pct1(foothold)),
+    footholdText: foothold === null ? absentText : (foothold >= 100 ? "Yes" : foothold <= 0 ? "No" : pct1(foothold)),
     coverageP50: num(row.asset_coverage_p50),
     halfLife: halfLifeView(row),
     verdict: capacityVerdict(row),
@@ -175,6 +203,7 @@ const VERDICT_LABEL = {
 // ----------------------------------------------------------------------------- the page
 
 export async function renderRepos(host, _params, _ctx) {
+  const boot = await bootstrap();
   host.append(pageHeader({
     route: "repos",
     lede: "Where the backlog sits, which repositories offer a foothold, and who owns them.",
@@ -185,18 +214,27 @@ export async function renderRepos(host, _params, _ctx) {
   const repoHost = el("div", {});
   const langHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid" });
+  // ONE WRAPPER FOR EVERY SECTION BELOW THE DENSITY CARDS, so a first run can clear four
+  // headings and their content together in one call — the same "label lives with its box"
+  // shape history.js's own `sectionsHost`/`ensureSections()` use, for the same reason: these
+  // headings are static text appended once rather than something a renderX function draws.
+  const sectionsHost = el("div", {});
 
-  host.append(
-    densityHost,
-    sectionLabel("Ownership attribution"),
-    ownershipHost,
-    sectionLabel("By repository"),
-    repoHost,
-    sectionLabel("By language"),
-    langHost,
-    sectionLabel("Half-life"),
-    chartsHost,
-  );
+  function ensureSections() {
+    if (sectionsHost.childNodes.length) return;
+    sectionsHost.append(
+      sectionLabel("Ownership attribution"),
+      ownershipHost,
+      sectionLabel("By repository"),
+      repoHost,
+      sectionLabel("By language"),
+      langHost,
+      sectionLabel("Half-life"),
+      chartsHost,
+    );
+  }
+
+  host.append(densityHost, sectionsHost);
 
   densityHost.append(skeletonStack(3, { variant: "stat" }));
 
@@ -204,7 +242,20 @@ export async function renderRepos(host, _params, _ctx) {
   const promise = swrCall("api_getReposPage", {}, (fresh) => paint && paint(fresh));
 
   paint = (model) => {
-    renderDensity(model);
+    const result = model && model.byRepo && model.byRepo.all;
+    const d = densityView(result);
+    const first = reposFirstRun(d);
+    renderDensity(model, d, first);
+    // FIRST RUN STOPS HERE — one notice above (in `densityHost`), not four more section
+    // headings each over their own empty box. Clearing `sectionsHost` detaches its four
+    // headings AND the four content hosts nested inside it in one call; `ensureSections()`
+    // re-attaches them the next time this runs non-first (see history.js for the identical
+    // shape).
+    if (first) {
+      [ownershipHost, repoHost, langHost, chartsHost, sectionsHost].forEach(clear);
+      return;
+    }
+    ensureSections();
     renderOwnership();
     renderGroupTable(repoHost, model && model.byRepo && model.byRepo.all, "repository", "repositories");
     renderGroupTable(langHost, model && model.byLanguage && model.byLanguage.all, "language", "languages");
@@ -224,27 +275,30 @@ export async function renderRepos(host, _params, _ctx) {
     ));
   }
 
-  function renderDensity(model) {
+  function renderDensity(model, d, first) {
     const result = model && model.byRepo && model.byRepo.all;
-    const d = densityView(result);
     const f = footholdView(result);
     clear(densityHost);
-    if (!d.measured) {
-      densityHost.append(emptyState("No repository profile yet.", "It appears once a sync has saved findings."));
+    if (first) {
+      densityHost.append(firstRunNotice({
+        synced: !!boot.latestSync,
+        at: boot.latestSync ? boot.latestSync.ts : null,
+        hint: "The repository profile appears once a sync has saved findings.",
+      }));
       return;
     }
     const densityCard = kpiCard("Median findings per repository", fmtCount(d.p50), "");
     densityCard.append(denomNote(
-      `p25 ${fmtCount(d.p25)} · p75 ${fmtCount(d.p75)}, across ${d.assets.toLocaleString()} repositories `
-      + `(${d.openFindings.toLocaleString()} open findings). Never a mean — the distribution is long-tailed.`,
+      `p25 ${fmtCount(d.p25)} · p75 ${fmtCount(d.p75)}, across ${fmtCount(d.assets)} repositories `
+      + `(${fmtCount(d.openFindings)} open findings). Never a mean — the distribution is long-tailed.`,
     ));
     const footholdCard = kpiCard(
       glossaryTip("Foothold rate", "foothold"),
-      f.pct === null ? "—" : pct1(f.pct),
+      f.pct === null ? absentText : pct1(f.pct),
       "",
     );
     footholdCard.append(denomNote(
-      f.assets ? `Of ${f.assets.toLocaleString()} repositories.` : "No repositories measured.",
+      f.assets ? `Of ${fmtCount(f.assets)} repositories.` : "No repositories measured.",
     ));
     densityHost.append(densityCard, footholdCard);
   }
@@ -252,24 +306,25 @@ export async function renderRepos(host, _params, _ctx) {
   function renderOwnership() {
     const view = ownershipView();
     clear(ownershipHost);
-    if (!view.available) {
-      ownershipHost.append(errorState(
-        "Ownership coverage is not available from this page's data.",
-        { detail: view.reason },
-      ));
-      return;
-    }
-    // Unreachable today (ownershipView() always reports unavailable) — kept so a future
-    // package that wires owner_project into assetProfile() has a rendering path to fill in
-    // rather than a page that has to be rebuilt from scratch.
-    ownershipHost.append(emptyState(`${view.unownedCount} unowned`));
+    // A permanent, known data gap is an ABSENCE, not a failure — this section renders correctly
+    // every single time it runs, it simply has nothing to show. `errorState`'s role="alert" red
+    // box used to draw here on every visit, which told a reader the page was broken rather than
+    // that ownership is a real, stated gap in what this page's data carries.
+    ownershipHost.append(emptyState(
+      "Ownership is not measured on this page.",
+      view.reason,
+      { variant: "notice" },
+    ));
   }
 
   function renderGroupTable(target, result, singular, plural) {
     const rows = groupRows(result).map(tableRow).sort((a, b) => b.openFindings - a.openFindings);
     clear(target);
     if (!rows.length) {
-      target.append(emptyState(`No ${plural} measured yet.`));
+      target.append(emptyState(
+        `No ${plural} measured yet.`,
+        `It appears once a sync has saved a finding against at least one ${singular}.`,
+      ));
       return;
     }
     const isRepo = singular === "repository";
@@ -277,10 +332,10 @@ export async function renderRepos(host, _params, _ctx) {
       { key: "label", label: isRepo ? "Repository" : "Language", cell: (r) => r.label },
     ];
     if (!isRepo) {
-      columns.push({ key: "assets", label: "Repos", className: "num", cell: (r) => r.assets.toLocaleString() });
+      columns.push({ key: "assets", label: "Repos", className: "num", cell: (r) => fmtCount(r.assets) });
     }
     columns.push(
-      { key: "open", label: "Open findings", className: "num", cell: (r) => r.openFindings.toLocaleString() },
+      { key: "open", label: "Open findings", className: "num", cell: (r) => fmtCount(r.openFindings) },
       {
         key: "foothold", label: "Foothold", className: "num", help: { term: "foothold" },
         cell: (r) => r.footholdText,
@@ -295,7 +350,7 @@ export async function renderRepos(host, _params, _ctx) {
       },
       {
         key: "capacity", label: "Capacity", className: "num", help: { term: "capacity" },
-        cell: (r) => (r.verdict ? VERDICT_LABEL[r.verdict] : "—"),
+        cell: (r) => (r.verdict ? VERDICT_LABEL[r.verdict] : absentText),
       },
     );
     target.append(dataTable({ columns, rows, emptyText: `No ${plural} measured yet.` }));
@@ -311,6 +366,7 @@ export async function renderRepos(host, _params, _ctx) {
     if (!rows.length) {
       chartsHost.append(emptyState(
         "Not enough resolved findings yet to chart a per-repository half-life.",
+        "It appears once at least one finding in a repository has resolved.",
       ));
       return;
     }

@@ -23,8 +23,8 @@
 import { bootstrap, bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import { call } from "../../../../../gas_shared/api.js";
 import {
-  clear, confirmDialog, dataTable, denomNote, downloadText, el, emptyState, errorState,
-  firstRunNotice,
+  absentText, clear, confirmDialog, dataTable, denomNote, downloadText, el, emptyState,
+  errorState, firstRunNotice,
   fmtCount, fmtDateTime, kpiCard, num, pageHeader, pct1, registerWideNote,
   sectionLabel, skeletonStack, statusPill, toast,
 } from "../ui.js";
@@ -251,7 +251,7 @@ export async function renderData(host, _params, ctx) {
     const kpiRow = el("div", { class: "kpi-row" });
     const headroom = kpiCard("Cells in use", fmtCount(cells.total));
     headroom.append(denomNote(
-      cells.limit === null ? "No published ceiling." : `${pct1(cells.pctUsed)} of ${cells.limit.toLocaleString()} cells.`,
+      cells.limit === null ? "No published ceiling." : `${pct1(cells.pctUsed)} of ${fmtCount(cells.limit)} cells.`,
     ));
     kpiRow.append(
       headroom,
@@ -267,7 +267,7 @@ export async function renderData(host, _params, ctx) {
           key: "cells", label: "Cells", className: "num",
           cell: (r) => (r.unreadable
             ? statusPill("bad", "Unreadable")
-            : (r.cells === null ? "—" : r.cells.toLocaleString())),
+            : (r.cells === null ? absentText : fmtCount(r.cells))),
         },
       ],
       rows: tabs,
@@ -279,9 +279,9 @@ export async function renderData(host, _params, ctx) {
         + tabs.filter((t) => t.unreadable).map((t) => `${t.tab} (${t.error})`).join("; ") + "."));
     }
     storageHost.append(denomNote(
-      `Plus ${cells.other.toLocaleString()} cell(s) in sheets this register does not manage — `
+      `Plus ${fmtCount(cells.other)} cell(s) in sheets this register does not manage — `
       + `the spreadsheet's own total, less the tabs listed above. `
-      + `${ledger.ledgerRowCells.toLocaleString()} column(s) per ledger row.`,
+      + `${fmtCount(ledger.ledgerRowCells)} column(s) per ledger row.`,
     ));
     // `scopeApplies: false` on `storageModel` is unconditional (it takes no params), but the
     // note only earns its place while a project view is actually narrowing the rest of the
@@ -294,7 +294,7 @@ export async function renderData(host, _params, ctx) {
     }
     if (ledger.unknownSeverityCount > 0) {
       storageHost.append(el("p", { class: "small muted" },
-        `${ledger.unknownSeverityCount.toLocaleString()} row(s) carry a severity that did not `
+        `${fmtCount(ledger.unknownSeverityCount)} row(s) carry a severity that did not `
         + `normalize to ${ledger.distinctSeverities.join(", ") || "a known level"}.`));
     }
   }
@@ -316,7 +316,7 @@ export async function renderData(host, _params, ctx) {
       try {
         const res = await call("api_getExportCsv", {});
         downloadText(res.filename, res.content, "text/csv;charset=utf-8");
-        toast(`Exported ${res.rowCount.toLocaleString()} row(s), ${res.columns} column(s).`);
+        toast(`Exported ${fmtCount(res.rowCount)} row(s), ${res.columns} column(s).`);
       } catch (e) {
         toast(`Export failed: ${(e && e.message) || e}`, "error");
       } finally {
@@ -341,7 +341,10 @@ export async function renderData(host, _params, ctx) {
     loadPreview();
 
     async function loadPreview() {
-      clear(previewHost).append(el("p", { class: "small muted" }, "Computing the dry run…"));
+      clear(previewHost).append(
+        el("div", { role: "status", "aria-label": "Computing the compaction dry run" },
+          skeletonStack(2, { widths: ["80%", "60%"] })),
+      );
       try {
         const res = await call("api_compact", { dryRun: true });
         paintPreview(res);
@@ -361,12 +364,12 @@ export async function renderData(host, _params, ctx) {
       runBtn.disabled = false;
       previewHost.append(
         el("p", {},
-          `Would seal ${v.scansSealed.toLocaleString()} scan(s) into `
-          + `${v.episodesCreated.toLocaleString()} episode(s), pruning `
-          + `${v.observationsPruned.toLocaleString()} observation(s).`),
+          `Would seal ${fmtCount(v.scansSealed)} scan(s) into `
+          + `${fmtCount(v.episodesCreated)} episode(s), pruning `
+          + `${fmtCount(v.observationsPruned)} observation(s).`),
         denomNote(
-          `Frees at least ${v.archiveBytesFreed.toLocaleString()} archive byte(s) and `
-          + `${v.dbBytesFreed.toLocaleString()} spreadsheet byte(s) — a lower bound, because the `
+          `Frees at least ${fmtCount(v.archiveBytesFreed)} archive byte(s) and `
+          + `${fmtCount(v.dbBytesFreed)} spreadsheet byte(s) — a lower bound, because the `
           + `archive figure prices whole scan folders and excludes observation files.`,
         ),
       );
@@ -386,7 +389,7 @@ export async function renderData(host, _params, ctx) {
       const v = compactionView(result);
       toast(v.noOp
         ? "Nothing to compact."
-        : `Sealed ${v.scansSealed.toLocaleString()} scan(s) into ${v.episodesCreated.toLocaleString()} episode(s).`);
+        : `Sealed ${fmtCount(v.scansSealed)} scan(s) into ${fmtCount(v.episodesCreated)} episode(s).`);
       ctx && ctx.refresh && ctx.refresh();
       loadPreview();
     }
@@ -434,7 +437,7 @@ export async function renderData(host, _params, ctx) {
         },
         { key: "ts", label: "When", cell: (r) => fmtDateTime(r.ts) },
         { key: "scope", label: "Register", cell: (r) => r.scope },
-        { key: "total", label: "Findings", className: "num", cell: (r) => r.total.toLocaleString() },
+        { key: "total", label: "Findings", className: "num", cell: (r) => fmtCount(r.total) },
       ],
       rows,
       emptyText: "No deletable scans.",
@@ -452,7 +455,7 @@ export async function renderData(host, _params, ctx) {
         () => call("api_deleteScans", { scanIds: ids }),
       );
       if (!ran) return;
-      toast(`Deleted ${result.deleted} scan(s); ${result.tracked.toLocaleString()} finding(s) tracked.`);
+      toast(`Deleted ${result.deleted} scan(s); ${fmtCount(result.tracked)} finding(s) tracked.`);
       ctx && ctx.refresh && ctx.refresh();
     }
   }
@@ -493,7 +496,7 @@ export async function renderData(host, _params, ctx) {
     const v = recentErrorsView(payload);
     clear(errorsHost);
     errorsHost.append(el("p", { class: "small muted", "data-denominator": v.covers ? `Covers: ${v.covers}.` : "" },
-      v.note || (v.covers ? `Covers: ${v.covers}.` : "Scope unknown.")));
+      v.note || (v.covers ? `Covers: ${v.covers}.` : "This log's coverage was not stated.")));
     if (!v.errors.length) {
       errorsHost.append(emptyState("No recent failures."));
       return;
@@ -502,7 +505,7 @@ export async function renderData(host, _params, ctx) {
       columns: [
         { key: "at", label: "When", cell: (r) => fmtDateTime(r.at) },
         { key: "kind", label: "Kind", cell: (r) => r.kind },
-        { key: "scope", label: "Register", cell: (r) => r.scope || "—" },
+        { key: "scope", label: "Register", cell: (r) => r.scope || absentText },
         { key: "phase", label: "Phase", cell: (r) => r.phase },
         { key: "error", label: "Error", cell: (r) => r.error },
       ],

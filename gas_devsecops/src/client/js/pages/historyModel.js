@@ -30,7 +30,7 @@ const REQUIRED = ["arrivals", "observed", "bounded", "reopened", "netChange"];
 /** A signed movement: direction is the point, so 0 stays bare and the minus is a real one. */
 function signed(n) {
   if (n === 0) return "0";
-  return (n > 0 ? "+" : "−") + Math.abs(n).toLocaleString();
+  return (n > 0 ? "+" : "−") + fmtCount(Math.abs(n));
 }
 
 /**
