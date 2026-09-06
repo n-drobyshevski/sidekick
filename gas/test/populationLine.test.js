@@ -17,7 +17,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { populationLine } from "../src/client/js/pages/overviewModel.js";
+import { populationLine, slaConsumedCaption } from "../src/client/js/pages/overviewModel.js";
 
 const FILTERS = ["one Wiz project", "virtual machines only"];
 
@@ -127,5 +127,64 @@ describe("os: populationLine's empty-gate guard actually bites", () => {
     const good = populationLine(input);
     expect(good.parts[1]).toBe("gate: all severities");
     expect(good.parts).not.toContain("below the gate: not counted");
+  });
+});
+
+// =========================================================================================
+//  slaConsumedCaption — the sentence that names what the bars LEFT OUT
+// =========================================================================================
+//
+// The SLA-window chart draws ten bars and deliberately does not draw two populations: rows at
+// or past their window (no tenth left to plot) and rows with no age or no target (never
+// measurable against a deadline). Neither can be read off the bars — they would still add up,
+// to a smaller number — so the caption is the only place either fact appears.
+//
+// The failure this guards is the same one populationLine guards above, arriving through a
+// different door: `Number(undefined)` is 0 and finite, so an older payload with no
+// `pastWindow` key would caption "0 past the window" over rows nobody counted.
+
+describe("os: slaConsumedCaption names the rows that are not drawn", () => {
+  const block = (over = {}) => ({
+    labels: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+    perSev: { CRITICAL: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0] },
+    pastWindow: {}, noWindow: 0, totalOpen: 1, ...over,
+  });
+
+  it("sums pastWindow across severities", () => {
+    const text = slaConsumedCaption(block({
+      pastWindow: { CRITICAL: 1204, HIGH: 96, LOW: 3 }, noWindow: 12,
+    }));
+    expect(text).toBe(
+      "Bucket k is time used; 9−k is time left. 1,303 past the window are not drawn; "
+      + "12 carry no window.",
+    );
+  });
+
+  it("returns null on an absent block", () => {
+    // An older cached payload, or a page state with no insights at all. A caption naming
+    // populations it never received would be a claim about nothing.
+    for (const v of [null, undefined, "", 0, false, 7]) {
+      expect(slaConsumedCaption(v), JSON.stringify(v)).toBeNull();
+    }
+  });
+
+  it("prints the em dash, never a zero, for a count that is not a number", () => {
+    // Number(null), Number(""), Number([]) and Number(false) are all 0 and all finite. A
+    // caption that cast first would state "0 carry no window" for a payload that carried no
+    // such measurement — the confident zero CLAUDE.md names three times.
+    for (const v of [null, undefined, "", [], false, {}]) {
+      const text = slaConsumedCaption(block({ noWindow: v }));
+      expect(text, `noWindow ${JSON.stringify(v)}`).toContain("— carry no window");
+      expect(text, `noWindow ${JSON.stringify(v)}`).not.toContain("0 carry no window");
+    }
+    // Same for the sum: a missing pastWindow block, and a present one holding an unmeasured
+    // severity. One non-number poisons the total rather than being added as a zero — the
+    // sum of a measurement and an absence is an absence.
+    expect(slaConsumedCaption(block({ pastWindow: undefined })))
+      .toContain("— past the window");
+    expect(slaConsumedCaption(block({ pastWindow: { CRITICAL: 4, HIGH: null } })))
+      .toContain("— past the window");
+    // An empty pastWindow IS a measurement: rows were read and none were past. That is a 0.
+    expect(slaConsumedCaption(block({ pastWindow: {} }))).toContain("0 past the window");
   });
 });

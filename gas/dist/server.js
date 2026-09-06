@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "8d0b30b1e2f0" : "dev";
+  var BUILD_ID = true ? "88329e33a4fd" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -5461,6 +5461,40 @@ var Server = (() => {
     const hi = Math.ceil(mid);
     return lo === hi ? ages[lo] : (ages[lo] + ages[hi]) / 2;
   }
+  var SLA_DECILE_LABELS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  function slaConsumedDeciles(rows, slaTargets) {
+    var _a, _b;
+    const out = {
+      labels: [...SLA_DECILE_LABELS],
+      perSev: {},
+      pastWindow: {},
+      noWindow: 0,
+      totalOpen: 0
+    };
+    for (const row of rows) {
+      if (!isOpen3(row.status)) continue;
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) {
+        out.noWindow += 1;
+        continue;
+      }
+      const s = normalizeSeverity(row.severity);
+      const w = slaTargets[s];
+      if (typeof w !== "number" || !Number.isFinite(w) || w <= 0) {
+        out.noWindow += 1;
+        continue;
+      }
+      if (age >= w) {
+        out.pastWindow[s] = ((_a = out.pastWindow[s]) != null ? _a : 0) + 1;
+        continue;
+      }
+      const k = Math.min(9, Math.max(0, Math.floor(10 * age / w)));
+      const arr = (_b = out.perSev[s]) != null ? _b : out.perSev[s] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+      arr[k] += 1;
+      out.totalOpen += 1;
+    }
+    return out;
+  }
 
   // src/domain/settingsImpact.ts
   var EPSS_BINS = 100;
@@ -8673,6 +8707,12 @@ var Server = (() => {
       // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
       awaiting: awaitingVendorFix(baseVisible),
       aging: ageBuckets(baseVisible),
+      // The same open rows against their OWN deadline instead of the shared 7/30/90 edges: how
+      // much of each finding's SLA window it has used, in tenths. The targets come from the
+      // domain constant HERE rather than inside insights.ts, which keeps that function pure
+      // over its arguments — and the client is never sent the table (see `bootstrapCore`), so
+      // the bucketing has to happen on this side of the wire.
+      slaConsumed: slaConsumedDeciles(baseVisible, SLA_TARGETS),
       // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow the register
       // before a single figure is computed: the rows themselves (`inScope`), the severity gate
       // THE LAST SCAN APPLIED — not the one settings hold now, which is why it is read off the
@@ -8754,7 +8794,10 @@ var Server = (() => {
       // "insights4" → "insights5": the payload gained `population` (in-scope count, the gate
       // the last scan applied, the base filter words); a stale insights4 entry has none of it,
       // and a half-drawn provenance line is worse than none.
-      "insights5",
+      // "insights5" → "insights6": the payload gained `slaConsumed` (open findings by tenth of
+      // their SLA window, plus the past-window and no-window counts that are not drawn); a
+      // stale insights5 entry has none of it and the section would render as a measured zero.
+      "insights6",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),

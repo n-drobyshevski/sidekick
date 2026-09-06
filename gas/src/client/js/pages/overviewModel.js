@@ -75,3 +75,35 @@ export function populationLine(insights) {
 
   return { text: parts.join(JOINER), parts };
 }
+
+/**
+ * The caption under the SLA-window-consumed chart: the sentence naming what the bars mean and
+ * WHAT THEY LEAVE OUT — or null when there is no block to caption.
+ *
+ * Two populations sit outside the bars and neither can be inferred from them. A finding at or
+ * past its window has no tenth left to plot, so it is counted and not drawn; a finding with no
+ * age or no target for its severity was never measurable against a deadline at all. Both would
+ * otherwise be invisible — the bars would still add up, to a smaller number, and nothing on
+ * screen would say so.
+ *
+ * Both counts go through `fmtCount`, which refuses null/undefined/""/[]/false BEFORE the cast
+ * and renders the em dash. That is not defensive decoration here: a payload written by an
+ * older server carries no `pastWindow` at all, and `Object.values(undefined)` throws while
+ * `Number(undefined)` would have quietly printed 0 — a confident "0 past the window" over a
+ * population this function never saw.
+ */
+export function slaConsumedCaption(slaConsumed) {
+  if (!slaConsumed || typeof slaConsumed !== "object") return null;
+  const past = slaConsumed.pastWindow;
+  // Summed only over the numbers that ARE numbers. A non-finite entry is an unmeasured
+  // severity, not a zero one, so it poisons the total rather than being added as 0 —
+  // fmtCount then prints the em dash for the whole sum.
+  let pastTotal = past && typeof past === "object" ? 0 : null;
+  for (const v of past && typeof past === "object" ? Object.values(past) : []) {
+    if (pastTotal === null) break;
+    pastTotal = typeof v === "number" && Number.isFinite(v) ? pastTotal + v : null;
+  }
+  return "Bucket k is time used; 9−k is time left. "
+    + `${fmtCount(pastTotal)} past the window are not drawn; `
+    + `${fmtCount(slaConsumed.noWindow)} carry no window.`;
+}

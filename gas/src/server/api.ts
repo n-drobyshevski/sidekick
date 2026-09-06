@@ -6,6 +6,7 @@ import {
   SEVERITY_COLORS,
   SEVERITY_ORDER,
   SELECTABLE_SEVERITIES,
+  SLA_TARGETS,
   isOpenStatus,
 } from "../domain/config";
 import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED, type CompiledDomain } from "../domain/domainRules";
@@ -503,6 +504,12 @@ function insightsData(p?: unknown): Rec {
     // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
     awaiting: awaitingVendorFix(baseVisible),
     aging: insights.ageBuckets(baseVisible),
+    // The same open rows against their OWN deadline instead of the shared 7/30/90 edges: how
+    // much of each finding's SLA window it has used, in tenths. The targets come from the
+    // domain constant HERE rather than inside insights.ts, which keeps that function pure
+    // over its arguments — and the client is never sent the table (see `bootstrapCore`), so
+    // the bucketing has to happen on this side of the wire.
+    slaConsumed: insights.slaConsumedDeciles(baseVisible, SLA_TARGETS),
     // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow the register
     // before a single figure is computed: the rows themselves (`inScope`), the severity gate
     // THE LAST SCAN APPLIED — not the one settings hold now, which is why it is read off the
@@ -619,7 +626,10 @@ const cachedInsightsData = (p?: unknown) =>
     // "insights4" → "insights5": the payload gained `population` (in-scope count, the gate
     // the last scan applied, the base filter words); a stale insights4 entry has none of it,
     // and a half-drawn provenance line is worse than none.
-    "insights5",
+    // "insights5" → "insights6": the payload gained `slaConsumed` (open findings by tenth of
+    // their SLA window, plus the past-window and no-window counts that are not drawn); a
+    // stale insights5 entry has none of it and the section would render as a measured zero.
+    "insights6",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
