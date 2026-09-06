@@ -825,6 +825,33 @@ describe("update disciplines (rule 6)", () => {
     expect(row.risk_observed_at).toBe("2026-03-01T00:00:00Z");
   });
 
+  it("a reopen RE-DERIVES first_seen from the API — open question: does Wiz reset firstDetectedAt on re-detection?", () => {
+    // Inherited from gas/. The reopen branch recomputes first_seen as
+    // min(apiFirst, scanTs) rather than keeping the stored value, so the reopened episode
+    // inherits the ORIGINAL birth date whenever Wiz keeps firstDetectedAt across a
+    // re-detection — and a reopened episode's MTTR is then inflated by the whole first
+    // episode. Five probe passes have never observed a reopen (none ran two scans), so the
+    // behaviour is held still and PINNED rather than decided; this test is the place the
+    // answer lands when a live reopen is finally measured.
+    const resolved = {
+      "sca:id:sca-1": {
+        finding_key: "sca:id:sca-1", scope: "sca", severity: "HIGH", identifier: "CVE-2026-1",
+        first_seen: "2026-03-01T00:00:00Z", last_seen: S1, status: "RESOLVED",
+        resolved_at: S1, resolution_src: "api", reopened_count: 0,
+        first_scan_id: "s0", last_scan_id: "s0",
+      },
+    } as unknown as Record<string, LedgerRow>;
+
+    // The API still reports the ORIGINAL birth date on the re-listing.
+    const { ledger } = run("sca", [scaNode({ firstDetectedAt: "2026-03-01T00:00:00Z" })], resolved, S2);
+    const row = ledger["sca:id:sca-1"];
+    expect(row.first_seen).toBe("2026-03-01T00:00:00Z"); // NOT reset to the scan-2 timestamp
+    expect(row.reopened_count).toBe(1);
+    expect(row.status).toBe("OPEN");
+    expect(row.resolved_at).toBeNull();
+    expect(row.resolution_src).toBeNull();
+  });
+
   it("emptyRiskSignals is all-null, never false or 0", () => {
     expect(emptyRiskSignals()).toEqual({
       has_kev: null, has_exploit: null, epss: null, risk_observed_at: null,
@@ -969,7 +996,10 @@ describe("validation is latest-wins among MEASURED states only (rule 7)", () => 
 //  Rule 8: disappearance, and removed-is-not-rotated
 // --------------------------------------------------------------------------- #
 
-describe("disappearance (rule 8)", () => {
+// The two describes below are named for the KIND OF FAILURE they guard against.
+// A failure of PRESENCE is a row that should be there and is missing; a failure of ABSENCE
+// is a row that should be gone and persists, or is dated gone for the wrong reason.
+describe("failure of absence: disappearance (rule 8)", () => {
   it("a secrets row that disappears sets removed_at = resolved_at and leaves rotated_at null", () => {
     const node = secretNode();
     const key = findingKey("secrets", node);
@@ -1021,13 +1051,41 @@ describe("disappearance (rule 8)", () => {
     expect(ledger["sast:id:sast-1"].status).toBe("OPEN");
     expect(deltas.resolved_count).toBe(0);
   });
+
+  it("failure of absence: a WITHDRAWN sca fix resolves as `disappeared` — recorded, not fixed", () => {
+    // `BASE.sca` carries `hasFix: true` (src/server/wizQueries.ts:290), so a WITHDRAWN fix
+    // reads as a remediation: the finding leaves the FILTERED population and the API simply
+    // stops returning it, which is exactly what disappearance-resolution means. Nothing in
+    // the ledger distinguishes it from a real fix — this row's resolved_at and
+    // resolution_src are byte-identical to a genuinely remediated one. Recorded, not fixed:
+    // dropping `hasFix` is a population change and belongs in its own measured round.
+    const node = scaNode({ fixedVersion: "1.2.3", fixDate: "2026-02-20T00:00:00Z" });
+    const key = findingKey("sca", node);
+
+    const s1 = run("sca", [node], {}, S1);
+    expect(s1.ledger[key].status).toBe("OPEN");
+    // Eligibility for the disappearance pass: last_scan_id must BE the previous scan, or the
+    // "a row last seen before the previous scan is not re-resolved" guard above swallows it
+    // and the assertions below would pass for the wrong reason.
+    expect(s1.ledger[key].last_scan_id).toBe(S1);
+
+    // Scan 2 lists NOTHING for the scope — the withdrawal is indistinguishable, from here,
+    // from the package having been upgraded.
+    const s2 = run("sca", [], s1.ledger, S2, S1);
+    const row = s2.ledger[key];
+    expect(row.status).toBe("RESOLVED");
+    expect(row.resolution_src).toBe("disappeared");
+    expect(row.resolved_at).toBe(S2);
+    // …and it counts as a remediation in the deltas the programme metrics are built from.
+    expect(s2.deltas.resolved_count).toBe(1);
+  });
 });
 
 // --------------------------------------------------------------------------- #
 //  Rule 9: the severity-scope guard
 // --------------------------------------------------------------------------- #
 
-describe("severity-scope guard (rule 9)", () => {
+describe("failure of absence: the severity-scope guard (rule 9)", () => {
   it("a MEDIUM row is untouched by a scan whose scannedSeverities is [CRITICAL, HIGH]", () => {
     const medium: LedgerRow = {
       finding_key: "sca:id:med-1", scope: "sca", identifier: "CVE-2026-MED", component: "lodash",
