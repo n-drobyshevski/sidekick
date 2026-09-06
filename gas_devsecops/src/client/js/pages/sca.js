@@ -29,8 +29,8 @@ import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../.
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, boundedDays, chartTable, chartTableModel, dataTable, days1,
-  denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, heroStat,
+  DEFAULT_PAGE_SIZE, absent, absentText, boundedDays, chartTable, chartTableModel, dataTable,
+  days1, denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, heroStat,
   kpiCard, measuredEmpty, meter, num, onPageTeardown, pageHeader, pageOf, pct1, segmented,
   sevBadge, sevEntries, sevKeyRow, sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter,
   togglePills, fmtDate, triCell,
@@ -84,7 +84,7 @@ export function registerFirstRunView(rowCount, synced, at) {
 /** EPSS is a probability, 0..1 off the wire; rendered as the percentage it names. */
 export function epssPct(v) {
   return v === null || v === undefined || !Number.isFinite(Number(v))
-    ? "—"
+    ? absentText
     : pct1(Number(v) * 100);
 }
 
@@ -144,8 +144,9 @@ export function sevPalette(order) {
   return { order: list, colors };
 }
 
-/** Only reached when bootstrap has not landed; bootstrap's `severityOrder` is the source. */
-const SEVERITY_FALLBACK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
+/** Only reached when bootstrap has not landed; bootstrap's `severityOrder` is the source.
+ *  `sast.js` imports this rather than declaring its own copy. */
+export const SEVERITY_FALLBACK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
 // ------------------------------------------------------------------ absent is never zero
 
@@ -205,7 +206,7 @@ export function signalFigure(id, label, glossary, cov) {
     cells: {
       measured: measured === 0 ? "None evaluated" : fmtCount(measured),
       missing: missing === 0 ? "None outstanding" : `${fmtCount(missing)} never evaluated`,
-      notApplicable: notApplicable === 0 ? "—" : `${fmtCount(notApplicable)} no such column`,
+      notApplicable: notApplicable === 0 ? absentText : `${fmtCount(notApplicable)} no such column`,
     },
     verdict,
     denominator:
@@ -761,7 +762,7 @@ export function scaModel(payload, opts) {
     // register nobody has read. `firstRunNotice`, rendered right below, carries the reason.
     hero: {
       label: "Dependencies",
-      value: firstRun.show ? "—" : fmtCount(p.open),
+      value: firstRun.show ? absentText : fmtCount(p.open),
       sub: firstRun.show
         ? "Nothing has been measured for this register yet."
         : `open findings of ${fmtCount(p.rowCount)} in the register — `

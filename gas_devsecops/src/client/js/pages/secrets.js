@@ -59,9 +59,9 @@
 
 import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
-  glossaryTip, heroLines, heroStat, meter, num, pageHeader, pct1, skeletonStack, statRow,
-  survivalTableModel, uiIcon,
+  absent, absentText, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount,
+  fmtDate, glossaryTip, heroLines, heroStat, meter, num, pageHeader, pct1, skeletonStack,
+  statRow, survivalTableModel, uiIcon,
 } from "../ui.js";
 import {
   boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
@@ -188,7 +188,7 @@ export function secretsModel(payload, opts) {
     // nobody has read is a confident claim about a corner nobody has looked at yet.
     hero: {
       label: "Removed, not rotated",
-      value: firstRun.show ? "—" : fmtCount(rvr.removedNotRotated),
+      value: firstRun.show ? absentText : fmtCount(rvr.removedNotRotated),
       sentence: firstRun.show
         ? "Nothing has been measured for this register yet."
         : `${fmtCount(rvr.removedNotRotated)} secrets left the code and nobody has `

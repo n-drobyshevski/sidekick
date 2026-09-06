@@ -28,21 +28,18 @@
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+// `fmtPct`, `denominatorNode`, `rateCell` and `scopeParam` used to be DEFINED here — see
+// `./_rates.js`'s header for why one copy now serves this page and mttr.js both.
+import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
+import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState, firstRunNotice,
-  glossaryTip, heroStat, kpiCard,
+  absentText, chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState,
+  firstRunNotice, glossaryTip, heroStat, kpiCard,
   onPageTeardown, pageHeader, pluralize, sectionLabel, skeleton, statRow, statusPill,
 } from "../ui.js";
 import { fmtCount, fmtDays } from "./mttr.js";
 
 // ---------------------------------------------------------------------------- formatting
-
-function fmtPct(p) {
-  const n = Number(p);
-  return (Math.round(n * 10) / 10) + "%";
-}
-
-const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
 
 /** The six risk clauses, in the order `domain/program.ts` fixes them, with their labels and
  *  the `signalCoverage` key each one rests on. `cwe` and `critical` rest on columns that are
@@ -305,7 +302,7 @@ export function capacityView(capacity) {
       closed: Number(m.closed || 0),
       net: Number(m.net || 0),
       verdict: m.verdict || null,
-      verdictLabel: VERDICT_LABELS[m.verdict] || "—",
+      verdictLabel: VERDICT_LABELS[m.verdict] || absentText,
       marks,
       measured: marks.length === 0,
       scanClosed: m.scanClosed === null || m.scanClosed === undefined ? null : Number(m.scanClosed),
@@ -329,7 +326,7 @@ export function capacityView(capacity) {
     oneInN: c.oneInN === null || c.oneInN === undefined ? null : Number(c.oneInN),
     netTotal: Number(c.netTotal || 0),
     verdict: c.verdict || null,
-    verdictLabel: VERDICT_LABELS[c.verdict] || "—",
+    verdictLabel: VERDICT_LABELS[c.verdict] || absentText,
     unmeasuredCount: months.filter((m) => !m.measured).length,
   };
 }
@@ -365,34 +362,9 @@ export function sensitivityView(sensitivity) {
 }
 
 // ----------------------------------------------------------------------------- the page
-
-function scopeParam(params) {
-  const s = params && params.scope;
-  return s === "sca" || s === "sast" || s === "secrets" ? s : null;
-}
-
-/**
- * A `[data-denominator]` node — every rate on this page is followed by one of these.
- *
- * The ATTRIBUTE always carries the number, a zero included. The visible text does not restate
- * a zero base beside "not measured" — see `rateView` in mttr.js, which this page's rates come
- * from, for why that pairing is the failure and not the disclosure.
- */
-function denominatorNode(rate) {
-  return el("span", {
-    class: "small muted",
-    "data-denominator": rate.denominator === null ? "none" : String(rate.denominator),
-  }, rate.baseEmpty ? "— " + rate.emptyLabel : rate.denominatorLabel);
-}
-
-/** The figure, its interval, and its base — the three things a rate is never published
- *  without on this page. */
-function rateCell(rate) {
-  return el("span", {},
-    el("span", { class: "num" }, rate.text),
-    rate.boundsText ? el("span", { class: "small muted" }, " (" + rate.boundsText + ") ") : " ",
-    denominatorNode(rate));
-}
+//
+// `scopeParam`, `denominatorNode` and `rateCell` moved to `./_rates.js` (imported above) —
+// `rateCell` there renders a `boundsText` when present, exactly as this page's copy did.
 
 export async function renderProgram(host, params, _ctx) {
   const boot = await bootstrap();
@@ -506,17 +478,22 @@ export async function renderProgram(host, params, _ctx) {
     // Efficiency rides in the header's aside slot rather than in a second hero: DESIGN.md
     // allows one hero per page, and the point of this pair is that neither figure means
     // anything alone. Coverage leads because it is the P2P convention, not because it wins.
-    const aside = el("div", { class: "page-strip" },
-      el("div", { class: "kpi-label" },
-        glossaryTip("Remediation efficiency", "efficiency")),
-      el("div", { class: "kpi-value num" }, view.efficiency.text),
+    //
+    // A `kpiCard` NOW, not a hand-built `.page-strip` of `.kpi-label`/`.kpi-value` divs — the
+    // same component this page already uses for every other figure, so this is the one figure
+    // that no longer draws its own copy of a card the shared module already owns.
+    // `denominatorNode` is appended after, exactly as `mmcrMean`'s card does below, because
+    // `kpiCard`'s own `sub` slot is the one line the bounds/measured sentence needs.
+    const aside = kpiCard(
+      glossaryTip("Remediation efficiency", "efficiency"),
+      view.efficiency.text,
       view.efficiency.boundsText
-        ? el("div", { class: "small muted" }, "Bounds " + view.efficiency.boundsText)
-        : el("div", { class: "small muted" },
-          view.efficiency.measured
-            ? "No unclassified rows, so the point estimate is the whole interval."
-            : "Nothing was remediated under a classification, so there is no rate to take."),
-      denominatorNode(view.efficiency));
+        ? "Bounds " + view.efficiency.boundsText
+        : (view.efficiency.measured
+          ? "No unclassified rows, so the point estimate is the whole interval."
+          : "Nothing was remediated under a classification, so there is no rate to take."),
+    );
+    aside.append(denominatorNode(view.efficiency));
 
     // NO `route`: the h1 is in the title block appended once at the top of renderProgram.
     heroHost.append(pageHeader({
@@ -815,7 +792,7 @@ export async function renderProgram(host, params, _ctx) {
     ));
     row.append(kpiCard(
       "Roughly",
-      view.oneInN === null ? "—" : "1 in " + Math.round(view.oneInN),
+      view.oneInN === null ? absentText : "1 in " + Math.round(view.oneInN),
       "of what was open at the start of a month gets closed in it",
     ));
     row.append(kpiCard(

@@ -95,7 +95,7 @@ Chart.register(
   LinearScale, LineController, LineElement, PieController, PointElement, Tooltip,
 );
 
-// Brand accent (crimson) — data color for non-severity series only.
+// Brand accent ink (`--accent-text`) — data color for non-severity series only.
 // The chart series colour is --accent-text, NOT --accent: #ffcb13 is 1.52:1 on the
 // canvas ground and a 2px line in it is invisible. Canvas cannot read CSS custom
 // properties, so this literal mirrors styles/tokens.css --accent-text by convention.

@@ -26,19 +26,17 @@
 import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import {
-  absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
-  heroStat, meter, num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
-  skeletonStack, statRow,
+  absent, absentText, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount,
+  fmtDate, heroStat, meter, num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow,
+  sevSegmentBar, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  RISK_TIER_LABELS, RISK_TIER_ORDER, agingModel, agingTableModel, chartCard,
+  RISK_TIER_LABELS, RISK_TIER_ORDER, SEVERITY_FALLBACK, agingModel, agingTableModel, chartCard,
   concentrationModel, figureCard, filterEmptyNotice, funnelModel, movementCard, movementModel,
   oldestFindingsModel, pagedTable, readRegisterParams, registerFirstRunView, registerRowsTable,
   registerToolbar, renderRegisterPage, sectionCard, sevPalette, severityCountsTableModel,
   signalFigure, textCell, tierModel,
 } from "./sca.js";
-
-const SEVERITY_FALLBACK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
 
 /**
  * The disappearance-dating caveat, as one string.
@@ -114,7 +112,7 @@ export function sastModel(payload, opts) {
     // module's comment. `rowCount`/`open`/`resolved` above stay the real numbers.
     hero: {
       label: "Code",
-      value: firstRun.show ? "—" : fmtCount(p.open),
+      value: firstRun.show ? absentText : fmtCount(p.open),
       sub: firstRun.show
         ? "Nothing has been measured for this register yet."
         : `open weaknesses of ${fmtCount(p.rowCount)} in the register — `

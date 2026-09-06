@@ -25,6 +25,10 @@
 // reaches half shows a dash there rather than a bound, and says so.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
+// `scopeParam` used to be DEFINED here — see `./_rates.js`'s header for why one copy now
+// serves this page, mttr.js and program.js all three.
+import { scopeParam } from "./_rates.js";
+import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
   absent, absentText, clear, dataTable, days1, el, emptyState, errorState, fmtCount, fmtDate,
   fmtDateTime, fmtDays, heroStat, kpiCard, num, pageHeader, pluralize, sectionLabel, sevBadge,
@@ -37,8 +41,6 @@ import {
 // `fmtCount`/`fmtDays` themselves come from `../ui.js` now, not from `./mttr.js` — see
 // `ui/figures.js`'s module header.
 import { kmHalfLifeView, rateView } from "./mttr.js";
-
-const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
 
 // ------------------------------------------------------------------------- view models
 
@@ -158,7 +160,7 @@ export function executiveRegisterView(byScope) {
           fmtCount(totalOpen) + " open across the registers",
         ),
         kmMedian,
-        kmText: kmMedian !== null && Number.isFinite(kmMedian) ? fmtDays(kmMedian) : "—",
+        kmText: kmMedian !== null && Number.isFinite(kmMedian) ? fmtDays(kmMedian) : absentText,
         // True where the register HAS lifecycles but no observable median. The bound that
         // would replace the dash is not in this payload.
         boundNotShipped: kmMedian === null,
@@ -453,7 +455,7 @@ export function fixNextView(payload, boot) {
       repo,
       // Never "(unknown)": a finding carrying no repository is a gap in attribution, and the
       // em dash is this register's one mark for that.
-      repoText: repo === null ? "—" : repo,
+      repoText: repo === null ? absentText : repo,
       ownerProject: g.owner_project === null || g.owner_project === undefined
         ? null
         : String(g.owner_project),
@@ -618,12 +620,8 @@ export function executiveFirstRunView(payload, boot) {
 }
 
 // ----------------------------------------------------------------------------- the page
-
-/** The one valid scope a deep link may narrow this page to. */
-function scopeParam(params) {
-  const s = params && params.scope;
-  return s === "sca" || s === "sast" || s === "secrets" ? s : null;
-}
+//
+// `scopeParam` moved to `./_rates.js` (imported above).
 
 export async function renderExecutive(host, params, _ctx) {
   const boot = await bootstrap();

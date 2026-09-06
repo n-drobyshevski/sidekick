@@ -27,9 +27,9 @@
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el, emptyState,
-  errorState, firstRunNotice, fmtCount, glossaryTip, kpiCard, num, onPageTeardown, pageHeader,
-  pct1, sectionLabel, skeletonStack,
+  absentText, boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
+  emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, kpiCard, num, onPageTeardown,
+  pageHeader, pct1, sectionLabel, skeletonStack,
 } from "../ui.js";
 
 const OVERALL = "OVERALL";
@@ -171,7 +171,7 @@ export function tableRow(row) {
     openFindings: num(row.open_findings, 0),
     densityP50: num(row.density_p50),
     footholdPct: foothold,
-    footholdText: foothold === null ? "—" : (foothold >= 100 ? "Yes" : foothold <= 0 ? "No" : pct1(foothold)),
+    footholdText: foothold === null ? absentText : (foothold >= 100 ? "Yes" : foothold <= 0 ? "No" : pct1(foothold)),
     coverageP50: num(row.asset_coverage_p50),
     halfLife: halfLifeView(row),
     verdict: capacityVerdict(row),
@@ -289,16 +289,16 @@ export async function renderRepos(host, _params, _ctx) {
     }
     const densityCard = kpiCard("Median findings per repository", fmtCount(d.p50), "");
     densityCard.append(denomNote(
-      `p25 ${fmtCount(d.p25)} · p75 ${fmtCount(d.p75)}, across ${d.assets.toLocaleString()} repositories `
-      + `(${d.openFindings.toLocaleString()} open findings). Never a mean — the distribution is long-tailed.`,
+      `p25 ${fmtCount(d.p25)} · p75 ${fmtCount(d.p75)}, across ${fmtCount(d.assets)} repositories `
+      + `(${fmtCount(d.openFindings)} open findings). Never a mean — the distribution is long-tailed.`,
     ));
     const footholdCard = kpiCard(
       glossaryTip("Foothold rate", "foothold"),
-      f.pct === null ? "—" : pct1(f.pct),
+      f.pct === null ? absentText : pct1(f.pct),
       "",
     );
     footholdCard.append(denomNote(
-      f.assets ? `Of ${f.assets.toLocaleString()} repositories.` : "No repositories measured.",
+      f.assets ? `Of ${fmtCount(f.assets)} repositories.` : "No repositories measured.",
     ));
     densityHost.append(densityCard, footholdCard);
   }
@@ -332,10 +332,10 @@ export async function renderRepos(host, _params, _ctx) {
       { key: "label", label: isRepo ? "Repository" : "Language", cell: (r) => r.label },
     ];
     if (!isRepo) {
-      columns.push({ key: "assets", label: "Repos", className: "num", cell: (r) => r.assets.toLocaleString() });
+      columns.push({ key: "assets", label: "Repos", className: "num", cell: (r) => fmtCount(r.assets) });
     }
     columns.push(
-      { key: "open", label: "Open findings", className: "num", cell: (r) => r.openFindings.toLocaleString() },
+      { key: "open", label: "Open findings", className: "num", cell: (r) => fmtCount(r.openFindings) },
       {
         key: "foothold", label: "Foothold", className: "num", help: { term: "foothold" },
         cell: (r) => r.footholdText,
@@ -350,7 +350,7 @@ export async function renderRepos(host, _params, _ctx) {
       },
       {
         key: "capacity", label: "Capacity", className: "num", help: { term: "capacity" },
-        cell: (r) => (r.verdict ? VERDICT_LABEL[r.verdict] : "—"),
+        cell: (r) => (r.verdict ? VERDICT_LABEL[r.verdict] : absentText),
       },
     );
     target.append(dataTable({ columns, rows, emptyText: `No ${plural} measured yet.` }));

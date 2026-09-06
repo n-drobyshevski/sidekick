@@ -40,10 +40,17 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 // across all four surfaces" rule. `sevPalette` is defined once in `sca.js`; `sast.js` already
 // imports it from there, and this is the same import rather than a second copy.
 import { agingTableModel, sevPalette } from "./sca.js";
+// `fmtPct`, `denominatorNode`, `rateCell` and `scopeParam` used to be DEFINED here. They now
+// live in `./_rates.js` — the same four helpers program.js declared byte-for-byte
+// (fmtPct/denominatorNode/scopeParam) or near-identically (rateCell, which there also renders
+// a `boundsText`). See that module's header for why `fmtPct` stays its own format rather than
+// collapsing onto `pct1`.
+import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
 import {
-  chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState, firstRunNotice,
-  fmtCount, fmtDays, heroStat, kpiCard, num, onPageTeardown, pageHeader, pluralize,
-  sectionLabel, sevBadge, sevEntries, sevSegmentBar, skeleton, statRow, survivalTableModel,
+  absentText, chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState,
+  firstRunNotice, fmtCount, fmtDays, heroStat, kpiCard, num, onPageTeardown, pageHeader,
+  pluralize, sectionLabel, sevBadge, sevEntries, sevSegmentBar, skeleton, statRow,
+  survivalTableModel,
 } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
@@ -56,12 +63,6 @@ import {
 // distinct from `ui/figures.js`'s `days1` ("41.0 d") — see that module's header for why both
 // exist.
 export { fmtCount, fmtDays };
-
-/** A percentage to one decimal. Only ever called through `rateView`, which owns the nulls. */
-function fmtPct(p) {
-  const n = Number(p);
-  return (Math.round(n * 10) / 10) + "%";
-}
 
 // ------------------------------------------------------------------------- view models
 
@@ -175,7 +176,7 @@ export function kmP90View(km) {
   }
   return {
     measured: false,
-    value: "—",
+    value: absentText,
     days: null,
     note: events > 0
       ? "the curve never reaches nine in ten inside the observed window"
@@ -664,30 +665,8 @@ export function actionableClockView(mttr, opts) {
 }
 
 // ----------------------------------------------------------------------------- the page
-
-function scopeParam(params) {
-  const s = params && params.scope;
-  return s === "sca" || s === "sast" || s === "secrets" ? s : null;
-}
-
-/**
- * A `[data-denominator]` node — every rate on this page is followed by one of these.
- *
- * The ATTRIBUTE always carries the number, including a zero: a test and a reader who asks
- * both get the base. The visible text does not restate a zero base, because "not measured"
- * followed by "0 resolved" reads as a measurement of nothing rather than as an absence.
- */
-function denominatorNode(rate) {
-  return el("span", {
-    class: "small muted",
-    "data-denominator": rate.denominator === null ? "none" : String(rate.denominator),
-  }, rate.baseEmpty ? "— " + rate.emptyLabel : rate.denominatorLabel);
-}
-
-/** A rate and its base as one cell: the figure, then the base under it. */
-function rateCell(rate) {
-  return el("span", {}, el("span", { class: "num" }, rate.text), " ", denominatorNode(rate));
-}
+//
+// `scopeParam`, `denominatorNode` and `rateCell` moved to `./_rates.js` (imported above).
 
 export async function renderMttr(host, params, _ctx) {
   const boot = await bootstrap();
@@ -1316,7 +1295,7 @@ export async function renderMttr(host, params, _ctx) {
     ));
     row.append(kpiCard(
       "Waiting for a vendor",
-      view.latency ? view.latency.value : "—",
+      view.latency ? view.latency.value : absentText,
       "detection to a fix existing, over the pre-toggle SCA population",
       null,
       { term: "awaiting-fix" },

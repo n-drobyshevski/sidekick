@@ -53,16 +53,15 @@ import { svgEl } from "../../../../../gas_shared/icons.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { showExperimental, subscribeExperimental } from "../experimental.js";
 import {
-  DEFAULT_PAGE_SIZE, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
-  emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDateTime, glossaryTip,
-  kpiCard, num,
+  DEFAULT_PAGE_SIZE, absentText, chartTable, chartTableModel, clear, dataTable,
+  denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDateTime,
+  fmtDays, glossaryTip, kpiCard, num,
   onPageTeardown, pageHeader, pageOf, pluralize, registerWideNote, sectionLabel, skeletonStack,
   sortRows, tableFooter,
 } from "../ui.js";
+import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import { movementBlocks } from "./historyModel.js";
 import { spiralLayout } from "./spiralLayout.js";
-
-const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
 
 // ---------------------------------------------------------------------------- formatting
 //
@@ -113,7 +112,7 @@ export function scanRowsView(scans) {
     scanId: s.scan_id,
     ts: s.ts,
     scope: s.scope,
-    scopeLabel: SCOPE_LABELS[s.scope] || String(s.scope || "—"),
+    scopeLabel: SCOPE_LABELS[s.scope] || String(s.scope || absentText),
     mode: s.mode,
     total: num(s.total, 0),
     newCount: num(s.new_count, 0),
@@ -450,11 +449,13 @@ export async function renderHistory(host, _params, _ctx) {
         card.append(denomNote(
           v.resolvedSharePct === null
             ? "No findings tracked yet."
-            : `${v.resolvedSharePct.toFixed(1)}% of ${v.tracked.toLocaleString()} tracked.`,
+            : `${v.resolvedSharePct.toFixed(1)}% of ${fmtCount(v.tracked)} tracked.`,
         ));
         return card;
       })(),
-      kpiCard(glossaryTip("Median MTTR", "half-life"), days1(v.medianMttr)),
+      // KPI TILE, NOT A TABLE CELL — `fmtDays` is the prose/KPI-tile duration format
+      // ("93 days"), `days1` the table-cell one ("92.8 d"); this card had the two crossed.
+      kpiCard(glossaryTip("Median MTTR", "half-life"), fmtDays(v.medianMttr)),
     );
   }
 
@@ -464,10 +465,10 @@ export async function renderHistory(host, _params, _ctx) {
     perScopeHost.append(dataTable({
       columns: [
         { key: "label", label: "Register", cell: (r) => r.label },
-        { key: "scans", label: "Scans", className: "num", cell: (r) => r.scans.toLocaleString() },
-        { key: "sealed", label: "Sealed", className: "num", cell: (r) => r.sealed.toLocaleString() },
-        { key: "first", label: "First scan", cell: (r) => (r.firstScanTs ? fmtDateTime(r.firstScanTs) : "—") },
-        { key: "last", label: "Last scan", cell: (r) => (r.lastScanTs ? fmtDateTime(r.lastScanTs) : "—") },
+        { key: "scans", label: "Scans", className: "num", cell: (r) => fmtCount(r.scans) },
+        { key: "sealed", label: "Sealed", className: "num", cell: (r) => fmtCount(r.sealed) },
+        { key: "first", label: "First scan", cell: (r) => (r.firstScanTs ? fmtDateTime(r.firstScanTs) : absentText) },
+        { key: "last", label: "Last scan", cell: (r) => (r.lastScanTs ? fmtDateTime(r.lastScanTs) : absentText) },
         { key: "total", label: "Last total", className: "num", cell: (r) => fmtCount(r.lastTotal) },
       ],
       rows,
@@ -511,10 +512,10 @@ export async function renderHistory(host, _params, _ctx) {
               ? el("span", {}, "All severities", el("span", { class: "domain-chip" }, "gate off"))
               : r.severitiesText),
           },
-          { key: "total", label: "Findings", className: "num", sortable: true, cell: (r) => r.total.toLocaleString() },
-          { key: "new", label: "+New", className: "num", cell: (r) => r.newCount.toLocaleString() },
-          { key: "resolved", label: "−Resolved", className: "num", cell: (r) => r.resolvedCount.toLocaleString() },
-          { key: "reopened", label: "Reopened", className: "num", cell: (r) => r.reopenedCount.toLocaleString() },
+          { key: "total", label: "Findings", className: "num", sortable: true, cell: (r) => fmtCount(r.total) },
+          { key: "new", label: "+New", className: "num", cell: (r) => fmtCount(r.newCount) },
+          { key: "resolved", label: "−Resolved", className: "num", cell: (r) => fmtCount(r.resolvedCount) },
+          { key: "reopened", label: "Reopened", className: "num", cell: (r) => fmtCount(r.reopenedCount) },
           { key: "sealed", label: "Sealed", cell: (r) => (r.sealed ? "Sealed" : "") },
         ],
         rows: cut.rows,
@@ -574,7 +575,7 @@ export async function renderHistory(host, _params, _ctx) {
   const CAUSE_COLUMNS = [
     { key: "cause", label: "Cause", cell: (r) => r.cause },
     { key: "basis", label: "How the date was arrived at", cell: (r) => r.basis },
-    { key: "count", label: "Findings", className: "num", cell: (r) => r.count.toLocaleString() },
+    { key: "count", label: "Findings", className: "num", cell: (r) => fmtCount(r.count) },
   ];
 
   function causeTable(title, rows) {
@@ -608,7 +609,7 @@ export async function renderHistory(host, _params, _ctx) {
     if (block.view.asideRows.length) {
       host.append(el("ul", { class: "small muted", style: "margin:12px 0 0; padding-left:18px" },
         ...block.view.asideRows.map((r) => el("li", {},
-          `${r.label}: `, el("span", { class: "num" }, r.count.toLocaleString())))));
+          `${r.label}: `, el("span", { class: "num" }, fmtCount(r.count))))));
     }
     return host;
   }
@@ -692,7 +693,7 @@ export async function renderHistory(host, _params, _ctx) {
       // section and not on this chart, and a reader comparing the two counts is owed the
       // reason.
       card.append(el("p", { class: "small muted" },
-        `${layout.skipped.toLocaleString()} scan `
+        `${fmtCount(layout.skipped)} scan `
         + `${pluralize(layout.skipped, "row")} could not be placed — no usable timestamp or no `
         + "count saved. They are unplaced, not zero."));
     }
