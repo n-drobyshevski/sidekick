@@ -173,6 +173,14 @@ var Server = (() => {
     // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
     // not by also appearing in ALLOWED_USERS.
     allowedAdmins: "ALLOWED_ADMINS",
+    // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
+    // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
+    // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
+    // is no API that hands one script project another's web-app URL, so somebody has to paste
+    // it. Unset (or blank) is legal and means the header simply carries no hub button — see
+    // server/hubUrl.ts, which owns the shape of the value and refuses anything that is neither a
+    // script.google.com URL nor a loopback dev-harness one.
+    urlHub: "URL_HUB",
     // The warm schedule setup() last installed, as a signature string. A ClockTrigger exposes
     // its handler and nothing else, so this is the ONLY way to tell a correctly-scheduled set
     // from one an older deployment left behind. Written by setup(), read by setup().
@@ -450,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "8a059e7301b7" : "dev";
+  var BUILD_ID = true ? "8e1065a5f115" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -4575,6 +4583,7 @@ var Server = (() => {
     runSync: () => runSync,
     saveAccess: () => saveAccess,
     saveAdmins: () => saveAdmins,
+    saveHubUrl: () => saveHubUrl,
     setProjectView: () => setProjectView,
     testWizConnection: () => testWizConnection
   });
@@ -4907,6 +4916,34 @@ var Server = (() => {
       };
     }
     return (r) => orNull(r[column]);
+  }
+
+  // src/server/hubUrl.ts
+  var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
+  var LOCAL_PREFIXES = [
+    ["http:", "", "localhost:"].join("/"),
+    ["http:", "", "127.0.0.1:"].join("/")
+  ];
+  var HUB_URL_REJECTED = "The hub URL must start with " + SCRIPT_PREFIX + " (the hub's deployed /exec URL) or " + LOCAL_PREFIXES[0] + "<port>/ (a hub running under npm run dev).";
+  function normalizeHubUrl(raw) {
+    if (typeof raw !== "string") throw new Error(HUB_URL_REJECTED);
+    const url = raw.trim();
+    if (!url) return "";
+    const legal = url.indexOf(SCRIPT_PREFIX) === 0 || LOCAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+    if (!legal) throw new Error(HUB_URL_REJECTED);
+    return url;
+  }
+  function readHubUrl() {
+    try {
+      return normalizeHubUrl(getProp(PROP_KEYS.urlHub) || "");
+    } catch (_e) {
+      return "";
+    }
+  }
+  function writeHubUrl(next) {
+    const url = normalizeHubUrl(next);
+    setProp(PROP_KEYS.urlHub, url);
+    return url;
   }
 
   // src/server/archiveStore.ts
@@ -7955,6 +7992,7 @@ var Server = (() => {
           return job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null;
         })(),
         canEditAccess: canEditUsers(),
+        hubUrl: readHubUrl(),
         settings,
         scope: {
           projectView: settings.projectView,
@@ -8015,6 +8053,12 @@ var Server = (() => {
       setProp(PROP_KEYS.allowedAdmins, list.join(", "));
       logAccessChange("admins", check().email, before, list);
       return { admins: list };
+    });
+  }
+  function saveHubUrl(p) {
+    return run(() => {
+      if (!canEditUsers()) throw new Error("Only the owner or an admin can change the hub URL.");
+      return { hubUrl: writeHubUrl(p == null ? void 0 : p.hubUrl) };
     });
   }
   function getSettings(_p) {

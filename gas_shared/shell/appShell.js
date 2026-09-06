@@ -88,7 +88,13 @@ export function createAppShell(spec) {
   }
 
   function renderChrome(data) {
-    renderAppbar(appbarEl, spec.appbarScope ? spec.appbarScope(data) : null);
+    // `data` twice on purpose: the app turns it into its own scope control, and the appbar
+    // reads the one field that is the same in every register (`hubUrl`) straight off it. The
+    // hub link is shared chrome rather than an app-supplied node — three identical
+    // `hubUrl: (d) => d && d.hubUrl` manifest entries would be three places for one contract
+    // to drift, and the field is a shared contract already: gas_shared/store.js knows
+    // `api_bootstrap` by name too.
+    renderAppbar(appbarEl, spec.appbarScope ? spec.appbarScope(data) : null, data);
   }
 
   function renderSidebar(data) {

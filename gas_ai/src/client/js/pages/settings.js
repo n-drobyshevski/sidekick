@@ -32,6 +32,7 @@ import {
   settingsDraft, settingsPatch, validateDraft,
 } from "../settingsModel.js";
 import { renderAccessPanel } from "./accessEditor.js";
+import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
 import { staleNotices } from "../staleness.js";
 import {
   clear, confirmDialog, debounce, diagnosticsPanel, disclosure, el, emptyState, errorState,
@@ -825,7 +826,24 @@ export async function renderSettings(main, params, ctx) {
     register: tabPanel("register", registerPanel, rankPanel),
     compliance: tabPanel("compliance", fiveRsHost),
     system: tabPanel(
-      "system", diagnostics.sections.credentials, experimentalPanel, diagnostics.sections.build,
+      "system",
+      diagnostics.sections.credentials,
+      // The hub field, on System because it is a fact about this DEPLOYMENT rather than about
+      // the register's own data. `accessPanelNode` is the tier signal this page already
+      // trusts — renderAccessPanel() answers null for a reader who may not edit the roster —
+      // and the same tier owns the hub URL. `saveHubUrl` re-checks server-side regardless, so
+      // this decides what to OFFER, never what is allowed.
+      //
+      // `refresh` is what makes the header catch up: the hub button is drawn from the
+      // bootstrap payload, so without it a reader saves a URL and the control it is FOR does
+      // not move until the next navigation.
+      hubUrlPanel({
+        hubUrl: (boot && boot.hubUrl) || "",
+        canEdit: !!accessPanelNode,
+        onSaved: () => { ctx && ctx.refresh && ctx.refresh(); },
+      }),
+      experimentalPanel,
+      diagnostics.sections.build,
     ),
   };
   // THE ONE SECTION THAT MAY LEGITIMATELY VANISH. renderAccessPanel() answers null both for a

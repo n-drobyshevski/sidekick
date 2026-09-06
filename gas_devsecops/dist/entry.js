@@ -82,6 +82,7 @@ function api_testWizConnection(p) { return timedApi_("testWizConnection", p); }
 function api_getAccess(p) { return timedApi_("getAccess", p); }
 function api_saveAccess(p) { return timedApi_("saveAccess", p); }
 function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }
+function api_saveHubUrl(p) { return timedApi_("saveHubUrl", p); }
 
 /* ------------------------------------------------------- editor-run, not RPC */
 /* Gated: these run as whoever opened the editor, which is not necessarily the owner. */

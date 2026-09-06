@@ -23,6 +23,7 @@ import {
   settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor, toast,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
+import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 
 export async function renderSettings(main, params, ctx) {
@@ -713,7 +714,25 @@ export async function renderSettings(main, params, ctx) {
   const lifecycleTab = tabPanel("lifecycle", retentionPanel, jobsPanel);
   // The Access roster editor is NOT a diagnostic — it is an editor with its own save control —
   // so it stays a sibling of the read-out grid rather than moving inside it.
-  const systemTab = tabPanel("system", diagnostics.node, accessPanelNode);
+  const systemTab = tabPanel(
+    "system",
+    diagnostics.node,
+      // The hub field, on System because it is a fact about this DEPLOYMENT rather than about
+      // the register's own data. `accessPanelNode` is the tier signal this page already
+      // trusts — renderAccessPanel() answers null for a reader who may not edit the roster —
+      // and the same tier owns the hub URL. `saveHubUrl` re-checks server-side regardless, so
+      // this decides what to OFFER, never what is allowed.
+      //
+      // `refresh` is what makes the header catch up: the hub button is drawn from the
+      // bootstrap payload, so without it a reader saves a URL and the control it is FOR does
+      // not move until the next navigation.
+      hubUrlPanel({
+        hubUrl: (boot && boot.hubUrl) || "",
+        canEdit: !!accessPanelNode,
+        onSaved: () => { ctx && ctx.refresh && ctx.refresh(); },
+      }),
+    accessPanelNode,
+  );
 
   const panels = {
     register: registerTab, risk: riskTab, attribution: attributionTab,

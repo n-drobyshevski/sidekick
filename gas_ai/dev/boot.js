@@ -35,6 +35,28 @@
     console.log("[dev] ?dry — credentials ignored, sample dataset");
   }
 
+  // The hub the header links back to, seeded into the fake Script Properties exactly as an
+  // operator would paste it into Settings > System. It points at gas_hub's OWN dev harness
+  // (`cd gas_hub && npm run dev`, port 8790 - see gas_hub/dev/serve.mjs), so the one journey
+  // this button exists for is exercisable before anything is deployed. A plausible-looking
+  // script.google.com placeholder would render the button and make it a dead link, which is
+  // not a safer seed - it is an unmeasured one. src/server/hubUrl.ts accepts the loopback form
+  // for exactly this reason and refuses everything else.
+  //
+  // ?nohub reaches the OTHER state, and it is a state worth being able to look at: a register
+  // whose operator has never set a hub URL is the normal first condition of every deployment,
+  // and it renders differently (no button at all). With the property always seeded there would
+  // be no way to see that rendering without editing this file.
+  if (new URLSearchParams(location.search).has("nohub")) {
+    console.log("[dev] ?nohub - no hub URL set; the header carries no hub button.");
+  } else {
+    // Built with join("/") rather than written, for the same reason gas_shared/hubUrl.js does
+    // it: no bare double slash in a file the middlebox's comment-stripping replay reads.
+    const HUB_URL = ["http:", "", "localhost:"].join("/") + "8790/";
+    PropertiesService.getScriptProperties().setProperty("URL_HUB", HUB_URL);
+    console.log("[dev] Hub URL seeded: " + HUB_URL + " (cd gas_hub && npm run dev) - ?nohub to unset.");
+  }
+
   console.log("[dev] " + Server.setup().split("\n").join("\n[dev] "));
 
   // One sync (?noseed leaves the store empty — for testing empty states).

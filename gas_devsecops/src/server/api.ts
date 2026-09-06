@@ -62,6 +62,7 @@ import {
 } from "../domain/pagePayload";
 import { BUILD_ID } from "./buildInfo";
 import { getProp, hasWizCredentials, projectScope, PROP_KEYS, setProp } from "./props";
+import { readHubUrl, writeHubUrl } from "./hubUrl";
 import { loadSettings, saveSettings } from "./settingsStore";
 import { readAll, TAB_HEADERS, TABS } from "./sheetsDb";
 import * as access from "./access";
@@ -183,6 +184,19 @@ export interface Bootstrap {
     scopes: Array<{ scope: string; total: number; severities: string | null }>;
   } | null;
   canEditAccess: boolean;
+  /**
+   * The hub launcher's address, or "" when nobody has set one.
+   *
+   * ON THE BOOTSTRAP RATHER THAN ON A PAGE'S MODEL because the control it feeds is chrome:
+   * `gas_shared/shell/appbar.js` draws it on every page of every register, and the shell
+   * already has this payload in hand when it renders the header (`renderChrome(data)`). A
+   * second RPC for one string would be a round trip the header would have to wait on.
+   *
+   * "" IS THE ORDINARY VALUE, not an error — see server/hubUrl.ts. It reaches the client as
+   * "draw no button", which is also where a value that is present but refused lands, because
+   * a header has no reader who could act on the difference.
+   */
+  hubUrl: string;
   settings: ReturnType<typeof loadSettings>;
   /**
    * The view-project scope, stated rather than left for the client to re-derive.
@@ -304,6 +318,7 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
       return job ? jobSummarySlice(job, !isTerminalPhase(job.phase) && isStaleJob(job)) : null;
     })(),
     canEditAccess: canEditUsers(),
+    hubUrl: readHubUrl(),
     settings,
     scope: {
       projectView: settings.projectView,
@@ -412,6 +427,31 @@ export function saveAdmins(p?: { admins?: unknown }): ApiResult<{ admins: string
     setProp(PROP_KEYS.allowedAdmins, list.join(", "));
     logAccessChange("admins", access.check().email, before, list);
     return { admins: list };
+  });
+}
+
+/**
+ * Point this register's header at a hub, or clear it. Owner or admin.
+ *
+ * ITS OWN ENDPOINT, DELIBERATELY OUTSIDE THE SETTINGS SAVE BAR. `setSettings` is a patch over
+ * the settings dict in the ledger spreadsheet; this writes a Script Property, which is a
+ * different store with a different access rule and a different failure mode. The access roster
+ * is separated from the batched bar for exactly this reason and Settings already draws it that
+ * way — two forms with one save model each is fine, two models inside one form is not.
+ *
+ * THE PANEL IS NOT THE BOUNDARY. `google.script.run` reaches `api_saveHubUrl` from any allowed
+ * caller's browser console, so the tier is re-checked here rather than inferred from what the
+ * client chose to render — the same rule `saveAccess` states above.
+ *
+ * `writeHubUrl` throws on a value that is present and wrong, and that refusal is a security
+ * boundary: the string becomes the `href` of a control in every page's header, so a
+ * `javascript:` paste would otherwise run in the app's own page. Blank is not wrong — it is
+ * how a reader disconnects the register from a hub that has moved.
+ */
+export function saveHubUrl(p?: { hubUrl?: unknown }): ApiResult<{ hubUrl: string }> {
+  return run(() => {
+    if (!canEditUsers()) throw new Error("Only the owner or an admin can change the hub URL.");
+    return { hubUrl: writeHubUrl(p?.hubUrl) };
   });
 }
 

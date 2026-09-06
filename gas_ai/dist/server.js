@@ -197,6 +197,14 @@ var Server = (() => {
     // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
     // not by also appearing in ALLOWED_USERS.
     allowedAdmins: "ALLOWED_ADMINS",
+    // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
+    // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
+    // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
+    // is no API that hands one script project another's web-app URL, so somebody has to paste
+    // it. Unset (or blank) is legal and means the header simply carries no hub button — see
+    // server/hubUrl.ts, which owns the shape of the value and refuses anything that is neither a
+    // script.google.com URL nor a loopback dev-harness one.
+    urlHub: "URL_HUB",
     // Optional comma-separated override of the AI resource-type enum values to
     // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
     wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES",
@@ -466,7 +474,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "11040f3aaa39" : "dev";
+  var BUILD_ID = true ? "ef135e824159" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12221,6 +12229,7 @@ var Server = (() => {
     runSync: () => runSync,
     saveAccess: () => saveAccess,
     saveAdmins: () => saveAdmins,
+    saveHubUrl: () => saveHubUrl,
     scoreAarsSample: () => scoreAarsSample,
     setAarsRule: () => setAarsRule2,
     setPostureRule: () => setPostureRule2,
@@ -16514,6 +16523,34 @@ var Server = (() => {
     };
   }
 
+  // src/server/hubUrl.ts
+  var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
+  var LOCAL_PREFIXES = [
+    ["http:", "", "localhost:"].join("/"),
+    ["http:", "", "127.0.0.1:"].join("/")
+  ];
+  var HUB_URL_REJECTED = "The hub URL must start with " + SCRIPT_PREFIX + " (the hub's deployed /exec URL) or " + LOCAL_PREFIXES[0] + "<port>/ (a hub running under npm run dev).";
+  function normalizeHubUrl(raw) {
+    if (typeof raw !== "string") throw new Error(HUB_URL_REJECTED);
+    const url = raw.trim();
+    if (!url) return "";
+    const legal = url.indexOf(SCRIPT_PREFIX) === 0 || LOCAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+    if (!legal) throw new Error(HUB_URL_REJECTED);
+    return url;
+  }
+  function readHubUrl() {
+    try {
+      return normalizeHubUrl(getProp(PROP_KEYS.urlHub) || "");
+    } catch (_e) {
+      return "";
+    }
+  }
+  function writeHubUrl(next) {
+    const url = normalizeHubUrl(next);
+    setProp(PROP_KEYS.urlHub, url);
+    return url;
+  }
+
   // src/server/readModelStore.ts
   var FOLDER = "readmodels";
   var ENVELOPE_V = 1;
@@ -16681,6 +16718,13 @@ var Server = (() => {
       return {
         ...durablyCached("bootstrapCore", null, bootstrapCore),
         hasCredentials: hasWizCredentials(),
+        // OUTSIDE THE DURABLY-CACHED CORE, and that placement is the whole point. The hub URL is
+        // a Script Property an operator can change at any moment through Settings; nothing about
+        // it bumps the data version the cache is keyed on, so a copy inside `bootstrapCore` would
+        // keep serving the OLD address — or keep the header's button hidden — until some unrelated
+        // sync happened to invalidate the cache. Same reason `hasCredentials` and the build stamp
+        // sit out here.
+        hubUrl: readHubUrl(),
         // Outside the cached core on purpose: a cached build stamp would be the one thing
         // guaranteed to lie after a deploy.
         build: buildInfo(),
@@ -18801,6 +18845,14 @@ var Server = (() => {
       const src = open < 0 || close < 0 ? "" : html.slice(open + 1, close).trim();
       if (!src) throw new Error("js_charts is missing or empty in this deployment");
       return src;
+    });
+  }
+  function saveHubUrl(p) {
+    return run(() => {
+      if (!canEditUsers()) {
+        throw new Error("Only the owner or an admin can change the hub URL.");
+      }
+      return { hubUrl: writeHubUrl(p == null ? void 0 : p.hubUrl) };
     });
   }
 

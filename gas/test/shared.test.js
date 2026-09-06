@@ -39,6 +39,8 @@ import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.j
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
 import { relativeAge } from "../../gas_shared/ui/figures.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
+import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
+import { normalizeHubUrl } from "../src/server/hubUrl";
 
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 import { scopeChrome, scopeKinds } from "../src/client/js/scopeKinds.js";
@@ -372,3 +374,13 @@ registerDiagnosticsContract({
 // =========================================================================================
 registerRelativeAgeContract({ ...base, relativeAge });
 registerSyncCaptionContract(base);
+
+// =========================================================================================
+//  The hub link: one rule, this register's boundary and the shared header gate
+// =========================================================================================
+//
+// `normalizeHubUrl` is handed over rather than imported inside the contract, because the
+// contract runs from three different packages and each has its own server copy — the copies
+// exist because no `src/server/**` module here imports gas_shared (tsconfig has no `allowJs`),
+// and this table is what holds them to the same rule.
+registerHubUrlContract({ ...base, normalizeHubUrl });

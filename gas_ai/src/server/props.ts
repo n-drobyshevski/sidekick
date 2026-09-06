@@ -22,6 +22,14 @@ export const PROP_KEYS = {
   // Unset means owner-only, like its sibling. Admins are allowed into the app by being admins,
   // not by also appearing in ALLOWED_USERS.
   allowedAdmins: "ALLOWED_ADMINS",
+  // The /exec URL of the hub launcher (gas_hub), pasted from its Deploy > Manage deployments,
+  // or set from Settings > System. A PROPERTY RATHER THAN CODE for the platform's reason, not
+  // a preference: `ScriptApp.getService().getUrl()` answers for this deployment only and there
+  // is no API that hands one script project another's web-app URL, so somebody has to paste
+  // it. Unset (or blank) is legal and means the header simply carries no hub button — see
+  // server/hubUrl.ts, which owns the shape of the value and refuses anything that is neither a
+  // script.google.com URL nor a loopback dev-harness one.
+  urlHub: "URL_HUB",
   // Optional comma-separated override of the AI resource-type enum values to
   // query (e.g. "AI_AGENT,AI_MODEL") for tenants whose schema names differ.
   wizAiResourceTypes: "WIZ_AI_RESOURCE_TYPES",

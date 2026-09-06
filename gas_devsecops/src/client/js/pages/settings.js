@@ -57,6 +57,7 @@ import {
   heroLines, pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
+import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
 import { TAB_FIELDS, tabStatus } from "../settingsModel.js";
 
 // ============================================================================ vocabulary
@@ -833,6 +834,20 @@ export async function renderSettings(host, params, ctx) {
       key: "wizConnection", label: "Wiz connection", body: connectionCard(),
     }));
 
-    clear(panels.system).append(maintenancePanel, prefsPanel, diagnostics.node);
+    clear(panels.system).append(
+      maintenancePanel,
+      // `canEditAccess` is this register's own tier flag, already on the bootstrap payload for
+      // the Access tab. `refresh` is what makes the header catch up: the hub button is drawn
+      // from the bootstrap payload, so without it a reader saves a URL and the control it is
+      // FOR does not move until the next navigation.
+      hubUrlPanel({
+        hubUrl: boot.hubUrl,
+        canEdit: !!boot.canEditAccess,
+        onSaved: () => { ctx && ctx.refresh && ctx.refresh(); },
+      }),
+      prefsPanel,
+      diagnostics.node,
+    );
   }
+
 }

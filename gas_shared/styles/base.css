@@ -62,6 +62,41 @@
    and without it the project name reads as part of the wordmark. */
 .appbar-sep { width: 1px; height: 20px; flex: 0 0 auto; background: var(--hairline); }
 
+/* The way out to the launcher. `margin-left: auto` is what puts it at the far right, so the
+   bar needs no spacer element that would have to be kept in sync with whether the button is
+   drawn at all (it is absent whenever no hub URL is configured — see shell/appbar.js).
+
+   QUIET ON PURPOSE. It leaves the app, and a control that leaves the app must not out-shout
+   the register's own primary actions; a hairline square in secondary ink is the same weight
+   .nav-flyout-pin carries for the same reason. It is NOT accent-filled: the accent is a fill
+   token at 1.52:1 on white (see each app's tokens.css) and could not carry a glyph either.
+
+   ICON ONLY, so it is a SQUARE TARGET rather than a text pill: 32px on both axes, which keeps
+   it a comfortable pointer target inside a 48px bar and matches the other icon-only controls
+   in this chrome (.nav-flyout-pin, .scan-progress-mini). Its name lives in `aria-label` and its
+   sentence in a tip — see shell/appbar.js for why neither can be a `title`. */
+.appbar-hub {
+  margin-left: auto;
+  flex: 0 0 auto;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--page);
+  color: var(--text-2);
+  line-height: 1;
+  text-decoration: none;
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.appbar-hub:hover { background: var(--surface-2); border-color: var(--hairline-strong); color: var(--ink); }
+.appbar-hub:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+/* Every animation in this package owes a reduced-motion alternative (CLAUDE.md's
+   accessibility bar). The hover STATES stay — losing them would cost a keyboard user the
+   affordance entirely; only the tween between them goes. */
+@media (prefers-reduced-motion: reduce) {
+  .appbar-hub { transition: none; }
+}
+
 .sidebar {
   width: var(--rail-icon-w);
   flex: 0 0 var(--rail-icon-w);

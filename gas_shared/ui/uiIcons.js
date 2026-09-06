@@ -56,6 +56,16 @@ const PATHS = {
   // level adds. Not `fit` (four corners, and already in the same rail) and not `filter` (a
   // funnel — grouping does not narrow a set).
   group: ["M2.5 2.5 h11 v11 h-11 z", "M5.5 5.5 h5 v5 h-5 z"],
+  // Four tiles in a 2x2 — the app-launcher idiom, and here it is literal rather than
+  // metaphorical: gas_hub's whole page IS a 2x2 grid of register tiles, so the header's hub
+  // button draws the thing it opens. Distinct from `group` (one box inside another, a
+  // containment mark) and from `layout` (a two-level tree, "an arrangement exists"); neither
+  // reads as "several destinations" at 16px, which is the one thing this has to say without a
+  // word beside it.
+  grid: [
+    "M2.5 2.5 h4.5 v4.5 h-4.5 z", "M9 2.5 h4.5 v4.5 h-4.5 z",
+    "M2.5 9 h4.5 v4.5 h-4.5 z", "M9 9 h4.5 v4.5 h-4.5 z",
+  ],
   // ---------------------------------------------------------------- layouts
   // The rail's Layouts button, and one glyph per entry in the list it opens. Each DRAWS ITS OWN
   // ARRANGEMENT in miniature — bands across, bands down, a burst, a ring — because the list is

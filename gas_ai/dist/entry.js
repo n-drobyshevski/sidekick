@@ -146,6 +146,7 @@ function api_setSettings(p) { return timedApi_("setSettings", p); }
 function api_getAccess(p) { return timedApi_("getAccess", p); }
 function api_saveAccess(p) { return timedApi_("saveAccess", p); }
 function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }
+function api_saveHubUrl(p) { return timedApi_("saveHubUrl", p); }
 function api_getAarsRule(p) { return timedApi_("getAarsRule", p); }
 function api_setAarsRule(p) { return timedApi_("setAarsRule", p); }
 function api_previewAarsRule(p) { return timedApi_("previewAarsRule", p); }

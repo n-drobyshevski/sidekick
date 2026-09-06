@@ -56,6 +56,7 @@ import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import * as access from "./access";
 import { hasWizCredentials, PROP_KEYS, setProp } from "./props";
+import { readHubUrl, writeHubUrl } from "./hubUrl";
 import { BASE_FILTER_WORDS } from "./wizClient";
 import * as backfillJobs from "./backfillJobs";
 import * as purgeJobs from "./purgeJobs";
@@ -147,6 +148,13 @@ export function bootstrap(_p?: unknown): ApiResult {
     // MTTR Unassigned bar look like a bug in the first place.
     ...(durablyCached("bootstrapCore8", { showNoFix: settingsStore.getShowNoFix() }, bootstrapCore) as Rec),
     // Live per-request fields: never cached (activeJob changes every poll tick).
+    // OUTSIDE THE DURABLY-CACHED CORE, and that placement is the whole point. The hub URL is
+    // a Script Property an operator can change at any moment through Settings; nothing about
+    // it bumps the data version the cache is keyed on, so a copy inside `bootstrapCore` would
+    // keep serving the OLD address — or keep the header's button hidden — until some unrelated
+    // sync happened to invalidate the cache. Same reason `hasCredentials` and the build stamp
+    // sit out here.
+    hubUrl: readHubUrl(),
     hasCredentials: hasWizCredentials(),
     activeJob: activeJobSummary(),
   }));
@@ -2866,4 +2874,31 @@ export function warmReadModelsScheduled(): void {
     return;
   }
   warmReadModels();
+}
+
+/**
+ * Point this register's header at a hub, or clear it. Owner or admin.
+ *
+ * ITS OWN ENDPOINT, DELIBERATELY OUTSIDE THE SETTINGS SAVE BAR. The settings save patches the
+ * settings dict in the ledger spreadsheet; this writes a Script Property, which is a different
+ * store with a different access rule and a different failure mode. The access roster is
+ * separated from the batched bar for exactly this reason — two forms with one save model each
+ * is fine, two models inside one form is not.
+ *
+ * THE PANEL IS NOT THE BOUNDARY. `google.script.run` reaches `api_saveHubUrl` from any allowed
+ * caller's browser console, so the tier is re-checked here rather than inferred from what the
+ * client chose to render — the same rule `saveAccess` states.
+ *
+ * `writeHubUrl` throws on a value that is present and wrong, and that refusal is a security
+ * boundary: the string becomes the `href` of a control in every page's header, so a
+ * `javascript:` paste would otherwise run in the app's own page. Blank is not wrong — it is
+ * how a reader disconnects the register from a hub that has moved.
+ */
+export function saveHubUrl(p?: { hubUrl?: unknown }): ApiResult<{ hubUrl: string }> {
+  return run(() => {
+    if (!access.canEditUsers()) {
+      throw new Error("Only the owner or an admin can change the hub URL.");
+    }
+    return { hubUrl: writeHubUrl(p?.hubUrl) };
+  });
 }

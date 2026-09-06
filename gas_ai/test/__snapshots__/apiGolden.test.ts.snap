@@ -128,6 +128,7 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "projects": [],
       },
       "hasCredentials": false,
+      "hubUrl": "",
       "latestSync": null,
       "palette": {
         "aarsSeverities": [
@@ -2477,6 +2478,7 @@ exports[`read endpoints > bootstrap answers the same shape 1`] = `
       ],
     },
     "hasCredentials": false,
+    "hubUrl": "",
     "latestSync": {
       "aars_rule_version": 0,
       "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
