@@ -1175,6 +1175,24 @@ function programData(p?: unknown): Rec {
       highRiskOnly: true,
       maxMonths: 24,
     }),
+    // The verdict's own track record, replayed against what happened next.
+    //
+    // HIGH-RISK, not whole-register, and that is the whole point of it: `capacityHighRisk`
+    // is the only capacity figure this page states as a verdict — the hero's pill reads
+    // `capacityHighRisk.verdict`, and `capacity.verdict` is never rendered as those three
+    // words anywhere. Hindcasting the whole-register series would publish a hit rate for a
+    // sentence nobody is shown.
+    //
+    // Cost measured on a synthetic 20k-row / 24-scan register, timed after the two
+    // capacityByMonth passes above so the paths are as warm as they are in production:
+    // 142 ms whole-register, 82 ms high-risk-only (636 ms before the domain layer parsed the
+    // register once instead of once per scan). The payload is cached for an hour, so this is
+    // a cache-miss cost; the cap stays at 24 scans.
+    capacityHindcast: program.capacityHindcast(capacityRows, scans, {
+      rule,
+      highRiskOnly: true,
+      scansCap: 24,
+    }),
     observationDays: program.observationWindowDays(rows as unknown as BaseRow[]),
     rowCount: rows.length,
     // Named so the methodology block can state what was excluded before any of this counted.
@@ -1445,7 +1463,9 @@ const cachedMttrTrendData = (p?: unknown) =>
 // wall-clock relative.
 const cachedProgramData = (p?: unknown) =>
   cached(
-    "program1",
+    // "program1" -> "program2": the payload gained `capacityHindcast`; dataVersion persists
+    // across deploys, so bump the namespace or a stale hindcast-less entry outlives the ship.
+    "program2",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),

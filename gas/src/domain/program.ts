@@ -38,7 +38,7 @@ import { parseSeverities } from "./compaction";
 import { EPSS_PRIORITY_THRESHOLD, RESOLVED_STATUSES, SEVERITY_ORDER } from "./config";
 import type { BaseRow } from "./ledgerCore";
 import { normalizeSeverity } from "./severity";
-import { minNum, parseTs } from "./util";
+import { minNum, parseTs, toIso } from "./util";
 
 const DAY_MS = 86_400_000;
 
@@ -512,7 +512,19 @@ export interface CapacityOptions {
   maxMonths?: number;
 }
 
-type CapacityRow = RiskRow & Pick<BaseRow, "first_seen" | "resolved_at">;
+/**
+ * A lifecycle row for the capacity metrics.
+ *
+ * The two dates are read ONLY through `parseTs`, which takes an epoch-millisecond number as
+ * readily as an ISO string, so the number form is spelled in the type rather than left as an
+ * undocumented capability. `capacityHindcast` relies on it: it parses the register once and
+ * replays the parsed form, which is the difference between 636 ms and 149 ms on a 20k-row
+ * register (see the note there).
+ */
+type CapacityRow = RiskRow & {
+  first_seen: string | number | null;
+  resolved_at: string | number | null;
+};
 
 /**
  * Monthly remediation capacity, derived from the durable base — NOT from the per-scan
@@ -640,6 +652,191 @@ export function capacityByMonth(
     verdict: counted.length ? verdictOf(netPctOverall) : null,
     monthsCounted: counted.length,
   };
+}
+
+// --------------------------------------------------------------------- hindcast
+
+/**
+ * One past scan, the verdict the page WOULD have shown that day, and what the next full
+ * calendar month actually did.
+ *
+ * `agreed` is three-valued on purpose: `null` is "nobody could check this one" (no verdict
+ * that day, or no observed net for the month after), and it is NEVER `false`. False here
+ * would read as a verdict that was checked and missed, which is the one claim an
+ * unobservable row cannot support.
+ */
+export interface HindcastRow {
+  asOf: string;
+  verdict: CapacityVerdict | null;
+  realisedNetPct: number | null;
+  agreed: boolean | null;
+}
+
+export interface Hindcast {
+  rows: HindcastRow[];
+  /** Rows where both sides were observable — the denominator of every sentence about this. */
+  comparable: number;
+  /** "Falling behind" followed by a real gain. The cases the verdict got backwards. */
+  counterperformative: number;
+  /** As-of points actually replayed — flat, parseable, capped. NOT the cap itself. */
+  scansConsidered: number;
+  /** The cap in force, so a caller can tell "only 3 scans exist" from "only 3 were read". */
+  scansCap: number;
+}
+
+/** Default number of trailing flat scans replayed. See `capacityHindcast`. */
+const HINDCAST_SCANS_CAP = 24;
+
+/**
+ * The register AS IT STOOD on `asOfMs`: rows born by then, with a resolution dated after
+ * then read back as still open.
+ *
+ * A NAMED SEAM RATHER THAN FOUR LINES INSIDE THE LOOP, because this is the one refusal the
+ * hindcast turns on and it has to be directly testable. Measured, and the measurement is the
+ * reason the export exists: within `capacityByMonth(…, { now: asOfMs })` this masking changes
+ * NOTHING today. That function never scores the month containing `now` (`partial: key ===
+ * lastKey`, and `counted` drops partial months), and no earlier month can see a resolution
+ * dated after `asOfMs` — every such row is already "open at start" of every month it builds.
+ * So the arithmetic absorbs the difference, and a perturbation applied to the hindcast's
+ * headline numbers fails nothing. It stays, and it is tested HERE where it does bite, for
+ * two reasons: the row set handed to the verdict rule should be true rather than
+ * incidentally harmless, and the absorption is a property of another function's
+ * partial-month rule — one edit there and the hindcast would quietly start scoring verdicts
+ * against closures that had not happened yet.
+ *
+ * Both tests are against a PARSED timestamp, never a cast. `parseTs` returns null for blank,
+ * garbage and `[]` alike, and a row whose `first_seen` will not parse is dropped rather than
+ * dated 1970 — the same refusal `capacityByMonth` makes on the same field.
+ */
+export function capacityRowsAsOf<T extends { first_seen: unknown; resolved_at: unknown }>(
+  rows: T[],
+  asOfMs: number,
+): T[] {
+  const out: T[] = [];
+  for (const row of rows) {
+    const first = parseTs(row.first_seen);
+    if (first === null || first > asOfMs) continue;
+    const resolved = parseTs(row.resolved_at);
+    // Copied only when it needs masking: on a large register this loop runs once per scan.
+    out.push(resolved !== null && resolved > asOfMs ? { ...row, resolved_at: null } : row);
+  }
+  return out;
+}
+
+/**
+ * REPLAY THE CAPACITY VERDICT AGAINST WHAT HAPPENED NEXT.
+ *
+ * The verdict is read by the people whose behaviour it describes, so the one thing it owes
+ * them is a track record. For each past scan this recomputes `capacityByMonth`'s own verdict
+ * from the rows AS THEY STOOD THAT DAY, and pairs it with the observed net capacity of the
+ * following calendar month. No schema change: every input is already in the ledger.
+ *
+ * THE MONTH THAT IS SCORED IS THE ONE AFTER THE SCAN'S OWN MONTH. A scan on 2 February sits
+ * inside February, whose outcome is already half spent by the time the verdict is read; the
+ * first month the verdict could still have moved is March. A scan only earns a row once that
+ * month is OVER within the same horizon `capacityByMonth` uses — the month in progress is
+ * not an outcome.
+ *
+ * The verdict rule itself is not restated here. `capacityByMonth(…, { now: ts })` IS the
+ * rule, called with the register as of that day and the scans that existed then, and
+ * `verdictOf` grades the realised month — so a change to the band or to what counts as a
+ * complete month moves the hindcast with the page instead of leaving a second copy behind.
+ *
+ * Grouped scans are not as-of points (they carry no per-finding rows — the same exclusion
+ * `capacityByMonth` makes), and a scan whose `ts` will not parse is skipped rather than
+ * placed at epoch 0, where it would replay the whole register against 1970.
+ */
+export function capacityHindcast(
+  rows: CapacityRow[],
+  scans: { ts?: unknown; shape?: unknown; resolved_count?: unknown }[],
+  options: CapacityOptions & { scansCap?: number },
+): Hindcast {
+  const cap = options.scansCap ?? HINDCAST_SCANS_CAP;
+  const horizonMs = options.now ?? Date.now();
+
+  // Grouped and unparseable scans are dropped BEFORE the cap, so the cap counts as-of points
+  // rather than rows that could never be one.
+  const asOfMs = scans
+    .filter((s) => s["shape"] !== "grouped")
+    .map((s) => parseTs(s["ts"]))
+    .filter((t): t is number => t !== null)
+    .sort((a, b) => b - a)
+    .slice(0, cap);
+
+  // PARSED ONCE, then replayed. Every date below is read through `parseTs`, which returns a
+  // number straight back, so this turns 24 x 40,000 string parses into 40,000 — measured
+  // 636 ms -> 149 ms on a 20k-row register at cap 24, and Date.parse WAS the whole cost
+  // (capacityRowsAsOf 270 ms -> 31 ms, capacityByMonth 333 ms -> 88 ms). Semantically a
+  // no-op: a date that will not parse becomes the same null `capacityByMonth` would have
+  // derived from it, and is dropped for the same reason.
+  const dated: CapacityRow[] = rows.map((r) => ({
+    ...r,
+    first_seen: parseTs(r.first_seen),
+    resolved_at: parseTs(r.resolved_at),
+  }));
+
+  // The realised series, computed ONCE over the whole register. `maxMonths` is dropped: it is
+  // the table's display trim, and trimming here would drop the outcome months of the oldest
+  // scans for a presentation reason.
+  const realised = capacityByMonth(dated, scans, { ...options, maxMonths: undefined });
+  const netByMonth: Record<string, number | null> = {};
+  for (const m of realised.months) netByMonth[m.month] = m.netPct;
+
+  const out: HindcastRow[] = [];
+  for (const ts of asOfMs) {
+    const followKey = nextMonthKey(monthKey(ts));
+    if (monthStartMs(nextMonthKey(followKey)) > horizonMs) continue;
+
+    const scansUpTo = scans.filter((s) => {
+      const t = parseTs(s["ts"]);
+      return t !== null && t <= ts;
+    });
+    const verdict = capacityByMonth(capacityRowsAsOf(dated, ts), scansUpTo, {
+      ...options,
+      now: ts,
+      maxMonths: undefined,
+    }).verdict;
+
+    // A follow month is never `reconstructed`: it ends after `ts`, and `ts` is itself a flat
+    // scan, so the earliest flat scan precedes it. Nothing to exclude on that count.
+    const realisedNetPct = netByMonth[followKey] ?? null;
+    out.push({
+      // Finite by construction — `parseTs` refused everything that was not a real timestamp.
+      asOf: toIso(ts) as string,
+      verdict,
+      realisedNetPct,
+      agreed: agreedWith(verdict, realisedNetPct),
+    });
+  }
+
+  return {
+    rows: out,
+    comparable: out.filter((r) => r.agreed !== null).length,
+    // "Falling behind" and then the ground was GAINED — graded by the same `verdictOf` the
+    // page's own pill uses, so "a gain" cannot mean one thing here and another there.
+    counterperformative: out.filter(
+      (r) => r.verdict === "falling-behind" && r.realisedNetPct !== null
+        && verdictOf(r.realisedNetPct) === "gaining",
+    ).length,
+    scansConsidered: asOfMs.length,
+    scansCap: cap,
+  };
+}
+
+/**
+ * Did the month land where the verdict said it would?
+ *
+ * `verdictOf` IS the rule — the same function `capacityByMonth` grades its own months with,
+ * applied to the realised net. Restating the three band comparisons here would be a second
+ * copy of `NET_CAPACITY_BAND_PCT`, free to drift from the one on screen.
+ *
+ * Null when either side is unobservable, and never false. The null check has to come FIRST:
+ * `verdictOf(null)` answers "keeping-up", so grading an unmeasured month through it would
+ * score a month nobody observed as a verdict that was checked and either kept or missed.
+ */
+function agreedWith(verdict: CapacityVerdict | null, netPct: number | null): boolean | null {
+  if (verdict === null || netPct === null) return null;
+  return verdictOf(netPct) === verdict;
 }
 
 /** Age in days of the register's observation window — context for the capacity table. */

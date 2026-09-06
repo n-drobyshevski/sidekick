@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "a89be99bc9aa" : "dev";
+  var BUILD_ID = true ? "dd2e89e4e59e" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -1723,6 +1723,68 @@ var Server = (() => {
       verdict: counted.length ? verdictOf(netPctOverall) : null,
       monthsCounted: counted.length
     };
+  }
+  var HINDCAST_SCANS_CAP = 24;
+  function capacityRowsAsOf(rows, asOfMs) {
+    const out = [];
+    for (const row of rows) {
+      const first = parseTs(row.first_seen);
+      if (first === null || first > asOfMs) continue;
+      const resolved = parseTs(row.resolved_at);
+      out.push(resolved !== null && resolved > asOfMs ? { ...row, resolved_at: null } : row);
+    }
+    return out;
+  }
+  function capacityHindcast(rows, scans, options) {
+    var _a, _b, _c;
+    const cap = (_a = options.scansCap) != null ? _a : HINDCAST_SCANS_CAP;
+    const horizonMs = (_b = options.now) != null ? _b : Date.now();
+    const asOfMs = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => b - a).slice(0, cap);
+    const dated = rows.map((r) => ({
+      ...r,
+      first_seen: parseTs(r.first_seen),
+      resolved_at: parseTs(r.resolved_at)
+    }));
+    const realised = capacityByMonth(dated, scans, { ...options, maxMonths: void 0 });
+    const netByMonth = {};
+    for (const m of realised.months) netByMonth[m.month] = m.netPct;
+    const out = [];
+    for (const ts of asOfMs) {
+      const followKey = nextMonthKey(monthKey(ts));
+      if (monthStartMs(nextMonthKey(followKey)) > horizonMs) continue;
+      const scansUpTo = scans.filter((s) => {
+        const t = parseTs(s["ts"]);
+        return t !== null && t <= ts;
+      });
+      const verdict = capacityByMonth(capacityRowsAsOf(dated, ts), scansUpTo, {
+        ...options,
+        now: ts,
+        maxMonths: void 0
+      }).verdict;
+      const realisedNetPct = (_c = netByMonth[followKey]) != null ? _c : null;
+      out.push({
+        // Finite by construction — `parseTs` refused everything that was not a real timestamp.
+        asOf: toIso(ts),
+        verdict,
+        realisedNetPct,
+        agreed: agreedWith(verdict, realisedNetPct)
+      });
+    }
+    return {
+      rows: out,
+      comparable: out.filter((r) => r.agreed !== null).length,
+      // "Falling behind" and then the ground was GAINED — graded by the same `verdictOf` the
+      // page's own pill uses, so "a gain" cannot mean one thing here and another there.
+      counterperformative: out.filter(
+        (r) => r.verdict === "falling-behind" && r.realisedNetPct !== null && verdictOf(r.realisedNetPct) === "gaining"
+      ).length,
+      scansConsidered: asOfMs.length,
+      scansCap: cap
+    };
+  }
+  function agreedWith(verdict, netPct) {
+    if (verdict === null || netPct === null) return null;
+    return verdictOf(netPct) === verdict;
   }
   function observationWindowDays(rows, now) {
     const nowMs = now != null ? now : Date.now();
@@ -9320,6 +9382,24 @@ var Server = (() => {
         highRiskOnly: true,
         maxMonths: 24
       }),
+      // The verdict's own track record, replayed against what happened next.
+      //
+      // HIGH-RISK, not whole-register, and that is the whole point of it: `capacityHighRisk`
+      // is the only capacity figure this page states as a verdict — the hero's pill reads
+      // `capacityHighRisk.verdict`, and `capacity.verdict` is never rendered as those three
+      // words anywhere. Hindcasting the whole-register series would publish a hit rate for a
+      // sentence nobody is shown.
+      //
+      // Cost measured on a synthetic 20k-row / 24-scan register, timed after the two
+      // capacityByMonth passes above so the paths are as warm as they are in production:
+      // 142 ms whole-register, 82 ms high-risk-only (636 ms before the domain layer parsed the
+      // register once instead of once per scan). The payload is cached for an hour, so this is
+      // a cache-miss cost; the cap stays at 24 scans.
+      capacityHindcast: capacityHindcast(capacityRows, scans, {
+        rule,
+        highRiskOnly: true,
+        scansCap: 24
+      }),
       observationDays: observationWindowDays(rows),
       rowCount: rows.length,
       // Named so the methodology block can state what was excluded before any of this counted.
@@ -9540,7 +9620,9 @@ var Server = (() => {
   var cachedProgramData = (p) => {
     var _a, _b;
     return cached(
-      "program1",
+      // "program1" -> "program2": the payload gained `capacityHindcast`; dataVersion persists
+      // across deploys, so bump the namespace or a stale hindcast-less entry outlives the ship.
+      "program2",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),

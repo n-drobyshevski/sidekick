@@ -9,6 +9,8 @@
 import { describe, expect, it } from "vitest";
 import {
   capacityByMonth,
+  capacityHindcast,
+  capacityRowsAsOf,
   classifyRisk,
   confusionBySeverity,
   confusionMatrix,
@@ -16,6 +18,7 @@ import {
   firedSignals,
   movementDecomposition,
   movementWindowScans,
+  NET_CAPACITY_BAND_PCT,
   type MovementRow,
   ruleSensitivity,
   RISK_TIER_ORDER,
@@ -396,6 +399,29 @@ describe("capacityByMonth", () => {
     expect(withBigFirst.months.find((m) => m.month === "2026-01")!.scanClosed).toBeNull();
   });
 
+  it("skips an unparseable scan ts rather than dating the first scan to 1970", () => {
+    // FOUND BY PERTURBING THIS GUARD while writing the hindcast below: the refusal existed
+    // and nothing in the suite fired on it. `Number("")` and `Number(null)` are both 0 and
+    // both finite, so a blank ts admitted as epoch 0 becomes the EARLIEST flat scan — and
+    // `reconstructed` is `end <= firstScanMs`, so every month in the register would report
+    // itself directly observed and every pre-scan closure would be counted as real.
+    const out = capacityByMonth(
+      rows,
+      [{ ts: "", shape: "flat", resolved_count: 0 }, ...scans],
+      { rule: RULE, now: NOW },
+    );
+    const jan = out.months.find((m) => m.month === "2026-01")!;
+    // January still ends after the real first scan (2 January), so it is observed — but that
+    // has to be true because of the January scan, not because of a scan dated to 1970.
+    expect(jan.reconstructed).toBe(false);
+    const before = capacityByMonth(
+      [...rows, { ...row(), first_seen: "2025-06-05T00:00:00Z", resolved_at: null }],
+      [{ ts: "", shape: "flat", resolved_count: 0 }, ...scans],
+      { rule: RULE, now: NOW },
+    );
+    expect(before.months.find((m) => m.month === "2025-06")!.reconstructed).toBe(true);
+  });
+
   it("gives the P2P v3 verdict from net flow", () => {
     const byKey = Object.fromEntries(out.months.map((m) => [m.month, m]));
     expect(byKey["2026-02"].net).toBe(1); // closed 1, opened 0
@@ -420,6 +446,223 @@ describe("capacityByMonth", () => {
     expect(empty.months).toEqual([]);
     expect(empty.mmcrMean).toBeNull();
     expect(empty.verdict).toBeNull();
+  });
+});
+
+// The verdict, replayed against what happened next.
+//
+// Every fixture here is hand-built, and the arithmetic is stated beside it, because the thing
+// under test is a claim about the PAST: a verdict computed from rows as they stood on a date,
+// scored against a month that had not happened yet. A fixture generated from today's register
+// could not tell the two apart.
+//
+// One measurement worth recording where the next reader will find it. Inside
+// `capacityByMonth(…, { now: ts })` the as-of masking changes NOTHING today: that function
+// never scores the month containing `now`, and no earlier month can see a resolution dated
+// after `ts` — such a row is already "open at start" of every month it builds. So perturbing
+// the masking and re-running the hindcast's headline numbers falsifies nothing, which is why
+// the load-bearing test below is aimed at `capacityRowsAsOf` directly, where it bites. See
+// that function's own header for why the masking stays.
+describe("capacityHindcast", () => {
+  const NOW = Date.parse("2026-05-10T00:00:00Z");
+  const capRow = (first: string, resolved: string | null) => ({
+    ...row(),
+    first_seen: first,
+    resolved_at: resolved,
+  });
+  const flat = (ts: string, resolved_count = 0) => ({ ts, shape: "flat", resolved_count });
+  const many = (n: number, first: string, resolved: string | null) =>
+    Array.from({ length: n }, () => capRow(first, resolved));
+  const DAY = 86_400_000;
+
+  // Ten findings born in December, five more in January, six of the fifteen closed in March.
+  //   Dec  openAtStart  0  (nothing existed before it)      -> no rate, never counted
+  //   Jan  openAtStart 10, opened 5, closed 0 -> net -50%   -> falling behind
+  //   Feb  openAtStart 15, opened 0, closed 0 -> net   0%   -> keeping up
+  //   Mar  openAtStart 15, opened 0, closed 6 -> net +40%   -> gaining ground
+  const F1_ROWS = [
+    ...many(6, "2025-12-05T00:00:00Z", "2026-03-10T00:00:00Z"),
+    ...many(4, "2025-12-05T00:00:00Z", null),
+    ...many(5, "2026-01-10T00:00:00Z", null),
+  ];
+  const F1_SCANS = [
+    flat("2025-12-05T00:00:00Z"),
+    flat("2026-01-02T00:00:00Z"),
+    flat("2026-02-02T00:00:00Z"),
+  ];
+
+  it("hindcasts nothing when no month has closed since the scan", () => {
+    // A scan on 15 April is scored against MAY, the first month it could still have moved —
+    // and May is still running on 10 May. No row, rather than a row grading the verdict
+    // against a fortnight.
+    const out = capacityHindcast(F1_ROWS, [flat("2026-04-15T00:00:00Z")], {
+      rule: RULE,
+      now: NOW,
+    });
+    expect(out.rows).toEqual([]);
+    expect(out.comparable).toBe(0);
+    expect(out.counterperformative).toBe(0);
+    expect(out.scansConsidered).toBe(1); // it was read; it just had nothing to be scored against
+  });
+
+  // THE LOAD-BEARING ONE. A row resolved after the as-of date was OPEN on that date, and a
+  // replay that reads today's `resolved_at` hands the past verdict closures that had not
+  // happened yet — a program graded on a future it already knew.
+  it("treats a row resolved after the as-of date as open at that date", () => {
+    const ts = Date.parse("2026-02-02T00:00:00Z");
+    const register = [
+      { first_seen: "2026-01-05T00:00:00Z", resolved_at: "2026-02-03T00:00:00Z" }, // a day late
+      { first_seen: "2026-01-06T00:00:00Z", resolved_at: "2026-01-20T00:00:00Z" }, // really closed
+      { first_seen: "2026-02-10T00:00:00Z", resolved_at: null },                   // not born yet
+      { first_seen: "", resolved_at: null },                                       // no birth date
+    ];
+    const asOf = capacityRowsAsOf(register, ts);
+
+    expect(asOf.map((r) => r.first_seen)).toEqual([
+      "2026-01-05T00:00:00Z",
+      "2026-01-06T00:00:00Z",
+    ]);
+    expect(asOf[0]!.resolved_at).toBeNull();                        // open on 2 February
+    expect(asOf[1]!.resolved_at).toBe("2026-01-20T00:00:00Z");      // closed, and stays closed
+    // A row whose birth date will not parse is DROPPED, not dated 1970 and counted as the
+    // oldest thing in the register.
+    expect(asOf.some((r) => r.first_seen === "")).toBe(false);
+    // The caller's own rows are never mutated — the mask is a copy.
+    expect(register[0]!.resolved_at).toBe("2026-02-03T00:00:00Z");
+  });
+
+  it("marks a falling-behind verdict followed by a gain as counterperformative", () => {
+    const out = capacityHindcast(F1_ROWS, F1_SCANS, { rule: RULE, now: NOW });
+    const feb = out.rows.find((r) => r.asOf === "2026-02-02T00:00:00Z")!;
+    // As of 2 February the only complete, observed month with a backlog is January: -50%.
+    expect(feb.verdict).toBe("falling-behind");
+    // March — the first month the 2 February verdict could still have moved — gained 40%.
+    expect(feb.realisedNetPct).toBe(40);
+    expect(feb.agreed).toBe(false);
+    expect(out.counterperformative).toBe(1);
+    expect(out.comparable).toBe(1);
+  });
+
+  it("reports agreed as null, never false, when either side is unobservable", () => {
+    // Side one: no verdict that day. As of 2 January the only month behind the scan is
+    // December, which had nothing open at its start, so there is no rate to average.
+    const out = capacityHindcast(F1_ROWS, F1_SCANS, { rule: RULE, now: NOW });
+    const jan = out.rows.find((r) => r.asOf === "2026-01-02T00:00:00Z")!;
+    expect(jan.verdict).toBeNull();
+    expect(jan.realisedNetPct).toBe(0); // February was observed; the verdict was not
+    expect(jan.agreed).toBeNull();
+
+    // Side two: a verdict, and no month to score it against. Everything closes in January, so
+    // March opens with nothing at all and has no net rate.
+    const emptied = capacityHindcast(
+      many(10, "2025-12-05T00:00:00Z", "2026-01-20T00:00:00Z"),
+      [flat("2025-12-05T00:00:00Z"), flat("2026-02-02T00:00:00Z")],
+      { rule: RULE, now: NOW },
+    );
+    const feb = emptied.rows.find((r) => r.asOf === "2026-02-02T00:00:00Z")!;
+    expect(feb.verdict).toBe("gaining"); // January closed all ten of them
+    expect(feb.realisedNetPct).toBeNull();
+    expect(feb.agreed).toBeNull();
+    expect(emptied.comparable).toBe(0);
+  });
+
+  it("a month inside the dead band agrees with keeping-up", () => {
+    // One arrival a month against a hundred open is -1%, inside NET_CAPACITY_BAND_PCT either
+    // side of zero. The verdict says keeping up and the month keeps up: agreed, not a miss.
+    const rows = [
+      ...many(100, "2025-12-05T00:00:00Z", null),
+      capRow("2026-01-10T00:00:00Z", null),
+      capRow("2026-03-10T00:00:00Z", null),
+    ];
+    const out = capacityHindcast(
+      rows,
+      [flat("2025-12-05T00:00:00Z"), flat("2026-02-02T00:00:00Z")],
+      { rule: RULE, now: NOW },
+    );
+    const feb = out.rows.find((r) => r.asOf === "2026-02-02T00:00:00Z")!;
+    expect(feb.verdict).toBe("keeping-up");
+    expect(feb.realisedNetPct).toBeCloseTo(-0.990099, 5); // -1 / 101
+    expect(Math.abs(feb.realisedNetPct!)).toBeLessThanOrEqual(NET_CAPACITY_BAND_PCT);
+    expect(feb.agreed).toBe(true);
+    expect(out.comparable).toBe(1);
+    expect(out.counterperformative).toBe(0);
+  });
+
+  it("a grouped scan is not an as-of point", () => {
+    // A grouped scan carries no per-finding rows, so there is no register to replay against
+    // it — the same exclusion capacityByMonth makes for the same reason.
+    const out = capacityHindcast(
+      F1_ROWS,
+      [...F1_SCANS, { ts: "2026-02-20T00:00:00Z", shape: "grouped", resolved_count: 99 }],
+      { rule: RULE, now: NOW },
+    );
+    expect(out.scansConsidered).toBe(3);
+    expect(out.rows.map((r) => r.asOf)).not.toContain("2026-02-20T00:00:00Z");
+  });
+
+  it("respects the scans cap and says so", () => {
+    const out = capacityHindcast(F1_ROWS, F1_SCANS, { rule: RULE, now: NOW, scansCap: 2 });
+    // Newest first, so the December scan is the one dropped.
+    expect(out.rows.map((r) => r.asOf)).toEqual([
+      "2026-02-02T00:00:00Z",
+      "2026-01-02T00:00:00Z",
+    ]);
+    expect(out.scansConsidered).toBe(2);
+    expect(out.scansCap).toBe(2);
+    // And the cap is reported apart from the count, so "only two scans exist" reads
+    // differently from "only two were read".
+    expect(capacityHindcast(F1_ROWS, F1_SCANS, { rule: RULE, now: NOW }).scansCap).toBe(24);
+  });
+
+  it("an unparseable scan ts is skipped, not placed at epoch 0", () => {
+    // Number(null) is 0 and Number("") is 0, and both are finite. A scan dated to epoch 0
+    // would replay the whole register against January 1970 — every row unborn, every verdict
+    // null — and it would sort to the bottom of the table looking like real history.
+    const scans = [
+      ...F1_SCANS,
+      { ts: "", shape: "flat", resolved_count: 0 },
+      { ts: null, shape: "flat", resolved_count: 0 },
+      { ts: "not a date", shape: "flat", resolved_count: 0 },
+      { ts: [], shape: "flat", resolved_count: 0 },
+    ];
+    const out = capacityHindcast(F1_ROWS, scans, { rule: RULE, now: NOW });
+    expect(out.scansConsidered).toBe(3);
+    expect(out.rows.some((r) => r.asOf.startsWith("1970"))).toBe(false);
+  });
+
+  it("costs about 140 ms on a 20k-row, 24-scan register", () => {
+    // MEASURED, on the shape the live register is heading for. Timed after the two
+    // capacityByMonth passes programData already runs, so the paths are as warm as they are
+    // in production: 142 ms whole-register, 82 ms high-risk-only (which is what the payload
+    // actually asks for). Before the domain parsed the register ONCE instead of once per
+    // scan it was 636 ms, and Date.parse was the entire difference.
+    //
+    // The ceiling below is a smoke bound, not the measurement — a machine ten times slower
+    // than this one still passes, and 636 ms would have too. What it catches is the shape
+    // going quadratic, which is the way this function actually breaks.
+    const rows: (RiskRow & { first_seen: string; resolved_at: string | null })[] = [];
+    const start = Date.parse("2024-06-01T00:00:00Z");
+    for (let i = 0; i < 20000; i++) {
+      const born = start + (i % 700) * DAY;
+      rows.push({
+        ...row({ has_kev: i % 4 === 0 }),
+        first_seen: new Date(born).toISOString(),
+        resolved_at: i % 3 === 0 ? new Date(born + 40 * DAY).toISOString() : null,
+      });
+    }
+    const scans = Array.from({ length: 24 }, (_, i) =>
+      flat(new Date(Date.parse("2024-08-01T00:00:00Z") + i * 30 * DAY).toISOString(), 3));
+    const now = Date.parse("2026-09-01T00:00:00Z");
+    capacityByMonth(rows, scans, { rule: RULE, now, maxMonths: 24 });
+    capacityByMonth(rows, scans, { rule: RULE, highRiskOnly: true, now, maxMonths: 24 });
+
+    const t0 = Date.now();
+    const out = capacityHindcast(rows, scans, {
+      rule: RULE, highRiskOnly: true, now, scansCap: 24,
+    });
+    const elapsed = Date.now() - t0;
+    expect(out.rows.length).toBe(24);
+    expect(elapsed).toBeLessThan(3000);
   });
 });
 
