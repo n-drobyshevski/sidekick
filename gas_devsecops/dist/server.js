@@ -450,7 +450,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "e53327524c63" : "dev";
+  var BUILD_ID = true ? "36d8a2d1a385" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -4136,6 +4136,28 @@ var Server = (() => {
       status: ["OPEN", "RESOLVED"]
     }
   };
+  var BASE_FILTER_WORDS = {
+    // hasFix: true                     — and note what this one costs: a WITHDRAWN fix drops a
+    //                                    finding out of the population and reads as a
+    //                                    remediation (sync.ts records the gap). A reader owed
+    //                                    the count is owed the reason it can move.
+    // codeToCloudPipelineStage: [CODE] — keeps the OS sidekick's container images out.
+    // isDefaultBranch: {equals: true}  — a branch nobody merged is not remediation debt.
+    sca: [
+      "only packages with a published fixed version",
+      "repository findings, not the container images carrying the same CVEs",
+      "the default branch only"
+    ],
+    // resource: { isDefaultBranch: { equals: true } } — nested here, top-level on SCA.
+    sast: [
+      "the default branch only"
+    ],
+    // codeToCloudPipelineStage: [CODE] — 394,927 rows unscoped, and most of them cloud or
+    //                                    runtime rather than code (PROBE_FINDINGS.md §3).
+    secrets: [
+      "repository findings, not cloud or runtime detections"
+    ]
+  };
   function shapeBase(scope, base) {
     const out = {};
     for (const [key, value] of Object.entries(base)) {
@@ -6658,7 +6680,28 @@ var Server = (() => {
       funnel: triageFunnel(rows, void 0, /* @__PURE__ */ new Set(), false, scope),
       awaiting: awaitingVendorFix(rows, { scope }),
       latestScan: latest,
-      signalCoverage: signalCoverage(rows)
+      signalCoverage: signalCoverage(rows),
+      // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow a register
+      // before one figure on it is computed: the rows themselves, the severity gate THE LAST
+      // SCAN OF THIS SCOPE APPLIED, and the base Wiz filter this scope's query carries. Each
+      // makes a count fall, and none can be published as a `0` — the rows they removed were
+      // never fetched, so a count there would measure a population nobody looked at.
+      //
+      // THE GATE COMES OFF THE SCAN ROW, never off `n.severities`. A scan records the gate it
+      // APPLIED (runScan's `severities` override), and the two differ across a settings change;
+      // stamping today's gate on yesterday's measurement is the same class of error the
+      // disappearance guard exists to prevent.
+      //
+      // `parseSeverities` returns NULL for a gate that covered everything — including the empty
+      // string and the full list — and null is what "all severities" is spelled as here. It must
+      // not be flattened to `[]`: `secrets` DEFAULTS to an empty gate
+      // (DEFAULT_FETCH_SEVERITIES.secrets), so the all-severities case is the live one on a
+      // third of this product, not a theoretical edge.
+      population: {
+        inScope: rows.length,
+        gate: latest ? parseSeverities(latest.severities) : null,
+        filters: BASE_FILTER_WORDS[scope]
+      }
     };
   }
   function countsOf(rows) {
@@ -6673,7 +6716,11 @@ var Server = (() => {
   function registerModel(scope, p) {
     const n2 = norm(p);
     return cached(
-      "dsRegister1",
+      // "dsRegister1" -> "dsRegister2": the payload gained `population` (in-scope count, the
+      // gate the last scan applied, the base filter words). A warm dsRegister1 entry carries
+      // none of it, and the page would draw no provenance line at all over figures that have
+      // one — worse than a stale number, because it is a silently missing caveat.
+      "dsRegister2",
       { ...keyOf(n2), scope },
       () => buildRegister(scope, n2),
       CLOCK_TTL_SEC

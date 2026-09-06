@@ -970,7 +970,11 @@ export async function renderMttr(host, params, _ctx) {
   function renderAging(mttr) {
     const vm = agingView(mttr && mttr.remediation, SEVERITY_ORDER);
     clear(agingHost);
-    agingHost.append(sectionLabel("Open findings by age", { term: "sla-target" }));
+    // THE BAND, NOT THE WALL. "SLA by severity" above reads the deadline per severity
+    // (term: "sla-target", still there and unchanged); this chart is the same deadline read
+    // as a DISTRIBUTION — how much of the window each open finding has consumed and how many
+    // are already past it — which is what "sla-band" defines.
+    agingHost.append(sectionLabel("Open findings by age", { term: "sla-band" }));
     if (!vm.show) {
       agingHost.append(emptyState(
         "No open findings to age yet.",

@@ -222,7 +222,10 @@ export async function renderHistory(host, _params, _ctx) {
   host.append(
     observedHost,
     kpiHost,
-    sectionLabel("Coverage by register"),
+    // The table the rail's one status dot is a summary of: a "Last scan" of "—" here is the
+    // never-measured state that outranks every stale one on the dot. `rail-status` is where
+    // that precedence is written down.
+    sectionLabel("Coverage by register", { term: "rail-status" }),
     perScopeHost,
     sectionLabel("Saved scans"),
     tableHost,

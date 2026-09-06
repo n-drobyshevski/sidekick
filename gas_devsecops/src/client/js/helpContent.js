@@ -164,7 +164,7 @@ const ENTRIES = [
     term: "Capacity",
     lines: [
       "Whether remediation is keeping up with new findings arriving, read month by month.",
-      "A month is gaining, keeping up, or falling behind, judged by closures against openings against a dead band around zero.",
+      "A month is gaining, keeping up or falling behind: only capacity absorbs inflow, so the verdict compares the close rate with the arrival rate, not a count, with a dead band around zero.",
     ],
   },
   {
@@ -206,6 +206,32 @@ const ENTRIES = [
       "One secret at one line, reported once against its repository and once against a branch of it.",
       "The ledger keys on (secret, path, line) and keeps the earlier of the two birth dates — 187 keys in this tenant span both, a median 19.9 days apart.",
       "Keying on Wiz's externalId instead would look unique and quietly double the register.",
+    ],
+  },
+  {
+    // pages/mttr.js's "Open findings by age" section label — the SLA read as a distribution,
+    // beside the "SLA by severity" table that reads it per severity (term: "sla-target").
+    id: "sla-band",
+    term: "SLA band",
+    lines: [
+      "An SLA is a band the population is kept inside, not a wall a single finding hits.",
+      "Read it as a distribution: how much of the window each open finding has consumed, and how many are already past it.",
+    ],
+  },
+  {
+    // pages/history.js's "Coverage by register" label — the per-register table the rail's
+    // one status dot summarises.
+    //
+    // THE COPY IS NOT THE RAIL'S OWN WORDING, and the difference is this file's rule, not a
+    // paraphrase. `railStatus.js` labels its states "Never scanned" and "Oldest register
+    // scanned N days ago"; the glossary may not spell the ACT with the word scan
+    // (test/helpContent.test.js's SCAN_AS_ACT sweep), so the same two states are named here
+    // by what was or was not measured.
+    id: "rail-status",
+    term: "Rail status",
+    lines: [
+      "Only exceptions speak: a sync running, a sync that failed, nothing to sync with, a register never measured, a scan gone old, or current.",
+      "Never-measured outranks old: a register nobody has looked at is unmeasured, not stale.",
     ],
   },
   {

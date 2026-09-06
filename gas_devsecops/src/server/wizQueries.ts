@@ -310,6 +310,76 @@ const BASE: Record<string, Record<string, unknown>> = {
 };
 
 /**
+ * THE BASE FILTER, IN WORDS — one short phrase per key of `BASE[scope]` that NARROWS the
+ * population, per register.
+ *
+ * The line under each register's hero has to name what the measurement kept OUT, and these
+ * are exactly that: every key below makes a count fall, and not one of them can be reported
+ * as a zero, because the rows it removed were never fetched. A register that publishes
+ * "1,324 secrets" without saying "repository findings only" states a fact about 394,927 rows
+ * that nobody measured.
+ *
+ * WHAT IS DELIBERATELY UNNAMED, and why each:
+ *
+ *   status    The register's DEFINITION of a finding, not a narrowing of it — `["OPEN",
+ *             "RESOLVED"]` is every state the ledger has a clock for. Naming it would read
+ *             as an exclusion that is not one. (SAST carries no `status` at all; see
+ *             SAST_FETCH_RESOLVED.)
+ *   severity  The scan's own GATE, and it is not in `BASE` at all — `buildFilter` injects it
+ *             per sync from the settings in force at the time. The hero line states it
+ *             separately, read off the scan row that APPLIED it, so a word here would be a
+ *             second and staler statement of the same thing.
+ *
+ * `test/wizQueryWords.test.js` binds each list's length to that scope's own nameable key
+ * count, so a filter added later cannot reach the screen unnamed. THE WORDS ARE PER SCOPE
+ * because the filters are: `hasFix` narrows SCA and nothing else, and SAST's default-branch
+ * gate is nested under `resource` while SCA's is top-level. One shared list would have to be
+ * wrong about two registers to be right about one.
+ *
+ * A STRING CONSTANT IS NOT TRANSPORT. This file must stay free of Apps Script globals
+ * (module header; `test/wizClient.test.ts` asserts it in text) — prose does not violate that.
+ */
+export const BASE_FILTER_WORDS: Record<Scope, string[]> = {
+  // hasFix: true                     — and note what this one costs: a WITHDRAWN fix drops a
+  //                                    finding out of the population and reads as a
+  //                                    remediation (sync.ts records the gap). A reader owed
+  //                                    the count is owed the reason it can move.
+  // codeToCloudPipelineStage: [CODE] — keeps the OS sidekick's container images out.
+  // isDefaultBranch: {equals: true}  — a branch nobody merged is not remediation debt.
+  sca: [
+    "only packages with a published fixed version",
+    "repository findings, not the container images carrying the same CVEs",
+    "the default branch only",
+  ],
+  // resource: { isDefaultBranch: { equals: true } } — nested here, top-level on SCA.
+  sast: [
+    "the default branch only",
+  ],
+  // codeToCloudPipelineStage: [CODE] — 394,927 rows unscoped, and most of them cloud or
+  //                                    runtime rather than code (PROBE_FINDINGS.md §3).
+  secrets: [
+    "repository findings, not cloud or runtime detections",
+  ],
+};
+
+/**
+ * Filter keys the words above deliberately do not name, and one that is not in `BASE` to
+ * begin with. Exported so the drift test names them rather than re-deciding them.
+ */
+export const UNNAMED_FILTER_KEYS = ["status", "severity"] as const;
+
+/**
+ * The keys of one scope's base filter, for the drift test.
+ *
+ * `BASE` stays module-private — it is mutated by `JSON.parse(JSON.stringify(...))` on every
+ * `buildFilter` call and has no business being reachable from outside — so what leaves the
+ * module is the key list, which is the only part the word count is a claim about.
+ */
+export function baseFilterKeys(scope: Scope): string[] {
+  return Object.keys(BASE[scope] ?? {});
+}
+
+/**
  * Apply OBJECT_FILTERS to every list-valued key of a base scope.
  *
  * BASE IS WRITTEN IN ONE CONVENTION — plain lists — and the shape table decides what goes on

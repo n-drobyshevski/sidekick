@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   PROVENANCE, PROVENANCE_HELP, REGISTERS, REGISTER_ORDER, activeFilterCount, boundedShare,
-  executiveHeadline, facetEntries, headerFigures, provenance, readFilters, returnedShare,
-  scopeSummaries,
+  executiveHeadline, facetEntries, headerFigures, populationLine, provenance, readFilters,
+  returnedShare, scopeSummaries,
 } from "../src/client/js/pages/registerModel.js";
 
 const open = (over = {}) => ({ status: "OPEN", resolution_src: null, ...over });
@@ -304,5 +304,108 @@ describe("the front door", () => {
 
   it("carries each register's title so the page does not re-name them", () => {
     expect(scopeSummaries({}).map((x) => x.title)).toEqual(["Dependencies", "Code", "Secrets"]);
+  });
+});
+
+
+// =========================================================================================
+//  The line under the hero: what was measured, and what was never looked at
+// =========================================================================================
+//
+// Every figure on a register page is computed over a population three things narrowed first.
+// The one failure this suite exists for is the tempting one: printing a ZERO for the rows the
+// severity gate kept out. Nothing counted them — a sync gated to CRITICAL/HIGH never fetched a
+// MEDIUM row — so a zero there would be a confident measurement of a population nobody looked
+// at.
+
+describe("the population line names the gate and refuses to price what it excluded", () => {
+  const withPop = (population) => ({ population });
+
+  it("names the gate when one was applied", () => {
+    const line = populationLine(withPop({
+      inScope: 1234,
+      gate: ["CRITICAL", "HIGH"],
+      filters: ["the default branch only"],
+    }));
+    expect(line.parts[0]).toBe("In scope 1,234");
+    expect(line.parts[1]).toBe("gate CRITICAL, HIGH");
+    expect(line.parts).toContain("the default branch only");
+    expect(line.text).toBe(
+      "In scope 1,234 · gate CRITICAL, HIGH · the default branch only · "
+      + "below the gate: not counted",
+    );
+  });
+
+  it("says 'all severities' rather than printing an empty gate", () => {
+    // THREE SHAPES, ONE MEANING. parseSeverities answers null for a gate that covered
+    // everything; a payload can carry the empty list; a hand-written fixture can carry the
+    // empty string. `[].join(", ")` is "", and "gate " on screen reads as a gate whose
+    // severities went missing — a different claim from "the gate was off".
+    for (const gate of [null, [], "", undefined, ["  ", ""]]) {
+      const line = populationLine(withPop({ inScope: 7, gate, filters: [] }));
+      expect(line.parts[1], `gate ${JSON.stringify(gate)}`).toBe("gate: all severities");
+      expect(line.text, `gate ${JSON.stringify(gate)}`).not.toMatch(/gate\s*·/);
+      expect(line.text, `gate ${JSON.stringify(gate)}`).not.toMatch(/gate\s*$/);
+    }
+  });
+
+  it("secrets' default empty gate reads as all severities, and says nothing was excluded", () => {
+    // DEFAULT_FETCH_SEVERITIES.secrets is [] — empty means all, and severityFilter([]) makes
+    // buildFilter omit the severity key entirely. So the whole CODE population is in the
+    // register, and there is no "below the gate" to speak of. This is a third of the product,
+    // not an edge case.
+    const line = populationLine(withPop({
+      inScope: 1958,
+      gate: [],
+      filters: ["repository findings, not cloud or runtime detections"],
+    }));
+    expect(line.parts[1]).toBe("gate: all severities");
+    expect(line.text).not.toContain("not counted");
+    expect(line.text).toBe(
+      "In scope 1,958 · gate: all severities · repository findings, not cloud or runtime "
+      + "detections",
+    );
+  });
+
+  it("never prints a zero for what the gate excluded", () => {
+    const line = populationLine(withPop({
+      inScope: 500,
+      gate: ["CRITICAL"],
+      filters: [],
+    }));
+    const excluded = line.parts.filter((s) => /below the gate/.test(s));
+    expect(excluded).toEqual(["below the gate: not counted"]);
+    // The excluded part carries NO DIGIT of any kind — not a zero, not a count, not a
+    // percentage. The rows it describes were never fetched.
+    expect(excluded[0]).not.toMatch(/\d/);
+  });
+
+  it("returns null on a payload with no population block", () => {
+    // A warm cache entry written before this block existed. Half a sentence — "In scope 412"
+    // with no gate and no filters — states the count as if it were the whole story, which is
+    // the exact reading this line exists to prevent.
+    for (const model of [null, undefined, {}, { population: null }, { population: 7 }]) {
+      expect(populationLine(model), JSON.stringify(model)).toBeNull();
+    }
+  });
+
+  it("says em dash rather than zero for a count that was never measured", () => {
+    // Number(null) is 0 and it is finite; fmtCount refuses null/undefined/""/[]/false BEFORE
+    // the cast, which is the only reason "In scope 0" is not printed over an absent count.
+    for (const inScope of [null, undefined, "", []]) {
+      const line = populationLine(withPop({ inScope, gate: null, filters: [] }));
+      expect(line.parts[0], JSON.stringify(inScope)).toBe("In scope —");
+    }
+    expect(populationLine(withPop({ inScope: 0, gate: null, filters: [] })).parts[0])
+      .toBe("In scope 0"); // a real zero IS a measurement, and keeps its digit
+  });
+
+  it("drops a blank or non-string filter word rather than joining an empty part", () => {
+    const line = populationLine(withPop({
+      inScope: 1,
+      gate: null,
+      filters: ["  the default branch only  ", "", null, 3, "  "],
+    }));
+    expect(line.parts).toEqual(["In scope 1", "gate: all severities", "the default branch only"]);
   });
 });

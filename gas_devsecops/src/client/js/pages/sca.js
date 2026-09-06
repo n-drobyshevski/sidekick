@@ -27,7 +27,7 @@
 
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
-import { PROVENANCE_LABEL, provenance } from "./registerModel.js";
+import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import {
   DEFAULT_PAGE_SIZE, absent, boundedDays, chartTable, chartTableModel, dataTable, days1,
   denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, heroStat,
@@ -712,6 +712,13 @@ export function scaModel(payload, opts) {
     open: num(p.open),
     resolved: num(p.resolved),
 
+    // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the gate the last scan
+    // of THIS scope applied, and the base filters its query carries. Passed straight through:
+    // `populationLine` (registerModel.js) is the one place that decides how it reads, so all
+    // three registers cannot disagree about it. Null on a payload written before the block
+    // existed, and the page draws nothing rather than half a sentence.
+    population: p.population ?? null,
+
     // ON A FIRST RUN THE FIGURE IS NOT A ZERO. `rowCount`/`open`/`resolved` above stay the
     // real numbers the payload carried, however zero, because they are what `firstRun` itself
     // was decided from — but the HERO is the one figure a reader meets before anything else on
@@ -860,6 +867,17 @@ function paintSca(host, vm, filters) {
       statRow("Resolved", fmtCount(vm.resolved), "closed in the ledger"),
     ],
   }));
+
+  // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT — one quiet line under the hero.
+  // Provenance, not a figure: the in-scope count, the severity gate the last scan of this
+  // register APPLIED, the base filters its query carries, and, where a gate was applied, the
+  // fact that what fell below it was never counted rather than counted as none.
+  //
+  // WITHHELD ON A FIRST RUN, on the same rule as the stat row above it: "In scope 0" over a
+  // register nobody has read is one more confident zero, and `firstRunNotice` below already
+  // says what is missing.
+  const population = vm.firstRun.show ? null : populationLine(vm);
+  if (population) host.append(el("p", { class: "small muted" }, population.text));
 
   // FIRST RUN STOPS HERE. Every section below — the two clocks, the exploitation signals,
   // both charts (so neither canvas is ever created), the tier and funnel tables, every

@@ -12,6 +12,8 @@
 // the same column and would otherwise look identical, so the provenance travels with the
 // date rather than living in a footnote nobody reads.
 
+import { fmtCount } from "../../../../../gas_shared/ui/figures.js";
+
 /* ------------------------------------------------------------------ provenance */
 
 export const PROVENANCE = {
@@ -330,4 +332,79 @@ export function scopeSummaries(payload, order) {
     lastScan: (payload.lastScan ?? {})[scope] ?? null,
     movement: (payload.movement ?? {})[scope] ?? null,
   }));
+}
+
+
+/* ------------------------------------------- what was measured, and what was never looked at */
+
+/**
+ * THE ONE LINE UNDER A REGISTER'S HERO THAT SAYS WHAT THE FIGURES ABOVE WERE MEASURED OVER.
+ *
+ * Three things narrow a register before any figure on its page is computed: the rows
+ * themselves, the severity gate THE LAST SCAN OF THAT SCOPE APPLIED, and the base Wiz filter
+ * that scope's query carries. A reader who does not know that reads "1,324 open" as a fact
+ * about the estate rather than about a filtered slice of it — and on `secrets` the slice is
+ * 1,933 rows out of 394,927.
+ *
+ * NOTHING HERE PRINTS A ZERO FOR WHAT THE GATE EXCLUDED, which is the whole reason this is a
+ * function and not a template literal in three pages. The obvious version counts the rows the
+ * gate kept out; nothing counted them. A sync gated to CRITICAL/HIGH never fetched a MEDIUM
+ * row, so "0 below the gate" would be a confident measurement of a population nobody looked
+ * at. The words are "below the gate: not counted".
+ */
+
+/** The separator between parts. One line, read left to right. */
+const POPULATION_JOINER = " · ";
+
+/**
+ * A gate as WORDS, or null for "this scan looked at every severity".
+ *
+ * `null`, `[]` and `""` all mean the same thing — the gate was off — and all three arrive in
+ * practice: `parseSeverities` answers null for a full or unparseable gate, a payload written
+ * before this block existed carries neither, and `DEFAULT_FETCH_SEVERITIES.secrets` is `[]`
+ * BY DESIGN, so the empty case is the secrets register's normal state rather than an edge.
+ * Refused BEFORE anything is joined, because `[].join(", ")` is `""` and an empty string reads
+ * on screen as a gate whose severities went missing.
+ *
+ * THIS IS THE ONLY PLACE THAT REFUSAL LIVES, deliberately rather than tidily. The sibling
+ * register's first draft ALSO tested the result for truthiness at the call site, so deleting
+ * the length check here changed nothing — the whole suite still passed, because the empty
+ * string the defect produced was absorbed by the second test. The caller below asks
+ * `=== null`, so there is exactly one refusal and perturbing it fails a test.
+ */
+function gateWords(gate) {
+  if (!Array.isArray(gate)) return null;
+  const kept = gate.filter((s) => typeof s === "string" && s.trim() !== "");
+  return kept.length ? kept.join(", ") : null;
+}
+
+/**
+ * The provenance line for a register hero: `{ text, parts }`, or null when the payload cannot
+ * support one.
+ *
+ * Null rather than half a sentence: a warm payload written before `population` existed has no
+ * gate and no filter words, and a line reading "In scope 1,324" alone would state the count as
+ * if it were the whole story — the exact reading this line exists to prevent.
+ */
+export function populationLine(model) {
+  const p = model && typeof model === "object" ? model.population : null;
+  if (!p || typeof p !== "object") return null;
+
+  const parts = [];
+  // `fmtCount` refuses null/undefined/""/[]/false BEFORE the cast and renders the em dash, so
+  // an unmeasured count says "—" instead of the confident zero `Number(null)` would give.
+  parts.push(`In scope ${fmtCount(p.inScope)}`);
+
+  const gate = gateWords(p.gate);
+  parts.push(gate === null ? "gate: all severities" : `gate ${gate}`);
+
+  for (const w of Array.isArray(p.filters) ? p.filters : []) {
+    if (typeof w === "string" && w.trim() !== "") parts.push(w.trim());
+  }
+
+  // Only where a gate was actually applied is there anything below it to speak of — and what
+  // is below it is UNKNOWN, not none.
+  if (gate !== null) parts.push("below the gate: not counted");
+
+  return { text: parts.join(POPULATION_JOINER), parts };
 }

@@ -113,6 +113,7 @@ import {
 } from "../domain/config";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
+import { parseSeverities } from "../domain/compaction";
 import { inProject, parseProjects } from "../domain/projectScope";
 import { clampInt, parseTs, type Rec } from "../domain/util";
 import {
@@ -173,6 +174,7 @@ import {
 import { listHistory } from "./historyStore";
 import { activeJob } from "./jobsStore";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
+import { BASE_FILTER_WORDS } from "./wizQueries";
 import { loadSettings } from "./settingsStore";
 import { cached, dataVersion } from "./serverCache";
 import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
@@ -947,6 +949,28 @@ function buildRegister(scope: Scope, n: NormParams): Rec {
     awaiting: awaitingVendorFix(rows, { scope }),
     latestScan: latest,
     signalCoverage: signalCoverage(rows),
+
+    // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow a register
+    // before one figure on it is computed: the rows themselves, the severity gate THE LAST
+    // SCAN OF THIS SCOPE APPLIED, and the base Wiz filter this scope's query carries. Each
+    // makes a count fall, and none can be published as a `0` — the rows they removed were
+    // never fetched, so a count there would measure a population nobody looked at.
+    //
+    // THE GATE COMES OFF THE SCAN ROW, never off `n.severities`. A scan records the gate it
+    // APPLIED (runScan's `severities` override), and the two differ across a settings change;
+    // stamping today's gate on yesterday's measurement is the same class of error the
+    // disappearance guard exists to prevent.
+    //
+    // `parseSeverities` returns NULL for a gate that covered everything — including the empty
+    // string and the full list — and null is what "all severities" is spelled as here. It must
+    // not be flattened to `[]`: `secrets` DEFAULTS to an empty gate
+    // (DEFAULT_FETCH_SEVERITIES.secrets), so the all-severities case is the live one on a
+    // third of this product, not a theoretical edge.
+    population: {
+      inScope: rows.length,
+      gate: latest ? parseSeverities(latest.severities) : null,
+      filters: BASE_FILTER_WORDS[scope],
+    },
   };
 }
 
@@ -964,7 +988,11 @@ export function registerModel(scope: Scope, p?: ModelParams): Rec {
   // `scope` is part of the KEY, not merely of the payload: three registers share one ledger
   // and one cache namespace, and a key that omitted it would serve sast's page from sca's entry.
   return cached(
-    "dsRegister1",
+    // "dsRegister1" -> "dsRegister2": the payload gained `population` (in-scope count, the
+    // gate the last scan applied, the base filter words). A warm dsRegister1 entry carries
+    // none of it, and the page would draw no provenance line at all over figures that have
+    // one — worse than a stale number, because it is a silently missing caveat.
+    "dsRegister2",
     { ...keyOf(n), scope },
     () => buildRegister(scope, n),
     CLOCK_TTL_SEC,

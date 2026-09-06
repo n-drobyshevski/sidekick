@@ -348,7 +348,12 @@ describe("the caching audit is per model, and the header states it", () => {
     expect(layerOf("dsExecutive1")).toEqual(["cached"]);
     expect(layerOf("dsMttr1")).toEqual(["cached"]);
     expect(layerOf("dsSecrets1")).toEqual(["cached"]);
-    expect(layerOf("dsRegister1")).toEqual(["cached", "cached", "cached"]);
+    // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
+    // `population` block. The CLAIM these three lines encode is the LAYER each model caches
+    // in, not the spelling of its namespace, and that is unchanged — a warm entry from the
+    // old namespace has no population block, and a page drawing no provenance line at all
+    // over figures that have one is a silently missing caveat.
+    expect(layerOf("dsRegister2")).toEqual(["cached", "cached", "cached"]);
 
     // Time-invariant models: dated by the ledger's own clock, so a stored copy stays true.
     expect(layerOf("dsProgram1")).toEqual(["durablyCached"]);
@@ -408,7 +413,7 @@ describe("the caching audit is per model, and the header states it", () => {
     registerModel("sca", ALL);
     registerModel("sast", ALL);
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsRegister1")
+      .filter((c) => c.name === "dsRegister2")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -909,7 +914,7 @@ describe("warmReadModels", () => {
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
       "dsHistory1", "dsProgram1", "dsRepos1", "dsStorage1",
-      "dsExecutive1", "dsMttr1", "dsSecrets1", "dsRegister1",
+      "dsExecutive1", "dsMttr1", "dsSecrets1", "dsRegister2",
     ]));
   });
 
