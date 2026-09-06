@@ -24,10 +24,10 @@
 
      MEASURED (ratio() from test/contracts/tokens.js, the same function that holds the three
      register brands):
-       --accent-text (#0a0a0a) on white           ≈ 19.8:1  — clears both the 3:1 mark floor
+       --accent-text (#0a0a0a) on white             19.80:1  — clears both the 3:1 mark floor
                                                                 and the 4.5:1 text floor on
                                                                 its own, unaided by any edge.
-       --on-accent (#fafafa) on --accent (#0a0a0a) ≈ 19.0:1 — the fill's own ink, clear of
+       --on-accent (#fafafa) on --accent (#0a0a0a)  18.97:1 — the fill's own ink, clear of
                                                                 every floor with room to spare.
      Two more travel with the brand, same as every sibling: the wash a STANDING state wears
      (never a hover alone). Carried at a low alpha — unlike gas_devsecops's yellow, graphite
@@ -41,7 +41,7 @@
   --accent-wash-hover: rgba(0, 0, 0, 0.09);
 
   /* THE TILE VOCABULARY, for the 2x2 launcher grid alone (styles/pages.css). Not the accent
-     contract above — these four fills are each ONE REGISTER'S identity colour, borrowed onto
+     contract above — the three fills are each ONE REGISTER'S identity colour, borrowed onto
      the hub's own front door, and none of them may leak past the tile component: no chart, no
      badge, no button anywhere in this app may reach for --tile-*. Values and the mandatory
      edge below are the option board's own measured table, not re-derived here.
@@ -51,7 +51,25 @@
        --on-tile-os   (#ffffff) on --tile-os   (#2563eb)   5.17:1  — clears 4.5:1 text.
        --on-tile-ai   (#ffffff) on --tile-ai   (#be123c)   6.29:1  — clears 4.5:1 text.
        --on-tile-dso  (#171717) on --tile-dso  (#ffcb13)  11.78:1  — clears 4.5:1 text.
-       --on-tile-soon (#ffffff) on --tile-soon (#52525b)   6.4:1   — clears 4.5:1 text.
+     The fourth tile has no ink token of its own, because it has no fill: `coming soon` is
+     drawn as a BORDERED CARD on the page's own ground (see .tile--soon in styles/pages.css),
+     so its words are --ink and --text-2, the same two the rest of the app writes with. An
+     unbuilt register must not carry the same visual weight as three real products, and a
+     fourth block of solid colour is exactly that weight.
+       --tile-soon    (#52525b) on white                   7.73:1  — a BORDER, not a fill:
+                                                                     it clears the 3:1
+                                                                     graphical-mark floor
+                                                                     with room to spare, and
+                                                                     as a 1px line that is
+                                                                     the only floor it owes.
+                                                                     (The option board's own
+                                                                     table said 6.4:1 for
+                                                                     white ON this grey; the
+                                                                     contract's ratio() makes
+                                                                     it 7.73:1. Re-measured
+                                                                     rather than copied, since
+                                                                     nothing tested the fill
+                                                                     while there was one.)
      And the fill that does NOT clear a floor on its own, which is why its edge is mandatory
      rather than optional:
        --tile-dso     (#ffcb13) on white                   1.52:1  — well under even the 3:1
@@ -68,11 +86,15 @@
   --tile-dso: #ffcb13;
   --on-tile-dso: #171717;
   --tile-dso-edge: rgba(0, 0, 0, 0.40);
+  /* THE ONE --tile-* THAT IS A LINE RATHER THAN A FILL. It draws `.tile--soon`'s border and
+     that tile's offset echo, and nothing paints with it — which is why there is no
+     --on-tile-soon beside it: no surface is filled with this colour, so no ink has to be
+     chosen for one. It used to be a fill with white on it; see the measured block above. */
   --tile-soon: #52525b;
-  --on-tile-soon: #ffffff;
-  /* The sketch's offset outline behind every tile, "coming soon" included. A flat black at
-     low alpha rather than a per-tile tint: the outline is decoration behind FOUR different
-     fills, and one neutral constant reads as one consistent device across all of them where a
-     tinted one would look like a shadow that picked up its neighbour's colour. */
-  --tile-outline: rgba(0, 0, 0, 0.16);
+  /* The dashed ring an UNCONFIGURED tile wears (`.tile--unset`, styles/pages.css) — not the
+     offset outline, which takes each tile's OWN colour on its own modifier and needs no token
+     of its own. This one is a flat black at low alpha because it is drawn INSIDE a saturated
+     fill rather than on the page: it darkens whatever it sits on by the same amount on all
+     four, where a per-tile tint would disappear into the fill it was derived from. */
+  --tile-unset-ring: rgba(0, 0, 0, 0.16);
 }

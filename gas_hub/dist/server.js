@@ -324,7 +324,7 @@ var Server = (() => {
   });
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "a6f415dc9623" : "dev";
+  var BUILD_ID = true ? "535b2f4092b1" : "dev";
 
   // src/server/urls.ts
   var TILE_ORDER = ["os", "ai", "devsecops"];
@@ -333,13 +333,18 @@ var Server = (() => {
     ai: PROP_KEYS.urlAi,
     devsecops: PROP_KEYS.urlDevsecops
   };
-  var REQUIRED_PREFIX = "https://script.google.com/";
-  var URL_REJECTED = "A sidekick URL must start with https://script.google.com/ \u2014 paste the /exec URL from Deploy \u2192 Manage deployments.";
+  var SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
+  var LOCAL_PREFIXES = [
+    ["http:", "", "localhost:"].join("/"),
+    ["http:", "", "127.0.0.1:"].join("/")
+  ];
+  var URL_REJECTED = "A sidekick URL must start with " + SCRIPT_PREFIX + " (a deployed /exec URL) or " + LOCAL_PREFIXES[0] + "<port>/ (a sibling's local dev harness).";
   function normalizeAppUrl(raw) {
     if (typeof raw !== "string") throw new Error(URL_REJECTED);
     const url = raw.trim();
     if (!url) return "";
-    if (url.indexOf(REQUIRED_PREFIX) !== 0) throw new Error(URL_REJECTED);
+    const legal = url.indexOf(SCRIPT_PREFIX) === 0 || LOCAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+    if (!legal) throw new Error(URL_REJECTED);
     return url;
   }
   function readUrls() {

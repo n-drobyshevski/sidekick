@@ -2,11 +2,19 @@
 // would serve (index.html with the styles/js_app includes resolved) plus the GAS
 // service fakes (gas-shims.js), the real Server bundle, and the boot script.
 //
-//   npm run dev   →  http://localhost:8787
+//   npm run dev   →  http://localhost:8790
+//
+// 8790, NOT 8787, AND THAT IS THE WHOLE POINT OF THIS APP RUNNING LOCALLY. All three sibling
+// harnesses default to 8787; a hub on the same port could never be open beside the register
+// it is supposed to open. So the four take a port each — gas 8787, gas_ai 8788,
+// gas_devsecops 8789, this hub 8790 — and dev/boot.js seeds the three URL properties to
+// match, which makes the tiles real links to real local apps rather than dead example.com
+// strings. The siblings honour PORT too (`PORT=8788 npm run dev`); see gas_hub/README.md's
+// "Running everything locally".
 //
 // Every load of "/" reruns the esbuild build, so editing src/client/** or
 // src/server/** and refreshing the browser is the whole loop. State is in-memory
-// and reseeded per load (three plausible sibling URLs; see dev/boot.js).
+// and reseeded per load (the three sibling harness URLs; see dev/boot.js).
 //
 // TRIMMED FROM gas_devsecops/dev/serve.mjs, and what is gone says what this app is. The
 // credentials block (ENV_FILES, /_fetch, window.__WIZ_DEV__) went because this app never
@@ -23,7 +31,7 @@ import { build } from "esbuild";
 import { buildStamp } from "../buildStamp.mjs";
 
 const gasRoot = join(dirname(fileURLToPath(import.meta.url)), "..");
-const PORT = Number(process.env.PORT || 8787);
+const PORT = Number(process.env.PORT || 8790);
 
 const SCRIPTS = {
   "/gas-shims.js": () => readFileSync(join(gasRoot, "dev/gas-shims.js"), "utf8"),
@@ -134,6 +142,14 @@ createServer(async (req, res) => {
 }).listen(PORT, () => {
   console.log(`Wiz Sidekick hub local dev: http://localhost:${PORT}`);
   console.log("Edit gas_hub/src/** and refresh — each page load rebuilds.");
+  console.log(
+    "Tiles are seeded to the siblings' own dev harnesses:\n" +
+    "  OS Patching  http://localhost:8787   (cd gas && npm run dev)\n" +
+    "  AI           http://localhost:8788   (cd gas_ai && PORT=8788 npm run dev)\n" +
+    "  DevSecOps    http://localhost:8789   (cd gas_devsecops && PORT=8789 npm run dev)\n" +
+    "A tile whose sibling is not running still links there — the browser reports the refusal, " +
+    "which is the same thing a deployed hub does with a stale /exec URL.",
+  );
   console.log(
     "?unset renders every tile as not-configured; ?unset=os|ai|devsecops does one. " +
     "?slow=<ms> adds artificial RPC latency.",

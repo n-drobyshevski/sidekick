@@ -14,6 +14,24 @@ scan history, and — in the GAS rebuild — Prioritization-to-Prediction progra
 analytics for SAST / SCA / secrets findings in source repositories, with `brick/devsecops/`
 as its behavioural spec.
 
+`gas_hub/` is the fourth GAS app and the only one that is NOT a register: a launcher whose whole
+job is to open the right sidekick. One page, a 2x2 grid of tiles — OS Patching, AI, DevSecOps,
+and a bordered "coming soon" placeholder — plus a Settings page holding the access roster and
+the three sibling URLs. **It reads no register's data.** There is no cross-app call, no
+ledger, no scan, no sync, no chart, no scope dimension, no help route and no welcome gate (each
+sibling runs its own "signed in as X, Continue"; two interstitials in one journey answer the
+same question twice). Its only state is five Script Properties: the two allowlists, and
+`URL_OS` / `URL_AI` / `URL_DEVSECOPS` — the siblings' `/exec` URLs, which **cannot be derived**
+(`ScriptApp.getService().getUrl()` answers for the calling deployment only and has flipped
+between the `/dev` and `/exec` forms across runtime changes), so somebody pastes them once and
+`src/server/urls.ts` is the one place that reads, writes and vets them. A blank property renders
+that tile as "not configured", never as a broken link; the only other legal form is
+`http://localhost:<port>/`, so the four dev harnesses can run side by side (gas 8787, gas_ai
+8788, gas_devsecops 8789, gas_hub 8790). Brand is **graphite `#0a0a0a`** — the hub belongs to no
+register, so it wears the neutral every sibling's primary button already does rather than
+borrowing one register's hue. Its tiles are a stated exception to root `DESIGN.md`'s
+Whisper-Or-Lift rule; see `gas_hub/DESIGN.md`.
+
 `gas/` holds a full Google Apps Script rebuild of the same product (Google Sheets ledger +
 Drive archives + HtmlService SPA). The Python `wiz_dashboard/domain/` layer is its behavioral
 spec: `gas/test/export_*.py` generate golden fixtures by running this code, and the TypeScript
@@ -21,7 +39,7 @@ ports are tested against them — after changing the Python domain layer, regene
 and run `cd gas && npm run check`. See `gas/README.md`.
 
 `gas_shared/` is the one copy of the component base, stylesheets and design tokens that
-`gas/`, `gas_ai/` and `gas_devsecops/` all draw with — plain ES modules and plain CSS,
+`gas/`, `gas_ai/`, `gas_devsecops/` and `gas_hub/` all draw with — plain ES modules and plain CSS,
 imported by relative path, bundled by each app's own esbuild step, nothing installed. It
 holds `ui/` (components, `index.js` the one barrel, `helpPage.js` a page and deliberately
 not in the barrel), `shell/` (`app.js`'s shell — nav rail, appbar, boot splash, the flyout

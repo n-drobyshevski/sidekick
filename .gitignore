@@ -34,6 +34,11 @@ gas_ai/dev/server.dev.js
 # Same, for the DevSecOps register.
 gas_devsecops/dev/server.dev.js
 
+# Same, for the hub. Listed here with its three siblings rather than in gas_hub/.gitignore:
+# one rule for four identical artifacts is easier to keep true than four, and this is where a
+# reader already looks for it.
+gas_hub/dev/server.dev.js
+
 # Local Spark/Delta test debris: brick/tests spins up a real SparkSession, which writes a
 # metastore and a warehouse directory into the working directory.
 spark-warehouse/

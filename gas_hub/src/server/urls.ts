@@ -14,12 +14,25 @@
 //
 // AND THE REFUSAL IS A SECURITY BOUNDARY, not a typo-catcher. The value ends up as the
 // `href` of an anchor the reader is invited to click, so a `javascript:` URL pasted here
-// would run in the app's own page. Requiring the literal prefix "https://script.google.com/"
-// rejects that, and with it `http:` (downgrade), `//script.google.com/x` (protocol-relative,
+// would run in the app's own page. Requiring one of the two prefixes below rejects that, and
+// with it `http:` to any other host (downgrade), `//script.google.com/x` (protocol-relative,
 // resolves to whatever the page's scheme is), a scheme-less "script.google.com/x" (a
 // RELATIVE path, which would resolve against googleusercontent.com), and any other host.
 // src/client/js/pages/urlsModel.js carries the same rule as a FIELD MESSAGE so the reader is
 // told before they save; this one is the boundary, and it re-checks every write.
+//
+// LOCALHOST IS THE SECOND LEGAL FORM, and it is here so the four apps can run side by side
+// on one machine. Each sibling's dev harness serves plain HTTP on its own port
+// (gas 8787, gas_ai 8788, gas_devsecops 8789, this hub 8790 — see dev/serve.mjs), so without
+// this a hub under `npm run dev` could not link to any of them and the one page it exists to
+// draw would be four dead tiles. In a DEPLOYMENT a localhost URL is a visible
+// misconfiguration rather than a hole: the tile points somewhere only the person who set it
+// can reach, and it announces itself the first time anybody else clicks it. What it is not
+// is a way to smuggle a foreign origin in — the colon is PART of the prefix, so
+// "http://localhost.evil.example/" is refused (it is a different host that merely starts with
+// the same letters), and so are "http://localhost/" with no port and "https://localhost:8788/"
+// (the harness is plain http; the https form is a typo worth catching rather than a second
+// legal shape).
 
 import { getProp, PROP_KEYS, setProp } from "./props";
 
@@ -34,14 +47,33 @@ export const URL_PROP: Record<TileKey, string> = {
   devsecops: PROP_KEYS.urlDevsecops,
 };
 
-const REQUIRED_PREFIX = "https://script.google.com/";
+/**
+ * The two legal prefixes, BUILT rather than written, so no bare `//` appears in the source.
+ *
+ * The client's twin (src/client/js/pages/urlsModel.js) has to do this — esbuild.config.mjs's
+ * middlebox guard fails the build on any `//` surviving a comment-stripping replay of the
+ * client bundle — and this file follows the same construction on purpose: two copies of one
+ * rule are only worth having while they are recognisably the same rule, and a reader
+ * comparing them should not have to decide whether a literal here and a `join("/")` there
+ * mean the same thing. `.join("/")` produces the same two characters at RUNTIME without
+ * either one ever appearing adjacent in the SOURCE.
+ */
+const SCRIPT_PREFIX = ["https:", "", "script.google.com", ""].join("/");
+/** Both loopback spellings a browser hands back for a local dev harness. The trailing colon
+ *  is deliberate: it forces a PORT and makes "http://localhost.evil.example/" a different
+ *  host rather than a longer match. */
+const LOCAL_PREFIXES = [
+  ["http:", "", "localhost:"].join("/"),
+  ["http:", "", "127.0.0.1:"].join("/"),
+];
 
 export const URL_REJECTED =
-  "A sidekick URL must start with https://script.google.com/ — paste the /exec URL from " +
-  "Deploy → Manage deployments.";
+  "A sidekick URL must start with " + SCRIPT_PREFIX + " (a deployed /exec URL) or "
+  + LOCAL_PREFIXES[0] + "<port>/ (a sibling's local dev harness).";
 
 /**
- * Trim, allow blank, and refuse anything that is not an Apps Script web-app URL.
+ * Trim, allow blank, and refuse anything that is neither an Apps Script web-app URL nor a
+ * loopback dev-harness one.
  *
  * REFUSED BEFORE THE CAST, never after. `String(null)` is "null" and `String([])` is "" —
  * one would be reported as a bad URL and the other would quietly READ AS "not configured",
@@ -54,7 +86,9 @@ export function normalizeAppUrl(raw: unknown): string {
   if (typeof raw !== "string") throw new Error(URL_REJECTED);
   const url = raw.trim();
   if (!url) return "";
-  if (url.indexOf(REQUIRED_PREFIX) !== 0) throw new Error(URL_REJECTED);
+  const legal = url.indexOf(SCRIPT_PREFIX) === 0
+    || LOCAL_PREFIXES.some((prefix) => url.indexOf(prefix) === 0);
+  if (!legal) throw new Error(URL_REJECTED);
   return url;
 }
 

@@ -12,7 +12,8 @@
 // flipped between /dev and /exec across runtime changes, so a hub cannot derive a sibling's
 // address; someone has to paste it. A property is where an operator can paste one without a
 // redeploy. An unset key is legal and means "not configured" — see urls.ts, which owns the
-// shape of the values and refuses anything that is not a script.google.com URL.
+// shape of the values and refuses anything that is neither a script.google.com URL nor a
+// loopback dev-harness one.
 
 export const PROP_KEYS = {
   // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.

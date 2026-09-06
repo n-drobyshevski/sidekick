@@ -9,9 +9,14 @@
 //
 // WHAT IS SEEDED INSTEAD IS THE ONE THING THIS APP STORES: the three sibling URLs, written
 // into the fake Script Properties exactly as an operator would paste them into Project
-// Settings. They are OBVIOUSLY FAKE on purpose (example.com, a deployment id that says what
-// it is) — a dev seed that looked like a real deployment would be a URL somebody eventually
-// copies into a real one.
+// Settings. They point at THE SIBLINGS' OWN DEV HARNESSES — gas on 8787, gas_ai on 8788,
+// gas_devsecops on 8789, this hub on 8790 (dev/serve.mjs) — so a locally-run hub actually
+// opens a locally-run register and the one journey this app exists for is exercisable before
+// anything is deployed. They used to be plausible-looking script.google.com strings, which
+// made every tile a dead link and left the app's whole purpose untestable outside a
+// deployment; a fake that cannot be clicked is not a safer seed, it is an unmeasured one.
+// src/server/urls.ts accepts the loopback form for exactly this reason and refuses everything
+// else — see its header.
 //
 // AND THE UNSET STATE IS REACHABLE, which is the whole reason `?unset` exists. A tile whose
 // URL has never been set is a NORMAL state of this app — one sibling deployed, two not — and
@@ -35,10 +40,15 @@
     ai: "URL_AI",
     devsecops: "URL_DEVSECOPS",
   };
+  // Built with join("/") rather than written, for the same reason urlsModel.js does it: no
+  // bare `//` in a file the middlebox's comment-stripping replay reads. (This one is a dev
+  // script and not part of the guarded bundle — the construction is here so the two files
+  // that spell a URL in this app spell it the same way.)
+  var LOCAL = ["http:", "", "localhost:"].join("/");
   var SEED_URL = {
-    os: "https://script.google.com/a/macros/example.com/s/DEV_SIDEKICK_OS/exec",
-    ai: "https://script.google.com/a/macros/example.com/s/DEV_SIDEKICK_AI/exec",
-    devsecops: "https://script.google.com/a/macros/example.com/s/DEV_SIDEKICK_DEVSECOPS/exec",
+    os: LOCAL + "8787/",
+    ai: LOCAL + "8788/",
+    devsecops: LOCAL + "8789/",
   };
 
   // `?unset` with no value means all three; `?unset=os,ai` means those. An unrecognised name

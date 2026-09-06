@@ -46,7 +46,35 @@ import { gzipSync } from "node:zlib";
 
 const HERE = dirname(fileURLToPath(import.meta.url)); // …/gas_shared
 const REPO_ROOT = dirname(HERE); // the monorepo root: gas/, gas_ai/, gas_devsecops/, gas_shared/
-const APPS = ["gas", "gas_ai", "gas_devsecops"];
+/**
+ * Every GAS app in the repo, in fork order. `gas_hub` joined in the launcher package: it
+ * draws with the same gas_shared/ component base, ships the same shell and the same token
+ * contract, and is measured by the same walks — its client tree, its CSS hygiene, its
+ * vocabulary counts and its dist/ sizes all belong in the tables below.
+ */
+const APPS = ["gas", "gas_ai", "gas_devsecops", "gas_hub"];
+
+/**
+ * The three that MEASURE A POPULATION — and the distinction is load-bearing for exactly three
+ * scorecard items.
+ *
+ * Items 5 (table pagination), 6 (scope-control chrome) and 8 (last-sync caption) each ask
+ * whether every app reaches for one shared mechanism. A launcher has none of the three
+ * BY DESIGN, not by omission: gas_hub draws no table (so no `tableFooter()`), slices no
+ * population (so no scope control, and `test/shared.test.js` deliberately does not register
+ * the scope contract), and runs no scan or sync (so its rail has no freshness sentence — the
+ * syncCaption contract is registered there with `railHasSyncZone: false`, a NAMED skip rather
+ * than a silent one). Scoring it against those three would turn all three rows ✗ and report a
+ * gap that does not exist, which is the failure mode this whole scorecard is meant to avoid:
+ * a ✗ here is supposed to mean "these apps disagree", never "one of them is a different kind
+ * of thing".
+ *
+ * Every OTHER item still reads all four, because every other item is about the shared design
+ * system rather than about registers — the boot splash, the h1 pattern, sevBadge, empty-vs-
+ * error, the diagnostics renderer, the z scale and the --ok/--warn pair are all things a
+ * launcher has and can get wrong.
+ */
+const REGISTER_APPS = ["gas", "gas_ai", "gas_devsecops"];
 
 // ============================================================================================
 //  Materializing a ref, read-only
@@ -395,15 +423,20 @@ function scorecard(root) {
       item: "empty-vs-error",
       mark: ok ? "✓" : "✗",
       note: ok
-        ? "all three register the shared emptyStates contract with a non-empty errorStateCarriers list: " +
+        ? "every app registers the shared emptyStates contract with a non-empty errorStateCarriers list: " +
           perApp.map((r) => `${r.a} ${r.count}`).join(", ") + "."
         : "at least one app's shared.test.js has no errorStateCarriers.",
     });
   }
 
   // 5. table pagination
+  //
+  // REGISTER_APPS: gas_hub draws no table at all — it has one page of four tiles and a
+  // settings form — so "calls tableFooter() and never pager()" is a question about registers.
+  // Scored against all four it would read ✗ with a note saying the launcher has no
+  // tableFooter, which is a fact about what the app IS, not a disagreement between apps.
   {
-    const perApp = APPS.map((a) => {
+    const perApp = REGISTER_APPS.map((a) => {
       const t = clientTrees(root, a);
       const jsText = readCode(t.js);
       return {
@@ -417,20 +450,23 @@ function scorecard(root) {
       item: "table pagination",
       mark: ok ? "✓" : "✗",
       note: ok
-        ? "every app calls only tableFooter(); pager() is an internal helper inside gas_shared/ui/data.js that no app reaches directly."
+        ? "every register calls only tableFooter(); pager() is an internal helper inside gas_shared/ui/data.js that no app reaches directly. gas_hub is out of scope: a launcher draws no table."
         : perApp.map((r) => `${r.a}: pager ${r.pager}, tableFooter ${r.footer}`).join("; "),
     });
   }
 
   // 6. scope-control chrome
   {
+    // REGISTER_APPS: a scope control narrows a population, and gas_hub measures none — its
+    // test/shared.test.js says in as many words why the scope contract is not registered
+    // there. Asking a launcher for one would be asking it to slice nothing by project.
     const has = existsSync(join(sharedUi, "scopeControl.js")) && existsSync(join(sharedUi, "scopeModel.js"))
-      && APPS.every((a) => /registerScopeContract\(/.test(readIfExists(join(root, a, "test/shared.test.js"))));
+      && REGISTER_APPS.every((a) => /registerScopeContract\(/.test(readIfExists(join(root, a, "test/shared.test.js"))));
     items.push({
       item: "scope-control chrome",
       mark: has ? "✓" : "✗",
       note: has
-        ? "one control (ui/scopeModel.js + ui/scopeControl.js); each app supplies its own scopeKinds() vocabulary and the deleted implementation's wire payload, pinned per app by the scope contract."
+        ? "one control (ui/scopeModel.js + ui/scopeControl.js); each register supplies its own scopeKinds() vocabulary and the deleted implementation's wire payload, pinned per app by the scope contract. gas_hub is out of scope: it slices no population, and its shared.test.js says so."
         : "shared scope control or its per-app contract registration is missing somewhere.",
     });
   }
@@ -466,8 +502,15 @@ function scorecard(root) {
   }
 
   // 8. last-sync caption
+  //
+  // REGISTER_APPS: the caption dates a scan or a sync, and gas_hub runs neither — it hands
+  // createAppShell no railFooter, so there is no freshness sentence to build correctly or
+  // otherwise. It DOES register the contract, with `railHasSyncZone: false`, which turns the
+  // "app.js calls syncCaption()" half into a NAMED skip and leaves the "never grow your own
+  // Math.floor day-count" half running. That is the honest shape, and it is also why a naive
+  // `registerSyncCaptionContract(` grep over all four would score ✓ for the wrong reason.
   {
-    const has = APPS.every((a) => {
+    const has = REGISTER_APPS.every((a) => {
       const src = readIfExists(join(root, a, "test/shared.test.js"));
       return /registerSyncCaptionContract\(/.test(src);
     }) && existsSync(join(sharedUi, "feedback.js"))
@@ -476,7 +519,7 @@ function scorecard(root) {
       item: "last-sync caption",
       mark: has ? "✓" : "✗",
       note: has
-        ? "syncCaption() in gas_shared/ui/feedback.js, called from every app.js, contract-registered by all three."
+        ? "syncCaption() in gas_shared/ui/feedback.js, called from every register's app.js, contract-registered by all three. gas_hub registers it too, with railHasSyncZone: false — a named skip, because a launcher has no sync to date."
         : "shared syncCaption() or a per-app registration is missing.",
     });
   }

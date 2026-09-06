@@ -40,15 +40,27 @@
 /* The sketch's offset outline: a second box, translated behind the tile rather than dropped
    as a shadow — an outline reads as a drawn line at any zoom; a shadow reads as elevation,
    which is exactly what Whisper-Or-Lift is about not implying here. `pointer-events: none`
-   so the decoration can never intercept the tile's own click/hover; `z-index: 0` keeps it
-   under the tile's real content, which is lifted to `z-index: 1` below. */
+   so the decoration can never intercept the tile's own click/hover, and NO z-index of its
+   own — the tile's real content is lifted to `z-index: 1` below, and a positioned pseudo
+   element at the default `auto` paints under that in DOM order without needing one. It
+   carried `z-index: 0` until gas_shared/test/contracts/zscale.js caught it: that contract
+   allows exactly two bare literals, `1` and `2`, for ordering WITHIN one component, and `0`
+   is neither those nor a --z-* app layer. It was also doing nothing — `0` and `auto` paint
+   in the same place here — except make this pseudo element its own stacking context.
+
+   THE OUTLINE IS THE TILE'S OWN COLOUR, not a neutral. Drawn in one flat grey it read as a
+   drop shadow that had lost its blur — four identical hairlines behind four different fills,
+   which is the elevation story the outline exists NOT to tell. In each register's own hue it
+   reads as what it is: the tile's edge, echoed. The colour therefore arrives with the
+   modifier (below) and this base rule declares a TRANSPARENT border rather than inheriting
+   `currentColor` — a tile that somehow reached the DOM without a modifier draws no stray
+   line at all instead of a hairline in the ink colour. */
 .tile::before {
   content: "";
   position: absolute;
   inset: 0;
-  z-index: 0;
   border-radius: var(--radius-xl);
-  border: 1px solid var(--tile-outline);
+  border: 1px solid transparent;
   transform: translate(-8px, -8px);
   pointer-events: none;
 }
@@ -69,14 +81,44 @@
   color: var(--on-tile-dso);
   box-shadow: inset 0 0 0 1px var(--tile-dso-edge);
 }
-.tile--soon { background: var(--tile-soon); color: var(--on-tile-soon); cursor: default; }
+/* THE UNBUILT FOURTH IS SECONDARY, AND THAT IS THE WHOLE POINT OF THE ROW. Drawn as a solid
+   grey fill it carried the same visual weight as the three registers beside it — four blocks
+   of colour, one of which opens nothing. A bordered card on the page's own ground says
+   "planned" without a disabled control or a greyed-out label: the double-card motif survives
+   (its `::before` echo below still draws in --tile-soon), the tile is simply not a
+   destination. `cursor: default` because ui/tile.js renders this one as a <div>, never a
+   link — a pointer cursor over something that cannot be clicked is the affordance PRODUCT.md
+   forbids. */
+.tile--soon {
+  background: var(--page);
+  border: 1px solid var(--tile-soon);
+  color: var(--ink);
+  cursor: default;
+}
+
+/* The eyebrow and the scope line step back to the secondary ink; the headline keeps --ink.
+   On the three coloured tiles the eyebrow's `opacity: .78` does this job against a fill it
+   knows; on white that opacity would land somewhere unmeasured, so the token says it instead.
+   `.tile-footer` is the class ui/tile.js actually emits for the scope line. */
+.tile--soon .tile-eyebrow,
+.tile--soon .tile-footer { color: var(--text-2); opacity: 1; }
+
+/* Each tile's offset outline, in that tile's own colour. THE YELLOW IS THE ONE EXCEPTION AND
+   IT IS THE SAME EXCEPTION AS ABOVE: --tile-dso is 1.52:1 on white, so its own hairline on
+   the page background would be a line nobody can see. The echo takes --tile-dso-edge, the
+   composited edge colour that lifts it — the same token, and the same reason, as the inset
+   ring on the fill itself. */
+.tile--os::before { border-color: var(--tile-os); }
+.tile--ai::before { border-color: var(--tile-ai); }
+.tile--dso::before { border-color: var(--tile-dso-edge); }
+.tile--soon::before { border-color: var(--tile-soon); }
 
 /* A sibling whose URL Settings has not set yet: still that register's own colour and
    headline (a reader should still be able to tell OS Patching apart from AI while it is
    unset) with a dashed inner ring standing in for the solid tone-on-tone edge a real link
    would otherwise have, so "not wired up yet" reads as a state rather than as a dead link. */
 .tile--unset {
-  outline: 1px dashed var(--tile-outline);
+  outline: 1px dashed var(--tile-unset-ring);
   outline-offset: -1px;
 }
 
