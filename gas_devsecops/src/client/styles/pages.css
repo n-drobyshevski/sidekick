@@ -72,3 +72,26 @@
 /* The badge row. Severity is never colour alone: the dot and the word travel together here,
    and the caption below states the half-life in words. */
 .sev-fan__head { margin-bottom: var(--space-2); }
+
+/* ------------------------------------------------------- Coverage & efficiency: the aside
+   `.page-header`'s second column is `minmax(320px, 2fr)` (components.css) and grid items
+   stretch to fill their column by default, so the efficiency `kpiCard` — the only aside on
+   any of this app's pages that IS a `.kpi-card` rather than a `.page-strip` — grew to the
+   full ~880px width of that column on a 1280px viewport: a bordered, surface-tinted box
+   nearly as wide as the borderless 2rem hero beside it, out-weighing the primary figure.
+   DESIGN.md's Hero Stat rule is that dominance comes from size, position and whitespace,
+   never from a card, so the fix caps the card's width rather than removing it — 2.8's point
+   was reusing the shared component, and a compact card at the column's start edge (the
+   default position once its width is capped) reads as the hero's companion instead of a
+   second hero. 22rem (352px) was measured against the hero's own value column: wide enough
+   for "Bounds 71.5% to 73.8%" and the denominator line on one line each, narrow enough to
+   leave clear air between it and the hero at 1280px. Scoped to `.page-header` so no other
+   `.kpi-row` card anywhere else on this page (or any other) is touched.
+
+   NO MEDIA QUERY: `.page-header` carries no responsive override anywhere in gas_shared (grep
+   confirms it), so its two columns never collapse to one — a narrow viewport instead widens
+   the whole page past the viewport, which is how it already behaved before this rule existed.
+   Measured at a 640px viewport: the rendered page is 888px wide and the two columns still sit
+   side by side, so capping the card here is exactly as correct there as at 1280px, and an
+   unconditional rule is simpler than a breakpoint nothing else in the header respects. */
+.page-header > .kpi-card { max-width: 22rem; }

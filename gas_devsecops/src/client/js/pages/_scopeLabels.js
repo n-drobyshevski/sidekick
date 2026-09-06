@@ -19,15 +19,18 @@ export const SCOPE_LABELS_LONG = {
 };
 
 /**
- * A scope's long-form label, falling back through the bootstrap payload's own (shorter)
- * `scopeLabels` before falling back to the raw scope string — so a scope this map has not
- * been told about yet still reads as a word rather than as a wire-format key.
+ * A scope's long-form label, falling back to the raw scope string — so a scope this map has
+ * not been told about yet still reads as a word rather than as a wire-format key.
+ *
+ * NO `boot` PARAMETER. An earlier draft took a second argument and fell back through a
+ * bootstrap payload's own `scopeLabels` before the raw string — but `SCOPE_LABELS_LONG` above
+ * is checked FIRST and already covers every scope this app declares (`sca`/`sast`/`secrets`),
+ * so that fallback could only ever fire for a scope outside that set, which `boot.scopeLabels`
+ * has no better an answer for than the raw string does either. A parameter nothing can make
+ * fire is decorative, not a guard.
  *
  * @param {string} scope
- * @param {object|null} [boot]  a bootstrap payload, for its `scopeLabels` field
  */
-export function scopeLabel(scope, boot) {
-  return SCOPE_LABELS_LONG[scope]
-    || (boot && boot.scopeLabels && boot.scopeLabels[scope])
-    || scope;
+export function scopeLabel(scope) {
+  return SCOPE_LABELS_LONG[scope] || scope;
 }

@@ -450,7 +450,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "743575b75c6d" : "dev";
+  var BUILD_ID = true ? "83b4b57fa58d" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";

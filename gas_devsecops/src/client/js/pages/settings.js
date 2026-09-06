@@ -61,16 +61,16 @@ import { TAB_FIELDS, tabStatus } from "../settingsModel.js";
 
 // ============================================================================ vocabulary
 
-// Derived from the bootstrap payload's own `scopeLabels` (config.ts's SCOPE_LABELS,
-// "Dependencies"/"Code"/"Secrets") when it has landed, with the same three words as a literal
-// fallback for the render before it has — the module-load-time read this app.js's own header
-// warns a shared consumer never to do (`appConfig()` is a function for exactly that reason),
-// but safe here only because this is a plain literal fallback, not a thrown error: a page that
-// renders before boot() resolves the cache gets the same three words either way.
-export const SCOPE_LABELS = Object.assign(
-  { sca: "Dependencies", sast: "Code", secrets: "Secrets" },
-  (bootstrapCached() || {}).scopeLabels,
-);
+// A PLAIN LITERAL, NOT DERIVED AT RUNTIME — an earlier draft of this line read
+// `Object.assign({...}, (bootstrapCached() || {}).scopeLabels)`, which never did anything:
+// this is module top-level code, evaluated at import time, before app.js's boot() has ever
+// called bootstrap() — so `bootstrapCached()` is always null here and the literal always won.
+// "A guard that fires on nothing is a finding, not a pass" (CLAUDE.md). This duplicates
+// `src/domain/config.ts`'s SCOPE_LABELS BY VALUE (the short form the server ships,
+// "Dependencies"/"Code"/"Secrets") rather than reading it — the client never imports
+// domain/*.ts (this file's own header states that rule) — so the two copies are held equal by
+// a test instead: test/pagesSettings.test.js asserts this literal against the domain export.
+export const SCOPE_LABELS = { sca: "Dependencies", sast: "Code", secrets: "Secrets" };
 // secrets has no matching glossary entry of its own (its terms — validation-state, rotated,
 // removed — describe the lifecycle, not the register as a whole), so it gets a plain label.
 const SCOPE_TERMS = { sca: "sca", sast: "sast" };
