@@ -91,7 +91,7 @@ export function sastModel(payload, opts) {
   const concentration = concentrationModel(p.concentration, ["cwe", "repo", "language", "owner_project"]);
   const weakness = concentration.find((c) => c.dim === "cwe") || null;
   const tiers = tierModel(p.tiers, RISK_TIER_ORDER, RISK_TIER_LABELS);
-  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced);
+  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced, opts && opts.at);
 
   return {
     scope: "sast",
@@ -181,6 +181,7 @@ export function renderSast(host, params) {
   const boot = bootstrapCached();
   const order = (boot && boot.severityOrder) || SEVERITY_FALLBACK;
   const synced = !!(boot && boot.latestSync);
+  const at = boot && boot.latestSync ? boot.latestSync.ts : null;
 
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
@@ -192,7 +193,7 @@ export function renderSast(host, params) {
       showNoFix: filters.showNoFix,
     }),
     paint: (payload) =>
-      paintSast(host, sastModel(payload, { severityOrder: order, synced }), filters),
+      paintSast(host, sastModel(payload, { severityOrder: order, synced, at }), filters),
   });
 }
 
@@ -244,6 +245,7 @@ function paintSast(host, vm, filters) {
   if (vm.firstRun.show) {
     host.append(firstRunNotice({
       synced: vm.firstRun.synced,
+      at: vm.firstRun.at,
       hint: "Code weaknesses arrive with the first sync that saves a row for this register; "
         + "enable it under Settings → Register if it is off.",
     }));

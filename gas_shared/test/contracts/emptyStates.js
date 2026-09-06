@@ -89,6 +89,17 @@ const EMPTY_STATE_WITH_FAILURE = /\bemptyState\(\s*"Couldn't /;
  * @param {string[]} ctx.guardedRoutes     routes with a per-section guard() that must reach
  *                                         for errorState
  * @param {string[]} ctx.firstRunRoutes    routes that must carry firstRunNotice()
+ * @param {string[]} [ctx.firstRunNoAt]    routes whose first-run notice cannot carry a date,
+ *   with the reason in a comment at the call site. A route named in `firstRunRoutes` must
+ *   appear in exactly one of "passes `at:` to its `firstRunNotice(` call" or this list — never
+ *   both, never neither — so an empty list here can never silently stand in for a route
+ *   nobody dated, and a route cannot claim the exemption while also quietly carrying a date.
+ * @param {string[]} [ctx.firstRunBootstrapRoutes]  routes that must literally `await
+ *   bootstrap()` (rather than read `bootstrapCached()`) before deciding `synced`. Defaults to
+ *   `firstRunRoutes`. Override with a NARROWER list when `firstRunRoutes` has grown to include
+ *   a page that reads the cache instead — safe only where something else (the shell's own
+ *   boot sequence) already guarantees the cache is populated before that page can render; see
+ *   gas_devsecops's registration for the worked case.
  * @param {string}   [ctx.syncField]       the bootstrap field a first-run page gates on.
  *   Defaults to `"latestSync"`, which is what two of the three registers call it; gas passes
  *   `"latestScan"`.
@@ -109,6 +120,12 @@ export function registerEmptyStateContract(ctx) {
   const CODE = Object.fromEntries(
     routes.map((r) => [r, code(readFileSync(resolve(pagesDir, r + ".js"), "utf8"))]),
   );
+  // Read fresh rather than through `routes`/`CODE` above — the shared module lives outside
+  // any app's own `src/client/js/pages`, and the date clause below needs its literal text
+  // once per app run (the same shared-module claim, checked identically three times).
+  const FEEDBACK_SRC = code(readFileSync(
+    resolve(fileURLToPath(ctx.appRoot), "../gas_shared/ui/feedback.js"), "utf8",
+  ));
 
   describe(app + ": a render that threw is announced as a failure, not as an absence", () => {
     it("no page module passes a \"Couldn't …\" message to emptyState", () => {
@@ -159,12 +176,48 @@ export function registerEmptyStateContract(ctx) {
       // failed on gas_devsecops, whose pages do read `latestSync`, which is how it was caught
       // rather than by the app it was written for.
       const field = new RegExp("\\b" + syncField + "\\b");
-      for (const route of ctx.firstRunRoutes) {
+      // `ctx.firstRunBootstrapRoutes`, defaulting to `ctx.firstRunRoutes`: three
+      // gas_devsecops register pages (sca/sast/secrets) read `bootstrapCached()` rather than
+      // awaiting `bootstrap()` fresh — safe ONLY because `gas_shared/shell/appShell.js`'s own
+      // `boot()` already awaits `bootstrap()` once before any route mounts, which every page
+      // relies on but only some name in their own text. Widening `firstRunRoutes` to cover
+      // those three for the date clause below must not silently widen THIS check too, or it
+      // starts failing on three pages that were never broken — it fails on the literal text
+      // "await bootstrap()", which those three pages have no reason to carry a second time.
+      for (const route of (ctx.firstRunBootstrapRoutes || ctx.firstRunRoutes)) {
         expect(CODE[route], "pages/" + route + ".js reads a cache that may not be populated yet")
           .toMatch(/await bootstrap\(\)/);
         expect(CODE[route], "pages/" + route + ".js never reads " + syncField)
           .toMatch(field);
       }
+    });
+  });
+
+  describe(app + ": an empty state says when it looked", () => {
+    // SHARED-MODULE CLAIM. Both sentence shapes live in one file, `gas_shared/ui/feedback.js`,
+    // so this assertion is identical across gas/gas_ai/gas_devsecops on purpose — it is a fact
+    // about the module every app imports, not about any one app's own pages.
+    it("gas_shared/ui/feedback.js carries both the dated and the undated shape", () => {
+      expect(FEEDBACK_SRC, "the dated firstRunNotice sentence is missing or reworded")
+        .toMatch(/The last \$\{noun\} on \$\{/);
+      expect(FEEDBACK_SRC, "measuredEmpty's dated line is missing or reworded")
+        .toMatch(/Measured at /);
+    });
+
+    // NOT VACUOUS BY CONSTRUCTION. `firstRunNoAt` names routes whose first-run notice cannot
+    // carry a date (the reason lives in a comment at that route's own call site — see
+    // gas/test/shared.test.js's "attribution" entry). A route must land in EXACTLY ONE of
+    // "passes at: in its call" or `firstRunNoAt`: an empty `firstRunNoAt` cannot stand in for
+    // a route nobody dated (the union check below would come up short), and a route cannot be
+    // both dated and exempt (the disjointness check would catch it carrying `at:` for no
+    // reason, or claiming an exemption a later edit made stale).
+    it("every route either dates its notice or is named as unable to", () => {
+      const noAt = ctx.firstRunNoAt || [];
+      const dated = ctx.firstRunRoutes.filter((r) => /firstRunNotice\(\{[^}]*\bat:/.test(CODE[r]));
+      const overlap = dated.filter((r) => noAt.includes(r));
+      expect(overlap, "route(s) both pass at: AND claim the firstRunNoAt exemption").toEqual([]);
+      expect([...dated, ...noAt].sort(), "dated routes + firstRunNoAt must equal firstRunRoutes")
+        .toEqual([...ctx.firstRunRoutes].sort());
     });
   });
 }

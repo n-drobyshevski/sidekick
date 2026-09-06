@@ -697,6 +697,7 @@ export async function renderMttr(host, params, _ctx) {
     if (!first) return;
     noticeHost.append(firstRunNotice({
       synced: !!boot.latestSync,
+      at: boot.latestSync ? boot.latestSync.ts : null,
       hint: "The clock on this page starts at the first finding a sync saves, and a duration"
         + " needs a second sync to close against. Run one with the Run sync button in the rail.",
     }));

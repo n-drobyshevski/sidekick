@@ -155,6 +155,7 @@ export function secretsModel(payload, opts) {
   const firstRun = registerFirstRunView(
     sec.rowCount !== undefined ? sec.rowCount : reg.rowCount,
     opts && opts.synced,
+    opts && opts.at,
   );
 
   const vm = {
@@ -556,6 +557,7 @@ export function bucketTotals(aging) {
 export function renderSecrets(host) {
   const boot = bootstrapCached();
   const synced = !!(boot && boot.latestSync);
+  const at = boot && boot.latestSync ? boot.latestSync.ts : null;
 
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
@@ -563,7 +565,7 @@ export function renderSecrets(host) {
     // sending one would mint an argument that changes nothing and imply a filter that does
     // not exist. `showNoFix` is likewise omitted: it cannot bite on a non-dependency row.
     fetch: () => swrCall("api_getSecretsPage", {}),
-    paint: (payload) => paintSecrets(host, secretsModel(payload, { synced })),
+    paint: (payload) => paintSecrets(host, secretsModel(payload, { synced, at })),
   });
 }
 
@@ -621,6 +623,7 @@ function paintSecrets(host, vm) {
   if (vm.firstRun.show) {
     host.append(firstRunNotice({
       synced: vm.firstRun.synced,
+      at: vm.firstRun.at,
       hint: "Secrets arrive with the first sync that saves a row for this register; enable "
         + "it under Settings → Register if it is off.",
     }));

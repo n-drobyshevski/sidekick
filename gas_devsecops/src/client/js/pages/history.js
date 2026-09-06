@@ -279,6 +279,7 @@ export async function renderHistory(host, _params, _ctx) {
     // same state. A reader moving between pages should meet one sentence, not four.
     observedHost.append(firstRunNotice({
       synced: !!boot.latestSync,
+      at: boot.latestSync ? boot.latestSync.ts : null,
       hint: "Nothing dates when watching began, so there is no observation window for the"
         + " figures below to sit inside. Run a sync with the Run sync button in the rail.",
     }));

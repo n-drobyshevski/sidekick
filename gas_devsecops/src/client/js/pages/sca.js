@@ -72,9 +72,13 @@ export { boundedDays, pct1 };
  * saved nothing for THIS register still makes `synced` true, which is the whole point: "the
  * tenant answered and had nothing to report" is a different, true, claim from "nobody has
  * asked".
+ *
+ * `at` is `boot.latestSync.ts` straight through, unexamined — `firstRunNotice` (ui/feedback.js)
+ * is the one place that decides whether it is usable, so a malformed or missing value here
+ * degrades to the same undated-but-true sentence rather than this function guessing twice.
  */
-export function registerFirstRunView(rowCount, synced) {
-  return { show: num(rowCount, 0) === 0, synced: !!synced };
+export function registerFirstRunView(rowCount, synced, at) {
+  return { show: num(rowCount, 0) === 0, synced: !!synced, at };
 }
 
 /** EPSS is a probability, 0..1 off the wire; rendered as the percentage it names. */
@@ -694,7 +698,7 @@ export function scaModel(payload, opts) {
   const order = (opts && opts.severityOrder) || SEVERITY_FALLBACK;
   const awaiting = p.awaiting || {};
   const coverage = p.signalCoverage || {};
-  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced);
+  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced, opts && opts.at);
 
   // THE TWO CLOCKS. `openTotal` is the whole open backlog in this scope; `overall` is the
   // part of it with no published fix. Everything else is the part a team could have closed.
@@ -820,6 +824,7 @@ export function renderSca(host, params) {
   const boot = bootstrapCached();
   const order = (boot && boot.severityOrder) || SEVERITY_FALLBACK;
   const synced = !!(boot && boot.latestSync);
+  const at = boot && boot.latestSync ? boot.latestSync.ts : null;
 
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
@@ -829,7 +834,7 @@ export function renderSca(host, params) {
       showNoFix: filters.showNoFix,
     }),
     paint: (payload) =>
-      paintSca(host, scaModel(payload, { severityOrder: order, synced }), filters),
+      paintSca(host, scaModel(payload, { severityOrder: order, synced, at }), filters),
   });
 }
 
@@ -888,6 +893,7 @@ function paintSca(host, vm, filters) {
   if (vm.firstRun.show) {
     host.append(firstRunNotice({
       synced: vm.firstRun.synced,
+      at: vm.firstRun.at,
       hint: "Dependency findings arrive with the first sync that saves a row for this "
         + "register; enable it under Settings → Register if it is off.",
     }));
