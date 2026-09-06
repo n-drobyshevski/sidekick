@@ -19,6 +19,7 @@ exists only here, because no other surface measures a register without a CVE in 
 """
 
 from dataclasses import dataclass
+from typing import Dict, Tuple
 
 # ---- Deployment version ----
 # The runtime modules are pasted into a flat Workspace folder by hand, one file at a time, and
@@ -77,8 +78,37 @@ API_SEVERITY_VALUES = {
     "INFO": "INFORMATIONAL",
 }
 
-# What a scan pulls when nothing else is asked for.
-DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")
+# What a scan pulls when nothing else is asked for, KEYED BY SCOPE -- and today both keys say
+# the same thing, deliberately.
+#
+# A single list is a volume control that every future population inherits without anybody
+# choosing it for them, and the sibling register made exactly that mistake in production:
+# `gas_devsecops` gave `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted
+# `PASSWORD` 209 -> 0 and `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and
+# published a secrets register with no passwords in it. Nothing was wrong with the number; it
+# was the right answer to a question nobody had asked about that population.
+#
+# Both scopes here are CVE-bearing volume registers whose severities mean the same thing, so
+# they agree, and this changes no figure today. What it changes is what happens next: a third
+# scope has to state its own gate rather than inherit one. See `default_fetch_severities`.
+DEFAULT_FETCH_SEVERITIES: Dict[str, Tuple[str, ...]] = {
+    "sca": ("CRITICAL", "HIGH"),
+    "sast": ("CRITICAL", "HIGH"),
+}
+
+
+def default_fetch_severities(scope: str) -> Tuple[str, ...]:
+    """The severity gate ``scope`` pulls when the run asks for nothing else.
+
+    Refuses an unknown scope rather than falling back to another population's gate: a silent
+    fallback is how the inherited default gets inherited again.
+    """
+    try:
+        return DEFAULT_FETCH_SEVERITIES[scope]
+    except KeyError:
+        raise RuntimeError(
+            f"unknown scope {scope!r} -- expected one of {sorted(DEFAULT_FETCH_SEVERITIES)}"
+        ) from None
 
 # ---- Scopes: which population of findings a run measures ----
 # The scope drives BOTH the API filter and the table names, from one parameter, so a table can
@@ -132,30 +162,38 @@ SCOPES = {
 }
 
 # ---- Whether the sast scope asks for resolved findings as well as open ones ----
-# OFF, and **not** because the filter key is unavailable. A SAST finding plainly has a status --
-# `sast_request.py` selects it, `resolutionReason` sits beside it, and the captured response
-# returns "OPEN" -- so RESOLVED is a real state the API can almost certainly be asked for.
+# OFF, for two reasons a live probe measured (2026-08-27, recorded in the repo's CLAUDE.md),
+# neither of which is the one this comment used to give. The old reason was that
+# `ingest.SAST_QUERY` selects no timestamps. It selects one now: `SASTFinding.createdAt` is a
+# non-null `DateTime!`, filterable and sortable. The two that remain:
 #
-# It is off because asking for it, *while ingest.SAST_QUERY selects no timestamps*, makes MTTR
-# actively wrong rather than merely absent. Trace one already-resolved finding through
-# `ledger.reconcile`:
+#   1. There is no `resolvedAt` on the type. The birth date exists; the death date does not.
+#   2. `status: RESOLVED` returns **zero rows** against this tenant. The filter would not
+#      deliver the population it appears to ask for even if the dates were there.
 #
-#   first sighting  ->  first_seen = least(coalesce(firstDetectedAt, now), now) = now
-#   status RESOLVED ->  api_resolved, so resolved_at = coalesce(resolvedAt, now) = now
-#   therefore           mttr_days = resolved_at - first_seen = 0.0
+# Reason 1 is still what makes it actively wrong rather than merely useless, and the arithmetic
+# has moved rather than gone away. Trace one already-resolved finding through
+# `ledger.reconcile`, with `createdAt` now selected:
 #
-# Every historical resolved finding would land at exactly zero days on the scan that first saw
-# it, and the Kaplan-Meier median would collapse toward zero. That is worse than the empty
-# result it replaces: "no MTTR yet" is a state a reader can act on, "MTTR is 0 days" is a
-# confident lie. `tests/test_devsecops.py` pins the zero so nobody flips this without meeting it.
+#   first sighting  ->  first_seen = least(coalesce(createdAt, now), now) = createdAt
+#   status RESOLVED ->  api_resolved, and there is no resolvedAt to read, so
+#                       resolved_at = coalesce(NULL, now) = now
+#   therefore           mttr_days = now - createdAt = the finding's AGE at first sighting
 #
-# The `sca` scope takes `status: [OPEN, RESOLVED]` safely for one reason and one only: its
-# findings carry `firstDetectedAt`, so `first_seen` is a real date and the subtraction means
-# something.
+# So the number stops being a flat zero and starts being a plausible one, which is worse. A
+# finding that was fixed within a day two years ago would report an MTTR of 730 days, and the
+# Kaplan-Meier median would be dragged up by the register's own start date instead of down by
+# it. Every historical resolved finding is priced by when we happened to look. `first_seen` is
+# real, `resolved_at` is fabricated, and their difference measures neither.
+# `tests/test_devsecops.py` pins that arithmetic so nobody flips this without meeting it.
 #
-# **Turn this on in the same change that adds a timestamp to ingest.SAST_QUERY, not before.**
-# At that point it is a genuine improvement -- an API resolution is better evidence than an
-# inferred disappearance, and `resolution_src` stops reading `disappeared` for every row.
+# The `sca` scope takes `status: [OPEN, RESOLVED]` safely because it has BOTH dates:
+# `firstDetectedAt` and `resolvedAt`, so the subtraction has two measured ends.
+#
+# **Turn this on if a `resolvedAt` (or equivalent) appears on `SASTFinding`, not before.** Until
+# then a disappearance between two scans is the better evidence, and it is honest about its
+# error bar: `resolution_src` reads `disappeared` and the date is an upper bound whose
+# uncertainty is the scan interval.
 SAST_FETCH_RESOLVED = False
 
 if SAST_FETCH_RESOLVED:
@@ -165,6 +203,86 @@ if SAST_FETCH_RESOLVED:
 # mean: its findings carry a CVE, real exploit signals and real timestamps. A reader who runs
 # this pipeline without choosing a scope should get the defensible half.
 DEFAULT_SCOPE = "sca"
+
+# ---- The second clock: when could a team actually have acted? ----
+# The SLA/MTTR clock a team can be held to starts when a fix becomes AVAILABLE, not when the
+# finding was detected. A row still waiting on a vendor is not late. `ledger.lifecycle_frame`
+# derives `fix_available_at` / `actionable_from` / `mttr_actionable_days` /
+# `actionable_age_days` / `awaiting_vendor_fix` from the `fix_date` / `fix_observed_at` the
+# ledger has been capturing since the schema was first laid out -- captured precisely so this
+# could be derived later, because a fix date nobody recorded at the time cannot be recovered
+# afterwards. Reference: gas/src/domain/ledgerCore.ts::baseRows, and the scope guard below is
+# gas_devsecops/src/domain/ledgerCore.ts's.
+#
+# Two questions decide the derivation, and they are DIFFERENT questions:
+
+#: Scopes where a vendor fix is a thing that can exist at all.
+#:
+#: SCA ONLY, AND THAT GUARD IS THE LOAD-BEARING PART OF THIS WHOLE FILE ENTRY. A dependency
+#: has a maintainer who ships the fixed version; a weakness in first-party code does not. The
+#: definition "open with no fix available" is therefore true of EVERY SAST finding, forever.
+#: Without the guard every open SAST row would read as awaiting a vendor: out of every
+#: actionable clock, still in every exposure count, so the two halves of a page disagree and
+#: the gap looks like broken arithmetic rather than the category error it is. The sibling
+#: register measured the cost on live data -- 2,085 rows (127 SAST + 1,958 secrets) sitting in
+#: that state permanently -- and `tests/test_ledger.py` prices it here as a mutation.
+#:
+#: `brick/config.py` says {"os", "all"}. Deliberately NOT one of
+#: `tests/test_fork_integrity.py`'s shared constants: the two registers measure different
+#: populations and are SUPPOSED to differ here. What that file pins instead is the asymmetry
+#: itself -- "sast" not in this set, "sca" in it.
+HAS_VENDOR_FIX = frozenset({"sca"})
+
+#: Scopes whose API filter pins `hasFix: true`, DERIVED from `SCOPES` rather than listed.
+#:
+#: This is the second question, and it changes what a blank fix clock means. Where the filter
+#: pins `hasFix`, every row in the register had a vendor fix AT THE MOMENT IT WAS INGESTED --
+#: that is what the filter asked for. So a row with no `fix_date` and no `fix_observed_at` is
+#: not a row awaiting a vendor: the fix is older than our first sighting of it, and
+#: `fix_available_at` falls back to `first_seen`. Same argument `gas`'s REMEDIATION_ROLLOUT_ISO
+#: makes for its pre-rollout rows, and it is a construction rather than a guess.
+#:
+#: Stated exactly, because the bound is one-sided: the filter proves a fix existed by the scan
+#: that ingested the row, not necessarily by `firstDetectedAt`, so `first_seen` can sit before
+#: the fix actually shipped. That is the HARSH direction -- the actionable clock degrades to
+#: the exposure clock for those rows and never flatters the team with a later start it cannot
+#: evidence. `fix_observed_at` is preferred over it wherever it exists, for the same reason in
+#: reverse: it is a moment a fix was SEEN.
+#:
+#: `sca` pins it through `_BASE`; `sast` does not use `_BASE` at all, which is the same reason
+#: it is absent from `HAS_VENDOR_FIX` arriving by a different route.
+#:
+#: Derived, not hardcoded, because dropping `hasFix` from the filter is a population change
+#: owed a measured round of its own, recorded in the sibling's `gas_devsecops/src/sync.ts`:
+#: with `hasFix` pinned, a WITHDRAWN fix reads as a remediation, because the finding leaves
+#: the filtered population and leaving the population is what disappearance-resolution means.
+#: When somebody drops it, this set empties itself, the fallback stops firing and
+#: `awaiting_vendor_fix` starts reporting real rows -- instead of the code silently going on
+#: claiming a fix existed for findings nobody filtered for one.
+SCOPES_PINNING_HAS_FIX = frozenset(
+    scope for scope, spec in SCOPES.items() if spec.get("hasFix") is True
+)
+
+
+def scope_has_vendor_fix(scope: str) -> bool:
+    """Whether ``scope``'s findings have a vendor who ships the fix.
+
+    False -- which is to say ``sast`` -- means the actionable clock does not apply to the scope
+    at all: no ``fix_available_at``, no ``mttr_actionable_days``, and, the half that matters,
+    ``awaiting_vendor_fix`` is False rather than True-forever.
+    """
+    return scope in HAS_VENDOR_FIX
+
+
+def scope_pins_has_fix(scope: str) -> bool:
+    """Whether ``scope``'s API filter pins ``hasFix: true``.
+
+    True means a blank fix clock is evidence of an OLD fix rather than of a MISSING one, so
+    ``fix_available_at`` falls back to ``first_seen``. Read from ``SCOPES`` at runtime so the
+    claim cannot outlive the filter that justifies it.
+    """
+    return scope in SCOPES_PINNING_HAS_FIX
+
 
 # ---- Sources: which API connection a scope reads ----
 # A scope has always chosen a `filterBy`. Two of them now also choose a GraphQL connection and
@@ -187,22 +305,59 @@ class Source:
 
     kind: str
     connection: str
-    #: Whether ``filterBy`` accepts a ``severity`` list. False means ``--severities`` cannot be
-    #: pushed to the API, and ``ingest._severity_gate`` applies it to the returned nodes
-    #: instead -- it has to be applied somewhere, because the scan log records the scope and
-    #: the disappearance guard trusts it.
+    #: Whether this scope's filter type accepts a ``severity`` key **at all**. False means
+    #: ``--severities`` cannot be pushed to the API, and ``ingest._severity_gate`` applies it
+    #: to the returned nodes instead -- it has to be applied somewhere, because the scan log
+    #: records the scope and the disappearance guard trusts it.
+    #:
+    #: This answers a DIFFERENT question from ``OBJECT_FILTERS`` below, and the two are not
+    #: substitutes: this one is *whether the key exists on the type*, ``OBJECT_FILTERS`` is
+    #: *what shape the value has to be in* once it does. Both are True/present for `sast`
+    #: today -- the key exists, and it takes an object -- so conflating them would have looked
+    #: fine right up until a type that genuinely lacks the key appeared.
     severity_filter: bool = True
 
 
 VULN_SOURCE = Source(kind="vulnerability", connection="vulnerabilityFindings")
-# UNVERIFIED against the live tenant: whether SASTFindingFilters accepts `severity`. If it does
-# not, flip `severity_filter` to False -- the scan still records its severity scope, so nothing
-# about the disappearance guard changes; the only cost is pulling rows the run then discards.
+# `severity_filter=True` is measured, not assumed: `SASTFindingFilters.severity` exists (as
+# `SASTSeverityFilter` -- see OBJECT_FILTERS for the shape it wants). If a filter type ever
+# turns up without the key, flip this to False -- the scan still records its severity scope, so
+# nothing about the disappearance guard changes; the only cost is pulling rows the run discards.
 SAST_SOURCE = Source(kind="sast", connection="sastFindings")
 
 SOURCES = {
     "sca": VULN_SOURCE,
     "sast": SAST_SOURCE,
+}
+
+# ---- Which filter keys a scope's filter type takes as an OBJECT rather than a bare list ----
+# The two filter types genuinely disagree about the SAME FIELD NAME, and this table exists so
+# that the disagreement is data a reader can check against the schema rather than a branch
+# buried in ``ingest.build_filter``:
+#
+#   VulnerabilityFindingFilters.severity                 [VulnerabilitySeverity!]  a bare list
+#   VulnerabilityFindingFilters.codeToCloudPipelineStage  [ ...Stage!]             a bare list
+#   VulnerabilityFindingFilters.projectIdV2   VulnerabilityFindingProjectFilter    {equals:[..]}
+#   SASTFindingFilters.severity               SASTSeverityFilter                   {equals:[..]}
+#   SASTFindingFilters.status                 SASTStatusFilter                     {equals:[..]}
+#   SASTFindingFilters.projectId              [String!]                            a bare list
+#
+# This asymmetry has cost the sibling register (`gas_devsecops/`) its whole SAST population
+# once, and it cost this fork the same way until now: ``build_filter`` applied the SCA
+# convention to both scopes, so every SAST run would be refused with HTTP 400
+# `VALIDATION_INVALID_TYPE_VARIABLE` and fetch **zero rows** -- which does not read as an error,
+# it reads as an empty register.
+#
+# DO NOT "TIDY" THIS INTO ONE CONVENTION. Applying SAST's object form to SCA breaks SCA, which
+# works today; the type names above are the evidence. And note `projectId` on SAST is a *bare*
+# list while `projectIdV2` on SCA is an object -- one field's shape says nothing about the
+# next's, in the same type or across types.
+#
+# **Copy these from `npm run probe -- --schema` in `gas_devsecops/`, which prints a ready-made
+# entry per filter type. Never infer one from another type.**
+OBJECT_FILTERS = {
+    "sca": ("projectIdV2",),
+    "sast": ("severity", "status"),
 }
 
 # ---- Where this deployment's tables live ----
@@ -548,11 +703,12 @@ LEDGER_COLUMNS = [
     "reopened_count",
     "first_scan_id",
     "last_scan_id",
-    # Vendor-fix capture. Nothing in v2 reads these yet -- the actionable clock
-    # (mttr_actionable_days, awaiting_vendor_fix) is gas/src/domain/ledgerCore.ts::baseRows'
-    # job and is out of scope here. They are captured anyway because they cannot be
-    # recovered later: a finding resolved by disappearance is gone from the API entirely,
-    # so a signal not written down at observation time is lost for good. Cheap now,
+    # Vendor-fix capture, and the inputs to the actionable clock: `ledger.lifecycle_frame`
+    # derives fix_available_at / mttr_actionable_days / awaiting_vendor_fix from these two.
+    # They were written to every row for a whole version before anything read them, because
+    # they cannot be recovered later: a finding resolved by disappearance is gone from the
+    # API entirely, so a signal not written down at observation time is lost for good, and a
+    # fix date backfilled afterwards would be a number nobody measured. Cheap now,
     # impossible afterwards.
     "fix_date",
     "fix_observed_at",

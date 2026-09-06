@@ -150,6 +150,11 @@ SAST_NODE_SCHEMA = StructType(
         StructField("id", StringType()),
         StructField("name", StringType()),
         StructField("status", StringType()),
+        # The one timestamp ``SASTFinding`` has (see ``ingest._SAST_QUERY_TEMPLATE``). Declared
+        # StringType and cast in the projection, exactly like ``firstDetectedAt`` above: a
+        # TimestampType field here would put date parsing inside ``from_json``, where a value it
+        # cannot read takes the whole node to NULL rather than the one column.
+        StructField("createdAt", StringType()),
         StructField("severity", StringType()),
         StructField("originalSeverity", StringType()),
         StructField("filePath", StringType()),
@@ -343,9 +348,18 @@ def silver_sast(bronze: DataFrame) -> DataFrame:
     is the point of ``config.SastRiskRule`` existing at all, and under ``RiskRule`` every row
     here would classify `unknown` -- correctly, and uselessly.
 
-    ``first_detected_at`` and ``resolved_at`` are NULL too, because ``ingest.SAST_QUERY``
-    selects no timestamps (see its comment). The ledger then dates the lifecycle from
-    observation, which is the honest fallback and not the same as a measured one.
+    **The clock is half measured and half inferred, and the row says which half.**
+    ``first_detected_at`` is the API's own ``createdAt`` -- a real birth date, which the ledger
+    prefers over the scan that first saw the finding. ``resolved_at`` stays NULL, because
+    ``SASTFinding`` has no ``resolvedAt`` (see ``config.SAST_FETCH_RESOLVED``): a death date
+    arrives only when a later scan stops returning the finding, and lands with
+    ``resolution_src = 'disappeared'`` so a reader can discount it by the scan interval.
+    A scan taken before ``createdAt`` was selected holds no such column in bronze, so
+    ``first_detected_at`` is NULL there and the ledger falls back to observation.
+
+    ``fix_date`` is NULL and stays NULL. A weakness in first-party code has no vendor to ship a
+    fix, so there is no second clock to start -- the same reason ``_BASE``'s ``hasFix`` is left
+    off this scope's filter.
     """
     node = F.from_json(F.col("node_json"), SAST_NODE_SCHEMA).alias("node")
     seq = F.col("seq") if "seq" in bronze.columns else F.lit(None).cast("long")
@@ -368,7 +382,7 @@ def silver_sast(bronze: DataFrame) -> DataFrame:
         ).alias("severity"),
         F.col("node.status").alias("status"),
         is_open(F.col("node.status")).alias("is_open"),
-        null_ts.alias("first_detected_at"),
+        F.col("node.createdAt").cast("timestamp").alias("first_detected_at"),
         null_ts.alias("last_detected_at"),
         null_ts.alias("resolved_at"),
         null_ts.alias("fix_date"),
@@ -620,6 +634,66 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
     # it is what the Streamlit dashboard shows and dropping it would make the two surfaces
     # incomparable -- but `km_median` is the one to report, and it is normally larger.
     return combined.join(kaplan_meier(df), "severity", "left")
+
+
+def _actionable_aggs() -> List[Column]:
+    """The actionable-clock aggregates, shared by the per-severity and OVERALL passes.
+
+    Deliberately the same shape as ``_mttr_aggs`` -- ``F.percentile``, not
+    ``percentile_approx``, and the same inclusive SLA comparison -- so the two clocks cannot
+    disagree about what a median or an in-SLA day is. Only the column they read differs.
+    """
+    return [
+        F.avg("mttr_actionable_days").alias("mttr_actionable_mean"),
+        F.percentile("mttr_actionable_days", 0.5).alias("mttr_actionable_median"),
+        # count() ignores NULLs, so this is exactly the population with a measurable actionable
+        # MTTR: resolved, in a scope with a vendor, with a fix clock. It is <= `resolved` and
+        # the gap is what the second clock could not price.
+        F.count("mttr_actionable_days").cast("long").alias("actionable_resolved"),
+        F.percentile("actionable_age_days", 0.5).alias("actionable_age_p50"),
+        F.percentile("actionable_age_days", 0.9).alias("actionable_age_p90"),
+        F.sum(F.when(F.col("awaiting_vendor_fix"), 1).otherwise(0))
+        .cast("long")
+        .alias("awaiting_vendor_fix_count"),
+        F.sum(F.when(F.col("mttr_actionable_days") <= F.col("sla_target"), 1).otherwise(0))
+        .cast("long")
+        .alias("actionable_sla_compliant"),
+    ]
+
+
+def actionable_mttr_by_severity(df: DataFrame) -> DataFrame:
+    """The second clock, per severity plus an OVERALL row: time measured from the fix.
+
+    Separate from ``mttr_by_severity`` rather than folded into it, and the reason is
+    structural rather than stylistic: ``run_pipeline.build_metrics`` calls that function
+    TWICE -- once over the ledger lifecycles and once over the silver snapshot, so the two can
+    be published side by side as ``snap_*``. Silver is a projection of one scan's payload and
+    has no ``fix_observed_at``, no ``actionable_from`` and no ``awaiting_vendor_fix``; it
+    cannot have them, because they are cross-scan facts. Widening ``mttr_by_severity`` would
+    therefore fail on the snapshot half, and the natural repair -- a ``coalesce`` or a column
+    existence check -- would publish an actionable figure computed from one scan under the
+    same name as one computed from the whole ledger.
+
+    ``sla_target`` is attached to the working frame and never emitted: it is already on the
+    frame this joins into, and two copies of the same target is one more thing that can drift.
+    The percentage it feeds is the point of the whole exercise -- it counts a team as
+    compliant from the day the fix existed, so on any finding both clocks can price it cannot
+    be harsher than ``sla_pct``. The two denominators are not the same population, though:
+    ``actionable_resolved`` excludes what the second clock could not price at all, so the two
+    percentages are read together rather than subtracted.
+    """
+    work = df.withColumn("sla_target", sla_target_col(F.col("severity")))
+
+    per_sev = work.groupBy("severity").agg(*_actionable_aggs())
+    # Same rule as its neighbour: the OVERALL percentage is total-compliant over
+    # total-resolved, not a mean of the per-severity percentages, so it takes its own pass
+    # over rows that each carry their own target.
+    overall = work.groupBy(F.lit(OVERALL).alias("severity")).agg(*_actionable_aggs())
+
+    return per_sev.unionByName(overall).withColumn(
+        "actionable_sla_pct",
+        safe_pct(F.col("actionable_sla_compliant"), F.col("actionable_resolved")),
+    )
 
 
 def resolution_sources(df: DataFrame) -> DataFrame:

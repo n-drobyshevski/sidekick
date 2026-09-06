@@ -1,0 +1,11 @@
+# devlake harness deps only. Neither brick/requirements.txt nor brick/devsecops/requirements.txt
+# names anything below -- those two files are cluster-facing and this directory never deploys.
+# pyspark / delta-spark themselves come from whichever fork's requirements.txt you installed.
+
+duckdb
+ipykernel
+nbclient
+pyyaml
+
+# Interactive use only ("jupyter lab brick/notebooks") -- no test imports it.
+jupyterlab

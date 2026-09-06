@@ -612,6 +612,140 @@ def test_untouched_rows_are_not_republished(spark):
     assert list(by_key(touched)) == ["id:f-2"]
 
 
+# ----------------------------------------------------------------- the scope refusal
+#
+# Absence is remediation in this reconciler, so a prior ledger from another population is not a
+# mislabelled input: it is a register that resolves itself. Every `all` row is missing from an
+# `os` scan by construction, and the reconciler cannot tell that from a week of good work.
+#
+# Each scope writes its own tables (`default_table_prefix`), so today the separation is
+# structural and nothing here can fire in production. That is the reason to have it: a
+# structural property nobody checks is one refactor away from being a calling convention nobody
+# knows about. `gas_devsecops` keeps three scopes in ONE tab and had to filter the prior inside
+# reconcile for exactly this; the lesson it wrote down is that reconcile must not trust its
+# caller for this, because the violation is silent and arrives dressed as remediation.
+
+FOREIGN_SCOPE = "all"  # brick's other register: same schema, different population
+NATIVE_SCOPE = "os"
+#: How many OPEN rows the foreign prior holds -- the price of the missing guard, in rows.
+FOREIGN_PRIOR_ROWS = 6
+
+
+def foreign_prior(spark, *, scope=FOREIGN_SCOPE, count=FOREIGN_PRIOR_ROWS):
+    """``count`` OPEN ledger rows stamped ``scope``, all last seen in SCAN_1.
+
+    Built through the real parse and reconcile path, so the rows are a genuine ledger of that
+    scope rather than hand-written ones that might not satisfy the disappearance conditions.
+    """
+    touched = ledger.reconcile(
+        ledger.empty_ledger(spark),
+        observed(
+            spark,
+            [node(id=f"foreign-{i}") for i in range(count)],
+            scan_id=SCAN_1,
+            scan_ts=TS_1,
+            scope=scope,
+        ),
+        scan_id=SCAN_1,
+        scan_ts=TS_1,
+        scope=scope,
+    )
+    prior = touched.select(*ledger.LEDGER_COLUMNS).cache()
+    assert prior.count() == count
+    assert prior.filter(F.col("status") == STATUS_OPEN).count() == count
+    return prior
+
+
+def test_reconcile_refuses_a_prior_from_another_scope(spark):
+    """A ledger of another population, handed to this scope's scan, is refused before the join."""
+    with pytest.raises(RuntimeError) as exc:
+        ledger.reconcile(
+            foreign_prior(spark),
+            observed(spark, [node(id="native-1")], scan_id=SCAN_2, scan_ts=TS_2),
+            scan_id=SCAN_2,
+            scan_ts=TS_2,
+            scope=NATIVE_SCOPE,
+            prev_scan_id=SCAN_1,
+        )
+    msg = str(exc.value)
+    # It has to name both populations and which side carried the wrong one, because the fix
+    # differs: a wrong prior is a table-resolution bug, a wrong observation an ingest one.
+    assert repr(FOREIGN_SCOPE) in msg and repr(NATIVE_SCOPE) in msg
+    assert "prior" in msg and "observation" not in msg
+
+
+def test_reconcile_refuses_an_observation_from_another_scope(spark):
+    """And the other side: this scope's ledger meeting another scope's scan.
+
+    Worse than the first case in one way -- those findings would be written into this
+    register as NEW, with this scope stamped on them, and nothing downstream could tell.
+    """
+    state, _ = apply(spark, ledger.empty_ledger(spark), [node()], scan_id=SCAN_1, scan_ts=TS_1)
+    with pytest.raises(RuntimeError) as exc:
+        ledger.reconcile(
+            state,
+            observed(
+                spark,
+                [node(id="foreign-1")],
+                scan_id=SCAN_2,
+                scan_ts=TS_2,
+                scope=FOREIGN_SCOPE,
+            ),
+            scan_id=SCAN_2,
+            scan_ts=TS_2,
+            scope=NATIVE_SCOPE,
+            prev_scan_id=SCAN_1,
+        )
+    msg = str(exc.value)
+    assert repr(FOREIGN_SCOPE) in msg and repr(NATIVE_SCOPE) in msg
+    assert "observation" in msg
+
+
+def test_without_the_scope_guard_a_foreign_prior_resolves_the_register_by_absence(
+    spark, monkeypatch
+):
+    """The mutation, and the price: every open row of the foreign prior closes as remediated.
+
+    The guard is removed and nothing else changes. The foreign rows are OPEN, in severity
+    scope, and their ``last_scan_id`` is the previous scan, so all three disappearance
+    conditions hold -- they are absent only because this scan never looked at their population.
+    The register would report a resolution for each, dated to this scan, with
+    ``resolution_src = 'disappeared'`` and a delta that reads like a good week.
+    """
+    prior = foreign_prior(spark)
+    scan = observed(spark, [node(id="native-1")], scan_id=SCAN_2, scan_ts=TS_2)
+
+    def scan_2(p):
+        return ledger.reconcile(
+            p,
+            scan,
+            scan_id=SCAN_2,
+            scan_ts=TS_2,
+            scope=NATIVE_SCOPE,
+            prev_scan_id=SCAN_1,
+        )
+
+    with pytest.raises(RuntimeError, match="prior"):
+        scan_2(prior)
+
+    monkeypatch.setattr(ledger, "_refuse_foreign_scope", lambda *a, **k: None)
+    touched = scan_2(prior).cache()
+
+    resolved = touched.filter(
+        (F.col("status") == STATUS_RESOLVED) & (F.col("resolution_src") == "disappeared")
+    )
+    assert resolved.count() == FOREIGN_PRIOR_ROWS, (
+        f"without the guard, an {FOREIGN_SCOPE!r} prior of {FOREIGN_PRIOR_ROWS} open rows "
+        f"meeting one {NATIVE_SCOPE!r} scan resolves ALL {FOREIGN_PRIOR_ROWS} as remediated, "
+        "with real resolution dates -- the failure is not an error, it is a remediation "
+        "programme that never happened"
+    )
+    assert deltas(touched)["resolved_count"] == FOREIGN_PRIOR_ROWS
+    # And they are stamped with THIS scope on the way out, so the ledger would not even
+    # remember which population they came from.
+    assert {r["scope"] for r in resolved.select("scope").collect()} == {NATIVE_SCOPE}
+
+
 # ------------------------------------------------------------ the risk-signal contract
 
 
@@ -728,9 +862,10 @@ def test_a_scan_carrying_no_signals_does_not_witness_anything(spark):
 
 # ------------------------------------------------------------------ the vendor-fix clock
 #
-# Nothing in v2 reads these columns yet -- the actionable clock is out of scope. They are
-# captured because they cannot be recovered afterwards: once a finding disappears from the
-# API, a fix signal nobody wrote down is gone for good.
+# ``lifecycle_frame`` reads these two columns now -- see "the actionable clock" below. They
+# were captured long before anything read them, because they cannot be recovered afterwards:
+# once a finding disappears from the API, a fix signal nobody wrote down is gone for good, and
+# a fix date backfilled later would be a number nobody measured.
 
 
 def test_the_fix_clock_is_sticky_first_wins(spark):
@@ -779,6 +914,137 @@ def test_the_fix_clock_resets_on_reopen(spark):
     row = by_key(state)["id:f-1"]
     assert row["reopened_count"] == 1
     assert row["fix_date"] is None and row["fix_observed_at"] is None
+
+
+# ------------------------------------------------------------------ the actionable clock
+#
+# The second clock. ``mttr_days`` answers "how long did this finding live"; these answer "how
+# long could anybody have done something about it", which is what an SLA is actually asking.
+# `config.HAS_VENDOR_FIX` decides which scopes the question applies to at all, and
+# `config.SCOPES_PINNING_HAS_FIX` decides what an empty fix clock means inside one.
+# Reference: gas/src/domain/ledgerCore.ts::baseRows.
+
+
+def test_the_actionable_clock_starts_at_the_fix_not_at_detection(spark):
+    """The headline: 37 days of exposure, 27 of them anybody's to act on.
+
+    The gap is the ten days the register spent waiting on a vendor, and publishing both is the
+    point -- a team held to the first number is being charged for time it did not have.
+    """
+    fixed = node(fixDate="2026-04-11T00:00:00Z", fixedVersion="1.2.3")
+    state, _ = apply(spark, ledger.empty_ledger(spark), [fixed], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = apply(spark, state, [], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
+
+    row = ledger.lifecycle_frame(state, TS_2).collect()[0]
+    assert row["fix_available_at"].strftime("%Y-%m-%d") == "2026-04-11"
+    assert row["actionable_from"].strftime("%Y-%m-%d") == "2026-04-11"
+    # first_seen 2026-04-01, resolved by disappearance at 2026-05-08.
+    assert row["mttr_days"] == pytest.approx(37.0)
+    assert row["mttr_actionable_days"] == pytest.approx(27.0)
+    assert row["awaiting_vendor_fix"] is False
+
+
+def test_the_actionable_clock_never_starts_before_detection(spark):
+    """A fix that shipped before we ever saw the finding does not start the clock in the past.
+
+    Without the clamp this row would report an actionable MTTR of 68 days against 37 days of
+    exposure -- a remediation time longer than the finding's whole life, which is not a number
+    that can be defended in either direction.
+    """
+    fixed = node(fixDate="2026-03-01T00:00:00Z", fixedVersion="1.2.3")
+    state, _ = apply(spark, ledger.empty_ledger(spark), [fixed], scan_id=SCAN_1, scan_ts=TS_1)
+    state, _ = apply(spark, state, [], scan_id=SCAN_2, scan_ts=TS_2, prev_scan_id=SCAN_1)
+
+    row = ledger.lifecycle_frame(state, TS_2).collect()[0]
+    assert row["fix_available_at"].strftime("%Y-%m-%d") == "2026-03-01"
+    assert row["actionable_from"].strftime("%Y-%m-%d") == "2026-04-01"  # first_seen, clamped
+    assert row["mttr_actionable_days"] == pytest.approx(37.0)
+    assert row["mttr_actionable_days"] == pytest.approx(row["mttr_days"])
+
+
+def test_fix_observed_at_is_the_conservative_fallback(spark):
+    """A ``fixedVersion`` with no ``fixDate``: the clock starts when the fix was SEEN.
+
+    ``fix_observed_at`` is the scan that first noticed a fix existed, so it is an upper bound
+    on when the fix appeared. Starting there never asserts that a fix existed at a moment
+    nothing evidences -- it credits the team with none of the time before we looked. The
+    register is open here, so it is the open-age half of the clock that shows it: 37 days of
+    exposure, 7 of them actionable.
+    """
+    state, _ = apply(spark, ledger.empty_ledger(spark), [node(fixedVersion="1.2.3")],
+                     scan_id=SCAN_1, scan_ts=TS_1)
+
+    row = ledger.lifecycle_frame(state, TS_2).collect()[0]
+    assert row["fix_date"] is None
+    assert row["fix_available_at"].strftime("%Y-%m-%dT%H:%M:%SZ") == TS_1
+    assert row["age_days"] == pytest.approx(37.0)
+    assert row["actionable_age_days"] == pytest.approx(7.0)
+    assert row["mttr_actionable_days"] is None  # still open
+    assert row["awaiting_vendor_fix"] is False
+
+
+def test_a_has_fix_scope_dates_a_blank_fix_clock_from_first_seen(first_scan):
+    """THE FINDING that separates this port from the implementation it is ported from.
+
+    ``config._BASE`` pins ``hasFix: true`` and both of this register's scopes spread it, so
+    every row in this register had a vendor fix AT THE MOMENT IT WAS INGESTED -- that is what
+    the filter asked for. ``gas``'s ``baseRows`` reads a row like this
+    one, whose fix clock is empty because Wiz returned no fix detail, as "no fix available"
+    and marks it awaiting a vendor: inside a population DEFINED by having one. The same
+    category error CLAUDE.md records for SAST, arriving by a different route.
+
+    So the empty clock dates from ``first_seen`` and the row is not awaiting anything. The
+    bound is one-sided -- the filter proves a fix existed by the scan that ingested the row,
+    not necessarily by ``firstDetectedAt`` -- which puts it on the harsh side: the actionable
+    clock collapses onto the exposure clock rather than inventing a later start.
+    """
+    state, _ = first_scan
+    row = ledger.lifecycle_frame(state, TS_2).collect()[0]
+
+    assert row["fix_date"] is None and row["fix_observed_at"] is None
+    assert row["fix_available_at"] == row["first_detected_at"]
+    assert row["actionable_from"] == row["first_detected_at"]
+    assert row["actionable_age_days"] == pytest.approx(row["age_days"])
+    assert row["awaiting_vendor_fix"] is False
+
+    # And it is read out of the filter at runtime rather than asserted here, so dropping
+    # `hasFix` from `SCOPES` takes the claim with it.
+    from config import scope_has_vendor_fix, scope_pins_has_fix
+
+    assert scope_pins_has_fix("os") and scope_has_vendor_fix("os")
+
+
+def test_dropping_the_has_fix_fallback_puts_the_whole_register_on_a_vendor_watchlist(
+    spark, monkeypatch
+):
+    """The mutation, and the cost of getting the finding above wrong.
+
+    With the fallback removed -- the literal port of ``gas``'s ``baseRows`` -- every open row
+    whose fix clock is empty reads as awaiting a vendor: out of ``mttr_actionable_days``, out
+    of ``actionable_age_days``, still in every open and exposure count, so the two halves of a
+    page disagree by exactly this population and the gap reads as broken arithmetic.
+
+    Priced on a synthetic register rather than on the committed capture, and deliberately so:
+    all four nodes in ``os_vulns_response_exemple.json`` carry a fix signal, so the fallback
+    never fires there and a fixture-derived number would be a reassuring zero. What the number
+    below prices is the RULE -- every row with no fix detail, whatever the tenant's share of
+    those turns out to be.
+    """
+    nodes = [node(id=f"f-{i}", fixDate=None, fixedVersion=None) for i in range(5)]
+    state, _ = apply(spark, ledger.empty_ledger(spark), nodes, scan_id=SCAN_1, scan_ts=TS_1)
+    state = state.cache()
+
+    guarded = ledger.lifecycle_frame(state, TS_2)
+    assert guarded.filter("awaiting_vendor_fix").count() == 0
+
+    monkeypatch.setattr(ledger, "SCOPES_PINNING_HAS_FIX", frozenset())
+    flipped = ledger.lifecycle_frame(state, TS_2).filter("awaiting_vendor_fix").count()
+    open_rows = guarded.filter("is_open").count()
+    assert flipped == open_rows == 5, (
+        f"{flipped} of {open_rows} open rows flip to awaiting_vendor_fix when the "
+        "hasFix fallback is dropped -- every finding the API returned no fix detail for, "
+        "inside a population the filter guarantees has a fix"
+    )
 
 
 # ------------------------------------------------------------------ the metric contract
