@@ -37,8 +37,8 @@ import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  countNumericTokens, countVisible, countWords, collectProseBlocks, diffReport, extractText,
-  formatDiffTable, formatTable, isIconSvg, overflowSummary, parsePages, PROSE_MIN_WORDS,
+  countNumericTokens, countVisible, countVisuals, countWords, collectProseBlocks, diffReport,
+  extractText, formatDiffTable, formatTable, overflowSummary, parsePages, PROSE_MIN_WORDS,
 } from "./densityModel.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url)); // …/gas_devsecops/dev
@@ -151,29 +151,6 @@ function serializeMain() {
 function buildUrl(port, route, noseed) {
   const q = noseed ? "?dry&noseed" : "?dry";
   return `http://localhost:${port}/${q}#/${route}`;
-}
-
-/** One list, not two: the fallback "nothing rendered" shape below is DERIVED from this same
- *  list rather than a second hand-typed object, so a visual class added here cannot drift out
- *  of sync with the all-zero shape a failed route falls back to. */
-const VISUAL_PREDICATES = [
-  ["canvas", (n) => n.tag === "CANVAS"],
-  ["svg", (n) => n.tag === "SVG" && !isIconSvg(n)],
-  ["meter", (n) => n.classes.includes("meter")],
-  ["sevbar", (n) => n.classes.includes("sevbar")],
-  ["axisBar", (n) => n.classes.includes("axis-bar")],
-  ["isotype", (n) => n.classes.includes("isotype")],
-  ["quad", (n) => n.classes.includes("quad")],
-  ["spark", (n) => n.classes.includes("spark")],
-];
-
-function countVisuals(tree) {
-  const visuals = { total: 0 };
-  for (const [name, pred] of VISUAL_PREDICATES) {
-    visuals[name] = tree ? countVisible(tree, pred) : 0;
-    visuals.total += visuals[name];
-  }
-  return visuals;
 }
 
 /** Tab to every VISIBLE `.tip-trigger` and ask whether the shared `.tip` card (one node,

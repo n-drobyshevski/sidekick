@@ -265,6 +265,41 @@ const ENTRIES = [
     ],
   },
   {
+    // The Executive front door's "Movement" aside. The method sentence used to sit under the
+    // rows as its own paragraph; the rows already carry the chips and the raw pair, so what
+    // was left to say was what the comparison is BETWEEN — a definition, which is what a tip
+    // is for.
+    id: "movement",
+    term: "Movement",
+    lines: [
+      "The open backlog now against the same register at the previous sync. A rising count is worse.",
+      "The comparison is between two syncs, not between two calendar dates — a register only learns anything on the days it looks.",
+    ],
+  },
+  {
+    // The Executive front door's "Fix next" section heading. This is the RANKING RULE, and it
+    // is a definition rather than a caveat: without it the list is eight repositories in an
+    // order nobody can check.
+    id: "fix-next",
+    term: "Fix next",
+    lines: [
+      "Ranked by what cannot wait rather than by severity: a credential somebody confirmed is live, then a fixable dependency finding already late, then a critical code weakness already late.",
+      "Grouped by repository, because that is the smallest unit somebody can be asked to own.",
+    ],
+  },
+  {
+    // The MTTR page's "Open findings by age" legend. NO DAY COUNTS IN THE COPY: the targets
+    // are per severity and editable in Settings, and the legend line beside this tip prints
+    // whatever the payload actually carries. A glossary that hard-coded 7 / 14 / 30 would be
+    // a second place for them to drift.
+    id: "sla-edge",
+    term: "SLA edge",
+    lines: [
+      "The day count that splits one severity's open findings into late and not late — its own SLA target, read against the age buckets.",
+      "A deadline rarely lands on a bucket's boundary, so a bucket is usually part in and part out; a rule is drawn on the chart only where every severity shares one exact edge.",
+    ],
+  },
+  {
     id: "returned",
     term: "Returned",
     lines: [

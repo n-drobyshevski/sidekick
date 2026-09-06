@@ -261,3 +261,40 @@
   text-decoration-thickness: 1px;
 }
 .kv dt .tip-trigger:hover { text-decoration-color: currentColor; }
+
+/* ------------------------------------------------- MTTR & SLA: the half-life trend aside
+   `pageHeader({aside})` is documented for "a small curve" and was empty on this page while
+   the series it wants sat at the foot of the same page in a Chart.js line. The sparkline that
+   fills it is a QUALIFIER on the hero, never a rival to it: DESIGN.md's Hero Stat rule puts
+   the hero's dominance in size, position and whitespace, so this block stays borderless (a
+   `.page-strip`, the same shell Executive's movement aside uses) and is capped the way
+   `.page-header > .kpi-card` above is - 26rem measured against the 220px SVG plus its
+   caption, wide enough for "12 readings, 297 days to 41 days" on one line and narrow enough
+   that the 2rem hero beside it keeps clear air.
+
+   The gap is the strip's own rhythm; nothing here sets a border, a tint or a shadow, because
+   any of the three would make this read as a second card in a header that has none. */
+.trend-aside { max-width: 26rem; display: grid; gap: var(--space-1); justify-items: start; }
+/* The line takes the page's ink rather than the strip's muted default: the sparkline is the
+   one mark in this block that carries a measurement, and `--text-2` (0.65 alpha) on a 1.5px
+   stroke over 40px of height reads as a hairline rule rather than as data. `--ink` is the
+   same neutral the isotype marks above take, and for the same reason - a mark carrying a
+   figure has to be legible on its own. */
+.trend-aside .sparkline { color: var(--ink); }
+
+/* ------------------------------------------------- MTTR & SLA: a rate cell with its meter
+   The SLA table's two rate columns print the figure, its base and now a `meter--stat` between
+   them - a third encoding, and the only one that can be compared DOWN a column at a glance
+   (six percentages in six rows are read one at a time; six fills are read as a shape). The
+   meter is `decorative`, i.e. aria-hidden, because both figures are already in words beside
+   it, so this rule is layout only: keep the three parts on one baseline and let the base wrap
+   under them on a narrow column rather than stretching the row.
+
+   `inline-flex`, not `flex`: the cell is a `<span>` inside a `<td>` that may also hold the
+   count and the parenthesised rate, and a block-level flex box would break that line. */
+.rate-with-meter {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1);
+}
+/* The meter must not be squeezed to nothing by the flex row when the denominator is long -
+   `meter--stat` already fixes its basis, this stops the shrink. */
+.rate-with-meter .meter { flex: 0 0 52px; }

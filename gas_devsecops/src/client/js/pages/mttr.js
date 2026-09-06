@@ -47,10 +47,10 @@ import { agingTableModel, sevPalette } from "./sca.js";
 // collapsing onto `pct1`.
 import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
 import {
-  absentText, chartTable, chartTableModel, clear, dataTable, el, emptyState, errorState,
-  firstRunNotice, fmtCount, fmtDays, heroStat, kpiCard, num, onPageTeardown, pageHeader,
-  pluralize, sectionLabel, sevBadge, sevEntries, sevSegmentBar, skeleton, statRow,
-  survivalTableModel,
+  absentText, axisBar, axisSegments, chartTable, chartTableModel, clear, dataTable, el,
+  emptyState, errorState, firstRunNotice, fmtCount, fmtDays, heroStat, kpiCard, meter, num,
+  onPageTeardown, pageHeader, pluralize, sectionLabel, sevBadge, sevEntries, sevSegmentBar,
+  skeleton, sparkLabel, sparkPath, sparkline, statRow, survivalTableModel, tipLabel,
 } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
@@ -204,6 +204,24 @@ export function mttrHeroView(mttr) {
         + fmtCount(censored) + " still open (censored)"
       : "No observations yet.",
   };
+}
+
+/**
+ * The half-life trend, as ONE array read by two things.
+ *
+ * `renderTrend` plots it as a line at the bottom of the page; `renderHero` draws the same
+ * readings as a `sparkline` in the header's aside slot, because "297 days" over a half-life
+ * that has been falling for four readings is a different fact from the same 297 over one that
+ * doubled — and the trend was already on the wire. `ui/chartTable.js`'s one rule is that a
+ * picture and its table are handed the SAME array; the same reasoning covers two pictures, so
+ * the filter lives here and `paint` passes the result to both rather than each deriving its
+ * own.
+ *
+ * A slot with no `date` is dropped rather than plotted: the x axis is the date.
+ */
+export function halfLifeTrendPoints(trends) {
+  const raw = trends && Array.isArray(trends.trend) ? trends.trend : [];
+  return raw.filter((p) => p && p.date);
 }
 
 /** The restricted mean, and the "≥" it earns when survival never reached zero. */
@@ -664,6 +682,107 @@ export function actionableClockView(mttr, opts) {
   };
 }
 
+// --------------------------------------------------- the pure half of Wave A's pictures
+//
+// Three figures on this page stopped being sentences and became a meter, a legend line and a
+// bar. Each of the three has a DECISION in it that can be wrong in a way a screenshot will
+// not show, so each decision lives here, pure, where vitest can perturb it — the same split
+// `agingView` and `slaConsumedCaption` above already make between what a section decides and
+// how it is drawn.
+
+/**
+ * The percentage a `meter` may be filled to — or NULL, which draws no meter at all.
+ *
+ * THIS IS THE `Number(null)` TRAP WEARING A METER. `ui/data.js`'s `meter(value)` opens with
+ * `Number(value) || 0`, so a null, a blank or an absent rate resolves to a confident 0% fill:
+ * an empty track beside the words "not measured", which is a picture asserting that nothing
+ * is in SLA rather than that nobody could tell. `rateView` already separates the two states —
+ * `measured: false` with a real base is "the server did not compute it", `baseEmpty` is "there
+ * is no population" — and both of them get no meter. A MEASURED ZERO does get one, empty: 0 of
+ * 10 resolved findings inside their window is a measurement, and the empty track is its
+ * picture.
+ *
+ * @param {{measured?: boolean, value?: number}|null|undefined} rate  a `rateView` result
+ * @returns {number|null}
+ */
+export function meterPctFor(rate) {
+  if (!rate || rate.measured !== true) return null;
+  const pct = num(rate.value);
+  return pct === null ? null : pct;
+}
+
+/**
+ * "CRITICAL 7 d · HIGH 14 d · …" — the six SLA-edge sentences as one line of figures.
+ *
+ * WHAT IT REPLACES: a `<ul>` of one ~22-word sentence per severity ("HIGH deadline 14 d falls
+ * inside the 8-30d bucket — that bucket is part in, part out, and everything to its right is
+ * late"), which is a table drawn as paragraphs: six rows whose only varying content is a
+ * severity and a number. Those numbers, in the bars' own order, read against the bucket labels
+ * the chart's x axis already prints, place every edge — and `sla-edge` in the glossary carries
+ * what the sentences said in general.
+ *
+ * THE TARGETS ARE THE PAYLOAD'S, NEVER A LITERAL. `agingView` reads them from
+ * `aging.slaTargets`, which is what Settings writes, so a deadline edited there moves this
+ * line. A severity with NO target says so rather than being dropped or rendered "null d": no
+ * target is exactly why that severity has no edge, and it is the one thing this line could
+ * say that the chart cannot.
+ *
+ * @param {Array<{sev: string, target: number|null}>} edges  `agingView(...).edges`
+ * @returns {string|null}  null when there is nothing to draw a legend for
+ */
+export function slaEdgeLegend(edges) {
+  const list = Array.isArray(edges) ? edges : [];
+  if (!list.length) return null;
+  return list
+    .map((e) => e.sev + " " + (num(e.target) === null ? "no target" : e.target + " d"))
+    .join(" · ");
+}
+
+/**
+ * How the vendor-wait population divides, in the `{total, counts, unknowns}` shape
+ * `axisSegments` reads.
+ *
+ * WHAT IT REPLACES: one 50-word sentence carrying five counts in series. Five figures inside a
+ * sentence are read one at a time and cannot be compared; the same five as one bar are read at
+ * a glance, and the legend still prints every count in words.
+ *
+ * `zeroAtOrigin` IS DELIBERATELY NOT A SEGMENT, and that is arithmetic rather than taste: it
+ * is a SUBSET of `events` — a fix that already existed on the day the finding was detected —
+ * so adding it as a fifth count would put the same rows in the bar twice and inflate the
+ * total every share is taken against. It keeps its own line under the bar, with its number.
+ *
+ * `unmeasured` IS THE ONLY HATCHED VALUE. Those rows carry no readable origin and sit outside
+ * the estimate entirely rather than being counted as a zero-day wait, and the hatch is this
+ * design system's one mark for "this part is not a measurement" — so the value's whole count
+ * is also its `unknowns` entry.
+ *
+ * Every count is refused BEFORE the cast (`num(v, 0)`), so a segment the server never sent is
+ * a zero it declared rather than a `Number(undefined)` that became one.
+ *
+ * @param {object|null|undefined} segments  `actionableClockView(...).segments`
+ * @returns {{values: string[], total: number, counts: object, unknowns: object}}
+ */
+export const VENDOR_WAIT_VALUES = [
+  "Fix observed", "Open, no fix", "Closed before a fix", "No readable origin",
+];
+
+export function vendorWaitReading(segments) {
+  const s = segments || {};
+  const counts = {
+    "Fix observed": num(s.events, 0),
+    "Open, no fix": num(s.censored, 0),
+    "Closed before a fix": num(s.closedBeforeFix, 0),
+    "No readable origin": num(s.unmeasured, 0),
+  };
+  return {
+    values: VENDOR_WAIT_VALUES.slice(),
+    total: VENDOR_WAIT_VALUES.reduce((a, v) => a + counts[v], 0),
+    counts,
+    // Only the unmeasured value is hatched — see the doc comment.
+    unknowns: { "No readable origin": counts["No readable origin"] },
+  };
+}
+
 // ----------------------------------------------------------------------------- the page
 //
 // `scopeParam`, `denominatorNode` and `rateCell` moved to `./_rates.js` (imported above).
@@ -729,8 +848,12 @@ export async function renderMttr(host, params, _ctx) {
   paint = (payload) => {
     const mttr = payload && payload.mttr;
     const first = Number((mttr && mttr.rowCount) || 0) === 0;
+    // ONE ARRAY, TWO PICTURES — see `halfLifeTrendPoints`. The sparkline in the header aside
+    // and the line chart at the foot of the page are two readings of the same series, so it
+    // is derived once here rather than filtered independently in each renderer.
+    const trendPoints = halfLifeTrendPoints(payload && payload.trends);
     guard("the first-run notice", noticeHost, () => renderFirstRun(first));
-    guard("the half-life", heroHost, () => renderHero(mttr, first));
+    guard("the half-life", heroHost, () => renderHero(mttr, first, trendPoints));
     // FIRST RUN STOPS HERE — one notice above, not ten section headings each over its own
     // empty box. Every section below reads a population of exactly zero on an unread ledger;
     // `firstRunNotice`, rendered by `renderFirstRun` above, already carries the one sentence
@@ -748,7 +871,7 @@ export async function renderMttr(host, params, _ctx) {
     guard("the SLA window consumed", slaConsumedHost, () => renderSlaConsumed(mttr));
     guard("the time-to-close distribution", bucketHost, () => renderBuckets(mttr));
     guard("the two clocks", clockHost, () => renderClocks(mttr));
-    guard("the half-life trend", trendHost, () => renderTrend(payload && payload.trends));
+    guard("the half-life trend", trendHost, () => renderTrend(trendPoints));
   };
 
   try {
@@ -781,21 +904,42 @@ export async function renderMttr(host, params, _ctx) {
 
   // ------------------------------------------------------------------------------ hero
 
-  function renderHero(mttr, first) {
+  /**
+   * The hero, and the four paragraphs that used to hang under it.
+   *
+   * WHAT MOVED AND WHY. Below the header sat up to four `<p class="small muted">` blocks: the
+   * SLA rate as a sentence, the awaiting-a-vendor count as a sentence, the lower-bound
+   * explanation, and (on an empty base) two "not measured" explanations. Four sentences, three
+   * of which contained a figure the page then never showed anywhere else — so a reader
+   * scanning the header met three stat cells and had to read prose to find two more numbers
+   * of equal standing. The two rates are now `statRow`s in the same strip, each with a
+   * `meter--stat` beside the figure, and every sentence that explained one is a tip line on
+   * that row's own name.
+   *
+   * WHAT DID NOT MOVE (R2). "not measured" stays the visible VALUE wherever a base is empty;
+   * "at least N days" stays the visible hero value on a bound; and the refused-flag count —
+   * open findings outside SCA that carried `awaiting_vendor_fix` anyway and were declined —
+   * stays on the surface as "· N refused" in the row's sub-line. A refused count is a
+   * measurement decision a reader is entitled to see without hovering anything.
+   */
+  function renderHero(mttr, first, trendPoints) {
     const view = mttrHeroView(mttr);
     const km = (mttr && mttr.remediation && mttr.remediation.km) || null;
     const rmst = rmstView(km);
+    const resolved = Number((mttr && mttr.overall && mttr.overall.resolved) || 0);
     const overallSla = rateView(
       mttr && mttr.slaPct,
-      Number((mttr && mttr.overall && mttr.overall.resolved) || 0),
-      fmtCount(Number((mttr && mttr.overall && mttr.overall.resolved) || 0)) + " resolved",
+      resolved,
+      fmtCount(resolved) + " resolved",
     );
+    const awaiting = awaitingView(mttr);
 
     clear(heroHost);
     // NO `route`: the page's h1 is in the title block appended once at the top of
     // `renderMttr`, so this header carries the figure and its stats and no heading.
     heroHost.append(pageHeader({
-      hero: heroStat("Remediation half-life", view.value, view.qualifier, { term: "half-life" }),
+      hero: heroStat("Remediation half-life", view.value, view.qualifier, heroHelp(view)),
+      aside: trendAside(trendPoints),
       // SUPPRESSED, not dashed — the same choice Executive and Coverage & efficiency make, so
       // one reader moving between the three pages meets one convention. "Censored 0 · open
       // findings kept in as evidence" is a claim about an estimator that has never run.
@@ -815,50 +959,155 @@ export async function renderMttr(host, params, _ctx) {
             ? "a lower bound — survival had not reached zero at " + fmtDays(rmst.restrictionTime)
             : "area under the curve to " + fmtDays(rmst.restrictionTime),
         ),
+        slaStatRow(overallSla),
+        ...(awaiting.show ? [awaitingStatRow(awaiting)] : []),
       ],
     }));
+  }
 
-    // NOT "not measured 0 resolved". Where the base is empty the sentence names the missing
-    // population rather than printing its size beside a claim that nothing was measured.
-    const slaLine = overallSla.baseEmpty
-      ? el("p", { class: "small muted" },
-          "Resolved inside the SLA window: not measured — nothing has closed yet, so there is"
-          + " no resolved population to compare against the target.")
-      : el("p", { class: "small muted" },
-          "Resolved inside the SLA window: ",
-          el("span", { class: "num" }, overallSla.text),
-          " ",
-          denominatorNode(overallSla),
-          ". ",
-          el("span", {}, "The comparison is inclusive — on or before the target."));
-    heroHost.append(slaLine);
+  /**
+   * "Resolved in SLA" as a stat cell rather than as a sentence.
+   *
+   * The `meter` is `statRow`'s own slot and takes the rate; a rate with no base gets NO meter
+   * rather than an empty track, because `meter(null)` would resolve to a confident 0% fill —
+   * `Number(null)` is 0 and finite, CLAUDE.md's third recording of it — over a population
+   * nobody measured. The empty case keeps its own words in both places: "not measured" is the
+   * value (`rateView.text`), the missing population is named in the sub-line, and the whole
+   * sentence rides in the tip.
+   */
+  function slaStatRow(rate) {
+    return statRow(
+      "Resolved in SLA",
+      rate.text,
+      rate.baseEmpty ? "nothing has closed yet" : "of " + rate.denominatorLabel,
+      meterPctFor(rate),
+      {
+        term: "sla-target",
+        lines: [
+          rate.baseEmpty
+            ? "Resolved inside the SLA window: not measured — nothing has closed yet, so there"
+              + " is no resolved population to compare against the target."
+            : "Taken over what CLOSED: of the findings that resolved, the share that resolved"
+              + " on or before their severity's target.",
+          "The comparison is inclusive — on or before the target.",
+        ],
+      },
+    );
+  }
 
-    if (view.isLowerBound) {
-      heroHost.append(el("p", { class: "small muted" },
+  /**
+   * "Awaiting a vendor" as a stat cell, with the refused count still on the surface.
+   *
+   * The figure is the COUNT of open SCA findings with no published fix; the meter is that
+   * count's share of the open backlog, which is the rate the old sentence carried. Both were
+   * in one paragraph before, and the count was the only one of the two a reader could act on.
+   */
+  function awaitingStatRow(awaiting) {
+    const rate = awaiting.share;
+    const refused = awaiting.notApplicable
+      ? " · " + fmtCount(awaiting.notApplicable) + " refused"
+      : "";
+    return statRow(
+      "Awaiting a vendor",
+      rate.baseEmpty ? rate.text : fmtCount(awaiting.overall),
+      (rate.baseEmpty
+        ? "no SCA finding is open"
+        : rate.text + " of " + rate.denominatorLabel) + refused,
+      meterPctFor(rate),
+      {
+        term: "awaiting-fix",
+        lines: [
+          rate.baseEmpty
+            ? "Awaiting a vendor fix: not measured — no SCA finding is open, so there is no"
+              + " backlog to take a share of."
+            : "Open SCA findings with no published fix. Those sit outside every deadline until"
+              + " a fix exists.",
+          ...(awaiting.notApplicable
+            ? ["Refused: " + fmtCount(awaiting.notApplicable) + " open findings outside SCA"
+              + " carried the flag anyway. SAST and secrets have no vendor to wait on, so the"
+              + " flag cannot be true there and the rows were declined rather than counted."]
+            : []),
+        ],
+      },
+    );
+  }
+
+  /**
+   * The hero label's tip: the STATE picks the lines, and the LABEL picks the term.
+   *
+   * Same decision Executive's own hero makes, and for the same reason: `kmHalfLifeView` puts
+   * "at least 297 days" in the 2rem slot, so the words are already on the surface and only
+   * the explanation moves. The term stays `half-life` in every state — the trigger is on the
+   * words "Remediation half-life", so that is the entry Enter goes to, and a control whose
+   * destination changes with the data is one a reader cannot learn. The bound's own sentence
+   * LEADS the lines instead; `lower-bound` stays reachable from the Key sheet.
+   */
+  function heroHelp(view) {
+    if (!view.isLowerBound) return { term: "half-life" };
+    return {
+      term: "half-life",
+      lines: [
         "The curve never falls to half within the observed window, so there is no median to"
-        + " publish. More than half of what is tracked is still open; the bound above is what"
-        + " is actually true."));
-    }
-    const awaiting = awaitingView(mttr);
-    if (awaiting.show && awaiting.share.baseEmpty) {
-      heroHost.append(el("p", { class: "small muted" },
-        "Awaiting a vendor fix: not measured — no SCA finding is open, so there is no backlog"
-        + " to take a share of. A finding with no published fix sits outside every deadline"
-        + " until one exists."));
-    } else if (awaiting.show) {
-      heroHost.append(el("p", { class: "small muted" },
-        "Awaiting a vendor fix: ",
-        el("span", { class: "num" }, fmtCount(awaiting.overall)),
-        " open SCA findings — ",
-        el("span", { class: "num" }, awaiting.share.text),
-        " ",
-        denominatorNode(awaiting.share),
-        ". Those sit outside every deadline until a fix exists."
-        + (awaiting.notApplicable
-          ? " " + fmtCount(awaiting.notApplicable) + " open findings outside SCA carried the"
-            + " flag anyway and were refused rather than counted."
-          : "")));
-    }
+        + " publish.",
+        "More than half of what is tracked is still open; the bound above is what is actually"
+        + " true.",
+      ],
+    };
+  }
+
+  /**
+   * The header's one qualifying aside: where this number is GOING.
+   *
+   * `pageHeader({aside})` is documented for exactly this ("a small curve"), and it was empty
+   * on this page while the series it wants sat at the foot of the same page in a 170 KB
+   * Chart.js line. `sparkline` is inline SVG with no library, `role="img"`, and an
+   * `aria-label` that always states first / last / low / high — so the picture has a text
+   * alternative and the caption underneath does not have to be one.
+   *
+   * BORDERLESS AND CAPPED (`.trend-aside`, pages.css): DESIGN.md's Hero Stat rule is that the
+   * hero's dominance comes from size and whitespace, so a bordered card here would out-weigh
+   * it — the same defect `4cdd472` fixed by capping the Coverage page's aside card.
+   *
+   * FEWER THAN TWO READINGS DRAWS THE LABEL, NEVER NOTHING. `sparkPath` returns `d: ""` for a
+   * single reading (one point is not a trend) and for none at all; `sparkLabel` is the words
+   * for both cases, and they are printed as the caption rather than the picture silently
+   * disappearing from a slot that is there on every other paint.
+   */
+  function trendAside(points) {
+    const list = Array.isArray(points) ? points : [];
+    const values = list.map((p) => p.km_median_days);
+    const model = sparkPath(values, { w: 220, h: 40 });
+    // THE GAPS ARE IN THE CAPTION, NOT ONLY IN THE aria-label. Measured on the dev seed: 208
+    // evaluated dates, 3 of which carry a half-life — the register's curve does not reach half
+    // on any earlier date, so `km_median_days` is null there and the line is three readings
+    // wide at the right-hand edge. That is the honest picture (the Chart.js line at the foot
+    // of this page draws exactly the same shape), but a caption reading "3 readings" over a
+    // 220px box would let a reader take the empty 97% for a flat line rather than for dates
+    // nobody could measure. `sparkPath` counts the gaps; this prints them.
+    const measured = model.gaps
+      ? fmtCount(model.n) + " of " + fmtCount(values.length) + " readings measured"
+      : fmtCount(model.n) + " readings";
+    // A FLAT SERIES SAYS IT IS FLAT. "199 days to 199 days" is two readings of one fact; the
+    // sparkline draws a straight line for exactly this case (`sparkPath`'s zero-span branch)
+    // and the caption should agree with the picture rather than restate an endpoint twice.
+    const range = model.first === model.last
+      ? "flat at " + fmtDays(model.first)
+      : fmtDays(model.first) + " to " + fmtDays(model.last);
+    const caption = model.n >= 2
+      ? measured + ", " + range
+      : sparkLabel(model, "", "days");
+    return el("div", { class: "page-strip trend-aside" },
+      el("div", { class: "kpi-label" }, tipLabel("Half-life over time", {
+        lines: [
+          "One reading per saved scan, plus one per day of pre-scan history reconstructed from"
+          + " first-detection dates.",
+          "The full line, and which readings are reconstructed, is at the foot of this page.",
+        ],
+      })),
+      sparkline(values, {
+        label: "Remediation half-life over time", unit: "days", w: 220, h: 40,
+      }),
+      el("div", { class: "small muted" }, caption));
   }
 
   // ------------------------------------------------------------------- the survival curve
@@ -866,7 +1115,20 @@ export async function renderMttr(host, params, _ctx) {
   function renderCurve(mttr) {
     const km = (mttr && mttr.remediation && mttr.remediation.km) || null;
     clear(curveHost);
-    curveHost.append(sectionLabel("Survival curve", { term: "censoring" }));
+    // THE METHOD SENTENCE IS THE HEADING'S DEFINITION. What the chart-note said first —
+    // "closed findings are events; open findings enter as right-censored observations at their
+    // current age" — is what `censoring` means on this chart, and the second half is
+    // provenance about the payload. Both are lines here; the two COUNTS stay under the canvas,
+    // where they qualify the picture.
+    curveHost.append(sectionLabel("Survival curve", {
+      term: "censoring",
+      lines: [
+        "Closed findings are events; open findings enter as right-censored observations at"
+        + " their current age.",
+        "The closed-only comparison markers are not in this payload, so the two markers drawn"
+        + " are both Kaplan-Meier.",
+      ],
+    }));
 
     if (!km || !Array.isArray(km.curve) || !km.curve.length) {
       curveHost.append(el("div", { class: "card" }, emptyState(
@@ -879,11 +1141,10 @@ export async function renderMttr(host, params, _ctx) {
 
     const canvas = el("canvas", { "aria-label": "Kaplan-Meier survival curve" });
     const card = el("section", { class: "chart-card" },
+      // The two numbers, and nothing else — the sentences around them are on the heading.
       el("p", { class: "chart-note" },
-        "Closed findings are events; open findings enter as right-censored observations at"
-        + " their current age. " + fmtCount(km.events) + " " + pluralize(km.events, "event")
-        + ", " + fmtCount(km.censored) + " censored. The closed-only comparison markers are not"
-        + " in this payload, so the two markers drawn are both Kaplan-Meier."),
+        fmtCount(km.events) + " " + pluralize(km.events, "event")
+        + " · " + fmtCount(km.censored) + " censored"),
       el("div", { class: "chart-box" }, canvas),
       // The same `km.curve` the wrapper below is handed, not a second read of the payload.
       chartTable({
@@ -909,7 +1170,22 @@ export async function renderMttr(host, params, _ctx) {
   function renderSeverity(mttr) {
     const rows = mttrSeverityRows(mttr, SEVERITY_ORDER);
     clear(sevHost);
-    sevHost.append(sectionLabel("The clock, by severity"));
+    // The 68-word note under the table said three things, all of them about METHOD: that the
+    // fan and the table are one estimate read twice, what "at least N days" means here, and
+    // that a staircase which stops stepping is a severity that stopped closing. None of them
+    // is a figure or a constraint, so all three sit on the heading. Every card still states
+    // its own half-life in words in its caption, which is the non-colour route to the same
+    // fact and the one thing that could not move.
+    sevHost.append(sectionLabel("The clock, by severity", {
+      term: "half-life",
+      lines: [
+        "Each severity's curve and its row in the table below are one estimate read two ways —"
+        + " the table is that curve's median, its lower bound and its P90.",
+        "“at least N days” means that curve never fell to half. Open findings are in"
+        + " every curve as right-censored observations, so a staircase that stops stepping is"
+        + " a severity that stopped closing.",
+      ],
+    }));
     if (!rows.length) {
       sevHost.append(emptyState(
         "No per-severity clock yet.",
@@ -986,12 +1262,6 @@ export async function renderMttr(host, params, _ctx) {
       ],
       rows,
     }));
-    sevHost.append(el("p", { class: "small muted" },
-      "Each severity gets its own curve, and the table is that same curve's median, its lower"
-      + " bound and its P90 — one estimate read two ways, not two estimates. \"at least N"
-      + " days\" means that severity's curve never fell to half, on the card and in the"
-      + " column alike; open findings are in every curve as right-censored observations, so a"
-      + " staircase that stops stepping is a severity that stopped closing."));
   }
 
   // ------------------------------------------------------------------------------- SLA
@@ -1017,15 +1287,41 @@ export async function renderMttr(host, params, _ctx) {
           help: { term: "sla-target" },
           cell: (r) => fmtDays(r.target),
         },
-        { key: "inSla", label: "Resolved in SLA", cell: (r) => rateCell(r.inSla) },
+        {
+          key: "inSla",
+          label: "Resolved in SLA",
+          // THE TWO DENOMINATORS ARE A FACT ABOUT THESE TWO COLUMNS, so each one says its own
+          // rather than a paragraph under the table saying both. A column heading is asked
+          // once, which is `ui/tip.js`'s whole rule for where a definition lives — and it is
+          // one tab stop for the column instead of one per row.
+          help: {
+            term: "sla-target",
+            lines: [
+              "Taken over what CLOSED: of the findings that resolved, the share that resolved"
+              + " on or before the target. The comparison is inclusive.",
+            ],
+          },
+          cell: (r) => withMeter(r.inSla),
+        },
         {
           key: "breached",
           label: "Open past SLA",
+          help: {
+            lines: [
+              "Taken over what is still RUNNING: of the findings still open, the share already"
+              + " past the target.",
+              "The two denominators in this table are not interchangeable — a single SLA"
+              + " percentage over everything would be neither.",
+            ],
+          },
           // The count AND the rate AND the base. The count alone hides how big the backlog
-          // it came out of is; the rate alone hides how many findings that actually is.
-          cell: (r) => el("span", {},
+          // it came out of is; the rate alone hides how many findings that actually is. The
+          // meter is the third encoding and the only one that can be compared down a column
+          // at a glance; it is `decorative` because both figures are printed beside it.
+          cell: (r) => el("span", { class: "rate-with-meter" },
             el("span", { class: "num" }, fmtCount(r.breached)),
             el("span", { class: "small muted" }, " (" + r.pastSla.text + ") "),
+            rateMeter(r.pastSla),
             denominatorNode(r.pastSla)),
         },
         { key: "p50", label: "Open age P50", className: "num", cell: (r) => fmtDays(r.openP50) },
@@ -1033,10 +1329,28 @@ export async function renderMttr(host, params, _ctx) {
       ],
       rows,
     }));
-    slaHost.append(el("p", { class: "small muted" },
-      "Two denominators sit in this table and they are not interchangeable. \"Resolved in"
-      + " SLA\" is taken over what closed; \"Open past SLA\" is taken over what is still"
-      + " running. A single SLA percentage over everything would be neither."));
+  }
+
+  /**
+   * The `meter--stat` that goes beside a rate — or nothing at all where there is no rate.
+   *
+   * The decision is `meterPctFor` and lives at module scope, pure, because `meter(null)` fills
+   * to 0% and a 0% track beside the words "not measured" is a confident zero in picture form.
+   * `decorative` because the percentage is printed next to it — `ui/data.js`'s own contract
+   * for a meter whose figure is already in words.
+   */
+  function rateMeter(rate) {
+    const pct = meterPctFor(rate);
+    return pct === null ? null : meter(pct, { className: "meter--stat", decorative: true });
+  }
+
+  /** `rateCell` with the meter folded in — the shared cell, plus this page's third encoding. */
+  function withMeter(rate) {
+    const cell = rateCell(rate);
+    const bar = rateMeter(rate);
+    if (bar) cell.insertBefore(bar, cell.childNodes[1] || null);
+    cell.className = "rate-with-meter";
+    return cell;
   }
 
   // ------------------------------------------------------- open findings by age
@@ -1059,7 +1373,19 @@ export async function renderMttr(host, params, _ctx) {
     // this one — these bars are fixed at 7/30/90 days and consume no window at all. It has
     // moved to "SLA window consumed", where the words and the figure agree. "sla-target"
     // stays where it was, on the "SLA by severity" table above.
-    agingHost.append(sectionLabel("Open findings by age"));
+    // The 62-word method note that used to close this section is here now. It says what the
+    // bars are OF (open findings only, aged from first_seen to now) and what they are NOT (a
+    // resolved finding stopped ageing and belongs to the survival curve) — a definition of the
+    // population, not a figure, so the heading is where it belongs. `vm.denominator` is the
+    // full origin sentence, unchanged and still pinned by test/mttrAging.test.js; the compact
+    // form of the same two counts is under the canvas.
+    agingHost.append(sectionLabel("Open findings by age", {
+      lines: [
+        "Open findings only, aged from first_seen to now — a resolved finding stopped ageing"
+        + " and its lifetime is the survival curve's subject, not this one's.",
+        vm.denominator,
+      ],
+    }));
     if (!vm.show) {
       agingHost.append(emptyState(
         "No open findings to age yet.",
@@ -1072,7 +1398,13 @@ export async function renderMttr(host, params, _ctx) {
       "aria-label": "Open findings by age bucket and severity",
     });
     const card = el("section", { class: "chart-card" },
-      el("p", { class: "chart-note" }, vm.denominator),
+      // BOTH COUNTS, NO SENTENCE. "N open with a readable age" is the denominator and
+      // "M undated" is the population the bars cannot hold — the second is an honesty
+      // statement and stays on the surface as a number and the word for it (R2), while the
+      // 55-word origin sentence it came from is a line on the heading above.
+      el("p", { class: "chart-note" },
+        fmtCount(vm.totalOpen) + " open with a readable age"
+        + (vm.unaged > 0 ? " · " + fmtCount(vm.unaged) + " undated" : "")),
       el("div", { class: "chart-box" }, canvas),
       chartTable({
         canvas,
@@ -1101,17 +1433,29 @@ export async function renderMttr(host, params, _ctx) {
       }));
     agingHost.append(card);
 
-    agingHost.append(el("ul", { class: "small muted" },
-      ...vm.edges.map((e) => el("li", {}, e.sentence))));
-    agingHost.append(el("p", { class: "small muted" },
-      "Open findings only, aged from first_seen to now — a resolved finding stopped ageing"
-      + " and its lifetime is the survival curve's subject, not this one's."
-      + (vm.unaged > 0
-        ? " " + fmtCount(vm.unaged) + " open " + pluralize(vm.unaged, "finding")
-          + (vm.unaged === 1 ? " carries" : " carry")
-          + " no first-seen date; they are counted here in words and drawn in no bar, because"
-          + " an undated finding is not a young one."
-        : "")));
+    // ONE LEGEND LINE INSTEAD OF SIX SENTENCES.
+    //
+    // What was here: an unordered list of one sentence per severity, each ~22 words, each
+    // saying the same thing about a different deadline — "HIGH deadline 14 d falls inside the
+    // 8-30d bucket — that bucket is part in, part out, and everything to its right is late."
+    // Six of those is ~130 words of near-identical prose whose only varying content is a
+    // severity name and a number, which is the definition of a table drawn as paragraphs.
+    //
+    // What replaces it: the numbers themselves, in the same order the bars are stacked, read
+    // against the bucket labels the chart's own x axis already prints. "MEDIUM 30 d" beside a
+    // bucket labelled "8-30d" places the edge exactly; "HIGH 14 d" places it inside one. The
+    // `sla-edge` tip carries what the sentences said in general (a deadline rarely lands on a
+    // boundary; a rule is drawn only where every severity shares an exact edge), and the
+    // chartTable's own "Past SLA for" column carries the per-bucket verdict row by row.
+    //
+    // NOTHING IS HARD-CODED: `e.target` is whatever the payload's `slaTargets` holds, so a
+    // deadline edited in Settings moves this line with it. A severity with no target says so
+    // rather than being dropped — an absent deadline is why that severity has no edge at all.
+    const legend = slaEdgeLegend(vm.edges);
+    if (legend) {
+      agingHost.append(el("p", { class: "small muted" },
+        tipLabel("SLA edges", { term: "sla-edge" }), ": ", legend));
+    }
 
     loadCharts().then((charts) => {
       if (!live) return;
@@ -1160,7 +1504,19 @@ export async function renderMttr(host, params, _ctx) {
     // THE BAND, NOT THE WALL — "SLA by severity" above reads the deadline per severity
     // (term: "sla-target"); this is the same deadline read as a DISTRIBUTION, which is what
     // "sla-band" defines.
-    slaConsumedHost.append(sectionLabel("SLA window consumed", { term: "sla-band" }));
+    slaConsumedHost.append(sectionLabel("SLA window consumed", {
+      term: "sla-band",
+      // What normalising by the row's OWN window buys, and why this axis needs no SLA rule.
+      // The axis key itself ("Bucket k is time used; 9−k is time left") stays on the surface
+      // in `slaConsumedCaption`, which is also where the two counts that are NOT drawn are
+      // stated — so it is deliberately not restated here.
+      lines: [
+        "A 3-day CRITICAL and a 39-day LOW stand in the same bar: each is placed by the"
+        + " fraction of its OWN deadline it has used, not by its age.",
+        "Every bar drawn is inside its own window, which is why this axis carries no SLA rule"
+        + " the way the age chart above can.",
+      ],
+    }));
     // NO SECTION BODY AT ALL rather than an empty state: "no open findings with a window"
     // would be a measurement, and a payload with no block never measured anything. Mirrors
     // renderAging's `vm.show` gate, which is also what covers the first run.
@@ -1187,11 +1543,11 @@ export async function renderMttr(host, params, _ctx) {
       "aria-label": "Open findings by tenth of their SLA window consumed",
     });
     slaConsumedHost.append(el("section", { class: "chart-card" },
+      // One clause: the count and what it is a count OF. The rest of the sentence described
+      // the axis, which is the heading's job now.
       el("p", { class: "chart-note" },
         fmtCount(vm.drawn) + " open " + pluralize(vm.drawn, "finding")
-        + " still inside " + (vm.drawn === 1 ? "its" : "their") + " window, placed by the"
-        + " tenth of it " + (vm.drawn === 1 ? "it has" : "they have") + " consumed and split"
-        + " by severity."),
+        + " still inside " + (vm.drawn === 1 ? "its" : "their") + " window"),
       el("div", { class: "chart-box" }, canvas),
       chartTable({
         canvas,
@@ -1228,7 +1584,13 @@ export async function renderMttr(host, params, _ctx) {
   function renderBuckets(mttr) {
     const view = resolutionBucketView(mttr && mttr.remediation && mttr.remediation.buckets);
     clear(bucketHost);
-    bucketHost.append(sectionLabel("Time to close"));
+    bucketHost.append(sectionLabel("Time to close", {
+      term: "censoring",
+      lines: [
+        "Resolved lifecycles only. Open findings are not in this distribution at any bucket —"
+        + " they are in the curve above, as censored observations.",
+      ],
+    }));
     if (!view.show || !view.total) {
       bucketHost.append(emptyState(
         "Nothing has closed yet.",
@@ -1259,20 +1621,29 @@ export async function renderMttr(host, params, _ctx) {
       ],
       rows: view.rows,
     }));
+    // The one clause that is a fact about the FIGURES rather than about the method: what this
+    // table's shares are taken over. The rest of the old note is on the heading.
     bucketHost.append(el("p", { class: "small muted" },
-      "Resolved lifecycles only. Open findings are not in this distribution at any bucket —"
-      + " they are in the curve above, as censored observations."));
+      fmtCount(view.total) + " resolved " + pluralize(view.total, "lifecycle") + " only"));
   }
 
   // ------------------------------------------------------------------- the two clocks
 
+  /**
+   * The second clock — and `view.note` printed ONCE.
+   *
+   * It was printed up to three times on one page: under the empty state, under the
+   * not-populated state, and under the populated KPI row. All three are the same 50-word
+   * paragraph explaining why this section says "SCA only", which is what the HEADING already
+   * says in two words. So it is a line on the heading now, on every path, and the section
+   * body carries figures.
+   */
   function renderClocks(mttr) {
     const view = actionableClockView(mttr);
     clear(clockHost);
-    clockHost.append(sectionLabel(view.heading, { term: "two-clocks" }));
+    clockHost.append(sectionLabel(view.heading, { term: "two-clocks", lines: [view.note] }));
     if (!view.show) {
       clockHost.append(emptyState("No actionable clock to show yet."));
-      clockHost.append(el("p", { class: "small muted" }, view.note));
       return;
     }
     if (!view.populated) {
@@ -1281,7 +1652,6 @@ export async function renderMttr(host, params, _ctx) {
         "It starts counting the day a fixed version exists for a dependency finding, so it"
         + " needs a sync that saves at least one SCA row.",
       ));
-      clockHost.append(el("p", { class: "small muted" }, view.note));
       return;
     }
 
@@ -1307,33 +1677,73 @@ export async function renderMttr(host, params, _ctx) {
     ));
     clockHost.append(row);
 
-    clockHost.append(el("p", { class: "small muted" },
+    // `.rate-with-meter`, not a bare paragraph: `.meter` is `display: block` (a percentage
+    // width on an inline box is ignored, which is why), so dropped into a `<p>` it takes a
+    // line of its own and the denominator falls below the figure it belongs to.
+    clockHost.append(el("p", { class: "small muted rate-with-meter" },
       "Coverage of this clock: ",
       el("span", { class: "num" }, view.coverage.text),
-      " ",
-      denominatorNode(view.coverage),
-      "."));
-    clockHost.append(el("p", { class: "small muted" }, view.note));
+      rateMeter(view.coverage),
+      denominatorNode(view.coverage)));
 
-    if (view.segments) {
-      const s = view.segments;
-      clockHost.append(el("p", { class: "small muted" },
-        "The vendor-wait population divides as: " + fmtCount(s.events) + " fixes observed ("
-        + fmtCount(s.zeroAtOrigin) + " of them already available at detection), "
-        + fmtCount(s.censored) + " still open with no fix, " + fmtCount(s.closedBeforeFix)
-        + " closed before any fix was seen, and " + fmtCount(s.unmeasured)
-        + " with no readable origin — outside the estimate entirely rather than counted as"
-        + " zero."));
+    if (view.segments) clockHost.append(vendorWaitBar(view.segments));
+  }
+
+  /**
+   * How the vendor-wait population divides — as a bar, because it is a division.
+   *
+   * WHAT IT REPLACES: one 50-word sentence carrying five counts in a row. Five figures inside
+   * a sentence is the shape a reader has to parse serially and cannot compare; the same five
+   * as one bar with a legend is read in a glance and still states every count in words.
+   *
+   * THE FOURTH SEGMENT IS HATCHED BECAUSE IT IS NOT A MEASUREMENT. `unmeasured` counts rows
+   * with no readable origin — outside the estimate entirely rather than counted as zero — so
+   * it is passed as this value's own `unknowns` entry, which is `axisBar`'s one mark for
+   * "nothing established this". `axisSegments` is what turns the reading into shares; nothing
+   * here re-derives them.
+   *
+   * `zeroAtOrigin` IS NOT A SEGMENT, and that is arithmetic rather than taste: it is a SUBSET
+   * of the fixes observed (a fix that already existed the day the finding was detected), so
+   * drawing it beside them would double-count the population the shares are taken over. It
+   * keeps its own line under the legend, in words, with its number.
+   */
+  function vendorWaitBar(s) {
+    const reading = vendorWaitReading(s);
+    const bar = axisBar({ values: reading.values, unit: "SCA lifecycles" });
+    bar.paint(axisSegments(reading, reading.values));
+    const box = el("div", {},
+      el("div", { class: "kpi-label" },
+        tipLabel("How the vendor wait divides", {
+          term: "awaiting-fix",
+          lines: [
+            "The population the wait-for-a-vendor estimate was taken over, split by how each"
+            + " finding left it.",
+            "The hatched part is not a measurement: those rows carry no readable origin and"
+            + " sit outside the estimate rather than being counted as a zero-day wait.",
+          ],
+        })),
+      bar);
+    if (num(s.zeroAtOrigin, 0) > 0) {
+      box.append(el("p", { class: "small muted" },
+        fmtCount(s.zeroAtOrigin) + " of the fixes observed were already available at"
+        + " detection — a zero-length wait, not a missing one."));
     }
+    return box;
   }
 
   // ---------------------------------------------------------------- half-life over time
 
-  function renderTrend(trends) {
-    const points = (trends && Array.isArray(trends.trend) ? trends.trend : [])
-      .filter((p) => p && p.date);
+  function renderTrend(points) {
     clear(trendHost);
-    trendHost.append(sectionLabel("Half-life over time"));
+    trendHost.append(sectionLabel("Half-life over time", {
+      term: "reconstructed",
+      lines: [
+        "The Kaplan-Meier median re-evaluated as of each date — the same series the sparkline"
+        + " beside the hero draws.",
+        "One point per saved scan, plus one per day of pre-scan history rebuilt from"
+        + " first-detection dates, where closures are under-counted.",
+      ],
+    }));
     if (points.length < 2) {
       trendHost.append(el("div", { class: "card" }, emptyState(
         "Not enough history to draw a line.",
@@ -1345,14 +1755,25 @@ export async function renderMttr(host, params, _ctx) {
     const reconstructed = points.filter((p) => p.reconstructed).length;
     const canvas = el("canvas", { "aria-label": "Remediation half-life over time, in days" });
     trendHost.append(el("section", { class: "chart-card" },
+      // THE LEGEND IS THE COUNT AND THE WORD, not the sentence. "reconstructed" is the
+      // honesty word and it stays on the surface with its number beside it (R2); what the
+      // word MEANS — rebuilt rather than observed, closures under-counted, read as not
+      // measured — is the `reconstructed` entry the trigger routes to.
+      //
+      // NOT "shaded = reconstructed": `charts.trendLine` draws one flat series and shades
+      // nothing, so a legend claiming a shading nobody can see would be a picture described
+      // rather than a picture drawn. `charts.js`'s `hatchPattern()` is the hook that would
+      // make that legend true, and wiring it is a change to a shipped chart rather than to
+      // this page's words.
       el("p", { class: "chart-note" },
-        "Kaplan-Meier median days, evaluated as of each date."
-        + (reconstructed
-          ? " The first " + fmtCount(reconstructed) + " "
-            + pluralize(reconstructed, "point") + " " + (reconstructed === 1 ? "is" : "are")
-            + " reconstructed from first-detection dates before the first saved scan, where"
-            + " closures are under-counted — read those as not measured."
-          : "")),
+        "Kaplan-Meier median days, as of each date. ",
+        reconstructed
+          ? tipLabel(
+            fmtCount(reconstructed) + " of " + fmtCount(points.length) + " points"
+            + " reconstructed",
+            { term: "reconstructed" },
+          )
+          : null),
       el("div", { class: "chart-box" }, canvas),
       // `points` — the same array the wrapper below plots — read once, into both.
       chartTable({

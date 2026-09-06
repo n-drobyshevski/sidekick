@@ -67,14 +67,89 @@ export function isNavChrome(node) {
     || node.classes.includes("nav-flyout");
 }
 
+/**
+ * A node's tag, upper-cased — and the reason this exists is a defect the first two runs of
+ * this walker shipped.
+ *
+ * `Element.tagName` upper-cases an HTML element and PRESERVES CASE on an element in the SVG
+ * namespace, so a real `<svg>` on a real page serialises as `"svg"`, never `"SVG"`. Every
+ * comparison in this file was written against the HTML spelling, so `isIconSvg` returned
+ * false for every SVG ever measured and the walker's `svg` bucket read 0 on all eleven
+ * routes — including `history`, which draws a 360px quarterly spiral. A zero that looked
+ * like "this page has no SVG" was really "this predicate has never once fired", which is the
+ * finding CLAUDE.md names twice ("a guard that fires on nothing"; "a zero has to prove it
+ * looked").
+ *
+ * Normalised HERE rather than in density.mjs's serializer, deliberately: the model is the
+ * half a test can hold, so the robustness belongs where the test can see it, and a hand-built
+ * fixture spelling it either way then means the same thing.
+ */
+export function tagOf(node) {
+  return node && typeof node === "object" && typeof node.tag === "string"
+    ? node.tag.toUpperCase()
+    : "";
+}
+
 /** An icon-sized <svg> — decoration, not a visual the wave is trying to grow. 20px is the
  *  plan's own threshold ("excluding icons <= 20px"); `rect` is populated only for
  *  svg/canvas nodes by the serializer, so its absence (an svg the serializer never measured)
  *  reads as "not icon-sized" rather than silently passing the exclusion either way. */
 export function isIconSvg(node) {
-  if (!node || node.tag !== "SVG") return false;
+  if (!node || tagOf(node) !== "SVG") return false;
   const r = node.rect;
   return !!r && r.width <= 20 && r.height <= 20;
+}
+
+/**
+ * What counts as a PICTURE on a page, and the one rule that keeps the total honest.
+ *
+ * MOVED HERE FROM density.mjs, because this file's own header states the split: that file
+ * "must not decide what counts as a word, a number, a prose block, or a diff — those are
+ * pure questions with pure answers". What counts as a VISUAL is the same kind of question,
+ * and leaving it on the Playwright side is why two of these eight buckets could sit dead
+ * through two runs with nothing to fail:
+ *
+ *   `svg`    never matched, because of the tag-case defect `tagOf` above records;
+ *   `spark`  looked for the class `spark`, and the shared component is `.sparkline` — the
+ *            rename is deliberate and documented at length (gas_shared/ui/sparkline.js:
+ *            `gas` already owns `.spark` for a bordered card), so this predicate was reading
+ *            for a class that by design does not exist.
+ *
+ * ONE NODE IS COUNTED ONCE. The buckets used to be independent counts summed into `total`,
+ * which was harmless only for as long as no visual was BOTH an `<svg>` and a named class —
+ * and a sparkline is exactly that. So the named-class buckets come first and the two element
+ * buckets are last, with `svg` explicitly declining anything a named bucket already claimed.
+ * A double count would show up as the wave inventing a picture it did not draw.
+ */
+const NAMED_VISUAL_CLASSES = ["meter", "sevbar", "axis-bar", "isotype", "quad", "sparkline"];
+
+function hasNamedVisual(node) {
+  return !!node && Array.isArray(node.classes)
+    && NAMED_VISUAL_CLASSES.some((c) => node.classes.includes(c));
+}
+
+const hasClass = (name) => (n) => !!n && Array.isArray(n.classes) && n.classes.includes(name);
+
+/** One list, not two: the all-zero fallback shape density.mjs uses for a route that never
+ *  settled is DERIVED from this, so a bucket added here cannot drift out of sync with it. */
+export const VISUAL_PREDICATES = [
+  ["meter", hasClass("meter")],
+  ["sevbar", hasClass("sevbar")],
+  ["axisBar", hasClass("axis-bar")],
+  ["isotype", hasClass("isotype")],
+  ["quad", hasClass("quad")],
+  ["spark", hasClass("sparkline")],
+  ["canvas", (n) => tagOf(n) === "CANVAS"],
+  ["svg", (n) => tagOf(n) === "SVG" && !isIconSvg(n) && !hasNamedVisual(n)],
+];
+
+export function countVisuals(tree) {
+  const visuals = { total: 0 };
+  for (const [name, pred] of VISUAL_PREDICATES) {
+    visuals[name] = tree ? countVisible(tree, pred) : 0;
+    visuals.total += visuals[name];
+  }
+  return visuals;
 }
 
 /**

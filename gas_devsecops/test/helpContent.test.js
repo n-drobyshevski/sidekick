@@ -36,6 +36,12 @@ const EXPECTED_IDS = [
   // entry behind them. (No quoted ids in this comment: test/pagesHelp.test.js reads this
   // array as TEXT and would take one for a fourth entry.)
   "compaction", "sealed", "episode",
+  // Wave A's three. The claim this array makes is "the book holds exactly these ids", so it
+  // GROWS with the book and never shrinks: `movement` is what the Executive aside's method
+  // sentence became, `fix-next` the ranking rule that was a 52-word lede above the ranked
+  // list, and `sla-edge` what the six per-severity edge sentences under the age chart became
+  // once the legend beside them started printing the targets themselves.
+  "movement", "fix-next", "sla-edge",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164

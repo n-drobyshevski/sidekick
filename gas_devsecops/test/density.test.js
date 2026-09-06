@@ -9,9 +9,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  collectProseBlocks, countNumericTokens, countVisible, countWords, diffReport, diffRoute,
-  extractText, formatDiffTable, formatTable, isClosedDetails, isHiddenAttr, isIconSvg,
-  isSrOnly, overflowSummary, parsePages, PROSE_MIN_WORDS,
+  collectProseBlocks, countNumericTokens, countVisible, countVisuals, countWords, diffReport,
+  diffRoute, extractText, formatDiffTable, formatTable, isClosedDetails, isHiddenAttr,
+  isIconSvg, isSrOnly, overflowSummary, parsePages, PROSE_MIN_WORDS, tagOf,
 } from "../dev/densityModel.mjs";
 
 // ============================================================================================
@@ -310,6 +310,111 @@ describe("isIconSvg()", () => {
 
   it("an <svg> the serializer never measured (no rect) is not treated as an icon either way", () => {
     expect(isIconSvg({ tag: "SVG" })).toBe(false);
+  });
+
+  // THE DEFECT THIS FILE MISSED FOR TWO RUNS. Every fixture above spells the tag the way an
+  // HTML element reports it. `Element.tagName` PRESERVES CASE for an element in the SVG
+  // namespace, so a real `<svg>` serialises as "svg" — and this predicate, written against
+  // the HTML spelling, returned false for every SVG on every page the walker has ever
+  // measured. The tests passed the whole time, because every fixture was hand-typed in the
+  // spelling the code expected.
+  it("reads a live page's lower-case svg tag, not only a hand-typed \"SVG\"", () => {
+    expect(isIconSvg({ tag: "svg", rect: { width: 16, height: 16 } })).toBe(true);
+    expect(isIconSvg({ tag: "svg", rect: { width: 220, height: 40 } })).toBe(false);
+  });
+});
+
+describe("tagOf() — the normalisation the SVG namespace forces", () => {
+  it("upper-cases whatever the serializer handed over", () => {
+    expect(tagOf({ tag: "svg" })).toBe("SVG");
+    expect(tagOf({ tag: "DIV" })).toBe("DIV");
+  });
+
+  it("answers an empty string rather than throwing for a text node or a missing tag", () => {
+    expect(tagOf("some text")).toBe("");
+    expect(tagOf(null)).toBe("");
+    expect(tagOf({})).toBe("");
+  });
+
+  // PERTURBATION: the pre-fix comparison, reproduced inline against the shape a live page
+  // actually produces.
+  it("is not a vacuous guard — the bare === comparison misses every real SVG", () => {
+    const live = { tag: "svg", classes: ["sparkline"], rect: { width: 220, height: 40 } };
+    expect(live.tag === "SVG").toBe(false);
+    expect(tagOf(live) === "SVG").toBe(true);
+  });
+});
+
+// ============================================================================================
+//  countVisuals — what counts as a PICTURE, and the rule that keeps the total honest
+// ============================================================================================
+
+describe("countVisuals() counts every picture once, and the right ones", () => {
+  const wrap = (...children) => ({ tag: "MAIN", classes: [], children });
+  const node = (tag, classes, rect) => ({ tag, classes, rect, children: [] });
+
+  it("counts a canvas, a meter, a sevbar, an axis bar, an isotype and a quad", () => {
+    const v = countVisuals(wrap(
+      node("CANVAS", [], { width: 600, height: 240 }),
+      node("SPAN", ["meter", "meter--stat"]),
+      node("DIV", ["sevbar", "sevbar--lg"]),
+      node("DIV", ["axis-bar"]),
+      node("SPAN", ["isotype"]),
+      node("TABLE", ["quad"]),
+    ));
+    expect(v).toMatchObject({
+      canvas: 1, meter: 1, sevbar: 1, axisBar: 1, isotype: 1, quad: 1, spark: 0, svg: 0,
+    });
+    expect(v.total).toBe(6);
+  });
+
+  // THE SECOND DEAD PREDICATE. It read `classes.includes("spark")`, and the shared component
+  // is `.sparkline` — a rename `gas_shared/ui/sparkline.js` documents at length, because
+  // `gas` already owns `.spark` for a bordered card. So the bucket asked for a class that by
+  // design does not exist, and answered 0 on a page that draws one.
+  it("counts the shared sparkline by the class it actually carries", () => {
+    const spark = node("svg", ["sparkline"], { width: 220, height: 40 });
+    expect(countVisuals(wrap(spark)).spark).toBe(1);
+    // PERTURBATION: the pre-fix predicate, inline.
+    expect(spark.classes.includes("spark")).toBe(false);
+  });
+
+  it("counts a sparkline ONCE — as a spark, not also as an svg", () => {
+    // A sparkline is both an `<svg>` and a named visual, and it is the first thing in this
+    // register that is both. Independent buckets summed into `total` would report two
+    // pictures where a reader sees one.
+    const v = countVisuals(wrap(node("svg", ["sparkline"], { width: 220, height: 40 })));
+    expect(v.spark).toBe(1);
+    expect(v.svg).toBe(0);
+    expect(v.total).toBe(1);
+  });
+
+  it("counts a bare large svg (history's quarterly spiral) as a picture", () => {
+    const v = countVisuals(wrap(node("svg", ["spiral"], { width: 360, height: 360 })));
+    expect(v.svg).toBe(1);
+    expect(v.total).toBe(1);
+  });
+
+  it("does not count an icon-sized svg", () => {
+    const v = countVisuals(wrap(node("svg", ["ui-icon"], { width: 16, height: 16 })));
+    expect(v.total).toBe(0);
+  });
+
+  it("skips a picture inside a closed <details> or an .sr-only, like every other count", () => {
+    const hiddenChart = {
+      tag: "DETAILS", classes: [], open: false,
+      children: [node("CANVAS", [], { width: 600, height: 240 })],
+    };
+    expect(countVisuals(wrap(hiddenChart)).total).toBe(0);
+  });
+
+  it("answers an all-zero shape for a route that never settled", () => {
+    const v = countVisuals(null);
+    expect(v.total).toBe(0);
+    // Every bucket present, so a failed route's row lines up with a measured one's.
+    for (const key of ["canvas", "svg", "meter", "sevbar", "axisBar", "isotype", "quad", "spark"]) {
+      expect(v[key], key).toBe(0);
+    }
   });
 });
 
