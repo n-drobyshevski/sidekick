@@ -65,6 +65,7 @@ import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.j
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
 import { relativeAge } from "../../gas_shared/ui/figures.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
+import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
 
@@ -323,3 +324,16 @@ registerSyncCaptionContract(base);
 // exist because no `src/server/**` module here imports gas_shared (tsconfig has no `allowJs`),
 // and this table is what holds them to the same rule.
 registerHubUrlContract({ ...base, normalizeHubUrl });
+
+// =========================================================================================
+//  The scope-walk chip: one mark per register, not two
+// =========================================================================================
+//
+// The two halves of the defect live in different files — a fixed pixel box in base.css and a
+// text glyph put into it by this app's own row builder — so the contract reads both. See the
+// contract's header for the measured overflow (an 8px box holding 21px of content).
+registerScanStepContract({
+  ...base,
+  progressSrc: readFileSync(new URL("../src/client/js/syncProgress.js", import.meta.url), "utf8"),
+  baseCss: readFileSync(new URL("../../gas_shared/styles/base.css", import.meta.url), "utf8"),
+});
