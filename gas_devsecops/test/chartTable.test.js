@@ -143,15 +143,26 @@ describe("every chart canvas ships a data-table alternative", () => {
   // function that builds its table, and an approximate function-body parser over arrow
   // chains and `.then()` callbacks would be a second, worse parser to maintain. A file that
   // gained a canvas without a table fails here whichever function it was added to.
-  it("each page builds exactly one chartTable per canvas", () => {
+  // A CANVAS IS NO LONGER THE ONLY GRAPHIC THAT OWES A TABLE, and that is what this count
+  // was pinned to. The claim — "a picture of the figures never ships without the figures" —
+  // is unchanged; what changed is that `pages/history.js` now draws one graphic that is not a
+  // canvas at all: the experimental time spiral is inline SVG built with `svgEl("svg", …)`,
+  // and it hangs the same `chartTable` off itself (`chartTable`'s `canvas` argument only ever
+  // calls `setAttribute("aria-details", …)`, so an SVG is as good a host as a canvas).
+  // Measured: with the equality left at canvases only, `history.js builds 2 canvas(es) and 3
+  // chartTable(s)` — a page FAILING for shipping an extra long description. So the
+  // denominator is graphics, not canvases; a canvas or an SVG added with no table still
+  // fails, which is the failure this test exists for.
+  it("each page builds exactly one chartTable per graphic (canvas or inline SVG)", () => {
     for (const file of PAGE_FILES) {
       const src = PAGE_CODE[file];
       const canvases = count(src, /el\("canvas"/g);
+      const svgs = count(src, /svgEl\("svg"/g);
       const tables = count(src, /\bchartTable\(/g);
       expect(
         tables,
-        `${file} builds ${canvases} canvas(es) and ${tables} chartTable(s)`,
-      ).toBe(canvases);
+        `${file} builds ${canvases} canvas(es), ${svgs} inline SVG(s) and ${tables} chartTable(s)`,
+      ).toBe(canvases + svgs);
     }
   });
 
@@ -170,8 +181,13 @@ describe("every chart canvas ships a data-table alternative", () => {
     // 9 -> 10 (W2, the open-findings-by-age stack). The tenth canvas is the aging bar in
     // mttr.js, under "Open findings by age" between the SLA table and the time-to-close
     // distribution — one `el("canvas"` literal, one drawn chart, one `chartTable` beside it.
+    //
+    // 10 -> 11 (the SLA-window-consumed deciles). The eleventh canvas is in mttr.js directly
+    // under the aging stack: the SAME open population measured against each finding's own
+    // deadline instead of the shared 7/30/90 edges, so it is a second chart rather than a
+    // reshape of the tenth. One `el("canvas"` literal, one `chartTable` beside it.
     const total = PAGE_FILES.reduce((n, f) => n + count(PAGE_CODE[f], /el\("canvas"/g), 0);
-    expect(total).toBe(10);
+    expect(total).toBe(11);
   });
 
   it("every chartTable call is handed the canvas it describes, so aria-details is wired", () => {

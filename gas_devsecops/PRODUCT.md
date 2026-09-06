@@ -1,7 +1,7 @@
 # PRODUCT — Wiz Sidekick DevSecOps
 
 > Sibling of [`../PRODUCT.md`](../PRODUCT.md). The register, the two desks, the brand
-> personality, the anti-references and the five design principles are **inherited
+> personality, the anti-references and the six design principles are **inherited
 > unchanged**. What differs is stated here. Where this file is silent, the shared document
 > governs.
 
@@ -23,9 +23,9 @@ interchangeable:
 
 That table is the reason the three are three pages rather than one list under a filter.
 
-### A sixth design principle: **a clock has to say where it started**
+### A seventh design principle: **a clock has to say where it started**
 
-The five shared principles hold. This register adds one, because its central number is a
+The six shared principles hold. This register adds one, because its central number is a
 duration and a duration is only as honest as its origin.
 
 Every remediation figure here states what it measured from and what it did with the rows it

@@ -22,6 +22,7 @@ import {
   groupPalette, tierPalette,
 } from "../charts.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { populationLine, slaConsumedCaption } from "./overviewModel.js";
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
   absent, clear, dataTable, el, emptyState, errorState, fmtDate, glossaryTip, kpiCard, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter, tip,
@@ -284,6 +285,13 @@ export async function renderOverview(main, params, ctx) {
       mini(median === null || median === undefined ? absent() : fmtAgeDays(median),
         "Median open age"),
     ));
+    // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the severity gate the
+    // last scan applied, and the base filters every query carries. Quiet on purpose: it is
+    // provenance, not a figure, and it is the only place on the page that says the register is
+    // a filtered slice rather than the fleet. Null (an older cached payload with no
+    // `population` block) draws nothing rather than half a sentence.
+    const provenance = loaded ? populationLine(insights) : null;
+    if (provenance) heroHost.append(el("p", { class: "small muted" }, provenance.text));
   }
 
   function renderInsights(insights) {
@@ -306,6 +314,7 @@ export async function renderOverview(main, params, ctx) {
     renderFunnel(insights);
     renderTiers(insights);
     renderAging(insights);
+    renderSlaConsumed(insights);
     renderMovement(insights);
     renderConcentration(insights);
     // The multi-dimension group explorer (group-by controls + pie + trend + expandable tree)
@@ -557,6 +566,60 @@ export async function renderOverview(main, params, ctx) {
           + "carrying the 90+ day backlog.",
       }),
     }, "Oldest open findings →"));
+  }
+
+  /** The same open findings against their OWN deadline: how much of each one's SLA window has
+   *  been used, in tenths. Bucket k is time used, 9-k is time left.
+   *
+   *  This is the chart the aging bars above cannot be. Their edges are fixed at 7/30/90 days
+   *  while the target varies fivefold across severities, which is why the SLA hairline is only
+   *  drawn when a single severity is in scope (`slaEdgeIndex`) — one line cannot stand for five
+   *  deadlines. Normalising by the row's own window removes the problem instead of hiding it:
+   *  every severity shares one axis, and no edge is needed because EVERY DRAWN BAR IS INSIDE
+   *  THE WINDOW. Hence no `slaEdgeAfter` here.
+   *
+   *  The stack is by SEVERITY, not by tier, and that is the point rather than an oversight:
+   *  severity is what picks the denominator, so the colour on this chart names the deadline
+   *  each bar was measured against. `tierPalette()` would colour by a variable this figure
+   *  does not use.
+   *
+   *  Two populations are counted and not drawn, and the caption says so — a finding past its
+   *  window has no tenth left to plot, and one with no age or no target was never measurable.
+   *  Neither is a zeroth tenth. */
+  function renderSlaConsumed(insights) {
+    const consumed = insights.slaConsumed;
+    // A cached payload written before this block existed. No section at all rather than a
+    // heading over an empty state: "no open findings with a window" would be a measurement,
+    // and nothing here measured anything.
+    if (!consumed || !Array.isArray(consumed.labels)) return;
+    insightsHost.append(sectionLabel("SLA window consumed"));
+    const past = consumed.pastWindow && typeof consumed.pastWindow === "object"
+      ? Object.values(consumed.pastWindow) : [];
+    const anyPast = past.some((v) => typeof v === "number" && v > 0);
+    // A measured zero, unlike the case above: rows were read and none of them landed inside a
+    // window. Same empty-state pattern renderAging uses.
+    if (!consumed.totalOpen && !anyPast) {
+      insightsHost.append(emptyState("No open findings with a measurable SLA window."));
+      return;
+    }
+    const canvas = el("canvas", { id: "sla-consumed-chart" });
+    insightsHost.append(el("div", { class: "chart-card" },
+      el("h3", {}, "How much of the SLA window is used"),
+      el("div", { class: "small muted", style: "margin-bottom:8px" },
+        `${(consumed.totalOpen || 0).toLocaleString()} open findings still inside their window, `
+        + "placed by the tenth of it they have consumed and split by severity."),
+      el("div", { class: "chart-box" }, canvas),
+      el("p", { class: "chart-caption muted" }, slaConsumedCaption(consumed)),
+    ));
+    loadCharts().then((charts) => {
+      charts.stackedAgeBar(
+        canvas, consumed.labels, consumed.perSev, boot.palette,
+        "Open findings by tenth of their SLA window consumed, stacked by severity.",
+        {},
+      );
+    }).catch(() => {
+      chartUnavailable(canvas);
+    });
   }
 
   /** The SLA edge is only meaningful when one severity is in scope: the buckets are fixed at

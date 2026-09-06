@@ -473,6 +473,7 @@ export async function renderProgram(host, params, _ctx) {
     if (!first) return;
     noticeHost.append(firstRunNotice({
       synced: !!boot.latestSync,
+      at: boot.latestSync ? boot.latestSync.ts : null,
       hint: "Coverage and efficiency are both taken over findings the risk rule has scored,"
         + " so this page waits on a sync that saves rows for it to score. Run one with the"
         + " Run sync button in the rail.",

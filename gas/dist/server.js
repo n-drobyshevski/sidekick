@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "8077748f9c01" : "dev";
+  var BUILD_ID = true ? "dd2e89e4e59e" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -1392,6 +1392,65 @@ var Server = (() => {
     return counts;
   }
 
+  // src/domain/compaction.ts
+  var CHECKPOINT_VERSION = 1;
+  function serializeSeverities(sevs) {
+    if (sevs === null || sevs === void 0) return null;
+    const vals = /* @__PURE__ */ new Set();
+    for (const s of sevs) {
+      if (typeof s === "string") {
+        const n = normalizeSeverity(s);
+        if (SELECTABLE_SEVERITIES.includes(n)) vals.add(n);
+      }
+    }
+    if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;
+    const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
+    return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
+  }
+  function parseSeverities(text) {
+    if (typeof text !== "string" || !text) return null;
+    let vals;
+    try {
+      vals = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(vals)) return null;
+    const chosen = new Set(
+      vals.filter((v) => typeof v === "string").map(normalizeSeverity)
+    );
+    const out = SEVERITY_ORDER.filter((s) => chosen.has(s));
+    return out.length ? out : null;
+  }
+  function selectSealCandidates(rows, cutoffMs) {
+    const flatIds = rows.filter((r) => r.shape === "flat").map((r) => r.scan_id);
+    const protectedIds = new Set(flatIds.slice(-MIN_UNSEALED_FLAT_SCANS));
+    const candidates = [];
+    for (const r of rows) {
+      if (protectedIds.has(r.scan_id)) break;
+      const ts = parseTs(r.ts);
+      if (ts === null || ts > cutoffMs) break;
+      candidates.push(r);
+    }
+    return candidates;
+  }
+  function statsEqual(a, b) {
+    if (isMissing(a) && isMissing(b)) return true;
+    if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+      const ka = Object.keys(a);
+      const kb = Object.keys(b);
+      if (ka.length !== kb.length || !ka.every((k) => kb.includes(k))) return false;
+      return ka.every((k) => statsEqual(a[k], b[k]));
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+      return a.length === b.length && a.every((x, i) => statsEqual(x, b[i]));
+    }
+    return a === b;
+  }
+  function isMissing(v) {
+    return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
+  }
+
   // src/domain/program.ts
   var DAY_MS = 864e5;
   function isOpen(status) {
@@ -1665,11 +1724,180 @@ var Server = (() => {
       monthsCounted: counted.length
     };
   }
+  var HINDCAST_SCANS_CAP = 24;
+  function capacityRowsAsOf(rows, asOfMs) {
+    const out = [];
+    for (const row of rows) {
+      const first = parseTs(row.first_seen);
+      if (first === null || first > asOfMs) continue;
+      const resolved = parseTs(row.resolved_at);
+      out.push(resolved !== null && resolved > asOfMs ? { ...row, resolved_at: null } : row);
+    }
+    return out;
+  }
+  function capacityHindcast(rows, scans, options) {
+    var _a, _b, _c;
+    const cap = (_a = options.scansCap) != null ? _a : HINDCAST_SCANS_CAP;
+    const horizonMs = (_b = options.now) != null ? _b : Date.now();
+    const asOfMs = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => b - a).slice(0, cap);
+    const dated = rows.map((r) => ({
+      ...r,
+      first_seen: parseTs(r.first_seen),
+      resolved_at: parseTs(r.resolved_at)
+    }));
+    const realised = capacityByMonth(dated, scans, { ...options, maxMonths: void 0 });
+    const netByMonth = {};
+    for (const m of realised.months) netByMonth[m.month] = m.netPct;
+    const out = [];
+    for (const ts of asOfMs) {
+      const followKey = nextMonthKey(monthKey(ts));
+      if (monthStartMs(nextMonthKey(followKey)) > horizonMs) continue;
+      const scansUpTo = scans.filter((s) => {
+        const t = parseTs(s["ts"]);
+        return t !== null && t <= ts;
+      });
+      const verdict = capacityByMonth(capacityRowsAsOf(dated, ts), scansUpTo, {
+        ...options,
+        now: ts,
+        maxMonths: void 0
+      }).verdict;
+      const realisedNetPct = (_c = netByMonth[followKey]) != null ? _c : null;
+      out.push({
+        // Finite by construction — `parseTs` refused everything that was not a real timestamp.
+        asOf: toIso(ts),
+        verdict,
+        realisedNetPct,
+        agreed: agreedWith(verdict, realisedNetPct)
+      });
+    }
+    return {
+      rows: out,
+      comparable: out.filter((r) => r.agreed !== null).length,
+      // "Falling behind" and then the ground was GAINED — graded by the same `verdictOf` the
+      // page's own pill uses, so "a gain" cannot mean one thing here and another there.
+      counterperformative: out.filter(
+        (r) => r.verdict === "falling-behind" && r.realisedNetPct !== null && verdictOf(r.realisedNetPct) === "gaining"
+      ).length,
+      scansConsidered: asOfMs.length,
+      scansCap: cap
+    };
+  }
+  function agreedWith(verdict, netPct) {
+    if (verdict === null || netPct === null) return null;
+    return verdictOf(netPct) === verdict;
+  }
   function observationWindowDays(rows, now) {
     const nowMs = now != null ? now : Date.now();
     const firsts = rows.map((r) => parseTs(r.first_seen)).filter((t) => t !== null);
     if (!firsts.length) return null;
     return (nowMs - minNum(firsts)) / DAY_MS;
+  }
+  function addCount(total, v, refused) {
+    if (typeof v !== "number" || !Number.isFinite(v)) {
+      refused.n += 1;
+      return total;
+    }
+    return total + v;
+  }
+  function inWindow(t, sinceMs, untilMs) {
+    return t !== null && t > sinceMs && t <= untilMs;
+  }
+  function movementDecomposition(rows, scans, window) {
+    var _a;
+    const sinceMs = parseTs(window.since);
+    const untilMs = parseTs(window.until);
+    if (sinceMs === null || untilMs === null || !(sinceMs < untilMs)) {
+      throw new Error(
+        "movementDecomposition: the window endpoints must be two parseable instants, since before until \u2014 got " + JSON.stringify(window)
+      );
+    }
+    const refused = { n: 0 };
+    let arrivals = 0;
+    let reopened = 0;
+    let scansInWindow = 0;
+    let skippedScans = 0;
+    let newestTs = null;
+    let newestScan = null;
+    for (const s of scans) {
+      if (s["shape"] === "grouped") continue;
+      const t = parseTs(s["ts"]);
+      if (t === null) {
+        skippedScans += 1;
+        continue;
+      }
+      if (!inWindow(t, sinceMs, untilMs)) continue;
+      scansInWindow += 1;
+      arrivals = addCount(arrivals, s["new_count"], refused);
+      reopened = addCount(reopened, s["reopened_count"], refused);
+      if (newestTs === null || t > newestTs) {
+        newestTs = t;
+        newestScan = s;
+      }
+    }
+    const gate2 = newestScan ? parseSeverities(newestScan["severities"]) : null;
+    const gateSet = gate2 && gate2.length ? new Set(gate2) : null;
+    let observed = 0;
+    let bounded = 0;
+    let unattributed = 0;
+    let outsideGate = 0;
+    let openAtSince = 0;
+    let openAtUntil = 0;
+    let unplacedRows = 0;
+    for (const row of rows) {
+      const first = parseTs(row.first_seen);
+      const resolved = parseTs(row.resolved_at);
+      if (inWindow(resolved, sinceMs, untilMs)) {
+        const src = String((_a = row.resolution_src) != null ? _a : "").trim().toLowerCase();
+        if (src === "api") observed += 1;
+        else if (src === "disappeared") bounded += 1;
+        else unattributed += 1;
+      }
+      if (gateSet && isOpen(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
+        outsideGate += 1;
+      }
+      if (first === null) {
+        unplacedRows += 1;
+        continue;
+      }
+      if (first <= sinceMs && (resolved === null || resolved > sinceMs)) openAtSince += 1;
+      if (first <= untilMs && (resolved === null || resolved > untilMs)) openAtUntil += 1;
+    }
+    const netChange = openAtUntil - openAtSince;
+    const identityGap = netChange - (arrivals - observed - bounded + reopened);
+    return {
+      arrivals,
+      observed,
+      bounded,
+      reopened,
+      outsideGate,
+      netChange,
+      measured: observed,
+      administrative: bounded,
+      unattributed,
+      identityGap,
+      identityHolds: identityGap === 0,
+      scansInWindow,
+      skippedScans,
+      partialCounts: refused.n,
+      unplacedRows,
+      sinceMs,
+      untilMs
+    };
+  }
+  function movementWindowScans(scans, minDays) {
+    const flat = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => a - b);
+    if (!flat.length) return { since: null, until: null, days: null, reason: "noScans" };
+    const until = flat[flat.length - 1];
+    const spanDays = Math.round((until - flat[0]) / DAY_MS * 10) / 10;
+    if (flat.length === 1) return { since: null, until, days: 0, reason: "oneScan" };
+    const cutoff = until - minDays * DAY_MS;
+    for (let i = flat.length - 2; i >= 0; i -= 1) {
+      const t = flat[i];
+      if (t <= cutoff) {
+        return { since: t, until, days: Math.round((until - t) / DAY_MS * 10) / 10, reason: null };
+      }
+    }
+    return { since: null, until, days: spanDays, reason: "tooClose" };
   }
 
   // src/domain/settingsLogic.ts
@@ -1883,6 +2111,18 @@ var Server = (() => {
   var MAX_PAGES = 1e3;
 
   // src/server/wizClient.ts
+  var BASE_FILTER_WORDS = [
+    "one Wiz project",
+    // projectIdV2
+    "virtual machines only",
+    // assetType
+    "OS-level detections",
+    // detectionMethod
+    "openssl, python and vim excluded",
+    // detailedNameV2.notEquals
+    "no representative-resource stand-ins"
+    // assetIsRepresentativeResource
+  ];
   var WizQueryError = class extends Error {
   };
   var WizDeltaFilterError = class extends WizQueryError {
@@ -3283,65 +3523,6 @@ var Server = (() => {
   }
   function recordEol(rec) {
     return rec["isOperatingSystemEndOfLife"] === true || isEndOfLifeName(rec["name"]);
-  }
-
-  // src/domain/compaction.ts
-  var CHECKPOINT_VERSION = 1;
-  function serializeSeverities(sevs) {
-    if (sevs === null || sevs === void 0) return null;
-    const vals = /* @__PURE__ */ new Set();
-    for (const s of sevs) {
-      if (typeof s === "string") {
-        const n = normalizeSeverity(s);
-        if (SELECTABLE_SEVERITIES.includes(n)) vals.add(n);
-      }
-    }
-    if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;
-    const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
-    return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
-  }
-  function parseSeverities(text) {
-    if (typeof text !== "string" || !text) return null;
-    let vals;
-    try {
-      vals = JSON.parse(text);
-    } catch {
-      return null;
-    }
-    if (!Array.isArray(vals)) return null;
-    const chosen = new Set(
-      vals.filter((v) => typeof v === "string").map(normalizeSeverity)
-    );
-    const out = SEVERITY_ORDER.filter((s) => chosen.has(s));
-    return out.length ? out : null;
-  }
-  function selectSealCandidates(rows, cutoffMs) {
-    const flatIds = rows.filter((r) => r.shape === "flat").map((r) => r.scan_id);
-    const protectedIds = new Set(flatIds.slice(-MIN_UNSEALED_FLAT_SCANS));
-    const candidates = [];
-    for (const r of rows) {
-      if (protectedIds.has(r.scan_id)) break;
-      const ts = parseTs(r.ts);
-      if (ts === null || ts > cutoffMs) break;
-      candidates.push(r);
-    }
-    return candidates;
-  }
-  function statsEqual(a, b) {
-    if (isMissing(a) && isMissing(b)) return true;
-    if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
-      const ka = Object.keys(a);
-      const kb = Object.keys(b);
-      if (ka.length !== kb.length || !ka.every((k) => kb.includes(k))) return false;
-      return ka.every((k) => statsEqual(a[k], b[k]));
-    }
-    if (Array.isArray(a) && Array.isArray(b)) {
-      return a.length === b.length && a.every((x, i) => statsEqual(x, b[i]));
-    }
-    return a === b;
-  }
-  function isMissing(v) {
-    return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
   }
 
   // src/domain/reconcile.ts
@@ -5448,6 +5629,40 @@ var Server = (() => {
     const lo = Math.floor(mid);
     const hi = Math.ceil(mid);
     return lo === hi ? ages[lo] : (ages[lo] + ages[hi]) / 2;
+  }
+  var SLA_DECILE_LABELS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  function slaConsumedDeciles(rows, slaTargets) {
+    var _a, _b;
+    const out = {
+      labels: [...SLA_DECILE_LABELS],
+      perSev: {},
+      pastWindow: {},
+      noWindow: 0,
+      totalOpen: 0
+    };
+    for (const row of rows) {
+      if (!isOpen3(row.status)) continue;
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) {
+        out.noWindow += 1;
+        continue;
+      }
+      const s = normalizeSeverity(row.severity);
+      const w = slaTargets[s];
+      if (typeof w !== "number" || !Number.isFinite(w) || w <= 0) {
+        out.noWindow += 1;
+        continue;
+      }
+      if (age >= w) {
+        out.pastWindow[s] = ((_a = out.pastWindow[s]) != null ? _a : 0) + 1;
+        continue;
+      }
+      const k = Math.min(9, Math.max(0, Math.floor(10 * age / w)));
+      const arr = (_b = out.perSev[s]) != null ? _b : out.perSev[s] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+      arr[k] += 1;
+      out.totalOpen += 1;
+    }
+    return out;
   }
 
   // src/domain/settingsImpact.ts
@@ -8661,6 +8876,25 @@ var Server = (() => {
       // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
       awaiting: awaitingVendorFix(baseVisible),
       aging: ageBuckets(baseVisible),
+      // The same open rows against their OWN deadline instead of the shared 7/30/90 edges: how
+      // much of each finding's SLA window it has used, in tenths. The targets come from the
+      // domain constant HERE rather than inside insights.ts, which keeps that function pure
+      // over its arguments — and the client is never sent the table (see `bootstrapCore`), so
+      // the bucketing has to happen on this side of the wire.
+      slaConsumed: slaConsumedDeciles(baseVisible, SLA_TARGETS),
+      // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow the register
+      // before a single figure is computed: the rows themselves (`inScope`), the severity gate
+      // THE LAST SCAN APPLIED — not the one settings hold now, which is why it is read off the
+      // scan row rather than off `severities` above — and the base Wiz filter every query
+      // carries. Each of them makes a count fall, and none of them can be published as a `0`:
+      // a zero is a measurement, and these are refusals to measure (CLAUDE.md, "The Outside").
+      // `parseSeverities` returns null for a full or absent gate, and null here means "all
+      // severities" — never an empty list, which the client would have to guess at.
+      population: {
+        inScope: baseVisible.length,
+        gate: latestFlat ? parseSeverities(latestFlat.severities) : null,
+        filters: BASE_FILTER_WORDS
+      },
       // Oldest open findings + 90+ backlog per asset / support group / domain, for the aging
       // panel's toggle. Capped at 100 (up from the old top-7) so the client can page through the
       // aged tail with prev/next controls — the whole set ships once and repaints client-side,
@@ -8726,7 +8960,13 @@ var Server = (() => {
       // fields, and the rebuilt page reads them unconditionally, so it must not be served.
       // The key gains riskRuleVersion for the same reason it does on the Program page: the
       // operator can change which signals classify a row, and every tier figure moves with it.
-      "insights4",
+      // "insights4" → "insights5": the payload gained `population` (in-scope count, the gate
+      // the last scan applied, the base filter words); a stale insights4 entry has none of it,
+      // and a half-drawn provenance line is worse than none.
+      // "insights5" → "insights6": the payload gained `slaConsumed` (open findings by tenth of
+      // their SLA window, plus the past-window and no-window counts that are not drawn); a
+      // stale insights5 entry has none of it and the section would render as a measured zero.
+      "insights6",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -9142,6 +9382,24 @@ var Server = (() => {
         highRiskOnly: true,
         maxMonths: 24
       }),
+      // The verdict's own track record, replayed against what happened next.
+      //
+      // HIGH-RISK, not whole-register, and that is the whole point of it: `capacityHighRisk`
+      // is the only capacity figure this page states as a verdict — the hero's pill reads
+      // `capacityHighRisk.verdict`, and `capacity.verdict` is never rendered as those three
+      // words anywhere. Hindcasting the whole-register series would publish a hit rate for a
+      // sentence nobody is shown.
+      //
+      // Cost measured on a synthetic 20k-row / 24-scan register, timed after the two
+      // capacityByMonth passes above so the paths are as warm as they are in production:
+      // 142 ms whole-register, 82 ms high-risk-only (636 ms before the domain layer parsed the
+      // register once instead of once per scan). The payload is cached for an hour, so this is
+      // a cache-miss cost; the cap stays at 24 scans.
+      capacityHindcast: capacityHindcast(capacityRows, scans, {
+        rule,
+        highRiskOnly: true,
+        scansCap: 24
+      }),
       observationDays: observationWindowDays(rows),
       rowCount: rows.length,
       // Named so the methodology block can state what was excluded before any of this counted.
@@ -9362,7 +9620,9 @@ var Server = (() => {
   var cachedProgramData = (p) => {
     var _a, _b;
     return cached(
-      "program1",
+      // "program1" -> "program2": the payload gained `capacityHindcast`; dataVersion persists
+      // across deploys, so bump the namespace or a stale hindcast-less entry outlives the ship.
+      "program2",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -9690,15 +9950,35 @@ var Server = (() => {
       severityCounts: cachedExecutiveSeverityCounts(p)
     }));
   }
+  var MOVEMENT_WINDOW_DAYS = 28;
+  function movementNoteFor(win) {
+    if (win.reason === "noScans") {
+      return "No per-finding scans are saved yet \u2014 nothing to decompose.";
+    }
+    if (win.reason === "oneScan") {
+      return "One scan only \u2014 a movement is a difference between two of them.";
+    }
+    return `No scan at least ${MOVEMENT_WINDOW_DAYS} days older than the latest one` + (win.days === null ? "" : ` \u2014 the saved scans span ${win.days} days`) + ".";
+  }
   function scanHistoryData() {
     var _a;
-    const scans = loadScanRows().slice().reverse();
+    const scanRows = loadScanRows();
+    const scans = scanRows.slice().reverse();
     const base = visibleBase(loadBaseRows());
     const open = base.filter((r) => r.status === "OPEN").length;
     const resolved = base.filter((r) => r.status === "RESOLVED").length;
     const { overall } = mttrFromLedger(base);
+    const win = movementWindowScans(scanRows, MOVEMENT_WINDOW_DAYS);
+    const movement2 = win.since !== null ? movementDecomposition(
+      base,
+      scanRows,
+      { since: win.since, until: win.until }
+    ) : null;
     return {
       scans,
+      movement: movement2,
+      movementWindow: win,
+      movementNote: movement2 ? null : movementNoteFor(win),
       kpis: {
         tracked: base.length,
         open,
@@ -9710,7 +9990,9 @@ var Server = (() => {
   var cachedScanHistoryData = () => (
     // "scanHistory" → "scanHistory2": the KPI band now drops no-fix findings when the toggle is
     // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
-    durablyCached("scanHistory2", { showNoFix: getShowNoFix2() }, scanHistoryData)
+    // "scanHistory2" → "scanHistory3": the payload carries the movement decomposition now, and a
+    // stale entry would serve the section's empty state over a window that is measurable.
+    durablyCached("scanHistory3", { showNoFix: getShowNoFix2() }, scanHistoryData)
   );
   function getScanHistory(_p) {
     return run(() => {

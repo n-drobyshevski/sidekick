@@ -27,6 +27,7 @@
 
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import {
   DEFAULT_PAGE_SIZE, absent, boundedDays, chartTable, chartTableModel, dataTable, days1,
   denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, heroStat,
@@ -71,9 +72,13 @@ export { boundedDays, pct1 };
  * saved nothing for THIS register still makes `synced` true, which is the whole point: "the
  * tenant answered and had nothing to report" is a different, true, claim from "nobody has
  * asked".
+ *
+ * `at` is `boot.latestSync.ts` straight through, unexamined — `firstRunNotice` (ui/feedback.js)
+ * is the one place that decides whether it is usable, so a malformed or missing value here
+ * degrades to the same undated-but-true sentence rather than this function guessing twice.
  */
-export function registerFirstRunView(rowCount, synced) {
-  return { show: num(rowCount, 0) === 0, synced: !!synced };
+export function registerFirstRunView(rowCount, synced, at) {
+  return { show: num(rowCount, 0) === 0, synced: !!synced, at };
 }
 
 /** EPSS is a probability, 0..1 off the wire; rendered as the percentage it names. */
@@ -533,14 +538,21 @@ export function registerRowsTable(spec) {
  * and no others. NO TOTAL COLUMN: a stacked total looks obvious and is not, because a null
  * bucket count would have to be summed as a zero to produce one, which is the exact move
  * `ui/figures.js` exists to refuse.
+ *
+ * `bucketLabel` NAMES THE X AXIS, and it is a parameter because this model outgrew age.
+ * `mttr.js`'s "SLA window consumed" hands it ten tenth-of-window labels; a first column
+ * headed "Age bucket" over "0".."9" would name a quantity the table does not hold, and this
+ * table is the non-visual reader's ONLY copy of the chart, so the wrong word there is the
+ * wrong figure rather than a cosmetic slip. Defaults to the age wording, so the two register
+ * pages that pass nothing are unchanged.
  */
-export function agingTableModel(labels, perSev, order) {
+export function agingTableModel(labels, perSev, order, bucketLabel = "Age bucket") {
   const buckets = Array.isArray(labels) ? labels : [];
   const perSevOf = perSev || {};
   const sevs = (order || []).filter((s) => perSevOf[s]);
   return chartTableModel({
     columns: [
-      { key: "bucket", label: "Age bucket", format: "text", value: (_row, i) => buckets[i] },
+      { key: "bucket", label: bucketLabel, format: "text", value: (_row, i) => buckets[i] },
       ...sevs.map((s) => ({
         key: s,
         label: s,
@@ -693,7 +705,7 @@ export function scaModel(payload, opts) {
   const order = (opts && opts.severityOrder) || SEVERITY_FALLBACK;
   const awaiting = p.awaiting || {};
   const coverage = p.signalCoverage || {};
-  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced);
+  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced, opts && opts.at);
 
   // THE TWO CLOCKS. `openTotal` is the whole open backlog in this scope; `overall` is the
   // part of it with no published fix. Everything else is the part a team could have closed.
@@ -710,6 +722,13 @@ export function scaModel(payload, opts) {
     rowCount: num(p.rowCount),
     open: num(p.open),
     resolved: num(p.resolved),
+
+    // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the gate the last scan
+    // of THIS scope applied, and the base filters its query carries. Passed straight through:
+    // `populationLine` (registerModel.js) is the one place that decides how it reads, so all
+    // three registers cannot disagree about it. Null on a payload written before the block
+    // existed, and the page draws nothing rather than half a sentence.
+    population: p.population ?? null,
 
     // ON A FIRST RUN THE FIGURE IS NOT A ZERO. `rowCount`/`open`/`resolved` above stay the
     // real numbers the payload carried, however zero, because they are what `firstRun` itself
@@ -812,6 +831,7 @@ export function renderSca(host, params) {
   const boot = bootstrapCached();
   const order = (boot && boot.severityOrder) || SEVERITY_FALLBACK;
   const synced = !!(boot && boot.latestSync);
+  const at = boot && boot.latestSync ? boot.latestSync.ts : null;
 
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
@@ -821,7 +841,7 @@ export function renderSca(host, params) {
       showNoFix: filters.showNoFix,
     }),
     paint: (payload) =>
-      paintSca(host, scaModel(payload, { severityOrder: order, synced }), filters),
+      paintSca(host, scaModel(payload, { severityOrder: order, synced, at }), filters),
   });
 }
 
@@ -860,6 +880,17 @@ function paintSca(host, vm, filters) {
     ],
   }));
 
+  // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT — one quiet line under the hero.
+  // Provenance, not a figure: the in-scope count, the severity gate the last scan of this
+  // register APPLIED, the base filters its query carries, and, where a gate was applied, the
+  // fact that what fell below it was never counted rather than counted as none.
+  //
+  // WITHHELD ON A FIRST RUN, on the same rule as the stat row above it: "In scope 0" over a
+  // register nobody has read is one more confident zero, and `firstRunNotice` below already
+  // says what is missing.
+  const population = vm.firstRun.show ? null : populationLine(vm);
+  if (population) host.append(el("p", { class: "small muted" }, population.text));
+
   // FIRST RUN STOPS HERE. Every section below — the two clocks, the exploitation signals,
   // both charts (so neither canvas is ever created), the tier and funnel tables, every
   // breakdown, the oldest-open ranking, the per-finding table and the movement card — reads a
@@ -869,6 +900,7 @@ function paintSca(host, vm, filters) {
   if (vm.firstRun.show) {
     host.append(firstRunNotice({
       synced: vm.firstRun.synced,
+      at: vm.firstRun.at,
       hint: "Dependency findings arrive with the first sync that saves a row for this "
         + "register; enable it under Settings → Register if it is off.",
     }));
@@ -1070,7 +1102,12 @@ function paintSca(host, vm, filters) {
         { key: "identifier", label: "CVE", sortable: true, cell: (r) => textCell(r.identifier) },
         { key: "component", label: "Package", sortable: true, cell: (r) => textCell(r.component) },
         { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
-        { key: "status", label: "Status", sortable: true, cell: (r) => textCell(r.status) },
+        {
+          // The server sorts the raw `status` column; the label below is a rendering of it
+          // (and of `resolution_src` / `reopened_count`, which ride the same row unsorted).
+          key: "status", label: "Status", sortable: true,
+          cell: (r) => textCell(PROVENANCE_LABEL[provenance(r)]), help: { term: "returned" },
+        },
         { key: "repo_name", label: "Repository", sortable: true, cell: (r) => textCell(r.repo_name) },
         { key: "branch", label: "Branch", sortable: true, cell: (r) => textCell(r.branch) },
         { key: "first_seen", label: "First seen", sortable: true, cell: (r) => fmtDate(r.first_seen) },

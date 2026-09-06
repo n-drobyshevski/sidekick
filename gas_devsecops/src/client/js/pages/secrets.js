@@ -68,6 +68,7 @@ import {
   movementModel, oldestReposModel, pagedTable, registerFirstRunView, registerRowsTable,
   renderRegisterPage, sectionCard, textCell,
 } from "./sca.js";
+import { populationLine } from "./registerModel.js";
 
 /**
  * The measurement note about the twin fold, as one string.
@@ -154,6 +155,7 @@ export function secretsModel(payload, opts) {
   const firstRun = registerFirstRunView(
     sec.rowCount !== undefined ? sec.rowCount : reg.rowCount,
     opts && opts.synced,
+    opts && opts.at,
   );
 
   const vm = {
@@ -162,6 +164,13 @@ export function secretsModel(payload, opts) {
     asOf: reg.asOf ?? sec.asOf ?? null,
     rowCount: num(sec.rowCount, num(reg.rowCount)),
     open: num(sec.open, num(reg.open)),
+
+    // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the gate the last scan
+    // of THIS scope applied, and the base filters the secrets query carries. Passed straight through:
+    // `populationLine` (registerModel.js) is the one place that decides how it reads, so all
+    // three registers cannot disagree about it. Null on a payload written before the block
+    // existed, and the page draws nothing rather than half a sentence.
+    population: reg.population ?? null,
 
     // THE HERO IS THE CORNER WHERE THE TWO AXES DISAGREE — suppressed to a dash on a first
     // run for the same reason sca.js's hero is: "0 secrets left the code" over a register
@@ -548,6 +557,7 @@ export function bucketTotals(aging) {
 export function renderSecrets(host) {
   const boot = bootstrapCached();
   const synced = !!(boot && boot.latestSync);
+  const at = boot && boot.latestSync ? boot.latestSync.ts : null;
 
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
@@ -555,7 +565,7 @@ export function renderSecrets(host) {
     // sending one would mint an argument that changes nothing and imply a filter that does
     // not exist. `showNoFix` is likewise omitted: it cannot bite on a non-dependency row.
     fetch: () => swrCall("api_getSecretsPage", {}),
-    paint: (payload) => paintSecrets(host, secretsModel(payload, { synced })),
+    paint: (payload) => paintSecrets(host, secretsModel(payload, { synced, at })),
   });
 }
 
@@ -596,12 +606,24 @@ function paintSecrets(host, vm) {
     ],
   }));
 
+  // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT — one quiet line under the hero.
+  // Provenance, not a figure: the in-scope count, the severity gate the last scan of this
+  // register APPLIED, the base filters its query carries, and, where a gate was applied, the
+  // fact that what fell below it was never counted rather than counted as none.
+  //
+  // WITHHELD ON A FIRST RUN, on the same rule as the stat row above it: "In scope 0" over a
+  // register nobody has read is one more confident zero, and `firstRunNotice` below already
+  // says what is missing.
+  const population = vm.firstRun.show ? null : populationLine(vm);
+  if (population) host.append(el("p", { class: "small muted" }, population.text));
+
   // FIRST RUN STOPS HERE — see sca.js's paintSca for why every section past this point would
   // otherwise print its own confident "0", including the removed-vs-rotated four-corner table
   // and the revocation survival chart.
   if (vm.firstRun.show) {
     host.append(firstRunNotice({
       synced: vm.firstRun.synced,
+      at: vm.firstRun.at,
       hint: "Secrets arrive with the first sync that saves a row for this register; enable "
         + "it under Settings → Register if it is off.",
     }));

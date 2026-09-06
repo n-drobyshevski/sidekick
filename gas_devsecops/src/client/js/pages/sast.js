@@ -24,6 +24,7 @@
 // hosts a second copy of those five, only the register-shaped helpers built on top of them.
 
 import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
+import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import {
   absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
   heroStat, meter, num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
@@ -90,7 +91,7 @@ export function sastModel(payload, opts) {
   const concentration = concentrationModel(p.concentration, ["cwe", "repo", "language", "owner_project"]);
   const weakness = concentration.find((c) => c.dim === "cwe") || null;
   const tiers = tierModel(p.tiers, RISK_TIER_ORDER, RISK_TIER_LABELS);
-  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced);
+  const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced, opts && opts.at);
 
   return {
     scope: "sast",
@@ -101,6 +102,13 @@ export function sastModel(payload, opts) {
     rowCount: num(p.rowCount),
     open: num(p.open),
     resolved: num(p.resolved),
+
+    // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the gate the last scan
+    // of THIS scope applied, and the base filters its query carries. Passed straight through:
+    // `populationLine` (registerModel.js) is the one place that decides how it reads, so all
+    // three registers cannot disagree about it. Null on a payload written before the block
+    // existed, and the page draws nothing rather than half a sentence.
+    population: p.population ?? null,
 
     // Suppressed to a dash on a first run, for the same reason scaModel's hero is — see that
     // module's comment. `rowCount`/`open`/`resolved` above stay the real numbers.
@@ -173,6 +181,7 @@ export function renderSast(host, params) {
   const boot = bootstrapCached();
   const order = (boot && boot.severityOrder) || SEVERITY_FALLBACK;
   const synced = !!(boot && boot.latestSync);
+  const at = boot && boot.latestSync ? boot.latestSync.ts : null;
 
   return renderRegisterPage(host, {
     skeleton: () => skeletonStack(6, { widths: ["70%", "100%", "90%", "100%", "80%", "60%"] }),
@@ -184,7 +193,7 @@ export function renderSast(host, params) {
       showNoFix: filters.showNoFix,
     }),
     paint: (payload) =>
-      paintSast(host, sastModel(payload, { severityOrder: order, synced }), filters),
+      paintSast(host, sastModel(payload, { severityOrder: order, synced, at }), filters),
   });
 }
 
@@ -220,11 +229,23 @@ function paintSast(host, vm, filters) {
     ],
   }));
 
+  // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT — one quiet line under the hero.
+  // Provenance, not a figure: the in-scope count, the severity gate the last scan of this
+  // register APPLIED, the base filters its query carries, and, where a gate was applied, the
+  // fact that what fell below it was never counted rather than counted as none.
+  //
+  // WITHHELD ON A FIRST RUN, on the same rule as the stat row above it: "In scope 0" over a
+  // register nobody has read is one more confident zero, and `firstRunNotice` below already
+  // says what is missing.
+  const population = vm.firstRun.show ? null : populationLine(vm);
+  if (population) host.append(el("p", { class: "small muted" }, population.text));
+
   // FIRST RUN STOPS HERE — see sca.js's paintSca for why every section past this point would
   // otherwise print its own confident "0", including both chart canvases.
   if (vm.firstRun.show) {
     host.append(firstRunNotice({
       synced: vm.firstRun.synced,
+      at: vm.firstRun.at,
       hint: "Code weaknesses arrive with the first sync that saves a row for this register; "
         + "enable it under Settings → Register if it is off.",
     }));
@@ -459,7 +480,12 @@ function paintSast(host, vm, filters) {
         { key: "origin", label: "Scanner", sortable: true, cell: (r) => textCell(r.origin) },
         { key: "ai_verdict", label: "AI verdict", sortable: true, cell: (r) => textCell(r.ai_verdict) },
         { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
-        { key: "status", label: "Status", sortable: true, cell: (r) => textCell(r.status) },
+        {
+          // The server sorts the raw `status` column; the label below is a rendering of it
+          // (and of `resolution_src` / `reopened_count`, which ride the same row unsorted).
+          key: "status", label: "Status", sortable: true,
+          cell: (r) => textCell(PROVENANCE_LABEL[provenance(r)]), help: { term: "returned" },
+        },
         { key: "repo_name", label: "Repository", sortable: true, cell: (r) => textCell(r.repo_name) },
         { key: "first_seen", label: "First seen", sortable: true, cell: (r) => fmtDate(r.first_seen) },
         { key: "last_seen", label: "Last seen", sortable: true, cell: (r) => fmtDate(r.last_seen) },

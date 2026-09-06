@@ -234,6 +234,24 @@ const ENTRIES = [
       "It measures sensitivity to the rule, not which rule is right: the ground truth here is the rule itself, so a narrow rule can look flattering simply by flagging less.",
     ],
   },
+  {
+    // pages/mttr.js's per-severity SLA section label.
+    id: "sla-band",
+    term: "SLA band",
+    lines: [
+      "An SLA is a band the population is kept inside, not a wall a single finding hits.",
+      "Read it as a distribution: how much of the window each open finding has consumed, and how many are already past it.",
+    ],
+  },
+  {
+    // pages/program.js's capacity section label.
+    id: "capacity",
+    term: "Remediation capacity",
+    lines: [
+      "Only capacity absorbs inflow: the verdict compares the close rate with the arrival rate, not a count.",
+      "Gaining ground, keeping up and falling behind are the three readings of that comparison, with a dead band so a flat month is not a verdict.",
+    ],
+  },
 ];
 
 /** One entry by id, or null. Callers render nothing rather than guessing. */

@@ -41,6 +41,7 @@ All four were called out explicitly. Steer away from every one:
 3. **Legible to both desks.** Every primary surface must work for the analyst scanning for the next fix and the leader reading posture. Density serves the analyst; an unambiguous top line serves the leader. Neither audience should have to translate.
 4. **Earned familiarity.** Use the conventions of best-in-class tools (Linear, Stripe, Notion-grade product UI) so the interface disappears into the task. Standard affordances, consistent component vocabulary screen to screen, no invented controls for standard jobs.
 5. **Honest state.** The dashboard already runs in dry-run mode, keeps a last-known-good snapshot, and tracks scan freshness. The design must tell the truth about its data: what was scanned, when, whether it's sample or live, and what an empty or stale view actually means. Never imply confidence the data doesn't support.
+6. **The representation is not the work.** A headline that improves while no fix landed is a finding, not a success. The register must be able to say why a number moved: a filter change, a gate change and a remediation are three different causes with one shape on screen, and a figure that cannot tell them apart is producing a report about itself.
 
 ## Accessibility & Inclusion
 

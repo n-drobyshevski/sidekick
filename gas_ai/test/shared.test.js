@@ -122,6 +122,10 @@ registerEmptyStateContract({
   // emptyState is for. Converting them would swap a box that says "run a sync and here is
   // how" for one quiet line and nothing else.
   firstRunRoutes: ["data"],
+  // data.js's call renders only inside `if (!(await bootstrap()).latestSync)` — `synced` is
+  // a literal `false` there, never a value derived at render time, so there is never a sync
+  // to date. Same shape as gas's `attribution` and gas_devsecops's `data`.
+  firstRunNoAt: ["data"],
 });
 
 registerNavGroupContract({

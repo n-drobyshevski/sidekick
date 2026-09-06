@@ -70,7 +70,18 @@ registerEmptyStateContract({
     "data", "executive", "history", "mttr", "program", "repos", "settings",
   ],
   guardedRoutes: ["executive", "mttr", "program"],
-  firstRunRoutes: ["mttr", "program", "history", "data"],
+  // All seven pages that carry firstRunNotice(). `firstRunBootstrapRoutes` stays the
+  // original four: sca/sast/secrets read `bootstrapCached()`, not `await bootstrap()` —
+  // safe only because `gas_shared/shell/appShell.js`'s own boot() already awaits bootstrap()
+  // once before any route mounts, which is a guarantee those three pages take rather than
+  // repeat, so widening the seven-route list must not also widen the literal-text check for
+  // a fresh await that only the other four pages actually make.
+  firstRunRoutes: ["mttr", "program", "history", "data", "sca", "sast", "secrets"],
+  firstRunBootstrapRoutes: ["mttr", "program", "history", "data"],
+  // "data" renders its notice only inside the branch where latestSync is already known
+  // falsy (see pages/data.js's comment at the call site) — synced is a literal `false`
+  // there, never a derived value, so there is never a date to carry.
+  firstRunNoAt: ["data"],
 });
 
 registerNavGroupContract({

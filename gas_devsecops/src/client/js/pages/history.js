@@ -43,14 +43,24 @@
 // box that looks like an empty register, which is the exact confusion the first-run package
 // was opened to end. Swapping that box for `errorState` is what made it visible.
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
+// The SVG element builder, straight from the shared icons module: `el()` is
+// `document.createElement`, which produces an HTML <svg> in the wrong namespace — it parses,
+// it appends, and it renders nothing at all. `svgEl` is `createElementNS`, and it is what
+// `ui/brandMark.js` and `ui/uiIcons.js` already draw with. It is not on the ui barrel (nothing
+// but those two needed it), so this page reaches the shared module by path, the same way it
+// already reaches `store.js`.
+import { svgEl } from "../../../../../gas_shared/icons.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { showExperimental, subscribeExperimental } from "../experimental.js";
 import {
   DEFAULT_PAGE_SIZE, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
   emptyState, errorState, firstRunNotice, fmtCount, fmtDate, fmtDateTime, glossaryTip,
   kpiCard, num,
-  onPageTeardown, pageHeader, pageOf, registerWideNote, sectionLabel, skeletonStack, sortRows,
-  tableFooter,
+  onPageTeardown, pageHeader, pageOf, pluralize, registerWideNote, sectionLabel, skeletonStack,
+  sortRows, tableFooter,
 } from "../ui.js";
+import { movementBlocks } from "./historyModel.js";
+import { spiralLayout } from "./spiralLayout.js";
 
 const SCOPE_LABELS = { sca: "Dependencies (SCA)", sast: "Code (SAST)", secrets: "Secrets" };
 
@@ -201,6 +211,92 @@ export function perScopeView(perScope) {
   return out;
 }
 
+// ------------------------------------------------------------------- the time spiral (SVG)
+//
+// EXPERIMENTAL, AND OFF LEAVES NO TRACE. The whole section — heading, lede, drawing and its
+// table — exists only while Settings -> Show experimental content is on. An unfinished shape
+// that leaves a heading behind with nothing under it is worse than one that is simply not
+// there: the reader is told a figure exists and denied it.
+//
+// GEOMETRY IS IN `spiralLayout.js`, which is DOM-free and tested; everything here is
+// drawing. The split is the same one `chartTableModel` / `chartTable` already use, and for the
+// same reason — this project's vitest run has no jsdom.
+//
+// SHAPE, NOT COLOUR, CARRIES THE REGISTER. Every mark is drawn in one ink (`--accent-text`,
+// 7.39:1 — never `--accent`, which is a 1.52:1 FILL token); which register a scan belongs to
+// is in the shape of the mark and repeated in words in the legend and in the table below, so
+// nothing on this chart means anything by colour alone. No animation: there is nothing here
+// that a movement would explain.
+
+const SPIRAL_R0 = 24;
+const SPIRAL_DR = 14;
+/** Room outside the last ring for its own quarter label. */
+const SPIRAL_PAD = 18;
+
+/** One mark per register, and its glyph twin for the legend. */
+const SPIRAL_SHAPES = { sca: "circle", sast: "square", secrets: "diamond" };
+const SPIRAL_GLYPHS = { circle: "●", square: "■", diamond: "◆" };
+
+/** Two decimals is a tenth of a pixel at the size this draws — enough for the geometry and
+ *  small enough that a diff of the DOM is readable. */
+function r2(n) {
+  return Math.round(n * 100) / 100;
+}
+
+/** One scan, as its register's mark. */
+function spiralMark(p) {
+  const shape = SPIRAL_SHAPES[p.scope] || "circle";
+  const style = "fill: var(--accent-text)";
+  if (shape === "circle") return svgEl("circle", { cx: r2(p.x), cy: r2(p.y), r: 2.4, style });
+  // A diamond is the square, turned — one code path, so the two can never drift in size.
+  const half = shape === "diamond" ? 2.8 : 2.2;
+  return svgEl("rect", {
+    x: r2(p.x - half), y: r2(p.y - half), width: r2(half * 2), height: r2(half * 2), style,
+    transform: shape === "diamond" ? `rotate(45 ${r2(p.x)} ${r2(p.y)})` : null,
+  });
+}
+
+/**
+ * The drawing: one thin ring per quarter with its key at 12 o'clock, the scans in time order
+ * joined by a polyline, and a mark per scan.
+ *
+ * The `aria-label` says what the picture IS and how much of it there is; what it SAYS is in
+ * the table `chartTable` hangs off it (`aria-details`), which is the same arrangement every
+ * canvas on this page already has.
+ */
+function spiralSvg(layout) {
+  const outer = SPIRAL_R0 + SPIRAL_DR * layout.turns + SPIRAL_PAD;
+  const n = layout.points.length;
+  const svg = svgEl("svg", {
+    class: "spiral",
+    viewBox: `${r2(-outer)} ${r2(-outer)} ${r2(outer * 2)} ${r2(outer * 2)}`,
+    role: "img",
+    focusable: "false",
+    "aria-label": `Open findings per scan on a quarterly spiral; ${n} ${pluralize(n, "scan")}, `
+      + `${layout.turns} ${pluralize(layout.turns, "quarter")}`,
+    style: "width: 100%; max-width: 360px; height: auto; display: block",
+  });
+  for (const q of layout.quarters) {
+    svg.append(svgEl("circle", {
+      cx: 0, cy: 0, r: r2(q.r), fill: "none",
+      style: "stroke: currentColor", "stroke-width": 0.5, "stroke-opacity": 0.22,
+    }));
+    const label = svgEl("text", {
+      x: 0, y: r2(-q.r - 2.5), "text-anchor": "middle", "font-size": 6.5,
+      style: "fill: currentColor", "fill-opacity": 0.55,
+    });
+    label.textContent = q.key;
+    svg.append(label);
+  }
+  svg.append(svgEl("polyline", {
+    fill: "none", style: "stroke: var(--accent-text)", "stroke-width": 1,
+    "stroke-linejoin": "round", "stroke-opacity": 0.75,
+    points: layout.points.map((p) => `${r2(p.x)},${r2(p.y)}`).join(" "),
+  }));
+  for (const p of layout.points) svg.append(spiralMark(p));
+  return svg;
+}
+
 // ----------------------------------------------------------------------------- the page
 
 export async function renderHistory(host, _params, _ctx) {
@@ -217,15 +313,31 @@ export async function renderHistory(host, _params, _ctx) {
   const kpiHost = el("div", { class: "kpi-row" });
   const perScopeHost = el("div", {});
   const tableHost = el("div", {});
+  const movementHost = el("div", {});
+  // EMPTY UNLESS THE EXPERIMENT IS ON. The heading and the lede are built inside
+  // `renderSpiral`, not here, so that an off toggle leaves nothing behind at all — a host div
+  // with no children renders as nothing.
+  const spiralHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid" });
 
   host.append(
     observedHost,
     kpiHost,
-    sectionLabel("Coverage by register"),
+    // The table the rail's one status dot is a summary of: a "Last scan" of "—" here is the
+    // never-measured state that outranks every stale one on the dot. `rail-status` is where
+    // that precedence is written down.
+    sectionLabel("Coverage by register", { term: "rail-status" }),
     perScopeHost,
     sectionLabel("Saved scans"),
     tableHost,
+    sectionLabel("What moved the number"),
+    el("p", { class: "section-note" },
+      "The change in each register's open count over the last 28-day window bounded by two of "
+      + "its own saved scans, split into the causes that moved it — and which of them are "
+      + "remediation the register actually observed. The window is per register: three scopes "
+      + "share one scan log, and a scan of one of them looked at none of the others."),
+    movementHost,
+    spiralHost,
     sectionLabel("Trends"),
     chartsHost,
   );
@@ -239,17 +351,37 @@ export async function renderHistory(host, _params, _ctx) {
   let paint = null;
   const promise = swrCall("api_getScanHistory", {}, (fresh) => paint && paint(fresh));
 
+  // What the spiral was last drawn from. Held because the experimental toggle can flip while
+  // this page is on screen and the redraw has no payload of its own to reach for; `first` is
+  // held beside it so a flip cannot re-open the first-run gate on the wrong answer.
+  let lastPayload = null;
+  let lastFirst = true;
+
   paint = (payload) => {
     // `observedFrom` is the page's own honest signal and it is already what `renderObserved`
     // gates on: it is the first saved scan's date, so a null there means nothing has ever
     // been measured and every figure below is a count over a window that does not exist.
     const first = !(payload && payload.observedFrom);
+    lastPayload = payload;
+    lastFirst = first;
     renderObserved(payload);
     renderKpis(payload, first);
     renderPerScope(payload, first);
     renderTable(payload);
+    renderMovement(payload, first);
+    renderSpiral(payload, first);
     renderTrends(payload);
   };
+
+  // THE GATE HAS ONE LISTENER SLOT AND IT IS THE SHELL'S (gas_shared/shell/experimental.js
+  // holds a single `listener`, claimed by createAppShell for the rail rebuild). Calling
+  // `onExperimentalChange` from here would TAKE it, and the rail would stop redrawing on a
+  // flip for the rest of the session with nothing on screen to say so. `experimental.js`'s
+  // fan-out is this app's answer: app.js claims the slot once with the shell's rebuild as the
+  // base, page subscriptions ride alongside it, and unsubscribing restores exactly what was
+  // there — the base listener is never touched. The teardown is not optional: a subscriber
+  // left behind would redraw into a DOM the router has already discarded.
+  onPageTeardown(subscribeExperimental(() => renderSpiral(lastPayload, lastFirst)));
 
   try {
     paint(await promise);
@@ -276,6 +408,7 @@ export async function renderHistory(host, _params, _ctx) {
     // same state. A reader moving between pages should meet one sentence, not four.
     observedHost.append(firstRunNotice({
       synced: !!boot.latestSync,
+      at: boot.latestSync ? boot.latestSync.ts : null,
       hint: "Nothing dates when watching began, so there is no observation window for the"
         + " figures below to sit inside. Run a sync with the Run sync button in the rail.",
     }));
@@ -421,6 +554,150 @@ export async function renderHistory(host, _params, _ctx) {
       }
     }
     draw();
+  }
+
+  // ---- what moved the number (see pages/historyModel.js for the reading, and
+  // domain/movementDecomposition.ts for the arithmetic).
+  //
+  // TWO TABLES PER REGISTER, NOT ONE TABLE WITH A COLUMN. The section exists to keep "the API
+  // said this was fixed" and "the scan stopped seeing it" apart; a single table sorted by count
+  // invites a total across them, and that total is precisely the number a narrowed severity
+  // gate inflates for free. On this register the administrative half is the majority case by
+  // construction for two of the three scopes — SAST has no resolved state to fetch and secrets
+  // has none either — so keeping the halves apart is not a corner case here.
+  const CAUSE_COLUMNS = [
+    { key: "cause", label: "Cause", cell: (r) => r.cause },
+    { key: "basis", label: "How the date was arrived at", cell: (r) => r.basis },
+    { key: "count", label: "Findings", className: "num", cell: (r) => r.count.toLocaleString() },
+  ];
+
+  function causeTable(title, rows) {
+    return el("div", { class: "chart-card" },
+      el("h3", { class: "section-label" }, title),
+      dataTable({ columns: CAUSE_COLUMNS, rows }));
+  }
+
+  function movementBlock(block) {
+    // No `class` on the wrapper: the shared stylesheets have no generic stack utility, and a
+    // class that matches nothing renders an unstyled block in silence (CLAUDE.md's own note on
+    // copying a page across this fork).
+    const host = el("section", { style: "margin-top:16px" },
+      el("h3", { class: "section-label" }, block.label));
+    if (block.view.empty) {
+      // The server's own words, verbatim: it is the only thing that knows WHY it declined for
+      // THIS register, and a reason invented here would print in the same ink as a measurement.
+      host.append(emptyState(
+        block.view.empty,
+        "The decomposition compares two of this register's own saved scans, at least 28 days"
+        + " apart.",
+      ));
+      return host;
+    }
+    host.append(
+      el("p", { class: "section-note" }, block.view.sentence),
+      el("div", { class: "chart-grid" },
+        causeTable("Measured remediation", block.view.measuredRows),
+        causeTable("Administrative", block.view.administrativeRows)),
+    );
+    if (block.view.asideRows.length) {
+      host.append(el("ul", { class: "small muted", style: "margin:12px 0 0; padding-left:18px" },
+        ...block.view.asideRows.map((r) => el("li", {},
+          `${r.label}: `, el("span", { class: "num" }, r.count.toLocaleString())))));
+    }
+    return host;
+  }
+
+  function renderMovement(payload, first) {
+    clear(movementHost);
+    // The page's own first-run gate, the same one the KPI band and the coverage strip use: a
+    // decomposition of a window that does not exist is four confident zeroes about a
+    // population nobody has looked at.
+    if (first) {
+      movementHost.append(emptyState(
+        "Nothing has moved yet, because nothing has been measured yet.",
+        "This section is a difference between two saved scans of the same register, so it"
+        + " fills in once one of them has two.",
+      ));
+      return;
+    }
+    for (const block of movementBlocks(payload, SCOPE_LABELS)) {
+      movementHost.append(movementBlock(block));
+    }
+  }
+
+  // ---- the time spiral (experimental). Geometry: pages/spiralLayout.js.
+  function renderSpiral(payload, first) {
+    clear(spiralHost);
+    // AN OFF EXPERIMENT LEAVES NO TRACE — not a heading, not a placeholder, not a note saying
+    // something is hidden. This is also the redraw the toggle's own subscription runs, so
+    // flipping it off empties the host rather than leaving the last drawing behind.
+    if (!showExperimental()) return;
+    // The page's first-run gate, the same one every section above uses: a spiral over a
+    // register nobody has scanned is a picture of a population nobody has looked at.
+    if (first) return;
+
+    const layout = spiralLayout((payload && payload.scans) || [],
+      { r0: SPIRAL_R0, dr: SPIRAL_DR });
+    spiralHost.append(
+      sectionLabel("Open count, one turn per quarter"),
+      el("p", { class: "section-note" },
+        "Experimental. Each turn is a calendar quarter, starting at the top; the radius grows "
+        + "with time. Read the angle as the day of the quarter."),
+    );
+    if (!layout.points.length) {
+      spiralHost.append(emptyState(
+        "No saved scan carries both a date and a count, so there is nothing to place.",
+        "A scan row reaches this chart only through its own timestamp — an undated row is not"
+        + " drawn at the epoch, it is left off.",
+      ));
+      return;
+    }
+
+    const svg = spiralSvg(layout);
+    const card = el("div", { class: "chart-card" }, svg);
+    // The registers actually on the chart, in the register's own order — a legend naming a
+    // shape nothing drew would be a fourth claim about a population.
+    const scopes = ["sca", "sast", "secrets"]
+      .filter((sc) => layout.points.some((p) => p.scope === sc));
+    if (scopes.length > 1) {
+      card.append(el("p", { class: "small muted" }, "Marks: " + scopes
+        .map((sc) => `${SPIRAL_GLYPHS[SPIRAL_SHAPES[sc]]} ${SCOPE_LABELS[sc]}`)
+        .join(" · ") + "."));
+    }
+    // THE SAME ARRAY the drawing was handed, not a second walk over the payload — chartTable's
+    // one rule (see gas_shared/ui/chartTable.js's header).
+    card.append(chartTable({
+      canvas: svg,
+      caption: "Every point on the spiral as a row: the scan, when it ran, which register it"
+        + " covered, and the open count it saved. Ordered oldest first, the way the line is"
+        + " drawn.",
+      model: chartTableModel({
+        columns: [
+          { key: "scanId", label: "Scan", format: "text" },
+          {
+            key: "ts", label: "Date", format: "text", value: (p) => fmtDateTime(p.ts),
+          },
+          {
+            key: "scope",
+            label: "Register",
+            format: "text",
+            value: (p) => SCOPE_LABELS[p.scope] || p.scope,
+          },
+          { key: "open", label: "Open", format: "count" },
+        ],
+        rows: layout.points,
+      }),
+    }));
+    if (layout.skipped) {
+      // THE OUTSIDE, named rather than rounded away: these rows are in the table above this
+      // section and not on this chart, and a reader comparing the two counts is owed the
+      // reason.
+      card.append(el("p", { class: "small muted" },
+        `${layout.skipped.toLocaleString()} scan `
+        + `${pluralize(layout.skipped, "row")} could not be placed — no usable timestamp or no `
+        + "count saved. They are unplaced, not zero."));
+    }
+    spiralHost.append(card);
   }
 
   function renderTrends(payload) {

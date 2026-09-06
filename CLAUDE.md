@@ -119,7 +119,7 @@ always names why in the test summary rather than just not running.
 Before any UI or design work, read:
 
 - **[PRODUCT.md](PRODUCT.md)** — register, users (security analysts + leadership), purpose,
-  brand personality (precise, trustworthy, instrument-grade), anti-references, the five design
+  brand personality (precise, trustworthy, instrument-grade), anti-references, the six design
   principles, and the accessibility bar (WCAG 2.1 AA).
 - **[DESIGN.md](DESIGN.md)** — the visual system: tokens, color and severity palette,
   typography, elevation, and components.
@@ -183,6 +183,17 @@ because they are in this file.
 - **Commit locally; do not push or open a PR** unless asked. Message style is
   `<area>: <lowercase phrase stating the substance>` — the body explains the defect and the
   measurement that justifies the fix.
+- **The Outside is everything the measurement kept out, and the screen has to name it.** A
+  gate (`scans.severities`), a `BASE` filter (`hasFix: true`, `isDefaultBranch`) and a field
+  the API never returns each remove rows from the measured population, and every one of them
+  makes a count fall. The words on screen are "below the gate", "not scanned", "unmeasured" —
+  never a `0`, because a zero is a measurement and these are refusals to measure.
+- **Two failure kinds, and a test names which one it is.** A *failure of presence* is a row
+  that should be in the register and is missing (a page skipped, a partial scan committed, a
+  wrong root field). A *failure of absence* is a row that should be gone and persists, or is
+  dated gone for the wrong reason (a withdrawn fix reading as a remediation, a stale row
+  re-resolved). They fail differently: presence looks like an empty register, absence looks
+  like a remediation programme. Name the kind in the `describe`.
 
 ## brick / devlake — the Databricks register
 
@@ -511,8 +522,11 @@ already implements the pipeline and is the behavioural spec (same relationship `
 - **A scan records the gate it APPLIED, not the one the settings hold now** (`runScan`'s
   `severities` override). The two differ across a settings change, and stamping today's gate
   on a replay of older scans makes the disappearance guard believe a severity was covered by
-  a scan that never looked at it. The dev fixture models exactly that: scan 1 wide, scans 2-3
-  narrow — which is also the only shape that leaves the guard something to protect.
+  a scan that never looked at it. Measured: every battery in
+  `gas_devsecops/dev/sampleData.dev.ts` carries `scannedSeverities: null` — the dev fixture
+  does not model this at all. The only wide-then-narrow shape lives in
+  `gas_devsecops/test/reconcile.test.ts`'s "failure of absence: the severity-scope guard
+  (rule 9)" describe, which is the only place that leaves the guard something to protect.
 - **The Access panel is not the boundary, and the tier is one `canEditAdmins()` call.**
   `google.script.run` reaches `api_saveAccess` from any allowed caller's console, so every
   endpoint re-checks; `getAccess` withholds the ROSTER from a non-editor rather than letting

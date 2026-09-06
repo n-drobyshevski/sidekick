@@ -21,6 +21,13 @@ const EXPECTED_IDS = [
   // P6's three: the two halves of the sync/scan split, and the bound notation. The registry
   // is a list of ids, not an assertion about copy — a new entry joins it here.
   "sync", "scan", "lower-bound",
+  // The live sca/sast status column now renders provenance() rather than raw status, and a
+  // reopened row needs its own word — this is that word's glossary entry.
+  "returned",
+  // The population line's two neighbours: the SLA read as a band the population sits inside
+  // (mttr.js's age distribution) and what the rail's one status dot is summarising
+  // (history.js's per-register coverage table).
+  "sla-band", "rail-status",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164

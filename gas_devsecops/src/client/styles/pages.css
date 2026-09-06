@@ -19,6 +19,30 @@
 .fixnext-repo { font-weight: 600; }
 .fixnext-meta { margin-top: var(--space-half); }
 
+/* -------------------------------------------- Executive: the open-backlog isotype
+   Neurath's rule, in three declarations: quantity is MORE MARKS OF THE SAME SIZE. Every mark
+   is 8x12 whatever the row's count is, and the unit is chosen once per table (executive.js,
+   `pictogramUnit`) so two rows' marks are comparable - a mark that grew with its value would
+   make the row's length and the mark's size two different encodings of one number.
+
+   --ink, NOT --accent. The brand accent is a FILL token at 1.52:1 on white (styles/tokens.css
+   states this at length); a mark carrying a COUNT has to be legible on its own, so these are
+   the page's ink. Nothing about the marks is colour-coded either - the percentage beside them
+   is the readout, and the marks are a second encoding of it.
+
+   The partial mark is CLIPPED, not shrunk: same box, same baseline, --tenths of it painted.
+   var(--tenths) is a bare integer so `var(--tenths) * 10%` resolves inside calc(). */
+.isotype { display: inline-flex; gap: 2px; margin-right: 8px; vertical-align: middle; }
+.isotype-mark { width: 8px; height: 12px; background: var(--ink); border-radius: 1px; display: inline-block; }
+.isotype-mark--part { clip-path: inset(0 calc(100% - var(--tenths) * 10%) 0 0); }
+
+/* Forced colours drop `background` entirely, which would leave the row of marks invisible with
+   nothing in its place - the one state where the picture is the only thing that changed. An
+   outlined mark in CanvasText survives the substitution, and the clip still applies to it. */
+@media (forced-colors: active) {
+  .isotype-mark { border: 2px solid CanvasText; background: transparent; }
+}
+
 /* ------------------------------------------------------- Executive: the movement strip
    One row per register plus a total, inside the header's second column. The label and the
    raw pair sit either side of the chip so the delta is never the only number visible —

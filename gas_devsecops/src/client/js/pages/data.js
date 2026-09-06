@@ -185,6 +185,11 @@ export async function renderData(host, _params, ctx) {
   // `await bootstrap()`, not `bootstrapCached()`: a null cache would read as "never synced"
   // and post the notice over a register that has been synced all week.
   if (!(await bootstrap()).latestSync) {
+    // NO `at:` HERE, ON PURPOSE — this call renders ONLY inside the branch where
+    // `latestSync` is falsy, so `synced` above is the literal `false`, not a value derived at
+    // render time, and there is no sync to date. Same shape as gas's attribution.js (which
+    // also renders only when `synced` is hard-coded false); this route is named in
+    // `firstRunNoAt` in `test/shared.test.js` rather than carrying a meaningless `at:`.
     noticeHost.append(firstRunNotice({
       synced: false,
       hint: "The figures below are a census of what is stored, so they read zero honestly."

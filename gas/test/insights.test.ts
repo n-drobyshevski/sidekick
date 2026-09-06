@@ -13,6 +13,7 @@ import {
   oldestOpen,
   openAgeMedian,
   riskTierStats,
+  slaConsumedDeciles,
   severityStats,
   triageFunnel,
 } from "../src/domain/insights";
@@ -455,5 +456,107 @@ describe("openAgeMedian", () => {
     // actually is, which is the whole reason this is not a mean.
     const rows = [...Array(9)].map(() => row(2)).concat([row(400)]);
     expect(openAgeMedian(rows)).toBe(2);
+  });
+});
+
+// THE BARS ANSWER "HOW LATE", AND THE THREE POPULATIONS THAT LEAVE THEM ARE THE TEST.
+//
+// `slaConsumedDeciles` divides an open finding's age by the target for its OWN severity, so a
+// 20-day CRITICAL (nearly three windows gone) and a 20-day LOW (under a quarter) stop sharing
+// a bar. Every quiet failure here is a row landing in a bucket it did not earn:
+//
+//   - `Number(null)` is 0 and it is finite, so an age of null cast first reads as a
+//     brand-new finding in bucket 0 — the most reassuring bar on the chart.
+//   - a severity with no target (UNKNOWN) cast first reads as a window of 0 days, and
+//     age/0 is Infinity, which clamps into bucket 9.
+//   - a finding exactly AT its window drawn in bucket 9 makes that bar mean two things at
+//     once: "in its final tenth" and "past the deadline by any amount".
+describe("slaConsumedDeciles", () => {
+  const TARGETS = { CRITICAL: 7, HIGH: 14, MEDIUM: 30, LOW: 90, INFO: 180 };
+  const row = (age_days: unknown, severity = "CRITICAL", status = "OPEN") =>
+    ({ severity, status, age_days } as unknown as Parameters<typeof slaConsumedDeciles>[0][0]);
+
+  it("puts a 3-day CRITICAL at four tenths of a seven-day window", () => {
+    // 10 * 3 / 7 = 4.28…, floored to 4: four tenths used, six left.
+    const out = slaConsumedDeciles([row(3)], TARGETS);
+    expect(out.perSev.CRITICAL).toEqual([0, 0, 0, 0, 1, 0, 0, 0, 0, 0]);
+    expect(out.labels).toEqual(["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]);
+    expect(out.totalOpen).toBe(1);
+    expect(out.noWindow).toBe(0);
+    expect(out.pastWindow).toEqual({});
+  });
+
+  it("clamps a finding at 99% of its window into bucket 9", () => {
+    const out = slaConsumedDeciles([row(6.93)], TARGETS);
+    expect(out.perSev.CRITICAL[9]).toBe(1);
+    expect(out.perSev.CRITICAL.reduce((a, b) => a + b, 0)).toBe(1);
+    expect(out.pastWindow.CRITICAL).toBeUndefined();
+  });
+
+  it("counts a finding at exactly its window as pastWindow, not as bucket 9", () => {
+    // The boundary is `>=`, so the last bar never absorbs a breach. 7.0 days on a 7-day
+    // window is a deadline reached, not a ninth tenth in progress.
+    const out = slaConsumedDeciles([row(7), row(7.0001), row(40)], TARGETS);
+    expect(out.pastWindow).toEqual({ CRITICAL: 3 });
+    expect(out.perSev.CRITICAL).toBeUndefined();
+    expect(out.totalOpen).toBe(0);
+    expect(out.noWindow).toBe(0);
+  });
+
+  it("age_days null lands in noWindow, never in bucket 0", () => {
+    // Every one of these is 0 under Number() and every one of them is finite. A cast before
+    // the refusal reads all five as findings opened today.
+    for (const age of [null, undefined, "", [], false]) {
+      const out = slaConsumedDeciles([row(age)], TARGETS);
+      expect(out.noWindow, `age ${JSON.stringify(age)}`).toBe(1);
+      expect(out.perSev, `age ${JSON.stringify(age)}`).toEqual({});
+      expect(out.totalOpen, `age ${JSON.stringify(age)}`).toBe(0);
+      expect(out.pastWindow, `age ${JSON.stringify(age)}`).toEqual({});
+    }
+  });
+
+  it("a severity with no SLA target lands in noWindow", () => {
+    // UNKNOWN is a local normalization bucket with no entry in SLA_TARGETS, so there is no
+    // deadline to measure the row against — and 0 is not one either: 3/0 is Infinity, which
+    // the clamp would file in bucket 9 as a finding on the brink.
+    const out = slaConsumedDeciles([row(3, "UNKNOWN"), row(3, "NOT_A_SEVERITY")], TARGETS);
+    expect(out.noWindow).toBe(2);
+    expect(out.perSev).toEqual({});
+    expect(slaConsumedDeciles([row(3)], { CRITICAL: 0 }).noWindow).toBe(1);
+    expect(slaConsumedDeciles([row(3)], { CRITICAL: -7 }).noWindow).toBe(1);
+    expect(slaConsumedDeciles([row(3)], { CRITICAL: NaN }).noWindow).toBe(1);
+  });
+
+  it("totalOpen counts only drawn rows", () => {
+    const out = slaConsumedDeciles([
+      row(1), row(3), row(6.5),          // drawn, CRITICAL
+      row(7), row(90),                    // past the window
+      row(null), row(3, "UNKNOWN"),       // no window
+      row(7, "HIGH"), row(45, "LOW"),     // drawn, other severities
+    ], TARGETS);
+    const drawn = Object.values(out.perSev)
+      .reduce((a, arr) => a + arr.reduce((x, y) => x + y, 0), 0);
+    expect(drawn).toBe(out.totalOpen);
+    expect(out.totalOpen).toBe(5);
+    expect(out.pastWindow).toEqual({ CRITICAL: 2 });
+    expect(out.noWindow).toBe(2);
+    // The three excluded populations plus the drawn rows account for every open row, and
+    // nothing is counted twice.
+    const past = Object.values(out.pastWindow).reduce((a, b) => a + b, 0);
+    expect(out.totalOpen + past + out.noWindow).toBe(9);
+  });
+
+  it("resolved rows are not counted anywhere", () => {
+    // Not in the bars, not past the window, not unmeasured — a closed finding has no window
+    // left to consume, so it is absent rather than in an "other" bucket.
+    const out = slaConsumedDeciles([
+      row(3, "CRITICAL", "RESOLVED"),
+      row(40, "CRITICAL", "RESOLVED"),
+      row(null, "CRITICAL", "RESOLVED"),
+    ], TARGETS);
+    expect(out).toEqual({
+      labels: ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"],
+      perSev: {}, pastWindow: {}, noWindow: 0, totalOpen: 0,
+    });
   });
 });

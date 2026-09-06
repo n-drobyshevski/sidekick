@@ -735,6 +735,12 @@ export function getScanHistory(p?: unknown): ApiResult {
       // The scans tab narrowed to the ten columns the table draws — raw_ref / obs_ref are
       // Drive file ids and are not among them (pagePayload.ts's SCAN_ROW_KEYS).
       scans: scanRowsSlice(h["scans"]),
+      // What moved the open count over the last 28-day window, one block per register, plus
+      // the server's own words where there was no such window. ENUMERATED like the rest: the
+      // note is what the client prints in the empty branch, so shipping one without the other
+      // leaves that branch inventing a reason of its own.
+      movement: h["movement"],
+      movementNote: h["movementNote"],
       trends: historyTrendSlice(h),
       // `scans` and `perScope` above are per-scan/per-day facts with no project dimension —
       // see `readModels.ts::buildHistory`'s own comment. `kpis` and `trends` DO narrow to the

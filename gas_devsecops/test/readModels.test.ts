@@ -346,14 +346,29 @@ describe("the caching audit is per model, and the header states it", () => {
 
     // Clock models: age buckets, SLA arithmetic and open exposure all drift within a day.
     expect(layerOf("dsExecutive1")).toEqual(["cached"]);
-    expect(layerOf("dsMttr1")).toEqual(["cached"]);
+    // "dsMttr1" -> "dsMttr2": the namespace was bumped when `remediation` gained its
+    // `slaConsumed` block. The CLAIM this line encodes is the LAYER the model caches in, not
+    // the spelling of its namespace, and that is unchanged — a warm entry from the old
+    // namespace carries no deciles, and a section missing for a cache reason reads as a
+    // register with nothing inside its SLA windows.
+    expect(layerOf("dsMttr2")).toEqual(["cached"]);
     expect(layerOf("dsSecrets1")).toEqual(["cached"]);
-    expect(layerOf("dsRegister1")).toEqual(["cached", "cached", "cached"]);
+    // "dsRegister1" -> "dsRegister2": the namespace was bumped when the payload gained its
+    // `population` block. The CLAIM these three lines encode is the LAYER each model caches
+    // in, not the spelling of its namespace, and that is unchanged — a warm entry from the
+    // old namespace has no population block, and a page drawing no provenance line at all
+    // over figures that have one is a silently missing caveat.
+    expect(layerOf("dsRegister2")).toEqual(["cached", "cached", "cached"]);
 
     // Time-invariant models: dated by the ledger's own clock, so a stored copy stays true.
     expect(layerOf("dsProgram1")).toEqual(["durablyCached"]);
     expect(layerOf("dsRepos1")).toEqual(["durablyCached"]);
-    expect(layerOf("dsHistory1")).toEqual(["durablyCached"]);
+    // "dsHistory1" -> "dsHistory2": the namespace was bumped when the payload gained its
+    // per-register `movement` / `movementNote` blocks. The CLAIM this line encodes is the
+    // LAYER the model caches in, not the spelling of its namespace, and that is unchanged — a
+    // warm entry from the old namespace carries no movement block, and the new section would
+    // draw "no movement decomposition in this payload" over a window that is measurable.
+    expect(layerOf("dsHistory2")).toEqual(["durablyCached"]);
     expect(layerOf("dsStorage1")).toEqual(["durablyCached"]);
 
     // And nothing reached both layers, which is the failure the spelling-out above exists to
@@ -408,7 +423,7 @@ describe("the caching audit is per model, and the header states it", () => {
     registerModel("sca", ALL);
     registerModel("sast", ALL);
     const keys = H.cacheCalls
-      .filter((c) => c.name === "dsRegister1")
+      .filter((c) => c.name === "dsRegister2")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
   });
@@ -810,6 +825,76 @@ describe("historyModel", () => {
     expect(m.kpis.tracked).toBe(2);
   });
 
+  // ---- what moved the number, per register (domain/movementDecomposition.ts) ------------ //
+  //
+  // THE FIXTURE'S OWN NUMBERS, worked out here so this block is the audit trail. sca has two
+  // scans (2026-01-01 and 2026-03-01, 59 days apart) so its window exists; sast and secrets
+  // have one each and must refuse SEPARATELY rather than suppressing sca's block with them.
+  //
+  //   window            since 2026-01-01, until 2026-03-01 (half-open: since < ts <= until)
+  //   scans in window   sync-2/sca only — the opening scan describes the period BEFORE it
+  //   arrivals          3  (sync-2/sca's new_count)
+  //   resolutions       CVE-1, resolved 01-08 with resolution_src "disappeared" -> bounded 1,
+  //                     observed 0 — which is this register's normal shape, not a corner case
+  //   replay            open at since = CVE-1, CVE-2 = 2;  open at until = CVE-2, CVE-3 = 2
+  //   netChange         0
+  //   identityGap       0 - (3 - 0 - 1 + 0) = -2, published rather than absorbed
+  it("ships one movement block per register, each measured over its own scans", () => {
+    const m = historyModel(ALL) as any;
+    expect(Object.keys(m.movement).sort()).toEqual(["sast", "sca", "secrets"]);
+    const sca = m.movement.sca;
+    expect(sca.scope).toBe("sca");
+    expect(sca.scansInWindow).toBe(1);
+    expect(sca.arrivals).toBe(3);
+    expect(sca.observed).toBe(0);
+    expect(sca.bounded).toBe(1);
+    expect(sca.measured).toBe(0);
+    expect(sca.administrative).toBe(1);
+    expect(sca.netChange).toBe(0);
+    // The books do not balance on this fixture and the payload SAYS so: `new_count` counts
+    // findings new to a scan, the replay counts findings born in the window, and the two are
+    // independent measurements. Tuning the gap away would make them one.
+    expect(sca.identityGap).toBe(-2);
+    expect(sca.identityHolds).toBe(false);
+    // Every scan in this fixture carries `severities: null` — the gate was off, which means
+    // every severity was in scope, never that every open row is outside it.
+    expect(sca.outsideGate).toBe(0);
+    expect(m.movementNote.sca).toBeNull();
+  });
+
+  it("refuses per register, so one register's short log cannot hide another's window", () => {
+    const m = historyModel(ALL) as any;
+    // sast and secrets have exactly one scan each in this fixture. A section that took the
+    // worst of the three would print "one scan only" over sca's perfectly good 59-day window —
+    // which is the failure the per-scope split exists to prevent.
+    for (const scope of ["sast", "secrets"]) {
+      expect(m.movement[scope], scope).toBeNull();
+      expect(m.movementNote[scope], scope)
+        .toBe("One scan only — a movement is a difference between two of them.");
+    }
+    expect(m.movement.sca).not.toBeNull();
+    expect(m.movementNote.sca).toBeNull();
+  });
+
+  it("does not let another register's scans bound this register's window", () => {
+    // The shape CLAUDE.md names for reconcile, in the read model: three registers share one
+    // scans tab. Give sast a second scan 40 days before sca's newest and sast — and ONLY sast
+    // — gains a window; sca's is unmoved, because its own two scans never changed.
+    const before = historyModel(ALL) as any;
+    H.scans.push({
+      scan_id: "sync-0", ts: "2026-01-20T00:00:00Z", scope: "sast", mode: "full",
+      severities: null, total: 2, new_count: 2, resolved_count: 0, reopened_count: 0,
+      raw_ref: null, obs_ref: null, sealed: 0,
+    });
+    H.version = "v2"; // a write bumps the data version; the memos key on it
+    __resetModelMemosForTest();
+    const after = historyModel(ALL) as any;
+    expect(after.movement.sast).not.toBeNull();
+    expect(after.movement.sast.scope).toBe("sast");
+    expect(after.movement.secrets).toBeNull(); // still one scan
+    expect(JSON.stringify(after.movement.sca)).toBe(JSON.stringify(before.movement.sca));
+  });
+
   // The trend must see the PRE-toggle rows: loadTrend excludes no-fix findings as-of each
   // date, so a fix landing later re-admits its finding at that point rather than deleting it.
   it("hands loadTrend the unfiltered population and the toggle", () => {
@@ -908,8 +993,8 @@ describe("warmReadModels", () => {
     expect(report.skipped).toBe(0);
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
-      "dsHistory1", "dsProgram1", "dsRepos1", "dsStorage1",
-      "dsExecutive1", "dsMttr1", "dsSecrets1", "dsRegister1",
+      "dsHistory2", "dsProgram1", "dsRepos1", "dsStorage1",
+      "dsExecutive1", "dsMttr2", "dsSecrets1", "dsRegister2",
     ]));
   });
 

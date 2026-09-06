@@ -1331,7 +1331,7 @@ export async function renderMttr(main, _params, ctx) {
     const sevs = boot.palette.order.filter((s) => mttr.perSev[s] && sevScope.includes(s));
     if (!sevs.length) return;
 
-    slaHost.append(sectionLabel("Remediation by severity"));
+    slaHost.append(sectionLabel("Remediation by severity", { term: "sla-band" }));
     // Trimmed to the high-signal columns — Resolved, Awaiting, Open age p90 and the SLA
     // target column are dropped from the default view (the target folds into the In-SLA
     // header helpTip). Column headers carry each metric's definition via helpTip so the

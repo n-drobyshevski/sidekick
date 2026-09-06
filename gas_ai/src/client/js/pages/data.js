@@ -41,6 +41,11 @@ export async function renderData(main, _params, ctx) {
   const noticeHost = el("div", {});
   main.append(noticeHost);
   if (!(await bootstrap()).latestSync) {
+    // NO `at:` — this call renders only inside `if (!(await bootstrap()).latestSync)`, so
+    // `synced` above is the literal `false`, never a value derived at render time, and there
+    // is no sync to date. Same shape as gas's attribution.js and gas_devsecops's data.js
+    // (both also listed in their own `firstRunNoAt`); this route is listed in
+    // `gas_ai/test/shared.test.js`.
     noticeHost.append(firstRunNotice({
       synced: false,
       hint: "The figures below count what the ledger holds, so they read zero honestly."

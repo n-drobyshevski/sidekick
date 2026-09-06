@@ -198,6 +198,10 @@ registerEmptyStateContract({
   // page-wide notice would say less, in a bigger box, twice. Registering `data` here to make
   // the list look symmetrical would be the tail wagging the page.
   firstRunRoutes: ["attribution"],
+  // attribution.js's call renders only inside `if (!boot.latestScan)` — `synced: false` is a
+  // literal there, never a value derived at render time, so there is never a scan to date.
+  // Same shape as gas_devsecops's `data` route (`gas_devsecops/test/shared.test.js`).
+  firstRunNoAt: ["attribution"],
 });
 
 // =========================================================================================

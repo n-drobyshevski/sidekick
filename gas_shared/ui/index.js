@@ -20,7 +20,8 @@
 //   nodeCell.js   and what it says when the answer is "this is a node": the kind medallion.
 //                 Split from cells.js because it, alone, reaches ../icons.js
 //   controls.js   status pills, KPI tiles, stat rows
-//   feedback.js   loading / empty / error / toast / dialog / the sync-zone freshness caption
+//   feedback.js   loading / empty / error / toast / dialog / the sync-zone freshness caption /
+//                 measuredEmpty, the filter-empty state that says when it looked
 //   tip.js        the one hover card: the app's only answer to "what does this mean"
 //   tipPlace.js   where that card lands and when it opens — the DOM-free half
 //   sheet.js      the drill-down overlay and its section+row vocabulary
@@ -70,8 +71,8 @@ export {
   selectField, statRow, statusPill, togglePills,
 } from "./controls.js";
 export {
-  confirmDialog, emptyState, errorState, firstRunNotice, skeleton, skeletonStack, syncCaption,
-  toast,
+  confirmDialog, emptyState, errorState, firstRunNotice, measuredEmpty, skeleton,
+  skeletonStack, syncCaption, toast,
 } from "./feedback.js";
 export {
   bookTip, chartTipHandler, closeTip, glossaryTip, tip, tipAnchor, tipLabel, tipLines,

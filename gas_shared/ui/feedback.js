@@ -2,11 +2,21 @@
 //
 // The help tip that used to live here is now ui/tip.js: it outgrew this file the moment it
 // stopped being a bubble parked inside its trigger.
+//
+// TWO SENTENCE SHAPES FOR AN EMPTY STATE, AND THE DATE IS WHAT TELLS THEM APART. "Nothing
+// here, and we looked (on 12 Aug)" is a measurement — the reader can trust the absence
+// because a specific run is named. "Nothing here because nothing has looked" is not a
+// measurement at all; there is no run to name and no date would make one up. `firstRunNotice`
+// draws the first shape once it has a real timestamp in hand and falls back to the second
+// (still true, just undated) when it does not; `measuredEmpty` gives the same date-or-nothing
+// treatment to a page's own filter-empty states. Both refuse a null/blank/unparseable `at`
+// BEFORE calling `fmtDate` on it — an absent date must never render as "on 1 Jan 1970" or as
+// today's date by accident, it must render as no date at all.
 
 import { appConfig } from "../appConfig.js";
 import { el } from "./dom.js";
 import { relativeAge } from "./figures.js";
-import { fmtDateTime } from "./format.js";
+import { fmtDate, fmtDateTime } from "./format.js";
 
 export function toast(message, kind) {
   let host = document.getElementById("toasts");
@@ -179,18 +189,68 @@ export function emptyState(message, hint, opts) {
  *
  * `unit` is the same argument for the thing being counted: gas measures findings on a host,
  * gas_ai assets in a graph. Defaulted, so no existing caller changes.
+ *
+ * `at` IS THE DIFFERENCE BETWEEN THE TWO SYNCED SENTENCES, not a cosmetic extra. `synced:
+ * true` alone only says a sync happened SOME time; naming WHEN is what turns "there is
+ * nothing here to measure yet" from a shrug into a stated fact a reader can check against
+ * their own memory of when they last ran one. `at` is refused BEFORE any cast — `usableDate`
+ * below — so a caller that has no timestamp in hand (an old bootstrap shape, a stubbed test)
+ * gets the undated sentence rather than a fabricated one. Callers that pass no `at` at all
+ * behave exactly as before this argument existed.
  */
-export function firstRunNotice({ synced, hint }) {
+export function firstRunNotice({ synced, hint, at }) {
   const sync = appConfig().sync || {};
   const noun = sync.noun || "sync";
   const unit = sync.unit || "findings";
+  const when = usableDate(at);
   return emptyState(
     synced
-      ? `The last ${noun} saved no ${unit}, so there is nothing here to measure yet.`
+      ? (when
+          ? `The last ${noun} on ${fmtDate(at)} saved no ${unit}, so there is nothing here to measure yet.`
+          : `The last ${noun} saved no ${unit}, so there is nothing here to measure yet.`)
       : `No ${noun} has run yet, so nothing on this page has been measured.`,
     hint,
     { variant: "notice" },
   );
+}
+
+/**
+ * The one guard both date-bearing empty states share: is `at` a value `fmtDate` may safely
+ * be pointed at, decided BEFORE any cast rather than after.
+ *
+ * `Number(null)` is `0`, and it is finite — CLAUDE.md names this as the cast where "absent is
+ * never zero" stops being obvious, and `Date.parse` has the same trap from the other side:
+ * `Date.parse(null)` and `Date.parse(undefined)` both produce `NaN` today, but the tempting
+ * "just check `Number.isNaN(Date.parse(at))`" rewrite still runs `Date.parse` on `[]` (which
+ * coerces to `""`, also `NaN` — safe by luck, not by design) and on `false` (coerces to
+ * `"false"`, also `NaN` — same luck). Refusing the falsy/blank/array shapes BEFORE the parse
+ * — rather than trusting every one of them to keep landing on `NaN` — is what this function
+ * is for, and it is the one thing perturbing the guard to plain truthiness (`if (at)`) still
+ * gets right for `[]`/`false` while it goes wrong for a non-empty but unparseable string.
+ */
+function usableDate(at) {
+  if (at === null || at === undefined || at === "" || at === false) return false;
+  if (Array.isArray(at)) return false;
+  return !Number.isNaN(Date.parse(at));
+}
+
+/**
+ * A filter-empty state that says WHEN it looked — `measuredEmpty("No CRITICAL findings.", {
+ * at: lastSync.ts })` reads as "we checked, on that date, and there were none" rather than
+ * leaving the reader to wonder whether the filter itself is broken. Builds on `emptyState`
+ * (same node, same `hint` slot) and appends one more line only when `at` survives
+ * `usableDate` — no trailing line at all otherwise, never a line naming no date.
+ *
+ * Deliberately NOT a drop-in replacement for `emptyState`: adopting it on an existing
+ * filter-empty call site is a per-page decision (does that page actually have a timestamp in
+ * hand?), not something this commit makes for every call site at once.
+ */
+export function measuredEmpty(message, { at, hint } = {}) {
+  const node = emptyState(message, hint);
+  if (usableDate(at)) {
+    node.append(el("div", { class: "small muted" }, "Measured at " + fmtDate(at) + " — nothing matched."));
+  }
+  return node;
 }
 
 /**

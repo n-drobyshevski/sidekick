@@ -9,6 +9,7 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   absent, clear, confirmDialog, dataTable, el, emptyState, fmtDateTime, fmtSpan, kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
 } from "../ui.js";
+import { movementView } from "./historyModel.js";
 
 // The rows-per-page the table OPENS on. It is no longer the only size available: the footer
 // below carries a rows-per-page select, so this is a starting point rather than a ceiling.
@@ -78,6 +79,7 @@ export async function renderHistory(main, _params, ctx) {
   const historyPromise = swrCall("api_getScanHistory", {}, (fresh) => {
     paintKpis(fresh.kpis, fresh.scans);
     paintScans(fresh.scans);
+    paintMovement(fresh);
   });
 
   main.append(pageHeader({
@@ -88,9 +90,16 @@ export async function renderHistory(main, _params, ctx) {
   const freshLine = el("p", { class: "section-note" });
   const kpiRow = el("div", { class: "kpi-row" });
   const scansHost = el("div", {});
+  const movementHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid", style: "margin-top:20px" });
   main.append(
     freshLine, kpiRow, sectionLabel("Saved scans"), scansHost,
+    sectionLabel("What moved the number"),
+    el("p", { class: "section-note" },
+      "The change in the open count over the last 28-day window bounded by two saved scans, "
+      + "split into the causes that moved it — and which of them are remediation the register "
+      + "actually observed."),
+    movementHost,
     sectionLabel("Remediation trends"),
     el("p", { class: "section-note" },
       "Open vs resolved and the Kaplan–Meier MTTR median, scoped to the display "
@@ -113,6 +122,7 @@ export async function renderHistory(main, _params, ctx) {
   const data = await historyPromise;
   paintKpis(data.kpis, data.scans);
   paintScans(data.scans);
+  paintMovement(data);
 
   function paintKpis(kpis, scans) {
     // Freshness: the ledger's whole value is recency, so state it plainly.
@@ -129,6 +139,55 @@ export async function renderHistory(main, _params, ctx) {
       kpiCard("Resolved all-time", kpis.resolvedAllTime.toLocaleString()),
       kpiCard("Median MTTR", fmtSpan(kpis.medianMttr)),
     );
+  }
+
+  // ---- what moved the number (see pages/historyModel.js for the reading, and
+  // domain/program.ts's movementDecomposition for the arithmetic).
+  //
+  // TWO TABLES, NOT ONE TABLE WITH A COLUMN. The section exists to keep "the API said this was
+  // fixed" and "the scan stopped seeing it" apart; a single table sorted by count invites a
+  // total across them, and that total is precisely the number a narrowed severity gate
+  // inflates for free.
+  const CAUSE_COLUMNS = [
+    { key: "cause", label: "Cause", cell: (r) => r.cause },
+    { key: "basis", label: "How the date was arrived at", cell: (r) => r.basis },
+    { key: "count", label: "Findings", cell: (r) => r.count.toLocaleString() },
+  ];
+
+  function causeTable(title, rows) {
+    return el("div", { class: "chart-card" },
+      el("h3", {}, title),
+      dataTable({
+        columns: CAUSE_COLUMNS,
+        rows,
+        cellClass: (_row, col) => (col.key === "count" ? "num" : ""),
+      }));
+  }
+
+  function paintMovement(payload) {
+    const view = movementView(payload.movement, payload.movementNote);
+    clear(movementHost);
+    if (view.empty) {
+      // The server's own words, verbatim: it is the only thing that knows WHY it declined,
+      // and a reason invented here would print in the same ink as a measurement.
+      movementHost.append(emptyState(
+        view.empty,
+        "The decomposition compares two saved scans at least 28 days apart."));
+      return;
+    }
+    movementHost.append(
+      el("p", { class: "section-note" }, view.sentence),
+      el("div", {
+        style: "display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr))",
+      },
+      causeTable("Measured remediation", view.measuredRows),
+      causeTable("Administrative", view.administrativeRows)),
+    );
+    if (view.asideRows.length) {
+      movementHost.append(el("ul", { class: "small", style: "margin:12px 0 0; padding-left:18px" },
+        ...view.asideRows.map((r) => el("li", {},
+          `${r.label}: `, el("span", { class: "num" }, r.count.toLocaleString())))));
+    }
   }
 
   // ---- saved scans table (paginated, sortable, sticky delete bar) with delete flow

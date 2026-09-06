@@ -9,6 +9,7 @@
 // all is shown beside every rate rather than quietly dropped; and the whole classified set
 // exports as CSV so a reader can recompute the page in a spreadsheet.
 
+import { capacityHindcastView, VERDICT } from "./programCapacity.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
@@ -109,13 +110,13 @@ function rangeNode(rate) {
   return el("span", { class: "prog-range" }, pct(rate.lo) + "–" + pct(rate.hi));
 }
 
-const VERDICT = {
-  gaining: { pill: "ok", glyph: "▲", text: "Gaining ground" },
-  "keeping-up": { pill: "neutral", glyph: "=", text: "Keeping up" },
-  "falling-behind": { pill: "bad", glyph: "▼", text: "Falling behind" },
-};
-
-/** Net-capacity verdict as a pill carrying a glyph and a word — never colour alone. */
+/**
+ * Net-capacity verdict as a pill carrying a glyph and a word — never colour alone.
+ *
+ * `VERDICT` moved to programCapacity.js rather than being copied into it: the track-record
+ * table below prints the same three words, and two maps would let the pill and the table
+ * disagree about what a verdict is called.
+ */
 function verdictPill(v) {
   const spec = VERDICT[v];
   // `absent()` IS this span, written once — same tag, same class, same dash. Spelling it out
@@ -599,7 +600,7 @@ export async function renderProgram(main, _params, ctx) {
     const months = (cap.months || []).slice(-12);
     if (!months.length) return;
 
-    capacityHost.append(sectionLabel("Remediation capacity"));
+    capacityHost.append(sectionLabel("Remediation capacity", { term: "capacity" }));
     capacityHost.append(el("p", { class: "note" },
       "How much of the open backlog the program closes per month, and whether high-risk work " +
       "is arriving faster than it is being cleared. The research benchmark is that a typical " +
@@ -690,6 +691,46 @@ export async function renderProgram(main, _params, ctx) {
         "the month in progress is not over. The per-month figures above are still exact for " +
         "what was observed."));
     }
+    renderHindcast(p);
+  }
+
+  /**
+   * How the verdict above has actually done — each saved scan, the verdict this page would
+   * have shown that day, and what the month after it did.
+   *
+   * The empty state is not a fallback for a missing payload; it is the honest answer while a
+   * register is young, and it goes through `emptyState` for the same reason every other
+   * "nothing to show yet" on this page does. `capacityHindcastView` decides which branch it
+   * is — this function only draws.
+   */
+  function renderHindcast(p) {
+    const view = capacityHindcastView(p.capacityHindcast);
+    capacityHost.append(sectionLabel("Verdict track record"));
+    capacityHost.append(el("p", { class: "note" },
+      "For each saved scan, the verdict this page would have shown that day, beside what the " +
+      "following month actually did. The verdict is the net capacity figure in the header — " +
+      "high-risk findings closed against high-risk findings arriving."));
+    if (view.empty) {
+      capacityHost.append(emptyState(view.empty));
+      return;
+    }
+    capacityHost.append(dataTable({
+      columns: [
+        { key: "asOf", label: "As of", cell: (r) => fmtDate(r.asOf) },
+        { key: "verdictText", label: "Projected", cell: (r) => r.verdictText },
+        {
+          key: "realisedText",
+          label: "What happened",
+          className: "num",
+          help: ["High-risk findings closed minus high-risk findings opened that month, as a " +
+            "share of the backlog open at its start. Positive means ground was gained."],
+          cell: (r) => r.realisedText,
+        },
+        { key: "agreedText", label: "Agreed", cell: (r) => r.agreedText },
+      ],
+      rows: view.rows,
+    }));
+    capacityHost.append(el("p", { class: "note" }, view.sentence + " " + view.capNote));
   }
 
   // ------------------------------------------------------------------ methodology

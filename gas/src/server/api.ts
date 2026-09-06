@@ -6,6 +6,7 @@ import {
   SEVERITY_COLORS,
   SEVERITY_ORDER,
   SELECTABLE_SEVERITIES,
+  SLA_TARGETS,
   isOpenStatus,
 } from "../domain/config";
 import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED, type CompiledDomain } from "../domain/domainRules";
@@ -15,6 +16,7 @@ import type { BaseRow } from "../domain/ledgerCore";
 import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
 import { normalizeSeverity } from "../domain/severity";
+import { parseSeverities } from "../domain/compaction";
 import {
   actionableView,
   awaitingVendorFix,
@@ -54,6 +56,7 @@ import * as ledgerStore from "./ledgerStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
 import * as access from "./access";
 import { hasWizCredentials, PROP_KEYS, setProp } from "./props";
+import { BASE_FILTER_WORDS } from "./wizClient";
 import * as backfillJobs from "./backfillJobs";
 import * as purgeJobs from "./purgeJobs";
 import * as scanJobs from "./scanJobs";
@@ -501,6 +504,25 @@ function insightsData(p?: unknown): Rec {
     // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
     awaiting: awaitingVendorFix(baseVisible),
     aging: insights.ageBuckets(baseVisible),
+    // The same open rows against their OWN deadline instead of the shared 7/30/90 edges: how
+    // much of each finding's SLA window it has used, in tenths. The targets come from the
+    // domain constant HERE rather than inside insights.ts, which keeps that function pure
+    // over its arguments — and the client is never sent the table (see `bootstrapCore`), so
+    // the bucketing has to happen on this side of the wire.
+    slaConsumed: insights.slaConsumedDeciles(baseVisible, SLA_TARGETS),
+    // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow the register
+    // before a single figure is computed: the rows themselves (`inScope`), the severity gate
+    // THE LAST SCAN APPLIED — not the one settings hold now, which is why it is read off the
+    // scan row rather than off `severities` above — and the base Wiz filter every query
+    // carries. Each of them makes a count fall, and none of them can be published as a `0`:
+    // a zero is a measurement, and these are refusals to measure (CLAUDE.md, "The Outside").
+    // `parseSeverities` returns null for a full or absent gate, and null here means "all
+    // severities" — never an empty list, which the client would have to guess at.
+    population: {
+      inScope: baseVisible.length,
+      gate: latestFlat ? parseSeverities(latestFlat.severities) : null,
+      filters: BASE_FILTER_WORDS,
+    },
     // Oldest open findings + 90+ backlog per asset / support group / domain, for the aging
     // panel's toggle. Capped at 100 (up from the old top-7) so the client can page through the
     // aged tail with prev/next controls — the whole set ships once and repaints client-side,
@@ -601,7 +623,13 @@ const cachedInsightsData = (p?: unknown) =>
     // fields, and the rebuilt page reads them unconditionally, so it must not be served.
     // The key gains riskRuleVersion for the same reason it does on the Program page: the
     // operator can change which signals classify a row, and every tier figure moves with it.
-    "insights4",
+    // "insights4" → "insights5": the payload gained `population` (in-scope count, the gate
+    // the last scan applied, the base filter words); a stale insights4 entry has none of it,
+    // and a half-drawn provenance line is worse than none.
+    // "insights5" → "insights6": the payload gained `slaConsumed` (open findings by tenth of
+    // their SLA window, plus the past-window and no-window counts that are not drawn); a
+    // stale insights5 entry has none of it and the section would render as a measured zero.
+    "insights6",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1147,6 +1175,24 @@ function programData(p?: unknown): Rec {
       highRiskOnly: true,
       maxMonths: 24,
     }),
+    // The verdict's own track record, replayed against what happened next.
+    //
+    // HIGH-RISK, not whole-register, and that is the whole point of it: `capacityHighRisk`
+    // is the only capacity figure this page states as a verdict — the hero's pill reads
+    // `capacityHighRisk.verdict`, and `capacity.verdict` is never rendered as those three
+    // words anywhere. Hindcasting the whole-register series would publish a hit rate for a
+    // sentence nobody is shown.
+    //
+    // Cost measured on a synthetic 20k-row / 24-scan register, timed after the two
+    // capacityByMonth passes above so the paths are as warm as they are in production:
+    // 142 ms whole-register, 82 ms high-risk-only (636 ms before the domain layer parsed the
+    // register once instead of once per scan). The payload is cached for an hour, so this is
+    // a cache-miss cost; the cap stays at 24 scans.
+    capacityHindcast: program.capacityHindcast(capacityRows, scans, {
+      rule,
+      highRiskOnly: true,
+      scansCap: 24,
+    }),
     observationDays: program.observationWindowDays(rows as unknown as BaseRow[]),
     rowCount: rows.length,
     // Named so the methodology block can state what was excluded before any of this counted.
@@ -1417,7 +1463,9 @@ const cachedMttrTrendData = (p?: unknown) =>
 // wall-clock relative.
 const cachedProgramData = (p?: unknown) =>
   cached(
-    "program1",
+    // "program1" -> "program2": the payload gained `capacityHindcast`; dataVersion persists
+    // across deploys, so bump the namespace or a stale hindcast-less entry outlives the ship.
+    "program2",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1844,16 +1892,48 @@ export function getExecutivePage(p?: unknown): ApiResult {
 
 // --------------------------------------------------------------------- scan history
 
+// The movement window is 28 days wide and BOUNDED BY SCANS, not by calendar dates — see
+// program.movementWindowScans for why. The COPY lives here rather than in the domain: the
+// domain answers with a reason code, and a reason a reader can act on is a fact about this
+// page ("run another scan"), not about the arithmetic.
+const MOVEMENT_WINDOW_DAYS = 28;
+
+function movementNoteFor(win: program.MovementWindow): string {
+  if (win.reason === "noScans") {
+    return "No per-finding scans are saved yet — nothing to decompose.";
+  }
+  if (win.reason === "oneScan") {
+    return "One scan only — a movement is a difference between two of them.";
+  }
+  return `No scan at least ${MOVEMENT_WINDOW_DAYS} days older than the latest one`
+    + (win.days === null ? "" : ` — the saved scans span ${win.days} days`)
+    + ".";
+}
+
 function scanHistoryData(): Rec {
-  const scans = ledgerStore.loadScanRows().slice().reverse(); // newest first
+  const scanRows = ledgerStore.loadScanRows();
+  const scans = scanRows.slice().reverse(); // newest first
   // KPI band only: drop no-fix findings when the toggle is off, so tracked/open/resolved/
   // median match the rest of the dashboard. The scans table (+ delete flow) stays unfiltered.
   const base = visibleBase(ledgerStore.loadBaseRows() as unknown as Rec[]) as unknown as BaseRow[];
   const open = base.filter((r) => r.status === "OPEN").length;
   const resolved = base.filter((r) => r.status === "RESOLVED").length;
   const { overall } = mttrFromLedger(base as unknown as Rec[]);
+  // The decomposition runs over the SAME `base` the KPI band counts, so "the open count moved
+  // N" and "Currently open" cannot describe two different populations on one page.
+  const win = program.movementWindowScans(scanRows as unknown as Rec[], MOVEMENT_WINDOW_DAYS);
+  const movement = win.since !== null
+    ? program.movementDecomposition(
+      base as unknown as program.MovementRow[],
+      scanRows as unknown as Rec[],
+      { since: win.since, until: win.until },
+    )
+    : null;
   return {
     scans,
+    movement,
+    movementWindow: win,
+    movementNote: movement ? null : movementNoteFor(win),
     kpis: {
       tracked: base.length,
       open,
@@ -1866,7 +1946,9 @@ function scanHistoryData(): Rec {
 const cachedScanHistoryData = () =>
   // "scanHistory" → "scanHistory2": the KPI band now drops no-fix findings when the toggle is
   // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
-  durablyCached("scanHistory2", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
+  // "scanHistory2" → "scanHistory3": the payload carries the movement decomposition now, and a
+  // stale entry would serve the section's empty state over a window that is measurable.
+  durablyCached("scanHistory3", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
 
 export function getScanHistory(_p?: unknown): ApiResult {
   return run(() => {

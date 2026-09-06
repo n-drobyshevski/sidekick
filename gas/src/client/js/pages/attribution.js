@@ -91,6 +91,8 @@ export async function renderAttribution(main, params, ctx) {
     // It says "scan", not "sync", because the manifest now carries the noun (`MANIFEST.sync`
     // in app.js). Until this package the shared component hard-coded "sync", which named a
     // control this app does not have — which is why this page could not use it.
+    // NO `at:` — this call renders only inside `if (!boot.latestScan)`, so `synced` above is
+    // the literal `false`, never a derived value, and there is no scan to date.
     main.append(firstRunNotice({
       synced: false,
       hint: "Use “Run scan” in the sidebar to take the first measurement.",

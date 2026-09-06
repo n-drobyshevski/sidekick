@@ -108,11 +108,13 @@ import {
   RESOLVED_STATUSES,
   SCOPES,
   SEVERITY_ORDER,
+  SLA_TARGETS,
   ruleForScope,
   type Scope,
 } from "../domain/config";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
+import { parseSeverities } from "../domain/compaction";
 import { inProject, parseProjects } from "../domain/projectScope";
 import { clampInt, parseTs, type Rec } from "../domain/util";
 import {
@@ -149,6 +151,12 @@ import {
   type AnyRiskRule,
   type RiskRow,
 } from "../domain/program";
+import {
+  movementDecomposition,
+  movementWindowScans,
+  type MovementRow,
+  type MovementWindow,
+} from "../domain/movementDecomposition";
 import { assetProfilePopulations, type AssetRow } from "../domain/assets";
 import {
   SEVERITY_AXIS_REFUSAL,
@@ -159,7 +167,7 @@ import {
   validationCoverage,
   type SecretRow,
 } from "../domain/secretsLifecycle";
-import { ageBuckets, agingDistribution, concentration, movement, oldestOpen, riskTierStats, severityStats, triageFunnel } from "../domain/insights";
+import { ageBuckets, agingDistribution, concentration, movement, oldestOpen, riskTierStats, severityStats, slaConsumedDeciles, triageFunnel } from "../domain/insights";
 import { kmMedianAsOf } from "../domain/trend";
 import { fixNext } from "./fixNext";
 import {
@@ -173,6 +181,7 @@ import {
 import { listHistory } from "./historyStore";
 import { activeJob } from "./jobsStore";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
+import { BASE_FILTER_WORDS } from "./wizQueries";
 import { loadSettings } from "./settingsStore";
 import { cached, dataVersion } from "./serverCache";
 import { durablyCached, duringWarm, sweepReadModels } from "./readModelStore";
@@ -637,6 +646,21 @@ function buildMttr(n: NormParams): Rec {
        * that count rather than letting the bars quietly cover fewer rows than the hero does.
        */
       aging: agingDistribution(rows),
+      /**
+       * The SAME open rows, against their OWN deadline instead of the shared 7/30/90 edges:
+       * how much of each finding's SLA window it has consumed, in tenths.
+       *
+       * `aging` above it cannot be this chart. Its bucket edges are fixed while the target
+       * varies fivefold across severities, which is exactly why `slaEdge` is per severity
+       * and the page draws one hairline only when every severity in scope agrees on it. This
+       * normalises by the row's own window instead: every severity shares one axis, and the
+       * two populations that have no tenth to plot — past the window, and no window at all —
+       * are counted separately rather than folded into a bar.
+       *
+       * `SLA_TARGETS` is passed in from HERE rather than read inside `insights.ts`, which
+       * keeps that function pure over its arguments; the client never receives the table.
+       */
+      slaConsumed: slaConsumedDeciles(rows, SLA_TARGETS),
       awaiting: awaitingVendorFix(rows),
       /**
        * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
@@ -661,7 +685,11 @@ function buildMttr(n: NormParams): Rec {
 
 export function mttrModel(p?: ModelParams): Rec {
   const n = norm(p);
-  return cached("dsMttr1", keyOf(n), () => buildMttr(n), CLOCK_TTL_SEC);
+  // "dsMttr1" -> "dsMttr2": the payload gained `remediation.slaConsumed`; a warm dsMttr1
+  // entry has none of it, and the section would be missing entirely from a page whose other
+  // figures are drawn — a chart absent for a cache reason reads as a register with nothing
+  // inside its windows.
+  return cached("dsMttr2", keyOf(n), () => buildMttr(n), CLOCK_TTL_SEC);
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -947,6 +975,28 @@ function buildRegister(scope: Scope, n: NormParams): Rec {
     awaiting: awaitingVendorFix(rows, { scope }),
     latestScan: latest,
     signalCoverage: signalCoverage(rows),
+
+    // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow a register
+    // before one figure on it is computed: the rows themselves, the severity gate THE LAST
+    // SCAN OF THIS SCOPE APPLIED, and the base Wiz filter this scope's query carries. Each
+    // makes a count fall, and none can be published as a `0` — the rows they removed were
+    // never fetched, so a count there would measure a population nobody looked at.
+    //
+    // THE GATE COMES OFF THE SCAN ROW, never off `n.severities`. A scan records the gate it
+    // APPLIED (runScan's `severities` override), and the two differ across a settings change;
+    // stamping today's gate on yesterday's measurement is the same class of error the
+    // disappearance guard exists to prevent.
+    //
+    // `parseSeverities` returns NULL for a gate that covered everything — including the empty
+    // string and the full list — and null is what "all severities" is spelled as here. It must
+    // not be flattened to `[]`: `secrets` DEFAULTS to an empty gate
+    // (DEFAULT_FETCH_SEVERITIES.secrets), so the all-severities case is the live one on a
+    // third of this product, not a theoretical edge.
+    population: {
+      inScope: rows.length,
+      gate: latest ? parseSeverities(latest.severities) : null,
+      filters: BASE_FILTER_WORDS[scope],
+    },
   };
 }
 
@@ -964,7 +1014,11 @@ export function registerModel(scope: Scope, p?: ModelParams): Rec {
   // `scope` is part of the KEY, not merely of the payload: three registers share one ledger
   // and one cache namespace, and a key that omitted it would serve sast's page from sca's entry.
   return cached(
-    "dsRegister1",
+    // "dsRegister1" -> "dsRegister2": the payload gained `population` (in-scope count, the
+    // gate the last scan applied, the base filter words). A warm dsRegister1 entry carries
+    // none of it, and the page would draw no provenance line at all over figures that have
+    // one — worse than a stale number, because it is a silently missing caveat.
+    "dsRegister2",
     { ...keyOf(n), scope },
     () => buildRegister(scope, n),
     CLOCK_TTL_SEC,
@@ -1338,7 +1392,47 @@ export function reposModel(p?: ModelParams): Rec {
  * per UTC day, recorded before this package's project scope existed. `scanScopeApplies:
  * false` names exactly which three keys that covers, so a client cannot draw them as if they
  * had narrowed alongside the rest of this payload.
+ *
+ * `movement` / `movementNote` ARE PER SCOPE AND ALWAYS COVER ALL THREE. See
+ * `domain/movementDecomposition.ts` for the arithmetic and `movementPopulation` below for the
+ * one filter this block deliberately does NOT inherit from the KPI band.
  */
+
+// The movement window is 28 days wide and BOUNDED BY SCANS OF ONE SCOPE, not by calendar dates
+// — see `movementWindowScans` for why, and for why the scope filter is inside it. The COPY
+// lives here rather than in the domain: the domain answers with a reason code, and a reason a
+// reader can act on is a fact about this page ("run another sync"), not about the arithmetic.
+const MOVEMENT_WINDOW_DAYS = 28;
+
+function movementNoteFor(win: MovementWindow): string {
+  if (win.reason === "noScans") {
+    return "No scans are saved for this register yet — nothing to decompose.";
+  }
+  if (win.reason === "oneScan") {
+    return "One scan only — a movement is a difference between two of them.";
+  }
+  return `No scan of this register at least ${MOVEMENT_WINDOW_DAYS} days older than its latest`
+    + (win.days === null ? "" : ` — its saved scans span ${win.days} days`)
+    + ".";
+}
+
+/**
+ * The population the decomposition replays — the KPI band's, MINUS the severity filter.
+ *
+ * The project scope and the no-fix toggle DO apply: they narrow which findings are the
+ * reader's. The DISPLAY SEVERITY FILTER MUST NOT, and that is the one thing this function
+ * exists to say. `outsideGate` counts open rows whose severity the last scan never looked at;
+ * running it over a population a display filter had already narrowed to the same severities
+ * would report 0 — "nothing was hidden" — exactly when something was, which is the confusion
+ * the whole section was built to end.
+ */
+function movementPopulation(rows: BaseRow[], n: NormParams): MovementRow[] {
+  const scoped = n.project
+    ? rows.filter((r) => inProject(parseProjects(r.projects_json), n.project!))
+    : rows;
+  return n.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
+}
+
 function buildHistory(n: NormParams): Rec {
   const snap = baseSnapshot();
   const clock = ledgerClock(n.scope);
@@ -1350,6 +1444,22 @@ function buildHistory(n: NormParams): Rec {
   const rows = visibleRows(snap.rows, n);
   const { overall } = mttrFromLedger(rows as unknown as Rec[], { now: snap.now });
 
+  const movementRows = movementPopulation(snap.rows, n);
+  const movement: Rec = {};
+  const movementNote: Rec = {};
+  for (const scope of SCOPES) {
+    const win = movementWindowScans(scansAll, MOVEMENT_WINDOW_DAYS, scope);
+    movement[scope] = win.reason === null
+      ? movementDecomposition(
+        movementRows,
+        scansAll,
+        { since: win.since, until: win.until },
+        scope,
+      )
+      : null;
+    movementNote[scope] = win.reason === null ? null : movementNoteFor(win);
+  }
+
   return {
     asOf: clock.asOf,
     asOfSource: clock.asOfSource,
@@ -1359,6 +1469,11 @@ function buildHistory(n: NormParams): Rec {
     showNoFix: n.showNoFix,
     scans,
     perScope: perScopeScanStats(scansAll),
+    // One block per register, ALWAYS all three — a window and a gate are per-scope facts and
+    // this page draws the three side by side. Each block is keyed by the scope it measured and
+    // `movement[scope].scope` echoes it, so two registers' movement can never be read as one.
+    movement,
+    movementNote,
     kpis: {
       tracked: rows.length,
       open: rows.filter((r) => isOpen(r.status)).length,
@@ -1413,7 +1528,11 @@ function perScopeScanStats(scans: ScanRow[]): Record<string, Rec> {
 
 export function historyModel(p?: ModelParams): Rec {
   const n = norm(p);
-  return durablyCached("dsHistory1", keyOf(n), () => buildHistory(n));
+  // "dsHistory1" -> "dsHistory2": the payload gained `movement` / `movementNote`, one block
+  // per register. A warm dsHistory1 entry carries neither, and this page's new section would
+  // draw its empty state — "no movement decomposition in this payload" — over a window that is
+  // perfectly measurable, for up to a week of durable-store MAX_AGE.
+  return durablyCached("dsHistory2", keyOf(n), () => buildHistory(n));
 }
 
 // --------------------------------------------------------------------------------------- //

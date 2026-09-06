@@ -23,7 +23,7 @@
 
 import { configureApp } from "../../../../gas_shared/appConfig.js";
 import { call } from "../../../../gas_shared/api.js";
-import { swrCall } from "../../../../gas_shared/store.js";
+import { bootstrapCached, swrCall } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { openSyncDetails, renderSyncCard, shouldContinuePolling } from "./syncProgress.js";
 import {
@@ -46,6 +46,7 @@ import { renderHelp } from "./pages/help.js";
 import { renderSettings } from "./pages/settings.js";
 import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
 import { findEntry } from "./helpContent.js";
+import { installExperimentalFanout } from "./experimental.js";
 
 // ============================================================================ the manifest
 //
@@ -503,6 +504,12 @@ const shell = createAppShell({
   railFooter: renderSyncZone,
   navContext,
 });
+
+// THE EXPERIMENTAL GATE HAS ONE LISTENER SLOT and createAppShell already claimed it, for the
+// rail rebuild. Claiming it back HERE, with that same rebuild as the base, is what lets a page
+// subscribe without silently costing the rail its redraw — `subscribeExperimental` hands each
+// page its own unsubscribe, and the base listener is never disturbed. See experimental.js.
+installExperimentalFanout(() => shell.renderSidebar(bootstrapCached()));
 
 export const refresh = shell.refresh;
 
