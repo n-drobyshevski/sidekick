@@ -15,6 +15,8 @@ import {
   formatFraction,
   formatRate,
   formatTau,
+  precisionLabel,
+  rankEvalCapacity,
   rankEvalHonesty,
   rankEvalRows,
 } from "../src/client/js/rankEvalModel.js";
@@ -153,5 +155,81 @@ describe("rankEvalHonesty", () => {
     });
     expect(block[0].value).toBe("1");
     expect(block[2].value).toBe("0 of 0");
+  });
+});
+
+describe("rankEvalCapacity", () => {
+  const capacity = (over) => ({
+    points: [{}, {}, {}],
+    closeRate: { point: 0.1, lo: 0.08, hi: 0.12 },
+    oneInN: 10,
+    closedPerHorizonMean: 12.4,
+    capacityK: 12,
+    verdict: "falling-behind",
+    netMeasuredPoints: 3,
+    horizonDays: 30,
+    ...over,
+  });
+
+  it("says the unit in words, because the inventory readout is per sync and this is not", () => {
+    const view = rankEvalCapacity({ horizonDays: 30, capacity: capacity() });
+    expect(view.unitNote).toBe("per 30-day horizon");
+    expect(view.detail).toContain("per 30-day horizon");
+  });
+
+  it("formats the four facts, verdict as a word", () => {
+    const view = rankEvalCapacity({ horizonDays: 30, capacity: capacity() });
+    expect(view.present).toBe(true);
+    expect(view.closeRateText).toBe("10.0% (8.0%–12.0%)");
+    expect(view.oneInNText).toBe("about 1 in 10.0");
+    expect(view.capacityKText).toBe("12 rows");
+    expect(view.verdictKey).toBe("falling-behind");
+    expect(view.verdictWord).toBe("Falling behind");
+  });
+
+  it("reads every null as a word, never as a zero", () => {
+    const view = rankEvalCapacity({
+      horizonDays: 30,
+      capacity: capacity({
+        closeRate: { point: null, lo: 0, hi: 1 },
+        oneInN: null,
+        closedPerHorizonMean: null,
+        capacityK: null,
+        verdict: null,
+        netMeasuredPoints: 0,
+      }),
+    });
+    expect(view.closeRateText).toBe(UNMEASURED + " (0.0%–100.0%)");
+    expect(view.oneInNText).toBe(UNMEASURED);
+    expect(view.capacityKText).toBe(UNMEASURED);
+    expect(view.verdictWord).toBe("Not yet comparable");
+    expect(view.verdictKey).toBeNull();
+  });
+
+  it("names the windows whose arrivals nobody has finished counting", () => {
+    const view = rankEvalCapacity({ horizonDays: 30, capacity: capacity({ netMeasuredPoints: 1, verdict: null }) });
+    expect(view.detail).toContain("2 windows with arrivals still uncounted");
+    expect(view.verdictWord).toBe("One window measured; the verdict needs two");
+  });
+
+  it("distinguishes 'fewer than one row' from 'unmeasured'", () => {
+    const view = rankEvalCapacity({ horizonDays: 30, capacity: capacity({ closedPerHorizonMean: 0.2, capacityK: null }) });
+    expect(view.capacityKText).toBe("fewer than 1 row");
+  });
+
+  it("is absent with a sentence, not with zeroes, when there is no capacity at all", () => {
+    const view = rankEvalCapacity({ horizonDays: 30, capacity: null });
+    expect(view.present).toBe(false);
+    expect(view.detail).toContain("two committed syncs");
+    expect(view.closeRateText).toBe(UNMEASURED);
+    expect(view.unitNote).toBe("per 30-day horizon");
+  });
+});
+
+describe("precisionLabel", () => {
+  it("marks only the cut that is the programme's capacity", () => {
+    expect(precisionLabel(10, 25)).toBe("precision@10");
+    expect(precisionLabel(25, 25)).toBe("precision@25 · monthly capacity");
+    expect(precisionLabel(25, null)).toBe("precision@25");
   });
 });

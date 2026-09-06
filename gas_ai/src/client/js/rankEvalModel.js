@@ -20,6 +20,8 @@
 // The server sends fractions (0..1); the percent sign is applied here, once, so no caller
 // can multiply twice.
 
+import { CAPACITY_WORDS } from "./postureTrendModel.js";
+
 /** The em-dash-plus-word every unmeasured cell reads as. */
 export const UNMEASURED = "— unmeasured";
 
@@ -157,4 +159,76 @@ export function rankEvalHonesty(report) {
       note: "Remediation is dated by DISAPPEARANCE, so every figure is an upper bound.",
     },
   ];
+}
+
+/**
+ * The precision column's heading, with the derived cut named as such.
+ *
+ * `capacityK` is a k like any other in the arithmetic; what makes it different is WHY it was
+ * asked, and that belongs in the heading rather than in a footnote a reader has to connect
+ * back to the right column.
+ */
+export function precisionLabel(k, capacityK) {
+  return "precision@" + k + (isNum(capacityK) && k === capacityK ? " · monthly capacity" : "");
+}
+
+/**
+ * The capacity block: four facts and the sentence under them, every one already a string.
+ *
+ * THE UNIT RIDES IN THE WORD. The Inventory page carries a per-SYNC close rate from the same
+ * ledger, and the two differ in number by design; `unitNote` says "per N-day horizon" so a
+ * reader holding both cannot take one for the other. The verdict is a word first and a colour
+ * second, for the same reason the inventory readout is.
+ */
+export function rankEvalCapacity(report) {
+  const r = report || {};
+  const cap = r.capacity || null;
+  const horizon = isNum(r.horizonDays) ? r.horizonDays : (cap && isNum(cap.horizonDays) ? cap.horizonDays : 0);
+  const unitNote = "per " + horizon + "-day horizon";
+  if (!cap) {
+    return {
+      present: false,
+      unitNote,
+      detail: "Capacity is measured over the same comparable syncs as precision, so it waits "
+        + "on the same two committed syncs under one register scope.",
+      closeRateText: UNMEASURED,
+      oneInNText: UNMEASURED,
+      capacityKText: UNMEASURED,
+      verdictKey: null,
+      verdictWord: "Not yet comparable",
+      netMeasuredPoints: 0,
+      points: 0,
+    };
+  }
+  const points = Array.isArray(cap.points) ? cap.points.length : 0;
+  const measured = isNum(cap.netMeasuredPoints) ? cap.netMeasuredPoints : 0;
+  const verdictKey = cap.verdict || null;
+  const verdictWord = verdictKey
+    ? (CAPACITY_WORDS[verdictKey] || verdictKey)
+    : (measured === 1 ? "One window measured; the verdict needs two" : "Not yet comparable");
+  const detailParts = [
+    "Of the rows open at each evaluated sync, the share gone " + unitNote
+      + ", pooled over " + points + " window" + (points === 1 ? "" : "s") + ".",
+  ];
+  if (measured < points) {
+    detailParts.push(
+      (points - measured) + " window" + (points - measured === 1 ? "" : "s")
+        + " with arrivals still uncounted: no sync has looked at the whole horizon, "
+        + "so the net flow there is unmeasured rather than zero.",
+    );
+  }
+  return {
+    present: true,
+    unitNote,
+    detail: detailParts.join(" "),
+    closeRateText: formatRate(cap.closeRate),
+    oneInNText: isNum(cap.oneInN) ? "about 1 in " + cap.oneInN.toFixed(1) : UNMEASURED,
+    capacityKText: isNum(cap.capacityK)
+      ? String(cap.capacityK) + " rows"
+      : (isNum(cap.closedPerHorizonMean) ? "fewer than 1 row" : UNMEASURED),
+    verdictKey,
+    verdictWord,
+    netMeasuredPoints: measured,
+    points,
+  };
 }

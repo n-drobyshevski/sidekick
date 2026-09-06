@@ -43,6 +43,26 @@
 //      sits in the same table row as coverage and efficiency, and two units in one row is how a
 //      reader misreads both. The bracket arithmetic is unchanged; only the scale is.
 //
+// CAPACITY IS THE THIRD P2P FIGURE, AND IT IS MEASURED ON THE SAME WINDOWS. Coverage and
+// efficiency say whether the queue is the RIGHT work; capacity (P2P vol. 3) says how much work
+// the programme clears per month — closed over open-at-start, the series' "about one in ten"
+// benchmark — and whether that outpaces what arrives. Vol. 8's simulation is why it belongs
+// beside precision rather than on another page: a better ordering at low capacity beat more
+// capacity at a worse ordering. Every window above already holds the population open at `t`
+// and, per row, whether it was gone by `t + h`, so with the default 30-day horizon the pooled
+// share that left IS the monthly close rate, over the same rows, the same labels and the same
+// unknown bracket as precision@k. `capacityFrom` computes it once, basis-independently, and
+// `capacityK` — the mean number of rows that left per window, rounded — is appended to the
+// requested cuts, so the table can answer "if the programme clears about N rows a month, is
+// the next month's work the right work?".
+//
+// THIS IS THE SECOND CAPACITY GRAIN IN THIS APP, ON PURPOSE. `aarsTrend.ts`'s
+// `capacityFromLedgerDeltas` reads each sync's ledger deltas, so its figure is PER SYNC and
+// moves with cadence — the right readout for "what did the last sync do", and no use as a `k`.
+// This one is per horizon. The two will differ in number by design, and the unit rides in the
+// word on both surfaces; the verdict vocabulary and the ±2 % dead band are shared as a PORT,
+// not an import, so either grain can move without rebuilding the other.
+//
 // NO CLOCK. `syncs` carry their own timestamps and the horizon is a parameter — the discipline
 // `readModelStore.ts` states for the whole domain layer, and what makes a multi-sync history
 // testable without a fake clock.
@@ -201,6 +221,71 @@ export interface PrecisionAtK {
   applicable: boolean;
 }
 
+// ------------------------------------------------------------------------- capacity
+
+export type CapacityVerdict = "gaining" | "keeping-up" | "falling-behind";
+
+/**
+ * The dead band around zero net flow that reads as "keeping up", as a FRACTION of the
+ * population open at `t`. 0.02 is `aarsTrend.ts`'s `NET_CAPACITY_BAND_PCT` (2) on this file's
+ * 0..1 scale, with its provenance intact: P2P v3 Fig. 22 splits firms into falling behind /
+ * maintaining / gaining ground without a sharp cut, and a one-issue swing must not flip a
+ * verdict. A judgement, not a measurement — named for that reason.
+ */
+export const NET_CAPACITY_BAND = 0.02;
+
+/** Below this many windows with a measured net flow there is no overall verdict. */
+const MIN_NET_POINTS = 2;
+
+/**
+ * Where a net flow of `netRate` puts the programme. NEVER called on a null: an unmeasured net
+ * is not a level one, and the caller keeps the null rather than letting it fall into the band.
+ */
+function verdictOf(netRate: number): CapacityVerdict {
+  if (Math.abs(netRate) <= NET_CAPACITY_BAND) return "keeping-up";
+  return netRate > 0 ? "gaining" : "falling-behind";
+}
+
+/** One window's close rate and net flow, from the labels every basis shares. */
+export interface CapacityPoint {
+  syncId: string;
+  at: string;
+  population: number;
+  resolved: number;
+  open: number;
+  unknown: number;
+  /**
+   * resolved / labelled, bracketed by the unknowns: `lo` reads every unknown row as still
+   * open, `hi` reads every one as gone. The point never moves; only the bracket does.
+   */
+  closeRate: Rate;
+  /**
+   * Rows first seen inside `(t, t+h]` — work that arrived. A COUNT only when a same-scope sync
+   * covers `t+h`, so every arrival could have been seen; null otherwise, never 0.
+   */
+  arrived: number | null;
+  /** `(resolved - arrived) / population`, or null whenever `arrived` is. */
+  netRate: number | null;
+  /** Null when `netRate` is: an unmeasured net is not "keeping up". */
+  verdict: CapacityVerdict | null;
+}
+
+export interface RankEvalCapacity {
+  points: CapacityPoint[];
+  /** Pooled Σresolved / Σlabelled with the pooled bracket — the same pooling `basisFrom` does. */
+  closeRate: Rate;
+  /** "About one in N" — the P2P v3 idiom. Null when the point is null or 0. */
+  oneInN: number | null;
+  /** Mean of `resolved` over the windows — the cut below, before rounding. */
+  closedPerHorizonMean: number | null;
+  /** `Math.round(closedPerHorizonMean)` when that is at least 1, else null. */
+  capacityK: number | null;
+  /** Over the windows whose net was measured; null below `MIN_NET_POINTS` of them. */
+  verdict: CapacityVerdict | null;
+  netMeasuredPoints: number;
+  horizonDays: number;
+}
+
 /** One evaluated sync: the queue as it stood at `at`, judged at `at + horizonDays`. */
 export interface RankEvalPoint {
   syncId: string;
@@ -272,6 +357,13 @@ export interface RankEvalReport {
   /** Of those, the ones it never did. `labelledRows + unknownRows === evaluatedRows`. */
   unknownRows: number;
   lastSyncAt: string | null;
+  /**
+   * The programme's close rate over the same windows — null when no window exists. Present
+   * even while `computed` is false for want of labels, with a null point rather than a zero.
+   */
+  capacity: RankEvalCapacity | null;
+  /** The cut derived from capacity, also carried inside `ks` when present. */
+  capacityK: number | null;
   candidate: RankEvalBasis | null;
   baselines: {
     rankV1: RankEvalBasis | null;
@@ -391,6 +483,8 @@ interface EvalWindow {
   horizonEndMs: number;
   rows: IssueLedgerRow[];
   labels: EvalLabel[];
+  /** Rows first seen in `(t, t+h]`, or null when no same-scope sync covers `t+h`. */
+  arrived: number | null;
 }
 
 function cleanKs(raw: readonly number[] | undefined): number[] {
@@ -445,9 +539,20 @@ function comparableWindows(
     const covered = coverEnd[scope] ?? null;
     const rows: IssueLedgerRow[] = [];
     const labels: EvalLabel[] = [];
+    // Arrivals are complete only once a same-scope sync has looked at or after `t+h`; until
+    // then the count is a lower bound wearing a number's clothes, so it stays null.
+    const arrivalsComplete = covered !== null && covered >= horizonEndMs;
+    let arrived = 0;
     for (const row of ledger) {
       const first = ms(row.firstSeenAt);
-      if (first === null || first > atMs) continue;
+      if (first === null) continue;
+      if (first > atMs) {
+        // Born after the queue was drawn: never population. Rows first seen AT `t` — the
+        // initial ingest included — are population, which is what keeps an ingest from
+        // reading as an arrival wave.
+        if (first <= horizonEndMs) arrived += 1;
+        continue;
+      }
       const gone = ms(row.disappearedAt);
       if (gone !== null && gone <= atMs) continue; // already left before the queue was drawn
       rows.push(row);
@@ -455,7 +560,10 @@ function comparableWindows(
       else if (covered !== null && covered >= horizonEndMs) labels.push("open");
       else labels.push("unknown");
     }
-    windows.push({ sync, nextSyncId: next.syncId, atMs, horizonEndMs, rows, labels });
+    windows.push({
+      sync, nextSyncId: next.syncId, atMs, horizonEndMs, rows, labels,
+      arrived: arrivalsComplete ? arrived : null,
+    });
   }
   return { windows, scopeChanges, unknownScopePairs, ordered };
 }
@@ -673,6 +781,85 @@ function averagePoints(perDraw: RankEvalPoint[][]): RankEvalPoint[] {
 }
 
 /**
+ * The programme's capacity over the evaluated windows — basis-independent, so computed once.
+ *
+ * The close rate is POOLED (Σresolved / Σlabelled) rather than a mean of per-window rates,
+ * matching how `basisFrom` pools the matrix every rate in the same table is read from: one
+ * pooling rule per table. `closedPerHorizonMean` is a per-window mean because it is a COUNT
+ * of rows, and a count pooled across overlapping windows would count the same departure once
+ * per window that saw it.
+ *
+ * A COHORT RATE, not a month's ledger. `resolved` counts departures from the rows open AT `t`;
+ * a row that arrives inside the window and leaves again inside it is an arrival and nothing
+ * else, on both sides of the net. P2P's monthly figure counts every closure in the month; this
+ * one answers "of what was open when the queue was drawn, how much is gone a horizon later",
+ * which is the question the labels can answer exactly.
+ */
+function capacityFrom(windows: EvalWindow[], horizonDays: number): RankEvalCapacity | null {
+  if (!windows.length) return null;
+  const points: CapacityPoint[] = [];
+  let sumResolved = 0;
+  let sumLabelled = 0;
+  let sumUnknown = 0;
+  const netRates: number[] = [];
+  for (const w of windows) {
+    let resolved = 0;
+    let open = 0;
+    let unknown = 0;
+    for (const l of w.labels) {
+      if (l === "resolved") resolved += 1;
+      else if (l === "open") open += 1;
+      else unknown += 1;
+    }
+    const labelled = resolved + open;
+    const population = labelled + unknown;
+    sumResolved += resolved;
+    sumLabelled += labelled;
+    sumUnknown += unknown;
+    // The null check is FIRST: `verdictOf` would read an unmeasured net as level, which is
+    // the one claim an unobserved window cannot support.
+    const netRate = w.arrived !== null && population > 0
+      ? (resolved - w.arrived) / population
+      : null;
+    if (netRate !== null) netRates.push(netRate);
+    points.push({
+      syncId: w.sync.syncId,
+      at: w.sync.finishedAt,
+      population,
+      resolved,
+      open,
+      unknown,
+      closeRate: {
+        point: frac(resolved, labelled),
+        lo: frac(resolved, labelled + unknown),
+        hi: frac(resolved + unknown, labelled + unknown),
+      },
+      arrived: w.arrived,
+      netRate,
+      verdict: netRate === null ? null : verdictOf(netRate),
+    });
+  }
+  const closeRate: Rate = {
+    point: frac(sumResolved, sumLabelled),
+    lo: frac(sumResolved, sumLabelled + sumUnknown),
+    hi: frac(sumResolved + sumUnknown, sumLabelled + sumUnknown),
+  };
+  const closedPerHorizonMean = mean(points.map((p) => p.resolved));
+  const rounded = closedPerHorizonMean === null ? 0 : Math.round(closedPerHorizonMean);
+  const netMean = netRates.length >= MIN_NET_POINTS ? mean(netRates) : null;
+  return {
+    points,
+    closeRate,
+    oneInN: closeRate.point !== null && closeRate.point > 0 ? 1 / closeRate.point : null,
+    closedPerHorizonMean,
+    capacityK: rounded >= 1 ? rounded : null,
+    verdict: netMean === null ? null : verdictOf(netMean),
+    netMeasuredPoints: netRates.length,
+    horizonDays,
+  };
+}
+
+/**
  * The whole evaluation: the candidate rule and three baselines over one population and one set
  * of labels, plus the honesty block that says what the figures are conditional on.
  */
@@ -681,7 +868,7 @@ export function evaluateRank(input: RankEvalInput): RankEvalReport {
   const horizonDays = Number.isFinite(input?.horizonDays) && input.horizonDays > 0
     ? input.horizonDays
     : 30;
-  const ks = cleanKs(input?.ks);
+  const requestedKs = cleanKs(input?.ks);
   const seed = Number.isFinite(input?.seed) ? Number(input.seed) : DEFAULT_EVAL_SEED;
   const rule = input?.rule ?? DEFAULT_RANK_RULE;
 
@@ -706,6 +893,12 @@ export function evaluateRank(input: RankEvalInput): RankEvalReport {
     }
   }
 
+  // Capacity first, because it decides one of the cuts. `cleanKs` dedupes, so a caller who
+  // already asked for the same k gets one column, not two.
+  const capacity = capacityFrom(windows, horizonDays);
+  const capacityK = capacity ? capacity.capacityK : null;
+  const ks = capacityK === null ? requestedKs : cleanKs([...requestedKs, capacityK]);
+
   const lastSync = ordered.length ? ordered[ordered.length - 1]! : null;
   const base: RankEvalReport = {
     computed: false,
@@ -722,6 +915,8 @@ export function evaluateRank(input: RankEvalInput): RankEvalReport {
     labelledRows,
     unknownRows: evaluatedRows - labelledRows,
     lastSyncAt: lastSync ? lastSync.finishedAt : null,
+    capacity,
+    capacityK,
     candidate: null,
     baselines: { rankV1: null, dueAtOnly: null, random: null, severityOnly: null },
     severityOnlyNote: SEVERITY_ONLY_NOTE,

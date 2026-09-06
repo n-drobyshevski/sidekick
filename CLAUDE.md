@@ -628,6 +628,16 @@ be pinned by tests). The seed-estate figures live in `ai/AARS_ASSESSMENT.md` and
   `0.9000000000000001` where v1 returned the raw component untouched. So a mean over exactly
   one measured term is returned AS that term's own component, with no division at all — the
   only form floating point cannot perturb.
+- **Capacity has two grains here, and the unit rides in the word.** `aarsTrend.ts`'s
+  `capacityFromLedgerDeltas` reads each sync's ledger deltas, so its close rate is PER SYNC and
+  moves with cadence (Inventory → Posture over time). `rankEval.ts`'s `capacityFrom` reads the
+  same windows precision@k is scored on, so its close rate is PER HORIZON (30 days by default,
+  i.e. P2P vol. 3's monthly close rate), pooled Σresolved / Σlabelled with the unknown rows as
+  the bracket. The two differ in number by design; both surfaces say "per sync" / "per N-day
+  horizon" in words. `capacityK` — the mean rows that left per window, rounded — is appended to
+  the requested cuts, so `precision@capacityK` asks whether the next month's worth of work is
+  the right work. Arrivals are counted only once a same-scope sync has looked at or after
+  `t+h`; before that `arrived` is null and the net verdict is null, never "keeping up".
 
 ## gas_ai — environment traps
 
