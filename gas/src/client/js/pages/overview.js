@@ -22,6 +22,7 @@ import {
   groupPalette, tierPalette,
 } from "../charts.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { populationLine } from "./overviewModel.js";
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
   absent, clear, dataTable, el, emptyState, errorState, fmtDate, glossaryTip, kpiCard, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter, tip,
@@ -284,6 +285,13 @@ export async function renderOverview(main, params, ctx) {
       mini(median === null || median === undefined ? absent() : fmtAgeDays(median),
         "Median open age"),
     ));
+    // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the severity gate the
+    // last scan applied, and the base filters every query carries. Quiet on purpose: it is
+    // provenance, not a figure, and it is the only place on the page that says the register is
+    // a filtered slice rather than the fleet. Null (an older cached payload with no
+    // `population` block) draws nothing rather than half a sentence.
+    const provenance = loaded ? populationLine(insights) : null;
+    if (provenance) heroHost.append(el("p", { class: "small muted" }, provenance.text));
   }
 
   function renderInsights(insights) {

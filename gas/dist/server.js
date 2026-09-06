@@ -504,7 +504,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "8077748f9c01" : "dev";
+  var BUILD_ID = true ? "8d0b30b1e2f0" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -1883,6 +1883,18 @@ var Server = (() => {
   var MAX_PAGES = 1e3;
 
   // src/server/wizClient.ts
+  var BASE_FILTER_WORDS = [
+    "one Wiz project",
+    // projectIdV2
+    "virtual machines only",
+    // assetType
+    "OS-level detections",
+    // detectionMethod
+    "openssl, python and vim excluded",
+    // detailedNameV2.notEquals
+    "no representative-resource stand-ins"
+    // assetIsRepresentativeResource
+  ];
   var WizQueryError = class extends Error {
   };
   var WizDeltaFilterError = class extends WizQueryError {
@@ -2998,6 +3010,65 @@ var Server = (() => {
     return summarize(work, opts.now);
   }
 
+  // src/domain/compaction.ts
+  var CHECKPOINT_VERSION = 1;
+  function serializeSeverities(sevs) {
+    if (sevs === null || sevs === void 0) return null;
+    const vals = /* @__PURE__ */ new Set();
+    for (const s of sevs) {
+      if (typeof s === "string") {
+        const n = normalizeSeverity(s);
+        if (SELECTABLE_SEVERITIES.includes(n)) vals.add(n);
+      }
+    }
+    if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;
+    const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
+    return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
+  }
+  function parseSeverities(text) {
+    if (typeof text !== "string" || !text) return null;
+    let vals;
+    try {
+      vals = JSON.parse(text);
+    } catch {
+      return null;
+    }
+    if (!Array.isArray(vals)) return null;
+    const chosen = new Set(
+      vals.filter((v) => typeof v === "string").map(normalizeSeverity)
+    );
+    const out = SEVERITY_ORDER.filter((s) => chosen.has(s));
+    return out.length ? out : null;
+  }
+  function selectSealCandidates(rows, cutoffMs) {
+    const flatIds = rows.filter((r) => r.shape === "flat").map((r) => r.scan_id);
+    const protectedIds = new Set(flatIds.slice(-MIN_UNSEALED_FLAT_SCANS));
+    const candidates = [];
+    for (const r of rows) {
+      if (protectedIds.has(r.scan_id)) break;
+      const ts = parseTs(r.ts);
+      if (ts === null || ts > cutoffMs) break;
+      candidates.push(r);
+    }
+    return candidates;
+  }
+  function statsEqual(a, b) {
+    if (isMissing(a) && isMissing(b)) return true;
+    if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
+      const ka = Object.keys(a);
+      const kb = Object.keys(b);
+      if (ka.length !== kb.length || !ka.every((k) => kb.includes(k))) return false;
+      return ka.every((k) => statsEqual(a[k], b[k]));
+    }
+    if (Array.isArray(a) && Array.isArray(b)) {
+      return a.length === b.length && a.every((x, i) => statsEqual(x, b[i]));
+    }
+    return a === b;
+  }
+  function isMissing(v) {
+    return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
+  }
+
   // src/domain/remediation.ts
   var DAY_MS3 = 864e5;
   var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
@@ -3283,65 +3354,6 @@ var Server = (() => {
   }
   function recordEol(rec) {
     return rec["isOperatingSystemEndOfLife"] === true || isEndOfLifeName(rec["name"]);
-  }
-
-  // src/domain/compaction.ts
-  var CHECKPOINT_VERSION = 1;
-  function serializeSeverities(sevs) {
-    if (sevs === null || sevs === void 0) return null;
-    const vals = /* @__PURE__ */ new Set();
-    for (const s of sevs) {
-      if (typeof s === "string") {
-        const n = normalizeSeverity(s);
-        if (SELECTABLE_SEVERITIES.includes(n)) vals.add(n);
-      }
-    }
-    if (!vals.size || vals.size === SELECTABLE_SEVERITIES.length) return null;
-    const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
-    return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
-  }
-  function parseSeverities(text) {
-    if (typeof text !== "string" || !text) return null;
-    let vals;
-    try {
-      vals = JSON.parse(text);
-    } catch {
-      return null;
-    }
-    if (!Array.isArray(vals)) return null;
-    const chosen = new Set(
-      vals.filter((v) => typeof v === "string").map(normalizeSeverity)
-    );
-    const out = SEVERITY_ORDER.filter((s) => chosen.has(s));
-    return out.length ? out : null;
-  }
-  function selectSealCandidates(rows, cutoffMs) {
-    const flatIds = rows.filter((r) => r.shape === "flat").map((r) => r.scan_id);
-    const protectedIds = new Set(flatIds.slice(-MIN_UNSEALED_FLAT_SCANS));
-    const candidates = [];
-    for (const r of rows) {
-      if (protectedIds.has(r.scan_id)) break;
-      const ts = parseTs(r.ts);
-      if (ts === null || ts > cutoffMs) break;
-      candidates.push(r);
-    }
-    return candidates;
-  }
-  function statsEqual(a, b) {
-    if (isMissing(a) && isMissing(b)) return true;
-    if (a !== null && b !== null && typeof a === "object" && typeof b === "object" && !Array.isArray(a) && !Array.isArray(b)) {
-      const ka = Object.keys(a);
-      const kb = Object.keys(b);
-      if (ka.length !== kb.length || !ka.every((k) => kb.includes(k))) return false;
-      return ka.every((k) => statsEqual(a[k], b[k]));
-    }
-    if (Array.isArray(a) && Array.isArray(b)) {
-      return a.length === b.length && a.every((x, i) => statsEqual(x, b[i]));
-    }
-    return a === b;
-  }
-  function isMissing(v) {
-    return v === null || v === void 0 || typeof v === "number" && Number.isNaN(v);
   }
 
   // src/domain/reconcile.ts
@@ -8661,6 +8673,19 @@ var Server = (() => {
       // (Naturally zero when the toggle hides them, so the client drops the surface entirely.)
       awaiting: awaitingVendorFix(baseVisible),
       aging: ageBuckets(baseVisible),
+      // WHAT THIS PAGE MEASURED, AND WHAT IT NEVER LOOKED AT. Three things narrow the register
+      // before a single figure is computed: the rows themselves (`inScope`), the severity gate
+      // THE LAST SCAN APPLIED — not the one settings hold now, which is why it is read off the
+      // scan row rather than off `severities` above — and the base Wiz filter every query
+      // carries. Each of them makes a count fall, and none of them can be published as a `0`:
+      // a zero is a measurement, and these are refusals to measure (CLAUDE.md, "The Outside").
+      // `parseSeverities` returns null for a full or absent gate, and null here means "all
+      // severities" — never an empty list, which the client would have to guess at.
+      population: {
+        inScope: baseVisible.length,
+        gate: latestFlat ? parseSeverities(latestFlat.severities) : null,
+        filters: BASE_FILTER_WORDS
+      },
       // Oldest open findings + 90+ backlog per asset / support group / domain, for the aging
       // panel's toggle. Capped at 100 (up from the old top-7) so the client can page through the
       // aged tail with prev/next controls — the whole set ships once and repaints client-side,
@@ -8726,7 +8751,10 @@ var Server = (() => {
       // fields, and the rebuilt page reads them unconditionally, so it must not be served.
       // The key gains riskRuleVersion for the same reason it does on the Program page: the
       // operator can change which signals classify a row, and every tier figure moves with it.
-      "insights4",
+      // "insights4" → "insights5": the payload gained `population` (in-scope count, the gate
+      // the last scan applied, the base filter words); a stale insights4 entry has none of it,
+      // and a half-drawn provenance line is worse than none.
+      "insights5",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),

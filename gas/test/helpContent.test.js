@@ -28,6 +28,11 @@ const EXPECTED_IDS = [
   "cell-tp", "cell-fp", "cell-fn", "cell-tn",
   "cell-unclassified-remediated", "cell-unclassified-open",
   "no-captured-signal", "coverage-efficiency-trend", "rule-sensitivity",
+  // Two later additions, and neither came out of a `tip(` call site: both are definitions the
+  // pages assumed a reader already had. "SLA band" is what the per-severity table is a picture
+  // of; "Remediation capacity" is the one figure on Program that is a COMPARISON (close rate
+  // against arrival rate) rather than a count, which is exactly the thing a reader gets wrong.
+  "sla-band", "capacity",
 ];
 
 // Long enough for the three-line entries in the file (the longest first-two line today is 218

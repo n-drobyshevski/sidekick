@@ -599,7 +599,7 @@ export async function renderProgram(main, _params, ctx) {
     const months = (cap.months || []).slice(-12);
     if (!months.length) return;
 
-    capacityHost.append(sectionLabel("Remediation capacity"));
+    capacityHost.append(sectionLabel("Remediation capacity", { term: "capacity" }));
     capacityHost.append(el("p", { class: "note" },
       "How much of the open backlog the program closes per month, and whether high-risk work " +
       "is arriving faster than it is being cleared. The research benchmark is that a typical " +
