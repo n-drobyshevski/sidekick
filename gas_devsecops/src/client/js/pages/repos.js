@@ -24,12 +24,12 @@
 // is explicit that a fabricated number is worse than an honest absence, and "a zero has to
 // prove it looked" applies just as hard to a percentage nobody computed.
 
-import { swrCall } from "../../../../../gas_shared/store.js";
+import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el, emptyState,
-  errorState, fmtCount, glossaryTip, kpiCard, num, onPageTeardown, pageHeader, pct1,
-  sectionLabel, skeletonStack,
+  errorState, firstRunNotice, fmtCount, glossaryTip, kpiCard, num, onPageTeardown, pageHeader,
+  pct1, sectionLabel, skeletonStack,
 } from "../ui.js";
 
 const OVERALL = "OVERALL";
@@ -118,18 +118,19 @@ export function capacityView(result) {
  *
  * `owner_project` never reaches `assetProfile()`'s output columns (see the module header),
  * so there is no owned/unowned split to render. `available: false` is the whole answer;
- * `reason` is what a reader — or this file's own report — needs to file it as a real gap
- * rather than a rendering bug.
+ * `reason` is reader prose for `renderOwnership` below — an absence stated in the register's
+ * own vocabulary rather than the trace a developer would want, which is this comment instead:
+ * `owner_project` is written to every ledger row and reaches the per-register concentration
+ * tables, but `assetProfile()` (src/domain/assets.ts) — the function that builds THIS page's
+ * data — does not read it. None of `AssetProfileRow`'s 17 published columns names an owner.
  */
 export function ownershipView() {
   return {
     available: false,
     unownedCount: null,
-    reason: "Ownership is not in reposModel's payload. owner_project is written to every "
-      + "ledger row and reaches the per-register concentration tables, but assetProfile() "
-      + "(src/domain/assets.ts) — the function that builds this page's data — does not read "
-      + "it: none of AssetProfileRow's 17 published columns names an owner. So this section "
-      + "cannot show a coverage percentage or an unowned count without inventing one.",
+    reason: "Every finding is captured with the project that owns it, but that field does not "
+      + "reach this page's data — so there is no owned/unowned split to show here without "
+      + "inventing one.",
   };
 }
 
@@ -175,6 +176,7 @@ const VERDICT_LABEL = {
 // ----------------------------------------------------------------------------- the page
 
 export async function renderRepos(host, _params, _ctx) {
+  const boot = await bootstrap();
   host.append(pageHeader({
     route: "repos",
     lede: "Where the backlog sits, which repositories offer a foothold, and who owns them.",
@@ -230,7 +232,11 @@ export async function renderRepos(host, _params, _ctx) {
     const f = footholdView(result);
     clear(densityHost);
     if (!d.measured) {
-      densityHost.append(emptyState("No repository profile yet.", "It appears once a sync has saved findings."));
+      densityHost.append(firstRunNotice({
+        synced: !!boot.latestSync,
+        at: boot.latestSync ? boot.latestSync.ts : null,
+        hint: "The repository profile appears once a sync has saved findings.",
+      }));
       return;
     }
     const densityCard = kpiCard("Median findings per repository", fmtCount(d.p50), "");
@@ -252,24 +258,25 @@ export async function renderRepos(host, _params, _ctx) {
   function renderOwnership() {
     const view = ownershipView();
     clear(ownershipHost);
-    if (!view.available) {
-      ownershipHost.append(errorState(
-        "Ownership coverage is not available from this page's data.",
-        { detail: view.reason },
-      ));
-      return;
-    }
-    // Unreachable today (ownershipView() always reports unavailable) — kept so a future
-    // package that wires owner_project into assetProfile() has a rendering path to fill in
-    // rather than a page that has to be rebuilt from scratch.
-    ownershipHost.append(emptyState(`${view.unownedCount} unowned`));
+    // A permanent, known data gap is an ABSENCE, not a failure — this section renders correctly
+    // every single time it runs, it simply has nothing to show. `errorState`'s role="alert" red
+    // box used to draw here on every visit, which told a reader the page was broken rather than
+    // that ownership is a real, stated gap in what this page's data carries.
+    ownershipHost.append(emptyState(
+      "Ownership is not measured on this page.",
+      view.reason,
+      { variant: "notice" },
+    ));
   }
 
   function renderGroupTable(target, result, singular, plural) {
     const rows = groupRows(result).map(tableRow).sort((a, b) => b.openFindings - a.openFindings);
     clear(target);
     if (!rows.length) {
-      target.append(emptyState(`No ${plural} measured yet.`));
+      target.append(emptyState(
+        `No ${plural} measured yet.`,
+        `It appears once a sync has saved a finding against at least one ${singular}.`,
+      ));
       return;
     }
     const isRepo = singular === "repository";
@@ -311,6 +318,7 @@ export async function renderRepos(host, _params, _ctx) {
     if (!rows.length) {
       chartsHost.append(emptyState(
         "Not enough resolved findings yet to chart a per-repository half-life.",
+        "It appears once at least one finding in a repository has resolved.",
       ));
       return;
     }

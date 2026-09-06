@@ -341,7 +341,10 @@ export async function renderData(host, _params, ctx) {
     loadPreview();
 
     async function loadPreview() {
-      clear(previewHost).append(el("p", { class: "small muted" }, "Computing the dry run…"));
+      clear(previewHost).append(
+        el("div", { role: "status", "aria-label": "Computing the compaction dry run" },
+          skeletonStack(2, { widths: ["80%", "60%"] })),
+      );
       try {
         const res = await call("api_compact", { dryRun: true });
         paintPreview(res);
@@ -493,7 +496,7 @@ export async function renderData(host, _params, ctx) {
     const v = recentErrorsView(payload);
     clear(errorsHost);
     errorsHost.append(el("p", { class: "small muted", "data-denominator": v.covers ? `Covers: ${v.covers}.` : "" },
-      v.note || (v.covers ? `Covers: ${v.covers}.` : "Scope unknown.")));
+      v.note || (v.covers ? `Covers: ${v.covers}.` : "This log's coverage was not stated.")));
     if (!v.errors.length) {
       errorsHost.append(emptyState("No recent failures."));
       return;

@@ -32,10 +32,10 @@ import {
 } from "../ui.js";
 import {
   RISK_TIER_LABELS, RISK_TIER_ORDER, agingModel, agingTableModel, chartCard,
-  concentrationModel, figureCard, funnelModel, movementCard, movementModel, oldestFindingsModel,
-  pagedTable, readRegisterParams, registerFirstRunView, registerRowsTable, registerToolbar,
-  renderRegisterPage, sectionCard, sevPalette, severityCountsTableModel, signalFigure, textCell,
-  tierModel,
+  concentrationModel, figureCard, filterEmptyNotice, funnelModel, movementCard, movementModel,
+  oldestFindingsModel, pagedTable, readRegisterParams, registerFirstRunView, registerRowsTable,
+  registerToolbar, renderRegisterPage, sectionCard, sevPalette, severityCountsTableModel,
+  signalFigure, textCell, tierModel,
 } from "./sca.js";
 
 const SEVERITY_FALLBACK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
@@ -295,6 +295,7 @@ function paintSast(host, vm, filters) {
   ));
 
   // ------------------------------------------------------------------ the rule
+  const ruleRows = vm.tiers.rows.filter((r) => vm.rule.clauses.includes(r.tier) || r.count > 0);
   host.append(sectionCard("The rule that calls a weakness high risk", "cwe-top-25",
     el("p", {}, vm.rule.sentence),
     el("div", { class: "table-host" }, dataTable({
@@ -310,10 +311,14 @@ function paintSast(host, vm, filters) {
           }),
         },
       ],
-      rows: vm.tiers.rows.filter((r) => vm.rule.clauses.includes(r.tier) || r.count > 0),
+      rows: ruleRows,
       emptyText: "Nothing open to classify.",
     })),
     denomNote(vm.tiers.denominator),
+    // The rule's own three clause rows are always drawn (see `ruleRows` above), so a filter
+    // that narrows the register to nothing still shows three rows of `0` rather than an empty
+    // table — `vm.tiers.open` is what actually reads "nothing under this filter".
+    filterEmptyNotice(vm.asOf, filters.severities.length > 0, vm.tiers.open === 0),
   ));
 
   // ----------------------------------------------------- ai_verdict coverage, shown
@@ -405,6 +410,7 @@ function paintSast(host, vm, filters) {
     })),
     denomNote(vm.funnel.denominator),
     vm.funnel.note ? el("p", { class: "small muted" }, vm.funnel.note) : null,
+    filterEmptyNotice(vm.asOf, filters.severities.length > 0, vm.funnel.steps[0].count === 0),
   ));
 
   // ---------------------------------------------------------------------- breakdowns
@@ -420,6 +426,7 @@ function paintSast(host, vm, filters) {
         emptyText: "No open weaknesses in this dimension.",
       })),
       denomNote(dim.denominator),
+      filterEmptyNotice(vm.asOf, filters.severities.length > 0, dim.rows.length === 0),
     ));
   }
 
@@ -462,6 +469,7 @@ function paintSast(host, vm, filters) {
     registerRowsTable({
       scope: "sast",
       severities: filters.severities,
+      at: vm.asOf,
       defaultSort: "age_days",
       defaultDir: "desc",
       emptyText: "Nothing in this register.",

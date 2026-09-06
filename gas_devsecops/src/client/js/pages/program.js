@@ -453,6 +453,16 @@ export async function renderProgram(host, params, _ctx) {
     guard("coverage and efficiency", heroHost, () => renderHero(program, first));
     guard("the confusion matrix", matrixHost, () => renderMatrix(program, first));
     guard("the signal breakdown", signalHost, () => renderSignals(program, first));
+    // FIRST RUN STOPS HERE — one notice above (`renderFirstRun`), not a page of section
+    // headings each over their own "nothing yet". `renderMatrix`/`renderSignals` already gate
+    // themselves to nothing on `first` (see their own `if (first) return;`); sensitivity,
+    // capacity and the trend used to reach this point regardless and print their OWN generic
+    // empty message ("No sweep yet.", "No monthly capacity yet.", "Not enough history…") —
+    // three more sentences beside the one at the top of the page, for the same fact.
+    if (first) {
+      [sensitivityHost, capacityHost, trendHost].forEach(clear);
+      return;
+    }
     guard("rule sensitivity", sensitivityHost, () => renderSensitivity(program));
     guard("monthly capacity", capacityHost, () => renderCapacity(program));
     guard("the coverage trend", trendHost, () => renderTrend(payload, program));
@@ -485,7 +495,10 @@ export async function renderProgram(host, params, _ctx) {
   function renderHero(program, first) {
     clear(heroHost);
     if (!program) {
-      heroHost.append(emptyState("No programme figures yet."));
+      heroHost.append(emptyState(
+        "No programme figures yet.",
+        "They appear once a sync has saved findings for the risk rule to score.",
+      ));
       return;
     }
     const view = coverageEfficiencyView(program.matrix);
@@ -573,23 +586,12 @@ export async function renderProgram(host, params, _ctx) {
 
   function renderMatrix(program, first) {
     clear(matrixHost);
+    // GATED WHOLESALE, HEADING INCLUDED — one notice already covers this page (see `paint`'s
+    // own gate below `renderSignals`); a heading with nothing under it is a dangling section,
+    // and `!program` is unreachable past this point (it implies `first`, since `first` reads
+    // `program && program.rowCount`).
+    if (first) return;
     matrixHost.append(sectionLabel("The confusion matrix"));
-    if (!program) {
-      matrixHost.append(emptyState("No matrix yet."));
-      return;
-    }
-    // The SECTION STAYS, its figures do not. Four cells of `0` and an `Unclassified 0` beside
-    // them describe a rule that has been run against nothing — and a reader cannot tell that
-    // apart from a rule that placed every row. The heading is kept so the page is not
-    // silently shorter than itself.
-    if (first) {
-      matrixHost.append(emptyState(
-        "The rule has not been run against a finding yet.",
-        "Each of the four cells counts findings by what the rule said and what happened to"
-        + " them, so all four wait on the first sync that saves a row.",
-      ));
-      return;
-    }
     const view = confusionView(program.matrix);
     const cell = (key) => view.cells.filter((c) => c.key === key)[0] || { value: 0, label: "" };
 
@@ -643,23 +645,14 @@ export async function renderProgram(host, params, _ctx) {
 
   function renderSignals(program, first) {
     clear(signalHost);
+    // GATED WHOLESALE, HEADING INCLUDED — same shape as `renderMatrix` above. "Fired on 0 ·
+    // Never captured 0" is a VERDICT on a clause, and this page argues in its own caption that
+    // a coverage of 0% is a measurement — it separates "the AI agreed with nothing" from
+    // "nobody asked the AI". Neither of those is true over an unread ledger, and printing
+    // twelve zeros here (or a heading with nothing under it) would make a third thing look
+    // like one of the other two.
+    if (first) return;
     signalHost.append(sectionLabel("What the rule fired on"));
-    if (!program) {
-      signalHost.append(emptyState("No signal breakdown yet."));
-      return;
-    }
-    // "Fired on 0 · Never captured 0" is a VERDICT on a clause, and this page argues in its
-    // own caption that a coverage of 0% is a measurement — it separates "the AI agreed with
-    // nothing" from "nobody asked the AI". Neither of those is true over an unread ledger,
-    // and printing twelve zeros here would make a third thing look like both.
-    if (first) {
-      signalHost.append(emptyState(
-        "No clause has had a finding to fire on.",
-        "Each row here is a clause of the risk rule; the counts beside it appear once a sync"
-        + " has saved findings for the rule to read.",
-      ));
-      return;
-    }
     const view = signalBreakdownView(program.signals, program.signalCoverage, program.rowCount);
     signalHost.append(dataTable({
       columns: [

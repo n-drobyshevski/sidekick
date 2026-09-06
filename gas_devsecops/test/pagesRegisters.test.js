@@ -839,7 +839,12 @@ describe("the shared register blocks", () => {
 
   it("names the missing columns rather than drawing a column of dashes", () => {
     const note = missingColumnsNote(["a", "b"]);
-    expect(note).toMatch(/^Not in this page's payload: a, b\./);
+    // WORDING CHANGED (Wave 1, item 1.8): "payload" is the wire's word, not a reader's, and it
+    // was reaching the screen verbatim. The claim this test pins is unchanged — these columns
+    // exist in the ledger but this aggregate endpoint ships aggregates and a top-N ranking
+    // rather than a per-finding row set, so no table on this page can draw them — only the
+    // phrasing moved, from "Not in this page's payload" to "Not shown on this page".
+    expect(note).toMatch(/^Not shown on this page: a, b\./);
     expect(note).toMatch(/aggregates and a top-N ranking/);
   });
 });

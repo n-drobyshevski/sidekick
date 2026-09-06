@@ -369,21 +369,32 @@ export async function renderSettings(host, params, ctx) {
     if (message) errors[field] = message; else delete errors[field];
   }
 
-  try {
-    const settings = await call("api_getSettings", {});
-    saved = draftFromSettings(settings);
-    draft = draftFromSettings(settings);
-  } catch (e) {
-    console.error("[settings] api_getSettings failed:", e);
-    for (const key of Object.keys(panels)) {
-      clear(panels[key]).append(
-        errorState("Couldn't load settings.", { detail: String((e && e.message) || e) }),
-      );
+  // ONE FAILURE, NOT FOUR. This used to loop over every tab panel and put its own
+  // `errorState` in each — four identical red boxes for one fetch that failed once. `load()`
+  // is a function (not inlined into the top-level try/catch) so the retry button below can
+  // call the exact same fetch again rather than duplicating it.
+  async function load() {
+    try {
+      const settings = await call("api_getSettings", {});
+      saved = draftFromSettings(settings);
+      draft = draftFromSettings(settings);
+    } catch (e) {
+      console.error("[settings] api_getSettings failed:", e);
+      // The tab strip names sections there is nothing behind yet — hidden along with the
+      // panels themselves, rather than left standing over one shared error box.
+      tabHost.hidden = true;
+      clear(panelHost).append(errorState("Couldn't load settings.", {
+        detail: String((e && e.message) || e),
+        onRetry: load,
+      }));
+      return;
     }
-    return;
+    tabHost.hidden = false;
+    buildPanels();
   }
 
-  buildPanels();
+  await load();
+  if (saved === undefined) return;
 
   // ------------------------------------------------------------------------- dirty tracking
 

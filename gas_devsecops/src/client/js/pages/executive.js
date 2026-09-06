@@ -910,7 +910,7 @@ export async function renderExecutive(host, params, _ctx) {
     clear(sevHost);
     if (!view.show) {
       sevHost.append(sectionLabel("Open findings by severity"));
-      sevHost.append(emptyState("No severity tally in this payload."));
+      sevHost.append(emptyState("No severity tally recorded yet."));
       return;
     }
     sevHost.append(sectionLabel("Open findings by severity"));
@@ -1057,8 +1057,9 @@ export async function renderExecutive(host, params, _ctx) {
     const latest = boot.latestSync;
     if (!latest) {
       scanHost.append(emptyState(
-        "Never.",
-        "What each figure is waiting for is listed in the panel at the top of this page.",
+        "No sync has run yet.",
+        "What each figure is waiting for is listed at the top of this page.",
+        { variant: "notice" },
       ));
       return;
     }

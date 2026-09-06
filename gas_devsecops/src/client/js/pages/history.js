@@ -319,28 +319,41 @@ export async function renderHistory(host, _params, _ctx) {
   // with no children renders as nothing.
   const spiralHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid" });
+  // ONE WRAPPER FOR EVERY SECTION BELOW THE KPI ROW, so a first run can clear four headings
+  // and their content together in one call rather than leaving them standing over an empty
+  // box — the same "label lives with its box" shape mttr.js/executive.js's own `paint` use,
+  // adapted here because these headings are static text appended once rather than something a
+  // renderX function draws itself. `ensureSections()` (re)populates it the first time a paint
+  // call is NOT a first run; `paint`'s own first-run branch clears it, which detaches
+  // `perScopeHost`/`tableHost`/`movementHost`/`spiralHost`/`chartsHost` from the DOM (their
+  // own children survive the detach, but `ensureSections()` re-attaches them before the next
+  // non-first paint repopulates those children).
+  const sectionsHost = el("div", {});
 
-  host.append(
-    observedHost,
-    kpiHost,
-    // The table the rail's one status dot is a summary of: a "Last scan" of "—" here is the
-    // never-measured state that outranks every stale one on the dot. `rail-status` is where
-    // that precedence is written down.
-    sectionLabel("Coverage by register", { term: "rail-status" }),
-    perScopeHost,
-    sectionLabel("Saved scans"),
-    tableHost,
-    sectionLabel("What moved the number"),
-    el("p", { class: "section-note" },
-      "The change in each register's open count over the last 28-day window bounded by two of "
-      + "its own saved scans, split into the causes that moved it — and which of them are "
-      + "remediation the register actually observed. The window is per register: three scopes "
-      + "share one scan log, and a scan of one of them looked at none of the others."),
-    movementHost,
-    spiralHost,
-    sectionLabel("Trends"),
-    chartsHost,
-  );
+  function ensureSections() {
+    if (sectionsHost.childNodes.length) return;
+    sectionsHost.append(
+      // The table the rail's one status dot is a summary of: a "Last scan" of "—" here is the
+      // never-measured state that outranks every stale one on the dot. `rail-status` is where
+      // that precedence is written down.
+      sectionLabel("Coverage by register", { term: "rail-status" }),
+      perScopeHost,
+      sectionLabel("Saved scans"),
+      tableHost,
+      sectionLabel("What moved the number"),
+      el("p", { class: "section-note" },
+        "The change in each register's open count over the last 28-day window bounded by two "
+        + "of its own saved scans, split into the causes that moved it — and which of them are "
+        + "remediation the register actually observed. The window is per register: three "
+        + "scopes share one scan log, and a scan of one of them looked at none of the others."),
+      movementHost,
+      spiralHost,
+      sectionLabel("Trends"),
+      chartsHost,
+    );
+  }
+
+  host.append(observedHost, kpiHost, sectionsHost);
 
   kpiHost.append(skeletonStack(4, { variant: "stat" }));
 
@@ -365,10 +378,22 @@ export async function renderHistory(host, _params, _ctx) {
     lastPayload = payload;
     lastFirst = first;
     renderObserved(payload);
-    renderKpis(payload, first);
-    renderPerScope(payload, first);
+    // FIRST RUN STOPS HERE — one notice above (`renderObserved`), not five below it: a KPI
+    // row of zeros, "No register has a saved scan yet.", "No scans saved yet.", "Nothing has
+    // moved yet…" and a heading over an empty trends chart used to print separately, each in
+    // its own words, for the one fact `renderObserved`'s notice already states. Clearing
+    // `sectionsHost` detaches its headings AND the five content hosts nested inside it in one
+    // call; `ensureSections()` re-attaches them the next time this runs non-first.
+    if (first) {
+      [kpiHost, perScopeHost, tableHost, movementHost, spiralHost, chartsHost, sectionsHost]
+        .forEach(clear);
+      return;
+    }
+    ensureSections();
+    renderKpis(payload);
+    renderPerScope(payload);
     renderTable(payload);
-    renderMovement(payload, first);
+    renderMovement(payload);
     renderSpiral(payload, first);
     renderTrends(payload);
   };
@@ -414,20 +439,9 @@ export async function renderHistory(host, _params, _ctx) {
     }));
   }
 
-  function renderKpis(payload, first) {
+  function renderKpis(payload) {
     const v = kpiView(payload && payload.kpis);
     clear(kpiHost);
-    // SUPPRESSED, not dashed — the convention the Program lane already uses. "Tracked
-    // (all-time) 0" over a register that has never been read is the same confident zero the
-    // front door was printing, and this page is where a reader comes to check that.
-    if (first) {
-      kpiHost.append(emptyState(
-        "Nothing has been tracked yet.",
-        "These four are all-time counts over saved scans, so the first sync is what starts"
-        + " them.",
-      ));
-      return;
-    }
     kpiHost.append(
       kpiCard("Tracked (all-time)", fmtCount(v.tracked)),
       kpiCard("Currently open", fmtCount(v.open)),
@@ -444,17 +458,9 @@ export async function renderHistory(host, _params, _ctx) {
     );
   }
 
-  function renderPerScope(payload, first) {
+  function renderPerScope(payload) {
     const rows = perScopeView(payload && payload.perScope);
     clear(perScopeHost);
-    if (first) {
-      perScopeHost.append(emptyState(
-        "No register has a saved scan yet.",
-        "This table is the record of what each register was asked for and when, so it fills"
-        + " in one row per register per sync.",
-      ));
-      return;
-    }
     perScopeHost.append(dataTable({
       columns: [
         { key: "label", label: "Register", cell: (r) => r.label },
@@ -607,19 +613,8 @@ export async function renderHistory(host, _params, _ctx) {
     return host;
   }
 
-  function renderMovement(payload, first) {
+  function renderMovement(payload) {
     clear(movementHost);
-    // The page's own first-run gate, the same one the KPI band and the coverage strip use: a
-    // decomposition of a window that does not exist is four confident zeroes about a
-    // population nobody has looked at.
-    if (first) {
-      movementHost.append(emptyState(
-        "Nothing has moved yet, because nothing has been measured yet.",
-        "This section is a difference between two saved scans of the same register, so it"
-        + " fills in once one of them has two.",
-      ));
-      return;
-    }
     for (const block of movementBlocks(payload, SCOPE_LABELS)) {
       movementHost.append(movementBlock(block));
     }
@@ -633,7 +628,11 @@ export async function renderHistory(host, _params, _ctx) {
     // flipping it off empties the host rather than leaving the last drawing behind.
     if (!showExperimental()) return;
     // The page's first-run gate, the same one every section above uses: a spiral over a
-    // register nobody has scanned is a picture of a population nobody has looked at.
+    // register nobody has scanned is a picture of a population nobody has looked at. `paint`'s
+    // own top-level gate already keeps this function from ever being CALLED with `first: true`
+    // during the initial paint (`spiralHost` is not even attached to the page until
+    // `ensureSections()` runs); this is the backstop for the toggle subscription below, which
+    // can still fire while a first-run page is on screen.
     if (first) return;
 
     const layout = spiralLayout((payload && payload.scans) || [],
@@ -783,8 +782,8 @@ export async function renderHistory(host, _params, _ctx) {
         + "the median honest as of each replayed date."));
     }
     chartsHost.append(el("p", { class: "small muted", style: "grid-column:1/-1" },
-      "The open-past-SLA trend is not in this page's payload — historyTrendSlice ships date, "
-      + "reconstructed, open, resolved and km_median_days only. It is on the MTTR & SLA page."));
+      "The open-past-SLA series is not published on this page — this trend ships date, "
+      + "reconstructed, open, resolved and the KM median only. It is on the MTTR & SLA page."));
 
     loadCharts()
       .then((api) => {

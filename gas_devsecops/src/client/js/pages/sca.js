@@ -31,9 +31,9 @@ import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js
 import {
   DEFAULT_PAGE_SIZE, absent, boundedDays, chartTable, chartTableModel, dataTable, days1,
   denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, heroStat,
-  kpiCard, meter, num, onPageTeardown, pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries,
-  sevKeyRow, sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate,
-  triCell,
+  kpiCard, measuredEmpty, meter, num, onPageTeardown, pageHeader, pageOf, pct1, segmented,
+  sevBadge, sevEntries, sevKeyRow, sevSegmentBar, skeletonStack, sortRows, statRow, tableFooter,
+  togglePills, fmtDate, triCell,
 } from "../ui.js";
 
 // =========================================================================================
@@ -397,17 +397,37 @@ export function oldestReposModel(oldest) {
 }
 
 /**
- * The columns this payload does not carry, named.
+ * The columns this page does not draw, named.
  *
  * A register page that silently omits the fields its own brief promised looks like a
  * register with nothing to say. `api_getRegisterPage` / `api_getSecretsPage` are aggregate
- * endpoints plus a top-N ranking; these columns exist in the ledger and simply do not travel.
+ * endpoints plus a top-N ranking; these columns exist in the ledger and simply do not travel
+ * to this aggregate reply — "payload" is the wire's word for that, not a reader's, so the
+ * sentence says what the reader can act on instead.
  */
 export function missingColumnsNote(fields) {
-  return "Not in this page's payload: " + fields.join(", ")
-    + ". These columns are in the ledger; the register endpoint ships aggregates and a "
-    + "top-N ranking rather than a per-finding row set, so no table here can draw them. "
+  return "Not shown on this page: " + fields.join(", ")
+    + ". These columns are in the ledger; this register publishes aggregates and a "
+    + "top-N ranking rather than every column, so no table here can draw them. "
     + "Open the finding in Wiz for the full record.";
+}
+
+/**
+ * A filter-narrowed section with nothing to show, dated when a date is in hand.
+ *
+ * `emptyText` on `dataTable` already reads "Nothing open." / "No open findings in this
+ * dimension." — a state the register can legitimately be in with NO filter active at all, and
+ * that sentence is right for it. What it cannot say is whether a SEVERITY FILTER is why the
+ * table is empty rather than the register itself — `measuredEmpty` (ui/feedback.js) is the
+ * "we looked, on this date, and there was nothing" shape, and it earns its place only once a
+ * filter narrows the population, never as a second caption on an unfiltered empty register.
+ * Returns null in every other case rather than being folded into `dataTable`'s own emptyText,
+ * because whether a given section's emptiness even CAN be explained by the severity filter is
+ * a per-call-site decision (secrets' toolbar covers validation/confidence too, not severity).
+ */
+export function filterEmptyNotice(asOf, filterOn, empty) {
+  if (!empty || !filterOn) return null;
+  return measuredEmpty("Nothing matched the current severity filter.", { at: asOf });
 }
 
 // ------------------------------------------------------------------------ shared DOM bits
@@ -466,10 +486,13 @@ export function pagedTable(spec) {
  *   defaultSort/defaultDir  the scope's own opening order — mirrors
  *                `REGISTER_ROW_DEFAULT_SORT` so the FIRST paint's header already reflects
  *                what the server actually sent, with no flash of the wrong arrow
+ *   at           `vm.asOf` — dates the `filterEmptyNotice` this table draws below itself when
+ *                a severity filter narrows a server page to zero rows; `undefined` on secrets,
+ *                where `severities` is `undefined` too and the notice never fires
  */
 export function registerRowsTable(spec) {
   const {
-    scope, columns, severities, showNoFix, defaultSort, defaultDir, emptyText,
+    scope, columns, severities, showNoFix, defaultSort, defaultDir, emptyText, at,
   } = spec;
   const state = {
     page: 0, pageSize: DEFAULT_PAGE_SIZE, sort: defaultSort, dir: defaultDir || "desc",
@@ -522,7 +545,8 @@ export function registerRowsTable(spec) {
       onPage: (p) => { state.page = p; load(); },
       onPageSize: (size, nextPage) => { state.pageSize = size; state.page = nextPage; load(); },
     });
-    host.replaceChildren(table, footer);
+    const notice = filterEmptyNotice(at, !!(severities && severities.length), rows.length === 0);
+    host.replaceChildren(table, footer, ...(notice ? [notice] : []));
   }
 
   load();
@@ -995,6 +1019,7 @@ function paintSca(host, vm, filters) {
     }),
   ));
 
+  const tierRows = vm.tiers.rows.filter((r) => r.count > 0);
   host.append(sectionCard("What is known about each open finding", null,
     el("div", { class: "table-host" }, dataTable({
       columns: [
@@ -1009,10 +1034,11 @@ function paintSca(host, vm, filters) {
           }),
         },
       ],
-      rows: vm.tiers.rows.filter((r) => r.count > 0),
+      rows: tierRows,
       emptyText: "Nothing open to classify.",
     })),
     denomNote(vm.tiers.denominator),
+    filterEmptyNotice(vm.asOf, filters.severities.length > 0, tierRows.length === 0),
   ));
 
   host.append(sectionCard("Triage funnel", null,
@@ -1034,6 +1060,7 @@ function paintSca(host, vm, filters) {
     })),
     denomNote(vm.funnel.denominator),
     vm.funnel.note ? el("p", { class: "small muted" }, vm.funnel.note) : null,
+    filterEmptyNotice(vm.asOf, filters.severities.length > 0, vm.funnel.steps[0].count === 0),
   ));
 
   // ---------------------------------------------------------------------- breakdowns
@@ -1060,6 +1087,7 @@ function paintSca(host, vm, filters) {
       })),
       denomNote(dim.denominator),
       kevCaveat(vm.signals),
+      filterEmptyNotice(vm.asOf, filters.severities.length > 0, dim.rows.length === 0),
     ));
   }
 
@@ -1095,6 +1123,7 @@ function paintSca(host, vm, filters) {
       scope: "sca",
       severities: filters.severities,
       showNoFix: filters.showNoFix,
+      at: vm.asOf,
       defaultSort: "age_days",
       defaultDir: "desc",
       emptyText: "Nothing in this register.",

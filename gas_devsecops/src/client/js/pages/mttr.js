@@ -752,6 +752,16 @@ export async function renderMttr(host, params, _ctx) {
     const first = Number((mttr && mttr.rowCount) || 0) === 0;
     guard("the first-run notice", noticeHost, () => renderFirstRun(first));
     guard("the half-life", heroHost, () => renderHero(mttr, first));
+    // FIRST RUN STOPS HERE — one notice above, not ten section headings each over its own
+    // empty box. Every section below reads a population of exactly zero on an unread ledger;
+    // `firstRunNotice`, rendered by `renderFirstRun` above, already carries the one sentence
+    // this page owes a reader. Same shape as executive.js's `paint` (labels live inside each
+    // renderX, so clearing the host removes label and box together).
+    if (first) {
+      [curveHost, sevHost, slaHost, agingHost, slaConsumedHost, bucketHost, clockHost, trendHost]
+        .forEach(clear);
+      return;
+    }
     guard("the survival curve", curveHost, () => renderCurve(mttr));
     guard("the per-severity clock", sevHost, () => renderSeverity(mttr));
     guard("SLA by severity", slaHost, () => renderSla(mttr));
@@ -922,7 +932,10 @@ export async function renderMttr(host, params, _ctx) {
     clear(sevHost);
     sevHost.append(sectionLabel("The clock, by severity"));
     if (!rows.length) {
-      sevHost.append(emptyState("No per-severity clock yet."));
+      sevHost.append(emptyState(
+        "No per-severity clock yet.",
+        "It appears once a finding of at least one severity has resolved.",
+      ));
       return;
     }
 
@@ -1009,7 +1022,10 @@ export async function renderMttr(host, params, _ctx) {
     clear(slaHost);
     slaHost.append(sectionLabel("SLA by severity", { term: "sla-target" }));
     if (!rows.length) {
-      slaHost.append(emptyState("No SLA figures yet."));
+      slaHost.append(emptyState(
+        "No SLA figures yet.",
+        "It appears once a finding has closed against a severity's SLA target.",
+      ));
       return;
     }
     slaHost.append(dataTable({
@@ -1276,7 +1292,7 @@ export async function renderMttr(host, params, _ctx) {
     clear(clockHost);
     clockHost.append(sectionLabel(view.heading, { term: "two-clocks" }));
     if (!view.show) {
-      clockHost.append(emptyState("No actionable clock in this payload."));
+      clockHost.append(emptyState("No actionable clock to show yet."));
       clockHost.append(el("p", { class: "small muted" }, view.note));
       return;
     }
