@@ -27,6 +27,7 @@
 
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { PROVENANCE_LABEL, provenance } from "./registerModel.js";
 import {
   DEFAULT_PAGE_SIZE, absent, boundedDays, chartTable, chartTableModel, dataTable, days1,
   denomNote, el, emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, heroStat,
@@ -1070,7 +1071,12 @@ function paintSca(host, vm, filters) {
         { key: "identifier", label: "CVE", sortable: true, cell: (r) => textCell(r.identifier) },
         { key: "component", label: "Package", sortable: true, cell: (r) => textCell(r.component) },
         { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
-        { key: "status", label: "Status", sortable: true, cell: (r) => textCell(r.status) },
+        {
+          // The server sorts the raw `status` column; the label below is a rendering of it
+          // (and of `resolution_src` / `reopened_count`, which ride the same row unsorted).
+          key: "status", label: "Status", sortable: true,
+          cell: (r) => textCell(PROVENANCE_LABEL[provenance(r)]), help: { term: "returned" },
+        },
         { key: "repo_name", label: "Repository", sortable: true, cell: (r) => textCell(r.repo_name) },
         { key: "branch", label: "Branch", sortable: true, cell: (r) => textCell(r.branch) },
         { key: "first_seen", label: "First seen", sortable: true, cell: (r) => fmtDate(r.first_seen) },

@@ -447,8 +447,8 @@ already implements the pipeline and is the behavioural spec (same relationship `
   a scan that never looked at it. Measured: every battery in
   `gas_devsecops/dev/sampleData.dev.ts` carries `scannedSeverities: null` — the dev fixture
   does not model this at all. The only wide-then-narrow shape lives in
-  `gas_devsecops/test/reconcile.test.ts`'s "severity-scope guard (rule 9)" describe, which is
-  the only place that leaves the guard something to protect.
+  `gas_devsecops/test/reconcile.test.ts`'s "failure of absence: the severity-scope guard
+  (rule 9)" describe, which is the only place that leaves the guard something to protect.
 - **The Access panel is not the boundary, and the tier is one `canEditAdmins()` call.**
   `google.script.run` reaches `api_saveAccess` from any allowed caller's console, so every
   endpoint re-checks; `getAccess` withholds the ROSTER from a non-editor rather than letting

@@ -23,6 +23,8 @@ export const PROVENANCE = {
   BOUNDED: "bounded",
   /** Resolved, but nothing recorded how. Older rows, or a source that did not say. */
   UNKNOWN: "unknown",
+  /** Seen again after it had been resolved. Its clock restarted on this sighting. */
+  RETURNED: "returned",
 };
 
 /**
@@ -33,9 +35,20 @@ export const PROVENANCE = {
  * first written for it — but SCA and secrets resolve by disappearance too, and a page that
  * qualified only SAST would be implying the other two dates are exact when a third of them
  * are not.
+ *
+ * A non-resolved row is not automatically plain OPEN, either: `reconcile.ts`'s reopen path
+ * sets status back to OPEN and increments `reopened_count`, so a row that was once resolved
+ * and came back reads as RETURNED rather than as though it had never left. `reopened_count`
+ * refuses null/undefined/""/[]/false BEFORE any cast — `Number(null)` is `0` and finite, so
+ * casting first would read an absent count as "never reopened" by accident, the same trap
+ * CLAUDE.md names for `cleanSettings` and the client's `num()` helper.
  */
 export function provenance(row) {
-  if (!row || row.status !== "RESOLVED") return PROVENANCE.OPEN;
+  if (!row || row.status !== "RESOLVED") {
+    const rc = row ? row.reopened_count : null;
+    if (typeof rc === "number" && Number.isFinite(rc) && rc > 0) return PROVENANCE.RETURNED;
+    return PROVENANCE.OPEN;
+  }
   if (row.resolution_src === "api") return PROVENANCE.OBSERVED;
   if (row.resolution_src === "disappeared") return PROVENANCE.BOUNDED;
   return PROVENANCE.UNKNOWN;
@@ -47,6 +60,7 @@ export const PROVENANCE_LABEL = {
   [PROVENANCE.OBSERVED]: "Resolved",
   [PROVENANCE.BOUNDED]: "Gone by",
   [PROVENANCE.UNKNOWN]: "Resolved",
+  [PROVENANCE.RETURNED]: "Returned",
 };
 
 export const PROVENANCE_HELP = {
@@ -58,6 +72,9 @@ export const PROVENANCE_HELP = {
     + "bound, not a measurement.",
   [PROVENANCE.UNKNOWN]:
     "Resolved, but nothing recorded how. Treat the date as unverified.",
+  [PROVENANCE.RETURNED]:
+    "Seen again after it had been resolved. Its clock restarted on this sighting; the "
+    + "earlier episode is not in this figure.",
 };
 
 /**
@@ -76,6 +93,22 @@ export function boundedShare(rows) {
     if (provenance(r) === PROVENANCE.BOUNDED) bounded += 1;
   }
   return { resolved, bounded, pct: resolved ? (bounded / resolved) * 100 : null };
+}
+
+/**
+ * The share of open rows that are back after a prior resolution, mirroring `boundedShare`'s
+ * null-not-zero rule: `pct` is `null`, not `0`, when nothing is open — an empty denominator
+ * is "we cannot say", never "none of them".
+ */
+export function returnedShare(rows) {
+  let open = 0;
+  let returned = 0;
+  for (const r of rows ?? []) {
+    if (r.status === "RESOLVED") continue;
+    open += 1;
+    if (provenance(r) === PROVENANCE.RETURNED) returned += 1;
+  }
+  return { open, returned, pct: open ? (returned / open) * 100 : null };
 }
 
 /* --------------------------------------------------------------- the three scopes */

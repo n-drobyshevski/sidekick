@@ -4,10 +4,13 @@
 // column, and one of them is a measurement while the other is an upper bound. If that
 // distinction can be lost, it will be lost silently.
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   PROVENANCE, PROVENANCE_HELP, REGISTERS, REGISTER_ORDER, activeFilterCount, boundedShare,
-  executiveHeadline, facetEntries, headerFigures, provenance, readFilters, scopeSummaries,
+  executiveHeadline, facetEntries, headerFigures, provenance, readFilters, returnedShare,
+  scopeSummaries,
 } from "../src/client/js/pages/registerModel.js";
 
 const open = (over = {}) => ({ status: "OPEN", resolution_src: null, ...over });
@@ -57,6 +60,75 @@ describe("a death date is not always a measurement", () => {
     // 0% bounded and "no resolved rows to characterise" are different answers.
     expect(boundedShare([open(), open()]).pct).toBeNull();
     expect(boundedShare([]).pct).toBeNull();
+  });
+
+  it("a reopened open row is Returned, not merely Open", () => {
+    // reconcile.ts's reopen path sets status back to OPEN and increments reopened_count —
+    // a row that came back is a different claim from one that never left.
+    expect(provenance(open({ reopened_count: 1 }))).toBe(PROVENANCE.RETURNED);
+    expect(provenance(open({ reopened_count: 3 }))).toBe(PROVENANCE.RETURNED);
+    expect(provenance(open({ reopened_count: 0 }))).toBe(PROVENANCE.OPEN);
+  });
+
+  it("a reopened row that has resolved again is still dated by its resolution_src", () => {
+    // Returned only describes a row that is OPEN right now. Once it resolves again,
+    // resolution_src still decides observed vs. bounded vs. unknown — reopened_count never
+    // overrides a status of RESOLVED.
+    expect(provenance(byApi({ reopened_count: 3 }))).toBe(PROVENANCE.OBSERVED);
+    expect(provenance(byGone({ reopened_count: 3 }))).toBe(PROVENANCE.BOUNDED);
+  });
+
+  it("Number(null) reopened_count is not a return", () => {
+    // CLAUDE.md's trap, restated for this field: Number(null) is 0, and it is finite. Every
+    // one of these has to refuse BEFORE the cast, not read a missing count as "reopened 0
+    // times" (harmless here) that a careless rewrite could just as easily read as "reopened".
+    expect(provenance(open({ reopened_count: null }))).toBe(PROVENANCE.OPEN);
+    expect(provenance(open({ reopened_count: undefined }))).toBe(PROVENANCE.OPEN);
+    expect(provenance(open({ reopened_count: "" }))).toBe(PROVENANCE.OPEN);
+    expect(provenance(open({ reopened_count: [] }))).toBe(PROVENANCE.OPEN);
+    expect(provenance(open({ reopened_count: false }))).toBe(PROVENANCE.OPEN);
+    // The bite the perturbation below actually finds: none of the five values above bite,
+    // because they all coerce to 0 or NaN and 0 > 0 is false either way — a naive
+    // `Number(row.reopened_count) > 0` would pass every one of them by accident, which is
+    // exactly the "guard that fires on nothing" CLAUDE.md warns against. A single-element
+    // array does bite: `Number(["2"])` is `2`, not NaN, so a malformed count wrapped in an
+    // array would read as genuinely reopened under a naive cast. The typed guard refuses it.
+    expect(provenance(open({ reopened_count: ["2"] }))).toBe(PROVENANCE.OPEN);
+  });
+
+  it("returnedShare reports null, not zero, when nothing is open", () => {
+    const s = returnedShare([open({ reopened_count: 2 }), open(), byApi(), byGone()]);
+    expect(s.open).toBe(2);
+    expect(s.returned).toBe(1);
+    expect(s.pct).toBeCloseTo(50, 1);
+    expect(returnedShare([byApi(), byGone()]).pct).toBeNull();
+    expect(returnedShare([]).pct).toBeNull();
+  });
+});
+
+describe("the live sca/sast status columns render provenance(), not raw status", () => {
+  // registerModel.js used to be read only by the orphan pages/register.js — the live tables
+  // (sca.js:1073, sast.js:462) rendered `textCell(r.status)` and a reopened row printed the
+  // same word as one that had never left. A text assertion over the source, in the style of
+  // gas_shared/test/contracts/*.js, so the live tables cannot drift back to raw status
+  // silently — a unit test on registerModel.js alone would never notice that regression.
+  const src = (rel) => readFileSync(
+    fileURLToPath(new URL(`../src/client/js/pages/${rel}`, import.meta.url)),
+    "utf8",
+  );
+
+  it("sca.js's status column reads provenance(), not r.status", () => {
+    const text = src("sca.js");
+    const statusCol = text.slice(text.indexOf('key: "status"'), text.indexOf('key: "status"') + 300);
+    expect(statusCol).toMatch(/provenance\(/);
+    expect(statusCol).not.toMatch(/textCell\(r\.status\)/);
+  });
+
+  it("sast.js's status column reads provenance(), not r.status", () => {
+    const text = src("sast.js");
+    const statusCol = text.slice(text.indexOf('key: "status"'), text.indexOf('key: "status"') + 300);
+    expect(statusCol).toMatch(/provenance\(/);
+    expect(statusCol).not.toMatch(/textCell\(r\.status\)/);
   });
 });
 

@@ -360,11 +360,18 @@ export function jobSummarySlice(job: unknown, stale: boolean): Rec | null {
 //   1. THE SLICE. `REGISTER_ROW_COLUMNS` is an ALLOWLIST, per scope, and `registerRowsSlice`
 //      copies nothing else off the base row. `raw_ref` / `obs_ref` are not on a `BaseRow` at
 //      all (they are scan columns — see SCAN_ROW_KEYS above), but `first_scan_id`,
-//      `last_scan_id`, `owner_path`, `tags_json`, `resolution_src`, `risk_observed_at`,
-//      `fix_date` / `fix_observed_at` and `repo_id` ARE, and none of them has a reader in a
-//      register table. Only `finding_key` rides along outside the drawn columns: it is the
-//      row identity the client keys and the sort tie-breaks on, and it names a finding
-//      rather than describing one.
+//      `last_scan_id`, `owner_path`, `tags_json`, `risk_observed_at`, `fix_date` /
+//      `fix_observed_at` and `repo_id` ARE, and none of them has a reader in a register
+//      table. `resolution_src` and `reopened_count` USED to be in that unread set too; they
+//      are on `sca` and `sast` now, because `pages/registerModel.js`'s `provenance()` reads
+//      both to tell an observed resolution from a bounded one and a plain OPEN row from one
+//      that came back after being resolved (`PROVENANCE.RETURNED`) — a distinction the live
+//      register tables draw in their status column. `secrets` omits them: its status column
+//      already carries `removed_at` / `rotated_at` / `validation_state` as the three events
+//      that matter there, and a fourth "returned" state on a register whose RESOLVED means
+//      "left HEAD" would be a second definition of the same word. Only `finding_key` rides
+//      along outside the drawn columns: it is the row identity the client keys and the sort
+//      tie-breaks on, and it names a finding rather than describing one.
 //
 //      NO SECRET VALUE CAN APPEAR HERE, AND THE ALLOWLIST IS WHY. There is none stored —
 //      `Q_SECRETS` omits the two denied fields and `slimRecord`'s deny-list refuses them at
@@ -414,13 +421,14 @@ export function jobSummarySlice(job: unknown, stale: boolean): Rec | null {
  */
 export const REGISTER_ROW_COLUMNS: Record<string, readonly string[]> = {
   sca: [
-    "identifier", "component", "severity", "status", "repo_name", "branch",
-    "first_seen", "last_seen", "fixed_version", "fix_available_at", "awaiting_vendor_fix",
-    "has_kev", "has_exploit", "epss", "mttr_days", "age_days",
+    "identifier", "component", "severity", "status", "resolution_src", "reopened_count",
+    "repo_name", "branch", "first_seen", "last_seen", "fixed_version", "fix_available_at",
+    "awaiting_vendor_fix", "has_kev", "has_exploit", "epss", "mttr_days", "age_days",
   ],
   sast: [
     "identifier", "cwe", "file_path", "start_line", "language", "origin", "ai_verdict",
-    "severity", "status", "repo_name", "first_seen", "last_seen", "age_days",
+    "severity", "status", "resolution_src", "reopened_count", "repo_name", "first_seen",
+    "last_seen", "age_days",
   ],
   secrets: [
     "identifier", "secret_kind", "confidence", "file_path", "start_line",

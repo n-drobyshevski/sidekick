@@ -450,7 +450,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "5c336794fb12" : "dev";
+  var BUILD_ID = true ? "e53327524c63" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -4704,6 +4704,8 @@ var Server = (() => {
       "component",
       "severity",
       "status",
+      "resolution_src",
+      "reopened_count",
       "repo_name",
       "branch",
       "first_seen",
@@ -4727,6 +4729,8 @@ var Server = (() => {
       "ai_verdict",
       "severity",
       "status",
+      "resolution_src",
+      "reopened_count",
       "repo_name",
       "first_seen",
       "last_seen",

@@ -24,6 +24,7 @@
 // hosts a second copy of those five, only the register-shaped helpers built on top of them.
 
 import { bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
+import { PROVENANCE_LABEL, provenance } from "./registerModel.js";
 import {
   absent, dataTable, days1, denomNote, el, emptyState, firstRunNotice, fmtCount, fmtDate,
   heroStat, meter, num, pageHeader, pct1, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
@@ -459,7 +460,12 @@ function paintSast(host, vm, filters) {
         { key: "origin", label: "Scanner", sortable: true, cell: (r) => textCell(r.origin) },
         { key: "ai_verdict", label: "AI verdict", sortable: true, cell: (r) => textCell(r.ai_verdict) },
         { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
-        { key: "status", label: "Status", sortable: true, cell: (r) => textCell(r.status) },
+        {
+          // The server sorts the raw `status` column; the label below is a rendering of it
+          // (and of `resolution_src` / `reopened_count`, which ride the same row unsorted).
+          key: "status", label: "Status", sortable: true,
+          cell: (r) => textCell(PROVENANCE_LABEL[provenance(r)]), help: { term: "returned" },
+        },
         { key: "repo_name", label: "Repository", sortable: true, cell: (r) => textCell(r.repo_name) },
         { key: "first_seen", label: "First seen", sortable: true, cell: (r) => fmtDate(r.first_seen) },
         { key: "last_seen", label: "Last seen", sortable: true, cell: (r) => fmtDate(r.last_seen) },

@@ -208,6 +208,14 @@ const ENTRIES = [
       "Keying on Wiz's externalId instead would look unique and quietly double the register.",
     ],
   },
+  {
+    id: "returned",
+    term: "Returned",
+    lines: [
+      "Seen again after it had been resolved. Its clock restarted on this sighting.",
+      "The earlier episode is not in this figure — a returned finding's age counts only from the return.",
+    ],
+  },
 ];
 
 /** One entry by id, or null. Callers render nothing rather than guessing. */
