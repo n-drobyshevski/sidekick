@@ -959,3 +959,23 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
   text-align: center; font-size: var(--fs-label); padding: 0 var(--space-5);
   height: auto; border: none; border-radius: 0;
 }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css
+   ------------------------------------------------------------------- rail status dot
+   `.rail-status-dot` (gas_shared/styles/base.css) is a 9px mark - all the colour a scan's
+   state needs, but nine pixels of hit target and, until app.js's own fix, a span wearing
+   `aria-hidden` with nothing behind it for a keyboard or a screen reader. It is a real
+   `<button>` now (app.js), so this is chrome, not colour: WCAG 2.2 SC 2.5.8 wants 24x24px of
+   TARGET even though the mark painted inside it stays 9px - `padding` plus
+   `background-clip: content-box` grows the hit box without growing the dot, and the negative
+   margin keeps the surrounding rail layout exactly as tight as it was when this was a span.
+   The state colours (`.ok`/`.warn`/`.bad`/`.neutral`/`.scanning`, base.css) keep painting the
+   9px content box unchanged - only the box the pointer and the focus ring measure grows. */
+.sidebar .rail-status-dot {
+  width: 24px; height: 24px; padding: 7.5px; box-sizing: border-box;
+  background-clip: content-box; margin: -7.5px auto;
+}
+/* Reset of the generic `button` chrome (base.css: border, box-shadow, min-height) a dot
+   never wanted - it is a mark with a tip and a destination, not a bordered control sitting
+   in the icon rail beside the Run scan button. */
+.sidebar button.rail-status-dot { border: none; box-shadow: none; min-height: 0; cursor: pointer; }
