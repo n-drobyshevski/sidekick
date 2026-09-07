@@ -27,8 +27,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  boundedDays, capacityVerdict, capacityView, densityView, footholdView, groupRows, halfLifeView,
-  overallRow, ownershipView, tableRow,
+  boundedDays, capacityVerdict, capacityView, coverageMeterPct, densityView, footholdCellKind,
+  footholdView, groupRows, halfLifeView, overallRow, ownershipView, tableRow,
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
@@ -164,6 +164,51 @@ describe("repos: foothold, half-life and capacity read the published fields, not
   });
 });
 
+// =========================================================================================
+//  repos.js — the two decisions the Foothold/Coverage cells draw from (C2)
+// =========================================================================================
+
+describe("repos: footholdCellKind names the glyph a Yes/No verdict earns, and refuses one to a percentage", () => {
+  it("Yes and No each get their own kind — a real verdict, drawn with a glyph and the word", () => {
+    expect(footholdCellKind("Yes")).toBe("yes");
+    expect(footholdCellKind("No")).toBe("no");
+  });
+
+  it("a percentage between the ends is not a verdict and draws no glyph", () => {
+    expect(footholdCellKind("27.5%")).toBe("value");
+  });
+
+  it("the shared absence mark reads as absent, not as a fourth glyph", () => {
+    expect(footholdCellKind("—")).toBe("absent");
+  });
+
+  // PERTURBATION (recorded, then reverted): folding "value" and "absent" into one fallback
+  // branch (`return "value"` for anything not exactly "Yes"/"No") reads the shared dash as a
+  // percentage — the render path would then hand `uiIcon`'s caller a bare "—" instead of the
+  // muted `absent()` node, which is exactly the "a dash in the same ink as a measured value"
+  // defect `ui/cells.js`'s own header names. Kept as three branches, not two, for that reason.
+});
+
+describe("repos: coverageMeterPct refuses null BEFORE any cast, so an unmeasured cell draws no meter", () => {
+  it("passes a real, measured percentage through unchanged — including a real zero", () => {
+    expect(coverageMeterPct({ coverageP50: 62.5 })).toBe(62.5);
+    expect(coverageMeterPct({ coverageP50: 0 })).toBe(0);
+  });
+
+  it("a null coverage (never measured) returns null, not a confident 0", () => {
+    expect(coverageMeterPct({ coverageP50: null })).toBeNull();
+    expect(coverageMeterPct(null)).toBeNull();
+    expect(coverageMeterPct(undefined)).toBeNull();
+  });
+
+  // PERTURBATION (recorded, then reverted): the tempting one-line rewrite —
+  // `Number(row && row.coverageP50) || 0` — reads `coverageP50: null` as the finite `0`
+  // (CLAUDE.md's own example of this exact cast) and would draw an empty 0% track beside a
+  // cell that never measured anything, rather than the em dash `renderGroupTable` draws when
+  // this returns null. `typeof pct === "number" && Number.isFinite(pct)` is the refusal that
+  // stops it, checked BEFORE any arithmetic rather than cleaned up after.
+});
+
 describe("repos: ownership coverage — honestly absent, not a fabricated unowned count", () => {
   // WAVE 1, ITEM 1.1 CHANGED BOTH ASSERTIONS BELOW, AND THE CLAIM THEY PIN IS UNCHANGED: an
   // honest gap is not a fabricated number. What moved is HOW that gap reaches the screen.
@@ -263,13 +308,101 @@ describe("history: three rows per sync, one per register", () => {
 
 describe("history: KPIs, KM points and the SLA-trend gap", () => {
   it("kpiView derives the one honest rate this KPI band can publish, with its denominator", () => {
-    const v = kpiView({ tracked: 100, open: 40, resolvedAllTime: 60, medianMttr: 3.5 });
+    const v = kpiView({
+      tracked: 100, open: 40, resolvedAllTime: 60, km: { median: 3.5, medianLowerBound: 3.5 },
+    });
     expect(v.resolvedSharePct).toBeCloseTo(60, 5);
     expect(v.tracked).toBe(100);
   });
 
   it("kpiView never divides by zero into a fake rate", () => {
     expect(kpiView({ tracked: 0, open: 0, resolvedAllTime: 0 }).resolvedSharePct).toBeNull();
+  });
+
+  /**
+   * THE FOURTH CARD, AND WHY THE `medianMttr` FIXTURE ABOVE BECAME A `km` ONE.
+   *
+   * The retired claim: the KPI band's half-life card publishes `kpis.medianMttr`, i.e.
+   * `overall.mttr_median` — the plain median over the rows that CLOSED. The card is captioned
+   * with the `half-life` glossary term, which defines a Kaplan-Meier figure that keeps
+   * still-open findings in as censored evidence, so the field and the caption were two
+   * different claims about two different populations. On the dev seed the card read 93 days
+   * while the MTTR page read "at least 297 days" over the same 554 rows. `medianMttr` is gone
+   * from the payload (readModels.ts's `buildHistory`) and the band reads `kpis.km` through
+   * `kmHalfLifeView` — the same chooser the MTTR page's hero draws with.
+   *
+   * NOTE ON WHAT THE OLD FIXTURE ACTUALLY PINNED: nothing about the median. It passed
+   * `medianMttr: 3.5` and asserted only `resolvedSharePct` and `tracked`, so the defect could
+   * never have failed here. The three outcomes below are the guard that was missing.
+   */
+  describe("the half-life card publishes the KM figure, in the tile's own notation", () => {
+    it("a measured median is the number itself", () => {
+      const v = kpiView({
+        tracked: 8, open: 3, resolvedAllTime: 5, km: { median: 41, medianLowerBound: 41 },
+      });
+      expect(v.halfLife)
+        .toEqual({ measured: true, value: "41 days", isLowerBound: false, days: 41 });
+    });
+
+    it("no median but a bound is PROSE — \"at least N days\", never a table cell's \"\u2265 N\"", () => {
+      const v = kpiView({
+        tracked: 554, open: 416, resolvedAllTime: 138, km: { median: null, medianLowerBound: 297 },
+      });
+      expect(v.halfLife.value).toBe("at least 297 days");
+      expect(v.halfLife.isLowerBound).toBe(true);
+      // THE PERTURBATION THIS PAIR EXISTS FOR. `boundedDays(null, 297).text` is "\u2265 297.0 d"
+      // — correct in a numeric cell and wrong in a KPI tile. README.md fixes one notation per
+      // context, and history.js's `renderKpis` had the two crossed once already, in the other
+      // direction (`days1` where `fmtDays` belonged). A tile that took the cell's form would
+      // still satisfy `isLowerBound` and every count on the card.
+      expect(v.halfLife.value).not.toMatch(/[\u2265>]/);
+      expect(v.halfLife.value).not.toMatch(/\bd\b/);
+    });
+
+    it("neither is \"Not measured\" — NOT a zero, and NOT a fallback to the retired naive median", () => {
+      // `medianMttr` is handed in on purpose: this is the defect trying to come back. A
+      // `kpiView` that fell through to it when the curve has no median would answer
+      // "93 days" here, which is exactly the figure the Scan History card used to publish.
+      const v = kpiView({
+        tracked: 554, open: 554, resolvedAllTime: 0, medianMttr: 93,
+        km: { median: null, medianLowerBound: null },
+      });
+      expect(v.halfLife)
+        .toEqual({ measured: false, value: "Not measured", isLowerBound: false, days: null });
+      expect(v.medianMttr).toBeUndefined();
+    });
+
+    it("a payload with no km block at all says so, rather than throwing or printing a 0", () => {
+      expect(kpiView({ tracked: 1, open: 1, resolvedAllTime: 0 }).halfLife.value)
+        .toBe("Not measured");
+      expect(kpiView(null).halfLife.value).toBe("Not measured");
+      expect(kpiView({ km: null }).halfLife.measured).toBe(false);
+    });
+
+    it("the card renders the view object's own string — no second chooser in the DOM half", () => {
+      // The DOM half read as text, this file's established split (see the module header).
+      // What must be true: the tile's value is `v.halfLife.value` verbatim, so every outcome
+      // pinned above is what a reader actually reads.
+      expect(HISTORY_SRC)
+        .toMatch(/glossaryTip\("Remediation half-life", "half-life"\), v\.halfLife\.value/);
+      expect(HISTORY_SRC).not.toMatch(/v\.medianMttr/);
+    });
+
+    /**
+     * ONE STATISTIC, ONE NAME. The retired claim is the label "Median MTTR", which this card
+     * carried while the MTTR page's hero called the same figure over the same population
+     * "Remediation half-life" — both pointing at the `half-life` glossary entry, itself
+     * titled "Remediation half-life". Nothing was wrong with the arithmetic; what was wrong
+     * is that a reader moving between the two pages had to work out that two names were one
+     * number, which is the drift the "one vocabulary for figures" wave exists to stop.
+     */
+    it("the card is named for the statistic, in the same words as the glossary and the MTTR hero", () => {
+      expect(HISTORY_SRC).not.toMatch(/kpiCard\(glossaryTip\("Median MTTR"/);
+      const mttrSrc = readFileSync(
+        new URL("../src/client/js/pages/mttr.js", import.meta.url), "utf8",
+      );
+      expect(mttrSrc).toContain('heroStat("Remediation half-life"');
+    });
   });
 
   it("kmMedianPoints filters the skipped points (km_median_days: null) — the server-applied kmSkipMask", () => {
@@ -337,13 +470,26 @@ describe("history: scanScopeNoteShown is gated on the server's own scanScopeNote
   // it cannot tell scoped-but-unmarked apart from genuinely unscoped.
 });
 
+// THE CARRIER CHANGED IN WAVE C; THE CLAIM DID NOT — and the three cases below say which is
+// which. What these pinned was `registerWideNote(` — a `<p class="register-wide-note">` under
+// each of the two scan-side tables, 21 words under one and 34 under the other, saying the
+// same thing in two sets of words. The density wave moved the STATE onto each table's own
+// heading as `statusPill("neutral", "Register-wide", lines)` and the two SENTENCES into that
+// pill's tip. That is a mechanism, not a claim: the same failure these cases were written to
+// catch — a table silently register-wide under a project view, or a note worded so it reads
+// as covering the KPIs and the trend as well — fails exactly as loudly against the pill.
+//
+// So the mechanism assertions are re-pointed at the pill, and everything that is a CLAIM is
+// kept verbatim: the gate is still read in the render function that owns the table (never
+// re-derived inside the DOM helper, which now takes the decision rather than the payload),
+// and the second sentence still says, in those words, that the KPIs and the trend ARE scoped.
 describe("history: the note is placed on the scan-side tables specifically, never worded to "
   + "imply the KPIs or trend are unscoped", () => {
   it("renderPerScope gates its own note on scanScopeNoteShown(payload)", () => {
     const fn = HISTORY_SRC.slice(HISTORY_SRC.indexOf("function renderPerScope"));
     const body = fn.slice(0, fn.indexOf("\n  }\n"));
     expect(body).toMatch(/scanScopeNoteShown\(payload\)/);
-    expect(body).toMatch(/registerWideNote\(/);
+    expect(body).toMatch(/registerWidePill\(/);
   });
 
   it("renderTable's note explicitly says the KPIs and trend ARE scoped, right beside the "
@@ -351,14 +497,21 @@ describe("history: the note is placed on the scan-side tables specifically, neve
     const fn = HISTORY_SRC.slice(HISTORY_SRC.indexOf("function renderTable"));
     const body = fn.slice(0, fn.indexOf("\n  function renderTrends"));
     expect(body).toMatch(/scanScopeNoteShown\(payload\)/);
-    expect(body).toMatch(/registerWideNote\(/);
     expect(body).toMatch(/KPIs above and the/);
     expect(body).toMatch(/trend below ARE scoped/);
   });
 
-  it("imports registerWideNote from the shared ui barrel, not a hand-rolled note", () => {
-    expect(HISTORY_SRC).toMatch(/registerWideNote/);
+  it("draws the state as the shared statusPill, not as a hand-rolled note", () => {
+    expect(HISTORY_SRC).toMatch(/statusPill\("neutral", "Register-wide"/);
     expect(HISTORY_SRC).toMatch(/from "\.\.\/ui\.js"/);
+    // NOT A VACUOUS SWEEP, and this half is what makes the re-point above safe: a pill with
+    // no lines behind it would be a two-word label where a sentence used to be, so both
+    // sentences have to still be in the source, and the helper has to refuse to draw a pill
+    // when the server sent no note at all.
+    expect(HISTORY_SRC).toMatch(/Scan counts across every register, not narrowed/);
+    expect(HISTORY_SRC).toMatch(/This table lists every scan ever saved, not narrowed/);
+    const fn = HISTORY_SRC.slice(HISTORY_SRC.indexOf("function registerWidePill"));
+    expect(fn.slice(0, fn.indexOf("\n  }\n"))).toMatch(/if \(!lines\) return;/);
   });
 });
 

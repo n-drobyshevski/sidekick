@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "e27a7037945c" : "dev";
+  var BUILD_ID = true ? "235ed4d2a198" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -6342,12 +6342,20 @@ var Server = (() => {
   function recordDaily(stats, now = Date.now()) {
     writeGzJson(subfolder(FOLDER), fileName(utcDay(now)), stats);
   }
-  function listHistory() {
-    const days = listNames(FOLDER).map((n2) => {
+  function recordedDays() {
+    return listNames(FOLDER).map((n2) => {
       var _a;
       return (_a = NAME_RE.exec(n2)) == null ? void 0 : _a[1];
     }).filter((d) => Boolean(d)).sort();
-    return days.map((date) => ({ date, stats: readGzJson(subfolder(FOLDER), fileName(date)) }));
+  }
+  function listHistory() {
+    return recordedDays().map((date) => ({ date, stats: readGzJson(subfolder(FOLDER), fileName(date)) }));
+  }
+  function latestHistory() {
+    const days = recordedDays();
+    if (days.length === 0) return null;
+    const date = days[days.length - 1];
+    return { date, stats: readGzJson(subfolder(FOLDER), fileName(date)) };
   }
 
   // src/server/readModelStore.ts
@@ -7012,10 +7020,33 @@ var Server = (() => {
       showNoFix: n2.showNoFix
     };
   }
+  var HISTORY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  function latestSecretsTwins() {
+    const entry = latestHistory();
+    const stats = entry && entry.stats;
+    if (!stats || typeof stats !== "object" || Array.isArray(stats)) return null;
+    const scopes = stats["scopes"];
+    if (!Array.isArray(scopes)) return null;
+    const block = scopes.find((s2) => s2 && typeof s2 === "object" && s2["scope"] === "secrets");
+    const twins = block ? block["twins"] : null;
+    if (!twins || typeof twins !== "object" || Array.isArray(twins)) return null;
+    const t = twins;
+    const keys = t["keys"];
+    const folded = t["folded"];
+    if (typeof keys !== "number" || !Number.isFinite(keys)) return null;
+    if (typeof folded !== "number" || !Number.isFinite(folded)) return null;
+    if (!("medianGapDays" in t)) return null;
+    const gap = t["medianGapDays"];
+    if (gap !== null && (typeof gap !== "number" || !Number.isFinite(gap))) return null;
+    const date = entry.date;
+    const asOf = typeof date === "string" && HISTORY_DAY_RE.test(date) ? date : null;
+    return { twins: { keys, folded, medianGapDays: gap }, asOf };
+  }
   function buildSecrets(n2) {
     const snap = baseSnapshot();
     const rows = visibleRows(snap.rows, { ...n2, scope: "secrets", severities: null });
     const secretRows = rows;
+    const fold = latestSecretsTwins();
     return {
       asOf: snap.now,
       scope: "secrets",
@@ -7035,7 +7066,14 @@ var Server = (() => {
         confidence: bySegment(secretRows, "confidence"),
         secret_kind: bySegment(secretRows, "secret_kind")
       },
-      signalCoverage: signalCoverage(rows)
+      signalCoverage: signalCoverage(rows),
+      // THE FOLD THIS SYNC ACTUALLY DID, AND THE DAY IT WAS MEASURED — or neither key is here.
+      // See `latestSecretsTwins` for where the only durable copy lives, why an absence is never
+      // a zero, and why the date rides beside the block instead of inside it. SPREAD rather
+      // than assigned so a refusal omits the keys entirely: `twins: null` would be a third
+      // shape for the client to read where two already say everything it can say, and
+      // `twinsAsOf: null` would be a date claim about a fold that has no date.
+      ...fold ? { twins: fold.twins, ...fold.asOf ? { twinsAsOf: fold.asOf } : {} } : {}
     };
   }
   function secretsModel(p) {
@@ -7162,13 +7200,11 @@ var Server = (() => {
     return n2.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
   }
   function buildHistory(n2) {
-    var _a;
     const snap = baseSnapshot();
     const clock = ledgerClock(n2.scope);
     const scansAll = loadScanRows();
     const scans = (n2.scope ? scansAll.filter((s2) => s2.scope === n2.scope) : scansAll).slice().reverse();
     const rows = visibleRows(snap.rows, n2);
-    const { overall } = mttrFromLedger(rows, { now: snap.now });
     const movementRows = movementPopulation(snap.rows, n2);
     const movement2 = {};
     const movementNote = {};
@@ -7200,9 +7236,17 @@ var Server = (() => {
         tracked: rows.length,
         open: rows.filter((r) => isOpen7(r.status)).length,
         resolvedAllTime: rows.filter((r) => !isOpen7(r.status)).length,
-        // The KM median, NOT the naive closed-only one, and its lower bound beside it: where the
-        // curve never reaches half there is no median to print and the bound is what is true.
-        medianMttr: (_a = overall.mttr_median) != null ? _a : null,
+        // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
+        // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
+        // plain median over resolved rows. The page drew THAT one, captioned with the
+        // `half-life` glossary term, which defines a Kaplan-Meier figure that keeps still-open
+        // findings as censored evidence. On the dev seed the two disagree by a factor of three:
+        // 93 days against the MTTR page's "at least 297 days" over the same population, because
+        // the plain median drops the 416 rows that have not closed yet. The naive field is
+        // retired rather than left on the wire beside the honest one — a payload key nothing
+        // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
+        // than no key", applied to a payload field) — so `km` is the only median this page can
+        // publish, and where the curve never reaches half `medianLowerBound` is what is true.
         km: shipKM(kaplanMeier(rows))
       },
       // `mttrPageTrendSlice` reads both of these keys.

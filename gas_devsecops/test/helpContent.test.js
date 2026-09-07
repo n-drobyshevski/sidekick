@@ -36,6 +36,22 @@ const EXPECTED_IDS = [
   // entry behind them. (No quoted ids in this comment: test/pagesHelp.test.js reads this
   // array as TEXT and would take one for a fourth entry.)
   "compaction", "sealed", "episode",
+  // Wave A's three. The claim this array makes is "the book holds exactly these ids", so it
+  // GROWS with the book and never shrinks: `movement` is what the Executive aside's method
+  // sentence became, `fix-next` the ranking rule that was a 52-word lede above the ranked
+  // list, and `sla-edge` what the six per-severity edge sentences under the age chart became
+  // once the legend beside them started printing the targets themselves.
+  "movement", "fix-next", "sla-edge",
+  // Wave B's, from the Code register: the 85-word caveat that opened its clock section is a
+  // tip line now, and the term behind it is what a closing date estimated from a finding no
+  // longer being returned is CALLED. Not a rename of the neighbouring censoring entry —
+  // that one is about a row that is still open.
+  "disappearance",
+  // Wave B's, from Coverage and efficiency: the signals table publishes three states in one
+  // column (a measured share, always-present, not-applicable) and a 72-word note under the
+  // table used to say which is which. The entry is where that reading lives now, and the
+  // meter beside each cell is drawn only for the first of the three.
+  "signal-coverage",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164
@@ -183,6 +199,21 @@ describe("the measurement decisions in the new entries", () => {
     expect(t).toMatch(/line/);
     expect(t).toMatch(/earlier|earliest/);
     expect(t).toContain("187");
+  });
+
+  it("movement: the window is PER REGISTER, and the entry says so", () => {
+    // THE POINT BOTH PAGES LEANED ON AND NEITHER DEFINED. The Executive aside and Scan
+    // history's section both route here; history's own 65-word note said it in its own words
+    // and this entry did not say it at all, so a reader who followed either trigger met a
+    // definition that reads as though one window covered the whole register. Three registers
+    // share one scan log and a scan of one of them looked at none of the others — which is
+    // why one register can publish a decomposition on a day the other two refuse.
+    const t = text("movement");
+    expect(t, "the entry does not say each register has its own window")
+      .toMatch(/own window|per register/);
+    expect(t, "the entry does not say the three share one scan log").toMatch(/scan log/);
+    // ...and it still leads with what the comparison IS, because a tip card shows two lines.
+    expect(findEntry("movement").lines[0].toLowerCase()).toMatch(/previous sync/);
   });
 });
 

@@ -42,7 +42,12 @@ import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
 import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
-import { relativeAge } from "../../gas_shared/ui/figures.js";
+import { figureCardModel, relativeAge } from "../../gas_shared/ui/figures.js";
+import { registerFigureCardContract } from "../../gas_shared/test/contracts/figureCard.js";
+import { registerQuadContract } from "../../gas_shared/test/contracts/quad.js";
+import { quadModel } from "../../gas_shared/ui/quad.js";
+import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
+import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
@@ -121,9 +126,13 @@ registerPageHeaderContract({
 
 registerParityContract({
   ...base,
-  // The one module that is genuinely this register's: it reads src/domain/projectScope.ts
-  // and means nothing in a sibling with no repositories.
-  localUiModules: ["projectScope.js"],
+  // Two modules that are genuinely this register's, neither a fork of a shared one:
+  // `projectScope.js` reads src/domain/projectScope.ts and means nothing in a sibling with no
+  // repositories; `verdict.js` is the capacity dot-and-word `pages/program.js` and
+  // `pages/repos.js` both draw — promoted out of program.js in Wave C once a second page
+  // wanted the identical mark, but never pushed down into gas_shared because neither sibling
+  // register has a capacity verdict to draw it for.
+  localUiModules: ["projectScope.js", "verdict.js"],
   sheetOrder: [
     "../../../gas_shared/styles/tokens.base.css",
     "./styles/tokens.css",
@@ -224,6 +233,25 @@ registerDiagnosticsContract({
 // =========================================================================================
 registerRelativeAgeContract({ ...base, relativeAge });
 registerSyncCaptionContract(base);
+
+// =========================================================================================
+//  The three primitives this wave added, and the arithmetic each of them can get wrong
+// =========================================================================================
+//
+// NO NAMED SKIPS HERE, and that is a claim rather than an omission. The other contracts in
+// this file carry optional halves because the three registers genuinely differ (gas_ai has no
+// error log; gas_hub has no sync caption). These three do not: `quadModel`, `sparkPath` and
+// `figureCardModel` are pure functions with no app-specific input at all, so every assertion
+// below runs in every app that registers them. If a future app cannot run one of these, the
+// reason belongs beside a named skip — a silent pass is the failure mode this whole directory
+// guards against.
+//
+// THE MODEL HALVES ARE HANDED OVER, the DOM halves are swept as source text: this package has
+// no jsdom (no `environment` in vitest.config.ts), which is the same reason `emptyStates.js`
+// reads code rather than rendering.
+registerQuadContract({ ...base, quadModel });
+registerSparklineContract({ ...base, sparkPath, sparkLabel });
+registerFigureCardContract({ ...base, figureCardModel });
 
 // =========================================================================================
 //  The hub link: one rule, this register's boundary and the shared header gate

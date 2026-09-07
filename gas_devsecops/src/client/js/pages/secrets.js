@@ -53,17 +53,20 @@
 // The shared register vocabulary is imported from ./sca.js — see that file's header. Nothing
 // severity-flavoured is imported: not sevBadge, not sevEntries, not sevSegmentBar, and not
 // the sca aging or oldest-findings models, both of which carry a severity axis. The numeric
-// core (`num`/`fmtCount`/`days1`/`pct1`/`denomNote`) comes straight from `../ui.js` instead:
-// `sca.js` no longer hosts a second copy of those five, only the register-shaped helpers
-// built on top of them.
+// core (`num`/`fmtCount`/`days1`/`pct1`) comes straight from `../ui.js` instead: `sca.js` no
+// longer hosts a second copy of those, only the register-shaped helpers built on top of them.
+// `denomNote` has left this page entirely — every denominator it printed as a paragraph is
+// now a line on the heading or card label it belongs to, and the sentence a test reads is
+// written to `data-denominator` by `figureCard` instead.
 
 import {
   bootstrapCached, listJoin, listSplit, navigate, swrCall,
 } from "../../../../../gas_shared/store.js";
 import {
-  absent, absentText, closeActiveSheet, dataTable, days1, denomNote, el, emptyState,
-  firstRunNotice, fmtCount, fmtDate, glossaryTip, heroLines, heroStat, meter, num, pageHeader,
-  pct1, skeletonStack, statRow, survivalTableModel, uiIcon,
+  absent, absentText, closeActiveSheet, dataTable, days1, el, emptyState, firstRunNotice,
+  fmtCount, fmtDate, glossaryTip, heroLines, heroStat, meter, num, pageHeader, pct1,
+  pluralize, quadModel, quadTable, sectionLabel, skeletonStack, statRow, survivalTableModel,
+  uiIcon,
 } from "../ui.js";
 import {
   boundedDays, chartCard, concentrationModel, figureCard, missingColumnsNote, movementCard,
@@ -85,12 +88,24 @@ import { populationLine } from "./registerModel.js";
  * IT IS A DATED, ONE-OFF MEASUREMENT — NOT A LIVE FIGURE THIS PAGE RECOMPUTES. The 187/135/
  * 19.9-day numbers came from one read of one tenant and stay fixed here whether or not this
  * scan's own population still spans that many twins; the fold itself IS applied fresh every
- * sync (`reconcile.ts`'s `foldSecretTwins`), only its own SIZE is not re-measured on screen.
- * The real fix is to ship the scan row's `twins` (`TwinStats`, already on the server —
- * `ledgerStore.ts`) onto `secretsModel` and render `twinAudit().sentence` here instead of a
- * frozen string; CLAUDE.md's own entry on this fold names the per-row auditability that is
- * still missing (`twin_count` / `twin_first_seen_spread_days` on each row). Flagged as a
- * follow-up, not done in this package.
+ * sync (`reconcile.ts`'s `foldSecretTwins`), only its own SIZE is not re-measured in THIS
+ * sentence. The live size is now beside it — `twinFold` below carries this sync's own
+ * `{keys, folded, medianGapDays}` — so the two are deliberately different kinds of statement:
+ * a dated tenant measurement explaining the mechanism, and a figure off the last sync.
+ *
+ * WHAT THIS COMMENT USED TO CLAIM, AND WHY IT WAS WRONG. It said the fix was to ship "the
+ * scan row's `twins` (`TwinStats`, already on the server — `ledgerStore.ts`)". There is no
+ * such field on the scan row: `ScanRow` is eleven fields and `TAB_HEADERS[TABS.scans]` has no
+ * twins column, so `writeGrid` would have dropped it even if reconcile's stats had been put
+ * there; `ledgerStore`'s `twins` is on the transient `ScopeOutcome` and dies with the
+ * request. The only durable copy is the per-sync history blob `scanJobs.ts`'s `dailyStats()`
+ * writes, and that is what `readModels.ts`'s `latestSecretsTwins` now reads.
+ *
+ * STILL MISSING, unchanged by this: the PER-ROW audit trail CLAUDE.md's own entry on this
+ * fold names (`twin_count` / `twin_first_seen_spread_days` on each row). `registerModel.js`'s
+ * `twinCell` is already written for those and degrades to "absent" because nothing populates
+ * them. Seeing WHICH row disagreed by 285 days is not what the register-wide aggregate below
+ * answers.
  */
 export const TWIN_NOTE =
   "One secret at one line is reported twice by Wiz — once against the repository and once "
@@ -100,6 +115,70 @@ export const TWIN_NOTE =
   + "not recomputed on every sync: 187 keys spanned both forms, the branch copy carried the "
   + "earlier of the two birth dates in 135 of them, median gap 19.9 days. That fold is already "
   + "applied to every count on this page; only this sentence's own numbers are a snapshot.";
+
+/**
+ * This sync's own twin fold, in one line — or the words for a fold nobody reported.
+ *
+ * ABSENT IS NEVER ZERO, AND IT IS THE WHOLE POINT HERE. "0 twins folded" is a measurement:
+ * it says this sync looked and found no credential reported against both a repository and a
+ * branch. A payload with no `twins` block has made no such statement, and the two must not
+ * print the same. Every field is refused BEFORE the cast (`num`), so a `keys` of `null`,
+ * `""` or `[]` cannot become the confident zero `Number()` would hand back.
+ *
+ * The median gap is refused separately: `TwinStats.medianGapDays` is null whenever nothing
+ * folded, so a fold of zero rows has a real count and no gap, and the line says exactly that.
+ *
+ * AND THE LINE SAYS WHEN IT WAS MEASURED, because a clock has to say where it started
+ * (PRODUCT.md's seventh principle). The figure comes off the newest per-UTC-day history blob
+ * — one file per day, latest write wins — so on a register nobody has synced since Tuesday
+ * this is Tuesday's fold read on Friday. `asOf` is the day that file names, and it arrives as
+ * its own payload field (`twinsAsOf`) rather than inside the stats, so the three fields the
+ * absent-vs-measured decision keys on stay exactly the three fields of a `TwinStats`.
+ *
+ * A DATE THAT DID NOT ARRIVE IS NOT TODAY. Refused before any cast, like the counts: a
+ * missing or unparseable day prints the fold WITHOUT one rather than dating it now, which
+ * would be the same substitution as reading an absent fold as a zero, one field along.
+ *
+ * THE UNMEASURED LINE TAKES NO DATE, whatever is passed beside it — it makes no claim about
+ * a measurement, so there is nothing to date.
+ *
+ * `fmtDate` IS THE APP'S OWN FORMATTER, not a hand-rolled slice. It renders in the display
+ * zone, which is ahead of UTC, so a UTC day never reads back as the day before.
+ *
+ * @param {{keys?: *, folded?: *, medianGapDays?: *}|null|undefined} twins
+ * @param {*} [asOf]  the blob's UTC day, `YYYY-MM-DD` — anything else is no date at all
+ * @returns {{measured: boolean, keys: (number|null), folded: (number|null),
+ *            medianGapDays: (number|null), asOf: (string|null), line: string}}
+ */
+export function twinFoldView(twins, asOf) {
+  const t = twins && typeof twins === "object" && !Array.isArray(twins) ? twins : null;
+  const keys = t ? num(t.keys) : null;
+  const folded = t ? num(t.folded) : null;
+  const gap = t ? num(t.medianGapDays) : null;
+  const day = typeof asOf === "string" && asOf !== "" && !Number.isNaN(Date.parse(asOf))
+    ? asOf
+    : null;
+  if (keys === null || folded === null) {
+    return {
+      measured: false,
+      keys: null,
+      folded: null,
+      medianGapDays: null,
+      asOf: null,
+      line: "Twin fold: not measured on this sync",
+    };
+  }
+  const gapText = gap === null ? "no birth-date gap recorded" : `median gap ${days1(gap)}`;
+  const when = day === null ? "" : ` · measured ${fmtDate(day)}`;
+  return {
+    measured: true,
+    keys,
+    folded,
+    medianGapDays: gap,
+    asOf: day,
+    line: `${fmtCount(folded)} ${pluralize(folded, "twin")} folded · ${gapText}${when}`,
+  };
+}
 
 /**
  * The 2x2's four cells, named by the two independent axes rather than by a quality grade.
@@ -139,6 +218,105 @@ export const REMOVAL_CELLS = [
     reading: "Still in the code, still unconfirmed.",
   },
 ];
+
+/**
+ * The percentage the validation-coverage headline may fill to — or NULL, which draws no bar.
+ *
+ * THE `Number(null)` TRAP WEARING A METER, for the fourth time in this repository. The call
+ * this replaces read `meter(cov.coveragePct === null ? 0 : cov.coveragePct)`: a coverage
+ * nobody computed drew an EMPTY TRACK, which is a picture asserting that nothing in this
+ * register has ever been validated rather than that nobody could tell. `ui/data.js`'s
+ * `meter(value)` opens with `Number(value) || 0`, so the null had to be turned into a decision
+ * somewhere, and the old ternary made it the wrong one.
+ *
+ * A MEASURED ZERO STILL GETS ITS METER, empty: 0 of 61 validated is a measurement and an empty
+ * track is its picture. Only an absence gets nothing.
+ *
+ * @param {{coveragePct?: *}|null|undefined} cov  a `secretsModel().validationCoverage`
+ * @returns {number|null}
+ */
+export function coverageMeterPct(cov) {
+  return cov ? num(cov.coveragePct) : null;
+}
+
+/**
+ * A segment row's validated SHARE, for the bar beside its count — or NULL for no bar.
+ *
+ * Refused twice before any cast: a row whose total is missing or zero has no share to take
+ * (`0/0` is not `0%`), and a row whose measured count is unreadable has nothing to take one
+ * of. `num()` does the refusing, so a `total` of `null`, `""` or `[]` cannot arrive here as
+ * the finite zero `Number()` would hand back and turn a missing denominator into a full bar
+ * or a division by zero.
+ *
+ * @param {{total?: *, measured?: *}|null|undefined} row  a segment row
+ * @returns {number|null}
+ */
+export function segmentValidatedPct(row) {
+  const total = row ? num(row.total) : null;
+  const measured = row ? num(row.measured) : null;
+  if (total === null || total === 0 || measured === null) return null;
+  return (measured / total) * 100;
+}
+
+/**
+ * Which corner is an alarm, which is clean, and which is neither — as data.
+ *
+ * TONE IS THE THIRD CUE AND NEVER THE FIRST: `quadModel` REFUSES a toned corner with no
+ * label, so every entry here is paired with `REMOVAL_CELLS`'s own two-to-four-word reading.
+ * "warn" rather than "bad" on the alarm corner because the page already has one word and one
+ * colour for this state — `alarmChip()`'s `pill warn` — and a second, louder one for the
+ * same fact would be two vocabularies for one corner.
+ */
+const REMOVAL_TONES = {
+  removedAndRotated: "ok",
+  removedNotRotated: "warn",
+  rotatedNotRemoved: "neutral",
+  neither: "neutral",
+};
+
+/**
+ * The removal/rotation cross as a `quadModel` — the 2x2 that used to be a five-column table.
+ *
+ * WHAT IT REPLACES. Five columns — Corner, String out of HEAD (Yes/No), Credential confirmed
+ * dead (Yes/No), Findings, Reading — and four rows, one of them carrying a 24-word sentence
+ * in a `wrap: true` cell. That is a cross drawn as prose: the reader rebuilds the 2x2 in
+ * their head from four rows, the two axis names are restated eight times, and the corner the
+ * page LEADS with (removed, not rotated) has no more visual weight than "Neither". Drawn as a
+ * cross it is read in a glance, the axis words are announced once per axis by `<th scope>`,
+ * and each Reading rides on its own corner's label as a tip.
+ *
+ * `alarmFor` IS INJECTED RATHER THAN CALLED HERE, and that is what keeps this half pure:
+ * `alarmChip()` builds a DOM node and this project's vitest has no jsdom, so a model that
+ * built its own chip could not be tested at all. The default hands back nothing, which is
+ * also the honest shape — whether a corner is an ALARM is the page's claim about its own
+ * population, and `quadTable` appends the caller's chip untouched.
+ *
+ * The shares are read against `total` — the register — not against the sum of the four
+ * corners. Here the two are the same number (every finding lands in exactly one corner) and
+ * `quadModel` still takes the stated total, because the day a corner stops being computed
+ * the shares must fall short of 100% rather than quietly renormalising.
+ *
+ * @param {object} vm  a `secretsModel` result
+ * @param {(id: string) => *} [alarmFor]  the caller's chip node for a corner id, or null
+ */
+export function removalQuadModel(vm, alarmFor = () => null) {
+  const rvr = (vm && vm.removalVsRotation) || {};
+  return quadModel({
+    rows: { label: "String out of HEAD", yes: "Out of HEAD", no: "Still in HEAD" },
+    cols: { label: "Credential confirmed dead", yes: "Confirmed dead", no: "Not confirmed" },
+    cells: (rvr.cells || []).map((c) => ({
+      row: !!c.removed,
+      col: !!c.rotated,
+      count: c.count,
+      label: c.label,
+      tone: REMOVAL_TONES[c.id] || "neutral",
+      alarm: alarmFor(c.id),
+      help: { lines: [c.reading] },
+    })),
+    total: rvr.total,
+    unit: "secrets",
+  });
+}
 
 // =========================================================================================
 //  The view model
@@ -326,6 +504,25 @@ export function secretsModel(payload, opts) {
     movement: withoutRequestedSeverities(movementModel(reg.movement, reg.latestScan)),
 
     twinNote: TWIN_NOTE,
+    // THE FOLD AS A FIGURE, and "not measured" when the wire does not carry it. `TWIN_NOTE`
+    // above is 120 words of mechanism with three frozen tenant numbers in the middle of it,
+    // and the `twin` glossary entry says the same three things in the book's own voice. What
+    // the entry CANNOT say is what this sync's own fold did, so that is what the page prints
+    // — one line, read off the payload, or the words for its absence.
+    //
+    // `sec.twins` IS THE PER-SYNC HISTORY BLOB'S OWN BLOCK, not a scan-row column: the scan
+    // row has never carried one (`readModels.ts`'s `latestSecretsTwins` has the full trace,
+    // and this comment claimed the opposite for a whole wave). The server REFUSES rather than
+    // substituting — no blob, a sweep that skipped secrets, or a malformed block omits the
+    // key — so an absence arrives here as `undefined` and `twinFoldView` says "not measured
+    // on this sync", which is a different sentence from a measured "0 twins folded" and must
+    // stay one.
+    //
+    // `twinsAsOf` IS A SIBLING FIELD, NOT PART OF THE BLOCK. The blob is per-UTC-day and
+    // latest-write-wins, so a fold can be days old; the day it names rides beside the stats
+    // so `twins` stays exactly the three fields of a `TwinStats`. A missing date prints the
+    // fold undated rather than as of today.
+    twinFold: twinFoldView(sec.twins, sec.twinsAsOf),
     resolvedNote:
       "A secret finding leaving this register means the string is out of HEAD. It does not "
       + "mean the credential is safe, and it does not mean the old commit is unreadable.",
@@ -417,6 +614,14 @@ export function validityTriageView(vm) {
   const alarm = alarmCell ? num(alarmCell.count) : null;
   const registerTotal = num(rvr.total);
   const ofOpen = (n) => `${fmtCount(n)} of ${fmtCount(open)} open`;
+  // R3's SHORT FORM, and the reading it used to carry is now one level down rather than
+  // twice on the page. Each `sub` used to read "3 of 41 open — the provider answered and the
+  // credential worked": the denominator AND a clause restating what VALID means. That clause
+  // is the opening of the card's own `denominator` sentence below, word for word in
+  // substance, and `figureCard` prepends that sentence to the label's tip lines — so the
+  // reading was printed twice, once under the figure and once behind its trigger. The sub is
+  // the denominator alone now; the tip still LEADS with the sentence.
+  const shortOpen = (n) => `${ofOpen(n)} ${pluralize(open, "finding")}`;
 
   return {
     known,
@@ -429,7 +634,7 @@ export function validityTriageView(vm) {
         count: live,
         alarm: false,
         glossary: VALIDITY_GLOSSARY,
-        sub: `${ofOpen(live)} — the provider answered and the credential worked`,
+        sub: shortOpen(live),
         denominator:
           `${ofOpen(live)} findings read VALID: somebody asked the provider and the `
           + "credential answered. The only rows this register can prove are still dangerous, "
@@ -441,7 +646,7 @@ export function validityTriageView(vm) {
         count: unchecked,
         alarm: false,
         glossary: VALIDITY_GLOSSARY,
-        sub: `${ofOpen(unchecked)} — nobody has asked the provider`,
+        sub: shortOpen(unchecked),
         denominator:
           `${ofOpen(unchecked)} findings read UNKNOWN, ERROR or nothing at all — neither `
           + "live nor dead, and the state most of this register is in. An unchecked "
@@ -453,7 +658,7 @@ export function validityTriageView(vm) {
         count: dead,
         alarm: false,
         glossary: VALIDITY_GLOSSARY,
-        sub: `${ofOpen(dead)} — the provider refused it`,
+        sub: shortOpen(dead),
         denominator:
           `${ofOpen(dead)} findings read INVALID: the credential was observed dead. They are `
           + "still open because the string is still in HEAD, which is a separate event with "
@@ -465,8 +670,7 @@ export function validityTriageView(vm) {
         count: alarm,
         alarm: true,
         glossary: "removed",
-        sub: `${fmtCount(alarm)} of ${fmtCount(registerTotal)} in register — the string left `
-          + "HEAD, the credential unconfirmed",
+        sub: `${fmtCount(alarm)} of ${fmtCount(registerTotal)} in the register`,
         denominator:
           `${fmtCount(alarm)} of ${fmtCount(registerTotal)} secret findings have a removal `
           + "date and no rotation date. Counted over the whole register, not the open rows "
@@ -718,13 +922,28 @@ function paintSecrets(host, vm, filters) {
       vm.hero.validitySentence
         ? heroLines(vm.hero.sentence, vm.hero.validitySentence)
         : vm.hero.sentence,
-      { term: "secret-resolved" },
+      // THE DENOMINATOR IS ON THE LABEL NOW, not in a paragraph under the header.
+      // `vm.hero.denominator` was printed as a `denomNote` two blocks below this call, a
+      // 40-word sentence between the toolbar and the validity spine; the figure it explains
+      // is in the 2rem slot above it and the trigger is on that figure's own name. The
+      // second line is the register's definition — what a secret finding IS here — which was
+      // the aside's first paragraph and said, in its own second half, exactly what
+      // `vm.resolvedNote` beside it says. One of the two was a duplicate; this is the half
+      // that is a definition, so it went where definitions go.
+      {
+        term: "secret-resolved",
+        lines: [
+          vm.hero.denominator,
+          "Credentials committed to source. Removing one is not the same as fixing it: the"
+          + " string leaving HEAD closes the finding, and the credential stays live until it"
+          + " is rotated.",
+        ],
+      },
     ),
+    // ONE PARAGRAPH, AND IT IS THE HONESTY STATEMENT. `resolvedNote` — "leaving this
+    // register means the string is out of HEAD… it does not mean the credential is safe" —
+    // is the page's whole thesis and R2's KEEP case, so it stays on the surface in words.
     aside: el("div", { class: "page-strip" },
-      el("p", { class: "small muted" },
-        "Credentials committed to source. Removing one is not the same as fixing it: the "
-        + "string leaving HEAD closes the finding, and the credential stays live until it is "
-        + "rotated."),
       el("p", { class: "small muted" }, vm.resolvedNote),
     ),
     // SUPPRESSED, not dashed — see sca.js's paintSca for the same convention.
@@ -769,8 +988,6 @@ function paintSecrets(host, vm, filters) {
   // BLOCKS that draw figures; this is chrome above them, not a block.
   host.append(secretsToolbar(vm, filters));
 
-  host.append(denomNote(vm.hero.denominator));
-
   // ------------------------------------------------------------------ the validity spine
   // FIRST, BEFORE THE FOUR CORNERS AND THE CURVE. Whether the credential is live is the
   // question every one of this page's other blocks is read against, so it is the first thing
@@ -792,45 +1009,50 @@ function paintSecrets(host, vm, filters) {
   ));
 
   // ------------------------------------------------- validity x confidence, side by side
+  //
+  // THE 60-WORD LEDE IS A HEADING AND ONE CLAUSE. What it said was two things: what the two
+  // axes MEAN (a definition, so it is on the heading, one level down behind the trigger) and
+  // that there is NO JOINT COUNT — which is a refusal to measure, R2's KEEP case, so it
+  // stays on the surface in the words a reader can act on. A cross-tab multiplied out of two
+  // sets of marginals would be a fabrication, and a page that only whispered that behind a
+  // tip would be inviting the reader to do the multiplication themselves.
+  host.append(sectionLabel("Validity and confidence", {
+    term: "validation-state",
+    lines: [
+      "The validation state says whether anybody asked the provider; the detector confidence"
+      + " says how sure the scanner was that the matched string is a credential at all.",
+      "The two are counted on separate axes, so a cross-tab would have to be multiplied out"
+      + " of two sets of totals — which is a fabrication, not a measurement.",
+    ],
+  }));
   host.append(el("p", { class: "small muted" },
-    "Read the two tables below together: the validation state says whether anybody asked the "
-    + "provider, and the detector confidence says how sure the scanner was that the matched "
-    + "string is a credential at all. They are counted on separate axes and the register "
-    + "carries no joint count, so this is two tables rather than a cross-tab multiplied out "
-    + "of two sets of totals."));
+    "Two axes, counted separately — no joint count."));
   const paired = PAIRED_SEGMENT_AXES
     .map((axis) => vm.segments.find((s) => s.axis === axis))
     .filter(Boolean);
   if (paired.length) host.append(el("div", { class: "card-pair" }, ...paired.map(segmentCard)));
 
   // ------------------------------------------------------------ removed is not rotated
-  host.append(sectionCard("Removed is not rotated", "removed",
-    el("p", { class: "small muted" },
-      "Two independent events, so two axes. A row is removed when the string leaves HEAD and "
-      + "rotated when the credential is observed dead; neither implies the other, and the "
-      + "corner where they disagree is the one that matters."),
-    el("div", { class: "table-host" }, dataTable({
-      columns: [
-        { key: "label", label: "Corner", cell: (r) => r.label },
-        {
-          key: "removed",
-          label: "String out of HEAD",
-          cell: (r) => (r.removed ? "Yes" : "No"),
-          help: { term: "removed" },
-        },
-        {
-          key: "rotated",
-          label: "Credential confirmed dead",
-          cell: (r) => (r.rotated ? "Yes" : "No"),
-          help: { term: "rotated" },
-        },
-        { key: "count", label: "Findings", className: "num", cell: (r) => fmtCount(r.count) },
-        { key: "reading", label: "Reading", cell: (r) => r.reading, wrap: true },
-      ],
-      rows: vm.removalVsRotation.cells,
-      emptyText: "Nothing in this register.",
-    })),
-    denomNote(vm.removalVsRotation.denominator),
+  //
+  // THE LEDE AND THE DENOMINATOR ARE BOTH ON THE HEADING. The 40-word lede said what the two
+  // axes are and that neither implies the other — a definition of the cross, which is what
+  // the cross itself now draws with its own `<th>` axes. The 36-word `denomNote` under the
+  // table said what the four corners are counted over. Both are lines on the section's own
+  // label; the two axis cards below keep their denominators through `figureCard`, so the
+  // sentence a reader can be SHOWN is still written into `data-denominator` on this page.
+  host.append(sectionCard("Removed is not rotated", {
+    term: "removed",
+    lines: [
+      vm.removalVsRotation.denominator,
+      "Two independent events, so two axes: a row is removed when the string leaves HEAD and"
+      + " rotated when the credential is observed dead. Neither implies the other, and the"
+      + " corner where they disagree is the one this page leads with.",
+    ],
+  },
+    quadTable(
+      removalQuadModel(vm, (id) => (id === "removedNotRotated" ? alarmChip() : null)),
+      { ariaLabel: "Removed against rotated, over every secret finding" },
+    ),
     el("div", { class: "kpi-row" },
       figureCard({
         label: vm.removalVsRotation.axes.removed.label,
@@ -856,8 +1078,20 @@ function paintSecrets(host, vm, filters) {
   ));
 
   // --------------------------------------------------------------- has anybody looked?
-  host.append(sectionCard("Has anybody looked?", "validation-state",
-    el("p", {}, vm.validationCoverage.denominator),
+  //
+  // THE DENOMINATOR WAS PRINTED TWICE — as a full paragraph opening the section, and again
+  // through the "Validated" card's own `denominator`, which `figureCard` puts on that card's
+  // label and into `data-denominator`. One of the two had to go and it is the paragraph: the
+  // sentence is the section's method, so it is on the section's own heading.
+  //
+  // THE METER IS THE HEADLINE NOW, not a bar trailing three cards. The section asks one
+  // question — has anybody looked — and the share that answers it was the last thing on
+  // screen, under the three figures it qualifies.
+  host.append(sectionCard("Has anybody looked?", {
+    term: "validation-state",
+    lines: [vm.validationCoverage.denominator],
+  },
+    coverageHeadline(vm.validationCoverage),
     el("div", { class: "kpi-row" },
       figureCard({
         label: "Validated",
@@ -884,18 +1118,21 @@ function paintSecrets(host, vm, filters) {
         denominator: vm.postDetectionValidity.denominator,
       }),
     ),
-    meter(vm.validationCoverage.coveragePct === null ? 0 : vm.validationCoverage.coveragePct, {
-      className: "meter--stat",
-      label: `Validation coverage, ${pct1(vm.validationCoverage.coveragePct)}`,
-    }),
   ));
 
   // ------------------------------------------------------------------- time to revoke
-  host.append(sectionCard("Time to revoke", "time-to-revoke",
-    el("p", { class: "small muted" },
-      "Detection to confirmed-invalid, with still-live credentials right-censored at today. "
-      + "A credential nobody ever checked supports no claim in either direction, so it is "
-      + "excluded from this estimate — and the excluded count is printed beside it."),
+  // THE 43-WORD LEDE IS THE HEADING'S DEFINITION. What the clock measures FROM and TO, and
+  // why an unchecked credential is outside it, is what "time to revoke" MEANS here. The
+  // excluded count itself does not move: it is the fourth card, in words, with its own
+  // figure — an exclusion is R2's KEEP case and never becomes a hover.
+  host.append(sectionCard("Time to revoke", {
+    term: "time-to-revoke",
+    lines: [
+      "Detection to confirmed-invalid, with still-live credentials right-censored at today.",
+      "A credential nobody ever checked supports no claim in either direction, so it is"
+      + " excluded from this estimate rather than censored inside it.",
+    ],
+  },
     el("div", { class: "kpi-row" },
       figureCard({
         label: "Median",
@@ -906,11 +1143,16 @@ function paintSecrets(host, vm, filters) {
         help: { term: "censoring" },
         denominator: vm.timeToRevoke.denominator,
       }),
+      // ONE SENTENCE, ONE CARD. This card used to carry the SAME `denominator` string as
+      // "Median" beside it — the same 60-word accounting of events, censored rows and the
+      // two exclusions, written into two `data-denominator` attributes a column apart. It is
+      // one estimate read at two points, so the accounting is stated once, on the first
+      // card, and this one routes to the term that defines what a censored estimate is.
       figureCard({
         label: "P90",
         value: vm.timeToRevoke.p90Text,
         sub: "nine in ten rotations within this",
-        denominator: vm.timeToRevoke.denominator,
+        help: { term: "censoring" },
       }),
       figureCard({
         label: "Within SLA",
@@ -962,7 +1204,9 @@ function paintSecrets(host, vm, filters) {
   }
 
   // ------------------------------------------------------------------------ exposure
-  host.append(sectionCard("How long the exposure has run", null,
+  host.append(sectionCard("How long the exposure has run", {
+    lines: [vm.aging.denominator],
+  },
     el("div", { class: "table-host" }, dataTable({
       columns: [
         { key: "label", label: "Open for", cell: (r) => r.label },
@@ -980,15 +1224,20 @@ function paintSecrets(host, vm, filters) {
       rows: vm.aging.buckets,
       emptyText: "Nothing open.",
     })),
-    denomNote(vm.aging.denominator),
+    // KEPT ON THE SURFACE, and it is the only sentence in this section that is not method:
+    // the window a reader is being shown runs to ROTATION, and a removed secret is still
+    // exposed. The denominator that used to sit above it is on the heading now.
     el("p", { class: "small muted" },
       glossaryTip("The exposure window runs to rotation, not to removal", "rotated"),
       " — a removed secret is still exposed for as long as the credential works."),
   ));
 
   // ---------------------------------------------------------------------- breakdowns
+  // Each breakdown's denominator names the groups the top-N ranking cut off, which is a
+  // fact about the METHOD of the table under it — so it is a line on the table's own heading
+  // rather than a paragraph beneath it, once per dimension.
   for (const dim of vm.concentration) {
-    host.append(sectionCard(dim.label, null,
+    host.append(sectionCard(dim.label, { lines: [dim.denominator] },
       el("div", { class: "table-host" }, dataTable({
         columns: [
           { key: "key", label: "Group", cell: (r) => r.key },
@@ -998,7 +1247,6 @@ function paintSecrets(host, vm, filters) {
         rows: dim.rows,
         emptyText: "No open findings in this dimension.",
       })),
-      denomNote(dim.denominator),
     ));
   }
 
@@ -1030,12 +1278,23 @@ function paintSecrets(host, vm, filters) {
   ));
 
   // ------------------------------------------------------------- every finding, server-paged
-  host.append(sectionCard("Every finding in the register", null,
+  // THE LEDE IS ONE LINE AND A HEADING. Two of its three clauses describe how the table
+  // BEHAVES (server-paged, server-sorted, a row opens a sheet) — a definition of the control,
+  // which is what a heading's tip is for. The third is the honesty statement this register is
+  // built on, so it stays on the surface in the shortest words that still say it.
+  // `missingColumnsNote`'s sentence — the columns the ledger holds and this page cannot draw
+  // — joins it there: it was a paragraph under a thirteen-column table, which is the furthest
+  // point on the page from the heading it is about.
+  host.append(sectionCard("Every finding in the register", {
+    lines: [
+      "Open and resolved, server-paged and server-sorted — click a column to ask for a"
+      + " different order rather than re-sorting what is already on screen, and open a row"
+      + " for everything the register holds about that one finding.",
+      vm.missingColumns,
+    ],
+  },
     el("p", { class: "small muted" },
-      "Open and resolved, server-paged and server-sorted — click a column to ask for a "
-      + "different order rather than re-sorting what is already on screen, and open a "
-      + "row for everything the register holds about that one finding. No severity "
-      + "column: severity here grades a detection, not whether a credential is live."),
+      "No severity column: severity grades a detection here, not a live credential."),
     // NO severities PARAMETER, for the same reason the aggregate fetch above sends none:
     // `secretsModel` and `registerRowsModel` both ignore it for this scope outright.
     registerRowsTable({
@@ -1083,14 +1342,52 @@ function paintSecrets(host, vm, filters) {
         { key: "last_seen", label: "Last seen", sortable: true, cell: (r) => fmtDate(r.last_seen) },
       ],
     }),
-    el("p", { class: "small muted" }, vm.missingColumns),
   ));
 
   host.append(movementCard(vm.movement));
 
+  // ---------------------------------------------------------------- the twin fold
+  //
+  // 120 WORDS BECAME A FIGURE AND A CONSTRAINT. `TWIN_NOTE` explained the fold, then named
+  // three tenant numbers (187 keys, 135, 19.9 days) measured once on a dated pass and frozen
+  // in the string — and the `twin` glossary entry, which this heading routes to, already
+  // carries all three in the book's own voice. What the entry cannot say is what THIS sync's
+  // fold did, and that is the line on the surface: read off the payload, or the words for a
+  // figure nobody sent. The second line is the constraint a reader needs before reading any
+  // count above it, and it is four words shorter than the sentence that carried it.
   host.append(sectionCard("How the register was counted", "twin",
-    el("p", {}, vm.twinNote),
+    el("p", { class: "small muted" }, vm.twinFold.line),
+    el("p", { class: "small muted" },
+      "The fold is applied to every count on this page."),
   ));
+}
+
+/**
+ * "5 of 61 validated", and the meter that draws it — or the words for a share nobody took.
+ *
+ * THE NULL BRANCH IS THE POINT, and it is the `Number(null)` trap wearing a meter for the
+ * fourth time in this repository. `ui/data.js`'s `meter(value)` opens with `Number(value) ||
+ * 0`, so the call this replaces — `meter(cov.coveragePct === null ? 0 : cov.coveragePct)` —
+ * drew an EMPTY TRACK for a coverage nobody computed, which is a picture asserting that
+ * nothing has been validated rather than that nobody could tell. A measured zero still gets
+ * its meter, empty: 0 of 61 validated is a measurement and an empty track is its picture.
+ *
+ * The words are the figure and the meter is the redundancy, never the other way round: the
+ * count, the total and the percentage are all printed, so a reader who cannot see the fill
+ * loses nothing. The meter keeps its own `aria-label` rather than being decorative because
+ * it is the section's headline — the one mark answering the question in the heading.
+ */
+function coverageHeadline(cov) {
+  const pct = coverageMeterPct(cov);
+  const words = `${fmtCount(cov.measured)} of ${fmtCount(cov.total)} validated`;
+  return el("div", { class: "coverage-headline" },
+    el("div", { class: "kpi-label" }, words),
+    pct === null
+      ? el("p", { class: "small muted" }, "Coverage not measured.")
+      : meter(pct, { label: `${words}, ${pct1(pct)}` }),
+    el("div", { class: "small muted" },
+      pct === null ? absentText : pct1(pct) + " of the register"),
+  );
 }
 
 /**
@@ -1105,12 +1402,41 @@ function alarmChip() {
 }
 
 /**
+ * The Validated count, with its own share as a bar beside it.
+ *
+ * THE SHARE IS THE THIRD ENCODING AND THE ONLY ONE COMPARABLE DOWN THE COLUMN: six counts in
+ * six rows are read one at a time, six fills are read as a shape, and the shape is what says
+ * "one segment is checked and the rest are not". `decorative` because the count is printed
+ * next to it and the column heading says what the bar is a share OF — `ui/data.js`'s own
+ * contract for a meter whose figure is already in words.
+ *
+ * REFUSED BEFORE THE CAST, twice. A row with no readable total gets NO bar rather than a 0%
+ * fill (`meter()` would resolve a null to a confident empty track), and the existing
+ * "0 measured reads as absent" behaviour of this cell is left exactly as it was — that is a
+ * question about this column's vocabulary, not about the bar, and changing it here would be
+ * a second change hiding inside this one.
+ */
+function validatedCell(row) {
+  if (!row.measured) return absent();
+  const pct = segmentValidatedPct(row);
+  const cell = el("span", { class: "rate-with-meter" },
+    el("span", { class: "num" }, fmtCount(row.measured)));
+  if (pct !== null) cell.append(meter(pct, { className: "meter--stat", decorative: true }));
+  return cell;
+}
+
+/**
  * One segment axis as a card. Extracted so the two triage axes can be drawn as a pair under
  * the spine while `secret_kind` stays down with the other breakdowns — one table definition,
  * three call sites, rather than the layout change forking the columns.
  */
 function segmentCard(seg) {
-  return sectionCard(seg.label, seg.glossary,
+  // THE AXIS'S DENOMINATOR IS ON ITS HEADING. Each of these three sentences (~45 words) is a
+  // statement about what the table under it counts and why it counts it that way, printed
+  // once per axis under the table — three paragraphs on one page for three tables that
+  // differ only in their axis. `sectionCard` takes every `tipLabel` shape now, so the
+  // glossary route and the sentence ride on the same trigger.
+  return sectionCard(seg.label, { term: seg.glossary, lines: [seg.denominator] },
     seg.rows.length
       ? el("div", {},
         el("div", { class: "table-host" }, dataTable({
@@ -1122,8 +1448,19 @@ function segmentCard(seg) {
               key: "measured",
               label: "Validated",
               className: "num",
-              cell: (r) => (r.measured ? fmtCount(r.measured) : absent()),
-              help: { term: "validation-state" },
+              cell: (r) => validatedCell(r),
+              // THE METER'S OWN DEFINITION, asked once on the heading rather than once per
+              // row — `ui/tip.js`'s rule, and the only shape that does not add a tab stop
+              // per segment.
+              help: {
+                term: "validation-state",
+                lines: [
+                  "The count is how many of this segment's findings have ever been"
+                  + " validated; the bar beside it is that count as a share of the"
+                  + " segment's own total, so two segments of different sizes can be"
+                  + " compared down the column.",
+                ],
+              },
             },
             {
               key: "valid",
@@ -1149,7 +1486,6 @@ function segmentCard(seg) {
           rows: seg.rows,
           emptyText: "No findings on this axis.",
         })),
-        denomNote(seg.denominator),
       )
       : emptyState("Nothing on this axis.", seg.denominator),
   );

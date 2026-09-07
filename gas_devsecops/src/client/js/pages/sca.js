@@ -30,11 +30,12 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, absentText, boundedDays, chartTable, chartTableModel,
-  closeActiveSheet, dataTable, days1, denomNote, el, emptyState, errorState, firstRunNotice,
-  fmtCount, glossaryTip, heroStat, kpiCard, measuredEmpty, meter, num, onPageTeardown,
-  pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar,
-  skeletonStack, sortRows, statRow, tableFooter, togglePills, fmtDate, triCell,
+  DEFAULT_PAGE_SIZE, absent, absentText, axisBar, axisSegments, boundedDays, chartTable,
+  chartTableModel, closeActiveSheet, dataTable, days1, el, emptyState, errorState, figureCard,
+  figureCardModel, firstRunNotice, fmtCount, glossaryTip, heroStat, kpiCard, measuredEmpty,
+  meter, num, onPageTeardown, pageHeader, pageOf, pct1, segmented, sevBadge, sevEntries,
+  sevKeyRow, sevSegmentBar, skeletonStack, sortRows, statRow, statusPill, tableFooter, tipLabel,
+  togglePills, fmtDate, triCell,
 } from "../ui.js";
 
 // =========================================================================================
@@ -50,7 +51,14 @@ import {
 //
 // This file re-exports `pct1` and `boundedDays` because `test/pagesRegisters.test.js` —
 // which this package may not edit — still imports both from here by name.
-export { boundedDays, pct1 };
+//
+// `figureCard` JOINS THEM, and for a different reason: it is no longer this page's, either.
+// It was a four-line wrapper over `kpiCard` that appended a `denomNote` paragraph, and the
+// paragraph is what this wave is removing from the surface — 22 of them were on these three
+// register pages at once. `gas_shared/ui/figures.js` owns the shape now: the same card, the
+// denominator sentence PREPENDED to the tip on the label and written to `data-denominator`,
+// no paragraph. `sast.js` and `secrets.js` import the name from here, so the name stays here.
+export { boundedDays, figureCard, pct1 };
 
 /**
  * The first-run decision, shared by sca.js, sast.js and secrets.js.
@@ -106,19 +114,53 @@ export function yesNo(v) {
   return v ? "Yes" : "No";
 }
 
-/** A card whose figure is a rate or a count, with its denominator sentence beneath it. */
-export function figureCard({ label, value, sub, help, denominator, chip }) {
-  const card = kpiCard(label, value, sub || "", chip || null, help || null);
-  if (denominator) card.append(denomNote(denominator));
-  return card;
-}
-
-/** A `.card` with its section label, in the one arrangement every block here uses. */
+/**
+ * A `.card` with its section label, in the one arrangement every block here uses.
+ *
+ * `help` TAKES EVERY tipLabel SHAPE NOW, and the string case is the one that could NOT be
+ * routed through `tipLabel` — there, a bare string is literal tip COPY, and here it has
+ * always meant a glossary id. So a string still goes to `glossaryTip` (unchanged behaviour,
+ * and `test/pagesLit.test.js`'s gate 6/7 reads exactly those string literals to check every
+ * id is defined); an object goes to `tipLabel`, which is what lets a section heading carry
+ * `{lines}` — the method paragraph that used to be printed under it — or `{lines, term}`,
+ * the paragraph plus the route to the book. Object shapes are invisible to gate 6/7's regex,
+ * which is correct: there is no literal id in them to check.
+ *
+ * A `denominator` ON THE HELP OBJECT IS THE SAME CONTRACT `figureCard` ALREADY HAS, one level
+ * up. A denominator under a TABLE is a `denomNote` paragraph — 22 of them across these three
+ * register pages — and the sentence is what this wave is moving off the surface, not the
+ * claim: `figureCardModel` (gas_shared/ui/figures.js) resolves the merge in exactly one
+ * place, so the sentence LEADS the tip lines and is written to `data-denominator` on the
+ * section itself, where a test can read what a reader reads. Additive in the strict sense:
+ * a help object with no `denominator` key takes the `tipLabel` path it already took, byte
+ * for byte, which is what keeps `secrets.js`'s twenty-odd calls unchanged.
+ */
 export function sectionCard(title, help, ...kids) {
-  return el("section", { class: "card" },
-    el("h2", { class: "section-label" }, help ? glossaryTip(title, help) : title),
+  const merged = headingDenominator(help);
+  const section = el("section", { class: "card" },
+    el("h2", { class: "section-label" }, sectionHeading(title, help, merged)),
     ...kids,
   );
+  if (merged) section.setAttribute("data-denominator", merged.denominator);
+  return section;
+}
+
+/**
+ * The denominator merge, for the two heading builders that share it (`sectionCard` above and
+ * `chartCard` below). Returns null unless there is really a sentence to prepend, which is
+ * what keeps every existing call site on its existing path.
+ */
+function headingDenominator(help) {
+  if (!help || typeof help !== "object" || Array.isArray(help) || !help.denominator) return null;
+  const merged = figureCardModel({ help, denominator: help.denominator });
+  return merged.denominator ? merged : null;
+}
+
+function sectionHeading(title, help, merged) {
+  if (!help) return title;
+  if (typeof help === "string") return glossaryTip(title, help);
+  if (merged) return tipLabel(title, { lines: merged.lines, term: merged.term });
+  return tipLabel(title, help);
 }
 
 /**
@@ -217,6 +259,125 @@ export function signalFigure(id, label, glossary, cov) {
   };
 }
 
+/**
+ * THE THREE STATES AS THREE WORDS — the legend a bar carries, and the bar's own segments.
+ *
+ * `signalFigure` above already keeps measured / never-evaluated / not-applicable apart in
+ * three vocabularies; these three constants ARE those vocabularies, minus their counts,
+ * because `axisBar`'s legend prints the value name and the count itself. Spelled once and
+ * exported so `sast.js` reads the same words this page does rather than a second set that
+ * could drift to "unknown" or "n/a" — the two spellings this module exists to refuse.
+ */
+export const SIGNAL_EVALUATED = "evaluated";
+export const SIGNAL_NEVER_EVALUATED = "never evaluated";
+export const SIGNAL_NO_COLUMN = "no such column";
+
+/**
+ * One tri-state signal as an `axisBar` reading — `{values, total, counts, unknowns}`, which
+ * is exactly what `axisSegments` takes.
+ *
+ * WHAT THIS REPLACES: a five-column table whose fifth column was a PROSE reading, one
+ * sentence per row, plus a `denomNote` paragraph per row under it — ~110 words on this page
+ * for three signals. The three counts are a DIVISION of one population, and a division read
+ * as three numbers in a row has to be re-derived by the reader every time; as one bar it is
+ * read in a glance, and the legend still prints every count in words beside it.
+ *
+ * THE THIRD SEGMENT IS DRAWN ONLY WHERE IT EXISTS, and that is a measurement about these two
+ * pages rather than taste. `signalCoverage` (src/server/readModels.ts) is handed THIS
+ * REGISTER'S OWN ROWS, so `notApplicable` — rows of some other scope, which have no such
+ * column — is 0 by construction on the sca and sast register pages, and the table this
+ * replaces printed an em dash there on every row. A permanent zero-width segment with a
+ * legend entry reading "no such column 0" would be a state nobody can act on drawn three
+ * times per page. Where the count IS non-zero (a mixed-scope payload), the segment appears
+ * and is hatched: `unknowns` is `axisBar`'s one mark for "this part is not a measurement",
+ * and a row with no such column was never measured, it was never measurable.
+ *
+ * `total` is the SUM of the three counts rather than `signal.total`, so the shares always
+ * sum to one. They are the same number on a well-formed payload (`coverageOf` builds
+ * `applicable + notApplicable === total`); taking the sum means a malformed one draws a bar
+ * that is still internally honest instead of one whose segments stop short of the track.
+ */
+export function signalReading(signal) {
+  const s = signal || {};
+  const measured = num(s.measured, 0);
+  const missing = num(s.missing, 0);
+  const notApplicable = num(s.notApplicable, 0);
+  const counts = {
+    [SIGNAL_EVALUATED]: measured,
+    [SIGNAL_NEVER_EVALUATED]: missing,
+    [SIGNAL_NO_COLUMN]: notApplicable,
+  };
+  const values = [
+    SIGNAL_EVALUATED,
+    SIGNAL_NEVER_EVALUATED,
+    ...(notApplicable > 0 ? [SIGNAL_NO_COLUMN] : []),
+  ];
+  return {
+    values,
+    total: values.reduce((sum, v) => sum + counts[v], 0),
+    counts,
+    // Only the not-applicable portion is hatched — see the doc comment.
+    unknowns: { [SIGNAL_NO_COLUMN]: notApplicable },
+  };
+}
+
+/**
+ * The signal's STATE as a pill: a dot, a word and a colour, never a colour alone.
+ *
+ * The state is the one thing the bar cannot say — a 40%-filled bar looks the same whether
+ * the other 60% was evaluated-and-negative or never looked at, and `signalFigure`'s whole
+ * point is that those are different claims. DESIGN.md's rule is that a state pairs colour
+ * with a glyph and a word; `.pill` carries the dot, this carries the word.
+ *
+ * "Partly evaluated" rather than the count: the count is in the legend under it, and a pill
+ * restating it would be the same number twice on one line. The sentence that says what
+ * partial coverage MEANS ("unknown, not clean") is the row label's tip.
+ */
+export function signalStatePill(signal) {
+  const s = signal || {};
+  const spec = {
+    measured: ["ok", "Fully evaluated"],
+    "partly-measured": ["warn", "Partly evaluated"],
+    unmeasured: ["warn", "None evaluated"],
+    "not-applicable": ["neutral", "No such column"],
+  }[s.state] || ["neutral", "Not measured"];
+  return statusPill(spec[0], spec[1]);
+}
+
+/**
+ * One signal: its name, its state, and how the register divided over it.
+ *
+ * The label's tip carries the two sentences that used to be printed — the reading
+ * (`verdict`) and the denominator — with the row's own glossary term still routing to the
+ * book on Enter. Shared with `sast.js`, whose single `ai_verdict` signal is the same shape
+ * with one row instead of three.
+ *
+ * NO BAR WHERE THERE IS NOTHING TO DIVIDE. `applicable === 0` is either "this register has
+ * no such column at all" — the count says how many rows, and a 0%-filled bar would be a
+ * measurement of a population nobody could measure — or "nothing is in view", which is the
+ * filter's answer, not the signal's.
+ */
+export function signalRow(signal, opts) {
+  const s = signal || {};
+  const head = el("div", { class: "signal-row__head" },
+    el("span", { class: "signal-row__name" },
+      tipLabel(s.label, { term: s.glossary, lines: [s.verdict, s.denominator] })),
+    signalStatePill(s));
+  const box = el("div", { class: "signal-row" }, head);
+  if (num(s.applicable, 0) === 0) {
+    box.append(el("p", { class: "small muted" },
+      num(s.notApplicable, 0) > 0
+        ? s.cells.notApplicable
+        : "No row in view carries this signal either way."));
+    return box;
+  }
+  const reading = signalReading(s);
+  const bar = axisBar({ values: reading.values, unit: (opts && opts.unit) || "rows in view" });
+  bar.paint(axisSegments(reading, reading.values));
+  box.append(bar);
+  return box;
+}
+
 // ------------------------------------------------------------------------ shared blocks
 
 /** Age buckets, as one bucket-by-severity matrix plus the totals the chart needs. */
@@ -238,6 +399,30 @@ export function agingModel(aging) {
       `${fmtCount(a.totalOpen)} open findings carry a readable age and are bucketed here; `
       + "any open row with no first-seen date is outside this chart.",
   };
+}
+
+/**
+ * BOTH COUNTS, NO SENTENCE — the age chart's caption, in the shape `mttr.js` already uses.
+ *
+ * `agingModel.denominator` is a 25-word origin sentence and it stays exactly as it is; what
+ * changes is where it is drawn (the chart heading's tip lines). What cannot move off the
+ * surface is the SECOND count: `ageBucketsBy` skips every open row with no readable age, so
+ * the bars cover fewer findings than the hero does, and that difference is the Outside —
+ * CLAUDE.md's rule is that it is named, in words, beside the picture that excluded it.
+ *
+ * `undated` is DERIVED here rather than shipped, because the payload does not carry it:
+ * `ageBuckets` returns the bucketed count only (`insights.ts` says so — "totalOpen + unaged
+ * is the open population", and only `slaConsumedDeciles` ships the second half). Both inputs
+ * are refused before any cast and the difference is floored at zero: a negative undated count
+ * would mean the two figures were measured over different populations, which is a payload
+ * defect and not something to print as a negative.
+ */
+export function agingSurfaceNote(open, bucketed) {
+  const total = num(open, 0);
+  const aged = num(bucketed, 0);
+  const undated = Math.max(0, total - aged);
+  return fmtCount(aged) + " open with a readable age"
+    + (undated > 0 ? " · " + fmtCount(undated) + " undated" : "");
 }
 
 /** insights.AGE_BUCKET_LABELS, mirrored — the client cannot import the TypeScript domain. */
@@ -641,15 +826,25 @@ export function severityCountsTableModel(counts, order, valueLabel) {
  * callback hands the wrapper. It is rendered EAGERLY, before `loadCharts()` is even asked —
  * so the case this card was written for (the bundle refused, `chartUnavailable(canvas)`) is
  * also the case where the figures are the only thing left, and they are already on screen.
+ *
+ * `help` is the fifth argument BECAUSE THE FOURTH IS ALREADY SPOKEN FOR. It takes every
+ * `tipLabel` shape and lands on the card's own heading — the one place a chart's method
+ * sentence can go without sitting under the picture as a third line of prose. `note` stays
+ * what it always was, the caption a reader must not have to ask for (a count, the population
+ * the bars could not hold); the SENTENCE explaining it moves here. Callers passing four
+ * arguments render byte-identically, which is what keeps `secrets.js`'s two calls unchanged.
  */
-export function chartCard(title, note, draw, table = null) {
+export function chartCard(title, note, draw, table = null, help = null) {
   const canvas = el("canvas");
+  const merged = headingDenominator(help);
   const card = el("section", { class: "chart-card" },
-    el("h3", { class: "section-label" }, title),
+    el("h3", { class: "section-label" },
+      merged ? tipLabel(title, { lines: merged.lines, term: merged.term }) : tipLabel(title, help)),
     note ? el("p", { class: "chart-note" }, note) : null,
     el("div", { class: "chart-box" }, canvas),
     table ? chartTable({ canvas, caption: table.caption, model: table.model }) : null,
   );
+  if (merged) card.setAttribute("data-denominator", merged.denominator);
   loadCharts()
     .then((api) => {
       draw(api, canvas);
@@ -887,6 +1082,12 @@ export function scaModel(payload, opts) {
           : num(awaiting.pctOfOpen, null),
         perSev: awaiting.perSev || {},
         notApplicable: num(awaiting.notApplicable),
+        // THE SHORT FORM, AND IT IS THE ONE ON SCREEN. R3's ladder: "N of M open findings"
+        // under the figure, the sentence below one level down on the label's own tip. Two
+        // counts rather than the percentage they imply — a share is what the reader can
+        // derive from these, not the other way round, and the two clocks are complements of
+        // one backlog, which is legible in "12 of 90 / 78 of 90" and not in "13.3% / 86.7%".
+        short: `${fmtCount(awaitingCount)} of ${fmtCount(openTotal)} open findings`,
         denominator:
           `${fmtCount(awaitingCount)} of ${fmtCount(openTotal)} open dependency findings have `
           + "no published fixed version. Their actionable clock has not started, so they sit "
@@ -899,6 +1100,7 @@ export function scaModel(payload, opts) {
         measures: "the team",
         count: actionableCount,
         pct: openTotal ? (actionableCount / openTotal) * 100 : null,
+        short: `${fmtCount(actionableCount)} of ${fmtCount(openTotal)} open findings`,
         denominator:
           `${fmtCount(actionableCount)} of ${fmtCount(openTotal)} open dependency findings `
           + "have a fixed version available. This is the only population whose remaining time "
@@ -992,6 +1194,12 @@ function paintSca(host, vm, filters) {
     route: "sca",
     help: { term: "sca" },
     hero: heroStat(null, vm.hero.value, vm.hero.sub),
+    // THE PARAGRAPH IS GONE AND THE PICTURE IS THE ASIDE. "A CVE in a third-party package.
+    // Fixed by upgrading it — which nobody can do until a fixed version exists." was 22 words
+    // restating the `sca` glossary entry ("a known CVE in a third-party package at a version.
+    // / Fixed by upgrading the dependency — which means it cannot be fixed at all until a
+    // fixed version exists") word for word, under a term already carried by the h1 above it.
+    // R2's DELETE case: a duplicate, and the one fate that needs no second home.
     aside: el("div", { class: "page-strip" },
       heroSevs.length
         ? [
@@ -999,9 +1207,6 @@ function paintSca(host, vm, filters) {
           sevKeyRow(heroSevs),
         ]
         : null,
-      el("p", { class: "small muted" },
-        "A CVE in a third-party package. Fixed by upgrading it — which nobody can do until "
-        + "a fixed version exists."),
     ),
     // SUPPRESSED, not dashed — the same convention Executive and MTTR use. "In register 0 ·
     // Open 0 · Resolved 0" over a register nobody has read is three more confident zeros
@@ -1050,65 +1255,66 @@ function paintSca(host, vm, filters) {
   }));
 
   // ------------------------------------------------------------------- the two clocks
-  const clocks = sectionCard("The clock splits", "two-clocks",
-    el("p", { class: "small muted" },
-      "An SCA finding cannot be fixed before somebody else publishes a fixed version. So the "
-      + "wait for a vendor and the wait for a team are counted separately, and this page "
-      + "publishes no figure that averages them together."),
+  //
+  // THE 43-WORD LEDE IS THE HEADING'S DEFINITION NOW. "An SCA finding cannot be fixed before
+  // somebody else publishes a fixed version…" is what "The clock splits" MEANS; printed under
+  // the heading it was a paragraph a reader had to get through to reach the two figures it
+  // was introducing. The `two-clocks` term still routes to the book from the same trigger.
+  const clocks = sectionCard("The clock splits", {
+    term: "two-clocks",
+    lines: [
+      "An SCA finding cannot be fixed before somebody else publishes a fixed version, so the"
+      + " wait for a vendor and the wait for a team are counted separately.",
+      "This page publishes no figure that averages the two together — an average across both"
+      + " measures the vendor and the team at once and names neither.",
+    ],
+  },
     el("div", { class: "kpi-row" },
       figureCard({
         label: vm.clocks.awaitingVendor.label,
         value: fmtCount(vm.clocks.awaitingVendor.count),
-        sub: `${pct1(vm.clocks.awaitingVendor.pct)} of the open backlog — measures ${
-          vm.clocks.awaitingVendor.measures}`,
+        sub: `${vm.clocks.awaitingVendor.short} — measures ${vm.clocks.awaitingVendor.measures}`,
         help: { term: vm.clocks.awaitingVendor.glossary },
         denominator: vm.clocks.awaitingVendor.denominator,
       }),
       figureCard({
         label: vm.clocks.actionable.label,
         value: fmtCount(vm.clocks.actionable.count),
-        sub: `${pct1(vm.clocks.actionable.pct)} of the open backlog — measures ${
-          vm.clocks.actionable.measures}`,
-        help: { term: vm.clocks.actionable.glossary },
+        sub: `${vm.clocks.actionable.short} — measures ${vm.clocks.actionable.measures}`,
+        // THE FIXED-VERSION SENTENCE LANDS HERE, on the card whose count it qualifies. It
+        // says why this page can count the rows that HAVE a fixed version without naming the
+        // versions themselves — a fact about this figure's provenance, which is a tip's job,
+        // and it sat under the pair as a third paragraph in a section that had two.
+        help: { term: vm.clocks.actionable.glossary, lines: [vm.fixedVersion.reason] },
         denominator: vm.clocks.actionable.denominator,
       }),
     ),
-    el("p", { class: "small muted" }, vm.fixedVersion.reason),
   );
   host.append(clocks);
 
   // ------------------------------------------------------------- exploitation signals
-  host.append(sectionCard("Exploitation signals", "sca",
-    el("p", { class: "small muted" },
-      "Three states, never two. A signal Wiz never evaluated is unknown — rendering it as a "
-      + "No is what makes an unassessed finding look clean."),
-    el("div", { class: "table-host" }, dataTable({
-      columns: [
-        { key: "label", label: "Signal", cell: (r) => r.label },
-        { key: "measured", label: "Evaluated", className: "num", cell: (r) => r.cells.measured },
-        {
-          key: "missing",
-          label: "Never evaluated",
-          className: "num",
-          cell: (r) => (r.missing > 0 ? r.cells.missing : absent()),
-        },
-        {
-          key: "na",
-          label: "Not applicable",
-          className: "num",
-          cell: (r) => (r.notApplicable > 0 ? r.cells.notApplicable : absent()),
-        },
-        { key: "verdict", label: "Reading", cell: (r) => r.verdict },
-      ],
-      rows: vm.signals,
-      emptyText: "No signal coverage in this payload.",
-    })),
-    ...vm.signals.map((s) => denomNote(`${s.label}: ${s.denominator}`)),
+  //
+  // ONE BAR PER SIGNAL, AND THE LEGEND CARRIES THE WORDS. What was here: a five-column table
+  // whose last column was a prose "Reading" — one sentence per row — with a `denomNote`
+  // paragraph per row underneath, ~110 words for three signals, to say how one population
+  // divided three ways. `signalRow` draws that division and prints all three counts in the
+  // legend beside it; the reading and the denominator are the row label's tip lines.
+  host.append(sectionCard("Exploitation signals", {
+    term: "sca",
+    lines: [
+      "Three states, never two: a signal Wiz never evaluated is unknown, not clean, and"
+      + " rendering it as a No is what makes an unassessed finding look assessed.",
+    ],
+  },
+    el("div", { class: "signal-rows" },
+      ...vm.signals.map((s) => signalRow(s, { unit: "dependency findings" }))),
   ));
 
   // ------------------------------------------------------------------ aging + tiers
   host.append(el("div", { class: "chart-row" },
-    chartCard("Open findings by age", vm.aging.denominator, (api, canvas) => {
+    // The caption is BOTH COUNTS and no sentence (see `agingSurfaceNote`); the 25-word origin
+    // sentence is the heading's tip, where a method note belongs.
+    chartCard("Open findings by age", agingSurfaceNote(vm.open, vm.aging.totalOpen), (api, canvas) => {
       api.stackedAgeBar(
         canvas,
         vm.aging.labels,
@@ -1120,7 +1326,7 @@ function paintSca(host, vm, filters) {
       caption: "Every bar of the stack as a count: one row per age bucket, one column per"
         + " severity drawn.",
       model: agingTableModel(vm.aging.labels, vm.aging.perSev, vm.severityOrder),
-    }),
+    }, { denominator: vm.aging.denominator }),
     chartCard("Open findings by severity", null, (api, canvas) => {
       api.severityBar(canvas, vm.counts, sevPalette(vm.severityOrder), null);
     }, {
@@ -1130,7 +1336,8 @@ function paintSca(host, vm, filters) {
   ));
 
   const tierRows = vm.tiers.rows.filter((r) => r.count > 0);
-  host.append(sectionCard("What is known about each open finding", null,
+  host.append(sectionCard("What is known about each open finding",
+    { denominator: vm.tiers.denominator },
     el("div", { class: "table-host" }, dataTable({
       columns: [
         { key: "label", label: "Strongest evidence", cell: (r) => r.label },
@@ -1147,11 +1354,10 @@ function paintSca(host, vm, filters) {
       rows: tierRows,
       emptyText: "Nothing open to classify.",
     })),
-    denomNote(vm.tiers.denominator),
     filterEmptyNotice(vm.asOf, filters.severities.length > 0, tierRows.length === 0),
   ));
 
-  host.append(sectionCard("Triage funnel", null,
+  host.append(sectionCard("Triage funnel", { denominator: vm.funnel.denominator },
     el("div", { class: "table-host" }, dataTable({
       columns: [
         { key: "label", label: "Step", cell: (r) => r.label },
@@ -1168,14 +1374,21 @@ function paintSca(host, vm, filters) {
       rows: vm.funnel.steps,
       emptyText: "Nothing open.",
     })),
-    denomNote(vm.funnel.denominator),
-    vm.funnel.note ? el("p", { class: "small muted" }, vm.funnel.note) : null,
+    // A PILL, NOT A PARAGRAPH, AND IT STAYS ON THE SURFACE. `funnel.note` is 38 words saying
+    // that two steps are missing because internet exposure is a property of a host and this
+    // register's asset is a repository. R2 keeps an honesty statement on the page: a reader
+    // counting three steps where another register draws five needs the words, not a hover.
+    // What moves one level down is the EXPLANATION; the claim is four words and a dot.
+    vm.funnel.note
+      ? el("p", { class: "small muted" },
+        statusPill("neutral", "Exposure and overdue: not applicable", { lines: [vm.funnel.note] }))
+      : null,
     filterEmptyNotice(vm.asOf, filters.severities.length > 0, vm.funnel.steps[0].count === 0),
   ));
 
   // ---------------------------------------------------------------------- breakdowns
   for (const dim of vm.concentration) {
-    host.append(sectionCard(dim.label, null,
+    host.append(sectionCard(dim.label, { denominator: dim.denominator },
       el("div", { class: "table-host" }, dataTable({
         columns: [
           { key: "key", label: "Group", cell: (r) => r.key },
@@ -1186,17 +1399,22 @@ function paintSca(host, vm, filters) {
             label: "On KEV",
             className: "num",
             // The KEV column counts rows whose flag reads TRUE. Where coverage is partial the
-            // caveat below the table says so; a bare count here would otherwise imply the
+            // heading's own tip says so; a bare count here would otherwise imply the
             // never-evaluated rows are known not to be on the catalogue.
+            //
+            // ONCE, ON THE HEADING, RATHER THAN THREE TIMES UNDER THREE TABLES. This page
+            // draws one breakdown per dimension and the caveat was printed under every one of
+            // them — the same 30 words, three times, about a column that appears once per
+            // table. `ui/tip.js`'s rule is that a column's definition is asked once per table
+            // rather than once per row; a caveat about what the column's counts do NOT
+            // include is the same kind of claim.
             cell: (r) => fmtCount(r.kev),
-            help: { term: "sca" },
+            help: kevColumnHelp(vm.signals),
           },
         ],
         rows: dim.rows,
         emptyText: "No open findings in this dimension.",
       })),
-      denomNote(dim.denominator),
-      kevCaveat(vm.signals),
       filterEmptyNotice(vm.asOf, filters.severities.length > 0, dim.rows.length === 0),
     ));
   }
@@ -1225,11 +1443,21 @@ function paintSca(host, vm, filters) {
   ));
 
   // ------------------------------------------------------------- every finding, server-paged
-  host.append(sectionCard("Every finding in the register", null,
-    el("p", { class: "small muted" },
-      "Open and resolved, server-paged and server-sorted — click a column to ask for a "
-      + "different order rather than re-sorting what is already on screen, and open a "
-      + "row for everything the register holds about that one finding."),
+  //
+  // ONE LINE, AND THE REST ON THE HEADING. The 44-word lede explained the interaction (click a
+  // column, open a row) and the `missingColumns` sentence under the table explained what this
+  // page cannot draw — one is an affordance a reader discovers by using it, the other is a
+  // fact about the payload. `missingColumnsNote` is still what writes the sentence
+  // (`test/pagesRegisters.test.js` pins its wording); it is now a line on the heading rather
+  // than a paragraph below 18 columns of table nobody reads to the end of.
+  host.append(sectionCard("Every finding in the register", {
+    lines: [
+      "Click a column to ask the server for a different order rather than re-sorting what is"
+      + " already on screen; open a row for everything the register holds about that finding.",
+      vm.missingColumns,
+    ],
+  },
+    el("p", { class: "small muted" }, "Open and resolved, server-paged and server-sorted."),
     registerRowsTable({
       scope: "sca",
       severities: filters.severities,
@@ -1285,7 +1513,6 @@ function paintSca(host, vm, filters) {
         },
       ],
     }),
-    el("p", { class: "small muted" }, vm.missingColumns),
   ));
 
   host.append(movementCard(vm.movement));
@@ -1298,12 +1525,30 @@ function paintSca(host, vm, filters) {
  * evaluated, the honest reading is "at least 3", and this says so rather than leaving the
  * number to be read as complete.
  */
-export function kevCaveat(signals) {
+export function kevCaveatLine(signals) {
   const kev = (signals || []).find((s) => s.id === "has_kev");
   if (!kev || kev.missing === 0) return null;
-  return el("p", { class: "small muted" },
-    `KEV counts are a floor: ${fmtCount(kev.missing)} row(s) were never evaluated against the `
-    + "catalogue, so they are unknown rather than absent from it.");
+  return `KEV counts are a floor: ${fmtCount(kev.missing)} row(s) were never evaluated against `
+    + "the catalogue, so they are unknown rather than absent from it.";
+}
+
+/**
+ * The KEV column's heading help — the caveat where a column's caveats belong.
+ *
+ * AN EMPTY `lines` ARRAY IS NOT "NO LINES". `tipLabel` tests `help.lines` for truthiness and
+ * `[]` is truthy, so `{term, lines: []}` renders a tip card with a term and nothing in it —
+ * which is why this returns the bare `{term}` shape when the register was fully evaluated
+ * rather than filtering an array down to empty at the call site.
+ */
+export function kevColumnHelp(signals) {
+  const line = kevCaveatLine(signals);
+  return line ? { term: "sca", lines: [line] } : { term: "sca" };
+}
+
+/** The same sentence as a paragraph — kept for a caller that wants it on the surface. */
+export function kevCaveat(signals) {
+  const line = kevCaveatLine(signals);
+  return line ? el("p", { class: "small muted" }, line) : null;
 }
 
 /** Scan-over-scan movement and the freshness caption, shared by all three registers. */

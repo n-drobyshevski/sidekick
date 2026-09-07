@@ -182,9 +182,23 @@ export async function renderData(host, _params, ctx) {
 
   host.append(
     noticeHost,
-    sectionLabel("Space in use"),
+    // THE FOOTPRINT NOTE, ONE LEVEL DOWN. "Plus N cell(s) in sheets this register does not
+    // manage — the spreadsheet's own total, less the tabs listed above" was a 28-word
+    // paragraph under the table; the counts stay visible in `denomNote` below (R3's short
+    // form), and the METHOD — which sheets that total excludes, and what the per-row figure
+    // counts — moves to this heading's own tip, since the numbers beside it already say how
+    // much either one is.
+    sectionLabel("Space in use", {
+      lines: [
+        "The spreadsheet's own total, less the tabs already listed above — cells in sheets "
+        + "this register does not manage.",
+        "The per-row figure counts ledger columns, not cells.",
+      ],
+    }),
     storageHost,
-    sectionLabel("Export"),
+    sectionLabel("Export", {
+      lines: ["No client-side column is added, and none of the ledger's own columns is dropped."],
+    }),
     exportHost,
     // THE THREE WORDS THIS PAGE RUNS ON, each now defined where it is used rather than
     // three sections later. "Compaction" is the act, "sealed" is the state it leaves a saved
@@ -192,9 +206,18 @@ export async function renderData(host, _params, ctx) {
     // if they were plain English.
     sectionLabel("Compaction", { term: "compaction" }),
     compactHost,
-    sectionLabel("Delete scans"),
+    sectionLabel("Delete scans", {
+      lines: ["Deletion rebuilds the ledger by replaying the surviving scans, as if the "
+        + "deleted ones had never been saved."],
+    }),
     deleteHost,
-    sectionLabel("Reset"),
+    sectionLabel("Reset", {
+      lines: [
+        "Wipes every scan, tracked finding, and compaction back to a fresh, never-compacted "
+        + "ledger.",
+        "Drive archives are left in place.",
+      ],
+    }),
     resetHost,
     sectionLabel("Recent errors"),
     errorsHost,
@@ -319,10 +342,12 @@ export async function renderData(host, _params, ctx) {
         "An unreadable tab is reported as an error, not as zero cells: "
         + tabs.filter((t) => t.unreadable).map((t) => `${t.tab} (${t.error})`).join("; ") + "."));
     }
+    // THE NUMBERS STAY ON THE SURFACE (R3): what they mean — which sheets the first count
+    // excludes, and that the second one is a column count, not a cell count — is the "Space
+    // in use" heading's own tip now, since restating it here would say it twice.
     storageHost.append(denomNote(
-      `Plus ${fmtCount(cells.other)} cell(s) in sheets this register does not manage — `
-      + `the spreadsheet's own total, less the tabs listed above. `
-      + `${fmtCount(ledger.ledgerRowCells)} column(s) per ledger row.`,
+      `${fmtCount(cells.other)} cells in unmanaged sheets · `
+      + `${fmtCount(ledger.ledgerRowCells)} columns per row`,
     ));
     // `scopeApplies: false` on `storageModel` is unconditional (it takes no params), but the
     // note only earns its place while a project view is actually narrowing the rest of the
@@ -346,9 +371,7 @@ export async function renderData(host, _params, ctx) {
     clear(exportHost);
     const btn = el("button", { onclick: doExport }, "Download ledger CSV");
     exportHost.append(
-      el("p", { class: "small muted" },
-        "The ledger tab, exactly as its own columns are declared — no client-side column is "
-        + "added and none of the ledger's own columns is dropped."),
+      el("p", { class: "small muted" }, "The ledger tab, exactly as its own columns are declared."),
       btn,
     );
 
@@ -372,10 +395,12 @@ export async function renderData(host, _params, ctx) {
     clear(compactHost);
     const previewHost = el("div", {});
     const runBtn = el("button", { class: "primary", onclick: runCompact, disabled: true }, "Run compaction");
+    // COMPRESSED TO THE ONE CLAUSE THAT IS A CONSTRAINT — nothing is written before you
+    // confirm. What a compaction actually DOES is already the "compaction" glossary entry
+    // this section's own heading carries ("the dry run states what would go before anything
+    // goes"), so restating it here would be the same sentence twice rather than a level down.
     compactHost.append(
-      el("p", { class: "small muted" },
-        "The dry run below is what a real compaction would do — nothing is written until "
-        + "“Run compaction” is confirmed."),
+      el("p", { class: "small muted" }, "Preview only — nothing is written until you confirm."),
       previewHost,
       runBtn,
     );
@@ -448,10 +473,11 @@ export async function renderData(host, _params, ctx) {
     const selected = new Set();
     const deleteBtn = el("button", { class: "danger", disabled: true, onclick: onDelete }, "Delete selected");
     const tableHost = el("div", {});
+    // COMPRESSED TO ITS ONE CONSTRAINT (R2 KEEP: an irreversible action's warning stays on the
+    // surface, never only in a tip). The mechanism — what deletion actually does — moved to
+    // the "Delete scans" heading's own tip, and the confirm dialog below repeats both.
     deleteHost.append(
-      el("p", { class: "small muted" },
-        "Deletion rebuilds the ledger by replaying the surviving scans, as if the deleted "
-        + "ones had never been saved. This cannot be undone."),
+      el("p", { class: "small muted" }, "This cannot be undone."),
       deleteBtn,
       tableHost,
     );
@@ -510,10 +536,10 @@ export async function renderData(host, _params, ctx) {
   function renderReset() {
     clear(resetHost);
     const btn = el("button", { class: "danger", onclick: onReset }, "Reset ledger");
+    // COMPRESSED TO ITS ONE CONSTRAINT, same reasoning as delete above: what a reset actually
+    // wipes moved to the "Reset" heading's own tip, and the confirm dialog repeats the warning.
     resetHost.append(
-      el("p", { class: "small muted" },
-        "Wipes every scan, tracked finding, and compaction back to a fresh, never-compacted "
-        + "ledger. Drive archives are left in place. This cannot be undone."),
+      el("p", { class: "small muted" }, "This cannot be undone."),
       btn,
     );
 

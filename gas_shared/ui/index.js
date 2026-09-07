@@ -46,11 +46,18 @@
 //                 and bad states, which neither meter() nor progressBar() carries
 //   figures.js    the register vocabulary's numeric core: num, fmtCount, days1, pct1,
 //                 denomNote, fmtDays, boundedDays, relativeAge — refuse-before-cast, so an
-//                 absent figure never renders as a confident 0
+//                 absent figure never renders as a confident 0 — plus figureCard, the KPI
+//                 tile whose denominator sentence rides in the tip and the attribute
+//                 instead of as a paragraph under the card
+//   quad.js       two yes/no questions crossed: the ordered 2x2, its shares and its one
+//                 aria sentence (pure), and the real <th scope> table that draws them
+//   sparkline.js  a series as one line at the size of a word: the path (pure, gaps kept as
+//                 breaks) and the role="img" SVG around it
 
 export { appendAll, clear, downloadText, el, motionOk, registerWideNote } from "./dom.js";
 export {
-  absentText, boundedDays, days1, denomNote, fmtCount, fmtDays, num, pct1, relativeAge,
+  absentText, boundedDays, days1, denomNote, figureCard, figureCardModel, fmtCount, fmtDays,
+  num, pct1, relativeAge,
 } from "./figures.js";
 export {
   DISPLAY_TZ, dueRank, fmtDate, fmtDateTime, plural, pluralize, sevRank,
@@ -92,6 +99,8 @@ export { brandMark } from "./brandMark.js";
 export { pointRail, railScale } from "./rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./timing.js";
 export { axisBar, axisSegments } from "./axisBar.js";
+export { quadModel, quadTable } from "./quad.js";
+export { sparkLabel, sparkPath, sparkline } from "./sparkline.js";
 export { rowDrag, ruleGrip } from "./rowReorder.js";
 export {
   disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList,

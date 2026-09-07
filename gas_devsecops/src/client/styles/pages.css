@@ -246,18 +246,161 @@
    this it keeps the 0 margin `pre` gets everywhere else and collides with the row beneath. */
 .kv dd > .code-block { margin: 0; }
 
-/* ONE LIST, ONE AFFORDANCE. `.tip-trigger--term` (components.css) underlines a GLOSSARY
-   trigger and nothing else, which is right where a definition is the only kind of tip on the
-   surface. The finding sheet mixes both in one `<dl>`: "Fix available" and "Awaiting a vendor"
-   are glossary terms and carry the dotted rule, while "Last seen", "Age", "On KEV", "Known
-   exploit" and "EPSS" have a plain sentence behind them — a focusable button with a tooltip
-   and nothing on screen saying so, three rows below three that do say so. Measured at 1280 in
-   the seeded harness. The underline is scoped to `.kv dt` rather than raised anywhere shared:
-   on a stat name or a kpi label the tip is the only one in view and the inconsistency this
-   fixes does not arise. */
-.kv dt .tip-trigger {
-  text-decoration: underline dotted rgba(0, 0, 0, .32);
-  text-underline-offset: 3px;
-  text-decoration-thickness: 1px;
+/* ------------------------------------------------- MTTR & SLA: the half-life trend aside
+   `pageHeader({aside})` is documented for "a small curve" and was empty on this page while
+   the series it wants sat at the foot of the same page in a Chart.js line. The sparkline that
+   fills it is a QUALIFIER on the hero, never a rival to it: DESIGN.md's Hero Stat rule puts
+   the hero's dominance in size, position and whitespace, so this block stays borderless (a
+   `.page-strip`, the same shell Executive's movement aside uses) and is capped the way
+   `.page-header > .kpi-card` above is - 26rem measured against the 220px SVG plus its
+   caption, wide enough for "12 readings, 297 days to 41 days" on one line and narrow enough
+   that the 2rem hero beside it keeps clear air.
+
+   The gap is the strip's own rhythm; nothing here sets a border, a tint or a shadow, because
+   any of the three would make this read as a second card in a header that has none. */
+.trend-aside { max-width: 26rem; display: grid; gap: var(--space-1); justify-items: start; }
+/* The line takes the page's ink rather than the strip's muted default: the sparkline is the
+   one mark in this block that carries a measurement, and `--text-2` (0.65 alpha) on a 1.5px
+   stroke over 40px of height reads as a hairline rule rather than as data. `--ink` is the
+   same neutral the isotype marks above take, and for the same reason - a mark carrying a
+   figure has to be legible on its own. */
+.trend-aside .sparkline { color: var(--ink); }
+
+/* ------------------------------------------------- MTTR & SLA: a rate cell with its meter
+   The SLA table's two rate columns print the figure, its base and now a `meter--stat` between
+   them - a third encoding, and the only one that can be compared DOWN a column at a glance
+   (six percentages in six rows are read one at a time; six fills are read as a shape). The
+   meter is `decorative`, i.e. aria-hidden, because both figures are already in words beside
+   it, so this rule is layout only: keep the three parts on one baseline and let the base wrap
+   under them on a narrow column rather than stretching the row.
+
+   `inline-flex`, not `flex`: the cell is a `<span>` inside a `<td>` that may also hold the
+   count and the parenthesised rate, and a block-level flex box would break that line. */
+.rate-with-meter {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1);
 }
-.kv dt .tip-trigger:hover { text-decoration-color: currentColor; }
+/* The meter must not be squeezed to nothing by the flex row when the denominator is long -
+   `meter--stat` already fixes its basis, this stops the shrink. */
+.rate-with-meter .meter { flex: 0 0 52px; }
+
+/* ------------------------------------- Dependencies / Code: one signal, one bar (Wave B)
+   `signalRow` (pages/sca.js) draws a tri-state signal - evaluated / never evaluated / no such
+   column - as one `axisBar` per signal, replacing a five-column table whose last column was a
+   prose "Reading" and whose rows each carried a denominator paragraph underneath.
+
+   LAYOUT ONLY, AND DELIBERATELY SO. There is no new fill here and no new colour: the bar's
+   segments, its hatch and its legend are `components.css`'s `.axis-bar` rules, the state pill
+   is `.pill.ok/.warn/.neutral`, and both already carry whatever forced-colours treatment they
+   were given there. A rule that invented a fill for this block would be a fourth place the
+   severity-free monotone ramp is decided.
+
+   The `.axis-bar`'s own margin is `--space-3` over `--space-4`, tuned for one bar standing
+   alone on the AARS rules page. Three of them stacked in a card need the rhythm of a list
+   instead, so the gap belongs to the container and each bar keeps only the air between it and
+   its own legend. */
+.signal-rows { display: grid; gap: var(--space-4); }
+.signal-row__head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+}
+.signal-row__name { font-weight: 600; }
+/* The bar sits directly under the name it belongs to; `--measure` is kept from `.axis-bar` so
+   the legend beside it wraps at a readable width rather than at the card's own edge. */
+.signal-row .axis-bar { margin: var(--space-2) 0 0; }
+
+/* ------------------------------------------- Secrets: the validation-coverage headline
+   "Has anybody looked?" asks one question and a meter answers it, so the meter is the first
+   thing under the heading rather than a bar trailing three cards. Full width would make it a
+   1,100px rule across the page - a hero, not a stat - so it is capped at the width the three
+   cards under it occupy at 640px and given the 10px height a headline earns over the 6px a
+   `meter--stat` in a table cell takes.
+
+   The meter is NOT decorative here: it is the section's answer, and it carries its own
+   aria-label with both figures. The words above it and the percentage below it are what a
+   reader who cannot see the fill reads instead, which is why both are printed. */
+.coverage-headline { display: grid; gap: var(--space-1); margin: 0 0 var(--space-3); }
+.coverage-headline .meter { max-width: 28rem; height: 10px; }
+
+/* ------------------------------- Coverage & efficiency: the unclassified rows, hatched
+   The block the whole page's honesty rests on, and the only one whose subject is rows nobody
+   could measure. `.hatch` (components.css) is this design system's one mark for exactly that,
+   so the card carries a swatch of it beside the word - never instead of the word, because a
+   texture is not a fact. The count stays in ink: it IS a measurement, of how much was not. */
+.unclassified-card { display: grid; gap: var(--space-half); }
+.unclassified-swatch {
+  display: inline-block; width: 14px; height: 14px; margin-right: var(--space-2);
+  border: 1px solid var(--hairline); border-radius: 2px; vertical-align: -2px;
+}
+/* Forced colours keep the hatch (it is ink at an alpha, see the --hatch token) but drop the
+   hairline into the forced border colour, so the swatch stays a bordered square rather than
+   dissolving into the card. */
+@media (forced-colors: active) {
+  .unclassified-swatch { border-color: CanvasText; }
+}
+
+/* --------------------------------- Coverage & efficiency: the capacity verdict, as a word
+   Ported from gas_ai's `.cap-verdict` (inventory.css), rule and reasoning intact: the WORD is
+   the signal and the dot only repeats it. Three states told apart by hue alone survive
+   neither greyscale nor a dichromat, and this is the one figure on the card a reader takes
+   away. Sized and spaced like `.rail-status-dot` above, so the app has one dot vocabulary.
+
+   The dot takes the ok / neutral / bad tones the per-month pills used to carry, rather than a
+   second list keyed by verdict slug. */
+.verdict-mark { display: inline-flex; align-items: center; gap: var(--space-2); }
+.verdict-word { font-size: var(--fs-lead); font-weight: 650; }
+.verdict-dot {
+  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
+  background: var(--text-3);
+}
+.verdict-dot--ok { background: var(--ok); }
+.verdict-dot--neutral { background: var(--text-3); }
+.verdict-dot--bad { background: var(--bad); }
+
+/* ------------------------------------------------ Repositories: the foothold cell, as a verdict
+   Yes/No used to print as plain text; the glyph now carries the same word rather than replacing
+   it — colour never stands alone, so the icon and the word are both always there, and a
+   percentage between the two ends (a language spanning several repositories) keeps no glyph at
+   all, since it is a measurement rather than a verdict. `footholdCellKind` (repos.js) is the
+   pure decision; this is only the two tones it may be drawn in.
+
+   NO forced-colors RULE HERE, unlike `.hatch`/`.unclassified-swatch` above: those replace a
+   background FILL, which forced-colors mode strips outright. `color` on ordinary text (and the
+   icon's `stroke="currentColor"`, which follows it) is one of the properties the browser's own
+   forced-colors substitution already rewrites to a legible system colour, so there is no fill
+   here for a media query to rescue. */
+.cell-verdict { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
+.cell-verdict svg { flex: 0 0 auto; }
+.cell-verdict--ok { color: var(--ok); }
+.cell-verdict--muted { color: var(--text-3); }
+
+/* --------------------------------------- Scan history: a KPI card and the series behind it
+   Three of the four cards in this page's band say where a number IS; the series each is the
+   last reading of sat at the foot of the same page in a Chart.js line. `ui/sparkline.js` puts
+   it on the card at the size of a word.
+
+   BORDERLESS AND BELOW THE SUB, because the card already has one figure to be looked at: this
+   is a qualifier on it, not a second figure. Same reasoning, and the same shape, as
+   `.trend-aside` above — grid, start-aligned, nothing here sets a surface, a tint or a rule.
+
+   The line takes the page's ink rather than the strip's muted default, for `.trend-aside`'s
+   reason: `--text-2` (0.65 alpha) on a 1.5px stroke reads as a hairline rather than as data,
+   and a mark carrying a figure has to be legible on its own. NO animation and no transition,
+   so there is deliberately no prefers-reduced-motion block owed here. */
+.kpi-spark {
+  display: grid; gap: var(--space-half); justify-items: start; margin-top: var(--space-2);
+}
+.kpi-spark .sparkline { color: var(--ink); }
+.kpi-spark__cap { font-size: var(--fs-label); color: var(--text-3); }
+
+/* ------------------------------------------- Scan history: a state pill on a section heading
+   "Register-wide" on the two scan-side tables and "Experimental" on the spiral are STATES of
+   what is under the heading, not part of its name, so they sit beside the words rather than
+   inside them and take the baseline the heading's own type sets. The pill's tint and word are
+   `statusPill`'s; this rule is spacing only. */
+.section-label > .heading-pill { margin-left: var(--space-2); font-weight: 400; }
+
+/* ------------------------------- Scan history: one register's movement, as a card and a row
+   Three of these stack under "What moved the number" — a chart card, up to two honesty lines
+   and a row of exception pills. The gap is the page's own rhythm; no border, because the
+   `.chart-card` inside already carries one and a second box around it would read as a fourth
+   level of nesting. */
+.movement-block { display: grid; gap: var(--space-2); margin-top: var(--space-4); }

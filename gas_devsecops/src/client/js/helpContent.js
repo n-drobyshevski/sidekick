@@ -52,6 +52,19 @@ const ENTRIES = [
     ],
   },
   {
+    // The Code register's clock section. `censoring` next door is about a finding that is
+    // still OPEN; this is about one that has closed and whose closing DATE is an estimate —
+    // the opposite end of the same clock, and the two were being asked to share one entry.
+    // The page's own 85-word caveat leads the tip and this is what sits behind it.
+    id: "disappearance",
+    term: "Dated by disappearance",
+    lines: [
+      "A finding dated closed at the first scan that stopped returning it, because the API publishes no resolution date for it.",
+      "An upper bound whose error is the interval between two scans: \"gone by 12 Aug\", never \"resolved 12 Aug\".",
+      "Until two syncs have run and findings have begun to disappear between them, a register dated this way reads near-zero — an absence of observations, not a fast team.",
+    ],
+  },
+  {
     id: "sla-target",
     term: "SLA target",
     lines: [
@@ -176,6 +189,15 @@ const ENTRIES = [
     ],
   },
   {
+    id: "signal-coverage",
+    term: "Signal coverage",
+    lines: [
+      "How much of the column a risk clause rests on was ever captured, over the rows that clause applies to.",
+      "A measured 0% is a measurement: it separates \u201cthe AI agreed with nothing\u201d from \u201cnobody asked the AI\u201d. \u201cNot applicable\u201d is a third statement \u2014 no row in scope has such a column at all.",
+      "The clauses are OR'd and overlap, so what each one fired on never sums to the high-risk count.",
+    ],
+  },
+  {
     id: "reconstructed",
     term: "Reconstructed month",
     lines: [
@@ -262,6 +284,48 @@ const ENTRIES = [
     lines: [
       "One finding's settled lifetime — first seen, how it ended, when — kept after the scan that carried it was sealed.",
       "The clock survives compaction; the per-scan observations behind it do not. A finding seen again after its episode begins a new one.",
+    ],
+  },
+  {
+    // The Executive front door's "Movement" aside, and Scan history's "What moved the number"
+    // section. The method sentence used to sit under the rows as its own paragraph; the rows
+    // already carry the chips and the raw pair, so what was left to say was what the
+    // comparison is BETWEEN — a definition, which is what a tip is for.
+    //
+    // THE THIRD LINE IS THE ONE BOTH PAGES LEANED ON AND NEITHER DEFINED. Scan history's
+    // 65-word section note said it in its own words; this entry did not say it at all, so a
+    // reader who followed the trigger from either page met a definition that reads as though
+    // one window covered the whole register. It is third because a tip card shows the first
+    // two lines: the general reading leads, and this qualifies it on the Help page.
+    id: "movement",
+    term: "Movement",
+    lines: [
+      "The open backlog now against the same register at the previous sync. A rising count is worse.",
+      "The comparison is between two syncs, not between two calendar dates — a register only learns anything on the days it looks.",
+      "Each register has its own window: the three share one scan log, and a scan of one of them looked at none of the others.",
+    ],
+  },
+  {
+    // The Executive front door's "Fix next" section heading. This is the RANKING RULE, and it
+    // is a definition rather than a caveat: without it the list is eight repositories in an
+    // order nobody can check.
+    id: "fix-next",
+    term: "Fix next",
+    lines: [
+      "Ranked by what cannot wait rather than by severity: a credential somebody confirmed is live, then a fixable dependency finding already late, then a critical code weakness already late.",
+      "Grouped by repository, because that is the smallest unit somebody can be asked to own.",
+    ],
+  },
+  {
+    // The MTTR page's "Open findings by age" legend. NO DAY COUNTS IN THE COPY: the targets
+    // are per severity and editable in Settings, and the legend line beside this tip prints
+    // whatever the payload actually carries. A glossary that hard-coded 7 / 14 / 30 would be
+    // a second place for them to drift.
+    id: "sla-edge",
+    term: "SLA edge",
+    lines: [
+      "The day count that splits one severity's open findings into late and not late — its own SLA target, read against the age buckets.",
+      "A deadline rarely lands on a bucket's boundary, so a bucket is usually part in and part out; a rule is drawn on the chart only where every severity shares one exact edge.",
     ],
   },
   {
