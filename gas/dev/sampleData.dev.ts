@@ -271,6 +271,129 @@ for (const asset of ASSETS) {
   }
 }
 
+// ------------------------------------------- pinned rows: the branches the roll cannot reach
+//
+// MEASURED on the seeded estate (2026-09-07, `PORT=8802 node dev/serve.mjs`, `?v=1`) BEFORE
+// these rows existed. `fixNext` returned tiers `{1: 0, 2: 3, 3: 19}` and unranked
+// `{noFix: 30, unclassified: 0, insideSla: 33, other: 23}` over 108 open findings — four of
+// the six branches populated and two empty. Neither is empty in a real register:
+//
+//   TIER 1 (KEV and reachable). The generator rolls `hasKev = hasExploit && rnd() < 0.4`, and
+//     `hasExploit` is 60% on CRITICAL and 12% everywhere else. Across 56 CVEs and 161 findings
+//     that left exactly ONE open KEV row in the estate (`exploit.kev` 1), and it did not land
+//     on an internet-reachable asset — `funnel.exploitable` was 4 and `funnel.exposed` 1, and
+//     the exposed one is an exploit-tier row, not the KEV one. So the Executive's top tier and
+//     the whole "a known-exploited finding on a reachable host outranks everything" argument
+//     were unlookable-at locally, in any state but empty.
+//     RAISING THE PROBABILITY WAS THE TEMPTING FIX AND THE WRONG ONE: the Program-performance
+//     page's coverage/efficiency figures are tuned against this exact signal mix (see the
+//     `isHighRisk` note on the resolution roll above), and moving it to light one tile would
+//     silently re-tune that whole page.
+//   UNCLASSIFIED. Every generated node carries all three signals, so `riskTier` is never
+//     `unknown` and the count is 0 BY CONSTRUCTION — not by measurement. A real register has
+//     rows nobody looked at: compacted episodes, imported resolved history, a tenant whose Wiz
+//     plan omits EPSS. `insights.riskTierStats.unclassified` and `funnel.unclassified` read 0
+//     here for the same reason and have the same gap.
+//
+// These rows are written EXPLICITLY and call `rnd()` NOWHERE, and they are appended AFTER the
+// generation loop: the seeded stream every existing node was drawn from is untouched, so every
+// previously generated finding stays byte-identical and only the additions are new.
+
+/** A wide/limited asset and a plainly-internal one, taken deterministically from the pool. */
+const EXPOSED_ASSETS = ASSETS.filter((a) => a.wide);
+const INTERNAL_ASSET = ASSETS.find((a) => !a.wide && !a.limited) as AssetSpec;
+
+interface PinSpec {
+  cve: string;
+  asset: AssetSpec;
+  severity: CveSpec["severity"];
+  ageDays: number;
+  /** null on all three = the signal was never captured, which is what `unknown` means. */
+  kev: boolean | null;
+  exploit: boolean | null;
+  epss: number | null;
+  /** false = vendor-blocked: no published fix, so `awaiting_vendor_fix` is true. */
+  fixed: boolean;
+}
+
+function pinnedNode(spec: PinSpec, idx: number): Rec {
+  const node: Rec = JSON.parse(JSON.stringify(TEMPLATES[0]));
+  const [pkg, version, fixedVersion, path] = PKGS[idx % PKGS.length];
+  const firstMs = NOW - spec.ageDays * DAY;
+  node["id"] = `vf_pin-${String(idx).padStart(4, "0")}`;
+  node["name"] = spec.cve;
+  node["detailedName"] = `${pkg} ${version}`;
+  node["version"] = version;
+  node["locationPath"] = path;
+  node["severity"] = spec.severity;
+  node["vendorSeverity"] = spec.severity;
+  node["weightedSeverity"] = spec.severity;
+  node["nvdSeverity"] = spec.severity;
+  node["score"] = spec.severity === "CRITICAL" ? 9.4 : 7.6;
+  node["cnaScore"] = node["score"];
+  node["vendorScore"] = node["score"];
+  node["hasExploit"] = spec.exploit;
+  node["hasCisaKevExploit"] = spec.kev;
+  node["epssProbability"] = spec.epss;
+  node["epssSeverity"] = spec.epss === null ? null : spec.epss > 0.5 ? "CRITICAL" : "LOW";
+  node["epssPercentile"] = null;
+  node["publishedDate"] = iso(firstMs - 30 * DAY);
+  node["firstDetectedAt"] = iso(firstMs);
+  node["lastDetectedAt"] = iso(NOW - DAY / 2);
+  node["status"] = "OPEN";
+  node["resolvedAt"] = null;
+  node["fixDate"] = null;
+  node["fixDateBefore"] = null;
+  node["isOperatingSystemEndOfLife"] = false;
+  // A published fix is signalled by `fixedVersion`; its absence is what `withDerived` reads as
+  // awaiting a vendor. Nulling BOTH version fields, not just one — `recommendedVersion` alone
+  // is a fix signal too.
+  node["fixedVersion"] = spec.fixed ? fixedVersion : null;
+  node["recommendedVersion"] = spec.fixed ? fixedVersion : null;
+  node["description"] =
+    `Pinned dev fixture row (${spec.cve}) in ${pkg} ${version} — see dev/sampleData.dev.ts.`;
+
+  const va: Rec = node["vulnerableAsset"];
+  va["id"] = spec.asset.id;
+  va["name"] = spec.asset.name;
+  va["cloudPlatform"] = spec.asset.cloud;
+  va["operatingSystem"] = spec.asset.os;
+  va["subscriptionName"] = spec.asset.sub;
+  va["subscriptionExternalId"] = spec.asset.subExt;
+  va["subscriptionId"] = spec.asset.subId;
+  va["tags"] = spec.asset.tags;
+  va["hasWideInternetExposure"] = spec.asset.wide;
+  va["hasLimitedInternetExposure"] = spec.asset.limited;
+  return node;
+}
+
+const PINNED: PinSpec[] = [
+  // TIER 1, three rows and three different reasons the tier has no gates.
+  // (a) Late as well — tier 1 takes it ahead of tier 2, which is the ordering claim.
+  { cve: "CVE-2026-90001", asset: EXPOSED_ASSETS[0], severity: "CRITICAL", ageDays: 210,
+    kev: true, exploit: true, epss: 0.82, fixed: true },
+  // (b) VENDOR-BLOCKED. Detected after REMEDIATION_ROLLOUT_ISO with no published fix, so
+  //     `awaiting_vendor_fix` is true and every other tier would file it under `noFix`. It
+  //     ranks anyway: the action on a known-exploited reachable host is to take it off the
+  //     internet, and that needs no patch. This is the live counterpart of perturbation (a)
+  //     in test/fixNext.test.ts.
+  { cve: "CVE-2026-90002", asset: EXPOSED_ASSETS[0], severity: "CRITICAL", ageDays: 5,
+    kev: true, exploit: true, epss: 0.64, fixed: false },
+  // (c) WELL INSIDE ITS SLA WINDOW (3 days against HIGH's 14) and on a second exposed asset,
+  //     so it also produces a second tier-1 group rather than a bigger first one.
+  { cve: "CVE-2026-90003", asset: EXPOSED_ASSETS[1], severity: "HIGH", ageDays: 3,
+    kev: true, exploit: null, epss: null, fixed: true },
+
+  // UNCLASSIFIED: past SLA, a fix available, and NOT ONE of the three signals captured. Not
+  // CRITICAL, so tier 3 does not claim them and the residue is decided by `riskTier` alone.
+  { cve: "CVE-2026-90004", asset: INTERNAL_ASSET, severity: "HIGH", ageDays: 120,
+    kev: null, exploit: null, epss: null, fixed: true },
+  { cve: "CVE-2026-90005", asset: INTERNAL_ASSET, severity: "MEDIUM", ageDays: 95,
+    kev: null, exploit: null, epss: null, fixed: true },
+];
+
+for (const spec of PINNED) nodes.push(pinnedNode(spec, nodes.length + 1));
+
 export const SAMPLE_FLAT = {
   data: {
     vulnerabilityFindings: {

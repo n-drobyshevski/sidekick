@@ -15,10 +15,13 @@
 
 import { describe, expect, it } from "vitest";
 
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import {
-  execGroupSlice, execMttrSlice, historyTrendSlice, jobSummarySlice, mttrGroupTableSlice,
-  mttrGroupTrendSlice, mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice,
-  programTrendSlice, scanRowsSlice,
+  execGroupSlice, execInsightsSlice, execMttrSlice, historyTrendSlice, jobSummarySlice,
+  mttrGroupTableSlice, mttrGroupTrendSlice, mttrPageTrendSlice, oldestOpenSlice,
+  overviewInsightsSlice, programTrendSlice, scanRowsSlice,
 } from "../src/domain/pagePayload";
 
 // A realistic mttrData return: everything the MTTR page reads, of which exec reads four numbers.
@@ -283,6 +286,11 @@ describe("overviewInsightsSlice — everything except the drawer's rows", () => 
     flatScan: true, counts: { HIGH: 4 }, total: 4, sevStats: {}, openTrend: [], exploit: {},
     aging: { totalOpen: 3 }, movement: {}, awaiting: {}, scan: { scanId: "s1" },
     oldest: { findings: [{ cve: "CVE-1" }], byAsset: [], bySupportGroup: [], byDomain: [] },
+    // Both computed inside `insightsData` and read ONLY by the Executive front door — see
+    // `execInsightsSlice` below. They share the Overview's cache entry precisely because they
+    // are computed together with everything else; what differs is which keys travel.
+    fixNext: { groups: [{ tier: 1 }], tiers: { 1: 3, 2: 3, 3: 19 } },
+    movementOpen: { comparable: true, rows: [{ severity: "HIGH", open: 4 }] },
   };
 
   // 16,434 of 18,064 bytes on the seeded estate — 91% of the payload — for four ranked views
@@ -295,6 +303,21 @@ describe("overviewInsightsSlice — everything except the drawer's rows", () => 
       "aging", "awaiting", "counts", "exploit", "flatScan", "movement",
       "openTrend", "scan", "sevStats", "total",
     ]);
+  });
+
+  // The claim the sorted key list above encoded was "everything but `oldest` travels", and it
+  // is no longer true: two keys now exist that this page has no reader for. Naming them here
+  // rather than leaving them to that list is the point — a future insights key still travels
+  // to the Overview by default (the spec below pins exactly that), and only a key somebody
+  // deliberately routed to the Executive does not.
+  it("carries neither fixNext nor movementOpen — the Executive reads those", () => {
+    const out = overviewInsightsSlice(INSIGHTS)!;
+    expect(out).not.toHaveProperty("fixNext");
+    expect(out).not.toHaveProperty("movementOpen");
+    // `movement` — the scan-over-scan reconcile deltas — is a DIFFERENT key and still
+    // travels. The two names differ by a suffix and answer different questions; dropping the
+    // wrong one would blank the Overview's movement card with no error anywhere.
+    expect(out).toHaveProperty("movement");
   });
 
   // Written as an omit rather than an enumeration precisely so a new insights key travels
@@ -412,5 +435,92 @@ describe("jobSummarySlice — what a 3-second poll is allowed to carry", () => {
 
   it("returns null for no job", () => {
     expect(jobSummarySlice(null, false)).toBeNull();
+  });
+});
+
+describe("execInsightsSlice — two read models and the scan stamp, and nothing else", () => {
+  // A realistic `insightsData` return: twenty-odd keys, of which the Executive front door
+  // reads three. The rest is the Overview's page — a per-severity trend, a breakdown tree's
+  // inputs, four ranked oldest-open views — and shipping it here would put the whole
+  // OS-vulnerabilities payload behind the default landing page for nobody.
+  const INSIGHTS = {
+    flatScan: true, domain: "", supportGroup: "",
+    scan: { scanId: "2026-09-07T17:22:08Z", ts: "2026-09-07T17:22:08Z", total: 161 },
+    counts: { CRITICAL: 25 }, total: 113, sevStats: {}, openTrend: [{ date: "2026-09-01" }],
+    exploit: {}, riskRule: {}, tiers: {}, funnel: {}, tierTrend: [], agingTier: {},
+    concentration: {}, pastSla: {}, medianOpenAge: 41.2, awaiting: {}, aging: {},
+    slaConsumed: {}, population: {}, oldest: { findings: [] }, movement: { newCount: 7 },
+    fixNext: { groups: [{ tier: 1, owner: "CS-A" }], tiers: { 1: 3, 2: 3, 3: 19 } },
+    movementOpen: { comparable: true, gapDays: 7, total: { open: 113, prevOpen: 117 } },
+  };
+
+  it("ships exactly fixNext, movement and scan", () => {
+    const out = execInsightsSlice(INSIGHTS)!;
+    expect(Object.keys(out).sort()).toEqual(["fixNext", "movement", "scan"]);
+  });
+
+  it("renames movementOpen to movement, because on this page there is only one", () => {
+    const out = execInsightsSlice(INSIGHTS)!;
+    // The Overview draws both kinds side by side and needs two names. The Executive draws
+    // only the open-backlog one, so it is `movement` there — and it must be the
+    // OPEN-BACKLOG figure, not the scan-over-scan deltas that carry the shorter name upstream.
+    expect(out["movement"]).toBe(INSIGHTS.movementOpen);
+    expect(out["movement"]).not.toBe(INSIGHTS.movement);
+  });
+
+  it("carries the scan stamp, so a ranked list can say when it last looked", () => {
+    expect(execInsightsSlice(INSIGHTS)!["scan"]).toEqual(INSIGHTS.scan);
+  });
+
+  it("passes the two read models through untouched rather than re-shaping them", () => {
+    expect(execInsightsSlice(INSIGHTS)!["fixNext"]).toBe(INSIGHTS.fixNext);
+  });
+
+  it("does NOT pass through a key it has never heard of", () => {
+    // The opposite of `overviewInsightsSlice`, and deliberately so: here the payload is
+    // overwhelmingly for somebody else, so a new insights key must be routed on purpose.
+    expect(execInsightsSlice({ ...INSIGHTS, somethingNew: 1 })!)
+      .not.toHaveProperty("somethingNew");
+  });
+
+  it("returns null for a missing payload", () => {
+    expect(execInsightsSlice(null)).toBeNull();
+    expect(execInsightsSlice(undefined)).toBeNull();
+  });
+});
+
+describe("the insights cache namespace moves when the payload's shape does", () => {
+  // WHY THIS IS A TEST AND NOT A CODE REVIEW. `cached()` keys on the namespace plus params,
+  // and the insights entry lives an hour. `dataVersion` persists across deploys, so a payload
+  // that gained keys without a bump is served from a stale entry that HAS NONE OF THEM for up
+  // to an hour after every deploy — and `execInsightsSlice` reads `fixNext` and
+  // `movementOpen` unconditionally, so the Executive front door would paint with no ranked
+  // list and no movement block. That reads as a register with nothing to do, not as a stale
+  // cache, which is why nobody would report it.
+  const API = readFileSync(
+    fileURLToPath(new URL("../src/server/api.ts", import.meta.url)), "utf8",
+  );
+
+  /** The ACTIVE namespace literals — the bare `"insightsN",` argument lines. Not the prose
+   *  above them, which names every prior namespace on purpose and must keep doing so. */
+  const active = [...API.matchAll(/^\s*"(insights\d+)",$/gm)].map((m) => m[1]);
+
+  it("names insights7, exactly once, as the namespace it caches under", () => {
+    expect(active).toEqual(["insights7"]);
+  });
+
+  it("no longer caches under insights6", () => {
+    expect(active).not.toContain("insights6");
+    // ...while the transition stays DOCUMENTED, which is the whole convention: the comment
+    // block above the literal is the change log, and losing the line would lose the reason.
+    expect(API).toContain(String.raw`"insights6" → "insights7"`);
+  });
+
+  it("the bump line says what changed and why a stale entry is not merely fat", () => {
+    const idx = API.indexOf(String.raw`"insights6" → "insights7"`);
+    expect(idx).toBeGreaterThan(-1);
+    const note = API.slice(idx, idx + 900);
+    expect(note).toContain("fixNext");
+    expect(note).toContain("movementOpen");
   });
 });
