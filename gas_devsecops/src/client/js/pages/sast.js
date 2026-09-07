@@ -149,7 +149,9 @@ export function sastModel(payload, opts) {
 
     // 0% in this tenant, and published as such. `signalFigure` renders "never evaluated"
     // rather than a zero, which is the difference between a gap and an all-clear.
-    aiVerdict: signalFigure("ai_verdict", "AI triage verdict", "sast", coverage.ai_verdict),
+    // Its OWN term, not "sast" — the register's entry, which is what this row pointed at
+    // and what the SCA register's three signals pointed at before them.
+    aiVerdict: signalFigure("ai_verdict", "AI triage verdict", "ai-verdict", coverage.ai_verdict),
 
     severityAxis: p.severityAxis || { supported: true },
     counts: p.counts || {},

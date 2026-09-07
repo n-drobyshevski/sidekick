@@ -319,6 +319,22 @@ describe("kevColumnHelp: the KEV caveat, once, on the column heading", () => {
     for (const id of ["kev", "known-exploit", "epss"]) expect(findEntry(id)?.id).toBe(id);
   });
 
+  it("does the same for the Code register's one signal", () => {
+    expect(SAST_CODE).toMatch(/signalFigure\("ai_verdict", "AI triage verdict", "ai-verdict"/);
+    expect(SAST_CODE).not.toMatch(/signalFigure\([^)]*, "sast",/);
+    expect(findEntry("ai-verdict")?.id).toBe("ai-verdict");
+    // The entry has to carry the part that makes the figure readable: this clause has never
+    // fired in this tenant, so a zero beside it is "nobody was asked", not "the AI disagreed".
+    expect(findEntry("ai-verdict").lines.join(" ")).toMatch(/never actually fired/);
+  });
+
+  // AND THE REGISTER'S OWN TERM STAYS WHERE IT BELONGS. `sast` is still the right entry for
+  // the page's rule section — this pins that the fix narrowed the term to signal rows rather
+  // than deleting a correct usage next door.
+  it("leaves the register's own entry on the section that is about the register", () => {
+    expect(SAST_CODE).toMatch(/help: \{ term: "sast" \}/);
+  });
+
   it("is drawn once per table rather than once under each breakdown", () => {
     // One CALL SITE — the column spec inside the breakdown loop — against the three
     // paragraphs the loop used to append, one per dimension.

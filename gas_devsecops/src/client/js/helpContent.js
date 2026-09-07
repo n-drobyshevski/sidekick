@@ -219,6 +219,18 @@ const ENTRIES = [
       "A FORECAST, not an observation — the one signal here that says what may happen rather than what has. It is a probability, so a high score on a large register still describes many findings that will never be attacked.",
     ],
   },
+  // The Code register's one signal, and the only one here that is somebody else's OPINION
+  // rather than an observation or a forecast. It shared the "sast" entry — the register's own
+  // definition — for the same reason the three above shared "sca".
+  {
+    id: "ai-verdict",
+    term: "AI triage verdict",
+    lines: [
+      "The scanner's own judgement that a static-analysis finding is real. A vendor opinion, not a measurement this register made — which is why it is one clause of the high-risk rule and never the whole of it.",
+      "It has never actually fired in this tenant: every SAST node captured so far carries a null aiAnalysis, so a zero beside it means nobody was asked, not that the AI looked and disagreed.",
+      "The values that count are EXPLOITABLE, TRUE_POSITIVE, CONFIRMED and VULNERABLE (domain/config.ts's AI_VERDICTS_HIGH). That vocabulary is UNVERIFIED against this tenant, so a register where every row reads unevaluated means either the field is not being returned or those are the wrong strings — both worth knowing, and neither of them a finding about the code.",
+    ],
+  },
   {
     id: "signal-coverage",
     term: "Signal coverage",

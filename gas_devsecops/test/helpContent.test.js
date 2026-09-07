@@ -42,6 +42,9 @@ const EXPECTED_IDS = [
   // exploitation (observed / code published / forecast) need three entries, and the array
   // grows to hold them.
   "kev", "known-exploit", "epss",
+  // The Code register's equivalent: a vendor OPINION rather than an observation, and the one
+  // entry here that has to say the signal has never fired in this tenant.
+  "ai-verdict",
   // Wave A's three. The claim this array makes is "the book holds exactly these ids", so it
   // GROWS with the book and never shrinks: `movement` is what the Executive aside's method
   // sentence became, `fix-next` the ranking rule that was a 52-word lede above the ranked
