@@ -1122,7 +1122,14 @@ export function scaModel(payload, opts) {
     aging: agingModel(p.aging),
     tiers: tierModel(p.tiers, RISK_TIER_ORDER, RISK_TIER_LABELS),
     funnel: funnelModel(p.funnel),
-    concentration: concentrationModel(p.concentration, ["repo", "language", "owner_project"]),
+    // THE LIST IS STATED TWICE — here and in readModels.ts's CONCENTRATION_DIMS — and THIS
+    // copy is the one that renders: `concentrationModel` maps over the dims it is GIVEN, so a
+    // name here that the payload does not carry yields a card with zero rows rather than no
+    // card. Dropping `language` from the server alone therefore replaced the breakdown with an
+    // empty one; both copies have to agree. (Passing no list at all falls back to
+    // `Object.keys(perDim)` — the server's order — which would remove the duplication, but it
+    // also hands the page's card order to the payload, so the explicit list stays.)
+    concentration: concentrationModel(p.concentration, ["repo", "owner_project"]),
     oldest: oldestFindingsModel(p.oldest),
     oldestRepos: oldestReposModel(p.oldest),
     movement: movementModel(p.movement, p.latestScan),

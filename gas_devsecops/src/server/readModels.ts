@@ -926,7 +926,13 @@ export function executiveModel(p?: ModelParams): Rec {
  */
 /** Concentration dimensions per register — every name is a key of `insights.GROUP_COLUMNS`. */
 const CONCENTRATION_DIMS: Record<Scope, string[]> = {
-  sca: ["repo", "language", "owner_project"],
+  // No `language` on sca. A dependency finding's language is a property of the REPOSITORY it
+  // sits in, not of the finding, so this breakdown restated "By repository" one level coarser:
+  // on the sample register its four rows (PYTHON 105, GO 70, JAVA 70, JAVASCRIPT 35) are the
+  // same 280 findings the repository card already groups, re-bucketed by an attribute nobody
+  // remediates against. `sast` keeps it, where the language is a fact about the CODE the
+  // weakness is in and pairs with `cwe`.
+  sca: ["repo", "owner_project"],
   sast: ["repo", "cwe", "language", "owner_project"],
   secrets: ["repo", "secret_kind", "owner_project"],
 };

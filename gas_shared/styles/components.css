@@ -8,7 +8,14 @@
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-card);
 }
-.card { padding: var(--space-4); }
+/* THE BOTTOM MARGIN IS THE PAGE'S VERTICAL RHYTHM, and it was missing. Every other top-level
+   block on these pages owns its own trailing space — `.page-header` and `.chart-row` both set
+   `margin-bottom: var(--space-5)` — but `.card` set none, so two consecutive cards rendered
+   FLUSH: measured `gapAbove: 0` between "The clock splits" and "Exploitation signals" on the
+   SCA page, and again between that card and the chart row below it. Two rounded, bordered
+   surfaces touching read as one broken container rather than as two sections.
+   The value matches `.chart-row`'s so a page mixing the two keeps one rhythm. */
+.card { padding: var(--space-4); margin-bottom: var(--space-5); }
 /* THE PAGE HEADER, which four routes had already invented separately.
    .cov-header (scans) and .inv-header (inventory) were byte-identical rulesets — scans.css
    even says so in a comment, "the same shape the AI Inventory header uses" — while
@@ -92,7 +99,11 @@
    confidence, which qualify each other and are counted on separate axes. Side by side once
    the viewport can hold both without either losing a column; below that they stack, which is
    what a single card already does. */
-.card-pair { display: grid; gap: var(--space-3); }
+.card-pair { display: grid; gap: var(--space-3); margin-bottom: var(--space-5); }
+/* The container owns the trailing space, the items inside do not: `.card`'s own bottom margin
+   would otherwise hang below the shorter column of the pair and push the container's box past
+   its own content. One rhythm, applied at the level that is actually a block on the page. */
+.card-pair > .card { margin-bottom: 0; }
 /* min-width:0, and it is not optional: a grid item's default `min-width: auto` refuses to
    shrink below its content, so a seven-column table inside one of these pushed its own track
    past 1fr and drew the card's right border off the side of the pane. With the floor released

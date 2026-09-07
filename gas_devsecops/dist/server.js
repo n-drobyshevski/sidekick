@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "af70cbbeb4cb" : "dev";
+  var BUILD_ID = true ? "79c92e918694" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -6848,7 +6848,13 @@ var Server = (() => {
     return cached("dsExecutive1", keyOf(n2), () => buildExecutive(n2), CLOCK_TTL_SEC);
   }
   var CONCENTRATION_DIMS = {
-    sca: ["repo", "language", "owner_project"],
+    // No `language` on sca. A dependency finding's language is a property of the REPOSITORY it
+    // sits in, not of the finding, so this breakdown restated "By repository" one level coarser:
+    // on the sample register its four rows (PYTHON 105, GO 70, JAVA 70, JAVASCRIPT 35) are the
+    // same 280 findings the repository card already groups, re-bucketed by an attribute nobody
+    // remediates against. `sast` keeps it, where the language is a fact about the CODE the
+    // weakness is in and pairs with `cwe`.
+    sca: ["repo", "owner_project"],
     sast: ["repo", "cwe", "language", "owner_project"],
     secrets: ["repo", "secret_kind", "owner_project"]
   };
