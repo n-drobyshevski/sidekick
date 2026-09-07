@@ -247,16 +247,12 @@
 /* ------------------------------------------------------------------ filter bar */
 .filter-bar .field { display: flex; flex-direction: column; }
 
-/* Segmented toggle (e.g. report format): the pressed option reads as selected without
-   borrowing the graphite of the primary action sitting beside it. */
-.seg-btn[aria-pressed="true"] {
-  background: var(--page);
-  border-color: var(--ink);
-  color: var(--ink);
-  font-weight: var(--fw-semibold);
-}
-/* Compact variant for inline section-level controls: body-small type, tighter box. */
-.seg-btn--sm { min-height: 26px; padding: var(--space-half) 10px; font-size: var(--fs-label); }
+/* `.seg-btn[aria-pressed="true"]` / `.seg-btn--sm` / `.seg-row` LEFT WITH P1.3. Five
+   hand-rolled aria-pressed toggles across mttr.js/overview.js/data.js each rebuilt this exact
+   recipe — a joined or unboxed row of buttons, the pressed one styled by hand — which is what
+   gas_shared/ui/controls.js's `segmented()` already is (components.css's `.segmented` rule).
+   Every call site now takes that shared control instead; nothing under src/client/js/pages/
+   references these three selectors any more (test/segmented.test.js sweeps for a regression). */
 /* Section label + inline control on one row, title left and control right.
    The wrapper owns the section-label's vertical rhythm; the h2 margin resets to 0. */
 .section-head {
@@ -264,8 +260,6 @@
   gap: var(--space-3); flex-wrap: wrap; margin: var(--space-6) 0 var(--space-3);
 }
 .section-head .section-label { margin: 0; }
-/* Unboxed row for segmented buttons (the .pill-row shape, no .filter-bar chrome). */
-.seg-row { display: flex; gap: 6px; }
 /* Card title + inline toggle on one row — the in-card variant of .section-head with no
    outer margin (the .chart-card padding owns the rhythm). */
 .chart-head {

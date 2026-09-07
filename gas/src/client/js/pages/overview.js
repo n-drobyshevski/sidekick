@@ -25,9 +25,9 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { populationLine, slaConsumedCaption } from "./overviewModel.js";
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, dataTable, days1, el, emptyState, errorState, fmtDate, fmtDays, glossaryTip,
-  kpiCard, num, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter,
-  tip, tipAnchor, tipLabel,
+  absent, clear, dataTable, days1, el, emptyState, errorState, firstRunNotice, fmtDate, fmtDays,
+  glossaryTip, kpiCard, measuredEmpty, num, nvdUrl, openSheet, pageHeader, scopeBar, segmented,
+  sectionLabel, skeleton, tableFooter, tip, tipAnchor, tipLabel,
 } from "../ui.js";
 
 // Rows per page in the "Oldest open findings" panel's pagination. The server ships
@@ -187,10 +187,13 @@ export async function renderOverview(main, params, ctx) {
   if (scopeChips) main.append(scopeChips);
 
   if (!boot.latestScan) {
-    main.append(emptyState(
-      "No scan saved yet.",
-      "Use “Run scan” in the sidebar to take the first measurement.",
-    ));
+    // THE SHARED FIRST-RUN NOTICE, not a hand-rolled emptyState. Nothing below this point is
+    // built yet — the hero and insights hosts are appended further down — so this return
+    // leaves no hero dash, no stats, and no canvas behind it.
+    main.append(firstRunNotice({
+      synced: false,
+      hint: "Use “Run scan” in the sidebar to take the first measurement.",
+    }));
     return;
   }
 
@@ -219,9 +222,17 @@ export async function renderOverview(main, params, ctx) {
 
   renderHero(null);
 
+  // The latest successfully-painted insights payload, held for its `scan.ts` alone: the
+  // drawer sections below (Oldest open findings, Concentration, Breakdown) build their own
+  // "nothing matched" states well after this closure's `insights` parameter has gone out of
+  // scope, and a filter-empty state that cannot say WHEN it looked is indistinguishable from
+  // one that never measured anything.
+  let lastInsights = null;
+
   // One batched RPC; revisits paint instantly from the session cache and repaint
   // in the background only when the revalidated payload differs.
   const paint = (data) => {
+    lastInsights = data;
     paintScopeNote(data);
     renderHero(data);
     renderInsights(data);
@@ -616,6 +627,13 @@ export async function renderOverview(main, params, ctx) {
     const anyPast = past.some((v) => typeof v === "number" && v > 0);
     // A measured zero, unlike the case above: rows were read and none of them landed inside a
     // window. Same empty-state pattern renderAging uses.
+    //
+    // KEPT AS `emptyState`, NOT `measuredEmpty` — a one-line decision, not an oversight. This
+    // is a STRUCTURAL absence (no open finding has a window at all, the same shape as
+    // renderAging's "No open findings in the durable base." two sections up) rather than a
+    // per-filter "nothing matched" like the ranking/breakdown states below it; the page-level
+    // first-run gate above has already ruled out "nobody has scanned", which is the one
+    // question a date on THIS notice would add.
     if (!consumed.totalOpen && !anyPast) {
       insightsHost.append(emptyState("No open findings with a measurable SLA window."));
       return;
@@ -669,25 +687,22 @@ export async function renderOverview(main, params, ctx) {
     // Rows per page, adjustable from the footer and kept across a view switch: a reader who
     // asked to see fifty rows meant it about the panel, not about one of its four tabs.
     let pageSize = OLDEST_PAGE_SIZE;
-    const toggle = el("div", { class: "filter-bar", role: "group", "aria-label": "Oldest open findings view" });
+    // The shared segmented() control, replacing a hand-rolled .filter-bar of .seg-btn buttons.
+    const toggle = segmented({
+      options: OLDEST_VIEWS.map(([value, label]) => ({ value, label })),
+      value: view,
+      ariaLabel: "Oldest open findings view",
+      onChange: (v) => {
+        if (view === v) return;
+        view = v;
+        page = 0;
+        toggle.set(v);
+        ensure();
+      },
+    });
     const tableHost = el("div", {});
     const footerHost = el("div", {});
     const caption = el("p", { class: "chart-caption muted" });
-    for (const [value, label] of OLDEST_VIEWS) {
-      const btn = el("button", {
-        class: "seg-btn", type: "button",
-        "aria-pressed": view === value ? "true" : "false",
-        onclick: () => {
-          if (view === value) return;
-          view = value;
-          page = 0;
-          toggle.querySelectorAll("button.seg-btn").forEach((b) =>
-            b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
-          ensure();
-        },
-      }, label);
-      toggle.append(btn);
-    }
 
     /** Fetch the active view unless it is already in hand, then repaint. */
     function ensure() {
@@ -767,7 +782,11 @@ export async function renderOverview(main, params, ctx) {
 
   /** Ranked table of individual oldest open findings (CVE · Asset · Subscription · Severity · Age). */
   function oldestFindingsTable(rows) {
-    if (!rows || !rows.length) return emptyState("No open findings to rank.");
+    // Dated to the scan the ranking was measured against: an empty ranking under a header
+    // that already says "oldest open findings" reads as broken unless it says when it looked.
+    if (!rows || !rows.length) {
+      return measuredEmpty("No open findings to rank.", { at: lastInsights?.scan?.ts });
+    }
     // The dashes are absent(): a finding with no CVE, asset or subscription recorded is a
     // finding the scan told us nothing about for that column, and a dash in the same ink as
     // the values beside it claims otherwise.
@@ -796,7 +815,9 @@ export async function renderOverview(main, params, ctx) {
    *  everywhere: the whole table is rebuilt on each paint (paint() clears tableHost), so
    *  nothing holds a stale header. */
   function oldestGroupTable(rows, dimLabel, extraCols = []) {
-    if (!rows || !rows.length) return emptyState("No open findings to rank.");
+    if (!rows || !rows.length) {
+      return measuredEmpty("No open findings to rank.", { at: lastInsights?.scan?.ts });
+    }
     const columns = [
       { key: "key", label: dimLabel, cell: (g) => el("strong", {}, g.key) },
       ...extraCols,
@@ -873,7 +894,20 @@ export async function renderOverview(main, params, ctx) {
     if (!conc || !conc.perDim) return;
     let dim = CONCENTRATION_DIMS.find(([k]) => conc.perDim[k]?.length)?.[0];
     if (!dim) return;
-    const toggle = el("div", { class: "seg-row", role: "group", "aria-label": "Concentration dimension" });
+    // The shared segmented() control — this used to be a hand-rolled .seg-row of .seg-btn--sm
+    // buttons, one of five duplicates of the same aria-pressed recipe across this app.
+    const availableDims = CONCENTRATION_DIMS.filter(([value]) => conc.perDim[value]);
+    const toggle = segmented({
+      options: availableDims.map(([value, label]) => ({ value, label })),
+      value: dim,
+      ariaLabel: "Concentration dimension",
+      onChange: (v) => {
+        if (dim === v) return;
+        dim = v;
+        toggle.set(v);
+        paintList();
+      },
+    });
     const listHost = el("div", {});
     const noteHost = el("p", { class: "section-note" });
 
@@ -901,28 +935,17 @@ export async function renderOverview(main, params, ctx) {
           el("div", { class: "num rank-row__value" }, row.open.toLocaleString()),
         ));
       }
-      clear(listHost).append(rows.length ? list : emptyState("Nothing open in this dimension."));
+      // Dated: an empty rank list under a dimension the reader just picked is a measurement
+      // of THIS scan's open findings, not a claim that the dimension itself is broken.
+      clear(listHost).append(rows.length
+        ? list
+        : measuredEmpty("Nothing open in this dimension.", { at: insights.scan.ts }));
       // Never let a truncated list read as a complete one.
       noteHost.textContent = more
         ? `Top ${rows.length} by open findings · ${more.toLocaleString()} more not shown.`
         : `All ${rows.length} ranked by open findings.`;
     }
 
-    for (const [value, label] of CONCENTRATION_DIMS) {
-      if (!conc.perDim[value]) continue;
-      const btn = el("button", {
-        class: "seg-btn seg-btn--sm", type: "button",
-        "aria-pressed": dim === value ? "true" : "false",
-        onclick: () => {
-          if (dim === value) return;
-          dim = value;
-          toggle.querySelectorAll("button.seg-btn").forEach((b) =>
-            b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
-          paintList();
-        },
-      }, label);
-      toggle.append(btn);
-    }
     insightsHost.append(el("div", { class: "section-head" },
       el("h2", { class: "section-label" }, "Where it concentrates"), toggle));
     insightsHost.append(listHost, noteHost);
@@ -1135,7 +1158,11 @@ export async function renderOverview(main, params, ctx) {
   function renderTree(host, groups) {
     clear(host);
     if (!groups.length) {
-      host.append(emptyState("Nothing to break down for this grouping."));
+      // Dated to the last insights scan this closure has seen: the grouping RPC's own
+      // payload carries no scan timestamp of its own (api.ts's getGrouping ships only
+      // `{flatScan, keys, groups}`), and the two read the same durable base.
+      host.append(measuredEmpty("Nothing to break down for this grouping.",
+        { at: lastInsights?.scan?.ts }));
       return;
     }
     const table = el("table", { class: "data" },

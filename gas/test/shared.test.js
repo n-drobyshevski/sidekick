@@ -158,7 +158,7 @@ registerEmptyStateContract({
   routes: [
     "executive", "mttr", "program", "overview", "data", "history", "attribution", "settings",
   ],
-  // The non-vacuity half: these five still carry the failure messages, on errorState. All
+  // The non-vacuity half: these seven still carry the failure messages, on errorState. All
   // seven "Couldn't …" call sites were emptyState before P4 — a crash announced through
   // `role="status"`, in the same dashed box the register uses for "no scan saved yet", with
   // the exception dropped on the floor rather than put in the disclosure.
@@ -174,10 +174,19 @@ registerEmptyStateContract({
   // now, which is the measurement: the route matches the carrier regex where it did not
   // before, and dropping it from this list to keep the test green would have re-hidden
   // exactly the surface the contract exists to find.
-  errorStateCarriers: ["executive", "mttr", "overview", "program", "data"],
-  // The two pages that render section-by-section behind a guard(), because they are the
-  // ones a single failing section must not blank.
-  guardedRoutes: ["executive", "program"],
+  //
+  // "history" AND "attribution" JOINED WITH P1.3. history.js had no errorState anywhere — a
+  // failed scan-history fetch and a failed trend fetch were each a bare `console.error`, so a
+  // page whose whole subject is what has been measured announced its own failures nowhere on
+  // screen at all. attribution.js had a page-level firstRunNotice and no errorState: seven
+  // section renderers, each able to throw on its own slice of the payload, all unguarded.
+  errorStateCarriers: ["executive", "mttr", "overview", "program", "data", "history", "attribution"],
+  // The four pages that render section-by-section behind a guard(), because they are the
+  // ones a single failing section must not blank. "mttr" and "attribution" joined with P1.3:
+  // mttr's hero/survival-curve/SLA-table/by-domain sections each read a different slice of
+  // two RPCs' payloads, and attribution's seven panels each read a different slice of one —
+  // in both, one section's throw used to take the whole page down with it.
+  guardedRoutes: ["executive", "program", "mttr", "attribution"],
   // THE FIELD NAME IS AN ARGUMENT NOW, so this list is no longer empty.
   //
   // It was `[]`, and the comment here was explicit that the pages DO say the ledger has not
@@ -192,19 +201,28 @@ registerEmptyStateContract({
   // "latestSync" fails both routes).
   syncField: "latestScan",
   //
-  // ONE ROUTE, NOT TWO, AND THAT IS A SECOND FINDING. The old comment named `data` and
-  // `attribution` as "the two pages that gate on it", and both do gate on `latestScan` — but
-  // neither reached for `firstRunNotice` at all; each had hand-rolled its own words. Only
-  // `attribution`'s was a PAGE-LEVEL first-run state, so only it is converted. `data`'s two
-  // are section notes inside Report and Export ("No scan saved yet — run a scan to generate a
-  // report"), which name the specific thing that section cannot do; replacing them with one
-  // page-wide notice would say less, in a bigger box, twice. Registering `data` here to make
-  // the list look symmetrical would be the tail wagging the page.
-  firstRunRoutes: ["attribution"],
-  // attribution.js's call renders only inside `if (!boot.latestScan)` — `synced: false` is a
-  // literal there, never a value derived at render time, so there is never a scan to date.
-  // Same shape as gas_devsecops's `data` route (`gas_devsecops/test/shared.test.js`).
-  firstRunNoAt: ["attribution"],
+  // FOUR MORE ROUTES JOINED WITH P1.3: `executive`, `mttr`, `overview`, `history`. Each used
+  // to say "nothing has been read yet" in its own hand-rolled words (or, on `executive`,
+  // three separate absences saying it three different ways) rather than through the one
+  // shared component every other first-run state on this page uses. `data`'s two remain
+  // deliberately unconverted — see below, unchanged from the original finding.
+  firstRunRoutes: ["attribution", "executive", "history", "mttr", "overview"],
+  // `data`'s two are section notes inside Report and Export ("No scan saved yet — run a scan
+  // to generate a report"), which name the specific thing that section cannot do; replacing
+  // them with one page-wide notice would say less, in a bigger box, twice. Registering `data`
+  // here to make the list look symmetrical would be the tail wagging the page.
+  //
+  // `attribution`, `executive` AND `overview` CANNOT CARRY A DATE, and for the same reason:
+  // each one's only `firstRunNotice(` call renders inside `if (!boot.latestScan)` (or its
+  // equivalent branch, on executive.js's page-level notice) — `synced: false` is a literal
+  // there, never a value derived at render time, so there is never a scan to date. Same shape
+  // as gas_devsecops's `data` route (`gas_devsecops/test/shared.test.js`).
+  // `mttr` and `history` are NOT here: both pass `at:` on the branch where a scan exists but
+  // tracked nothing (`synced: true`), so the contract's own regex finds a dated call in each
+  // file even though each ALSO carries an undated `synced: false` branch for the no-scan-at-
+  // all case — the check is file-level ("does this route ever date its notice"), not
+  // per-call, and both routes do.
+  firstRunNoAt: ["attribution", "executive", "overview"],
 });
 
 // =========================================================================================

@@ -16,7 +16,7 @@
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, firstRunNotice, fmtDate, glossaryTip, kpiCard, pageHeader, settingsPanel, statusPill, tableFooter, tip,
+  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, kpiCard, pageHeader, settingsPanel, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -167,9 +167,9 @@ export async function renderAttribution(main, params, ctx) {
         `scan from ${fmtDate(data.scan.ts)}.`));
     }
 
-    renderKpis(coverage, unassigned, untagged);
-    renderCoverageTable(coverage);
-    renderSupportGroupCoverage(supportGroups, sgMap);
+    guard("the coverage KPIs", () => renderKpis(coverage, unassigned, untagged));
+    guard("coverage by domain", () => renderCoverageTable(coverage));
+    guard("coverage by support group", () => renderSupportGroupCoverage(supportGroups, sgMap));
 
     // THE LEDGER LIST IS CHECKED BEFORE THE ALL-CLEAR, and that ordering is the whole point.
     // Every figure above is about the current scan, so an operator who has just fixed their
@@ -194,7 +194,7 @@ export async function renderAttribution(main, params, ctx) {
       bodyHost.append(el("p", { class: "section-note" },
         "Every finding in the current scan is attributed. The lifecycles below are not, and "
         + "they are the ones the MTTR by-domain split draws as Unassigned."));
-      renderUnassignedLedger(ledgerRows);
+      guard("unassigned lifecycles", () => renderUnassignedLedger(ledgerRows));
       return;
     }
 
@@ -206,10 +206,27 @@ export async function renderAttribution(main, params, ctx) {
     bodyHost.append(editorHost);
     const editor = renderDomainsEditor(editorHost, boot, ctx, { onCommitted: () => editor.save() });
 
-    renderUnassigned(unassigned, editor);
-    renderRuleHealth(ruleHealthRows, editor);
-    renderUntagged(untagged, sgMap);
-    renderUnassignedLedger(ledgerRows);
+    guard("unassigned resources", () => renderUnassigned(unassigned, editor));
+    guard("rule health", () => renderRuleHealth(ruleHealthRows, editor));
+    guard("untagged subscriptions", () => renderUntagged(untagged, sgMap));
+    guard("unassigned lifecycles", () => renderUnassignedLedger(ledgerRows));
+  }
+
+  // One failing panel must not blank the rest of the audit — each panel reads its own slice
+  // of the payload and the page is exactly the kind of one-throw-per-drawer surface
+  // gas_devsecops/pages/executive.js's `guard()` was written for. `bodyHost` rather than a
+  // per-panel host: unlike executive.js this page appends its panels straight into one
+  // stream rather than into pre-built section hosts, so a caught exception's errorState
+  // takes the exact spot the panel would have filled.
+  function guard(label, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[attribution] " + label + " render failed:", e);
+      bodyHost.append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
   }
 
   // ------------------------------------------------- unassigned lifecycles (ledger)

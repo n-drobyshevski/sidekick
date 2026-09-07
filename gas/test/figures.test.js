@@ -150,16 +150,21 @@ function forbiddenPatterns(src) {
 }
 
 /**
- * Pre-existing, OUT-OF-SCOPE hand-typed dashes this package's brief did not list
- * (`pages/data.js`, `pages/settings.js` — neither is one of the five files P1.1 names). Named
- * here rather than silently exempted: an allowlist that does not say WHY is indistinguishable
- * from a sweep nobody trusts, and an allowlist with no expected count would stop noticing a
- * SECOND dash added to the same file. `count` is the exact number of `"—"`/`'—'` occurrences
- * `code()`-stripped source carries today; a file dropping below its count is fine (progress),
- * a file exceeding it fails, same as an unlisted file would.
+ * Pre-existing, OUT-OF-SCOPE hand-typed dashes no package has swept yet.
+ * `pages/data.js`'s three (`${ep.oldest ? … : "—"}`, and its two siblings) were fixed by
+ * P1.3 — the compaction-preview sentences now take `absentText` like everything else in this
+ * file, so `data.js` carries no entry here any more, and a future dash in that file has
+ * nothing to hide behind. `pages/settings.js` is a different package's file (P1.3's brief:
+ * "leave settings.js's two" — MEASURED at one, not two, when this package actually counted;
+ * the discrepancy is recorded here rather than silently corrected on another package's file),
+ * so its one remaining dash stays allowlisted. Named here rather than silently exempted: an
+ * allowlist that does not say WHY is indistinguishable from a sweep nobody trusts, and an
+ * allowlist with no expected count would stop noticing a SECOND dash added to the same file.
+ * `count` is the exact number of `"—"`/`'—'` occurrences `code()`-stripped source carries
+ * today; a file dropping below its count is fine (progress), a file exceeding it fails, same
+ * as an unlisted file would.
  */
 const DASH_ALLOWLIST = new Map([
-  ["data.js", 3], // `${ep.oldest ? … : "—"}` compaction-preview sentences — not in P1.1's brief
   ["settings.js", 1], // the risk-backfill preview's `Floor: ${preview.floor_ts ?? "—"}`
 ]);
 

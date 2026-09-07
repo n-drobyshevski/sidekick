@@ -12,9 +12,9 @@ import {
 import { bootstrap } from "../../../../../gas_shared/store.js";
 import { purgeStatusView } from "../purgeStatus.js";
 import {
-  clear, confirmDialog, downloadText, el, emptyState, errorState, fmtDateTime, fmtSpan,
-  pageHeader, progressBar, scopeBar, sectionLabel, settingRow, settingsPanel,
-  switchToggle, toast,
+  absentText, clear, confirmDialog, downloadText, el, emptyState, errorState, fmtDateTime,
+  fmtSpan, pageHeader, progressBar, scopeBar, sectionLabel, segmented, settingRow,
+  settingsPanel, switchToggle, toast,
 } from "../ui.js";
 
 // A one-line description of the global scope a report/export is generated under, so a
@@ -116,23 +116,26 @@ function renderReportSection(main, boot, domain, supportGroup) {
   const domains = domain ? [domain] : [];
   const supportGroups = supportGroup ? [supportGroup] : [];
   let format = "markdown";
-  // A segmented toggle group (aria-pressed), not a radiogroup — the buttons are toggle
-  // buttons, so radiogroup semantics (role=radio + arrow keys) would misannounce them.
-  const controls = el("div", { class: "filter-bar", role: "group", "aria-label": "Report format" });
-  for (const [value, label] of [["markdown", "Markdown"], ["csv", "CSV"], ["json", "JSON"]]) {
-    const btn = el("button", {
-      class: "seg-btn", type: "button",
-      "aria-pressed": format === value ? "true" : "false",
-      onclick: () => {
-        format = value;
-        controls.querySelectorAll("button.seg-btn").forEach((b) =>
-          b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
-      },
-    }, label);
-    controls.append(btn);
-  }
+  // The shared segmented() control, replacing a hand-rolled .filter-bar of .seg-btn buttons —
+  // aria-pressed, not a radiogroup: the buttons are toggle buttons, so radiogroup semantics
+  // (role=radio + arrow keys) would misannounce them.
+  const formatToggle = segmented({
+    options: [
+      { value: "markdown", label: "Markdown" },
+      { value: "csv", label: "CSV" },
+      { value: "json", label: "JSON" },
+    ],
+    value: format,
+    ariaLabel: "Report format",
+    // Nothing else re-renders on a format pick — unlike every OTHER converted toggle on this
+    // page, which rebuilds its whole section and so gets a fresh, correctly-pressed
+    // `segmented()` for free. `format` only feeds the Generate button's click handler, so
+    // the toggle has to reflect the pick itself via `.set()`, or the pressed state would
+    // freeze on "Markdown" forever while `format` silently changed underneath it.
+    onChange: (v) => { format = v; formatToggle.set(v); },
+  });
   const generateBtn = el("button", { class: "primary", onclick: generate }, "Generate & download");
-  controls.append(generateBtn);
+  const controls = el("div", { class: "filter-bar" }, formatToggle, generateBtn);
 
   main.append(
     el("p", { class: "muted small", style: "margin:-2px 0 8px" },
@@ -714,15 +717,15 @@ function renderMaintenanceSection(main, boot, ctx) {
     const ep = preview.episodes;
     episodeCounts.textContent = ep.rows
       ? `${ep.rows.toLocaleString()} episode(s) — ${bySeverityLine(order, ep.bySeverity)}. ` +
-        `Oldest ${ep.oldest ? ep.oldest.slice(0, 10) : "—"}, newest ` +
-        `${ep.newest ? ep.newest.slice(0, 10) : "—"}. ${ep.remaining.toLocaleString()} would remain.`
+        `Oldest ${ep.oldest ? ep.oldest.slice(0, 10) : absentText}, newest ` +
+        `${ep.newest ? ep.newest.slice(0, 10) : absentText}. ${ep.remaining.toLocaleString()} would remain.`
       : "No episodes are old enough to prune.";
     episodeBtn.disabled = !ep.rows;
     episodeBtn.textContent = ep.rows ? `Prune ${ep.rows.toLocaleString()} episode(s)…` : "Prune episodes…";
 
     const h = preview.history;
     historyCounts.textContent = h.rows
-      ? `${h.rows.toLocaleString()} snapshot(s) before ${h.oldest ? h.oldest : "—"}… ` +
+      ? `${h.rows.toLocaleString()} snapshot(s) before ${h.oldest ? h.oldest : absentText}… ` +
         `${h.remaining.toLocaleString()} would remain.`
       : "No snapshots are old enough to trim.";
     historyBtn.disabled = !h.rows;

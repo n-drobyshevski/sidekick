@@ -28,8 +28,8 @@
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { kmHalfLifeView } from "./mttr.js";
 import {
-  clear, dataTable, el, emptyState, errorState, fmtDateTime, fmtSpan, glossaryTip,
-  heroLines,
+  clear, dataTable, el, emptyState, errorState, firstRunNotice, fmtDateTime, fmtSpan,
+  glossaryTip, heroLines,
   num, pageHeader, scopeBar, sectionLabel, skeleton, statusPill, tip, tipAnchor,
 } from "../ui.js";
 
@@ -240,11 +240,26 @@ export async function renderExecutive(main, _params, ctx) {
 
   // Section hosts, painted below. Order = visual hierarchy: the headline MTTR, then the
   // scan action, then open risk, then the per-domain split.
+  const noticeHost = el("div", {});
   const heroHost = el("div", { class: "exec-hero" });
   const scanHost = el("div", { class: "exec-scan" });
   const sevHost = el("div", {});
   const byDomainHost = el("div", {});
-  page.append(heroHost, scanHost, sevHost, byDomainHost);
+  page.append(noticeHost, heroHost, scanHost, sevHost, byDomainHost);
+
+  // INTERIM: this page is rewritten whole in a later package. Until then, the one thing it
+  // owes a reader whose ledger has never been read is the shared first-run notice rather
+  // than three separate absences saying it three different ways — "No scan saved yet." on
+  // the scan caption, "No lifecycle data yet." on the hero, and a row of severity tiles
+  // reading a confident 0 off an empty `boot.openCounts`. All three are suppressed below
+  // in favour of this one line; the by-domain table already suppresses itself (no rows).
+  if (!boot.latestScan) {
+    noticeHost.append(firstRunNotice({
+      synced: false,
+      hint: "Run a scan — the Run scan button below, or in the sidebar — to take the first "
+        + "measurement.",
+    }));
+  }
 
   // This is the default landing page, so a single failing section must never blank the whole
   // view. Each section renders inside a guard: on error it logs a tagged trace (so a recurrence
@@ -310,6 +325,10 @@ export async function renderExecutive(main, _params, ctx) {
   // the figure was measured over so the number is never shown without its base.
   function renderHero(mttr, weekTrend) {
     clear(heroHost);
+    // SUPPRESSED, not dashed: the page-level first-run notice above already says the ledger
+    // has never been read, and a second "No lifecycle data yet." box under it would say the
+    // same thing twice in two different voices.
+    if (!boot.latestScan) return;
     if (!mttr || !mttr.rowCount) {
       heroHost.append(emptyState(
         "No lifecycle data yet.",
@@ -366,9 +385,9 @@ export async function renderExecutive(main, _params, ctx) {
         el("div", { class: "scan-caption" },
           `Last scan ${fmtDateTime(boot.latestScan.ts)}` + (age >= 2 ? ` — ${age} days ago` : "")),
       );
-    } else {
-      scanHost.append(el("div", { class: "scan-caption" }, "No scan saved yet."));
     }
+    // No caption here on first run: the page-level first-run notice above already says "No
+    // scan has run yet" — this button is exactly what it points a reader at.
     scanHost.append(runBtn);
     // Honest state: name the dry-run when there are no Wiz credentials, so the numbers above
     // aren't mistaken for a live register (matches the sidebar's credentials pill).
@@ -390,6 +409,10 @@ export async function renderExecutive(main, _params, ctx) {
   // Critical tile, not the full selectable breakdown.
   function renderSeverity(data) {
     clear(sevHost);
+    // SUPPRESSED on first run: `boot.openCounts` is empty before the first scan, so these
+    // tiles would otherwise print a confident 0 per severity — the page-level notice above
+    // already says nothing has been measured.
+    if (!boot.latestScan) return;
     const view = executiveSeverityView({
       order: boot.palette.order,
       scope: sevScope,
@@ -424,6 +447,9 @@ export async function renderExecutive(main, _params, ctx) {
   // Which dimension, and whether there is a split worth drawing at all, is executiveByDomainView.
   function renderByDomain(byDomain) {
     clear(byDomainHost);
+    // SUPPRESSED on first run, same as the hero and the severity tiles above — belt-and-
+    // braces alongside `executiveByDomainView`'s own no-rows guard.
+    if (!boot.latestScan) return;
     const view = executiveByDomainView(byDomain, { domainNames: boot.domainNames });
     if (!view.show) return;
 

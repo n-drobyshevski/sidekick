@@ -7,9 +7,9 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import { fmtPct } from "./_rates.js";
 import {
-  absent, absentText, changeChip, clear, dataTable, el, emptyState, errorState, fmtDays,
-  fmtSpan, glossaryTip, num, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge, skeleton,
-  tip,
+  absent, absentText, changeChip, clear, dataTable, el, emptyState, errorState, firstRunNotice,
+  fmtDays, fmtSpan, glossaryTip, num, openSheet, pageHeader, scopeBar, sectionLabel, segmented,
+  sevBadge, skeleton, tip,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -108,18 +108,19 @@ function savePref(key, value) {
   }
 }
 
-// A compact two-option segmented toggle, reusing the exact .seg-row / .seg-btn--sm /
-// aria-pressed pattern as the Trends timeframe and survival-window controls (no invented
-// control — DESIGN.md "earned familiarity"). `options` is [[label, value], …]; `onPick`
-// gets the chosen value and is expected to persist + repaint.
+// A compact toggle over a small option set — a thin wrapper over the shared segmented()
+// control (gas_shared/ui/controls.js) rather than the hand-rolled .seg-row / .seg-btn--sm
+// pair this used to build directly. Every call site below re-renders its whole section on
+// a pick, so the fresh `segmented()` node the next render builds is enough; nothing here
+// needs `.set()`. `options` is [[label, value], …]; `onPick` gets the chosen value and is
+// expected to persist + repaint.
 function toggleRow(ariaLabel, options, current, onPick) {
-  return el("div", { class: "seg-row", role: "group", "aria-label": ariaLabel },
-    ...options.map(([label, value]) =>
-      el("button", {
-        type: "button", class: "seg-btn seg-btn--sm",
-        "aria-pressed": String(value === current),
-        onclick: () => onPick(value),
-      }, label)));
+  return segmented({
+    options: options.map(([label, value]) => ({ value, label })),
+    value: current,
+    ariaLabel,
+    onChange: onPick,
+  });
 }
 
 // A chart card whose title row can carry an inline toggle on the right (via .chart-head)
@@ -519,6 +520,21 @@ export async function renderMttr(main, _params, ctx) {
   }
 
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas_devsecops/pages/executive.js uses: try/render, and on a throw the section's own host
+  // gets `errorState` — an alert with a "Technical details" disclosure — rather than the
+  // page silently dropping content or the whole route dying on one section's exception.
+  function guard(label, host, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[mttr] " + label + " render failed:", e);
+      clear(host).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   async function load() {
     // Put every section into a pending state before the await, so a severity change never
     // leaves the charts / SLA table showing the old scope's numbers. The skeleton mirrors the
@@ -557,11 +573,16 @@ export async function renderMttr(main, _params, ctx) {
       const plan = mttrPaintPlan({
         mttr, page: pageData, pagePainted, summaryChanged, pageChanged, scoped: chipsSuppressed(),
       });
-      if (plan.hero) renderHero(mttr, plan.historyChips ? pageData.trends : { history: [] });
-      if (plan.survival) renderSurvivalCurve(mttr);
-      if (plan.sla) renderSla(mttr);
+      if (plan.hero) {
+        guard("the MTTR hero", heroHost,
+          () => renderHero(mttr, plan.historyChips ? pageData.trends : { history: [] }));
+      }
+      if (plan.survival) guard("the distribution", survivalHost, () => renderSurvivalCurve(mttr));
+      if (plan.sla) guard("the SLA table", slaHost, () => renderSla(mttr));
       if (plan.charts) renderCharts(pageData.trends, mttr);
-      if (plan.byDomain) renderByDomain(pageData.byDomain, mttr);
+      if (plan.byDomain) {
+        guard("the by-domain breakdown", byDomainHost, () => renderByDomain(pageData.byDomain, mttr));
+      }
       if (plan.charts || plan.byDomain) pagePainted = true;
     };
     const onSummary = (next) => { if (next) { mttr = next; apply({ summaryChanged: true }); } };
@@ -748,28 +769,23 @@ export async function renderMttr(main, _params, ctx) {
         });
       }
 
-      // KM ⇄ Naive clock toggle for the by-domain line — same .seg-row/.seg-btn--sm pattern as
-      // the "MTTR over time" card. Buttons hold their own refs so a pick can flip aria-pressed and
-      // repaint the one canvas without rebuilding the sheet.
-      const kmClockBtn = el("button", {
-        type: "button", class: "seg-btn seg-btn--sm",
-        "aria-pressed": String(byDomainClock === "km"), onclick: () => pickClock("km"),
-      }, "KM");
-      const naiveClockBtn = el("button", {
-        type: "button", class: "seg-btn seg-btn--sm",
-        "aria-pressed": String(byDomainClock === "naive"), onclick: () => pickClock("naive"),
-      }, "Naive");
+      // KM ⇄ Naive clock toggle for the by-domain line — the shared segmented() control, same
+      // as the "MTTR over time" card. Repaints the one canvas via `.set()` rather than
+      // rebuilding the whole sheet, unlike every OTHER toggle on this page.
+      const lineToggle = canToggleClock
+        ? segmented({
+          options: [{ value: "km", label: "KM" }, { value: "naive", label: "Naive" }],
+          value: byDomainClock,
+          ariaLabel: `MTTR by ${dim.noun} clock`,
+          onChange: pickClock,
+        })
+        : null;
       function pickClock(v) {
         byDomainClock = v;
         savePref("mttrByDomainClock", v);
-        kmClockBtn.setAttribute("aria-pressed", String(v === "km"));
-        naiveClockBtn.setAttribute("aria-pressed", String(v === "naive"));
+        if (lineToggle) lineToggle.set(v);
         paintLine();
       }
-      const lineToggle = canToggleClock
-        ? el("div", { class: "seg-row", role: "group", "aria-label": `MTTR by ${dim.noun} clock` },
-          kmClockBtn, naiveClockBtn)
-        : null;
       const lineHelp = [
         `KM: Kaplan–Meier median days from first detection to remediation per ${dim.noun}, replayed `
           + "as of each scan; still-open findings censored, so a wave of fresh open findings can't "
@@ -1068,10 +1084,23 @@ export async function renderMttr(main, _params, ctx) {
   function renderHero(mttr, trends) {
     clear(heroHost);
     if (!mttr.rowCount) {
-      heroHost.append(emptyState(
-        "No lifecycle data yet.",
-        "MTTR needs at least one saved scan with resolved findings.",
-      ));
+      if (!boot.latestScan) {
+        // Nothing has been READ yet — the shared first-run notice, not this page's own words
+        // for the same state.
+        heroHost.append(firstRunNotice({
+          synced: !!boot.latestScan,
+          at: boot.latestScan?.ts,
+          hint: "MTTR needs at least one saved scan with resolved findings.",
+        }));
+      } else {
+        // A scan exists but tracked no lifecycle this page can measure MTTR over — a
+        // structural absence (the register may genuinely have nothing resolved yet), not a
+        // claim that the ledger has never been read.
+        heroHost.append(emptyState(
+          "No lifecycle data yet.",
+          "MTTR needs at least one saved scan with resolved findings.",
+        ));
+      }
       return;
     }
     const hist = trends.history;
@@ -1237,13 +1266,15 @@ export async function renderMttr(main, _params, ctx) {
         }));
     }
     if (mode === "survival") {
-      controls.append(el("div", { class: "seg-row", role: "group", "aria-label": "Survival window" },
-        ...SURVIVAL_WINDOWS.map(([label, weeks]) =>
-          el("button", {
-            type: "button", class: "seg-btn seg-btn--sm",
-            "aria-pressed": String(weeks === survivalWeeks),
-            onclick: () => { survivalWeeks = weeks; saveSurvivalWeeks(label); renderSurvivalCurve(mttr); },
-          }, label))));
+      controls.append(segmented({
+        options: SURVIVAL_WINDOWS.map(([label, weeks]) => ({ value: weeks, label })),
+        value: survivalWeeks,
+        ariaLabel: "Survival window",
+        onChange: (weeks) => {
+          const label = SURVIVAL_WINDOWS.find(([, w]) => w === weeks)[0];
+          survivalWeeks = weeks; saveSurvivalWeeks(label); renderSurvivalCurve(mttr);
+        },
+      }));
     }
     survivalHost.append(el("div", { class: "section-head" },
       sectionLabel("Distribution"), controls));
@@ -1306,16 +1337,18 @@ export async function renderMttr(main, _params, ctx) {
       ? null
       : { min: Math.floor(cutoff / 86400000), max: Math.floor(Date.now() / 86400000) };
 
-    // Compact timeframe toggle inline with the section label. aria-pressed toggle
-    // buttons, not a radiogroup — the same segmented pattern as the report-format and
-    // oldest-open controls. Clicking repaints from the closed-over payload.
-    const segRow = el("div", { class: "seg-row", role: "group", "aria-label": "Trends timeframe" },
-      ...TREND_WINDOWS.map(([label, days]) =>
-        el("button", {
-          type: "button", class: "seg-btn seg-btn--sm",
-          "aria-pressed": String(days === trendWindowDays),
-          onclick: () => { trendWindowDays = days; saveTrendWindow(label); renderCharts(trends, mttr); },
-        }, label)));
+    // Compact timeframe toggle inline with the section label — the shared segmented()
+    // control, not a radiogroup: the buttons are toggle buttons, not mutually exclusive
+    // radios in the ARIA sense. Clicking repaints from the closed-over payload.
+    const segRow = segmented({
+      options: TREND_WINDOWS.map(([label, days]) => ({ value: days, label })),
+      value: trendWindowDays,
+      ariaLabel: "Trends timeframe",
+      onChange: (days) => {
+        const label = TREND_WINDOWS.find(([, d]) => d === days)[0];
+        trendWindowDays = days; saveTrendWindow(label); renderCharts(trends, mttr);
+      },
+    });
     const sectionHead = el("div", { class: "section-head" }, sectionLabel("Trends"), segRow);
 
     // With the vendor-fix filter off, mttr_history's snapshots were captured before any
