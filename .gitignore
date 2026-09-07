@@ -70,8 +70,10 @@ skills-lock.json
 # design-sync (claude.ai/design)
 .ds-sync/
 ds-bundle/
-.design-sync/.cache/
-.design-sync/learnings/
-.design-sync/node_modules
-.design-sync/adapter/node_modules
-.design-sync/adapter/dist/
+# The WHOLE tree, not the curated subset this used to list (.cache/, learnings/,
+# node_modules, adapter/dist/). It is local tooling: the adapter reads gas_ai's stylesheets
+# and REGENERATES its own outputs, so the tracked copies were a snapshot that drifted from
+# whatever the last run produced — `shared-extras.css` and the generated `docs/` churned on
+# every run and had to be kept out of every unrelated commit by hand. The 150 files it
+# tracked were untracked in the same commit that added this line; they remain on disk.
+.design-sync/
