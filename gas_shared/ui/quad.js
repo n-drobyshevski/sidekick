@@ -27,6 +27,15 @@
 // `test/pagesLit.test.js` (4/7) against any severity spelling in its executable code, and
 // the secrets triage cross is the first thing this module was written for. A severity axis
 // crossed with anything else would be a different component.
+//
+// ONE DEFINITION CONTROL, ONE ACTION CONTROL, PER CORNER — never more. The corner's `label`
+// is its one DEFINITION: what the cell means, carried as a `tipLabel` trigger and never as
+// anything else. `quadTable`'s `cellAction` is the corner's one ACTION: what a reader can DO
+// with what it counts — open the findings behind it, typically — appended after the share
+// line and before the caller's own alarm chip. A fixed 2x2 stays bounded at two tab stops
+// per corner (eight, worst case) whether or not a page uses the second one, which is why
+// `cellAction` is additive rather than a reason to reconsider the one-control argument the
+// label already made for itself.
 
 import { el } from "./dom.js";
 import { absentText, fmtCount, num, pct1 } from "./figures.js";
@@ -189,15 +198,27 @@ function ariaSentence(rows, cols, corners, total, unit) {
  * are the point does. The trigger sits on the corner's LABEL, never on its number: a
  * definition is a control, a value is not.
  *
+ * `cellAction` KEEPS THAT SPLIT RATHER THAN BLURRING IT: the label stays the corner's one
+ * DEFINITION control (what does this cell mean), and `cellAction` is the corner's one ACTION
+ * control (do something with what it counts — open the findings behind it, typically). Two
+ * tab stops per corner, eight worst case, is still bounded for a grid that is always 2x2 —
+ * the same arity argument the paragraph above already makes for the label alone, extended by
+ * exactly one control rather than relaxed.
+ *
  * @param {object} model  the output of `quadModel`
  * @param {object} [opts]
  * @param {string} [opts.ariaLabel]  a short name for the table ("Removed is not rotated").
  *   Falls back to `model.aria`, so a table always has an accessible name.
  * @param {Function} [opts.cellHelp]  `(corner) => help` in any `tipLabel` shape. Defaults to
  *   whatever `help` the corner already carries from the model.
+ * @param {Function} [opts.cellAction]  `(corner) => Node | null`. Appended after the share
+ *   line and before the caller's own alarm chip. Returning `null` — an empty corner with
+ *   nothing to open, say — draws nothing. Omitted entirely, the default, draws nothing
+ *   either: the DOM this function produces with no `cellAction` given is byte-identical to
+ *   what it produced before this option existed.
  */
 export function quadTable(model, opts = {}) {
-  const { ariaLabel = "", cellHelp = (c) => c.help } = opts;
+  const { ariaLabel = "", cellHelp = (c) => c.help, cellAction = null } = opts;
   const { rows, cols, corners } = model;
   const at = (row, col) => corners.find((c) => c.row === row && c.col === col);
 
@@ -213,8 +234,8 @@ export function quadTable(model, opts = {}) {
 
   const body = [true, false].map((row) => el("tr", {},
     el("th", { scope: "row" }, row ? rows.yes : rows.no),
-    cellNode(at(row, true), cellHelp),
-    cellNode(at(row, false), cellHelp),
+    cellNode(at(row, true), cellHelp, cellAction),
+    cellNode(at(row, false), cellHelp, cellAction),
   ));
 
   return el("table", { class: "quad", "aria-label": ariaLabel || model.aria },
@@ -223,13 +244,19 @@ export function quadTable(model, opts = {}) {
   );
 }
 
-function cellNode(corner, cellHelp) {
+function cellNode(corner, cellHelp, cellAction) {
   const help = cellHelp ? cellHelp(corner) : null;
   const cell = el("td", { class: "quad-cell", "data-tone": corner.tone },
     el("span", { class: "quad-num num" }, corner.countText),
     el("span", { class: "quad-label" }, help ? tipLabel(corner.label, help) : corner.label),
     el("span", { class: "quad-share num" }, corner.shareText),
   );
+  // The corner's own action, between its reading and the caller's state — after `cellHelp`
+  // (a chip is a value; the action opens the values behind it), before `alarm`. `cellAction`
+  // is null by default, so a caller that never passes it gets exactly the three children
+  // above, unchanged — this is the one line the default path adds, and it is a no-op.
+  const action = cellAction ? cellAction(corner) : null;
+  if (action) cell.append(action);
   // The caller's own chip, appended rather than built: whether a corner is an ALARM is the
   // page's claim about its own population, and the chip already carries that page's word for
   // it. Nothing here invents a second vocabulary for the same state.

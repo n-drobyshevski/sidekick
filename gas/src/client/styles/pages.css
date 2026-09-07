@@ -601,57 +601,12 @@ dialog.domains-dialog .dialog-preview {
   margin-top: var(--space-3);
 }
 
-/* The confusion matrix. Row headers carry the classification, column headers the outcome,
-   so each cell's meaning is readable from its position alone — no colour coding. */
-.prog-matrix th[scope="row"] {
-  font-weight: var(--fw-semibold);
-  color: var(--ink);
-  white-space: nowrap;
-}
-.prog-matrix td { padding: 0; }
-.prog-matrix td:last-child { padding: 10px var(--space-3); }
-/* The unclassified row sits below a heavier rule: outside the 2x2, not a fifth quadrant. */
-.prog-unknown-row > * { border-top: 2px solid var(--hairline); }
-.prog-unknown-row th[scope="row"] { color: var(--text-2); font-weight: var(--fw-medium); }
-
-/* Each matrix cell is a button into the findings behind it — the drill-down that makes the
-   count checkable. Full-bleed inside its td so the whole cell is the hit target. */
-.prog-cell {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
-  width: 100%;
-  padding: 10px var(--space-3);
-  background: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  text-align: left;
-  cursor: pointer;
-  min-height: 0;
-  height: auto;
-}
-/* Was `var(--surface-1, rgba(0, 0, 0, 0.03))`, and --surface-1 has never existed in any of
-   the three token files — so the fallback was doing all the work under a name that read
-   like a token. --wash-hover IS the named neutral hover ground (rgba(0,0,0,.045)); the
-   0.015 alpha step is the only visible part of the correction. */
-.prog-cell:hover:not(:disabled) { background: var(--wash-hover); }
-.prog-cell:disabled { cursor: default; opacity: 0.55; }
-.prog-cell:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
-.prog-cell-count { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); line-height: 1.1; }
-.prog-cell-word { font-size: var(--fs-label); color: var(--text-3); }
-/* TP/FP/FN/TN kept as a subordinate tag beside the plain-English label — present for the
-   reader who knows the shorthand, never the only cue for the reader who doesn't. */
-.prog-cell-abbr {
-  font-size: var(--fs-micro);
-  font-weight: var(--fw-hero);
-  letter-spacing: 0.06em;
-  color: var(--text-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-xs);
-  padding: 0 var(--space-1);
-  margin-right: 6px;
-}
+/* The confusion matrix is `gas_shared/ui/quad.js`'s cross now (`.quad`/`.quad-cell`/
+   `.quad-label`/etc., `gas_shared/styles/components.css`) — the hand-built `.prog-matrix`
+   table, its `.prog-cell` buttons and the `.prog-unknown-row` beneath them are gone with it.
+   `.quad-action`, just below, is the one rule this page still owns for that grid: the
+   corner's own drill-down button, a small `linklike` under the share line. */
+.quad-action { display: block; margin-top: var(--space-half); }
 
 /* The classifier card: the rule as a sentence, then its clauses with their hit counts. */
 .prog-rule-card {
