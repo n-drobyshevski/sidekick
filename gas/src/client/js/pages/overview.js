@@ -23,11 +23,12 @@ import {
 } from "../charts.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { populationLine, slaConsumedCaption } from "./overviewModel.js";
+import { agingTableModel, pieTableModel, trendTableModel } from "./_charts.js";
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, dataTable, days1, el, emptyState, errorState, firstRunNotice, fmtDate, fmtDays,
-  glossaryTip, kpiCard, measuredEmpty, num, nvdUrl, openSheet, pageHeader, scopeBar, segmented,
-  sectionLabel, skeleton, tableFooter, tip, tipAnchor, tipLabel,
+  absent, chartTable, clear, dataTable, days1, el, emptyState, errorState, firstRunNotice,
+  fmtDate, fmtDays, glossaryTip, kpiCard, measuredEmpty, num, nvdUrl, openSheet, pageHeader,
+  scopeBar, segmented, sectionLabel, skeleton, tableFooter, tip, tipAnchor, tipLabel,
 } from "../ui.js";
 
 // Rows per page in the "Oldest open findings" panel's pagination. The server ships
@@ -504,6 +505,29 @@ export async function renderOverview(main, params, ctx) {
       pending.push({ canvas, series, tier });
     }
     card.append(grid);
+    // ONE TABLE FOR THE WHOLE GRID, NOT FIVE. All five small multiples share one x axis — the
+    // same `trend` array each tier's own `series` above is read from — so a `trendTableModel`
+    // over `trend` itself (one date column, one column per tier) is the row-for-row reading of
+    // every sparkline at once. Five near-identical two-column "Point"/"Value" disclosures beside
+    // a grid this compact would be noise: a reader who opens one learns nothing the next four
+    // don't repeat, and the shared date each tier's series doesn't carry on its own is lost the
+    // moment it is split five ways. `aria-details` is wired to the GRID, not to any one tier's
+    // canvas — a long description naming five series belongs to the group of pictures, not to
+    // one of them. And unlike each tier's own `series` (which reads a missing count as `0` so
+    // the chart has something to plot), this table reads `byGroup[tier]` directly and prints a
+    // genuinely unmeasured point as the em dash — the more honest of the two readings, which is
+    // exactly what a data-table alternative is for.
+    card.append(chartTable({
+      canvas: grid,
+      caption: "Every point of the five lines above: date, and each tier's open-finding count "
+        + "on that date.",
+      model: trendTableModel(trend, TIER_ORDER.map((tier) => ({
+        key: tier,
+        label: TIER_LABELS[tier],
+        format: "count",
+        value: (p) => (p && p.byGroup ? (p.byGroup[tier] ?? null) : null),
+      }))),
+    }));
     loadCharts().then((charts) => {
       for (const { canvas, series, tier } of pending) {
         charts.sparkline(canvas, series, {
@@ -563,6 +587,13 @@ export async function renderOverview(main, params, ctx) {
         "SLA is measured on the vendor-fix clock, so a finding still awaiting a patch is not "
         + "counted as a breach. Rows with no recorded age are omitted from the bars, which is "
         + "why this total can trail the open count above."),
+      // The same `AGE_LABELS` / `aging.perTier` the wrapper below is handed, named once here.
+      chartTable({
+        canvas,
+        caption: "Every bar of the stack as a count: one row per age bucket, one column per "
+          + "risk tier drawn.",
+        model: agingTableModel(AGE_LABELS, aging.perTier, TIER_ORDER, "Age"),
+      }),
     ));
     loadCharts().then((charts) => {
       charts.stackedAgeBar(
@@ -646,6 +677,17 @@ export async function renderOverview(main, params, ctx) {
         + "placed by the tenth of it they have consumed and split by severity."),
       el("div", { class: "chart-box" }, canvas),
       el("p", { class: "chart-caption muted" }, slaConsumedCaption(consumed)),
+      // The same `consumed.labels` / `consumed.perSev` the wrapper below is handed, named once
+      // here — `ui/chartTable.js`'s one rule. `agingTableModel` is generic over its label
+      // array; the header word is passed because these labels are tenths, not age buckets.
+      chartTable({
+        canvas,
+        caption: "Every bar of the stack as a count: one row per tenth of the SLA window "
+          + "consumed, one column per severity drawn.",
+        model: agingTableModel(
+          consumed.labels, consumed.perSev, boot.palette.order, "Tenth of window consumed",
+        ),
+      }),
     ));
     loadCharts().then((charts) => {
       charts.stackedAgeBar(
@@ -865,6 +907,14 @@ export async function renderOverview(main, params, ctx) {
         x: p.date,
         y: Object.values(p.bySev || {}).reduce((a, b) => a + (b || 0), 0),
       }));
+      // `points` — the same array the wrapper below is handed — read once, into both.
+      card.append(chartTable({
+        canvas,
+        caption: "Every point of the line above: date and total open findings.",
+        model: trendTableModel(points, [
+          { key: "y", label: "Open findings", format: "count" },
+        ], { dateKey: "x" }),
+      }));
       loadCharts().then((charts) => {
         charts.trendLine(canvas, points, { yLabel: "Open findings" });
       }).catch(() => {
@@ -971,18 +1021,20 @@ export async function renderOverview(main, params, ctx) {
     const pieCanvas = el("canvas", {});
     const pieMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const pieCaption = el("p", { class: "chart-caption muted" });
+    const pieTableHost = el("div", {});
     const lineCanvas = el("canvas", {});
     const lineMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     const lineCaption = el("p", { class: "chart-caption muted" });
+    const lineTableHost = el("div", {});
     const chartGrid = el("div", { class: "chart-grid", style: "align-items:start" },
       el("div", { class: "chart-card" },
         el("h3", {}, "Group share"),
         el("div", { class: "chart-box" }, pieCanvas, pieMsg),
-        pieCaption),
+        pieCaption, pieTableHost),
       el("div", { class: "chart-card" },
         el("h3", {}, "Group trend"),
         el("div", { class: "chart-box" }, lineCanvas, lineMsg),
-        lineCaption),
+        lineCaption, lineTableHost),
     );
     host.append(controls, chartGrid, tableHost);
     renderControls();
@@ -1022,12 +1074,19 @@ export async function renderOverview(main, params, ctx) {
       pieCaption.textContent = "Open findings by " + dimLabel + ", this scan.";
       if (!head.length) {
         showMsg(pieCanvas, pieMsg, "No open findings to partition.");
+        clear(pieTableHost);
       } else {
         const slices = head.map((n) => ({ label: n.key, value: n.open, color: colors.get(n.key) }));
         if (tailOpen > 0) {
           slices.push({ label: "Other", value: tailOpen, color: colors.get("Other") });
         }
         showChart(pieCanvas, pieMsg);
+        // `slices` — the same array the wrapper below is handed — read once, into both.
+        clear(pieTableHost).append(chartTable({
+          canvas: pieCanvas,
+          caption: "Every slice of the pie above: group, count and share of the total.",
+          model: pieTableModel(slices),
+        }));
         loadCharts().then((charts) => {
           charts.groupPie(pieCanvas, slices);
         }).catch(() => {
@@ -1042,10 +1101,12 @@ export async function renderOverview(main, params, ctx) {
       // still renders from the current scan.
       if (key0 === "os") {
         showMsg(lineCanvas, lineMsg, "Historical trend isn't available for operating system.");
+        clear(lineTableHost);
         return;
       }
       if (!names.length) {
         showMsg(lineCanvas, lineMsg, "No groups to trend.");
+        clear(lineTableHost);
         return;
       }
       const series = head.map((n) => ({ name: n.key, color: colors.get(n.key) }));
@@ -1058,10 +1119,24 @@ export async function renderOverview(main, params, ctx) {
         if (key0 !== groupKeys[0]) return; // a newer top-level selection superseded this
         if (!td || td.supported === false) {
           showMsg(lineCanvas, lineMsg, "Historical trend isn't available for this grouping.");
+          clear(lineTableHost);
         } else if (!td.points || td.points.length < 2) {
           showMsg(lineCanvas, lineMsg, "Trend appears after the second scan.");
+          clear(lineTableHost);
         } else {
           showChart(lineCanvas, lineMsg);
+          // `td.points` / `series` — the same references the wrapper below is handed.
+          clear(lineTableHost).append(chartTable({
+            canvas: lineCanvas,
+            caption: "Every point of the lines above: date and each group's open-finding "
+              + "count.",
+            model: trendTableModel(td.points, series.map((s) => ({
+              key: s.name,
+              label: s.name,
+              format: "count",
+              value: (p) => (p && p.byGroup ? (p.byGroup[s.name] ?? null) : null),
+            }))),
+          }));
           loadCharts().then((charts) => {
             charts.groupTrendLines(lineCanvas, td.points, series);
           }).catch(() => {
@@ -1072,6 +1147,7 @@ export async function renderOverview(main, params, ctx) {
       loadTrend();
       async function loadTrend() {
         showMsg(lineCanvas, lineMsg, "Loading trend…");
+        clear(lineTableHost);
         try {
           paintTrend(await swrCall("api_getGroupTrend", params, paintTrend));
         } catch (e) {

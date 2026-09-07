@@ -6,10 +6,11 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
 import { fmtPct } from "./_rates.js";
+import { agingTableModel, barsTableModel, trendTableModel } from "./_charts.js";
 import {
-  absent, absentText, changeChip, clear, dataTable, el, emptyState, errorState, firstRunNotice,
-  fmtDays, fmtSpan, glossaryTip, num, openSheet, pageHeader, scopeBar, sectionLabel, segmented,
-  sevBadge, skeleton, tip,
+  absent, absentText, changeChip, chartTable, chartTableModel, clear, dataTable, el, emptyState,
+  errorState, firstRunNotice, fmtDays, fmtSpan, glossaryTip, num, openSheet, pageHeader,
+  scopeBar, sectionLabel, segmented, sevBadge, skeleton, survivalTableModel, tip,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -126,12 +127,17 @@ function toggleRow(ariaLabel, options, current, onPick) {
 // A chart card whose title row can carry an inline toggle on the right (via .chart-head)
 // and whose title can be a helpTip (methodology moves off the always-on caption onto a
 // hover, matching the table columns' convention). `box` is the .chart-box element.
+//
+// `opts.table` IS THE CANVAS'S DATA-TABLE ALTERNATIVE — a `chartTable(...)` node, appended
+// after `box`. This is the ONE `.chart-card` shape this page uses; a caller that needs a
+// table hands it here rather than this file growing a second card-building function the way
+// gas_devsecops's `chartCard` (ported, unused, into `./_charts.js`) already is one.
 function chartCard(title, box, opts = {}) {
   const h3 = opts.helpLines
     ? el("h3", {}, tip(title, opts.helpLines))
     : el("h3", {}, title);
   const head = opts.toggle ? el("div", { class: "chart-head" }, h3, opts.toggle) : h3;
-  return el("div", { class: "chart-card" }, head, box);
+  return el("div", { class: "chart-card" }, head, box, opts.table || null);
 }
 
 // ------------------------------------------------------------------------- view models
@@ -661,6 +667,12 @@ export async function renderMttr(main, _params, ctx) {
     const medianMsg = el("p", { class: "chart-empty muted", style: "display:none" });
     // The two lenses (contribution / median) share one switchable card, so they share one caption.
     const lensCaption = el("p", { class: "chart-caption muted" });
+    // Each canvas's data-table alternative gets its own host, rebuilt on every paint alongside
+    // the message-swap above — a `chartTable` built once from a stale `impactRows`/`medianRows`
+    // would drift the moment a fresh trend arrives or the lens swaps.
+    const lineTableHost = el("div", {});
+    const impactTableHost = el("div", {});
+    const medianTableHost = el("div", {});
 
     // Swap a card between its live canvas and a centered muted message.
     function showChart(canvas, msg) {
@@ -753,9 +765,22 @@ export async function renderMttr(main, _params, ctx) {
           : `Naive median MTTR (days) by ${dim.noun}, per scan — closed findings only.`;
         if (pts.length < 2) {
           showMsg(lineCanvas, lineMsg, "Trend appears after the second saved scan.");
+          clear(lineTableHost);
           return;
         }
         showChart(lineCanvas, lineMsg);
+        // `pts` / `series` — the same references the wrapper below is handed.
+        clear(lineTableHost).append(chartTable({
+          canvas: lineCanvas,
+          caption: `Every point of the lines above: date and each ${dim.noun}'s median MTTR, `
+            + "in days.",
+          model: trendTableModel(pts, series.map((s) => ({
+            key: s.name,
+            label: s.name,
+            format: "days",
+            value: (p) => (p && p.byGroup ? (p.byGroup[s.name] ?? null) : null),
+          }))),
+        }));
         loadCharts().then((charts) => {
           charts.groupTrendLines(lineCanvas, pts, series, {
             unit: "days",
@@ -837,7 +862,7 @@ export async function renderMttr(main, _params, ctx) {
       const lensCard = el("div", { class: "chart-card" },
         el("div", { class: "chart-head" }, lensTitleHost, swapBtn),
         el("div", { class: "chart-box" }, impactCanvas, impactMsg, medianCanvas, medianMsg),
-        lensCaption);
+        lensCaption, impactTableHost, medianTableHost);
 
       // Switch the lens: flip aria-pressed, retitle with the matching help, tear down the hidden
       // chart, and paint the active one (each paint fn shows its own canvas / empty message).
@@ -854,10 +879,13 @@ export async function renderMttr(main, _params, ctx) {
               { term: "mttr-contribution" })
             : tip(`Median MTTR by ${dim.noun}`, medianHelp,
               { term: "median-mttr-by-dimension" }));
-        const [hideCanvas, hideMsg] = view === "impact" ? [medianCanvas, medianMsg] : [impactCanvas, impactMsg];
+        const [hideCanvas, hideMsg, hideTableHost] = view === "impact"
+          ? [medianCanvas, medianMsg, medianTableHost]
+          : [impactCanvas, impactMsg, impactTableHost];
         loadCharts().then((charts) => charts.destroyChart(hideCanvas)).catch(() => {});
         hideCanvas.style.display = "none";
         hideMsg.style.display = "none";
+        clear(hideTableHost);
         if (view === "impact") paintImpact(); else paintMedian();
       }
       function pickLens(view) {
@@ -870,7 +898,7 @@ export async function renderMttr(main, _params, ctx) {
         el("div", { class: "chart-card" },
           lineHead,
           el("div", { class: "chart-box" }, lineCanvas, lineMsg),
-          lineCaption),
+          lineCaption, lineTableHost),
       );
 
       // Shared omission note for both lenses — named groups with resolved work but no observable
@@ -889,13 +917,22 @@ export async function renderMttr(main, _params, ctx) {
         if (overallKm == null) {
           showMsg(impactCanvas, impactMsg,
             "The overall KM median isn't observable yet — too much is still open to baseline contribution.");
+          clear(impactTableHost);
           return;
         }
         if (!impactRows.length) {
           showMsg(impactCanvas, impactMsg, "No resolved findings with an observable median to attribute.");
+          clear(impactTableHost);
           return;
         }
         showChart(impactCanvas, impactMsg);
+        // `impactRows` — the same array the wrapper below is handed.
+        clear(impactTableHost).append(chartTable({
+          canvas: impactCanvas,
+          caption: `Every bar above: ${dim.noun} and its signed contribution to MTTR, in `
+            + "finding·days.",
+          model: barsTableModel(impactRows, "Contribution (finding·days)", { labelHeading: dim.Noun }),
+        }));
         loadCharts().then((charts) => {
           charts.mttrImpactBars(impactCanvas, impactRows, { subject: `${dim.Noun} contribution to MTTR` });
         }).catch(() => {
@@ -913,9 +950,16 @@ export async function renderMttr(main, _params, ctx) {
         lensCaption.textContent = `Each ${dim.noun}'s KM median MTTR${refClause}${omittedNote}`;
         if (!medianRows.length) {
           showMsg(medianCanvas, medianMsg, "No resolved findings with an observable median to rank.");
+          clear(medianTableHost);
           return;
         }
         showChart(medianCanvas, medianMsg);
+        // `medianRows` — the same array the wrapper below is handed.
+        clear(medianTableHost).append(chartTable({
+          canvas: medianCanvas,
+          caption: `Every bar above: ${dim.noun} and its Kaplan–Meier median MTTR, in days.`,
+          model: barsTableModel(medianRows, "Median MTTR", { format: "days", labelHeading: dim.Noun }),
+        }));
         loadCharts().then((charts) => {
           charts.mttrContributionBars(medianCanvas, medianRows, {
             overall: overallKm,
@@ -1283,12 +1327,19 @@ export async function renderMttr(main, _params, ctx) {
     if (mode === "survival") {
       const canvas = el("canvas", { id: "survival-curve" });
       box.append(canvas);
+      // `rem.km.curve` — the same array the wrapper below is handed — read once, into both.
       survivalHost.append(chartCard("S(t): share of findings still open", box, {
         helpLines: [
           "Time from first detection to remediation, as a Kaplan–Meier survival curve. " +
             "Markers: Median (KM) and Mean (KM · RMST) — still-open findings censored — plus " +
             "Median (closed), the naive closed-only median KM corrects for.",
         ],
+        table: chartTable({
+          canvas,
+          caption: "Every step of the curve above: weeks and days since detection, and the "
+            + "share still open after that step.",
+          model: survivalTableModel(rem.km.curve),
+        }),
       }));
       loadCharts().then((charts) => {
         // The two KM markers plus the naive closed-only median dot, so the curve shows the
@@ -1302,14 +1353,24 @@ export async function renderMttr(main, _params, ctx) {
     } else {
       const canvas = el("canvas", { id: "resolution-buckets" });
       box.append(canvas);
+      // Named once, so the table and `charts.stackedAgeBar` below cannot read two different
+      // fallbacks for a stale pre-label cache.
+      const bucketLabels = rem.buckets.labels || RESOLUTION_LABELS;
       survivalHost.append(chartCard("Time to resolve", box, {
         helpLines: [
           "How long resolved findings actually took, bucketed by severity. The right-hand " +
             "bars are the tail the median hides.",
         ],
+        table: chartTable({
+          canvas,
+          caption: "Every bar of the stack as a count: one row per time-to-resolve bucket, one "
+            + "column per severity drawn.",
+          model: agingTableModel(bucketLabels, rem.buckets.perSev, boot.palette.order,
+            "Time to resolve"),
+        }),
       }));
       loadCharts().then((charts) => {
-        charts.stackedAgeBar(canvas, rem.buckets.labels || RESOLUTION_LABELS, rem.buckets.perSev,
+        charts.stackedAgeBar(canvas, bucketLabels, rem.buckets.perSev,
           boot.palette, "Resolved findings by time-to-resolve bucket and severity.");
       }).catch(() => {
         chartUnavailable(canvas);
@@ -1415,6 +1476,10 @@ export async function renderMttr(main, _params, ctx) {
             overTimeMode = v; savePref("mttrOverTimeMode", v); renderCharts(trends, mttr);
           })
           : null;
+        // Named once — the ACTIVE mode's series, read into the table and the paint callback
+        // both, so a toggle flip can never leave the two disagreeing about which clock is on
+        // screen.
+        const plotted = mode === "km" ? kmMedianPoints : points.filter((p) => p.y !== null);
         grid.append(chartCard("MTTR over time", el("div", { class: "chart-box" }, canvas), {
           toggle,
           helpLines: [
@@ -1424,10 +1489,17 @@ export async function renderMttr(main, _params, ctx) {
             "Naive: median of closed findings only, per scan — the biased comparison KM " +
               "corrects for.",
           ],
+          table: chartTable({
+            canvas,
+            caption: "Every point of the line above: date and " +
+              (mode === "km" ? "Kaplan–Meier median" : "naive median") +
+              " days to remediation.",
+            model: trendTableModel(plotted, [
+              { key: "y", label: "Half-life", format: "days" },
+            ], { dateKey: "x" }),
+          }),
         }));
-        painters.push({ canvas, paint: (charts) => (mode === "km"
-          ? charts.trendLine(canvas, kmMedianPoints, { yLabel: "days", xRange })
-          : charts.trendLine(canvas, points.filter((p) => p.y !== null), { yLabel: "days", xRange })) });
+        painters.push({ canvas, paint: (charts) => charts.trendLine(canvas, plotted, { yLabel: "days", xRange }) });
       }
     }
 
@@ -1435,7 +1507,16 @@ export async function renderMttr(main, _params, ctx) {
     // point-shape, so it stays its own card rather than a third overlay on anything).
     if (trend.length > 1) {
       const canvas = el("canvas", { id: "open-resolved" });
-      grid.append(chartCard("Open vs resolved", el("div", { class: "chart-box" }, canvas)));
+      grid.append(chartCard("Open vs resolved", el("div", { class: "chart-box" }, canvas), {
+        table: chartTable({
+          canvas,
+          caption: "Every point of the lines above: date, open findings and resolved findings.",
+          model: trendTableModel(trend, [
+            { key: "open", label: "Open", format: "count" },
+            { key: "resolved", label: "Resolved", format: "count" },
+          ]),
+        }),
+      }));
       painters.push({ canvas, paint: (charts) => charts.openResolvedLines(canvas, trend, { xRange }) });
     }
 
@@ -1448,6 +1529,13 @@ export async function renderMttr(main, _params, ctx) {
             "available rather than first detection. Counts step up at the fix-tracking " +
             "rollout — findings awaiting a vendor fix are now included in the register.",
         ],
+        table: chartTable({
+          canvas,
+          caption: "Every point of the line above: date and open findings past their SLA.",
+          model: trendTableModel(openSlaPoints, [
+            { key: "y", label: "Open past SLA", format: "count" },
+          ], { dateKey: "x" }),
+        }),
       }));
       painters.push({ canvas, paint: (charts) => charts.trendLine(canvas, openSlaPoints, { yLabel: "findings", xRange }) });
     }
@@ -1466,6 +1554,8 @@ export async function renderMttr(main, _params, ctx) {
               slaQualMode = v; savePref("mttrSlaQualMode", v); renderCharts(trends, mttr);
             })
           : null;
+        // Named once, for the same reason as Card 1's `plotted` above.
+        const plotted = mode === "attainment" ? slaAttainmentPoints : slaBurnPoints;
         grid.append(chartCard("SLA quality", el("div", { class: "chart-box" }, canvas), {
           toggle,
           helpLines: [
@@ -1474,10 +1564,18 @@ export async function renderMttr(main, _params, ctx) {
             "Burn (net flow): findings crossing their SLA deadline minus breached findings " +
               "cleared, per scan. Above zero = the past-SLA backlog is growing.",
           ],
+          table: chartTable({
+            canvas,
+            caption: "Every point of the line above: date and " +
+              (mode === "attainment" ? "SLA attainment, in percent." : "net SLA flow, in findings."),
+            model: trendTableModel(plotted, [
+              mode === "attainment"
+                ? { key: "y", label: "Attainment", format: "pct" }
+                : { key: "y", label: "Net flow", format: "count" },
+            ], { dateKey: "x" }),
+          }),
         }));
-        painters.push({ canvas, paint: (charts) => (mode === "attainment"
-          ? charts.trendLine(canvas, slaAttainmentPoints, { yLabel: "%", xRange })
-          : charts.trendLine(canvas, slaBurnPoints, { yLabel: "findings", xRange })) });
+        painters.push({ canvas, paint: (charts) => charts.trendLine(canvas, plotted, { yLabel: mode === "attainment" ? "%" : "findings", xRange }) });
       }
     }
 

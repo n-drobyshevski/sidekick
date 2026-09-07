@@ -13,12 +13,13 @@ import { capacityHindcastView, VERDICT } from "./programCapacity.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { rateView } from "./mttr.js";
 import { rateCell } from "./_rates.js";
+import { scatterTableModel, trendTableModel } from "./_charts.js";
 import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, clear, dataTable, downloadText,
-  el, emptyState, errorState, fmtDate, glossaryTip, num, openSheet, pageHeader, pct1, scopeBar,
-  sectionLabel, sevBadge, skeleton, statusPill, tableFooter, tip, toast,
+  DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, chartTable, clear, dataTable,
+  downloadText, el, emptyState, errorState, fmtDate, glossaryTip, num, openSheet, pageHeader,
+  pct1, scopeBar, sectionLabel, sevBadge, skeleton, statusPill, tableFooter, tip, toast,
 } from "../ui.js";
 
 // Matrix cells, in reading order. `key` matches the server's `matrix_cell` / cohort quadrant
@@ -540,8 +541,17 @@ export async function renderProgram(main, _params, ctx) {
       el("h3", {}, glossaryTip("Coverage & efficiency over time",
         "coverage-efficiency-trend")),
       box);
-    trendHost.append(card);
     const canvas = box.querySelector("canvas");
+    // `points` — the same array the wrapper below is handed — read once, into both.
+    card.append(chartTable({
+      canvas,
+      caption: "Every point of the lines above: date, coverage and efficiency, in percent.",
+      model: trendTableModel(points, [
+        { key: "coverage_pct", label: "Coverage", format: "pct" },
+        { key: "efficiency_pct", label: "Efficiency", format: "pct" },
+      ]),
+    }));
+    trendHost.append(card);
     loadCharts().then((charts) => {
       charts.coverageEfficiencyLines(canvas, points);
     }).catch((e) => {
@@ -596,10 +606,19 @@ export async function renderProgram(main, _params, ctx) {
     );
     if (sens.length > 1) {
       const box = el("div", { class: "chart-box chart-box--tall" }, el("canvas", {}));
-      ruleHost.append(el("div", { class: "chart-card" },
+      const canvas = box.querySelector("canvas");
+      const card = el("div", { class: "chart-card" },
         el("h3", {}, glossaryTip("How much the rule choice matters",
           "rule-sensitivity")),
-        box));
+        box,
+        // `sens` — the same array the wrapper below is handed — read once, into both.
+        chartTable({
+          canvas,
+          caption: "Every point plotted above: the rule, its coverage and efficiency in "
+            + "percent, and how many findings it flags high risk.",
+          model: scatterTableModel(sens),
+        }));
+      ruleHost.append(card);
       // The one caveat that must not depend on a hover: each point is scored against its OWN
       // definition of high risk, so a narrow rule can post high coverage simply by flagging
       // few findings. Without this the chart invites the reading that KEV-only "wins".
@@ -608,7 +627,6 @@ export async function renderProgram(main, _params, ctx) {
         "competing on a common yardstick: a narrow rule reaches high coverage by flagging " +
         "little. Read this as how sensitive the headline is to the rule, not as which rule " +
         "is right."));
-      const canvas = box.querySelector("canvas");
       loadCharts().then((charts) => {
         charts.coverageEfficiencyScatter(canvas, sens);
       }).catch((e) => {
