@@ -44,90 +44,16 @@
    figures fall back to body type and stop reading as figures. */
 .mini-value { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); }
 
-/* ---------------------------------------------------------------- executive view */
-/* The default landing page: a centered single-column summary. This is the one place the
-   shell gets a max-width, centered container — every other page is full-bleed against the
-   left rail. Leadership landing page, so hierarchy is dominated by one big number. */
-.exec { max-width: 720px; margin: 0 auto; text-align: center; }
-/* The page's own <h1> + .page-sub pair is a pageHeader({ route: "executive" }) now, so the
-   centered column has to centre the header's own blocks rather than a paragraph under it.
-   `text-align` inherits, so `.page-titles` is centred by the rule on `.page-header` above it —
-   what does NOT centre is the lede, which is a max-width block and would sit hard-left inside
-   a wider cell. */
-.exec .page-header, .exec .page-hero { text-align: center; }
-.exec .page-titles .page-hero-sub { margin-left: auto; margin-right: auto; }
-/* .scope-bar is a flex row, so it ignores .exec's text-align and would sit hard-left in an
-   otherwise centered column. The chip qualifies these figures — it centers with them. */
-.exec .scope-bar { justify-content: center; }
-/* The single hero value (DESIGN.md: at most one per page). A deliberate exec-only step
-   above the --fs-hero .hero-value cap — this page *is* that number, so the larger size
-   earns its place; it is still the only hero value on the page. Tabular figures so it
-   never jitters. Left as a clamp() rather than a --fs-* step: it is the one type size in
-   the app that is viewport-relative, and no step on a seven-step fixed scale can be. */
-.exec-hero { margin: var(--space-2) 0 18px; }
-.exec-hero .label { margin-bottom: var(--space-1); }
-.exec-hero-value {
-  font-size: clamp(2.5rem, 6vw, 4rem);
-  font-weight: var(--fw-semibold); letter-spacing: -0.02em; line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-.exec-hero .hero-src { margin-top: 6px; }
-/* Hero value + week-over-week trend badge. The badge is taken OUT of flow (absolute, at the
-   metric's bottom-right) so the big number stays centred under its label — an inline-flex row
-   would group number+badge and shift the number left by the badge's width. The row shrink-wraps
-   the metric and is centred by .exec's text-align. */
-.exec-hero-row { position: relative; display: inline-block; }
-.exec-trend {
-  position: absolute; left: 100%; bottom: 10px; margin-left: var(--space-3);
-  display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
-}
-.exec-trend .chg { margin-left: 0; }
-.exec-trend-arrow { margin-right: var(--space-half); font-weight: var(--fw-hero); }
-.exec-trend-note { font-size: var(--fs-label); color: var(--text-3); }
-/* Narrow viewports: the out-of-flow badge would overflow the right edge, so drop it back into
-   flow and stack it centred under the number instead (still centred, no horizontal scroll). */
-@media (max-width: 600px) {
-  .exec-hero-row { display: flex; flex-direction: column; align-items: center; }
-  .exec-trend { position: static; margin: 6px 0 0; }
-}
-/* Scan bar: last-scan caption + a single primary Run scan, centered under the hero. */
-.exec-scan {
-  display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0 0 var(--space-2);
-}
-.exec-scan .primary { display: inline-flex; align-items: center; gap: 6px; }
-.exec-scan .btn-icon { display: inline-flex; width: 16px; height: 16px; }
-.exec-scan .btn-icon svg { width: 16px; height: 16px; display: block; }
-/* Open-vulns-by-severity tiles: dot + count + label. Colour rides only on the dot — the
-   count and name carry the meaning too (DESIGN two-token + non-colour-signal rules). */
-.exec-sev-row {
-  display: flex; flex-wrap: wrap; justify-content: center;
-  gap: var(--space-3); margin: 0 0 var(--space-1);
-}
-.exec-sev-tile {
-  min-width: 108px;
-  background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-xl); box-shadow: var(--shadow-card);
-  padding: var(--space-3) var(--space-4);
-  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
-}
-.exec-sev-count {
-  font-size: var(--fs-display); font-weight: var(--fw-semibold);
-  letter-spacing: -0.02em; line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-.exec-sev-name {
-  display: inline-flex; align-items: center;
-  font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--text-2);
-}
-/* The by-domain table reads left-to-right even inside the centered column. */
-.exec-by-domain { text-align: left; margin-top: var(--space-1); }
-/* The KM median is this table's headline number — size it up (a step above the body rows)
-   so the per-domain MTTR reads as the figure to scan, echoing the page's single big hero.
-   Tabular nums keep the column from jittering across rows. */
-.exec-by-domain td.num--key {
-  font-size: var(--fs-display-sm); line-height: 1.15; letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
+/* THE `.exec*` BLOCK IS GONE, AND ITS ABSENCE IS THE CHANGE. It was the centred 720px
+   column (`.exec`), the clamp()ed hero value two steps above every other figure in the app
+   (`.exec-hero-value`), the out-of-flow week-over-week badge (`.exec-trend*`), the page's own
+   Run scan bar (`.exec-scan`), the five bordered severity tiles (`.exec-sev-*`) and the
+   by-domain table's own left-align override — all of it furniture for a leadership one-pager
+   inherited from the Streamlit build. gas/DESIGN.md §6 wrote the retirement down before it
+   happened: the page draws the shared `pageHeader()` shape now (hero stat, movement aside,
+   stat strip), a `sevSegmentBar` + `sevKeyRow` picture instead of tiles, and the rail's Run
+   scan button instead of its own. The `.fixnext*` / `.movement-*` rules below are what it
+   draws with; nothing here replaces `.exec`, because a full-bleed page needs no container. */
 
 /* ------------------------------------------- severity breakdown stat list (+ delta) */
 /* A bordered card of one row per severity: dot + label (left), count over an
