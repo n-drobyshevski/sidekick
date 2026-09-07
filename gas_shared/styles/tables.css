@@ -1,5 +1,21 @@
 /* ----------------------------------------------------------------------- tables */
 .table-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-lg); }
+/* PROMOTED FROM gas_devsecops/src/client/styles/pages.css, P3.4b (2026-09-08) — byte-identical
+   to gas's own copy of the same rule. THE TABLE WAS NEVER THE PROBLEM: `.table-wrap` above
+   already clips its `table.data` with `overflow-x: auto`. What escapes is `.sr-only` (this
+   file's own base sheet: `position: absolute`, no `top`/`left` of its own) — every `tip()`
+   call drops one of these beside its trigger for the description a screen reader needs, and
+   a register row's severity/status cells anchor several. `.table-wrap` was never `position`ed,
+   so an absolutely-positioned description with no positioned ancestor between it and the
+   document root takes its STATIC POSITION — computed from where the WIDE, un-scrolled table
+   would have placed it, a column or two past the visible edge — and resolves against the
+   document's own un-clipped flow instead of `.table-wrap`'s scrollport. The description is
+   1x1px and invisible either way; the bug is that its LAYOUT BOX still counts toward
+   `document.documentElement.scrollWidth`. Measured on gas_devsecops's seeded fixture at a
+   640px viewport: four routes (Coverage & efficiency, Code, Dependencies, Secrets) rendered
+   888/978/1201/1145px wide before this rule, and exactly 640 (the viewport) after it, with
+   nothing else touched. */
+.table-wrap { position: relative; }
 /* A table nested inside a card or a detail cell. The surrounding surface IS the box, so a
    bordered wrapper here would be a surface inside a surface — the shape DESIGN.md rules out
    for cards and the reason both of these tables were hand-built rather than asked for. The
@@ -145,6 +161,38 @@ a { color: var(--accent-text); }
   grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
   gap: var(--space-3);
   margin-bottom: var(--space-5);
+}
+/* PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b (2026-09-08) —
+   byte-identical in both. Small multiples: one survival curve per severity, on an MTTR page.
+   `auto-fit` + a 280px floor gives three per row on a desktop content column, two around
+   800px and one below ~560px, without a media query per breakpoint — the floor is where a
+   26-week staircase stops being readable rather than a device width. The canvas is HALF the
+   standard `.chart-box` so six of them stay light: these cards are read as shapes against
+   each other, and the figures behind each one are a keystroke away in the card's own table. */
+.sev-fan {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.sev-fan .chart-box { height: 160px; }
+/* The badge row. Severity is never colour alone: the dot and the word travel together here,
+   and the caption below states the half-life in words. */
+.sev-fan__head { margin-bottom: var(--space-2); }
+
+/* PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b — byte-identical.
+   `.sev-fan` and `.chart-row--pair` (components.css) both use `auto-fit` with a floor - 280px
+   and 300px - that two columns can still clear on a narrow phone before the text inside each
+   card starts crowding; below 640px a single column reads better than two cramped ones.
+   `.chart-row` above joins the same query for a different reason: its 420px floor is not too
+   CROWDED at 360px, it is simply wider than the viewport — `auto-fit` never lets a track
+   shrink below its `minmax` floor even down to a single column, so `1fr` alone (no floor)
+   collapses it to the real available width instead, same fix as `.page-header`'s narrow
+   collapse (components.css). Placed after `.chart-row` and `.sev-fan` so this wins the
+   cascade at equal specificity; `.chart-row--pair` lives in components.css, which this file
+   loads AFTER (SHEET_ORDER), so it wins over that definition too regardless of position here. */
+@media (max-width: 640px) {
+  .sev-fan, .chart-row--pair, .chart-row { grid-template-columns: 1fr; }
 }
 /* The line under a chart title: what the chart leaves out, or what it's still waiting for. */
 .chart-note { margin: -4px 0 var(--space-3); font-size: var(--fs-label); color: var(--text-3); }

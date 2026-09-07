@@ -30,19 +30,14 @@
 .kpi-row--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 /* -------------------------------------------------------------------- hero stat */
-.hero { margin: var(--space-1) 0 var(--space-5); }
-.hero .label { margin-bottom: var(--space-half); }
-.hero-src { font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-half); }
-.hero-minis {
-  display: flex; flex-wrap: wrap; gap: 28px;
-  border-top: 1px solid var(--hairline);
-  margin-top: 14px; padding-top: var(--space-3);
-}
-.mini-label { font-size: var(--fs-label); color: var(--text-3); }
-/* components.css sizes `.stat-row .mini-value`; this is the same figure OUTSIDE a
-   .stat-row, in .hero-minis, which is this register's own shape. Without it the mini
-   figures fall back to body type and stop reading as figures. */
-.mini-value { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); }
+/* THE SIX RULES THAT USED TO LIVE HERE ARE GONE (P3.4b). Measured, `grep -c` over
+   `gas/src/client/js/**` for each class as a `class:` literal: "hero" 0, "hero .label" 0,
+   "hero-src" 0, "hero-minis" 0, "mini-label" 0, "mini-value" 0 — no page builds any of them
+   any more, every hero is the shared `pageHeader`/`heroStat` now, and `mini-value` had
+   already been shadowed everywhere it still matched by components.css's higher-specificity
+   `.stat-row .mini-value` (statRow() always nests it inside `.stat-row`). The only `hero-*`
+   literal left is `hero-line`, which `gas_shared/styles/components.css` defines under
+   `.page-hero-sub`. */
 
 /* THE `.exec*` BLOCK IS GONE, AND ITS ABSENCE IS THE CHANGE. It was the centred 720px
    column (`.exec`), the clamp()ed hero value two steps above every other figure in the app
@@ -52,8 +47,9 @@
    inherited from the Streamlit build. gas/DESIGN.md §6 wrote the retirement down before it
    happened: the page draws the shared `pageHeader()` shape now (hero stat, movement aside,
    stat strip), a `sevSegmentBar` + `sevKeyRow` picture instead of tiles, and the rail's Run
-   scan button instead of its own. The `.fixnext*` / `.movement-*` rules below are what it
-   draws with; nothing here replaces `.exec`, because a full-bleed page needs no container. */
+   scan button instead of its own. `.fixnext*` / `.movement-*` (gas_shared/styles/
+   components.css, P3.4b) are what it draws with; nothing here replaces `.exec`, because a
+   full-bleed page needs no container. */
 
 /* ------------------------------------------- severity breakdown stat list (+ delta) */
 /* A bordered card of one row per severity: dot + label (left), count over an
@@ -337,50 +333,25 @@ td.num--key { font-weight: var(--fw-semibold); color: var(--ink); }
 .chart-grid--2 {
   grid-template-columns: repeat(auto-fit, minmax(max(320px, (100% - 14px) / 2), 1fr));
 }
-/* Distribution row: the survival curve spans 2 of the 3 chart blocks, the time-to-resolve
-   histogram takes the third. align-items:start keeps each card at its natural height (the
-   survival caption doesn't stretch the histogram); the span clamps to 1 when the grid drops
-   to a single column, so the two cards stack on a narrow pane. */
-.dist-grid { align-items: start; }
-.chart-grid .dist-main { grid-column: span 2; }
+/* `.dist-grid` / `.chart-grid .dist-main` (a distribution row's 2-of-3-column span) and
+   `.chart-card.fill-height` (an aging card stretching its chart into the row's height) are
+   GONE, P3.4b. Measured, `grep -c` over `gas/src/client/js/**`: "dist-grid" 0, "dist-main" 0,
+   "fill-height" 0 — every `.chart-grid` call in mttr.js/overview.js/history.js now sets
+   `align-items:start` as an inline style instead, and overview.js's aging card is a bare
+   `.chart-card`. */
 /* Survival curve gets a little more vertical room than the 240px trend boxes so the
    staircase reads clearly, especially zoomed into a 5w window. */
 .chart-box.chart-box--tall { height: 300px; }
-/* Aging card: let the age histogram grow into the height the stretched grid gives it
-   (its toggle-table sibling is taller) instead of a fixed 240px box. The canvas is taken
-   out of flow so its rendered height never feeds back into the card's own height — the
-   sibling panel drives the row height per view, and the chart just fills what's left. */
-.chart-card.fill-height { display: flex; flex-direction: column; }
-.chart-card.fill-height .chart-box { flex: 1 1 auto; height: auto; min-height: 240px; }
-.chart-card.fill-height .chart-box > canvas { position: absolute; inset: 0; }
 .chart-caption { margin-top: 10px; font-size: var(--fs-label); }
 
 /* --------------------------------------------------------------- finding sheet */
-/* Resize handle: a slim hit-strip on the sheet's left edge (the sheet itself is `position:
-   fixed`, which is enough of a containing block for this absolutely-positioned child — no
-   extra positioning context needed). The hit area is 6px so it's easy to grab, but the visible
-   hairline is a slender 1px centered in it, brightening to the accent on hover/focus so it
-   reads as "grabbable" without competing with the sheet's own left border at rest. No width
-   transition on the handle — live drag updates would look laggy if animated. */
-.sheet-resize-handle {
-  position: absolute; top: 0; left: 0; bottom: 0; width: 6px;
-  cursor: ew-resize; touch-action: none; z-index: 1;
-  background: transparent;
-}
-.sheet-resize-handle::before {
-  content: ""; position: absolute; top: 0; bottom: 0; left: var(--space-half); width: 1px;
-  background: var(--hairline);
-}
-.sheet-resize-handle:hover::before { background: var(--accent); }
-.sheet-resize-handle:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
-.sheet-resize-handle:focus-visible::before,
-.sheet-resize-handle:active::before { background: var(--accent); width: 2px; }
-.raw-json {
-  background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg); padding: 10px; font-size: var(--fs-label);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto;
-}
+/* THE WHOLE SECTION THAT USED TO BE HERE IS GONE, P3.4b: a hand-built `.sheet-resize-handle`
+   (the sheet's own drag strip) and a hand-built `.raw-json` monospace block. Measured,
+   `grep -c` over `gas/src/client/js/**`: "sheet-resize-handle" 0, "raw-json" 0 — the sheet's
+   resize affordance is `gas_shared/ui/sheet.js`'s own `.sheet-grip` now (a real Window
+   Splitter separator, styled in `gas_shared/styles/sheet.css`), and findingSheet.js prints a
+   raw value through the shared `codeBlock()` (`gas_shared/ui/code.js`, class `.code-block`,
+   base rule in `gas_shared/styles/components.css`) rather than building its own container. */
 
 /* ---------------------------------------------------------------------- dialogs */
 /* Never grow past the viewport; a tall dialog scrolls instead of clipping its actions.
@@ -799,27 +770,21 @@ table.data.jobs-table td:last-child { text-align: right; white-space: nowrap; }
 table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px; overflow: visible; }
 
 /* ---------------------------------------------------------------- the scope combobox */
-/* ui/combobox.js is the ONE component this package could not hand back to gas_shared, so
-   these rules are not an override of the shared `.combobox-*` — they are the only rules
-   that dress this app's option rows. The shared list draws an option as a single row;
-   gas's nests a `.combobox-option-body` holding the label, with the check and the reset
-   row as siblings. The fork's own header names the exact gas_shared change (two glyphs in
-   ui/uiIcons.js) that retires both it and this block. */
+/* THIS PACKAGE'S OWN COMBOBOX FORK IS GONE (gas/src/client/js has no local combobox.js any
+   more; ui/scopeControl.js draws through `gas_shared/ui/combobox.js`), and most of what dressed
+   it went with it. That component's option row is `.combobox-option` > (an optional
+   `.combobox-option-icon`, the label as bare text, an optional `.combobox-option-hint`, an
+   optional `.combobox-check`) — `.combobox-option-body` (a wrapper this app nested the label
+   in), `.combobox-option-label`, `.combobox-option-check` and `.combobox-option--reset`
+   dressed a shape the shared component stopped building. Measured, `grep -rn` over `gas/`,
+   `gas_shared/ui/` and `gas_shared/shell/`: zero hits for any of the four. Two rules survive
+   because the classes are still built there and each one changes what renders — an active
+   trigger's accent border, and the tabular-nums alignment a count-bearing hint needs that the
+   shared rule (built for a kind, not a number) does not set. */
 .combobox-trigger.active { border-color: var(--accent-text); }
-.combobox-option-body {
-  flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: var(--space-2);
-}
-.combobox-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The hint carries a COUNT ("1,204 assets"), so it needs the figures to line up; the shared
    rule does not set this because its hint carries a kind rather than a number. */
 .combobox-option-hint { font-variant-numeric: tabular-nums; }
-.combobox-option-check {
-  display: inline-flex; flex: 0 0 auto; align-self: center;
-  margin-left: var(--space-1); color: var(--accent-text);
-}
-.combobox-option--reset {
-  border-bottom: 1px solid var(--hairline); margin-bottom: var(--space-half); padding-bottom: var(--space-2);
-}
 
 /* ------------------------------------------------------------------- the empty chart */
 /* NOT an override of gas_shared/styles/tables.css `.chart-empty` — a genuinely different
@@ -834,147 +799,3 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
   text-align: center; font-size: var(--fs-label); padding: 0 var(--space-5);
   height: auto; border: none; border-radius: 0;
 }
-
-/* =========================================================================================
-   CSS INTAKE (P1.6). The blocks below are copied byte-identical (selector + declarations)
-   from gas_devsecops/src/client/styles/pages.css, which already carries the page-level rules
-   a LATER package's Executive/MTTR/Program/History rebuild needs — those pages do not exist
-   here yet, so nothing in this file references these classes today. Every declaration below
-   resolves against tokens already imported (tokens.base.css, components.css, tables.css — see
-   SHEET_ORDER), so this is additive: no new hex, no new token, no rule this file already owns.
-   Excluded on purpose (per the wave's own package split): .isotype*, .spiral*, .scan-scopes,
-   .signal-rows*, .coverage-headline, .verdict-*, .cell-verdict (devsecops-only shapes this
-   register does not draw), and .sidebar .rail-status-dot (another P1 package's block). */
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: Executive (the ranked "fix next" list). */
-.fixnext { margin: 0 0 var(--space-3); padding-left: var(--space-5); display: grid; gap: var(--space-2); }
-.fixnext-item { padding-left: var(--space-1); }
-.fixnext-item::marker { color: var(--text-3); font-variant-numeric: tabular-nums; }
-.fixnext-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.fixnext-repo { font-weight: 600; }
-.fixnext-meta { margin-top: var(--space-half); }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: Executive (the movement strip in the header)
-   and Scan History (.movement-block, one register's movement as a card and a row). */
-.movement-rows { display: grid; gap: var(--space-1); max-width: 46ch; }
-.movement-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.movement-label { color: var(--text-2); min-width: 8ch; }
-.movement-counts { margin-left: auto; font-variant-numeric: tabular-nums; }
-.movement-block { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA (the per-severity survival fan,
-   one small-multiple chart per severity). */
-.sev-fan {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-}
-.sev-fan .chart-box { height: 160px; }
-.sev-fan__head { margin-bottom: var(--space-2); }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA and Program performance (caps
-   the header's aside kpiCard so it reads as the hero's companion, not a second hero). */
-.page-header > .kpi-card { max-width: 22rem; }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: Scan History and Program performance (a
-   chart-row floor measured against a table's own content rather than a chart's). */
-.chart-row--pair { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA, Scan History and Program
-   performance (the narrow-viewport collapse for the two auto-fit rules above and for the
-   shared .chart-row, plus the .page-header two-column collapse below). */
-@media (max-width: 640px) {
-  .sev-fan, .chart-row--pair, .chart-row { grid-template-columns: 1fr; }
-}
-@media (max-width: 640px) {
-  .page-header { grid-template-columns: 1fr; }
-}
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: every register table (fixes a
-   scroll-clipped .sr-only description's static position leaking into
-   document.documentElement.scrollWidth — see the horizontal-overflow diagnosis below). */
-.table-wrap { position: relative; }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: any register toolbar (keeps a control's
-   label with its control when the row wraps at narrow widths). */
-.toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: the finding Sheet (the copy actions row at
-   the top of the body, as distinct from .sheet-actions' pinned footer). */
-.finding-actions {
-  display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3);
-}
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: the finding Sheet (a code block inside a
-   .kv value, so it does not collide with the row beneath it). */
-.kv dd > .code-block { margin: 0; }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA (the header's half-life trend
-   aside — a sparkline qualifier beside the hero, never a rival to it). */
-.trend-aside { max-width: 26rem; display: grid; gap: var(--space-1); justify-items: start; }
-.trend-aside .sparkline { color: var(--ink); }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA (the SLA table's rate cells,
-   figure plus base plus a decorative meter as a third encoding). */
-.rate-with-meter {
-  display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1);
-}
-.rate-with-meter .meter { flex: 0 0 52px; }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: Program performance (the unclassified-rows
-   card, hatched rather than filled — a measurement gap is not a low score). */
-.unclassified-card { display: grid; gap: var(--space-half); }
-.unclassified-swatch {
-  display: inline-block; width: 14px; height: 14px; margin-right: var(--space-2);
-  border: 1px solid var(--hairline); border-radius: 2px; vertical-align: -2px;
-}
-@media (forced-colors: active) {
-  .unclassified-swatch { border-color: CanvasText; }
-}
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: Scan History (a KPI card's own sparkline,
-   borderless and below the sub-value it qualifies). */
-.kpi-spark {
-  display: grid; gap: var(--space-half); justify-items: start; margin-top: var(--space-2);
-}
-.kpi-spark .sparkline { color: var(--ink); }
-.kpi-spark__cap { font-size: var(--fs-label); color: var(--text-3); }
-
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
-   to gas_shared/styles after wave 3. Consumed by: Scan History (a state pill riding beside a
-   section heading rather than inside its name). */
-.section-label > .heading-pill { margin-left: var(--space-2); font-weight: 400; }
-/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css
-   ------------------------------------------------------------------- rail status dot
-   `.rail-status-dot` (gas_shared/styles/base.css) is a 9px mark - all the colour a scan's
-   state needs, but nine pixels of hit target and, until app.js's own fix, a span wearing
-   `aria-hidden` with nothing behind it for a keyboard or a screen reader. It is a real
-   `<button>` now (app.js), so this is chrome, not colour: WCAG 2.2 SC 2.5.8 wants 24x24px of
-   TARGET even though the mark painted inside it stays 9px - `padding` plus
-   `background-clip: content-box` grows the hit box without growing the dot, and the negative
-   margin keeps the surrounding rail layout exactly as tight as it was when this was a span.
-   The state colours (`.ok`/`.warn`/`.bad`/`.neutral`/`.scanning`, base.css) keep painting the
-   9px content box unchanged - only the box the pointer and the focus ring measure grows. */
-.sidebar .rail-status-dot {
-  width: 24px; height: 24px; padding: 7.5px; box-sizing: border-box;
-  background-clip: content-box; margin: -7.5px auto;
-}
-/* Reset of the generic `button` chrome (base.css: border, box-shadow, min-height) a dot
-   never wanted - it is a mark with a tip and a destination, not a bordered control sitting
-   in the icon rail beside the Run scan button. */
-.sidebar button.rail-status-dot { border: none; box-shadow: none; min-height: 0; cursor: pointer; }

@@ -44,6 +44,22 @@ read the tree as `"type": "module"`.
   has"; it is not, and was not when it was written — see the exception below. It is the shape
   TWO of the three have.
 
+  The gas parity wave's P3.4b (2026-09-08) added a narrower exception, and it is not a new
+  category: `gas/` and `gas_devsecops/` each carried sixteen rule blocks in their own
+  `pages.css` that were byte for byte identical, flagged since P1.6 as promotion candidates in
+  gas's own sheet. A rule is page-shaped only while more than one app draws that page
+  differently; once both copies say the same thing, the duplicate is the thing worth removing.
+  `fixnext*`, `movement-rows/-row/-label/-counts/-block`, `sev-fan*`, `.page-header >
+  .kpi-card`, `chart-row--pair`, `toolbar-group`, `finding-actions`, `.kv dd > .code-block`,
+  `trend-aside*`, `rate-with-meter*`, `unclassified-card/-swatch` and `.section-label >
+  .heading-pill` moved into `styles/components.css`; `.table-wrap { position: relative }` and
+  the `.sev-fan`/`.chart-row--pair`/`.chart-row` narrow-viewport collapse moved into
+  `styles/tables.css` beside the rules they extend; the `.page-header` narrow-viewport
+  collapse moved into `styles/components.css` beside `.page-header`; and the rail status dot's
+  hit-target chrome (`.sidebar .rail-status-dot` / `.sidebar button.rail-status-dot`) moved
+  into `styles/base.css` beside `.rail-status-dot`. Both apps' own `pages.css` now hold only
+  the pages a sibling does not draw.
+
 ## The one page that IS shared, and the one that is not
 
 `ui/helpPage.js` is the key sheet — a search field over one flat, alphabetical list of
