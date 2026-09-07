@@ -147,6 +147,7 @@ export async function renderOverview(main, params, ctx) {
 
   main.append(pageHeader({
     route: "overview",
+    help: { term: "risk-tiers" },
     lede: "What is exploitable, where risk concentrates, and what to fix next.",
   }));
   // The route out stays a paragraph rather than joining the lede: a link inside the hero
@@ -652,7 +653,7 @@ export async function renderOverview(main, params, ctx) {
     // heading over an empty state: "no open findings with a window" would be a measurement,
     // and nothing here measured anything.
     if (!consumed || !Array.isArray(consumed.labels)) return;
-    insightsHost.append(sectionLabel("SLA window consumed"));
+    insightsHost.append(sectionLabel("SLA window consumed", { term: "sla-target" }));
     const past = consumed.pastWindow && typeof consumed.pastWindow === "object"
       ? Object.values(consumed.pastWindow) : [];
     const anyPast = past.some((v) => typeof v === "number" && v > 0);
@@ -792,8 +793,20 @@ export async function renderOverview(main, params, ctx) {
       // absent() rather than a typed dash: an asset with no subscription recorded is a gap in
       // the payload, and the muted dash is what says so without asserting a value.
       const extraCols = view === "byAsset"
-        ? [{ key: "subscription", label: "Subscription", cell: (g) => g.subscription || absent() },
-           { key: "domain", label: "Domain", cell: (g) => g.domain || absent() }]
+        ? [
+          {
+            key: "subscription",
+            label: "Subscription",
+            help: ["The asset's cloud subscription."],
+            cell: (g) => g.subscription || absent(),
+          },
+          {
+            key: "domain",
+            label: "Domain",
+            help: ["The domain this asset resolved to."],
+            cell: (g) => g.domain || absent(),
+          },
+        ]
         : [];
       clear(tableHost).append(individual
         ? oldestFindingsTable(pageRows)
@@ -833,18 +846,44 @@ export async function renderOverview(main, params, ctx) {
     // finding the scan told us nothing about for that column, and a dash in the same ink as
     // the values beside it claims otherwise.
     const columns = [
-      { key: "cve", label: "CVE", cell: (r) => (r.cve && r.cve !== "(none)"
-        ? el("a", { href: nvdUrl(r.cve), target: "_blank", rel: "noopener" }, r.cve)
-        : (r.cve || absent())) },
-      { key: "asset", label: "Asset", cell: (r) => r.asset || absent() },
-      { key: "subscription", label: "Subscription", cell: (r) => r.subscription || absent() },
+      {
+        key: "cve",
+        label: "CVE",
+        help: ["The finding's CVE identifier, where Wiz reports one."],
+        cell: (r) => (r.cve && r.cve !== "(none)"
+          ? el("a", { href: nvdUrl(r.cve), target: "_blank", rel: "noopener" }, r.cve)
+          : (r.cve || absent())),
+      },
+      {
+        key: "asset",
+        label: "Asset",
+        help: ["The host workload carrying this finding."],
+        cell: (r) => r.asset || absent(),
+      },
+      {
+        key: "subscription",
+        label: "Subscription",
+        help: ["The cloud subscription the asset belongs to."],
+        cell: (r) => r.subscription || absent(),
+      },
       // Severity is the dot AND the word — never the colour alone.
-      { key: "severity", label: "Severity", cell: (r) => [
-        el("span", { class: "sev-dot", "aria-hidden": "true",
-          style: `background:${boot.palette.colors[r.severity] || "var(--text-3)"}` }),
-        sevTitle(r.severity),
-      ] },
-      { key: "age", label: "Age", className: "num", cell: (r) => days1(r.ageDays) },
+      {
+        key: "severity",
+        label: "Severity",
+        help: ["The finding's severity, as assigned by the scan."],
+        cell: (r) => [
+          el("span", { class: "sev-dot", "aria-hidden": "true",
+            style: `background:${boot.palette.colors[r.severity] || "var(--text-3)"}` }),
+          sevTitle(r.severity),
+        ],
+      },
+      {
+        key: "age",
+        label: "Age",
+        className: "num",
+        help: { term: "age" },
+        cell: (r) => days1(r.ageDays),
+      },
     ];
     return dataTable({ columns, rows });
   }
@@ -861,14 +900,34 @@ export async function renderOverview(main, params, ctx) {
       return measuredEmpty("No open findings to rank.", { at: lastInsights?.scan?.ts });
     }
     const columns = [
-      { key: "key", label: dimLabel, cell: (g) => el("strong", {}, g.key) },
+      {
+        key: "key",
+        label: dimLabel,
+        help: [`The ${dimLabel.toLowerCase()} this row's 90+ day backlog is ranked against.`],
+        cell: (g) => el("strong", {}, g.key),
+      },
       ...extraCols,
-      { key: "aged", label: "90+ days", className: "num",
-        cell: (g) => g.agedCount.toLocaleString() },
-      { key: "open", label: "Open", className: "num",
-        cell: (g) => g.openCount.toLocaleString() },
-      { key: "oldest", label: "Oldest", className: "num",
-        cell: (g) => days1(g.oldestDays) },
+      {
+        key: "aged",
+        label: "90+ days",
+        className: "num",
+        help: ["Open findings in this group older than 90 days."],
+        cell: (g) => g.agedCount.toLocaleString(),
+      },
+      {
+        key: "open",
+        label: "Open",
+        className: "num",
+        help: ["Open findings in this group, at every age."],
+        cell: (g) => g.openCount.toLocaleString(),
+      },
+      {
+        key: "oldest",
+        label: "Oldest",
+        className: "num",
+        help: ["The single oldest open finding in this group, in days."],
+        cell: (g) => days1(g.oldestDays),
+      },
     ];
     return dataTable({ columns, rows });
   }
@@ -881,7 +940,11 @@ export async function renderOverview(main, params, ctx) {
    *  whether this scan was typical. */
   function renderMovement(insights) {
     const m = insights.movement;
-    insightsHost.append(sectionLabel("Scan-over-scan movement"));
+    insightsHost.append(sectionLabel("Scan-over-scan movement", { lines: [
+      "Four counts against the previous scan: New, Newly resolved, Reopened and Persisting — "
+      + "not a comparison to a calendar date, since the register only learns something on the "
+      + "days it scans.",
+    ] }));
     if (!m.hasPrevious) {
       insightsHost.append(el("p", { class: "muted" },
         "First scan — movement appears once there is a previous scan to compare against."));
@@ -1241,10 +1304,22 @@ export async function renderOverview(main, params, ctx) {
         { at: lastInsights?.scan?.ts }));
       return;
     }
+    // TREE_HEAD carries help alongside the plain label list this used to be — `tipLabel` was
+    // already imported for the tips elsewhere on this page, so giving the tree's own `<th>`s a
+    // definition needed no restructuring of `renderTree` at all, only this one array.
+    const TREE_HEAD = [
+      ["Group", ["The value of the active grouping dimension, chosen above — domain, asset, "
+        + "CVE or another axis."]],
+      ["Severity", ["The open findings in this group, split by severity — never color alone."]],
+      ["Assets", ["Distinct assets carrying at least one finding in this group."]],
+      ["Findings", ["All findings ever tracked in this group, open and resolved."]],
+      ["Open", ["Findings in this group not yet resolved."]],
+      ["Risk", ["Whether any finding in this group is on the CISA KEV catalog or has a "
+        + "public exploit."]],
+    ];
     const table = el("table", { class: "data" },
       el("thead", {}, el("tr", {},
-        ...["Group", "Severity", "Assets", "Findings", "Open", "Risk"]
-          .map((h) => el("th", { scope: "col" }, h)))),
+        ...TREE_HEAD.map(([h, help]) => el("th", { scope: "col" }, tipLabel(h, help))))),
     );
     const tbody = el("tbody", {});
     table.append(tbody);

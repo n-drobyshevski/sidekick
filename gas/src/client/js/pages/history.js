@@ -108,8 +108,12 @@ export async function renderHistory(main, _params, ctx) {
   const movementHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid", style: "margin-top:20px" });
   main.append(
-    noticeHost, freshLine, kpiRow, sectionLabel("Saved scans"), scansHost,
-    sectionLabel("What moved the number"),
+    noticeHost, freshLine, kpiRow, sectionLabel("Saved scans", { term: "scan" }), scansHost,
+    sectionLabel("What moved the number", { lines: [
+      "Two tables, not one: an API-confirmed resolution and a finding that merely stopped "
+      + "appearing in a scan are counted separately, because only one of them is a confirmed "
+      + "remediation.",
+    ] }),
     el("p", { class: "section-note" },
       "The change in the open count over the last 28-day window bounded by two saved scans, "
       + "split into the causes that moved it — and which of them are remediation the register "
@@ -197,9 +201,25 @@ export async function renderHistory(main, _params, ctx) {
   // total across them, and that total is precisely the number a narrowed severity gate
   // inflates for free.
   const CAUSE_COLUMNS = [
-    { key: "cause", label: "Cause", cell: (r) => r.cause },
-    { key: "basis", label: "How the date was arrived at", cell: (r) => r.basis },
-    { key: "count", label: "Findings", cell: (r) => r.count.toLocaleString() },
+    {
+      key: "cause",
+      label: "Cause",
+      help: ["Which of the two measured pathways moved the open count between the two scans."],
+      cell: (r) => r.cause,
+    },
+    {
+      key: "basis",
+      label: "How the date was arrived at",
+      help: ["What kind of evidence dates this row: an API-confirmed resolution, or a finding "
+        + "that simply stopped appearing in a scan — an upper bound, not an exact date."],
+      cell: (r) => r.basis,
+    },
+    {
+      key: "count",
+      label: "Findings",
+      help: ["Findings that moved by this cause, in the measured window."],
+      cell: (r) => r.count.toLocaleString(),
+    },
   ];
 
   function causeTable(title, rows) {
@@ -314,11 +334,17 @@ export async function renderHistory(main, _params, ctx) {
       // `.th-sort-glyph` span rather than concatenated into the button's text.
       const NUM_CELLS = new Set(["when", "total", "new", "resolved", "reopened"]);
       const columns = [
-        { key: "select", label: selectAll, cell: (s) => selectCell(s) },
+        {
+          key: "select",
+          label: selectAll,
+          help: ["Select every deletable scan on this page. Sealed scans can't be selected."],
+          cell: (s) => selectCell(s),
+        },
         {
           key: "when",
           label: "When",
           sortable: true,
+          help: ["When this scan ran."],
           cell: (s) => {
             const when = el("span", {}, fmtDateTime(s.ts));
             if (s.scan_id !== newestId) return when;
@@ -326,23 +352,49 @@ export async function renderHistory(main, _params, ctx) {
               el("span", { class: "domain-chip", style: "margin-left:8px" }, "Latest"));
           },
         },
-        { key: "mode", label: "Mode", cell: (s) => modeCell(s.mode) },
-        { key: "shape", label: "Shape", cell: (s) => shapeLabel(s.shape) },
-        { key: "total", label: "Findings", cell: (s) => s.total.toLocaleString() },
-        { key: "new", label: "+New", cell: (s) => deltaCell(s.new_count, { sign: "+" }) },
+        {
+          key: "mode",
+          label: "Mode",
+          help: ["Whether this scan read live Wiz data or bundled sample data, and whether it "
+            + "was a full scan or a quick incremental refresh."],
+          cell: (s) => modeCell(s.mode),
+        },
+        {
+          key: "shape",
+          label: "Shape",
+          help: ["Whether the scan saved one row per finding, or counts only. A counts-only "
+            + "scan can't feed insights, MTTR or attribution."],
+          cell: (s) => shapeLabel(s.shape),
+        },
+        {
+          key: "total",
+          label: "Findings",
+          help: ["Findings this scan tracked, across every severity in scope."],
+          cell: (s) => s.total.toLocaleString(),
+        },
+        {
+          key: "new",
+          label: "+New",
+          help: ["Findings first seen in this scan that were not present in the previous one."],
+          cell: (s) => deltaCell(s.new_count, { sign: "+" }),
+        },
         {
           key: "resolved",
           label: "−Resolved",
+          help: ["Findings that left the register between the previous scan and this one."],
           cell: (s) => deltaCell(s.resolved_count, { good: true, sign: "−" }),
         },
         {
           key: "reopened",
           label: "Reopened",
+          help: { term: "returned" },
           cell: (s) => deltaCell(s.reopened_count, { sign: "+" }),
         },
         {
           key: "scope",
           label: "Scope",
+          help: ["The severities this scan covered — \"all\" when every selectable severity "
+            + "was in scope."],
           cell: (s) => (s.severities ? JSON.parse(s.severities).join(", ") : "all"),
         },
         // The sentence used to ride on a `title` attribute, which el() now throws on: a native
@@ -354,6 +406,7 @@ export async function renderHistory(main, _params, ctx) {
         {
           key: "status",
           label: "Status",
+          help: { term: "sealed" },
           cell: (s) => (s.sealed
             ? tipAnchor(
               el("span", { class: "pill neutral",

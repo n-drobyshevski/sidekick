@@ -37,7 +37,7 @@ export async function renderData(main, params, ctx) {
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
 
-  main.append(sectionLabel("Report"));
+  main.append(sectionLabel("Report", { term: "scan" }));
   if (boot.latestScan) {
     // Synchronous mount + lazy preview: the report preview must never block (or, on error,
     // blank) the Export and Import sections below, which don't even need a scan.
@@ -47,7 +47,7 @@ export async function renderData(main, params, ctx) {
       "No scan saved yet — run a scan to generate a report."));
   }
 
-  main.append(sectionLabel("Export"));
+  main.append(sectionLabel("Export", { term: "sealed" }));
   if (boot.latestScan) {
     renderExportSection(main, boot, domain, supportGroup);
   } else {
@@ -70,7 +70,7 @@ export async function renderData(main, params, ctx) {
   main.append(sectionLabel("Maintenance"));
   renderMaintenanceSection(main, boot, ctx);
 
-  main.append(sectionLabel("Storage"));
+  main.append(sectionLabel("Storage", { term: "compaction" }));
   renderStorageSection(main);
 }
 

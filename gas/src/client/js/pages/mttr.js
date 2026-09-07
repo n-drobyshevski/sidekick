@@ -455,6 +455,7 @@ export async function renderMttr(main, _params, ctx) {
 
   main.append(pageHeader({
     route: "mttr",
+    help: { term: "km-median" },
     lede: "How fast risk gets closed, measured over observed lifecycles. The SLA clock starts "
       + "once a vendor fix is available.",
   }));
@@ -983,7 +984,12 @@ export async function renderMttr(main, _params, ctx) {
     // wrapping this again would nest two.
     const tableWrap = dataTable({
       columns: [
-        { key: "group", label: dim.Noun, cell: groupOf },
+        {
+          key: "group",
+          label: dim.Noun,
+          help: [`The ${dim.noun} this row summarizes remediation for.`],
+          cell: groupOf,
+        },
         {
           key: "kmMedian",
           label: "Median MTTR (KM)",
@@ -1019,6 +1025,8 @@ export async function renderMttr(main, _params, ctx) {
           key: "slaPct",
           label: "In SLA (of resolved)",
           className: "num",
+          help: ["Share of resolved findings closed within their severity's SLA target — " +
+            "CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d."],
           // Null here means the group has closed nothing yet, so there is no share to state.
           cell: (r) => (r.slaPct != null ? `${r.slaPct.toFixed(0)}%` : absent()),
         },
@@ -1031,11 +1039,18 @@ export async function renderMttr(main, _params, ctx) {
             "findings), an aged-out open CRITICAL counts here."],
           cell: (r) => fmtOpenPastSla(r.openPastSla),
         },
-        { key: "open", label: "Open", className: "num", cell: (r) => (r.open ?? 0).toLocaleString() },
+        {
+          key: "open",
+          label: "Open",
+          className: "num",
+          help: [`Findings in this ${dim.noun} not yet resolved.`],
+          cell: (r) => (r.open ?? 0).toLocaleString(),
+        },
         {
           key: "resolved",
           label: "Resolved",
           className: "num",
+          help: [`Findings in this ${dim.noun} already resolved.`],
           cell: (r) => (r.resolved ?? 0).toLocaleString(),
         },
       ],
@@ -1635,7 +1650,13 @@ export async function renderMttr(main, _params, ctx) {
     // right-aligned numeric headings its own `td.num` cells always implied.
     slaHost.append(dataTable({
       columns: [
-        { key: "sev", label: "Severity", cell: (sev) => sevBadge(sev) },
+        {
+          key: "sev",
+          label: "Severity",
+          help: ["This row's severity band — the population the remediation figures beside it "
+            + "are measured over."],
+          cell: (sev) => sevBadge(sev),
+        },
         {
           key: "kmMedian",
           label: "Median MTTR (KM)",
@@ -1655,7 +1676,13 @@ export async function renderMttr(main, _params, ctx) {
             "shows \"—\" when too much is still open to observe it."],
           cell: (sev) => fmtSpan(kmP90Of(sev)),
         },
-        { key: "open", label: "Open", className: "num", cell: (sev) => mttr.perSev[sev].open },
+        {
+          key: "open",
+          label: "Open",
+          className: "num",
+          help: ["Findings at this severity not yet resolved."],
+          cell: (sev) => mttr.perSev[sev].open,
+        },
         {
           key: "openPastSla",
           label: "Open past SLA",

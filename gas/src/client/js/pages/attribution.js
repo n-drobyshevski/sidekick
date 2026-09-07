@@ -245,23 +245,59 @@ export async function renderAttribution(main, params, ctx) {
     // because the stored lifecycle never carried a subscription, a support group or a last-seen
     // date, and a dash in the same ink as the values beside it reads as a value.
     const columns = [
-      { key: "asset", label: "Asset", cell: (r) => assetCell(r) },
-      { key: "subscription", label: "Subscription", className: "muted",
-        cell: (r) => r.subscription || absent() },
-      { key: "supportGroup", label: "Support group", className: "muted",
-        cell: (r) => r.supportGroup || absent() },
-      { key: "open", label: "Open", className: "num",
-        cell: (r) => (r.open || 0).toLocaleString() },
-      { key: "resolved", label: "Resolved", className: "num",
-        cell: (r) => (r.resolved || 0).toLocaleString() },
-      { key: "lastSeen", label: "Last seen", className: "muted",
-        cell: (r) => (r.lastSeen ? fmtDate(r.lastSeen) : absent()) },
-      { key: "tags", label: "Stored tags", className: "small muted", cell: (r) => {
-        const tagEntries = Object.entries(r.tags || {});
-        // "no tags" is a MEASUREMENT, not an absence: the lifecycle carried a tag bag and it
-        // was empty, which is why this one stays a word rather than becoming the dash.
-        return tagEntries.length ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ") : "no tags";
-      } },
+      {
+        key: "asset",
+        label: "Asset",
+        help: ["The asset this lifecycle belongs to."],
+        cell: (r) => assetCell(r),
+      },
+      {
+        key: "subscription",
+        label: "Subscription",
+        className: "muted",
+        help: ["The subscription recorded on this lifecycle's stored tag snapshot."],
+        cell: (r) => r.subscription || absent(),
+      },
+      {
+        key: "supportGroup",
+        label: "Support group",
+        className: "muted",
+        help: ["The support group recorded on this lifecycle's stored tag snapshot — may be stale."],
+        cell: (r) => r.supportGroup || absent(),
+      },
+      {
+        key: "open",
+        label: "Open",
+        className: "num",
+        help: ["Findings in this lifecycle not yet resolved."],
+        cell: (r) => (r.open || 0).toLocaleString(),
+      },
+      {
+        key: "resolved",
+        label: "Resolved",
+        className: "num",
+        help: ["Findings in this lifecycle already resolved."],
+        cell: (r) => (r.resolved || 0).toLocaleString(),
+      },
+      {
+        key: "lastSeen",
+        label: "Last seen",
+        className: "muted",
+        help: ["The most recent scan that reported this lifecycle."],
+        cell: (r) => (r.lastSeen ? fmtDate(r.lastSeen) : absent()),
+      },
+      {
+        key: "tags",
+        label: "Stored tags",
+        className: "small muted",
+        help: ["The tag values stored the last time this lifecycle was seen."],
+        cell: (r) => {
+          const tagEntries = Object.entries(r.tags || {});
+          // "no tags" is a MEASUREMENT, not an absence: the lifecycle carried a tag bag and it
+          // was empty, which is why this one stays a word rather than becoming the dash.
+          return tagEntries.length ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ") : "no tags";
+        },
+      },
     ];
     function assetCell(r) {
       const nm = (r.nearMisses || [])[0];
@@ -348,24 +384,44 @@ export async function renderAttribution(main, params, ctx) {
     }
     const total = coverage.totalFindings || 0;
     const columns = [
-      { key: "domain", label: "Domain", cell: (d) => {
-        // Zero-count real domains never matched anything (possibly dead); a non-empty
-        // Unassigned row is a coverage gap. Never a warning on an empty Unassigned row (good).
-        // `Not attributable` is NEITHER: nothing an operator does here can close it, so
-        // flagging it as a gap would put a permanent red pill beside work that does not exist.
-        const marker = d.domain === NOT_ATTRIBUTABLE
-          ? statusPill("neutral", "no inputs")
-          : d.domain === UNASSIGNED
-            ? (d.findings > 0 ? statusPill("bad", "coverage gap") : null)
-            : (d.findings === 0 ? statusPill("warn", "no matches") : null);
-        return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
-          el("strong", {}, d.domain), marker);
-      } },
-      { key: "findings", label: "Findings", className: "num",
-        cell: (d) => (d.findings || 0).toLocaleString() },
-      { key: "assets", label: "Assets", className: "num",
-        cell: (d) => (d.assets || 0).toLocaleString() },
-      { key: "share", label: "Share", cell: (d) => shareCell(total ? d.findings / total : 0) },
+      {
+        key: "domain",
+        label: "Domain",
+        help: ["The manual group or Wiz/Domain tag value findings resolved to."],
+        cell: (d) => {
+          // Zero-count real domains never matched anything (possibly dead); a non-empty
+          // Unassigned row is a coverage gap. Never a warning on an empty Unassigned row (good).
+          // `Not attributable` is NEITHER: nothing an operator does here can close it, so
+          // flagging it as a gap would put a permanent red pill beside work that does not exist.
+          const marker = d.domain === NOT_ATTRIBUTABLE
+            ? statusPill("neutral", "no inputs")
+            : d.domain === UNASSIGNED
+              ? (d.findings > 0 ? statusPill("bad", "coverage gap") : null)
+              : (d.findings === 0 ? statusPill("warn", "no matches") : null);
+          return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
+            el("strong", {}, d.domain), marker);
+        },
+      },
+      {
+        key: "findings",
+        label: "Findings",
+        className: "num",
+        help: ["Findings that resolved to this domain, in the current scan."],
+        cell: (d) => (d.findings || 0).toLocaleString(),
+      },
+      {
+        key: "assets",
+        label: "Assets",
+        className: "num",
+        help: ["Distinct assets carrying at least one finding resolved to this domain."],
+        cell: (d) => (d.assets || 0).toLocaleString(),
+      },
+      {
+        key: "share",
+        label: "Share",
+        help: ["This domain's findings as a share of every finding in the current scan."],
+        cell: (d) => shareCell(total ? d.findings / total : 0),
+      },
     ];
     bodyHost.append(settingsPanel({
       title: "Coverage by domain",
@@ -451,17 +507,37 @@ export async function renderAttribution(main, params, ctx) {
     }
     const total = sg.totalFindings || 0;
     const columns = [
-      { key: "group", label: "Support group", cell: (g) => {
-        // A non-empty "(none)" row is the unresolved gap; resolved groups carry no marker.
-        const marker = g.unresolved && g.findings > 0 ? statusPill("bad", "unresolved") : null;
-        return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
-          el("strong", {}, g.group), marker);
-      } },
-      { key: "findings", label: "Findings", className: "num",
-        cell: (g) => (g.findings || 0).toLocaleString() },
-      { key: "assets", label: "Assets", className: "num",
-        cell: (g) => (g.assets || 0).toLocaleString() },
-      { key: "share", label: "Share", cell: (g) => shareCell(total ? g.findings / total : 0) },
+      {
+        key: "group",
+        label: "Support group",
+        help: ["The support group a finding's subscription resolved to."],
+        cell: (g) => {
+          // A non-empty "(none)" row is the unresolved gap; resolved groups carry no marker.
+          const marker = g.unresolved && g.findings > 0 ? statusPill("bad", "unresolved") : null;
+          return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
+            el("strong", {}, g.group), marker);
+        },
+      },
+      {
+        key: "findings",
+        label: "Findings",
+        className: "num",
+        help: ["Findings whose subscription resolved to this support group."],
+        cell: (g) => (g.findings || 0).toLocaleString(),
+      },
+      {
+        key: "assets",
+        label: "Assets",
+        className: "num",
+        help: ["Distinct assets carrying at least one finding in this support group."],
+        cell: (g) => (g.assets || 0).toLocaleString(),
+      },
+      {
+        key: "share",
+        label: "Share",
+        help: ["This group's findings as a share of every finding in the current scan."],
+        cell: (g) => shareCell(total ? g.findings / total : 0),
+      },
     ];
     bodyHost.append(settingsPanel({
       title: "Coverage by support group",
@@ -486,36 +562,66 @@ export async function renderAttribution(main, params, ctx) {
     // row Wiz told us nothing about, and a black em dash in the same weight as the values
     // beside it reads as a recorded value rather than as silence.
     const columns = [
-      { key: "asset", label: "Asset", cell: (r) => {
-        // Top near-miss as a muted second line under the asset name ("almost matches
-        // Payments — rule 2, failing: tag"). ruleIndex is 0-based; show it 1-based.
-        const nm = (r.nearMisses || [])[0];
-        return [
-          el("strong", {}, r.asset || absent()),
-          nm
-            ? el("div", { class: "small muted" },
-              "almost matches ", el("em", {}, nm.domain), ` — rule ${nm.ruleIndex + 1}`,
-              (nm.failedTypes && nm.failedTypes.length)
-                ? `, failing: ${nm.failedTypes.join(", ")}` : "")
-            : null,
-        ];
-      } },
-      { key: "assetType", label: "Type", cell: (r) => r.assetType || absent() },
-      { key: "subscription", label: "Subscription", cell: (r) => r.subscription || absent() },
-      { key: "supportGroup", label: "Support group",
-        cell: (r) => (r.supportGroup ? r.supportGroup : statusPill("neutral", "(none)")) },
-      { key: "tags", label: "Tags", cell: (r) => {
-        const tagEntries = Object.entries(r.tags || {});
-        return el("span", { class: "small muted" }, tagEntries.length
-          ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ")
-          : absent());
-      } },
-      { key: "findings", label: "Findings", cell: (r) =>
-        el("div", { class: "mix-cell" },
+      {
+        key: "asset",
+        label: "Asset",
+        help: ["The asset no manual group rule claimed."],
+        cell: (r) => {
+          // Top near-miss as a muted second line under the asset name ("almost matches
+          // Payments — rule 2, failing: tag"). ruleIndex is 0-based; show it 1-based.
+          const nm = (r.nearMisses || [])[0];
+          return [
+            el("strong", {}, r.asset || absent()),
+            nm
+              ? el("div", { class: "small muted" },
+                "almost matches ", el("em", {}, nm.domain), ` — rule ${nm.ruleIndex + 1}`,
+                (nm.failedTypes && nm.failedTypes.length)
+                  ? `, failing: ${nm.failedTypes.join(", ")}` : "")
+              : null,
+          ];
+        },
+      },
+      {
+        key: "assetType",
+        label: "Type",
+        help: ["The asset's type, as reported by Wiz."],
+        cell: (r) => r.assetType || absent(),
+      },
+      {
+        key: "subscription",
+        label: "Subscription",
+        help: ["The subscription this asset belongs to."],
+        cell: (r) => r.subscription || absent(),
+      },
+      {
+        key: "supportGroup",
+        label: "Support group",
+        help: ["The support group resolved for this asset's subscription, if any."],
+        cell: (r) => (r.supportGroup ? r.supportGroup : statusPill("neutral", "(none)")),
+      },
+      {
+        key: "tags",
+        label: "Tags",
+        help: ["The tags Wiz recorded for this asset."],
+        cell: (r) => {
+          const tagEntries = Object.entries(r.tags || {});
+          return el("span", { class: "small muted" }, tagEntries.length
+            ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ")
+            : absent());
+        },
+      },
+      {
+        key: "findings",
+        label: "Findings",
+        help: ["This asset's open findings, split by severity."],
+        cell: (r) => el("div", { class: "mix-cell" },
           mixStrip(r.sevCounts || {}),
           el("span", { class: "mix-text small muted num" },
-            mixText(r.sevCounts || {}) || `${(r.findings || 0).toLocaleString()}`)) },
-      // The action column's heading is deliberately empty — the button says what it does.
+            mixText(r.sevCounts || {}) || `${(r.findings || 0).toLocaleString()}`)),
+      },
+      // The action column's heading is deliberately empty — the button says what it does, and
+      // an empty heading has nothing for a `?` to define. See test/columnHelp.test.js's
+      // allowlist.
       { key: "attribute", label: "", cell: (r) => {
         const btn = el("button", { type: "button",
           onclick: () => editor.openWithPrefill({
@@ -571,21 +677,49 @@ export async function renderAttribution(main, params, ctx) {
     }
     const items = (boot.settings.domains && boot.settings.domains.items) || [];
     const columns = [
-      { key: "domain", label: "Manual group", cell: (rh) => el("strong", {}, rh.domain) },
-      { key: "rule", label: "Rule", cell: (rh) => {
-        const rule = items[rh.domainIndex] && items[rh.domainIndex].rules
-          ? items[rh.domainIndex].rules[rh.ruleIndex] : null;
-        return el("span", { class: "small muted" }, summarizeRule(rule));
-      } },
-      { key: "fired", label: "Fired", className: "num",
-        cell: (rh) => (rh.fired || 0).toLocaleString() },
-      { key: "matched", label: "Matched", className: "num",
-        cell: (rh) => (rh.matched || 0).toLocaleString() },
-      { key: "status", label: "Status", cell: (rh) => {
-        const [kind, label] = STATUS_PILL[rh.status] || ["neutral", rh.status || "?"];
-        return statusPill(kind, label);
-      } },
-      // Empty heading: a column of "Edit" buttons names itself.
+      {
+        key: "domain",
+        label: "Manual group",
+        help: ["The manual group this rule belongs to."],
+        cell: (rh) => el("strong", {}, rh.domain),
+      },
+      {
+        key: "rule",
+        label: "Rule",
+        help: ["The rule's own conditions, ANDed together."],
+        cell: (rh) => {
+          const rule = items[rh.domainIndex] && items[rh.domainIndex].rules
+            ? items[rh.domainIndex].rules[rh.ruleIndex] : null;
+          return el("span", { class: "small muted" }, summarizeRule(rule));
+        },
+      },
+      {
+        key: "fired",
+        label: "Fired",
+        className: "num",
+        help: ["Findings this rule actually claims, under first-match priority — an earlier "
+          + "rule can shadow it."],
+        cell: (rh) => (rh.fired || 0).toLocaleString(),
+      },
+      {
+        key: "matched",
+        label: "Matched",
+        className: "num",
+        help: ["Findings this rule's conditions match, whether or not an earlier rule claims "
+          + "them first."],
+        cell: (rh) => (rh.matched || 0).toLocaleString(),
+      },
+      {
+        key: "status",
+        label: "Status",
+        help: { term: "rule-health" },
+        cell: (rh) => {
+          const [kind, label] = STATUS_PILL[rh.status] || ["neutral", rh.status || "?"];
+          return statusPill(kind, label);
+        },
+      },
+      // Empty heading: a column of "Edit" buttons names itself, and there is nothing for a
+      // `?` to define. See test/columnHelp.test.js's allowlist.
       { key: "edit", label: "", cell: (rh) => {
         const btn = el("button", { type: "button",
           onclick: () => editor.openEditor(rh.domainIndex) }, "Edit");
@@ -625,16 +759,35 @@ export async function renderAttribution(main, params, ctx) {
       return;
     }
     const columns = [
-      { key: "subscription", label: "Subscription",
-        cell: (u) => el("strong", {}, u.subscription) },
-      { key: "extId", label: "Ext ID", cell: (u) => u.extId },
-      { key: "assets", label: "Assets", className: "num",
-        cell: (u) => (u.assets || 0).toLocaleString() },
-      { key: "findings", label: "Findings", cell: (u) =>
-        el("div", { class: "mix-cell" },
+      {
+        key: "subscription",
+        label: "Subscription",
+        help: ["The subscription carrying findings but no support-group tag."],
+        cell: (u) => el("strong", {}, u.subscription),
+      },
+      {
+        key: "extId",
+        label: "Ext ID",
+        help: ["The subscription's external id, as Wiz reports it — compare against the "
+          + "support-group map's indexed keys."],
+        cell: (u) => u.extId,
+      },
+      {
+        key: "assets",
+        label: "Assets",
+        className: "num",
+        help: ["Distinct assets under this subscription with at least one finding."],
+        cell: (u) => (u.assets || 0).toLocaleString(),
+      },
+      {
+        key: "findings",
+        label: "Findings",
+        help: ["This subscription's findings, split by severity."],
+        cell: (u) => el("div", { class: "mix-cell" },
           mixStrip(u.sevCounts || {}),
           el("span", { class: "mix-text small muted num" },
-            mixText(u.sevCounts || {}) || `${(u.findings || 0).toLocaleString()}`)) },
+            mixText(u.sevCounts || {}) || `${(u.findings || 0).toLocaleString()}`)),
+      },
     ];
     bodyHost.append(settingsPanel({
       title: "Untagged subscriptions", description: desc,
