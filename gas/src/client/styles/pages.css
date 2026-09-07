@@ -959,3 +959,128 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
   text-align: center; font-size: var(--fs-label); padding: 0 var(--space-5);
   height: auto; border: none; border-radius: 0;
 }
+
+/* =========================================================================================
+   CSS INTAKE (P1.6). The blocks below are copied byte-identical (selector + declarations)
+   from gas_devsecops/src/client/styles/pages.css, which already carries the page-level rules
+   a LATER package's Executive/MTTR/Program/History rebuild needs — those pages do not exist
+   here yet, so nothing in this file references these classes today. Every declaration below
+   resolves against tokens already imported (tokens.base.css, components.css, tables.css — see
+   SHEET_ORDER), so this is additive: no new hex, no new token, no rule this file already owns.
+   Excluded on purpose (per the wave's own package split): .isotype*, .spiral*, .scan-scopes,
+   .signal-rows*, .coverage-headline, .verdict-*, .cell-verdict (devsecops-only shapes this
+   register does not draw), and .sidebar .rail-status-dot (another P1 package's block). */
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: Executive (the ranked "fix next" list). */
+.fixnext { margin: 0 0 var(--space-3); padding-left: var(--space-5); display: grid; gap: var(--space-2); }
+.fixnext-item { padding-left: var(--space-1); }
+.fixnext-item::marker { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.fixnext-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.fixnext-repo { font-weight: 600; }
+.fixnext-meta { margin-top: var(--space-half); }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: Executive (the movement strip in the header)
+   and Scan History (.movement-block, one register's movement as a card and a row). */
+.movement-rows { display: grid; gap: var(--space-1); max-width: 46ch; }
+.movement-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.movement-label { color: var(--text-2); min-width: 8ch; }
+.movement-counts { margin-left: auto; font-variant-numeric: tabular-nums; }
+.movement-block { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA (the per-severity survival fan,
+   one small-multiple chart per severity). */
+.sev-fan {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.sev-fan .chart-box { height: 160px; }
+.sev-fan__head { margin-bottom: var(--space-2); }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA and Program performance (caps
+   the header's aside kpiCard so it reads as the hero's companion, not a second hero). */
+.page-header > .kpi-card { max-width: 22rem; }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: Scan History and Program performance (a
+   chart-row floor measured against a table's own content rather than a chart's). */
+.chart-row--pair { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA, Scan History and Program
+   performance (the narrow-viewport collapse for the two auto-fit rules above and for the
+   shared .chart-row, plus the .page-header two-column collapse below). */
+@media (max-width: 640px) {
+  .sev-fan, .chart-row--pair, .chart-row { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .page-header { grid-template-columns: 1fr; }
+}
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: every register table (fixes a
+   scroll-clipped .sr-only description's static position leaking into
+   document.documentElement.scrollWidth — see the horizontal-overflow diagnosis below). */
+.table-wrap { position: relative; }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: any register toolbar (keeps a control's
+   label with its control when the row wraps at narrow widths). */
+.toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: the finding Sheet (the copy actions row at
+   the top of the body, as distinct from .sheet-actions' pinned footer). */
+.finding-actions {
+  display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3);
+}
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: the finding Sheet (a code block inside a
+   .kv value, so it does not collide with the row beneath it). */
+.kv dd > .code-block { margin: 0; }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA (the header's half-life trend
+   aside — a sparkline qualifier beside the hero, never a rival to it). */
+.trend-aside { max-width: 26rem; display: grid; gap: var(--space-1); justify-items: start; }
+.trend-aside .sparkline { color: var(--ink); }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: MTTR & SLA (the SLA table's rate cells,
+   figure plus base plus a decorative meter as a third encoding). */
+.rate-with-meter {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1);
+}
+.rate-with-meter .meter { flex: 0 0 52px; }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: Program performance (the unclassified-rows
+   card, hatched rather than filled — a measurement gap is not a low score). */
+.unclassified-card { display: grid; gap: var(--space-half); }
+.unclassified-swatch {
+  display: inline-block; width: 14px; height: 14px; margin-right: var(--space-2);
+  border: 1px solid var(--hairline); border-radius: 2px; vertical-align: -2px;
+}
+@media (forced-colors: active) {
+  .unclassified-swatch { border-color: CanvasText; }
+}
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: Scan History (a KPI card's own sparkline,
+   borderless and below the sub-value it qualifies). */
+.kpi-spark {
+  display: grid; gap: var(--space-half); justify-items: start; margin-top: var(--space-2);
+}
+.kpi-spark .sparkline { color: var(--ink); }
+.kpi-spark__cap { font-size: var(--fs-label); color: var(--text-3); }
+
+/* promotion candidate: byte-identical to gas_devsecops/src/client/styles/pages.css — promote
+   to gas_shared/styles after wave 3. Consumed by: Scan History (a state pill riding beside a
+   section heading rather than inside its name). */
+.section-label > .heading-pill { margin-left: var(--space-2); font-weight: 400; }

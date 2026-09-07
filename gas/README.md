@@ -29,6 +29,10 @@ vitest specs instead of fixture parity.
 | Scan jobs | `src/server/scanJobs.ts` | resumable page walk (6-min limit) via one-shot trigger continuation |
 | Web app | `src/client/` | hash-routed SPA served by `doGet`; Chart.js 4 bundled into `js_app.html` (no CDN); DESIGN.md system in `styles.css` |
 
+Root `DESIGN.md` is the design system; [`DESIGN.md`](DESIGN.md) here states only where this
+register differs (the ink-equals-fill accent, the categorical group palette, the rail dot,
+the scan noun, `fmtSpan`).
+
 ### The shell
 
 A header across the top, a two-tier nav under it, and the page beside that. The header carries
