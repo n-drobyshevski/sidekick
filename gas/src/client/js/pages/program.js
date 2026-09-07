@@ -11,15 +11,16 @@
 
 import { capacityHindcastView, VERDICT } from "./programCapacity.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
-import { rateView } from "./mttr.js";
-import { rateCell } from "./_rates.js";
+import { meterPctFor, rateView } from "./mttr.js";
+import { denominatorNode, rateCell } from "./_rates.js";
 import { scatterTableModel, trendTableModel } from "./_charts.js";
 import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, chartTable, clear, dataTable,
-  downloadText, el, emptyState, errorState, fmtDate, glossaryTip, num, openSheet, pageHeader,
-  pct1, scopeBar, sectionLabel, sevBadge, skeleton, statusPill, tableFooter, tip, toast,
+  downloadText, el, emptyState, errorState, fmtDate, glossaryTip, meter, num, openSheet,
+  pageHeader, pct1, quadModel, quadTable, scopeBar, sectionLabel, sevBadge, skeleton,
+  statusPill, tableFooter, tip, tipLabel, toast,
 } from "../ui.js";
 
 // Matrix cells, in reading order. `key` matches the server's `matrix_cell` / cohort quadrant
@@ -99,6 +100,217 @@ function pct0Cell(v) {
 }
 
 /**
+ * A `{point, lo, hi}` rate, its interval, and the base it was taken over — ported from
+ * `gas_devsecops/src/client/js/pages/program.js`, unchanged in shape. `src/domain/program.ts`'s
+ * `finalize()` already hands this page `m.coverage` / `m.efficiency` in exactly that shape
+ * (a `NO_RATE` of `{point: null, lo: null, hi: null}` when the denominator was empty), so this
+ * is the one place that turns it into text and a bounds sentence rather than every call site
+ * doing the null-before-cast dance by hand.
+ *
+ * `hasBounds` is false only when `lo === point === hi`, which happens exactly when nothing was
+ * unclassified — the one case where the bare point is the whole truth and no bracket is drawn.
+ */
+export function boundedRateView(rate, denominator, denominatorLabel, emptyLabel) {
+  const r = rate || {};
+  const den = num(denominator);
+  const point = num(r.point);
+  const lo = num(r.lo);
+  const hi = num(r.hi);
+  const measured = den !== null && den > 0 && point !== null;
+  const hasBounds = measured && lo !== null && hi !== null
+    && (Math.abs(lo - point) > 1e-9 || Math.abs(hi - point) > 1e-9);
+  return {
+    measured,
+    point: measured ? point : null,
+    lo,
+    hi,
+    text: measured ? pct(point) : "not measured",
+    boundsText: hasBounds ? pct(lo) + " to " + pct(hi) : null,
+    hasBounds,
+    denominator: den,
+    denominatorLabel,
+    baseEmpty: !(den !== null && den > 0),
+    emptyLabel: emptyLabel || "nothing has been measured to take it over",
+  };
+}
+
+/**
+ * The 2x2, and the rows that are not in it — ported from gas_devsecops's `confusionView`,
+ * unchanged in shape. `cells` sums to `classified` by construction; `unclassified` is a
+ * SIBLING of that array, never a fifth cell, so `confusionQuadModel` below cannot mistake
+ * "the rule could not place this" for "the rule placed this and called it low risk".
+ *
+ * LABELS COME FROM `CELLS` ABOVE, gas's own — not gas_devsecops's wording. The four corners
+ * keep the readings the hand-built table already drew ("Fixed, and it mattered", …), so the
+ * glossary entries those readings link to (`cell-tp` etc.) keep describing what is on screen.
+ */
+export function confusionView(matrix) {
+  const m = matrix || {};
+  const cells = [
+    { key: "tp", row: "High risk", column: "Remediated", label: CELLS.tp.word,
+      value: Number(m.tp || 0) },
+    { key: "fn", row: "High risk", column: "Still open", label: CELLS.fn.word,
+      value: Number(m.fn || 0) },
+    { key: "fp", row: "Not high risk", column: "Remediated", label: CELLS.fp.word,
+      value: Number(m.fp || 0) },
+    { key: "tn", row: "Not high risk", column: "Still open", label: CELLS.tn.word,
+      value: Number(m.tn || 0) },
+  ];
+  const unknownRemediated = Number(m.unknownRemediated || 0);
+  const unknownOpen = Number(m.unknownOpen || 0);
+  const classified = Number(m.classified || 0);
+  const total = Number(m.total || 0);
+  return {
+    cells,
+    cellTotal: cells.reduce((a, c) => a + c.value, 0),
+    classified,
+    total,
+    unclassified: {
+      // Named and placed outside on purpose — see the module header above `confusionView`.
+      insideMatrix: false,
+      remediated: unknownRemediated,
+      open: unknownOpen,
+      total: unknownRemediated + unknownOpen,
+      share: boundedRateView(
+        {
+          point: total > 0 ? ((unknownRemediated + unknownOpen) / total) * 100 : null,
+          lo: null,
+          hi: null,
+        },
+        total,
+        total.toLocaleString() + " findings in scope",
+      ),
+    },
+  };
+}
+
+/**
+ * Which corner of the matrix is good news, which is bad, and which is neither.
+ *
+ * `fp` IS "warn", NOT "bad" — effort spent on a finding the rule did not rate high is the cost
+ * side of the pair this page publishes (efficiency is exactly that corner's share), not a
+ * failure, so colouring it an error would make a verdict the arithmetic does not.
+ */
+const CONFUSION_TONES = { tp: "ok", fn: "bad", fp: "warn", tn: "neutral" };
+
+// A LOOKUP, NOT `"cell-" + key` AT THE CALL SITE. `test/helpContent.test.js`'s
+// `referencedGlossaryIds` sweep matches the FIRST double-quoted literal after `term:` to
+// check it against the book — a concatenation would have hung the literal `"cell-"` in front
+// of it, which the sweep reads as a (non-existent) id of its own. `CELLS` above already
+// carries these same four ids as `.term`; this is a second, tiny map rather than a reach
+// into that one, because `CELLS` also holds the two unclassified-pair keys this map does not.
+const CELL_TERMS = { tp: "cell-tp", fn: "cell-fn", fp: "cell-fp", tn: "cell-tn" };
+
+/**
+ * The confusion matrix as a `quadModel` — ported from gas_devsecops's `confusionQuadModel`.
+ *
+ * THE SHARES ARE TAKEN AGAINST `classified`, NOT `total`, and that is the one arithmetic
+ * decision in this function. The four corners sum to `classified` by construction; the
+ * unclassified rows are a SIBLING of the array, drawn beside the grid under a hatch — passing
+ * `total` here would leave four shares summing to less than 100% with nothing on the grid
+ * explaining the missing share. `test/quadPages.test.js` reproduces that rewrite inline.
+ *
+ * `help` REUSES GAS'S OWN cell-tp/cell-fp/cell-fn/cell-tn GLOSSARY IDS — the same entries the
+ * hand-built table drew through `bookTip` before this package, not a second copy of them.
+ */
+export function confusionQuadModel(view) {
+  const cells = (view && view.cells) || [];
+  const at = (key) => cells.filter((c) => c.key === key)[0] || {};
+  const corner = (key, row, col) => {
+    const c = at(key);
+    // NO FALLBACK LABEL, and that is the point rather than an omission: `quadModel` REFUSES a
+    // corner with no word, and "tp" is a word only in the sense that it is a string — a toned
+    // cell reading "tp" would pass the refusal while defeating what it protects.
+    return {
+      row,
+      col,
+      count: c.value === undefined ? null : c.value,
+      label: c.label,
+      tone: CONFUSION_TONES[key] || "neutral",
+      help: { term: CELL_TERMS[key] },
+    };
+  };
+  return quadModel({
+    rows: { label: "Classified", yes: "High risk", no: "Not high risk" },
+    cols: { label: "Outcome", yes: "Remediated", no: "Still open" },
+    cells: [
+      corner("tp", true, true),
+      corner("fn", true, false),
+      corner("fp", false, true),
+      corner("tn", false, false),
+    ],
+    total: view && view.classified,
+    unit: "classified findings",
+  });
+}
+
+/**
+ * Which cohort quadrant a matrix corner opens, and whether it should — pure, so the guard is
+ * testable with no DOM (`quadTable`'s `cellAction` calls this and builds the button itself).
+ *
+ * THE GUARD IS `corner.count > 0`. An empty corner has no findings behind it, so its action
+ * would open a cohort sheet with nothing in it — an unopenable-looking control that opens
+ * anyway. `gas/test/quadAction.test.js` drops this guard and captures the result.
+ */
+export function matrixCellActionSpec(corner) {
+  if (!corner || !(corner.count > 0)) return null;
+  const quadrant = corner.row
+    ? (corner.col ? "tp" : "fn")
+    : (corner.col ? "fp" : "tn");
+  return {
+    quadrant,
+    count: corner.count,
+    ariaLabel: corner.label + ": open the " + corner.count.toLocaleString() + " findings",
+  };
+}
+
+/**
+ * A `rateView` whose visible TEXT goes through this page's own `pct` (`pct1`, one guaranteed
+ * decimal) rather than `./_rates.js`'s `fmtPct` (a decimal only when rounding produces one —
+ * `fmtPct(0)` is "0%", not "0.0%"). Every other percentage on this page already reads through
+ * `pct`; the by-severity table is the one place `rateView`'s own formatter would otherwise
+ * print a measured zero one way here and every other rate on the page another way. The
+ * measured / baseEmpty / denominator machinery is `rateView`'s, unchanged.
+ */
+function severityRateView(point, denominator, denominatorLabel) {
+  const view = rateView(point, denominator, denominatorLabel);
+  return view.measured ? { ...view, text: pct(view.value) } : view;
+}
+
+/**
+ * Coverage and efficiency per severity, from `confusionBySeverity`'s `perSev` half of the
+ * payload — shipped by `api_getProgramPage` (src/server/api.ts) since the cross above was
+ * first ported, and drawn nowhere until this package.
+ *
+ * EACH RATE READS AGAINST `classified` FOR THAT SEVERITY, not against the sub-denominator
+ * (tp+fn for coverage, tp+fp for efficiency) the top-of-page bounded rates use — a coarser,
+ * single base that lets one row hold both figures against one denominator instead of two
+ * different populations per row.
+ */
+export function confusionSeverityRows(perSev) {
+  const bySev = perSev || {};
+  return Object.keys(bySev).map((sev) => {
+    const m = bySev[sev] || {};
+    const classified = num(m.classified, 0);
+    const label = "of " + classified.toLocaleString() + " classified";
+    return {
+      sev,
+      classified,
+      unclassified: num(m.unknown, 0),
+      coverage: severityRateView(m.coverage && m.coverage.point, classified, label),
+      efficiency: severityRateView(m.efficiency && m.efficiency.point, classified, label),
+    };
+  });
+}
+
+/** The `meter--stat` beside a by-severity coverage/efficiency figure — the DOM half of
+ *  `meterPctFor`. Decorative: the rate's own text already prints the figure beside it. */
+function severityMeter(rate) {
+  const pctVal = meterPctFor(rate);
+  return pctVal === null ? null : meter(pctVal, { className: "meter--stat", decorative: true });
+}
+
+/**
  * Cell content at caption size, as a span rather than as a class on the cell.
  *
  * `dataTable` lands `col.className` on the <th> as well as on every <td>, which is exactly what
@@ -111,31 +323,27 @@ function small(...kids) {
 }
 
 /**
- * The rate itself. Paired with rangeNode below, never shown without it.
- *
- * BOTH of its call sites are Node child positions (the coverage hero value and the efficiency
- * stat beside it), so this one may return `absent()` rather than a bare dash. It now refuses a
- * null `point` as well as a null rate: `pct(null)` was already returning the dash for it, in
- * black, which is the case this whole helper family exists to keep out of the ink of a measured
- * number.
+ * The hero rate's own bare value, or the muted dash — the DOM half of `boundedRateView`'s
+ * `measured` flag. A Node child position (the coverage hero value and the efficiency stat
+ * beside it), so an unmeasured rate draws `absent()` rather than the plain-ink string
+ * `boundedRateView` itself returns for a table cell.
  */
-function rateText(rate) {
-  if (!rate || rate.point === null || rate.point === undefined) return absent();
-  return pct(rate.point);
+function rateNode(rate) {
+  return rate.measured ? rate.text : absent();
 }
 
 /**
  * The uncertainty the unclassified population implies, as a subordinate clause beside the
- * rate: "50.0–66.7%". Rendered only when there is real doubt — with every finding classified
- * the bounds collapse onto the point and the figure stands bare.
+ * rate: "bounds 50.0% to 66.7%" — `boundedRateView`'s own `boundsText`, worded as a clause
+ * rather than a bare range. Rendered only when there is real doubt (`hasBounds`); with every
+ * finding classified the bounds collapse onto the point and the figure stands bare.
  *
- * This is the honest-state device the whole page hangs on: the width of the range IS the size
- * of the unclassified bucket, so missing data cannot hide behind a confident-looking number.
+ * This is the honest-state device the whole page hangs on: the width of the bracket IS the
+ * size of the unclassified bucket, so missing data cannot hide behind a confident-looking
+ * number.
  */
-function rangeNode(rate) {
-  if (!rate || rate.lo === null || rate.hi === null || rate.point === null) return null;
-  if (Math.abs(rate.hi - rate.lo) < 0.05) return null;
-  return el("span", { class: "prog-range" }, pct(rate.lo) + "–" + pct(rate.hi));
+function boundsNode(rate) {
+  return rate.hasBounds ? el("span", { class: "prog-range" }, "bounds " + rate.boundsText) : null;
 }
 
 /**
@@ -269,6 +477,19 @@ export async function renderProgram(main, _params, ctx) {
   function renderHero(p) {
     clear(heroHost);
     const m = p.matrix;
+    // `boundedRateView` — ported from gas_devsecops — replaces the ad hoc `rateText`/
+    // `rangeNode` pair this page carried before this package: the same refuse-before-cast
+    // logic, but shared with the by-severity table below rather than typed twice.
+    const covRate = boundedRateView(
+      m.coverage, m.tp + m.fn,
+      (m.tp + m.fn).toLocaleString() + " classified high-risk findings",
+      "no finding has been classified high risk",
+    );
+    const effRate = boundedRateView(
+      m.efficiency, m.tp + m.fp,
+      (m.tp + m.fp).toLocaleString() + " classified remediations",
+      "no classified finding has been remediated",
+    );
     // `tip(..., { term })` RATHER THAN `glossaryTip`, AND THE ONE LINE THAT STAYS IS WHY.
     // Each of these tips opened with THIS scan's arithmetic — "TP / (TP + FN) — here 412 of
     // 1,204" — which no glossary entry can carry and which is the part that makes the rate
@@ -279,7 +500,8 @@ export async function renderProgram(main, _params, ctx) {
     const cov = tip(
       [
         el("div", { class: "label" }, "Remediation coverage"),
-        el("div", { class: "hero-value num" }, rateText(m.coverage), rangeNode(m.coverage)),
+        el("div", { class: "hero-value num" }, rateNode(covRate), boundsNode(covRate)),
+        denominatorNode(covRate),
       ],
       [
         "Of every finding the active rule calls high risk, the share that has been " +
@@ -291,7 +513,8 @@ export async function renderProgram(main, _params, ctx) {
     const eff = tip(
       [
         el("div", { class: "label" }, "Efficiency"),
-        el("div", { class: "kpi-value num" }, rateText(m.efficiency), rangeNode(m.efficiency)),
+        el("div", { class: "kpi-value num" }, rateNode(effRate), boundsNode(effRate)),
+        denominatorNode(effRate),
       ],
       [
         "Of everything remediated, the share that was actually high risk. TP / (TP + FP) — " +
@@ -352,14 +575,16 @@ export async function renderProgram(main, _params, ctx) {
   // -------------------------------------------------------------- confusion matrix
 
   /**
-   * The transparency centrepiece: the 2×2 with real counts, every cell a button into the
-   * findings behind it. The unclassified counts sit in their own row BELOW the matrix rule,
-   * never inside the 2×2, so they cannot be misread as a quadrant.
+   * The transparency centrepiece: the 2×2 with real counts, every corner a button into the
+   * findings behind it — `gas_shared/ui/quad.js`'s cross, ported in for this page the way the
+   * secrets and program lanes already draw it in `gas_devsecops`. The unclassified counts sit
+   * OUTSIDE the grid, in their own hatched card below it, never a fifth quadrant.
    *
-   * Deliberately uncoloured. These are counts, not severities, and DESIGN.md's Rationed Ink
-   * rule reserves saturation for real risk signal — a red-washed FN cell would be exactly the
-   * "security-vendor theater" the product explicitly steers away from. The quadrants are
-   * distinguished by their words and their position.
+   * Deliberately uncoloured beyond the design system's own tone washes. These are counts, not
+   * severities, and DESIGN.md's Rationed Ink rule reserves saturation for real risk signal —
+   * a red-washed FN cell would be exactly the "security-vendor theater" the product explicitly
+   * steers away from. `quadModel`'s tones (`CONFUSION_TONES` above) are a 12% wash on the
+   * diagonal, not a severity palette.
    */
   function renderMatrix(p) {
     clear(matrixHost);
@@ -371,52 +596,120 @@ export async function renderProgram(main, _params, ctx) {
         onclick: () => exportCsv(""),
       }, "Download classified rows (CSV)")));
 
-    const cell = (key, count) => {
+    const view = confusionView(m);
+    const model = confusionQuadModel(view);
+    matrixHost.append(quadTable(model, {
+      ariaLabel: "Classified risk against remediation outcome, over "
+        + view.classified.toLocaleString() + " classified findings",
+      // The corner's own drill-down — reuses the SAME `openCohort`/`api_getRiskCohort` path
+      // the hand-built table used, paging and errorState included. `matrixCellActionSpec`
+      // is the pure half (the count > 0 guard); this is only the DOM half of it.
+      cellAction: (corner) => {
+        const spec = matrixCellActionSpec(corner);
+        if (!spec) return null;
+        return el("button", {
+          type: "button",
+          class: "linklike quad-action",
+          onclick: () => openCohort(spec.quadrant, spec.count),
+          "aria-label": spec.ariaLabel,
+        }, "Open list");
+      },
+    }));
+
+    // OUTSIDE the grid, never a fifth cell — the unclassified pair as its own hatched card,
+    // each half its own cohort drill-down (the SAME `unknownRemediated`/`unknownOpen`
+    // quadrants the old table's bottom row opened, via the same `CELLS`/`openCohort`).
+    const u = view.unclassified;
+    const unkBtn = (key, count, word) => {
       const spec = CELLS[key];
       const btn = el("button", {
         type: "button",
-        class: "prog-cell",
+        class: "linklike",
         onclick: () => openCohort(key, count),
-        "aria-label": spec.word + ": " + count.toLocaleString() + " findings. Open the list.",
         disabled: count ? null : true,
-      },
-        el("span", { class: "prog-cell-count num" }, count.toLocaleString()),
-        el("span", { class: "prog-cell-word" },
-          spec.abbr ? el("span", { class: "prog-cell-abbr" }, spec.abbr) : null,
-          spec.word));
-      return el("td", {}, bookTip(btn, spec.term));
+      }, count.toLocaleString() + " " + word);
+      return bookTip(btn, spec.term);
     };
+    matrixHost.append(el("section", { class: "card unclassified-card" },
+      el("div", { class: "kpi-label" },
+        el("i", { class: "hatch unclassified-swatch", "aria-hidden": "true" }),
+        // `no-captured-signal`, NOT the generic `unclassified` entry — this card IS the old
+        // unclassified row, and that glossary id is written specifically for it ("outside
+        // the 2×2 on purpose", the coverage/efficiency inflation it would cause folded in).
+        tipLabel("Unclassified", { term: "no-captured-signal" })),
+      el("div", { class: "kpi-value num" }, u.total.toLocaleString()),
+      el("p", { class: "small muted" },
+        unkBtn("unknownRemediated", u.remediated, "remediated"),
+        " · ",
+        unkBtn("unknownOpen", u.open, "still open"),
+        " · ",
+        el("span", { class: "num" }, u.share.text),
+        " ",
+        denominatorNode(u.share))));
 
-    const table = el("table", { class: "data prog-matrix" },
-      el("thead", {}, el("tr", {},
-        el("th", { scope: "col" }, ""),
-        el("th", { scope: "col" }, "Remediated"),
-        el("th", { scope: "col" }, "Still open"),
-        el("th", { scope: "col" }, "Total"))),
-      el("tbody", {},
-        el("tr", {},
-          el("th", { scope: "row" }, "High risk"),
-          cell("tp", m.tp),
-          cell("fn", m.fn),
-          el("td", { class: "num" }, m.highRisk.toLocaleString())),
-        el("tr", {},
-          el("th", { scope: "row" }, "Not high risk"),
-          cell("fp", m.fp),
-          cell("tn", m.tn),
-          el("td", { class: "num" }, m.notHighRisk.toLocaleString())),
-        el("tr", { class: "prog-unknown-row" },
-          el("th", { scope: "row" },
-            glossaryTip("No captured signal", "no-captured-signal")),
-          cell("unknownRemediated", m.unknownRemediated),
-          cell("unknownOpen", m.unknownOpen),
-          el("td", { class: "num" }, m.unknown.toLocaleString()))),
-    );
-    matrixHost.append(el("div", { class: "table-wrap" }, table));
     matrixHost.append(el("p", { class: "note" },
       "Coverage reads across the top row (" + m.tp.toLocaleString() + " of " +
       m.highRisk.toLocaleString() + "). Efficiency reads down the Remediated column (" +
       m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() +
-      "). Select any cell for the findings behind it."));
+      "). Select \"Open list\" on any corner, or the figures below it, for the findings " +
+      "behind them."));
+
+    renderSeverityBreakdown(p);
+  }
+
+  /**
+   * `confusionBySeverity`'s `perSev` half of `p` (src/server/api.ts), drawn as its own table
+   * under the cross — shipped since the matrix above was first ported, and drawn nowhere
+   * until this package. Each row's coverage and efficiency read against `classified` for
+   * THAT severity (`confusionSeverityRows`'s own header explains why that denominator, not
+   * the tp+fn/tp+fp sub-denominators the hero above uses).
+   */
+  function renderSeverityBreakdown(p) {
+    const rows = confusionSeverityRows(p.perSev);
+    if (!rows.length) return;
+    matrixHost.append(sectionLabel("By severity"));
+    matrixHost.append(dataTable({
+      columns: [
+        {
+          key: "sev",
+          label: "Severity",
+          help: ["The finding's severity, as assigned by the scan."],
+          cell: (r) => sevBadge(r.sev),
+        },
+        {
+          key: "coverage",
+          label: "Coverage",
+          className: "num",
+          help: { term: "coverage" },
+          cell: (r) => el("span", { class: "rate-with-meter" },
+            rateCell(r.coverage), severityMeter(r.coverage)),
+        },
+        {
+          key: "efficiency",
+          label: "Efficiency",
+          className: "num",
+          help: { term: "efficiency" },
+          cell: (r) => el("span", { class: "rate-with-meter" },
+            rateCell(r.efficiency), severityMeter(r.efficiency)),
+        },
+        {
+          key: "classified",
+          label: "Classified",
+          className: "num",
+          help: ["How many findings of this severity carried a captured exploit signal and "
+            + "could be scored either way."],
+          cell: (r) => r.classified.toLocaleString(),
+        },
+        {
+          key: "unclassified",
+          label: "Unclassified",
+          className: "num",
+          help: { term: "unclassified" },
+          cell: (r) => r.unclassified.toLocaleString(),
+        },
+      ],
+      rows,
+    }));
   }
 
   /** Drill-down: the actual findings in one matrix cell, paged, from the durable ledger. */
@@ -516,7 +809,13 @@ export async function renderProgram(main, _params, ctx) {
       load();
     }, {
       title: spec.word,
-      subtitle: total.toLocaleString() + " finding(s) · " + spec.help,
+      // NOT `spec.help` — a pre-existing, out-of-scope defect this package's own browser
+      // check exposed rather than fixed here: `CELLS` carries `abbr`/`word`/`term` (its own
+      // header explains the sentences moved to helpContent.js's glossary), and `.help` has
+      // not existed on it since that move — every drill-down sheet's subtitle read "N
+      // finding(s) · undefined". `spec.word` is already the sheet's own `title`, so the
+      // subtitle states only the count.
+      subtitle: total.toLocaleString() + " finding(s)",
       width: "min(720px, 96vw)",
       // `resizable: true` replaces `storageKey: "programCohortWidth"`, the same substitution the
       // MTTR by-domain sheet needed and for the same reason: `storageKey` was one of gas's own
