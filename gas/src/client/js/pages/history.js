@@ -7,8 +7,9 @@ import { call } from "../../../../../gas_shared/api.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, confirmDialog, dataTable, el, emptyState, errorState, firstRunNotice, fmtDateTime, fmtSpan, kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
+  absent, chartTable, clear, confirmDialog, dataTable, el, emptyState, errorState, firstRunNotice, fmtDateTime, fmtSpan, kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
 } from "../ui.js";
+import { trendTableModel } from "./_charts.js";
 import { movementView } from "./historyModel.js";
 
 // The rows-per-page the table OPENS on. It is no longer the only size available: the footer
@@ -462,7 +463,10 @@ export async function renderHistory(main, _params, ctx) {
     // findings right-censored, so a wave of fresh open findings can't bias it down), replacing
     // the old naive closed-only median. Null where the median is unobservable under censoring;
     // hollow vertices + a shaded band mark the reconstructed pre-first-scan prefix (see trendLine).
-    const kmMedianPoints = trends.trend
+    // Named once — the same reference both charts.openResolvedLines below and this card's
+    // chartTable are handed, so the two can never disagree about the population plotted.
+    const rows = trends.trend;
+    const kmMedianPoints = rows
       .map((t) => ({ x: t.date, y: t.km_median_days, reconstructed: t.reconstructed }))
       .filter((p) => p.y !== null && p.y !== undefined);
     // A trend needs at least two points; KM can be censored at every point on a young ledger,
@@ -476,17 +480,33 @@ export async function renderHistory(main, _params, ctx) {
         el("div", { class: "chart-box" }, mttrCanvas),
         el("p", { class: "chart-caption muted" },
           "Kaplan–Meier median days to remediation, replayed as of each scan; " +
-          "still-open findings censored."))
+          "still-open findings censored."),
+        chartTable({
+          canvas: mttrCanvas,
+          caption: "Every point of the line above: date, and the Kaplan–Meier median days to "
+            + "remediation as of that date.",
+          model: trendTableModel(kmMedianPoints, [
+            { key: "y", label: "Half-life", format: "days" },
+          ], { dateKey: "x" }),
+        }))
       : el("p", { class: "chart-empty muted" },
         "Not enough remediation history to estimate a KM median trend yet.");
 
     chartsHost.append(
       el("div", { class: "chart-card" }, el("h3", {}, "Open vs resolved"),
-        el("div", { class: "chart-box" }, openResolvedCanvas)),
+        el("div", { class: "chart-box" }, openResolvedCanvas),
+        chartTable({
+          canvas: openResolvedCanvas,
+          caption: "Every point of the line above: date, open findings and resolved findings.",
+          model: trendTableModel(rows, [
+            { key: "open", label: "Open", format: "count" },
+            { key: "resolved", label: "Resolved", format: "count" },
+          ]),
+        })),
       el("div", { class: "chart-card" }, el("h3", {}, "MTTR trend (KM median)"), mttrBody),
     );
     loadCharts().then((charts) => {
-      charts.openResolvedLines(openResolvedCanvas, trends.trend);
+      charts.openResolvedLines(openResolvedCanvas, rows);
       if (hasKm) charts.trendLine(mttrCanvas, kmMedianPoints, { yLabel: "days" });
     }).catch(() => {
       chartUnavailable(openResolvedCanvas);
