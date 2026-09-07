@@ -16,7 +16,7 @@
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, kpiCard, pageHeader, settingsPanel, statusPill, tableFooter, tip,
+  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, kpiCard, measuredEmpty, pageHeader, settingsPanel, sevEntries, sevSegmentBar, sevSpoken, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -181,11 +181,16 @@ export async function renderAttribution(main, params, ctx) {
     const frameClear = (coverage.unassignedFindings || 0) === 0 &&
       (coverage.supportGroupUnresolved || 0) === 0;
     if (frameClear && !ledgerRows.length) {
-      bodyHost.append(emptyState(
-        "Everything is attributed.",
-        "Every finding maps to a manual group and every subscription with findings carries a " +
-        "support group, in this scan and across the ledger. Nothing to troubleshoot.",
-      ));
+      // MEASURED, not a structural absence: `frameClear` is read straight off the CURRENT
+      // per-finding scan's coverage numbers ("in this scan" in the hint below is literal), and
+      // `ledgerRows` reflects the register as reconciliation left it after that same scan — so
+      // the whole claim is dated by `data.scan.ts`, the same as "No unassigned resources on
+      // this page" and "Every subscription … carries a support group" two panels down.
+      bodyHost.append(measuredEmpty("Everything is attributed.", {
+        at: data.scan.ts,
+        hint: "Every finding maps to a manual group and every subscription with findings carries a " +
+          "support group, in this scan and across the ledger. Nothing to troubleshoot.",
+      }));
       return;
     }
     // Live attribution is complete and the history is not — the reported case. The frame-side
@@ -206,9 +211,9 @@ export async function renderAttribution(main, params, ctx) {
     bodyHost.append(editorHost);
     const editor = renderDomainsEditor(editorHost, boot, ctx, { onCommitted: () => editor.save() });
 
-    guard("unassigned resources", () => renderUnassigned(unassigned, editor));
+    guard("unassigned resources", () => renderUnassigned(unassigned, editor, data.scan.ts));
     guard("rule health", () => renderRuleHealth(ruleHealthRows, editor));
-    guard("untagged subscriptions", () => renderUntagged(untagged, sgMap));
+    guard("untagged subscriptions", () => renderUntagged(untagged, sgMap, data.scan.ts));
     guard("unassigned lifecycles", () => renderUnassignedLedger(ledgerRows));
   }
 
@@ -548,13 +553,17 @@ export async function renderAttribution(main, params, ctx) {
 
   // ------------------------------------------------------- unassigned resources
 
-  function renderUnassigned(unassigned, editor) {
+  function renderUnassigned(unassigned, editor, scanTs) {
     const rows = unassigned.rows || [];
     if (!rows.length) {
       bodyHost.append(settingsPanel({
         title: "Unassigned resources",
-        body: emptyState("No unassigned resources on this page.",
-          "Every finding here maps to a manual group."),
+        // MEASURED: this is the current per-finding scan's own paginated slice, not a
+        // structural gap like "no rules configured" — "we looked, on this date" is literal.
+        body: measuredEmpty("No unassigned resources on this page.", {
+          at: scanTs,
+          hint: "Every finding here maps to a manual group.",
+        }),
       }));
       return;
     }
@@ -614,10 +623,7 @@ export async function renderAttribution(main, params, ctx) {
         key: "findings",
         label: "Findings",
         help: ["This asset's open findings, split by severity."],
-        cell: (r) => el("div", { class: "mix-cell" },
-          mixStrip(r.sevCounts || {}),
-          el("span", { class: "mix-text small muted num" },
-            mixText(r.sevCounts || {}) || `${(r.findings || 0).toLocaleString()}`)),
+        cell: (r) => sevMixCell(r.sevCounts, r.findings),
       },
       // The action column's heading is deliberately empty — the button says what it does, and
       // an empty heading has nothing for a `?` to define. See test/columnHelp.test.js's
@@ -737,7 +743,7 @@ export async function renderAttribution(main, params, ctx) {
 
   // ------------------------------------------------------ untagged subscriptions
 
-  function renderUntagged(untagged, sgMap) {
+  function renderUntagged(untagged, sgMap, scanTs) {
     if (!sgMap.configured) {
       bodyHost.append(settingsPanel({
         title: "Untagged subscriptions",
@@ -754,7 +760,10 @@ export async function renderAttribution(main, params, ctx) {
     if (!untagged.length) {
       bodyHost.append(settingsPanel({
         title: "Untagged subscriptions", description: desc,
-        body: emptyState("Every subscription with findings carries a support group."),
+        // MEASURED for the same reason as "No unassigned resources on this page": it reads
+        // the current per-finding scan's own subscription set, not a structural gap.
+        body: measuredEmpty("Every subscription with findings carries a support group.",
+          { at: scanTs }),
       }));
       return;
     }
@@ -783,10 +792,7 @@ export async function renderAttribution(main, params, ctx) {
         key: "findings",
         label: "Findings",
         help: ["This subscription's findings, split by severity."],
-        cell: (u) => el("div", { class: "mix-cell" },
-          mixStrip(u.sevCounts || {}),
-          el("span", { class: "mix-text small muted num" },
-            mixText(u.sevCounts || {}) || `${(u.findings || 0).toLocaleString()}`)),
+        cell: (u) => sevMixCell(u.sevCounts, u.findings),
       },
     ];
     bodyHost.append(settingsPanel({
@@ -808,26 +814,29 @@ export async function renderAttribution(main, params, ctx) {
     return strip;
   }
 
-  /** Proportional severity-mix bar. Decorative (aria-hidden); the exact counts ride in the
-   *  visible .mix-text the caller renders beside it. Copied from overview.js. */
-  function mixStrip(sevCounts) {
-    const total = boot.palette.order.reduce((a, s) => a + (sevCounts[s] || 0), 0);
-    const strip = el("div", { class: "mix-strip", "aria-hidden": "true" });
-    if (!total) return strip;
-    for (const s of boot.palette.order) {
-      if (!sevCounts[s]) continue;
-      const span = el("span", {});
-      span.style.width = `${(sevCounts[s] / total) * 100}%`;
-      span.style.background = boot.palette.colors[s];
-      strip.append(span);
-    }
-    return strip;
-  }
-
-  function mixText(sevCounts) {
-    return boot.palette.order
-      .filter((s) => sevCounts[s])
-      .map((s) => `${s} ${sevCounts[s]}`)
-      .join(" · ");
+  /**
+   * A row's severity mix, as the shared distribution idiom rather than this page's own
+   * hand-rolled bar + text: `sevSegmentBar` (a segment per level, grown by its count) beside
+   * its spoken form. THIS REPLACES THE PAGE'S FORMER PRIVATE `mixStrip`/`mixText` COPY, which
+   * drew the identical picture with its own div-and-inline-style loop (a second copy of the
+   * same idiom overview.js's own private mixStrip/mixText already carried, per that page's
+   * comment "Copied from overview.js" — that comment is why this is the one worth de-forking).
+   *
+   * SIZED `"xs"`, not the brief's literal `"sm"` — no `.sevbar--sm` class exists
+   * (components.css defines only xs/md/lg), and `"xs"` is the one already documented as the
+   * in-row / table-cell size ("the severity mix in a table cell", components.css:423), which
+   * is exactly this call site.
+   *
+   * NO `label` ON THE BAR: it stays `aria-hidden` because the visible `sevSpoken` text beside
+   * it already names every level and its count — meaning never rides on colour alone, but the
+   * "key" here is that text, not a second `sevKeyRow` (which would repeat the same counts a
+   * second time, wider, once per row, across two tables of many rows).
+   */
+  function sevMixCell(sevCounts, fallbackCount) {
+    const entries = sevEntries(sevCounts || {}, boot.palette.order);
+    return el("div", { class: "mix-cell" },
+      sevSegmentBar(entries, { size: "xs" }),
+      el("span", { class: "mix-text small muted num" },
+        entries.length ? sevSpoken(entries) : `${(fallbackCount || 0).toLocaleString()}`));
   }
 }
