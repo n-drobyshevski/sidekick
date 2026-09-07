@@ -63,7 +63,7 @@ const ENTRIES = [
     term: "Median MTTR (Kaplan–Meier)",
     lines: [
       "Median days from first detection to remediation, read off a Kaplan–Meier survival curve. Still-open findings count as censored observations instead of being ignored, so a wave of fresh open findings can't bias it down.",
-      "\"> X d\" means the curve never dropped to 50% within the observed window — over half of tracked findings are still open, so the true median is at least that many days out.",
+      "Where the curve never falls to half within the window, there is no median: the longest thing observed becomes a lower bound, printed \"at least N days\" in prose and \"≥ N d\" in a cell.",
       "A vuln that disappears between scans counts as resolved, dated to the scan that noticed. Mean remediation time (KM · RMST) is marked on the survival curve rather than published as a second headline.",
     ],
   },

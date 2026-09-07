@@ -60,6 +60,10 @@ import {
 // into a sentence has to be the same rule on both pages or the front door and the detail page
 // could describe the same estimate differently. It lives on the page that owns the clock.
 import { kmHalfLifeView } from "./mttr.js";
+// `findEntry` READS THE BOOK'S OWN "fix-next" LINES so the heading's tip can carry BOTH the
+// ranking rule and what a click does, in one trigger — see `renderFixNext`'s own comment on
+// why `linkNote` moved off the surface and onto here rather than growing a second `?`.
+import { findEntry } from "../helpContent.js";
 
 // ------------------------------------------------------------------------- view models
 
@@ -160,7 +164,14 @@ export function executiveSeverityView({ order, scope, bootCounts, payload, scope
   const sum = (tiles) => tiles.reduce((n, t) => n + (t.count === null ? 0 : t.count), 0);
   const done = (tiles, openAll, note) => {
     const open = sum(tiles);
-    return { pending: false, tiles, open, openAll, note, populationLine: line(open, openAll) };
+    const pop = line(open, openAll);
+    return {
+      pending: false, tiles, open, openAll, note,
+      populationLine: pop.text,
+      // NULL WHEN THE TWO POPULATIONS AGREE — there is nothing to explain, and `renderSeverity`
+      // draws a plain paragraph rather than a tip trigger over a line with nothing behind it.
+      populationExplain: pop.explain,
+    };
   };
   if (!scoped) {
     const c = bootCounts || {};
@@ -182,7 +193,7 @@ export function executiveSeverityView({ order, scope, bootCounts, payload, scope
   if (!payload) {
     return {
       pending: true, tiles: build(() => null), open: null, openAll: null, note: null,
-      populationLine: null,
+      populationLine: null, populationExplain: null,
     };
   }
   const counts = payload.counts || {};
@@ -205,17 +216,32 @@ export function executiveSeverityView({ order, scope, bootCounts, payload, scope
  * two totals that disagree by four, with nothing saying why, reads as arithmetic that has
  * gone wrong.
  *
- * So where the two differ the line names both AND names the reason, because "of 70" without
- * it just moves the reader's question along one sentence. Where they agree it says the one
- * number: "66 open findings, of 66" is a caveat about nothing.
+ * THE NUMBERS STAY ON THE SURFACE; THE REASON MOVES ONE LEVEL DOWN. This used to be one
+ * paragraph reading "66 open findings at the severities this page shows. The figures above
+ * count 70: a severity gate always keeps findings graded UNKNOWN, and this picture has no
+ * level to draw them at." — two sentences, the second one an EXPLANATION of why the two
+ * figures differ rather than an honesty statement a reader needs without asking for it. Both
+ * numbers still print where a reader can see them without hovering anything (`text`); the
+ * explanation of WHY they differ is `explain`, for `renderSeverity` to hang on a `tipLabel`
+ * over that same line. Where the two populations agree there is nothing to explain and
+ * `explain` is null — "66 open findings, of 66" was a caveat about nothing before, and a tip
+ * trigger over a line with nothing behind it would be a control that does nothing.
+ *
+ * @returns {{text: string, explain: string[]|null}}
  */
 function line(open, openAll) {
   const shown = fmtCount(open) + " open " + pluralize(open, "finding");
-  return openAll > open
-    ? shown + " at the severities this page shows. The figures above count "
-      + fmtCount(openAll) + ": a severity gate always keeps findings graded UNKNOWN, and this"
-      + " picture has no level to draw them at."
-    : shown + ".";
+  if (openAll <= open) return { text: shown + ".", explain: null };
+  return {
+    text: fmtCount(open) + " open at the shown severities · " + fmtCount(openAll)
+      + " including UNKNOWN",
+    explain: [
+      "The figures elsewhere on this page count " + fmtCount(openAll) + "; this picture"
+      + " counts only the " + fmtCount(open) + " at the severities it shows.",
+      "A severity gate always keeps findings graded UNKNOWN, and this picture has no level"
+      + " to draw them at.",
+    ],
+  };
 }
 
 /**
@@ -532,12 +558,21 @@ export function fixNextView(payload, boot) {
       ? { cve: String(g.topCve.cve), count: num(g.topCve.count, 0) }
       : null;
     // EVERY PART IS OMITTED RATHER THAN DASHED. A dash inside a running sentence reads as
-    // punctuation, not as an absence, so "7 open findings on — hosts" says nothing true. The
+    // punctuation, not as an absence, so "7 open findings, — hosts" says nothing true. The
     // parts a group does not have simply are not in its sentence.
+    //
+    // CLAUSES, NOT A SENTENCE — "on" and "mostly" DROPPED. The joined form used to read "11
+    // open findings on 4 hosts · mostly CVE-2024-3094 (5) · oldest 412 days · domain Payments":
+    // a preposition stitching two clauses together in the FIRST one and a hedge word in the
+    // second that the density walker counts the same as any other word. Every unit still names
+    // itself exactly once (findings, hosts, days) and nothing measured is dropped to buy the
+    // shorter form — the CVE's own count stays, because "which CVE, and how much of the group
+    // is it" is two different facts and cutting the second to fit a word budget is exactly the
+    // trade CLAUDE.md's own package brief rules out.
     const parts = [
-      fmtCount(count) + " open " + pluralize(count, "finding")
-        + (assets > 0 ? " on " + fmtCount(assets) + " " + pluralize(assets, "host") : ""),
-      topCve ? "mostly " + topCve.cve + " (" + fmtCount(topCve.count) + ")" : null,
+      fmtCount(count) + " open " + pluralize(count, "finding"),
+      assets > 0 ? fmtCount(assets) + " " + pluralize(assets, "host") : null,
+      topCve ? topCve.cve + " (" + fmtCount(topCve.count) + ")" : null,
       // `fmtDays`, for the same reason the movement sentence above uses it: this is a clause
       // in a running sentence, not a table cell. "oldest 210 days", never "oldest 210.0 d".
       oldest === null ? null : "oldest " + fmtDays(oldest),
@@ -894,7 +929,9 @@ export async function renderExecutive(main, _params, ctx) {
    * half-life", so the entry it navigates to on Enter is that figure's own definition,
    * whatever the figure happens to read this week. A control whose destination changes with
    * the data is a control a reader cannot learn. The state-specific sentence LEADS the lines
-   * instead, and `lower-bound` stays reachable from the by-domain footnote and the Key sheet.
+   * instead, and `lower-bound` stays reachable from the Key sheet (the by-domain table's own
+   * footnote naming it is gone — the column heading's own tip already says what its dash
+   * means, see `renderByDomain`).
    */
   function heroHelp(view) {
     if (view.isLowerBound) {
@@ -1033,8 +1070,19 @@ export async function renderExecutive(main, _params, ctx) {
     }
 
     // THE RANKING RULE IS A DEFINITION, so it lives where a definition lives: the `fix-next`
-    // entry, reached from the heading.
-    fixHost.append(sectionLabel("Fix next", { term: "fix-next" }));
+    // entry, reached from the heading. `linkNote` RIDES ALONG ON THE SAME TRIGGER rather than
+    // growing a second `?` beside it — it used to be its own surface paragraph under the list
+    // ("Each link opens the register unfiltered…"), which is an EXPLANATION of what a click
+    // does, not an honesty statement a reader needs without asking. The book's own two lines
+    // are read explicitly (`findEntry`, not the `{term}` shape `tipLabel` would otherwise
+    // resolve to) so the caller's line can sit alongside them in one card instead of replacing
+    // them — the same "own copy first, book's copy behind it" order `figureCard`'s
+    // `figureCardModel` uses for a denominator.
+    const fixNextEntry = findEntry("fix-next");
+    fixHost.append(sectionLabel("Fix next", {
+      term: "fix-next",
+      lines: [...(fixNextEntry ? fixNextEntry.lines : []), view.linkNote],
+    }));
 
     if (view.empty) {
       fixHost.append(emptyState("Nothing is ranked.", view.emptyReason));
@@ -1074,7 +1122,8 @@ export async function renderExecutive(main, _params, ctx) {
     if (view.exposureNote) {
       fixHost.append(el("p", { class: "small muted" }, view.exposureNote));
     }
-    fixHost.append(el("p", { class: "small muted" }, view.linkNote));
+    // `view.linkNote` ITSELF IS UNCHANGED AND STILL ON THE VIEW MODEL — only the render moved,
+    // onto the heading's own tip above. See that append for why.
   }
 
   // -------------------------------------------------------------------------- severity
@@ -1137,7 +1186,14 @@ export async function renderExecutive(main, _params, ctx) {
     }
     strip.append(sevKeyRow(entries));
     sevHost.append(strip);
-    sevHost.append(el("p", { class: "small muted" }, view.populationLine));
+    // THE TWO NUMBERS STAY ON THE SURFACE; WHY THEY DIFFER IS A TIP. `populationLine` is
+    // already the short form ("66 open at the shown severities · 70 including UNKNOWN") —
+    // both figures a reader needs are printed with nothing to hover. `populationExplain` is
+    // null exactly when the two agree, which is also when there is nothing to explain.
+    sevHost.append(el("p", { class: "small muted" },
+      view.populationExplain
+        ? tipLabel(view.populationLine, { lines: view.populationExplain })
+        : view.populationLine));
     if (view.note) sevHost.append(el("p", { class: "small muted" }, view.note));
   }
 
@@ -1191,14 +1247,12 @@ export async function renderExecutive(main, _params, ctx) {
       ],
       rows: view.rows,
     }));
-    // THE DASH IS EXPLAINED WHERE IT APPEARS, and only when it appears. The trigger's
-    // destination does not move with the data: it is always the `lower-bound` entry, and the
-    // note is simply absent when no cell in the column is a dash.
-    if (view.anyBoundMissing) {
-      byDomainHost.append(el("p", { class: "small muted" },
-        tipLabel("Lower bound", { term: "lower-bound" }),
-        " — a dash in the half-life column is a curve that never fell to half, not a zero."));
-    }
+    // NO FOOTNOTE HERE ANY MORE. The dash was explained twice: once on the KM-median column's
+    // own heading tip (`view.anyBoundMissing`'s extra line above, "A dash means this group's
+    // curve never falls to half…") and again in a paragraph under the table restating the same
+    // fact in different words. A column heading is asked once — that is `ui/tip.js`'s own rule
+    // for a definition — so the second statement was the explanation repeating itself one level
+    // UP rather than staying down, and it is gone rather than kept as a second surface sentence.
   }
 
   // ------------------------------------------------------------------------- last scan

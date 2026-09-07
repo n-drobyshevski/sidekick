@@ -252,11 +252,14 @@ describe("os: fixNextView", () => {
     expect(view.items[1].kind).toBe("warn");
     expect(first.ownerText).toBe("CS-CORE-PLATFORM");
     expect(first.ownerKindWord).toBe(" · support group");
-    // EVERY FIGURE CARRIES ITS UNIT. "11" is not a figure; "11 open findings" is, and the
-    // hosts, the CVE and the age each keep their own noun.
+    // EVERY FIGURE CARRIES ITS UNIT, ONCE. "11" is not a figure; "11 open findings" is, and
+    // the hosts, the CVE and the age each keep their own noun — but "on" (stitching the finding
+    // count to the host count) and "mostly" (a hedge word on the CVE clause) are both gone, so
+    // the density walker's 15-word prose threshold has real headroom rather than the line
+    // riding right up against it. The CVE's own count is NOT dropped to buy that shorter form —
+    // "which CVE" and "how much of the group is it" are two different facts.
     expect(first.meta).toBe(
-      "11 open findings on 4 hosts · mostly CVE-2024-3094 (5) · oldest 412 days"
-      + " · domain Payments",
+      "11 open findings · 4 hosts · CVE-2024-3094 (5) · oldest 412 days · domain Payments",
     );
   });
 

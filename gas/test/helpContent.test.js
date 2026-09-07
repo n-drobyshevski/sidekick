@@ -35,13 +35,16 @@ const EXPECTED_IDS = [
   "sla-band", "capacity",
   // FIVE MORE, ADDITIVE, WITH THE EXECUTIVE REWRITE. Each is a word that page now uses in a
   // way a reader could get wrong, and each is reached from a real trigger on it: the hero
-  // label (`half-life`), the "Still open" stat row (`censoring`), the by-domain footnote
-  // saying what a dash in the half-life column is (`lower-bound`), the "Fix next" heading —
+  // label (`half-life`), the "Still open" stat row (`censoring`), the "Fix next" heading —
   // which is a RANKING RULE, the one thing that makes a list of eight owners checkable — and
-  // the "Movement" aside's own definition (`movement`). Ported from gas_devsecops with "sync"
-  // swapped for this register's noun. `km-median` is untouched and still reached from
-  // pages/mttr.js: the two entries define the same estimator at two different call sites with
-  // two different notations ("> X d" in a table cell, "at least N days" in a hero).
+  // the "Movement" aside's own definition (`movement`). `lower-bound` is the fifth: it is
+  // still a real entry (the by-domain table's dash used to carry its own footnote naming it,
+  // now gone — the KM-median column's own heading tip states the same fact instead, one level
+  // up from where the footnote sat), reachable from the Key sheet even with no inline trigger
+  // left on this page. Ported from gas_devsecops with "sync" swapped for this register's noun.
+  // `km-median` is untouched and still reached from pages/mttr.js: the two entries define the
+  // same estimator at two different call sites with two different notations ("≥ N d" in a
+  // table cell, "at least N days" in a hero).
   "half-life", "lower-bound", "censoring", "fix-next", "movement",
   // P1.4: sixteen register-neutral entries ported from gas_devsecops/helpContent.js (`scan`
   // rewritten for a register with no separate sync word — see the entry's own comment) plus
@@ -153,10 +156,23 @@ describe("os: the measurement decisions the seeded entries encode", () => {
   it("km-median: censors the still-open, and states the lower-bound notation", () => {
     const t = text("km-median");
     expect(t).toContain("censored");
-    // The "> X d" reading is the whole reason this figure needs an entry: without it the
-    // hero's own value is unreadable.
-    expect(t).toContain("> x d");
+    // "≥ N d" is the cell notation and "at least N days" is the prose form — the SAME claim
+    // P1.1 fixed in the code (figures.js's `boundedDays`: "≥", inclusive, never ">", which
+    // claims something stronger than a censored curve showed). This entry taught the OLD,
+    // wrong glyph ("> X d") for a whole package after the code was fixed; a perturbation
+    // reproducing that string is below so this measurement stays load-bearing.
+    expect(t).toContain("≥ n d");
+    expect(t).not.toMatch(/>\s*x\s*d/);
     expect(t).toMatch(/at least/);
+  });
+
+  // PERTURBATION: the defective wording this test used to let through, reproduced and shown
+  // failing — so "the entry teaches the wrong glyph" is a red test, not a silent gap.
+  it("PERTURBATION: the old '> X d' wording fails the same two checks", () => {
+    const defective = ("\"> X d\" means the curve never dropped to 50% within the observed"
+      + " window, so the true median is at least that many days out.").toLowerCase();
+    expect(defective).not.toContain("≥ n d");
+    expect(defective).toMatch(/>\s*x\s*d/);
   });
 
   it("naive-median: says it is the BIASED comparison, not the better number", () => {
