@@ -457,8 +457,12 @@ function paintSast(host, vm, filters) {
   ));
 
   // ---------------------------------------------------------------------- breakdowns
+  // PAIRED, same as sca.js's breakdowns and for the same reason: four narrow columns each,
+  // identical shape, meant to be read against one another. Stacked they were a screen apart.
+  // An odd count flows the last onto its own row at half width, which is fine.
+  const breakdowns = el("div", { class: "card-pair" });
   for (const dim of vm.concentration) {
-    host.append(sectionCard(dim.label, { denominator: dim.denominator },
+    breakdowns.append(sectionCard(dim.label, { denominator: dim.denominator },
       el("div", { class: "table-host" }, dataTable({
         columns: [
           { key: "key", label: "Group", cell: (r) => r.key },
@@ -471,6 +475,7 @@ function paintSast(host, vm, filters) {
       filterEmptyNotice(vm.asOf, filters.severities.length > 0, dim.rows.length === 0),
     ));
   }
+  host.append(breakdowns);
 
   // ------------------------------------------------------------------ oldest open
   host.append(sectionCard("Oldest open weaknesses", null,

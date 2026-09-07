@@ -1336,7 +1336,15 @@ function paintSca(host, vm, filters) {
   ));
 
   const tierRows = vm.tiers.rows.filter((r) => r.count > 0);
-  host.append(sectionCard("What is known about each open finding",
+  // TWO NARROW CARDS SIDE BY SIDE. Both tables are three columns — a label, a count and a
+  // share meter — so at full width each drew ~1,400px of empty card to the right of its own
+  // content, and the reader's eye had to travel that gap to compare two readings of the same
+  // 280 open findings. `.card-pair` is the existing primitive for exactly this
+  // (secrets.js already pairs its segment cards with it): one column below 1100px, two above,
+  // with `min-width: 0` on the items so a table that outgrows its half scrolls inside its own
+  // `.table-wrap` rather than pushing the card's border off the pane.
+  const narrowPair = el("div", { class: "card-pair" });
+  narrowPair.append(sectionCard("What is known about each open finding",
     { denominator: vm.tiers.denominator },
     el("div", { class: "table-host" }, dataTable({
       columns: [
@@ -1357,7 +1365,7 @@ function paintSca(host, vm, filters) {
     filterEmptyNotice(vm.asOf, filters.severities.length > 0, tierRows.length === 0),
   ));
 
-  host.append(sectionCard("Triage funnel", { denominator: vm.funnel.denominator },
+  narrowPair.append(sectionCard("Triage funnel", { denominator: vm.funnel.denominator },
     el("div", { class: "table-host" }, dataTable({
       columns: [
         { key: "label", label: "Step", cell: (r) => r.label },
@@ -1386,9 +1394,16 @@ function paintSca(host, vm, filters) {
     filterEmptyNotice(vm.asOf, filters.severities.length > 0, vm.funnel.steps[0].count === 0),
   ));
 
+  host.append(narrowPair);
+
   // ---------------------------------------------------------------------- breakdowns
+  // THE THREE BREAKDOWNS PAIR TOO, and they are the strongest case for it: same four
+  // columns, same shape, same units, read against each other. Stacked, comparing "By language"
+  // with "By owning project" meant scrolling past a screen of white. An odd count is fine —
+  // grid flows the third onto its own row at half width rather than stretching it.
+  const breakdowns = el("div", { class: "card-pair" });
   for (const dim of vm.concentration) {
-    host.append(sectionCard(dim.label, { denominator: dim.denominator },
+    breakdowns.append(sectionCard(dim.label, { denominator: dim.denominator },
       el("div", { class: "table-host" }, dataTable({
         columns: [
           { key: "key", label: "Group", cell: (r) => r.key },
@@ -1418,6 +1433,7 @@ function paintSca(host, vm, filters) {
       filterEmptyNotice(vm.asOf, filters.severities.length > 0, dim.rows.length === 0),
     ));
   }
+  host.append(breakdowns);
 
   // ------------------------------------------------------------------ oldest open
   host.append(sectionCard("Oldest open findings", null,
