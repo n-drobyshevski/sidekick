@@ -33,10 +33,22 @@
 
   // Live credentials from the dev server, written into the fake Script Properties exactly
   // as an operator would in Project Settings. The secrets here are placeholders that
-  // /_fetch substitutes; the real ones never enter the page. ?dry ignores them, which is
-  // how you get the sample dataset back without emptying the file.
+  // /_fetch substitutes; the real ones never enter the page.
+  //
+  // DRY IS THE DEFAULT HERE AND LIVE IS OPT-IN (`?live`), which is the opposite of the two
+  // siblings and the opposite of what this harness did until now. The reason is this app's
+  // own asymmetry: `scanJobs.ts` REFUSES without credentials rather than falling back to a
+  // dry run ("fabricating findings in a security register is the one thing this product does
+  // not do"), and the seeding branch below only runs when NOT live. So with credentials on
+  // disk, a plain load did neither — no seed AND no sync — and opened an empty register that
+  // looked like a broken build rather than like a deliberate state. gas/ and gas_ai/ never
+  // show that face because `startSync` there falls back to `dryRunSync`.
+  //
+  // Inverting the flag also makes the DANGEROUS direction the explicit one. `?dry` used to be
+  // something you had to remember on every load of a register wired to a production security
+  // tenant; forgetting it cost a real scan. Now forgetting `?live` costs nothing.
   const cfg = window.__WIZ_DEV__ || { mode: null };
-  const live = Boolean(cfg.mode) && !query.has("dry");
+  const live = Boolean(cfg.mode) && query.has("live");
   if (live) {
     const props = PropertiesService.getScriptProperties();
     const set = (k, v) => { if (v) props.setProperty(k, v); };
@@ -51,7 +63,9 @@
       `[dev] LIVE ${cfg.mode} — ${cfg.apiUrl}, project ${cfg.projectId || "(all)"}`,
     );
   } else if (cfg.mode) {
-    console.log("[dev] ?dry — credentials ignored, sample dataset");
+    // Says the credentials are PRESENT and were not used, rather than just "dry" — the two
+    // are different situations and only one of them is one keystroke from a real scan.
+    console.log("[dev] dry (default) — credentials on disk ignored; sample dataset. ?live uses the tenant.");
   }
 
   // The hub the header links back to, seeded into the fake Script Properties exactly as an
