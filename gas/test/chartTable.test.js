@@ -10,11 +10,13 @@
 // and every builder over it are pure and exercised directly; the DOM half (`chartTable`,
 // `chartCard`) is read as SOURCE TEXT, comment-stripped first.
 //
-// BASELINE, MEASURED ON THIS BRANCH BEFORE THIS PACKAGE: `chartTable(` call sites in gas = 0;
+// BASELINE, MEASURED WHEN THIS FILE WAS WRITTEN: `chartTable(` call sites in gas = 0;
 // `el("canvas"` occurrences in source = mttr 9, overview 6, program 2, history 2 (some
-// conditional, some inside a sheet/drawer that only renders when opened). After this package
-// every one of those 19 canvases has exactly one `chartTable(` call beside it — see the pinned
-// count below.
+// conditional, some inside a sheet/drawer that only renders when opened). Every one of those
+// 19 canvases gained exactly one `chartTable(` call beside it. The register is at 21 now — the
+// MTTR page's per-severity survival fan and its open-findings-by-age bar each added one — and
+// the pinned count below says which file moved and why, because a registry whose number
+// changes without a reason is a registry nobody trusts.
 //
 // SECTION 5 OF THE PORTED FILE (the SCA/SAST hero severity bar + key row) DOES NOT PORT: none
 // of these four pages draws a `sevSegmentBar`/`sevKeyRow`/`sevEntries` hero bar — that pattern
@@ -152,11 +154,19 @@ describe("every chart canvas ships a data-table alternative", () => {
     }
   });
 
-  it("the four chart pages still draw the 19 canvases they compose, counted so a deletion shows", () => {
+  it("the four chart pages still draw the 21 canvases they compose, counted so a deletion shows", () => {
     // A count, so a canvas deleted to make the test above pass is visible as a change here
-    // rather than as a silent green. Per file, measured on this branch:
-    //   mttr.js      9  — survival curve, resolution-bucket histogram, MTTR-over-time,
-    //                     open-vs-resolved, open-past-SLA, SLA-quality (6, on the main page);
+    // rather than as a silent green. THIS IS A REGISTRY, so a number that moves says what
+    // joined: mttr.js went 9 -> 11 when the per-severity survival fan and the open-findings-
+    // by-age bar landed, and the register total went 19 -> 21 with them. Both are single
+    // `el("canvas"` literals in source — the fan's sits inside a `for (const card of fan)`
+    // loop and draws one canvas per severity that has a curve at runtime, which is why the
+    // SOURCE count moves by one for a section that paints up to six charts.
+    //
+    // Per file, measured on this branch:
+    //   mttr.js     11  — survival curve, resolution-bucket histogram, MTTR-over-time,
+    //                     open-vs-resolved, open-past-SLA, SLA-quality, the per-severity
+    //                     survival fan, open findings by age (8, on the main page);
     //                     the by-domain drawer's contribution/median lens pair and its MTTR-by-
     //                     domain line (3, inside a sheet that only renders when opened)
     //   overview.js  6  — the per-tier trend small-multiples grid (one canvas literal, one
@@ -167,7 +177,7 @@ describe("every chart canvas ships a data-table alternative", () => {
     //   program.js   2  — coverage/efficiency over time, the rule-sensitivity scatter
     //   history.js   2  — open vs resolved, MTTR trend (KM median)
     const perFile = {
-      "mttr.js": 9, "overview.js": 6, "program.js": 2, "history.js": 2,
+      "mttr.js": 11, "overview.js": 6, "program.js": 2, "history.js": 2,
     };
     let total = 0;
     for (const [file, expected] of Object.entries(perFile)) {
@@ -175,7 +185,7 @@ describe("every chart canvas ships a data-table alternative", () => {
       expect(n, file).toBe(expected);
       total += n;
     }
-    expect(total).toBe(19);
+    expect(total).toBe(21);
   });
 
   it("every chartTable call is handed the canvas it describes, so aria-details is wired", () => {

@@ -33,7 +33,7 @@ import {
   recordNoFix,
   resolutionBuckets,
 } from "../domain/remediation";
-import type { LatencyOrigin } from "../domain/remediation";
+import type { KMResult, LatencyOrigin } from "../domain/remediation";
 import { validateBundle } from "../domain/importMerge";
 import { buildMigrationBundle, bundleCounts } from "../domain/exportBundle";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
@@ -1079,16 +1079,72 @@ function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
  * One latency clock's shippable summary: the KM stats WITHOUT the curve, plus the segment
  * counts that say how much of the population was measured at all.
  *
- * The curve's omission is deliberate, not an oversight. `kmActionable` — a second complete
- * KMResult, curve included — used to ship on every MTTR and Executive load with no reader
- * anywhere, and was removed for it (see the note in the remediation block below). Two more
- * curves with no chart to draw them would re-make that mistake twice over. Add the curve
- * back the day something plots it.
+ * THE RULE IS "A CURVE SHIPS WHERE SOMETHING PLOTS IT", AND IT HAS NOW CUT BOTH WAYS.
+ * `kmActionable` — a second complete KMResult, curve included — used to ship on every MTTR
+ * and Executive load with no reader anywhere, and was removed for it (see the note in the
+ * remediation block below). This comment then said the per-severity curves were withheld for
+ * the same reason: "three fixed statistics per severity, and no chart to draw the staircase
+ * they were read off". That is no longer true. `remediation.kmPerSev` ships one `shipKM`-
+ * narrowed curve per severity because `pages/mttr.js` now DRAWS them — a `.sev-fan` grid of
+ * small multiples above the per-severity table, where the table's three numbers are the
+ * statistics and the fan is the shape they came from. The two latency clocks below still
+ * have no plotter, so they still ship without a curve; add theirs back the day one exists.
  *
  * One `now` for both calls so the segment counts and the estimator's own event/censored
  * split are computed against the same instant, which is what makes their agreement an
  * invariant rather than a near-certainty.
  */
+
+/**
+ * A Kaplan-Meier estimate narrowed for the wire — `{t, s}` curve points, and the statistics
+ * a client actually reads off them.
+ *
+ * `KMPoint` carries `{t, s, atRisk, events}`: the risk set and the event count at each step
+ * are what the estimator needs to BUILD the curve and what `test/remediation.test.ts` pins on
+ * it, but the survival chart plots `t` against `s`. One point per distinct resolution time
+ * means the register decides the array's length, so halving a point's width is a saving that
+ * grows with the ledger — and there are now SIX of these curves per payload rather than one.
+ *
+ * NOT USED FOR THE OVERALL `km`, AND THE SHAPES ARE WHY. `remediation.km` must keep
+ * `naiveMedian` and `naiveMean` — the closed-only comparison the KM headline corrects for —
+ * because `pages/mttr.js` draws `naiveMedian` as the hero's secondary stat, as a marker on the
+ * overall survival curve, and as the "Naive" arm of the MTTR-over-time toggle, and
+ * `test/pagePayload.test.ts` reads it off the Executive slice. `shipKM` deliberately drops
+ * both: a per-severity card draws two Kaplan-Meier markers and no closed-only comparison, so
+ * shipping six copies of a statistic nothing plots is exactly the `kmActionable` mistake at
+ * six times the width. The overall narrowing below therefore stays a spread with its curve
+ * replaced; this is a narrower projection for a different reader, not a second copy of one.
+ *
+ * `p90` is computed HERE rather than by the caller so `kmPerSev[s].p90` and `kmP90PerSev[s]`
+ * cannot be two different reads of the same curve.
+ */
+interface ShippedKM {
+  curve: { t: number; s: number }[];
+  median: number | null;
+  medianLowerBound: number | null;
+  p90: number | null;
+  mean: number | null;
+  meanTruncated: boolean;
+  restrictionTime: number | null;
+  events: number;
+  censored: number;
+  total: number;
+}
+
+function shipKM(km: KMResult): ShippedKM {
+  return {
+    curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
+    median: km.median,
+    medianLowerBound: km.medianLowerBound,
+    p90: kmQuantileFromCurve(km.curve, 0.9),
+    mean: km.mean,
+    meanTruncated: km.meanTruncated,
+    restrictionTime: km.restrictionTime,
+    events: km.events,
+    censored: km.censored,
+    total: km.total,
+  };
+}
 function latencySummary(rows: BaseRow[], origin: LatencyOrigin): Rec {
   const now = Date.now();
   const km = kaplanMeier(latencyView(rows, origin, now));
@@ -1131,18 +1187,43 @@ function mttrData(p?: unknown): Rec {
   // that bias low on a wave of fresh open findings. Both read off one KM curve per severity.
   // Keyed by normalized severity to line up with `perSev` (UNKNOWN included). Grouped over the
   // same from-detection rows as the overall `km` below.
+  //
+  // THE CURVE SHIPS NOW, NOT ONLY ITS STATISTICS. This block used to run one `kaplanMeier(rs)`
+  // per severity and keep the median and the P90 off it, discarding the staircase that
+  // produced both — so no surface in the app could compare severity survival SHAPES, and two
+  // fixed statistics cannot say that CRITICAL closes fast and then stalls, or that LOW never
+  // moves at all. `kmPerSev` is that same curve, narrowed by `shipKM`, so the fan of small
+  // multiples and the summary table under it are two views of ONE estimate rather than two
+  // estimates: `kmPerSev[s].median` IS `kmMedianPerSev[s]` by construction.
+  //
+  // `kmLowerBoundPerSev` joins them for the same reason it is on the hero: a severity whose
+  // curve never falls to half has a median that is AT LEAST the longest observation, and the
+  // per-severity table printed a dash for that until this shipped — throwing away a true
+  // statement because the stronger one was unavailable.
+  //
+  // The three flat maps stay beside the curve map rather than being folded into it. They are
+  // what the summary table reads today, and collapsing them would rewrite a read path for no
+  // measured gain. Keys are emitted in `SEVERITY_ORDER` so the client's fan needs no sort.
   const kmMedianPerSev: Record<string, number | null> = {};
   const kmP90PerSev: Record<string, number | null> = {};
+  const kmLowerBoundPerSev: Record<string, number | null> = {};
+  const kmPerSev: Record<string, ShippedKM> = {};
   {
     const bySev: Record<string, BaseRow[]> = {};
     for (const r of remRows) {
       const s = normalizeSeverity((r as unknown as Rec)["severity"]);
       (bySev[s] ?? (bySev[s] = [])).push(r);
     }
-    for (const [s, rs] of Object.entries(bySev)) {
-      const k = kaplanMeier(rs);
+    const seen = Object.keys(bySev);
+    const ordered = (SEVERITY_ORDER as readonly string[])
+      .filter((s) => seen.indexOf(s) >= 0)
+      .concat(seen.filter((s) => (SEVERITY_ORDER as readonly string[]).indexOf(s) < 0));
+    for (const s of ordered) {
+      const k = kaplanMeier(bySev[s]!);
       kmMedianPerSev[s] = k.median;
+      kmLowerBoundPerSev[s] = k.medianLowerBound;
       kmP90PerSev[s] = kmQuantileFromCurve(k.curve, 0.9);
+      kmPerSev[s] = shipKM(k);
     }
   }
   // Full Kaplan–Meier estimate (curve + KM median/RMST mean + naive comparison stats), open
@@ -1166,6 +1247,21 @@ function mttrData(p?: unknown): Rec {
     kmP90: kmQuantileFromCurve(kmFull.curve, 0.9),
     kmMedianPerSev,
     kmP90PerSev,
+    kmLowerBoundPerSev,
+    kmPerSev,
+    /**
+     * The open backlog as an age DISTRIBUTION, against the per-severity SLA edge.
+     *
+     * `openPastSla` below it is the same population reduced to one ratio per severity, and a
+     * ratio cannot say whether the breaches are a week late or a year late. This ships the
+     * shape as well, over the SAME `remRows` every other block here measures — so the domain,
+     * support-group, severity and both display toggles apply to it identically.
+     *
+     * `unaged` is on the wire for the reason `ageBuckets` could not put it there: an open row
+     * with no readable `first_seen` is not young, it is undated, and the page prints that
+     * count rather than letting the bars quietly cover fewer rows than the hero does.
+     */
+    aging: insights.agingDistribution(remRows),
     openPastSla: openPastSla(remRows),
     // Actionable-clock companion (clock starts at vendor-fix availability): the same function
     // over the actionableView projection. Awaiting-vendor-fix rows carry null actionable
@@ -1477,7 +1573,17 @@ const cachedMttrData = (p?: unknown) =>
     // latency clocks and their segment counts. Note they are computed over a DIFFERENT
     // population from everything else in the block (the show-no-fix filter is not applied to
     // them), so a stale entry is not merely missing keys; bump so none survives.
-    "mttr9",
+    // "mttr9" -> "mttr10": remediation gained `kmPerSev` (one shipKM-narrowed Kaplan-Meier
+    // curve per severity, for the small-multiple fan), `kmLowerBoundPerSev` (the bound the
+    // per-severity table prints where the curve never falls to half) and `aging` (the open
+    // backlog by age bucket and severity, with the unaged remainder and the SLA edge). A
+    // stale mttr9 entry is not merely FATTER than an mttr10 one, which is the case a TTL
+    // could ride out: it carries none of those three keys, so for up to an hour after a
+    // deploy the fan would draw no cards, the table's bound column would fall back to a dash
+    // on every censored severity, and the whole aging section would render its "no open
+    // findings to age yet" empty state over a register with a backlog. An absent section
+    // reads as a measurement — "there is nothing here" — rather than as a cache age.
+    "mttr10",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),

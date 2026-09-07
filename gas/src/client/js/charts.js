@@ -651,10 +651,30 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
 // the rest of the app's "never color alone" rule.
 const KM_MARKERS = [
   { key: "naiveMedian", label: "Median (closed)", color: "#171717", pointStyle: "circle" },
-  { key: "median", label: "Median (KM, all)", color: "#2563eb", pointStyle: "triangle" },
+  { key: "median", label: "Median (KM, all)", scopeSuffix: "all)", color: "#2563eb", pointStyle: "triangle" },
   { key: "naiveMean", label: "Mean (closed)", color: "#171717", pointStyle: "rect" },
-  { key: "mean", label: "Mean (KM · RMST, all)", color: "#2563eb", pointStyle: "rectRot" },
+  { key: "mean", label: "Mean (KM · RMST, all)", scopeSuffix: "all)", color: "#2563eb", pointStyle: "rectRot" },
 ];
+
+/**
+ * A marker's legend text, with its POPULATION word replaced where the caller named one.
+ *
+ * The two KM markers say what they were estimated OVER — "all" meaning all findings, closed
+ * and open — and on a per-severity small multiple that word is simply false: the diamond on
+ * the CRITICAL card is CRITICAL's own restricted mean, not the register's. So `scopeSuffix`
+ * marks the two labels whose parenthetical ends in a population, and `viewOpts.scope` swaps it.
+ *
+ * THE CLOSED-ONLY MARKERS ARE LEFT ALONE ON PURPOSE. "(closed)" says how the estimate was
+ * made, not over what; rewriting it to "(CRITICAL)" would delete the one word that
+ * distinguishes the naive statistic from the Kaplan–Meier one beside it.
+ *
+ * Unscoped callers get `m.label` back unchanged, byte for byte — the register-wide curve on
+ * the MTTR page still reads "Median (KM, all)".
+ */
+function markerLabel(m, scope) {
+  if (!scope || !m.scopeSuffix || !m.label.endsWith(m.scopeSuffix)) return m.label;
+  return m.label.slice(0, m.label.length - m.scopeSuffix.length) + scope + ")";
+}
 
 // S(day) off a KM curve (distinct event times ascending, implicit S(0)=1). The staircase is
 // right-continuous ("after"): survival holds at its pre-drop level until an event time, then
@@ -682,6 +702,20 @@ function stepAt(curve, day) {
 export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
   destroyExisting(canvas);
   const points = curve || [];
+  // THREE OPTIONS THE PER-SEVERITY FAN ADDED, and every one of them defaults to what the
+  // register-wide curve already drew. `color` is the staircase's own ink — a severity FILL
+  // read off the bootstrap palette, so six small multiples are six colours rather than six
+  // identical blue lines; the MARKERS stay the brand blue whatever the line is, because they
+  // mean "this is the Kaplan-Meier estimate" and that meaning does not change per card.
+  // `subject` and `scope` are the accessible half: the first names the population in the
+  // canvas's own long description, the second in its legend.
+  const lineColor = typeof viewOpts.color === "string" && viewOpts.color
+    ? viewOpts.color
+    : "#2563eb";
+  const subject = typeof viewOpts.subject === "string" && viewOpts.subject
+    ? " " + viewOpts.subject
+    : "";
+  const scope = typeof viewOpts.scope === "string" && viewOpts.scope ? viewOpts.scope : null;
   // A positive maxWeeks hard-crops the x-axis to that window (the 30w/15w/5w view filter);
   // absent it, keep the auto-extending 26w default. Points/markers past the max clip out —
   // the describe() aria text below still names every marker's day value, so nothing is lost.
@@ -699,7 +733,7 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
     .map((m) => {
       const day = markers[m.key];
       return {
-        label: m.label,
+        label: markerLabel(m, scope),
         data: [{ x: day / 7, y: stepAt(points, day) * 100, day }],
         showLine: false,
         pointRadius: 6,
@@ -711,11 +745,11 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
     });
 
   const named = KM_MARKERS
-    .map((m) => ({ ...m, day: markers ? markers[m.key] : null }))
+    .map((m) => ({ ...m, label: markerLabel(m, scope), day: markers ? markers[m.key] : null }))
     .filter((m) => m.day !== null && m.day !== undefined);
   describe(
     canvas,
-    "Kaplan-Meier survival curve of time to remediation." +
+    "Kaplan-Meier survival curve of time to remediation" + subject + "." +
       (named.length
         ? " Markers: " + named.map((m) => `${m.label} at ${Math.round(m.day)} day(s)`).join(", ") + "."
         : ""),
@@ -779,7 +813,7 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
           label: "S(t)",
           data: survivalPoints,
           stepped: "after",
-          borderColor: "#2563eb",
+          borderColor: lineColor,
           pointRadius: 0,
           borderWidth: 2,
         },

@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "981f379efeec" : "dev";
+  var BUILD_ID = true ? "b4b92a5a4f26" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -5499,6 +5499,7 @@ var Server = (() => {
 
   // src/domain/insights.ts
   var AGE_BUCKET_EDGES = [7, 30, 90];
+  var AGE_BUCKET_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"];
   var WIDE_KEY = "vulnerableAsset.hasWideInternetExposure";
   var LIMITED_KEY = "vulnerableAsset.hasLimitedInternetExposure";
   function isOpen3(status) {
@@ -5563,6 +5564,51 @@ var Server = (() => {
       totalOpen += 1;
     }
     return { perKey, totalOpen };
+  }
+  function slaEdgeBucket(severity) {
+    const target = SLA_TARGETS[normalizeSeverity(severity)];
+    if (typeof target !== "number" || !Number.isFinite(target)) return null;
+    return target <= AGE_BUCKET_EDGES[0] ? 0 : target <= AGE_BUCKET_EDGES[1] ? 1 : target <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+  }
+  function slaEdgeIsExact(severity) {
+    const target = SLA_TARGETS[normalizeSeverity(severity)];
+    return typeof target === "number" && AGE_BUCKET_EDGES.indexOf(target) >= 0;
+  }
+  function agingDistribution(rows) {
+    const perSev = {};
+    let unaged = 0;
+    let totalOpen = 0;
+    for (const row of rows) {
+      if (!isOpen3(row.status)) continue;
+      const s = normalizeSeverity(row.severity);
+      if (!perSev[s]) perSev[s] = [0, 0, 0, 0];
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) {
+        unaged += 1;
+        continue;
+      }
+      const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+      perSev[s][bucket] += 1;
+      totalOpen += 1;
+    }
+    const slaEdge = {};
+    const slaTargets = {};
+    const slaEdgeExact = {};
+    for (const s of Object.keys(perSev)) {
+      slaEdge[s] = slaEdgeBucket(s);
+      const t = SLA_TARGETS[s];
+      slaTargets[s] = typeof t === "number" && Number.isFinite(t) ? t : null;
+      slaEdgeExact[s] = slaEdgeIsExact(s);
+    }
+    return {
+      labels: [...AGE_BUCKET_LABELS],
+      perSev,
+      unaged,
+      totalOpen,
+      slaEdge,
+      slaTargets,
+      slaEdgeExact
+    };
   }
   var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
   function openAge2(row) {
@@ -9605,6 +9651,20 @@ var Server = (() => {
     }
     return rows;
   }
+  function shipKM(km) {
+    return {
+      curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
+      median: km.median,
+      medianLowerBound: km.medianLowerBound,
+      p90: kmQuantileFromCurve(km.curve, 0.9),
+      mean: km.mean,
+      meanTruncated: km.meanTruncated,
+      restrictionTime: km.restrictionTime,
+      events: km.events,
+      censored: km.censored,
+      total: km.total
+    };
+  }
   function latencySummary(rows, origin) {
     const now = Date.now();
     const km = kaplanMeier(latencyView(rows, origin, now));
@@ -9633,16 +9693,22 @@ var Server = (() => {
     const remRows = rows;
     const kmMedianPerSev = {};
     const kmP90PerSev = {};
+    const kmLowerBoundPerSev = {};
+    const kmPerSev = {};
     {
       const bySev = {};
       for (const r of remRows) {
         const s = normalizeSeverity(r["severity"]);
         ((_c = bySev[s]) != null ? _c : bySev[s] = []).push(r);
       }
-      for (const [s, rs] of Object.entries(bySev)) {
-        const k = kaplanMeier(rs);
+      const seen2 = Object.keys(bySev);
+      const ordered = SEVERITY_ORDER.filter((s) => seen2.indexOf(s) >= 0).concat(seen2.filter((s) => SEVERITY_ORDER.indexOf(s) < 0));
+      for (const s of ordered) {
+        const k = kaplanMeier(bySev[s]);
         kmMedianPerSev[s] = k.median;
+        kmLowerBoundPerSev[s] = k.medianLowerBound;
         kmP90PerSev[s] = kmQuantileFromCurve(k.curve, 0.9);
+        kmPerSev[s] = shipKM(k);
       }
     }
     const kmFull = kaplanMeier(remRows);
@@ -9657,6 +9723,21 @@ var Server = (() => {
       kmP90: kmQuantileFromCurve(kmFull.curve, 0.9),
       kmMedianPerSev,
       kmP90PerSev,
+      kmLowerBoundPerSev,
+      kmPerSev,
+      /**
+       * The open backlog as an age DISTRIBUTION, against the per-severity SLA edge.
+       *
+       * `openPastSla` below it is the same population reduced to one ratio per severity, and a
+       * ratio cannot say whether the breaches are a week late or a year late. This ships the
+       * shape as well, over the SAME `remRows` every other block here measures — so the domain,
+       * support-group, severity and both display toggles apply to it identically.
+       *
+       * `unaged` is on the wire for the reason `ageBuckets` could not put it there: an open row
+       * with no readable `first_seen` is not young, it is undated, and the page prints that
+       * count rather than letting the bars quietly cover fewer rows than the hero does.
+       */
+      aging: agingDistribution(remRows),
       openPastSla: openPastSla(remRows),
       // Actionable-clock companion (clock starts at vendor-fix availability): the same function
       // over the actionableView projection. Awaiting-vendor-fix rows carry null actionable
@@ -9904,7 +9985,17 @@ var Server = (() => {
       // latency clocks and their segment counts. Note they are computed over a DIFFERENT
       // population from everything else in the block (the show-no-fix filter is not applied to
       // them), so a stale entry is not merely missing keys; bump so none survives.
-      "mttr9",
+      // "mttr9" -> "mttr10": remediation gained `kmPerSev` (one shipKM-narrowed Kaplan-Meier
+      // curve per severity, for the small-multiple fan), `kmLowerBoundPerSev` (the bound the
+      // per-severity table prints where the curve never falls to half) and `aging` (the open
+      // backlog by age bucket and severity, with the unaged remainder and the SLA edge). A
+      // stale mttr9 entry is not merely FATTER than an mttr10 one, which is the case a TTL
+      // could ride out: it carries none of those three keys, so for up to an hour after a
+      // deploy the fan would draw no cards, the table's bound column would fall back to a dash
+      // on every censored severity, and the whole aging section would render its "no open
+      // findings to age yet" empty state over a register with a backlog. An absent section
+      // reads as a measurement — "there is nothing here" — rather than as a cache age.
+      "mttr10",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
