@@ -1227,7 +1227,13 @@ export function mttrContributionBars(canvas, groups, opts = {}) {
 // A solid vertical rule at x = 0 for a diverging bar chart — the origin the bars split around,
 // with an inked chip naming what zero means. Sibling of medianReferenceLine, but solid (an origin,
 // not a threshold) and always at zero. Drawn on top of the bars so the rule and chip stay legible.
-function zeroReferenceLine(labelText) {
+/**
+ * `opts.side` — "left" to place the label on the far side of the rule from the top bar, so a
+ * chart whose FIRST row grows to the right does not have its rule label drawn on top of it.
+ * Omitted, the placement is exactly what it always was (right of the rule, flipping left only
+ * when it would run off the plot), which is what keeps `mttrImpactBars` byte-identical.
+ */
+function zeroReferenceLine(labelText, opts = {}) {
   return {
     id: "zeroReferenceLine",
     afterDatasetsDraw(chart) {
@@ -1248,8 +1254,10 @@ function zeroReferenceLine(labelText) {
         ctx.font = `600 10px ${FONT.family}`;
         const pad = 4;
         const tw = ctx.measureText(labelText).width;
-        let lx = x + 5;
-        if (lx + tw + pad * 2 > area.right) lx = x - 5 - tw - pad * 2;
+        let lx = opts.side === "left" ? x - 5 - tw - pad * 2 : x + 5;
+        if (opts.side !== "left" && lx + tw + pad * 2 > area.right) lx = x - 5 - tw - pad * 2;
+        // Fell off the plot on the chosen side — the other one is better than clipped.
+        if (lx < area.left) lx = x + 5;
         ctx.fillStyle = "#0a0a0a";
         ctx.fillRect(lx, area.top + 2, tw + pad * 2, 15);
         ctx.fillStyle = "#ffffff";
@@ -1499,6 +1507,125 @@ export function monthlyCapacityBars(canvas, months, opts = {}) {
     },
     options: opt,
     plugins: [netGroupLabels(rows)],
+  });
+}
+
+/**
+ * WHAT MOVED ONE REGISTER'S OPEN COUNT, as four bars about a zero line.
+ *
+ * WHAT IT REPLACES: a 32-word sentence naming six figures, plus TWO three-column tables — one
+ * per half of the movement — printed once per register, so three registers cost three
+ * sentences and six tables. Every figure in them was right and the QUESTION the section asks
+ * ("which way did the count go, and which half of that was work anybody observed?") is a
+ * shape those eighteen cells never draw. Arrivals and returns push the open count up;
+ * closures and disappearances pull it down; the net is what is left. That is a diverging bar
+ * chart, and the table behind the canvas still carries every cell.
+ *
+ * THE TWO HALVES STAY APART, AND COLOUR IS NOT WHAT KEEPS THEM APART. The section exists to
+ * refuse a total across "the API said this was fixed" and "the scan stopped seeing it", so
+ * neither the bars nor the legend offers one: the four y-axis labels ARE the vocabulary
+ * ("Closed by observation" is the measured half, "Dated gone by absence" the administrative
+ * one), the caller prints the two subtotals as its own line above the canvas, and nothing
+ * here stacks, sums or shades one into the other.
+ *
+ * THE FILLS ARE `monthlyCapacityBars`'s, deliberately: what arrives takes the neutral zinc,
+ * what leaves takes this register's accent INK — the same pairing, one page apart, so a
+ * reader meets one vocabulary rather than two. They say ADDED / REMOVED, never good / bad:
+ * "dated gone by absence" removes a finding from the count and is the weakest evidence on the
+ * page. Colour is redundant here by construction — the side of the zero line already carries
+ * the direction, every bar is direct-labelled with its own signed figure, and the text
+ * alternative states all four in words — which is what lets the fill be decoration rather
+ * than the third cue DESIGN.md would otherwise demand of it.
+ *
+ * `rows` is `movementBarsModel(...).rows` — the array the caller also hands `chartTableModel`,
+ * per `ui/chartTable.js`'s one rule. `opts.net` is the signed net drawn ON the zero rule (the
+ * figure the four bars are a decomposition of, direct-labelled so it is never inferred from
+ * four lengths); `opts.subject` leads the text alternative.
+ */
+export function movementBars(canvas, rows, opts = {}) {
+  destroyExisting(canvas);
+  const list = Array.isArray(rows) ? rows : [];
+  const subject = opts.subject || "What moved the open count";
+  const signed = (v) => (v > 0 ? "+" : "") + localeNum(v); // localeNum keeps the − on negatives
+  // A NET OF NULL IS NOT A NET OF ZERO. The caller refuses a payload it could not read before
+  // it ever reaches this function, so the null case here is the defensive one — and it prints
+  // no rule label at all rather than a confident "net 0" on a window nobody decomposed.
+  const net = typeof opts.net === "number" && Number.isFinite(opts.net) ? opts.net : null;
+  describe(canvas, `${subject}: `
+    + (list.map((r) => `${r.cause} ${signed(Number(r.value) || 0)}`).join("; ") || "none")
+    + (net === null ? "." : `. Net ${signed(net)}.`));
+
+  const opt = baseOptions("findings");
+  opt.indexAxis = "y";
+  // No beginAtZero on the value (x) axis: the bars grow from 0 in BOTH directions, and a zero
+  // floor would clip every negative one — the half of this chart that is remediation.
+  opt.scales.x.grace = "12%"; // headroom so the outer value labels are not clipped either side
+  opt.scales.x.title = {
+    display: true, text: "findings added to / removed from the open count", font: FONT, color: INK2,
+  };
+  opt.scales.y.grid = { display: false };
+  // THE CATEGORY AXIS PRINTS THE CAUSE, NOT ITS INDEX. `baseOptions` gives the y axis
+  // `callback: localeNum` — right for the VALUE axis every other wrapper in this file puts
+  // there, and wrong the moment `indexAxis: "y"` makes it a category scale, because Chart.js
+  // hands a category tick its INDEX and `localeNum(0)` is "0". Measured in the browser before
+  // this line went in: four bars labelled 0, 1, 2, 3, with the vocabulary that IS the picture
+  // (`movementBarsModel`'s four causes) nowhere on the canvas. `mttrImpactBars` above has the
+  // same defect and is not called by any page today; fixing it is a change to a chart nothing
+  // draws and belongs with its first caller.
+  opt.scales.y.ticks = {
+    ...opt.scales.y.ticks,
+    callback: (value, index) => (list[index] ? list[index].cause : value),
+  };
+  // THE LEGEND IS BUILT, NOT INFERRED, for `monthlyCapacityBars`'s reason: Chart.js reads
+  // `backgroundColor[0]` for a per-bar fill, so the one key it would generate is whichever
+  // colour the FIRST row happens to take. Two keys, each with the word its fill means; the
+  // click handler is stood down because hiding half a diverging chart leaves a picture that
+  // still looks like a measurement and is half of one.
+  opt.plugins.legend = {
+    display: true,
+    onClick: () => {},
+    labels: {
+      font: FONT,
+      color: INK2,
+      boxWidth: 12,
+      generateLabels: () => [
+        { text: "Added to the open count", fillStyle: ARRIVED_FILL, strokeStyle: ARRIVED_FILL, lineWidth: 0 },
+        { text: "Removed from it", fillStyle: CLOSED_FILL, strokeStyle: CLOSED_FILL, lineWidth: 0 },
+      ],
+    },
+  };
+  opt.plugins.tooltip.callbacks.label = (ctx) => {
+    const r = list[ctx.dataIndex];
+    if (!r) return "";
+    return ` ${signed(Number(r.value) || 0)} findings — ${r.basis}`;
+  };
+
+  return new Chart(canvas, {
+    type: "bar",
+    data: {
+      labels: list.map((r) => r.cause),
+      datasets: [
+        {
+          data: list.map((r) => r.value),
+          // One fill per bar, keyed off the SIGN the row already carries, so a row that moves
+          // from one side to the other cannot keep the other side's colour.
+          backgroundColor: list.map((r) => ((Number(r.value) || 0) < 0 ? CLOSED_FILL : ARRIVED_FILL)),
+          borderRadius: 3,
+          maxBarThickness: 26,
+        },
+      ],
+    },
+    options: opt,
+    plugins: [
+      // THE RULE'S LABEL GOES ON THE FAR SIDE OF THE TOP BAR. `zeroReferenceLine` draws it at
+      // the top of the rule, which is exactly where the FIRST row's bar is; the rows are
+      // ordered additions-first, so row 0 grows to the right and the label takes the left.
+      // Measured in the browser: drawn on the default side it sat on top of the arrivals bar.
+      zeroReferenceLine(net === null ? null : `net ${signed(net)}`, {
+        side: (Number(list[0] && list[0].value) || 0) >= 0 ? "left" : "right",
+      }),
+      divergingBarLabels(list),
+    ],
   });
 }
 

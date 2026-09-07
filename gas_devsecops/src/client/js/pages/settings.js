@@ -193,11 +193,16 @@ export function changeCountText(n) {
 
 // ---------------------------------------------------------------------------- register tab
 
-const SECRETS_ALL_NOTE =
-  "No severity gate is set by default. Severity grades how a scanner classified the "
-  + "detection, not whether the credential is still live — a SAAS_API_KEY can read LOW and "
-  + "still work. An empty selection here requests every severity, which is this register's "
-  + "whole CODE population.";
+// SPLIT IN TWO SO THE ROW CAN SHOW ITS LEDE AND DISCLOSE THE REST (R1's ladder), while
+// `registerFieldView().note` — pinned by test/pagesSettings.test.js to still contain
+// "detection" — keeps reading the WHOLE sentence, unchanged, below. Only the DOM half
+// (`registerScopeBlock`) reads the two halves separately; the model still hands back one note.
+const SECRETS_SEVERITY_LEDE = "No severity gate is set by default.";
+const SECRETS_SEVERITY_DETAIL =
+  "Severity grades how a scanner classified the detection, not whether the credential is "
+  + "still live — a SAAS_API_KEY can read LOW and still work. An empty selection here "
+  + "requests every severity, which is this register's whole CODE population.";
+const SECRETS_ALL_NOTE = SECRETS_SEVERITY_LEDE + " " + SECRETS_SEVERITY_DETAIL;
 
 const SCOPE_ALL_NOTE = "No severities selected requests every severity for this register.";
 
@@ -459,10 +464,15 @@ export async function renderSettings(host, params, ctx) {
       body: [
         el("p", { class: "small muted" },
           "Set by an operator as the WIZ_PROJECT_ID_V2 script property, outside this settings "
-          + "tab. This decides what a sync COLLECTS from Wiz, not which project the pages "
-          + "SHOW of what is already collected — that is a separate, page-level scope set "
-          + "elsewhere in the app. This page does not offer to edit either one, and the "
-          + "current fetch value is not part of what it is given to draw with."),
+          + "tab."),
+        disclosure(
+          "What this scope decides",
+          el("p", {},
+            "This decides what a sync COLLECTS from Wiz, not which project the pages SHOW of "
+            + "what is already collected — that is a separate, page-level scope set elsewhere "
+            + "in the app. This page does not offer to edit either one, and the current fetch "
+            + "value is not part of what it is given to draw with."),
+        ),
       ],
     });
     clear(panels.register).append(scopesPanel, projectPanel);
@@ -505,13 +515,21 @@ export async function renderSettings(host, params, ctx) {
         syncDirty();
       },
     });
+    // SECRETS GETS THE LEDE ON THE ROW AND THE REST BEHIND A DISCLOSURE; the other two scopes'
+    // note (`SCOPE_ALL_NOTE`, 9 words) is already the whole thing there is to say and stays a
+    // plain row description. `view.note` itself is untouched (still the full sentence,
+    // test/pagesSettings.test.js reads "detection" off it directly) — only the DOM below
+    // splits it, and only for the one scope whose note is 50 words rather than 9.
     const severitiesRow = settingRow({
       label: "Severities requested",
-      description: view.note,
+      description: scope === "secrets" ? SECRETS_SEVERITY_LEDE : view.note,
       control: el("div", { class: "settings-severity-row" }, pills, displayEl),
     });
+    const severityDisclosure = scope === "secrets"
+      ? disclosure("Why severity is not a gate for secrets", el("p", {}, SECRETS_SEVERITY_DETAIL))
+      : null;
 
-    return el("div", { class: "settings-scope-block" }, collectRow, severitiesRow);
+    return el("div", { class: "settings-scope-block" }, collectRow, severitiesRow, severityDisclosure);
   }
 
   function buildDeadlinesPanel() {

@@ -27,8 +27,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  boundedDays, capacityVerdict, capacityView, densityView, footholdView, groupRows, halfLifeView,
-  overallRow, ownershipView, tableRow,
+  boundedDays, capacityVerdict, capacityView, coverageMeterPct, densityView, footholdCellKind,
+  footholdView, groupRows, halfLifeView, overallRow, ownershipView, tableRow,
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
@@ -162,6 +162,51 @@ describe("repos: foothold, half-life and capacity read the published fields, not
     expect(tableRow({ ...REPO_A, assets_with_high_risk_pct: 0 }).footholdText).toBe("No");
     expect(tableRow({ ...REPO_A, assets_with_high_risk_pct: null }).footholdText).toBe("—");
   });
+});
+
+// =========================================================================================
+//  repos.js — the two decisions the Foothold/Coverage cells draw from (C2)
+// =========================================================================================
+
+describe("repos: footholdCellKind names the glyph a Yes/No verdict earns, and refuses one to a percentage", () => {
+  it("Yes and No each get their own kind — a real verdict, drawn with a glyph and the word", () => {
+    expect(footholdCellKind("Yes")).toBe("yes");
+    expect(footholdCellKind("No")).toBe("no");
+  });
+
+  it("a percentage between the ends is not a verdict and draws no glyph", () => {
+    expect(footholdCellKind("27.5%")).toBe("value");
+  });
+
+  it("the shared absence mark reads as absent, not as a fourth glyph", () => {
+    expect(footholdCellKind("—")).toBe("absent");
+  });
+
+  // PERTURBATION (recorded, then reverted): folding "value" and "absent" into one fallback
+  // branch (`return "value"` for anything not exactly "Yes"/"No") reads the shared dash as a
+  // percentage — the render path would then hand `uiIcon`'s caller a bare "—" instead of the
+  // muted `absent()` node, which is exactly the "a dash in the same ink as a measured value"
+  // defect `ui/cells.js`'s own header names. Kept as three branches, not two, for that reason.
+});
+
+describe("repos: coverageMeterPct refuses null BEFORE any cast, so an unmeasured cell draws no meter", () => {
+  it("passes a real, measured percentage through unchanged — including a real zero", () => {
+    expect(coverageMeterPct({ coverageP50: 62.5 })).toBe(62.5);
+    expect(coverageMeterPct({ coverageP50: 0 })).toBe(0);
+  });
+
+  it("a null coverage (never measured) returns null, not a confident 0", () => {
+    expect(coverageMeterPct({ coverageP50: null })).toBeNull();
+    expect(coverageMeterPct(null)).toBeNull();
+    expect(coverageMeterPct(undefined)).toBeNull();
+  });
+
+  // PERTURBATION (recorded, then reverted): the tempting one-line rewrite —
+  // `Number(row && row.coverageP50) || 0` — reads `coverageP50: null` as the finite `0`
+  // (CLAUDE.md's own example of this exact cast) and would draw an empty 0% track beside a
+  // cell that never measured anything, rather than the em dash `renderGroupTable` draws when
+  // this returns null. `typeof pct === "number" && Number.isFinite(pct)` is the refusal that
+  // stops it, checked BEFORE any arithmetic rather than cleaned up after.
 });
 
 describe("repos: ownership coverage — honestly absent, not a fabricated unowned count", () => {
@@ -337,13 +382,26 @@ describe("history: scanScopeNoteShown is gated on the server's own scanScopeNote
   // it cannot tell scoped-but-unmarked apart from genuinely unscoped.
 });
 
+// THE CARRIER CHANGED IN WAVE C; THE CLAIM DID NOT — and the three cases below say which is
+// which. What these pinned was `registerWideNote(` — a `<p class="register-wide-note">` under
+// each of the two scan-side tables, 21 words under one and 34 under the other, saying the
+// same thing in two sets of words. The density wave moved the STATE onto each table's own
+// heading as `statusPill("neutral", "Register-wide", lines)` and the two SENTENCES into that
+// pill's tip. That is a mechanism, not a claim: the same failure these cases were written to
+// catch — a table silently register-wide under a project view, or a note worded so it reads
+// as covering the KPIs and the trend as well — fails exactly as loudly against the pill.
+//
+// So the mechanism assertions are re-pointed at the pill, and everything that is a CLAIM is
+// kept verbatim: the gate is still read in the render function that owns the table (never
+// re-derived inside the DOM helper, which now takes the decision rather than the payload),
+// and the second sentence still says, in those words, that the KPIs and the trend ARE scoped.
 describe("history: the note is placed on the scan-side tables specifically, never worded to "
   + "imply the KPIs or trend are unscoped", () => {
   it("renderPerScope gates its own note on scanScopeNoteShown(payload)", () => {
     const fn = HISTORY_SRC.slice(HISTORY_SRC.indexOf("function renderPerScope"));
     const body = fn.slice(0, fn.indexOf("\n  }\n"));
     expect(body).toMatch(/scanScopeNoteShown\(payload\)/);
-    expect(body).toMatch(/registerWideNote\(/);
+    expect(body).toMatch(/registerWidePill\(/);
   });
 
   it("renderTable's note explicitly says the KPIs and trend ARE scoped, right beside the "
@@ -351,14 +409,21 @@ describe("history: the note is placed on the scan-side tables specifically, neve
     const fn = HISTORY_SRC.slice(HISTORY_SRC.indexOf("function renderTable"));
     const body = fn.slice(0, fn.indexOf("\n  function renderTrends"));
     expect(body).toMatch(/scanScopeNoteShown\(payload\)/);
-    expect(body).toMatch(/registerWideNote\(/);
     expect(body).toMatch(/KPIs above and the/);
     expect(body).toMatch(/trend below ARE scoped/);
   });
 
-  it("imports registerWideNote from the shared ui barrel, not a hand-rolled note", () => {
-    expect(HISTORY_SRC).toMatch(/registerWideNote/);
+  it("draws the state as the shared statusPill, not as a hand-rolled note", () => {
+    expect(HISTORY_SRC).toMatch(/statusPill\("neutral", "Register-wide"/);
     expect(HISTORY_SRC).toMatch(/from "\.\.\/ui\.js"/);
+    // NOT A VACUOUS SWEEP, and this half is what makes the re-point above safe: a pill with
+    // no lines behind it would be a two-word label where a sentence used to be, so both
+    // sentences have to still be in the source, and the helper has to refuse to draw a pill
+    // when the server sent no note at all.
+    expect(HISTORY_SRC).toMatch(/Scan counts across every register, not narrowed/);
+    expect(HISTORY_SRC).toMatch(/This table lists every scan ever saved, not narrowed/);
+    const fn = HISTORY_SRC.slice(HISTORY_SRC.indexOf("function registerWidePill"));
+    expect(fn.slice(0, fn.indexOf("\n  }\n"))).toMatch(/if \(!lines\) return;/);
   });
 });
 

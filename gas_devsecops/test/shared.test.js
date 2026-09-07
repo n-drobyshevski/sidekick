@@ -126,9 +126,13 @@ registerPageHeaderContract({
 
 registerParityContract({
   ...base,
-  // The one module that is genuinely this register's: it reads src/domain/projectScope.ts
-  // and means nothing in a sibling with no repositories.
-  localUiModules: ["projectScope.js"],
+  // Two modules that are genuinely this register's, neither a fork of a shared one:
+  // `projectScope.js` reads src/domain/projectScope.ts and means nothing in a sibling with no
+  // repositories; `verdict.js` is the capacity dot-and-word `pages/program.js` and
+  // `pages/repos.js` both draw — promoted out of program.js in Wave C once a second page
+  // wanted the identical mark, but never pushed down into gas_shared because neither sibling
+  // register has a capacity verdict to draw it for.
+  localUiModules: ["projectScope.js", "verdict.js"],
   sheetOrder: [
     "../../../gas_shared/styles/tokens.base.css",
     "./styles/tokens.css",

@@ -287,15 +287,22 @@ const ENTRIES = [
     ],
   },
   {
-    // The Executive front door's "Movement" aside. The method sentence used to sit under the
-    // rows as its own paragraph; the rows already carry the chips and the raw pair, so what
-    // was left to say was what the comparison is BETWEEN — a definition, which is what a tip
-    // is for.
+    // The Executive front door's "Movement" aside, and Scan history's "What moved the number"
+    // section. The method sentence used to sit under the rows as its own paragraph; the rows
+    // already carry the chips and the raw pair, so what was left to say was what the
+    // comparison is BETWEEN — a definition, which is what a tip is for.
+    //
+    // THE THIRD LINE IS THE ONE BOTH PAGES LEANED ON AND NEITHER DEFINED. Scan history's
+    // 65-word section note said it in its own words; this entry did not say it at all, so a
+    // reader who followed the trigger from either page met a definition that reads as though
+    // one window covered the whole register. It is third because a tip card shows the first
+    // two lines: the general reading leads, and this qualifies it on the Help page.
     id: "movement",
     term: "Movement",
     lines: [
       "The open backlog now against the same register at the previous sync. A rising count is worse.",
       "The comparison is between two syncs, not between two calendar dates — a register only learns anything on the days it looks.",
+      "Each register has its own window: the three share one scan log, and a scan of one of them looked at none of the others.",
     ],
   },
   {

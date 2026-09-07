@@ -152,6 +152,44 @@ export function countVisuals(tree) {
   return visuals;
 }
 
+// ============================================================================================
+//  tipsSignified — does a `.tip-trigger` carry a RESTING affordance, before anything is
+//  hovered? DESIGN.md's own words for The Tip: "a `?` mark, a metric label or a column
+//  heading becomes a real <button> with a dotted underline ... visible before anything is
+//  hovered, because a definition nobody can see is not help." `gas_shared/ui/tip.js` only
+//  ever adds `.tip-trigger--term` (the underline) when the help carries a `{term}` — a
+//  lines-only tip on a bare word shipped with NO resting affordance at all until pages.css's
+//  own app-wide rule (below `.movement-block` in that file) gave every bare-word trigger the
+//  same underline. This is the walker's half of MEASURING that fix, not deciding it: the CSS
+//  decides what the browser actually paints, and this function only reads the two facts a
+//  live page can hand back per trigger.
+//
+//  A trigger counts as SIGNIFIED by either of two independent affordances, matching
+//  DESIGN.md's own two cases side by side ("A badge or a clipped cell ... does not become a
+//  control" vs. a bare word, which must be underlined):
+//
+//    1. a resting text-decoration underline (the bare-word case), or
+//    2. an atomic affordance CHILD — `.tip-mark`, `.pill`, `.sev-badge`, `.domain-chip`, a
+//       `.quad-label`/`.sevkey` chip — which already carries its own visible boundary (a
+//       tint, a border, a glyph) and is EXEMPT from the underline rule for the reason
+//       `components.css`'s own `.tip-trigger--term` comment gives: an atomic inline box
+//       (inline-flex/inline-block) does not take a parent's `text-decoration` in the first
+//       place, so decorating the wrapping trigger would paint nothing anyway. A pill-wrapped
+//       trigger is not an oversight to fix — it is already signified, just not by a line.
+//
+//  Fed `{ decoration, childClasses }` — a plain record density.mjs's browser-side reader
+//  builds per trigger, never a real DOM node, for the same DOM-free-test reason every other
+//  predicate in this file exists.
+const TIP_AFFORDANCE_CHILD_CLASSES = ["tip-mark", "pill", "sev-badge", "domain-chip", "quad-label", "sevkey"];
+
+export function isTipSignified(record) {
+  if (!record || typeof record !== "object") return false;
+  const decoration = typeof record.decoration === "string" ? record.decoration : "";
+  if (decoration.split(/\s+/).includes("underline")) return true;
+  const childClasses = Array.isArray(record.childClasses) ? record.childClasses : [];
+  return TIP_AFFORDANCE_CHILD_CLASSES.some((c) => childClasses.includes(c));
+}
+
 /**
  * The `[hidden]` ATTRIBUTE — not asked for by name in the plan's own exclusion list, but
  * found by measurement rather than assumed away: `gas_shared/styles/base.css`'s one-line
@@ -343,6 +381,7 @@ export const DIFF_METRICS = [
   ["visualsTotal", (r) => r.visuals && r.visuals.total],
   ["tips", (r) => r.tips],
   ["tipsReachable", (r) => r.tipsReachable],
+  ["tipsSignified", (r) => r.tipsSignified],
   ["scrollWidth", (r) => r.scrollWidth],
 ];
 

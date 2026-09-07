@@ -69,6 +69,12 @@ const SECRETS = raw("secrets");
 const PROGRAM = raw("program");
 const SECRETS_CODE = code(SECRETS);
 const PROGRAM_CODE = code(PROGRAM);
+// `verdictMark` moved out of program.js into ui/verdict.js in Wave C (repos.js's Capacity
+// column needed the identical dot-and-word this page had already built) — read separately so
+// the "gives the capacity verdict a dot AND a word" claim below still checks the DOM that
+// claim is actually about, rather than quietly passing because program.js still says
+// "aria-hidden" somewhere else on the page.
+const VERDICT_CODE = code(readFileSync(new URL("../src/client/js/ui/verdict.js", import.meta.url), "utf8"));
 
 // =========================================================================================
 //  1. R2's KEEP list never leaves the surface
@@ -207,9 +213,14 @@ describe("program — the same, on the coverage lane", () => {
   });
 
   it("gives the capacity verdict a dot AND a word", () => {
+    // This page's own claim is only that it CALLS the shared mark with its verdict and
+    // label — verdictMark's DOM (the dot, the word, its aria-hidden-ness) is ui/verdict.js's
+    // claim now, checked against that file's own source below, since the function moved
+    // there in Wave C when repos.js needed the identical mark for its Capacity column.
     expect(PROGRAM_CODE).toMatch(/verdictMark\(view\.verdict, view\.verdictLabel\)/);
-    expect(PROGRAM_CODE).toMatch(/class: "verdict-word"/);
-    expect(PROGRAM_CODE).toMatch(/"aria-hidden": "true"/);
+    expect(PROGRAM_CODE).not.toMatch(/function verdictMark\(/);
+    expect(VERDICT_CODE).toMatch(/class: "verdict-word"/);
+    expect(VERDICT_CODE).toMatch(/"aria-hidden": "true"/);
   });
 });
 

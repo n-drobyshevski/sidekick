@@ -11,7 +11,7 @@ import { describe, expect, it } from "vitest";
 import {
   collectProseBlocks, countNumericTokens, countVisible, countVisuals, countWords, diffReport,
   diffRoute, extractText, formatDiffTable, formatTable, isClosedDetails, isHiddenAttr,
-  isIconSvg, isSrOnly, overflowSummary, parsePages, PROSE_MIN_WORDS, tagOf,
+  isIconSvg, isSrOnly, isTipSignified, overflowSummary, parsePages, PROSE_MIN_WORDS, tagOf,
 } from "../dev/densityModel.mjs";
 
 // ============================================================================================
@@ -418,6 +418,74 @@ describe("countVisuals() counts every picture once, and the right ones", () => {
   });
 });
 
+// ============================================================================================
+//  isTipSignified — DESIGN.md's "visible before anything is hovered" rule, made measurable.
+//  Fed the plain record density.mjs's browser-side reader builds per trigger, never a real
+//  DOM node — see densityModel.mjs's own header on why every decision that can be made
+//  without a `document` lives here.
+// ============================================================================================
+
+describe("isTipSignified(): a resting affordance, by EITHER of the two routes DESIGN.md draws", () => {
+  it("neither an underline nor an affordance child answers false — the bare-tip-on-a-word "
+    + "defect this walker exists to catch", () => {
+    expect(isTipSignified({ decoration: "none", childClasses: [] })).toBe(false);
+  });
+
+  it("a resting underline alone answers true", () => {
+    expect(isTipSignified({ decoration: "underline", childClasses: [] })).toBe(true);
+  });
+
+  it("a multi-value text-decoration-line that INCLUDES underline still answers true — the "
+    + "computed value can list more than one line", () => {
+    expect(isTipSignified({ decoration: "underline overline", childClasses: [] })).toBe(true);
+  });
+
+  it("a pill child with NO underline answers true — the pill is already its own affordance, "
+    + "and components.css's own comment is why: an atomic inline box does not take a "
+    + "parent's text-decoration in the first place, so this is not something to fix", () => {
+    expect(isTipSignified({ decoration: "none", childClasses: ["pill", "pill--ok"] })).toBe(true);
+  });
+
+  it("every named affordance-child class answers true on its own", () => {
+    for (const cls of ["tip-mark", "pill", "sev-badge", "domain-chip", "quad-label", "sevkey"]) {
+      expect(isTipSignified({ decoration: "none", childClasses: [cls] }), cls).toBe(true);
+    }
+  });
+
+  it("an underline AND a pill child (either would be enough) still answers true", () => {
+    expect(isTipSignified({ decoration: "underline", childClasses: ["pill"] })).toBe(true);
+  });
+
+  it("a child class that merely CONTAINS an affordance name is not a match — the check is "
+    + "exact class membership, not a substring", () => {
+    expect(isTipSignified({ decoration: "none", childClasses: ["pillow", "not-a-pill"] })).toBe(false);
+  });
+
+  it("null/undefined/non-object records answer false rather than throwing", () => {
+    expect(isTipSignified(null)).toBe(false);
+    expect(isTipSignified(undefined)).toBe(false);
+    expect(isTipSignified("nope")).toBe(false);
+  });
+
+  it("a missing/non-string decoration and a missing childClasses array degrade to false, "
+    + "not a thrown error", () => {
+    expect(isTipSignified({})).toBe(false);
+    expect(isTipSignified({ decoration: null, childClasses: null })).toBe(false);
+  });
+
+  // PERTURBATION: the tempting one-line simplification — "has any child classes at all" —
+  // would count a plain wrapper span (no affordance, just structure) as signified. The
+  // shipped guard checks the class NAME, not merely that children exist.
+  it("PERTURBATION PROOF: a child with unrelated classes (no affordance) does not signify", () => {
+    function anyChildDefective(record) {
+      return (record.childClasses || []).length > 0; // the exact anti-pattern
+    }
+    const record = { decoration: "none", childClasses: ["kpi-value", "num"] };
+    expect(anyChildDefective(record)).toBe(true); // defective: says "signified"
+    expect(isTipSignified(record)).toBe(false); // shipped: correctly "not signified"
+  });
+});
+
 describe("isSrOnly()", () => {
   it("requires the literal .sr-only class, not just any single-letter class", () => {
     expect(isSrOnly({ tag: "SPAN", classes: ["sr-only"] })).toBe(true);
@@ -491,7 +559,7 @@ describe("formatTable()", () => {
 // ============================================================================================
 
 describe("diffRoute() and formatDiffTable(): the zero-delta guard", () => {
-  const same = { words: 400, proseBlocks: 6, proseWords: 90, numbers: 20, tableCells: 12, visuals: { total: 3 }, tips: 4, tipsReachable: 4, scrollWidth: 1280 };
+  const same = { words: 400, proseBlocks: 6, proseWords: 90, numbers: 20, tableCells: 12, visuals: { total: 3 }, tips: 4, tipsReachable: 4, tipsSignified: 4, scrollWidth: 1280 };
 
   it("a route that moved on NOTHING still reports every delta explicitly as 0", () => {
     const diff = diffRoute(same, same);

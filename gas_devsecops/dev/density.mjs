@@ -38,7 +38,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   countNumericTokens, countVisible, countVisuals, countWords, collectProseBlocks, diffReport,
-  extractText, formatDiffTable, formatTable, overflowSummary, parsePages, PROSE_MIN_WORDS,
+  extractText, formatDiffTable, formatTable, isTipSignified, overflowSummary, parsePages,
+  PROSE_MIN_WORDS,
 } from "./densityModel.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url)); // …/gas_devsecops/dev
@@ -153,6 +154,49 @@ function buildUrl(port, route, noseed) {
   return `http://localhost:${port}/${q}#/${route}`;
 }
 
+/**
+ * Runs INSIDE the page (element.evaluate), on ONE trigger — self-contained for the same
+ * reason `serializeMain` above is: the source text ships to the browser as a string and is
+ * re-declared there, so a closure over this file's own imports would be `undefined` on the
+ * other side.
+ *
+ * Returns the plain record `densityModel.mjs`'s `isTipSignified()` decides over: whether the
+ * TRIGGER carries a resting underline (checked on the trigger itself first, then on its first
+ * text-bearing descendant — a trigger built by wrapping an already-underlined span would
+ * otherwise read as bare), and every class riding on any descendant element (so the model can
+ * ask whether an atomic affordance child — `.pill`, `.tip-mark`, … — is present without this
+ * function having to know the list itself; that list is the model's, not the walker's).
+ */
+function readTipSignifier(el) {
+  function hasUnderline(node) {
+    return !!node && node.nodeType === 1
+      && getComputedStyle(node).textDecorationLine.split(/\s+/).includes("underline");
+  }
+  function firstTextBearingElement(node) {
+    for (const child of node.childNodes) {
+      if (child.nodeType === 3 && child.nodeValue && child.nodeValue.trim()) return node;
+      if (child.nodeType === 1) {
+        const found = firstTextBearingElement(child);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  let decoration = getComputedStyle(el).textDecorationLine;
+  if (!decoration.split(/\s+/).includes("underline")) {
+    const holder = firstTextBearingElement(el);
+    if (holder && holder !== el && hasUnderline(holder)) decoration = "underline";
+  }
+  const childClasses = [];
+  (function walk(node) {
+    for (const child of node.children) {
+      childClasses.push(...Array.from(child.classList));
+      walk(child);
+    }
+  }(el));
+  return { decoration, childClasses };
+}
+
 /** Tab to every VISIBLE `.tip-trigger` and ask whether the shared `.tip` card (one node,
  *  portaled — see gas_shared/ui/tip.js's own header) opens on focus. Reported by TRIGGER
  *  TEXT, not just a count, so a failure names the tip a keyboard user actually cannot reach.
@@ -167,6 +211,7 @@ async function measureTips(page) {
   const triggers = page.locator(".tip-trigger:visible");
   const count = await triggers.count();
   const failures = [];
+  const unsignified = [];
   for (let i = 0; i < count; i++) {
     const trigger = triggers.nth(i);
     const label = ((await trigger.textContent()) || "").trim().replace(/\s+/g, " ") || `#${i}`;
@@ -177,8 +222,16 @@ async function measureTips(page) {
     const open = await page.locator(".tip.open").count();
     if (open === 0) failures.push(label);
     await page.evaluate(() => { if (document.activeElement) document.activeElement.blur(); });
+    const record = await trigger.evaluate(readTipSignifier);
+    if (!isTipSignified(record)) unsignified.push(label);
   }
-  return { tips: count, tipsReachable: count - failures.length, tipFailures: failures };
+  return {
+    tips: count,
+    tipsReachable: count - failures.length,
+    tipsSignified: count - unsignified.length,
+    tipFailures: failures,
+    tipsUnsignified: unsignified,
+  };
 }
 
 async function measureRoute(page, port, route, viewportWidth, noseed) {
@@ -254,6 +307,7 @@ const MAIN_COLUMNS = [
   ["visuals", (r) => r.visuals.total],
   ["tips", (r) => r.tips],
   ["tipsReachable", (r) => r.tipsReachable],
+  ["tipsSignified", (r) => r.tipsSignified],
   ["scrollWidth", (r) => r.scrollWidth],
 ];
 
@@ -334,6 +388,11 @@ async function runMeasure(args) {
           + "was still present after the wait) — its counts are suspect, not a measurement.");
         if (result.consoleErrors.length) console.error(`WARNING: ${tag} logged console `
           + `error(s): ${result.consoleErrors.join(" | ")}`);
+        if (result.tipsUnsignified && result.tipsUnsignified.length) {
+          console.error(`WARNING: ${tag} has a tip-trigger with NO resting affordance (no `
+            + "underline, no atomic affordance child) — a leak to investigate, per CLAUDE.md, "
+            + `not a number to report and move on: ${result.tipsUnsignified.join(" | ")}`);
+        }
       }
       await context.close();
     }

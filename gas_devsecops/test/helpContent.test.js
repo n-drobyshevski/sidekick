@@ -200,6 +200,21 @@ describe("the measurement decisions in the new entries", () => {
     expect(t).toMatch(/earlier|earliest/);
     expect(t).toContain("187");
   });
+
+  it("movement: the window is PER REGISTER, and the entry says so", () => {
+    // THE POINT BOTH PAGES LEANED ON AND NEITHER DEFINED. The Executive aside and Scan
+    // history's section both route here; history's own 65-word note said it in its own words
+    // and this entry did not say it at all, so a reader who followed either trigger met a
+    // definition that reads as though one window covered the whole register. Three registers
+    // share one scan log and a scan of one of them looked at none of the others — which is
+    // why one register can publish a decomposition on a day the other two refuse.
+    const t = text("movement");
+    expect(t, "the entry does not say each register has its own window")
+      .toMatch(/own window|per register/);
+    expect(t, "the entry does not say the three share one scan log").toMatch(/scan log/);
+    // ...and it still leads with what the comparison IS, because a tip card shows two lines.
+    expect(findEntry("movement").lines[0].toLowerCase()).toMatch(/previous sync/);
+  });
 });
 
 // =========================================================================================

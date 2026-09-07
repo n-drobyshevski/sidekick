@@ -247,7 +247,20 @@ describe("history.js — the spiral is behind the toggle, and hands the slot bac
     expect(gate).toBeGreaterThan(fn);
     // The heading and the lede are BUILT INSIDE the gated function — an off experiment leaves
     // no heading behind. Both strings appear exactly once, after the gate.
-    for (const literal of ["Open count, one turn per quarter", "Experimental. Each turn is a"]) {
+    //
+    // THE SECOND LITERAL MOVED IN WAVE C, AND THE CLAIM DID NOT. The 24-word lede was one
+    // `.section-note` opening "Experimental. Each turn is a calendar quarter…"; it is now a
+    // `statusPill("neutral", "Experimental")` on the heading (the word is a STATE of the
+    // picture and stays on the surface) over two tip lines holding the geometry (how to read
+    // an unfamiliar shape is a definition, and goes one level down). Both pieces are still
+    // built inside the gated function, which is the whole of what this case checks — so the
+    // strings are re-pointed and a third is added, because the pill is now the only thing on
+    // screen saying the section is unfinished and it must not be able to escape the gate.
+    for (const literal of [
+      "Open count, one turn per quarter",
+      "Each turn is a calendar quarter",
+      '"Experimental"',
+    ]) {
       expect(HISTORY.split(literal)).toHaveLength(2);
       expect(HISTORY.indexOf(literal)).toBeGreaterThan(gate);
     }

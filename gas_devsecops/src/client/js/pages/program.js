@@ -33,7 +33,7 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absent, absentText, chartTable, chartTableModel, clear, dataTable, disclosure, el, emptyState,
+  absentText, chartTable, chartTableModel, clear, dataTable, disclosure, el, emptyState,
   errorState, figureCard, firstRunNotice, heroStat, kpiCard, meter, num, onPageTeardown,
   pageHeader, pluralize, quadModel, quadTable, sectionLabel, skeleton, statRow, statusPill,
   tipLabel,
@@ -45,6 +45,11 @@ import { fmtCount, fmtDays } from "./mttr.js";
 // worth reading behind it, and re-typing the shell here would be the fourth copy of a
 // `.chart-card > h3 + note + chart-box + chartTable` block in this package.
 import { chartCard } from "./sca.js";
+// `verdictMark` moved out to its own module in Wave C: `pages/repos.js` needed the identical
+// dot-and-word for its own Capacity column, and two pages wanting the same shape is what
+// promotes a helper. See ui/verdict.js's header for the DOM and the tone mapping this page no
+// longer carries a private copy of.
+import { verdictMark } from "../ui/verdict.js";
 
 // ---------------------------------------------------------------------------- formatting
 
@@ -66,8 +71,6 @@ const VERDICT_LABELS = {
   "keeping-up": "Keeping up",
   "falling-behind": "Falling behind",
 };
-
-const VERDICT_KINDS = { gaining: "ok", "keeping-up": "neutral", "falling-behind": "bad" };
 
 /**
  * The percentage a signal's coverage meter may be filled to — or NULL, which draws no meter.
@@ -1088,29 +1091,6 @@ export async function renderProgram(host, params, _ctx) {
           },
         )
         : "Every month here was directly observed."));
-  }
-
-  /**
-   * The capacity verdict as a dot AND a word — ported from gas_ai's `.cap-verdict`.
-   *
-   * The WORD is the signal and the dot is the redundancy, never the other way round. Three
-   * states (gaining / keeping up / falling behind) told apart by hue would be one hue doing
-   * all the work, which DESIGN.md's accessibility bar forbids outright; the dot is
-   * `aria-hidden` for the same reason — it says nothing the word beside it does not.
-   *
-   * A verdict of null still draws: `capacityView` renders `absentText` as the word, and a
-   * neutral dot beside an em dash is the honest picture of a verdict nobody could reach.
-   */
-  function verdictMark(verdict, word) {
-    // The dot takes the same ok / neutral / bad vocabulary the per-month pills used to, so
-    // there is one tone list on this page rather than a second one keyed by verdict slug.
-    const kind = VERDICT_KINDS[verdict] || "neutral";
-    return el("span", { class: "verdict-mark" },
-      el("span", { class: "verdict-dot verdict-dot--" + kind, "aria-hidden": "true" }),
-      // `kpiCard`'s own `valueOrAbsent` cannot reach an em dash wrapped in a node, so the
-      // absent case is resolved here: a verdict nobody could reach reads as this app's one
-      // absence mark rather than as a bare dash in the verdict's own weight.
-      el("span", { class: "verdict-word" }, word === absentText ? absent() : word));
   }
 
   // ------------------------------------------------------------- coverage over time
