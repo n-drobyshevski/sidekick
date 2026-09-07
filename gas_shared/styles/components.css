@@ -597,17 +597,63 @@
   text-align: inherit;
   cursor: help;
 }
-/* Term triggers only. The chip base above and the tag base below it are all inline-flex or
-   inline-block — atomic inline boxes, which do not take a parent's text-decoration — so a
-   trigger wrapping a pill, a badge or the "?" mark is left alone by this rule without needing
-   a selector to say so. The underline lands on bare words, which is exactly where it is the
-   only affordance available. */
-.tip-trigger--term {
+/* EVERY TRIGGER, NOT ONLY A TERM-BACKED ONE — and the modifier this rule replaced is the
+   reason it has to be said out loud. `ui/tip.js`'s `markTerm()` adds `.tip-trigger--term`
+   solely when the help carries a `{term}`, and for a long time that modifier was the ONLY
+   thing carrying the underline. A tip built from bare `{ lines }` — a section heading, a stat
+   name, a column heading, a kpi label — therefore rendered as plain text with nothing but
+   `cursor: help` to say it was a control: DESIGN.md's own rule for The Tip ("visible before
+   anything is hovered, because a definition nobody can see is not help") broken by the shape
+   of the caller's help object rather than by anything a reader could see. Measured across the
+   three register apps with `gas_devsecops/dev/density.mjs`'s `tipsSignified` count, on each
+   app's own dev server at 1280 and 640. gas_devsecops fixed it app-locally first (f95f895,
+   after measuring executive 6 of 9 triggers signified, mttr 19/22, sca 12/19, sast 9/16,
+   secrets 28/41, data 2/6); with that local rule in place and this one still absent, the two
+   siblings were carrying it unfixed — gas 12 unsignified (executive's "Median MTTR (KM)";
+   mttr's four chart-card headings and four SLA column headings; program's "Close rate",
+   "High-risk net", "Cross-check") and gas_ai 5 (config's "Not on an AI asset", compliance's
+   "Compliance posture", scans' "Landscape reach", "By kind", "Decision-tree axis coverage"),
+   plus 16 more on gas_ai's Key sheet whenever an entry is counted but unresolved. One app's
+   local fix is not a design system's answer, so the rule lives here: after it,
+   `tipsSignified == tips` on every route of all three, seeded and unseeded.
+
+   `.tip-trigger--term` KEEPS BEING EMITTED and is deliberately not deleted: it is the
+   behavioural hook for "activate to reach this word's entry in the Key sheet" (`markTerm`
+   registers the navigation on it), which is a different fact from "this is defined". Only its
+   decoration block is gone from this file, because it had become a byte-identical duplicate of
+   the one below.
+
+   (0,1,0) IS ENOUGH, AND THAT IS MEASURED RATHER THAN ASSUMED. The full reset above needs
+   `.tip-trigger.tip-trigger` (0,2,0) to beat the dozen `<context> button` rules at (0,1,1)
+   that load after this file — but not one of them sets `text-decoration`: the only three
+   `text-decoration` declarations anywhere outside this block are `.appbar-hub`, the nav link
+   in `base.css` and `gas_hub`'s tile anchor, none of which is a trigger or an ancestor
+   context of one, and `--term` itself has always shipped as a single-class rule nothing
+   overrode. Copying the doubled-class treatment here would state a conflict that does not
+   exist.
+
+   NO :not() / :has() GUARD FOR A PILL-, BADGE- OR CHIP-WRAPPED TRIGGER, for the reason the
+   deleted comment gave and which is now the reason no guard is needed at all: the chip base
+   above (`.sev-badge, .aars-chip, .pill, .filter-chip, .combo-cond`) and the tag base beside
+   it (`.domain-chip, .fw-tag`) are inline-flex or inline-block, and an atomic inline box does
+   not take an ancestor's `text-decoration` in the first place. So this rule paints on exactly
+   the bare words where a line is the only affordance available, and paints nothing on a
+   trigger built by wrapping a mark that already carries its own boundary. Confirmed in the
+   browser at 1280px on every `.pill`-wrapped trigger the three dev seeds actually render —
+   gas_ai's "capped" on a node-budgeted Security Graph, and gas_devsecops's "Dry run", "At or
+   below random", "Secrets excluded (N)" and "Exposure and overdue: not applicable": computed
+   `text-decoration-line` is `underline` on the button and `none` inside the pill, and the pill
+   paints no line beside a bare-word trigger that now does. Two things this rule does NOT reach
+   either, measured the same way: an already-interactive `tip()` target keeps its own node and
+   never gets the class at all (every `[data-tip]` anchor that is not a `.tip-trigger` — a
+   combobox, an appbar link, a graph `<g>`, a `button.prog-cell` — reads `none`), and
+   `.tip-mark`, the bare "?" affordance, is inline-flex like the chips. */
+.tip-trigger {
   text-decoration: underline dotted rgba(0, 0, 0, 0.32);
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
 }
-.tip-trigger--term:hover { text-decoration-color: currentColor; }
+.tip-trigger:hover { text-decoration-color: currentColor; }
 .tip-trigger:focus-visible {
   outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-sm);
 }

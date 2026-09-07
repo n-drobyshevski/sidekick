@@ -46,6 +46,68 @@ describe("parsePages() reads the same PAGES table shape test/pagesLit.test.js's 
     const src = "const PAGES = {\n  help: { title: \"Key sheet\", group: \"Data\" },\n};\n";
     expect(parsePages(src)).toEqual([{ route: "help", render: null }]);
   });
+
+  // WHY THESE THREE SHAPES AND NOT A HAND-WAVE. `--root` (density.mjs) points this walker at
+  // any of the four apps, which is only sound if `parsePages()` reads all four PAGES tables
+  // unchanged. Measured against the real files rather than assumed: gas 9 routes, gas_ai 11,
+  // gas_devsecops 11, gas_hub 2 — each equal to that app's own `render:` count inside its
+  // PAGES block. The three shapes below are the ones the SIBLING tables carry and this app's
+  // does not, reproduced here so the claim is pinned without a test reaching across app
+  // boundaries to read another app's source at runtime.
+  it("a sibling app's extra per-route key (gas_ai's fullBleed) does not hide the route", () => {
+    const src = [
+      "const PAGES = {",
+      '  graph: { title: "Security Graph", group: "Landscape", render: renderGraphPage, fullBleed: true },',
+      "};",
+    ].join("\n");
+    expect(parsePages(src)).toEqual([{ route: "graph", render: "renderGraphPage" }]);
+  });
+
+  it("two-space comment lines BETWEEN routes are skipped, not read as routes — every sibling "
+    + "table interleaves them, gas_ai's most heavily", () => {
+    const src = [
+      "const PAGES = {",
+      "  // The front door. MANIFEST.defaultRoute names it.",
+      '  hub: { title: "Registers", group: null, render: renderHub },',
+      "  // Second lane comment: the route key stays `settings`.",
+      '  settings: { title: "Settings", group: null, render: renderSettings },',
+      "};",
+    ].join("\n");
+    expect(parsePages(src)).toEqual([
+      { route: "hub", render: "renderHub" },
+      { route: "settings", render: "renderSettings" },
+    ]);
+  });
+
+  // A GUARD THAT FIRED ON NOTHING, MADE TO BITE. `parsePages` bounds the PAGES literal at the
+  // first "\n};" — and that bound was protecting nothing: deleting it (measured, by mutating
+  // the source) left every one of these cases green AND returned the identical route list for
+  // all four real app.js files, because no line after any of those tables happens to match
+  // `  key: {`. It is one two-space object literal away from mattering — this app's own
+  // ROUTE_ICONS / MANIFEST region is exactly that shape — so the case below is what the bound
+  // is for, rather than a rule stated in a comment nothing runs.
+  it("a route-shaped line BELOW the table's closing brace is not a route", () => {
+    const src = [
+      "const PAGES = {",
+      '  hub: { title: "Registers", group: null, render: renderHub },',
+      "};",
+      "const ROUTE_ICONS = {",
+      '  notaroute: { d: "M0 0h1v1H0z", render: renderNothing },',
+      "};",
+    ].join("\n");
+    expect(parsePages(src)).toEqual([{ route: "hub", render: "renderHub" }]);
+  });
+
+  it("a two-route table (gas_hub's whole IA) is a measurement, not an empty walk", () => {
+    const src = [
+      "const PAGES = {",
+      '  hub: { title: "Registers", group: null, render: renderHub },',
+      '  settings: { title: "Settings", group: null, render: renderSettings },',
+      "};",
+      "configureApp({ ...MANIFEST, PAGES });",
+    ].join("\n");
+    expect(parsePages(src)).toHaveLength(2);
+  });
 });
 
 // ============================================================================================
@@ -447,10 +509,48 @@ describe("isTipSignified(): a resting affordance, by EITHER of the two routes DE
   });
 
   it("every named affordance-child class answers true on its own", () => {
-    for (const cls of ["tip-mark", "pill", "sev-badge", "domain-chip", "quad-label", "sevkey"]) {
+    for (const cls of [
+      "tip-mark", "pill", "sev-badge", "aars-chip", "domain-chip", "quad-label", "sevkey",
+    ]) {
       expect(isTipSignified({ decoration: "none", childClasses: [cls] }), cls).toBe(true);
     }
   });
+
+  // `.aars-chip` IS gas_ai's, AND THAT IS WHY IT IS HERE. This walker now reads any of the
+  // four apps (`density.mjs --root`), and `components.css:184` declares one chip base for
+  // `.sev-badge, .aars-chip, .pill, .filter-chip, .combo-cond` — all inline-flex, all atomic
+  // inline boxes. `.aars-chip` was the one member of that base this list omitted, so an AARS
+  // score chip inside a trigger read as an unsignified trigger: a walker bug that would have
+  // been reported as a page bug on the very run F2's measurement depends on.
+  it("an aars-chip child with NO underline answers true — gas_ai's score chip is atomic under "
+    + "the same chip base .pill and .sev-badge sit in", () => {
+    expect(isTipSignified({ decoration: "none", childClasses: ["aars-chip", "sev-HIGH"] }))
+      .toBe(true);
+  });
+
+  it("the chip a real aarsChip() builds — aars-chip over a sev-dot mark — answers true", () => {
+    // The exact class run gas_ai/src/client/js/ui/aarsChip.js emits: the chip, its severity
+    // token, and the dot inside it.
+    expect(isTipSignified({
+      decoration: "none", childClasses: ["aars-chip", "sev-HIGH", "sev-dot"],
+    })).toBe(true);
+  });
+
+  // PERTURBATION: the shipped list BEFORE this round — the exact six names — reads gas_ai's
+  // chip as unsignified. Reproduced inline rather than asserted from a comment, the way
+  // contracts/relativeAge.js reproduces its defective rewrite.
+  it("PERTURBATION PROOF: the pre-F2 list (no aars-chip) calls gas_ai's score chip unsignified",
+    () => {
+      const PRE_F2 = ["tip-mark", "pill", "sev-badge", "domain-chip", "quad-label", "sevkey"];
+      function signifiedDefective(record) {
+        const cls = record.childClasses || [];
+        return (record.decoration || "").split(/\s+/).includes("underline")
+          || PRE_F2.some((c) => cls.includes(c));
+      }
+      const record = { decoration: "none", childClasses: ["aars-chip", "sev-HIGH", "sev-dot"] };
+      expect(signifiedDefective(record)).toBe(false); // defective: "no resting affordance"
+      expect(isTipSignified(record)).toBe(true); // shipped: the chip IS the affordance
+    });
 
   it("an underline AND a pill child (either would be enough) still answers true", () => {
     expect(isTipSignified({ decoration: "underline", childClasses: ["pill"] })).toBe(true);

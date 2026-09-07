@@ -7,13 +7,26 @@
 // nothing in this repo checked it before R6.
 //
 // USAGE
-//   node dev/density.mjs --port 8789 [--viewports 1280,640,360] [--routes a,b] [--noseed]
-//                         [--out file.json] [--playwright <module path>]
+//   node dev/density.mjs --port 8789 [--root <app dir>] [--viewports 1280,640,360]
+//                         [--routes a,b] [--noseed] [--out file.json]
+//                         [--playwright <module path>]
 //   node dev/density.mjs --diff before.json after.json
 //
 // ROUTES COME FROM app.js's OWN PAGES TABLE (densityModel.mjs's `parsePages`, the exact regex
 // test/pagesLit.test.js's own parser uses), never hand-typed here — a renamed or added route
 // shows up next run with no second list to forget.
+//
+// `--root` IS WHY THIS WALKS FOUR APPS FROM ONE FILE. The route table, the git sha and the
+// report's own label all come from ONE directory, which defaulted to this script's own parent
+// and so could only ever be gas_devsecops. `parsePages()` was already generic — the PAGES
+// literal has the same two-space `key: {` shape in all four apps' `src/client/js/app.js`,
+// which is a fact this file MEASURES (it refuses an empty walk) rather than assumes — so
+// pointing the root at `../gas`, `../gas_ai` or `../gas_hub` and the port at that app's own
+// dev server is the whole of what a cross-app run needs. A shared-CSS change is invisible to
+// a walker that can only see one app; F2's promotion of the tip underline into
+// `gas_shared/styles/components.css` is exactly that change, and this flag is how its blast
+// radius was measured rather than eyeballed. (Promoting the walker itself into `gas_shared/`
+// is the structural answer and is deliberately not this round.)
 //
 // EVERY COUNT IS DERIVED, NOT TYPED (gas_shared/measure.mjs's own rule) — every figure below
 // comes from walking the ACTUAL rendered DOM of the actual dev server, every run.
@@ -33,7 +46,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
@@ -43,7 +56,7 @@ import {
 } from "./densityModel.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url)); // …/gas_devsecops/dev
-const APP_ROOT = dirname(HERE); // …/gas_devsecops
+const DEFAULT_APP_ROOT = dirname(HERE); // …/gas_devsecops — the app this script lives in
 const DEFAULT_VIEWPORTS = [1280, 640, 360];
 const SETTLE_MS = 350; // short settle after skeletons clear: chart draw, one layout tick
 const SKELETON_TIMEOUT_MS = 8000;
@@ -53,17 +66,19 @@ const SKELETON_TIMEOUT_MS = 8000;
 function usage() {
   return [
     "Usage:",
-    "  node dev/density.mjs --port <n> [--viewports 1280,640,360] [--routes a,b] [--noseed]",
-    "                        [--out file.json] [--playwright <module path>]",
+    "  node dev/density.mjs --port <n> [--root <app dir>] [--viewports 1280,640,360]",
+    "                        [--routes a,b] [--noseed] [--out file.json]",
+    "                        [--playwright <module path>]",
     "  node dev/density.mjs --diff before.json after.json",
   ].join("\n");
 }
 
 function parseArgs(argv) {
-  const out = { viewports: DEFAULT_VIEWPORTS, noseed: false };
+  const out = { viewports: DEFAULT_VIEWPORTS, noseed: false, root: DEFAULT_APP_ROOT };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--port") out.port = Number(argv[++i]);
+    else if (a === "--root") out.root = resolve(argv[++i]);
     else if (a === "--viewports") out.viewports = argv[++i].split(",").map(Number);
     else if (a === "--routes") out.routes = argv[++i].split(",").map((s) => s.trim());
     else if (a === "--noseed") out.noseed = true;
@@ -317,9 +332,9 @@ function printMainTable(routeRows) {
   console.log(formatTable(headers, rows));
 }
 
-function gitSha() {
+function gitSha(appRoot) {
   try {
-    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: APP_ROOT, encoding: "utf8" }).trim();
+    return execFileSync("git", ["rev-parse", "HEAD"], { cwd: appRoot, encoding: "utf8" }).trim();
   } catch {
     return null;
   }
@@ -348,10 +363,21 @@ async function runMeasure(args) {
     console.error(`--port is required for a measurement run.\n\n${usage()}`);
     process.exit(2);
   }
-  const appSrc = readFileSync(join(APP_ROOT, "src/client/js/app.js"), "utf8");
+  const appRoot = args.root;
+  const appName = basename(appRoot);
+  const appJs = join(appRoot, "src/client/js/app.js");
+  if (!existsSync(appJs)) {
+    console.error(`--root ${appRoot} has no src/client/js/app.js — that is not one of this `
+      + "design system's apps, and walking it would report someone else's routes.");
+    process.exit(2);
+  }
+  const appSrc = readFileSync(appJs, "utf8");
   const allRoutes = parsePages(appSrc).map((p) => p.route);
+  // THE REFUSAL IS THE POINT OF `--root`, not a formality: `parsePages()` returning [] on a
+  // sibling app would print a clean, empty, entirely believable table. A zero has to prove it
+  // looked (CLAUDE.md), so an empty route list ends the run instead of reporting it.
   if (!allRoutes.length) {
-    console.error("parsePages() found no routes in app.js's PAGES table — refusing to report "
+    console.error(`parsePages() found no routes in ${appJs}'s PAGES table — refusing to report `
       + "an empty walk as a measurement.");
     process.exit(1);
   }
@@ -369,7 +395,8 @@ async function runMeasure(args) {
 
   const doc = {
     meta: {
-      sha: gitSha(), when: new Date().toISOString(), port: args.port,
+      app: appName, root: appRoot,
+      sha: gitSha(appRoot), when: new Date().toISOString(), port: args.port,
       viewports: args.viewports, noseed: args.noseed,
     },
     routes: {},
@@ -411,7 +438,7 @@ async function runMeasure(args) {
     return { route, ...r };
   });
   const suspicious = mainRows.filter((r) => r.words === 0);
-  console.log(`\n== gas_devsecops density @ ${primary}px `
+  console.log(`\n== ${appName} density @ ${primary}px `
     + `(sha ${doc.meta.sha ? doc.meta.sha.slice(0, 12) : "unknown"}, ${doc.meta.when}) ==\n`);
   printMainTable(mainRows);
   if (suspicious.length) {

@@ -246,43 +246,6 @@
    this it keeps the 0 margin `pre` gets everywhere else and collides with the row beneath. */
 .kv dd > .code-block { margin: 0; }
 
-/* ONE LIST, ONE AFFORDANCE — APP-WIDE, not just the finding sheet's `<dl>` this rule used to be
-   scoped to. `.tip-trigger--term` (components.css) underlines a GLOSSARY trigger only:
-   `gas_shared/ui/tip.js`'s `markTerm()` adds that modifier class solely when the help carries
-   a `{term}`. The visual-density wave (182bef9, ef6d11f, and Wave C) moved a run of
-   plain-sentence tips onto `sectionLabel`, `statRow`, `kpiCard`/`figureCard` labels and
-   `dataTable` column headings via bare `help: { lines }` — no term, so no modifier class, so
-   DESIGN.md's own rule for The Tip ("visible before anything is hovered") broke on roughly
-   sixty triggers across the app: on Data, "Compaction" (a term) reads underlined while "Space
-   in use", "Export", "Delete scans" and "Reset" (lines only, right beside it) render as plain
-   text with nothing but `cursor: help` to say they are controls — measured with
-   `dev/density.mjs`'s `tipsSignified` count before this rule existed: those four named
-   verbatim as `data`'s unsignified triggers, at 1280px, on this app's own dev server. This
-   used to be scoped to `.kv dt` alone (the finding sheet's `<dl>`, where the same asymmetry
-   was noticed first, in 3216b4f) — the scope is gone now that the fix is app-wide; a `.kv dt`
-   row gets it from this rule exactly as every other bare-word trigger does.
-
-   NO :not()/:has() GUARD NEEDED FOR A PILL/BADGE/CHIP-WRAPPED TRIGGER, measured rather than
-   assumed: `.pill`, `.sev-badge` and `.domain-chip` (components.css) are inline-flex or
-   inline-block — atomic inline boxes, the same reason `.tip-trigger--term`'s own comment gives
-   for why THAT rule never needs one — and an atomic box does not take an ancestor's
-   `text-decoration` at all, so a trigger built by wrapping one (`statusPill`'s `help` case,
-   e.g. Scan history's "Register-wide" heading pill) paints no line regardless of this rule.
-   Confirmed in the browser at 1280px: the pill stays undecorated beside a bare-word trigger
-   that is now underlined.
-
-   APP-LOCAL FOR NOW. `gas` and `gas_ai` carry the identical asymmetry (they also feed
-   `help: { lines }` into the same shared primitives with no term), so the real fix is
-   `gas_shared/styles/components.css` making `.tip-trigger` itself unconditional and
-   `.tip-trigger--term` redundant — a promotion this wave leaves for the reviewer's own
-   measured round rather than folding a three-app change into a one-app defect. */
-.tip-trigger {
-  text-decoration: underline dotted rgba(0, 0, 0, .32);
-  text-underline-offset: 3px;
-  text-decoration-thickness: 1px;
-}
-.tip-trigger:hover { text-decoration-color: currentColor; }
-
 /* ------------------------------------------------- MTTR & SLA: the half-life trend aside
    `pageHeader({aside})` is documented for "a small curve" and was empty on this page while
    the series it wants sat at the foot of the same page in a Chart.js line. The sparkline that

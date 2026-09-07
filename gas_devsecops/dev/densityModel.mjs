@@ -156,31 +156,43 @@ export function countVisuals(tree) {
 //  tipsSignified — does a `.tip-trigger` carry a RESTING affordance, before anything is
 //  hovered? DESIGN.md's own words for The Tip: "a `?` mark, a metric label or a column
 //  heading becomes a real <button> with a dotted underline ... visible before anything is
-//  hovered, because a definition nobody can see is not help." `gas_shared/ui/tip.js` only
-//  ever adds `.tip-trigger--term` (the underline) when the help carries a `{term}` — a
-//  lines-only tip on a bare word shipped with NO resting affordance at all until pages.css's
-//  own app-wide rule (below `.movement-block` in that file) gave every bare-word trigger the
-//  same underline. This is the walker's half of MEASURING that fix, not deciding it: the CSS
-//  decides what the browser actually paints, and this function only reads the two facts a
-//  live page can hand back per trigger.
+//  hovered, because a definition nobody can see is not help." `gas_shared/ui/tip.js` only ever
+//  adds `.tip-trigger--term` when the help carries a `{term}`, and for a while that modifier
+//  was the ONLY thing carrying the underline — so a lines-only tip on a bare word shipped with
+//  no resting affordance at all, in three apps. `gas_shared/styles/components.css` now
+//  underlines `.tip-trigger` itself, unconditionally, and the modifier is only the behavioural
+//  hook for "activate to reach the Key sheet entry". This is the walker's half of MEASURING
+//  that fix, not deciding it: the CSS decides what the browser actually paints, and this
+//  function only reads the two facts a live page can hand back per trigger.
 //
 //  A trigger counts as SIGNIFIED by either of two independent affordances, matching
 //  DESIGN.md's own two cases side by side ("A badge or a clipped cell ... does not become a
 //  control" vs. a bare word, which must be underlined):
 //
 //    1. a resting text-decoration underline (the bare-word case), or
-//    2. an atomic affordance CHILD — `.tip-mark`, `.pill`, `.sev-badge`, `.domain-chip`, a
-//       `.quad-label`/`.sevkey` chip — which already carries its own visible boundary (a
-//       tint, a border, a glyph) and is EXEMPT from the underline rule for the reason
-//       `components.css`'s own `.tip-trigger--term` comment gives: an atomic inline box
+//    2. an atomic affordance CHILD — `.tip-mark`, `.pill`, `.sev-badge`, `.aars-chip`, a
+//       `.domain-chip`, a `.quad-label`/`.sevkey` chip — which already carries its own visible
+//       boundary (a tint, a border, a glyph) and is EXEMPT from the underline rule for the
+//       reason `components.css`'s own `.tip-trigger` comment gives: an atomic inline box
 //       (inline-flex/inline-block) does not take a parent's `text-decoration` in the first
 //       place, so decorating the wrapping trigger would paint nothing anyway. A pill-wrapped
 //       trigger is not an oversight to fix — it is already signified, just not by a line.
 //
+//  THE LIST IS THE DESIGN SYSTEM'S, NOT ONE APP'S. `components.css:184` declares the chip base
+//  — `.sev-badge, .aars-chip, .pill, .filter-chip, .combo-cond` — and `:191` the tag base
+//  (`.domain-chip, .fw-tag`); every member is `inline-flex` or `inline-block` and therefore
+//  atomic. `.aars-chip` was the one member of that base this list omitted, and it is `gas_ai`'s
+//  own: an AARS score chip (`gas_ai/src/client/js/ui/aarsChip.js`) is the mark a
+//  `glossaryTip`/`tip()` wraps on that app's scoring surfaces. Walking `gas_ai` with it missing
+//  would report an already-signified chip as an unsignified trigger — a walker bug reading as a
+//  page bug, exactly the class of error the `[hidden]` note below records.
+//
 //  Fed `{ decoration, childClasses }` — a plain record density.mjs's browser-side reader
 //  builds per trigger, never a real DOM node, for the same DOM-free-test reason every other
 //  predicate in this file exists.
-const TIP_AFFORDANCE_CHILD_CLASSES = ["tip-mark", "pill", "sev-badge", "domain-chip", "quad-label", "sevkey"];
+const TIP_AFFORDANCE_CHILD_CLASSES = [
+  "tip-mark", "pill", "sev-badge", "aars-chip", "domain-chip", "quad-label", "sevkey",
+];
 
 export function isTipSignified(record) {
   if (!record || typeof record !== "object") return false;
