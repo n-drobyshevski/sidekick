@@ -22,6 +22,7 @@ import {
   execGroupSlice, execInsightsSlice, execMttrSlice, historyTrendSlice, jobSummarySlice,
   mttrGroupTableSlice, mttrGroupTrendSlice, mttrPageTrendSlice, oldestOpenSlice,
   overviewInsightsSlice, programTrendSlice, scanRowsSlice,
+  REGISTER_ROW_COLUMNS, REGISTER_ROW_KEY, registerRowsSlice,
 } from "../src/domain/pagePayload";
 
 // A realistic mttrData return: everything the MTTR page reads, of which exec reads four numbers.
@@ -522,5 +523,37 @@ describe("the insights cache namespace moves when the payload's shape does", () 
     const note = API.slice(idx, idx + 900);
     expect(note).toContain("fixNext");
     expect(note).toContain("movementOpen");
+  });
+});
+
+// registerRowsSlice belongs to the same family as every slice above: a projection whose whole
+// job is to be NARROWER than what it is handed, where the failure is invisible on screen. The
+// difference is that this one is the only projection carrying per-finding rows, so a widening
+// here does not merely add bytes — it puts the asset's tag bag and the ledger's internal
+// addresses on the wire. `test/registerRows.test.ts` measures it against real base rows and
+// against the endpoint; this is the same claim stated where the other slices are stated.
+
+describe("registerRowsSlice — an allowlist, exactly", () => {
+  const wide = {
+    vuln_key: "k-1", cve: "CVE-2026-1", severity: "HIGH", status: "OPEN",
+    asset_id: "asset-1", tags_json: '{"Owner":"someone@example.com"}',
+    first_scan_id: "s1", last_scan_id: "s2", fix_date: "2026-01-01T00:00:00Z",
+    risk_observed_at: "2026-01-02T00:00:00Z", raw_ref: "drive-1", obs_ref: "drive-2",
+    _supportGroup: "Platform SRE", _domain: "Payments",
+  };
+
+  it("emits exactly REGISTER_ROW_COLUMNS plus the key — no more, no fewer", () => {
+    const [out] = registerRowsSlice([wide]);
+    expect(Object.keys(out!).sort())
+      .toEqual([REGISTER_ROW_KEY, ...REGISTER_ROW_COLUMNS].sort());
+  });
+
+  it("drops every field outside the list, over the whole serialized payload", () => {
+    const json = JSON.stringify(registerRowsSlice([wide]));
+    for (const k of ["asset_id", "tags_json", "first_scan_id", "last_scan_id", "fix_date",
+      "risk_observed_at", "raw_ref", "obs_ref", "_supportGroup", "_domain"]) {
+      expect(json, k).not.toContain(k);
+    }
+    expect(json).not.toContain("someone@example.com");
   });
 });

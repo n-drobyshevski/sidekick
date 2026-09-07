@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "981f379efeec" : "dev";
+  var BUILD_ID = true ? "eeb04cf0e7ff" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -2427,6 +2427,7 @@ var Server = (() => {
     getProgramPage: () => getProgramPage,
     getPurgeStatus: () => getPurgeStatus,
     getRecentErrors: () => getRecentErrors,
+    getRegisterRows: () => getRegisterRows,
     getReport: () => getReport,
     getRiskBackfillStatus: () => getRiskBackfillStatus,
     getRiskCohort: () => getRiskCohort,
@@ -4801,17 +4802,17 @@ var Server = (() => {
       return { state, result: zero, observationsByScan: {} };
     }
     const rows = scansAsc(state.scans);
-    const present3 = new Set(rows.filter((r) => targets.has(r.scan_id)).map((r) => r.scan_id));
-    if (!present3.size) {
+    const present2 = new Set(rows.filter((r) => targets.has(r.scan_id)).map((r) => r.scan_id));
+    if (!present2.size) {
       return { state, result: zero, observationsByScan: {} };
     }
-    const sealedTargets = rows.filter((r) => present3.has(r.scan_id) && r.sealed).map((r) => r.scan_id).sort();
+    const sealedTargets = rows.filter((r) => present2.has(r.scan_id) && r.sealed).map((r) => r.scan_id).sort();
     if (sealedTargets.length) {
       throw new SealedScanError(
         `Cannot delete sealed scan(s) ${sealedTargets.join(", ")}: they are part of the compacted baseline (their raw archives were pruned), so their effects can no longer be un-replayed.`
       );
     }
-    const survivors = rows.filter((r) => !present3.has(r.scan_id));
+    const survivors = rows.filter((r) => !present2.has(r.scan_id));
     const replay = loadReplayPayloads(
       survivors,
       readPayload,
@@ -4832,7 +4833,7 @@ var Server = (() => {
     return {
       state: rebuilt,
       result: {
-        deleted: present3.size,
+        deleted: present2.size,
         scans: rebuilt.scans.length,
         tracked: baseRows(rebuilt, now).length
       },
@@ -5698,23 +5699,23 @@ var Server = (() => {
     }
     const nowBySev = /* @__PURE__ */ new Map();
     const thenBySev = /* @__PURE__ */ new Map();
-    const present3 = /* @__PURE__ */ new Set();
+    const present2 = /* @__PURE__ */ new Set();
     let open = 0;
     let prevOpen = 0;
     for (const row of rows) {
       const s = normalizeSeverity(row.severity);
       if (isOpen3(row.status)) {
         nowBySev.set(s, ((_b = nowBySev.get(s)) != null ? _b : 0) + 1);
-        present3.add(s);
+        present2.add(s);
         open += 1;
       }
       if (openAsOf(row, since)) {
         thenBySev.set(s, ((_c = thenBySev.get(s)) != null ? _c : 0) + 1);
-        present3.add(s);
+        present2.add(s);
         prevOpen += 1;
       }
     }
-    const wanted = new Set(present3);
+    const wanted = new Set(present2);
     if (gate2 !== null) for (const s of gate2) wanted.add(normalizeSeverity(s));
     const out = [];
     for (const s of SEVERITY_ORDER) {
@@ -6128,6 +6129,144 @@ var Server = (() => {
     }
     out["incremental"] = incremental;
     return out;
+  }
+  var REGISTER_ROW_KEY = "vuln_key";
+  var REGISTER_ROW_COLUMNS = [
+    "cve",
+    "severity",
+    "risk_tier",
+    "status",
+    "resolution_src",
+    "reopened_count",
+    "asset_name",
+    "asset_type",
+    "cloud",
+    "subscription_name",
+    "support_group",
+    "domain",
+    "first_seen",
+    "published_date",
+    "fix_available_at",
+    "awaiting_vendor_fix",
+    "last_seen",
+    "resolved_at",
+    "has_kev",
+    "has_exploit",
+    "epss",
+    "internet_exposed",
+    "mttr_days",
+    "age_days",
+    "actionable_age_days"
+  ];
+  var REGISTER_ROW_SOURCE = {
+    support_group: "_supportGroup",
+    domain: "_domain"
+  };
+  var REGISTER_ROW_DEFAULT_SORT = {
+    sort: "age_days",
+    dir: "desc"
+  };
+  var REGISTER_ROWS_PAGE_SIZE_CAP = 250;
+  var REGISTER_ROWS_DEFAULT_PAGE_SIZE = 50;
+  function registerRowsSlice(rows) {
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => {
+      var _a;
+      const key = r[REGISTER_ROW_KEY];
+      const out = { [REGISTER_ROW_KEY]: key === void 0 ? null : key };
+      for (const c of REGISTER_ROW_COLUMNS) {
+        const v = r[(_a = REGISTER_ROW_SOURCE[c]) != null ? _a : c];
+        out[c] = v === void 0 ? null : v;
+      }
+      return out;
+    });
+  }
+  function compareRegisterValues(a, b) {
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
+    const sa = String(a).toLowerCase();
+    const sb = String(b).toLowerCase();
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
+  }
+  function nullsLastOrder(a, b) {
+    const na = a === null || a === void 0;
+    const nb = b === null || b === void 0;
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
+    return null;
+  }
+  function sortRegisterRows(rows, spec) {
+    const list = Array.isArray(rows) ? rows.slice() : [];
+    const value = spec && spec.value;
+    if (typeof value !== "function") return list;
+    const descending = Boolean(spec.descending);
+    const tiebreak = typeof spec.tiebreak === "function" ? spec.tiebreak : null;
+    return list.sort((ra, rb) => {
+      const va = value(ra);
+      const vb = value(rb);
+      const order = nullsLastOrder(va, vb);
+      if (order === null) {
+        const d = compareRegisterValues(va, vb);
+        if (d !== 0) return descending ? -d : d;
+      } else if (order !== 0) {
+        return order;
+      }
+      if (!tiebreak) return 0;
+      const ta = tiebreak(ra);
+      const tb = tiebreak(rb);
+      const tie = nullsLastOrder(ta, tb);
+      return tie === null ? compareRegisterValues(ta, tb) : tie;
+    });
+  }
+  function pageOfRegisterRows(rows, page, pageSize) {
+    const size = Math.max(1, Math.floor(pageSize));
+    const pageCount = Math.max(1, Math.ceil(rows.length / size));
+    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
+    return {
+      rows: rows.slice(clamped * size, (clamped + 1) * size),
+      page: clamped,
+      pageCount
+    };
+  }
+  var DATE_SORT_COLUMNS = /* @__PURE__ */ new Set([
+    "first_seen",
+    "last_seen",
+    "resolved_at",
+    "fix_available_at",
+    "published_date"
+  ]);
+  var NUMBER_SORT_COLUMNS = /* @__PURE__ */ new Set([
+    "epss",
+    "mttr_days",
+    "age_days",
+    "actionable_age_days",
+    "reopened_count"
+  ]);
+  function severityRank(v) {
+    const i = SEVERITY_ORDER.indexOf(normalizeSeverity(v));
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function riskTierRank(v) {
+    const i = RISK_TIER_ORDER.indexOf(String(v != null ? v : ""));
+    return i === -1 ? RISK_TIER_ORDER.length : i;
+  }
+  function orNull(v) {
+    return v === null || v === void 0 || v === "" ? null : v;
+  }
+  function registerSortValue(column) {
+    if (column === "severity") return (r) => severityRank(r["severity"]);
+    if (column === "risk_tier") return (r) => riskTierRank(r["risk_tier"]);
+    if (DATE_SORT_COLUMNS.has(column)) return (r) => parseTs(r[column]);
+    if (NUMBER_SORT_COLUMNS.has(column)) {
+      return (r) => {
+        const raw = orNull(r[column]);
+        if (raw === null) return null;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : null;
+      };
+    }
+    return (r) => orNull(r[column]);
   }
 
   // src/server/errorLog.ts
@@ -7149,8 +7288,8 @@ var Server = (() => {
       mttr_history: (_b = rawManifest == null ? void 0 : rawManifest["mttr_history"]) != null ? _b : [],
       totals: { ledger: 0, episodes: 0 }
     });
-    const present3 = new Set(loadScanRows().map((s) => s.scan_id));
-    const toAppend = session.sealedScans.filter((s) => !present3.has(s.scan_id));
+    const present2 = new Set(loadScanRows().map((s) => s.scan_id));
+    const toAppend = session.sealedScans.filter((s) => !present2.has(s.scan_id));
     chunkedAppend(TABS.scans, toAppend);
     invalidateLedgerMemos();
     const cpRef = writeCheckpointManifest(
@@ -10191,6 +10330,164 @@ var Server = (() => {
       });
     }
     return out;
+  }
+  var REGISTER_ROW_STATUSES = ["open", "resolved", "all"];
+  var REGISTER_ROW_FIX_MODES = ["all", "fixable", "awaiting"];
+  function registerRowFilters(p) {
+    var _a, _b;
+    const params = p != null ? p : {};
+    const askedStatus = String((_a = params["status"]) != null ? _a : "").toLowerCase();
+    const status = REGISTER_ROW_STATUSES.includes(askedStatus) ? askedStatus : "open";
+    const askedFix = String((_b = params["fix"]) != null ? _b : "").toLowerCase();
+    const fix = REGISTER_ROW_FIX_MODES.includes(askedFix) ? askedFix : "all";
+    const rawTier = params["tier"];
+    const askedTiers = Array.isArray(rawTier) ? rawTier.map(String) : rawTier === null || rawTier === void 0 || rawTier === "" ? [] : String(rawTier).split(",");
+    const wanted = new Set(
+      askedTiers.map((v) => v.trim().toLowerCase()).filter((v) => RISK_TIER_ORDER.includes(v))
+    );
+    const tier = wanted.size ? RISK_TIER_ORDER.filter((t) => wanted.has(t)) : null;
+    const rawExposed = params["exposed"];
+    return { status, fix, tier, exposed: rawExposed === true || rawExposed === "true" };
+  }
+  function registerRowsData(p, filters) {
+    var _a, _b, _c, _d;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const severities = readSeverities(p);
+    const recsVisible = filterSeverities(
+      scopedFrameRecords(domain, supportGroup, []),
+      severities
+    );
+    const exposureKnown = exploitSummary(recsVisible).exposureKnown;
+    const exposedKeys = exposedVulnKeys(recsVisible, exposureKnown);
+    const framedKeys = /* @__PURE__ */ new Set();
+    for (const r of recsVisible) {
+      const k = String((_c = r["_vuln_key"]) != null ? _c : "");
+      if (k) framedKeys.add(k);
+    }
+    const base = visibleBase(
+      filterSeverities(scopedBaseRows(domain, supportGroup), severities)
+    );
+    attachSupportGroups(base);
+    attachBizDomains(base);
+    const compiled = compileDomains(getDomains2().items);
+    const rule = getRiskRule2().rule;
+    for (const r of base) {
+      r["_domain"] = resolveDomainName(r, compiled);
+      r["risk_tier"] = riskTier(r, rule);
+      const key = String((_d = r["vuln_key"]) != null ? _d : "");
+      r["internet_exposed"] = !exposureKnown || !framedKeys.has(key) ? null : exposedKeys.has(key);
+    }
+    let rows = base;
+    if (filters.status !== "all") {
+      const wantOpen = filters.status === "open";
+      rows = rows.filter((r) => isOpenStatus(r["status"]) === wantOpen);
+    }
+    if (filters.fix === "awaiting") {
+      rows = rows.filter((r) => r["awaiting_vendor_fix"] === true);
+    } else if (filters.fix === "fixable") {
+      rows = rows.filter((r) => present(r["fix_available_at"]));
+    }
+    if (filters.tier) {
+      const keep = new Set(filters.tier);
+      rows = rows.filter((r) => keep.has(String(r["risk_tier"])));
+    }
+    const exposedApplied = filters.exposed && exposureKnown;
+    if (exposedApplied) rows = rows.filter((r) => r["internet_exposed"] === true);
+    const latestFlat = latestFlatScanRow();
+    return {
+      asOf: nowIso(),
+      // SLICED HERE, INSIDE THE CACHE ENTRY, so what is stored is exactly what travels: 26
+      // allowlisted fields per row rather than a whole `BaseRow` with `tags_json`, the scan
+      // ids and the raw fix/risk capture columns riding along. The sort reads only allowlisted
+      // columns, so nothing outside the wire shape is needed downstream.
+      rows: registerRowsSlice(rows),
+      exposureKnown,
+      exposureFilterSupported: exposureKnown,
+      exposed: exposedApplied,
+      // WHAT THIS PAGE MEASURED AND WHAT IT NEVER LOOKED AT — the same three-part line
+      // `insightsData` publishes, over the same population, so the register and the Overview
+      // account for their Outside identically. `inScope` is the scoped, gated, toggle-filtered
+      // register BEFORE the reader's own row filters; `total` below is after them.
+      population: {
+        inScope: base.length,
+        gate: latestFlat ? parseSeverities(latestFlat.severities) : null,
+        filters: BASE_FILTER_WORDS
+      }
+    };
+  }
+  var cachedRegisterRows = (p, filters) => {
+    var _a, _b;
+    return cached(
+      "registerRows1",
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2(),
+        riskRuleVersion: getRiskRule2().version,
+        status: filters.status,
+        fix: filters.fix,
+        tier: filters.tier,
+        exposed: filters.exposed
+      },
+      () => registerRowsData(p, filters),
+      3600
+    );
+  };
+  function registerRowsPageSize(v) {
+    if (!present(v)) return REGISTER_ROWS_DEFAULT_PAGE_SIZE;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return REGISTER_ROWS_DEFAULT_PAGE_SIZE;
+    return Math.min(REGISTER_ROWS_PAGE_SIZE_CAP, Math.max(1, Math.floor(n)));
+  }
+  function registerRowsPage(v) {
+    if (!present(v)) return 0;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.floor(n) : 0;
+  }
+  function getRegisterRows(p) {
+    return run(() => {
+      var _a, _b;
+      const params = p != null ? p : {};
+      const filters = registerRowFilters(p);
+      const model = cachedRegisterRows(p, filters);
+      const rows = Array.isArray(model["rows"]) ? model["rows"] : [];
+      const asked = String((_a = params["sort"]) != null ? _a : "");
+      const sort = REGISTER_ROW_COLUMNS.includes(asked) ? asked : REGISTER_ROW_DEFAULT_SORT.sort;
+      const askedDir = String((_b = params["dir"]) != null ? _b : "").toLowerCase();
+      const dir = askedDir === "asc" || askedDir === "desc" ? askedDir : sort === REGISTER_ROW_DEFAULT_SORT.sort ? REGISTER_ROW_DEFAULT_SORT.dir : "asc";
+      const pageSize = registerRowsPageSize(params["pageSize"]);
+      const sorted = sortRegisterRows(rows, {
+        value: registerSortValue(sort),
+        descending: dir === "desc",
+        tiebreak: (r) => r[REGISTER_ROW_KEY]
+      });
+      const cut = pageOfRegisterRows(sorted, registerRowsPage(params["page"]), pageSize);
+      return {
+        asOf: model["asOf"],
+        // The column list TRAVELS WITH THE ROWS, so the client draws what the server said it
+        // sent rather than a hand-kept second copy of the same list.
+        columns: REGISTER_ROW_COLUMNS.slice(),
+        key: REGISTER_ROW_KEY,
+        rows: cut.rows,
+        total: sorted.length,
+        page: cut.page,
+        pageCount: cut.pageCount,
+        pageSize,
+        sort,
+        dir,
+        status: filters.status,
+        fix: filters.fix,
+        tier: filters.tier,
+        exposed: model["exposed"],
+        exposureFilterSupported: model["exposureFilterSupported"],
+        exposureKnown: model["exposureKnown"],
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2(),
+        population: model["population"]
+      };
+    });
   }
   var WEEK_MS = 7 * 864e5;
   function executiveWeekTrend(p) {

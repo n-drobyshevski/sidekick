@@ -46,6 +46,9 @@ import {
   execGroupSlice, execInsightsSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice,
   mttrGroupTrendSlice, jobSummarySlice, mttrPageTrendSlice, oldestOpenSlice,
   overviewInsightsSlice, programTrendSlice, scanRowsSlice,
+  REGISTER_ROW_COLUMNS, REGISTER_ROW_DEFAULT_SORT, REGISTER_ROW_KEY,
+  REGISTER_ROWS_DEFAULT_PAGE_SIZE, REGISTER_ROWS_PAGE_SIZE_CAP,
+  pageOfRegisterRows, registerRowsSlice, registerSortValue, sortRegisterRows,
 } from "../domain/pagePayload";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
@@ -1811,6 +1814,330 @@ function riskCohortRows(p: unknown, quadrant: string): Rec[] {
     });
   }
   return out;
+}
+
+// ------------------------------------------------------------ the register's own rows
+//
+// EVERY OTHER READ MODEL IN THIS FILE IS AN AGGREGATE. Severity counts, the tier ladder, KM
+// curves, oldest-open rankings, a confusion matrix — the OS register can say a great deal
+// about its population and, until this endpoint, could not hand a reader the population
+// itself. `getRiskCohort` above is the closest thing and is not it: it is a drill-down into
+// ONE confusion-matrix cell, with a hand-built ten-column projection chosen to make that
+// cell checkable.
+//
+// So this is the register: one page of findings, sorted and paged SERVER-SIDE, each row
+// carrying its own provenance (was the death date measured or bounded, was the exposure
+// looked at, which clause put it in its tier). The slice and the ordering rule live in
+// `domain/pagePayload.ts` — see that file's header for why both halves sit together and how
+// the ordering is held identical to the client's `gas_shared/ui/tableModel.js`.
+
+/** The four row-level filters, normalized ONCE so the cache key and the compute agree. */
+interface RegisterRowFilters {
+  status: "open" | "resolved" | "all";
+  fix: "all" | "fixable" | "awaiting";
+  /** A subset of `RISK_TIER_ORDER`, in tier order, or null for "no tier filter". */
+  tier: string[] | null;
+  /** Whether the reader ASKED for internet-reachable only. Whether it BIT is a separate
+   *  question, answered inside the compute where the frame is in hand. */
+  exposed: boolean;
+}
+
+const REGISTER_ROW_STATUSES = ["open", "resolved", "all"] as const;
+const REGISTER_ROW_FIX_MODES = ["all", "fixable", "awaiting"] as const;
+
+/**
+ * The filters as the server will actually apply them.
+ *
+ * AN UNRECOGNISED VALUE FALLS BACK TO THE DEFAULT, NEVER TO AN EMPTY PAGE. These arrive from
+ * a URL hash, which is a place typos come from, and answering a typo with "0 findings" states
+ * a measurement about a population nobody asked for. The applied values are echoed in the
+ * payload so the client can see what actually bit.
+ *
+ * A TIER NAME THIS REGISTER DOES NOT HAVE IS DROPPED, and a list that drops to empty is no
+ * filter at all — same rule, one level down. `tier` comes back in `RISK_TIER_ORDER` order
+ * rather than the order it was asked in, so two clients asking for the same set land on one
+ * cache entry.
+ */
+function registerRowFilters(p?: unknown): RegisterRowFilters {
+  const params = (p ?? {}) as Rec;
+  const askedStatus = String(params["status"] ?? "").toLowerCase();
+  const status = (REGISTER_ROW_STATUSES as readonly string[]).includes(askedStatus)
+    ? (askedStatus as RegisterRowFilters["status"])
+    // OPEN, not "all": the register's question is what is still outstanding. Resolved rows
+    // are one parameter away and are counted in `population.inScope` either way.
+    : "open";
+  const askedFix = String(params["fix"] ?? "").toLowerCase();
+  const fix = (REGISTER_ROW_FIX_MODES as readonly string[]).includes(askedFix)
+    ? (askedFix as RegisterRowFilters["fix"])
+    : "all";
+  const rawTier = params["tier"];
+  const askedTiers = Array.isArray(rawTier)
+    ? (rawTier as unknown[]).map(String)
+    : rawTier === null || rawTier === undefined || rawTier === ""
+      ? []
+      : String(rawTier).split(",");
+  const wanted = new Set(
+    askedTiers
+      .map((v) => v.trim().toLowerCase())
+      .filter((v) => (program.RISK_TIER_ORDER as readonly string[]).includes(v)),
+  );
+  const tier = wanted.size
+    ? (program.RISK_TIER_ORDER as readonly string[]).filter((t) => wanted.has(t))
+    : null;
+  const rawExposed = params["exposed"];
+  return { status, fix, tier, exposed: rawExposed === true || rawExposed === "true" };
+}
+
+/**
+ * The whole filtered set, sliced to the wire columns — everything except the sort and the
+ * page, which the endpoint applies outside the cache entry.
+ *
+ * THE POPULATION CHAIN IS THE ONE EVERY ANALYTIC PAGE USES, in the same order, deliberately:
+ * `scopedBaseRows` (domain / support-group scope) → `filterSeverities` (the display-severity
+ * subset) → `visibleBase` (the no-fix and end-of-life toggles). A register whose rows came
+ * from a different chain than the figures above it would be two populations on one screen —
+ * the failure `executiveSeverityCounts` was corrected for.
+ *
+ * THREE COLUMNS ARE STAMPED HERE BECAUSE NOTHING ELSE COULD.
+ *
+ *   `support_group` / `domain` — a base row is a ledger row and carries neither natively;
+ *   they come from the attribution join, exactly as `insightsData` attaches them.
+ *
+ *   `risk_tier` — `program.riskTier` under the rule in force. It is a REFINEMENT of
+ *   `classifyRisk`, never a second opinion, so a reader can filter the table by the same tier
+ *   the ladder above it counted (pinned in test/program.test.ts).
+ *
+ *   `internet_exposed` — and this one is TRI-STATE, which is the whole reason it is computed
+ *   rather than read. `hasWideInternetExposure` is a CURRENT-SCAN fact and not a ledger
+ *   column, so it can only be answered by joining the frame. `true` when the join says the
+ *   host is reachable; `false` only when the frame carries the exposure keys AND this row is
+ *   in the frame without them; `null` otherwise — either the frame predates those keys
+ *   (`exposureKnown` false) or the row is not in the current frame at all, which every
+ *   finding resolved by disappearance is. `Boolean(exposedKeys.has(k))` is the tempting
+ *   one-liner and it answers `false` to all three, turning "we could not look" into "not
+ *   reachable" (CLAUDE.md, "The Outside"); `test/registerRows.test.ts` reproduces that
+ *   rewrite inline and shows it failing.
+ *
+ * `asOf` is stamped INSIDE this compute, not at the endpoint. The rows carry wall-clock ages
+ * (`age_days`, `actionable_age_days`) computed when this ran, and a cached payload that
+ * restamped `asOf` on every read would claim those ages were measured up to an hour later
+ * than they were.
+ */
+function registerRowsData(p: unknown, filters: RegisterRowFilters): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const severities = readSeverities(p);
+
+  // The frame half. `scopedFrameRecords` already applies `visibleFrame`, so this is the same
+  // `recsVisible` the Overview's risk ladder and triage funnel read — one join, one answer
+  // about which hosts are reachable, rather than a second pass free to disagree.
+  const recsVisible = filterSeverities(
+    scopedFrameRecords(domain, supportGroup, []),
+    severities,
+  );
+  // `exposureKnown` is `exploitSummary`'s own answer rather than a re-derivation: the key it
+  // probes for is private to insights.ts, and a copy here is a second definition of "did the
+  // scan look".
+  const exposureKnown = insights.exploitSummary(recsVisible).exposureKnown;
+  const exposedKeys = exposedVulnKeys(recsVisible, exposureKnown);
+  const framedKeys = new Set<string>();
+  for (const r of recsVisible) {
+    const k = String(r["_vuln_key"] ?? "");
+    if (k) framedKeys.add(k);
+  }
+
+  // The durable half — the same chain riskCohortRows uses.
+  const base = visibleBase(
+    filterSeverities(scopedBaseRows(domain, supportGroup), severities),
+  );
+  supportGroups.attachSupportGroups(base);
+  bizDomains.attachBizDomains(base);
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  const rule = settingsStore.getRiskRule().rule;
+  for (const r of base) {
+    r["_domain"] = resolveDomainName(r, compiled);
+    r["risk_tier"] = program.riskTier(r as unknown as program.RiskRow, rule);
+    const key = String(r["vuln_key"] ?? "");
+    r["internet_exposed"] = !exposureKnown || !framedKeys.has(key)
+      ? null
+      : exposedKeys.has(key);
+  }
+
+  let rows = base;
+  if (filters.status !== "all") {
+    const wantOpen = filters.status === "open";
+    rows = rows.filter((r) => isOpenStatus(r["status"]) === wantOpen);
+  }
+  // THE TWO FIX MODES ARE NOT COMPLEMENTS, and the asymmetry is the honest one. `awaiting`
+  // is the ledger's own `awaiting_vendor_fix` — OPEN with no fix available — while `fixable`
+  // asks whether a vendor fix was ever observed at all (`fix_available_at`). Under the
+  // default `status: open` they do partition the register; across RESOLVED rows they do not,
+  // because a lifecycle can close without this register ever having seen a fix date, and
+  // calling such a row "fixable" would be a claim nobody measured.
+  if (filters.fix === "awaiting") {
+    rows = rows.filter((r) => r["awaiting_vendor_fix"] === true);
+  } else if (filters.fix === "fixable") {
+    rows = rows.filter((r) => present(r["fix_available_at"]));
+  }
+  if (filters.tier) {
+    const keep = new Set(filters.tier);
+    rows = rows.filter((r) => keep.has(String(r["risk_tier"])));
+  }
+  // THE EXPOSURE FILTER IS REFUSED, NOT SILENTLY SATISFIED, when the frame never carried the
+  // keys. Applying it against an empty `exposedKeys` would answer "0 internet-facing
+  // findings" — a measurement — where the truth is that nothing looked. The payload says
+  // `exposureFilterSupported: false` and the control is the client's to disable.
+  const exposedApplied = filters.exposed && exposureKnown;
+  if (exposedApplied) rows = rows.filter((r) => r["internet_exposed"] === true);
+
+  const latestFlat = ledgerStore.latestFlatScanRow();
+  return {
+    asOf: nowIso(),
+    // SLICED HERE, INSIDE THE CACHE ENTRY, so what is stored is exactly what travels: 26
+    // allowlisted fields per row rather than a whole `BaseRow` with `tags_json`, the scan
+    // ids and the raw fix/risk capture columns riding along. The sort reads only allowlisted
+    // columns, so nothing outside the wire shape is needed downstream.
+    rows: registerRowsSlice(rows),
+    exposureKnown,
+    exposureFilterSupported: exposureKnown,
+    exposed: exposedApplied,
+    // WHAT THIS PAGE MEASURED AND WHAT IT NEVER LOOKED AT — the same three-part line
+    // `insightsData` publishes, over the same population, so the register and the Overview
+    // account for their Outside identically. `inScope` is the scoped, gated, toggle-filtered
+    // register BEFORE the reader's own row filters; `total` below is after them.
+    population: {
+      inScope: base.length,
+      gate: latestFlat ? parseSeverities(latestFlat.severities) : null,
+      filters: BASE_FILTER_WORDS,
+    },
+  };
+}
+
+/**
+ * The filtered set, cached, with the sort and the page applied OUTSIDE it.
+ *
+ * A NEW NAMESPACE RATHER THAN A BUMP: nothing served this shape before, so no stale entry can
+ * survive. `registerRows1` holds one FILTERED, SLICED row set per (scope × severities ×
+ * showNoFix × risk rule × status × fix × tier × exposed) — deliberately not per sort or per
+ * page, which is the shape `getAttribution` and `riskCohort1` already use: paging inside the
+ * key would mint an entry per click of Next, evict the read-models worth keeping, and still
+ * miss on the first click of every new sort.
+ *
+ * WHAT INVALIDATES IT. Everything that changes WHICH ROWS EXIST is in the key or in the
+ * global stamp. `riskRuleVersion` joins for the reason `program1` and `riskCohort1` carry it:
+ * the rule decides every row's `risk_tier`, so a changed rule is a different filtered set
+ * AND a different `tier` filter result — a stale entry here is not merely fat, it is a table
+ * that disagrees with the tier ladder printed above it. `includeEol` is deliberately absent,
+ * for the reason it is absent from "mttr9" and "execSevCounts2": `setIncludeEol` goes through
+ * `mutate()`, which bumps `DATA_VERSION`, and the version is already part of every key.
+ * `showNoFix` is carried for symmetry with its siblings rather than because it must be.
+ * `exposed` is keyed as REQUESTED, not as applied — on a frame with no exposure keys that
+ * mints two entries holding the same rows, which is a rounding error against keeping the key
+ * computable without a frame pass.
+ *
+ * DELIBERATELY NOT WARMED. `warmReadModels` precomputes what a LANDING PAGE opens with; a
+ * paged table is fetched on demand, and what would be worth warming is not one payload but
+ * the filtered set for whichever of the filter combinations a reader happens to pick. The
+ * cache entry is the thing that makes the second click cheap, and it is populated by the
+ * first one.
+ *
+ * 1h TTL, matching its siblings: the rows carry wall-clock-relative ages.
+ */
+const cachedRegisterRows = (p: unknown, filters: RegisterRowFilters): Rec =>
+  cached(
+    "registerRows1",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+      riskRuleVersion: settingsStore.getRiskRule().version,
+      status: filters.status,
+      fix: filters.fix,
+      tier: filters.tier,
+      exposed: filters.exposed,
+    },
+    () => registerRowsData(p, filters),
+    3600,
+  );
+
+/** A page size the reader asked for, CLAMPED into range. Refuses null / blank / non-numeric
+ *  BEFORE the cast — `Number(null)` is 0 and `Number.isFinite(0)` is true, so a cast-first
+ *  form would read an absent `pageSize` as the clamp's floor of one row per page. */
+function registerRowsPageSize(v: unknown): number {
+  if (!present(v)) return REGISTER_ROWS_DEFAULT_PAGE_SIZE;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return REGISTER_ROWS_DEFAULT_PAGE_SIZE;
+  return Math.min(REGISTER_ROWS_PAGE_SIZE_CAP, Math.max(1, Math.floor(n)));
+}
+
+/** The requested page index; `pageOfRegisterRows` does the clamping, so this only has to
+ *  refuse the values a cast would turn into a confident 0. */
+function registerRowsPage(v: unknown): number {
+  if (!present(v)) return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.floor(n) : 0;
+}
+
+/**
+ * One page of the register: the findings themselves, with the provenance to read them by.
+ *
+ * The sort and the page are applied HERE rather than inside `cachedRegisterRows`, so every
+ * reordering and every Next click reads the one cached filtered set. An unknown sort column
+ * falls back to the register's default (`age_days` descending — oldest open first): ordering
+ * by a column that does not exist would leave the rows in `loadBaseRows` order while the
+ * payload claimed to be sorted, which is worse than refusing.
+ *
+ * The tiebreak is `vuln_key`, the ledger's own primary key, so the arrangement is TOTAL: two
+ * requests for the same page return the same rows, and a reader paging forward through a
+ * column of equal values cannot see one finding twice and miss another.
+ */
+export function getRegisterRows(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const filters = registerRowFilters(p);
+    const model = cachedRegisterRows(p, filters);
+    const rows = (Array.isArray(model["rows"]) ? model["rows"] : []) as Rec[];
+
+    const asked = String(params["sort"] ?? "");
+    const sort = REGISTER_ROW_COLUMNS.includes(asked) ? asked : REGISTER_ROW_DEFAULT_SORT.sort;
+    const askedDir = String(params["dir"] ?? "").toLowerCase();
+    const dir: "asc" | "desc" = askedDir === "asc" || askedDir === "desc"
+      ? askedDir
+      : sort === REGISTER_ROW_DEFAULT_SORT.sort ? REGISTER_ROW_DEFAULT_SORT.dir : "asc";
+
+    const pageSize = registerRowsPageSize(params["pageSize"]);
+    const sorted = sortRegisterRows(rows, {
+      value: registerSortValue(sort),
+      descending: dir === "desc",
+      tiebreak: (r) => r[REGISTER_ROW_KEY],
+    });
+    const cut = pageOfRegisterRows(sorted, registerRowsPage(params["page"]), pageSize);
+
+    return {
+      asOf: model["asOf"],
+      // The column list TRAVELS WITH THE ROWS, so the client draws what the server said it
+      // sent rather than a hand-kept second copy of the same list.
+      columns: REGISTER_ROW_COLUMNS.slice(),
+      key: REGISTER_ROW_KEY,
+      rows: cut.rows,
+      total: sorted.length,
+      page: cut.page,
+      pageCount: cut.pageCount,
+      pageSize,
+      sort,
+      dir,
+      status: filters.status,
+      fix: filters.fix,
+      tier: filters.tier,
+      exposed: model["exposed"],
+      exposureFilterSupported: model["exposureFilterSupported"],
+      exposureKnown: model["exposureKnown"],
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+      population: model["population"],
+    };
+  });
 }
 
 /** Executive landing page in one round trip — the lean sibling of getMttrPage. The exec
