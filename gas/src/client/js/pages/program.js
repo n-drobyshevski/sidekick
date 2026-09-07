@@ -171,6 +171,7 @@ export async function renderProgram(main, _params, ctx) {
 
   main.append(pageHeader({
     route: "program",
+    help: { term: "coverage" },
     lede: "Whether remediation effort lands on the findings that matter. Coverage and "
       + "efficiency pull against each other, so neither means anything alone.",
   }));
@@ -446,21 +447,39 @@ export async function renderProgram(main, _params, ctx) {
               {
                 key: "finding",
                 label: "Finding",
+                help: ["The CVE (or vuln key) and the asset it was found on."],
                 cell: (r) => el("div", {},
                   el("div", {}, r.cve || r.vuln_key),
                   el("div", { class: "muted small" }, r.asset_name || "")),
               },
-              { key: "severity", label: "Severity", cell: (r) => sevBadge(r.severity) },
+              {
+                key: "severity",
+                label: "Severity",
+                help: ["The finding's severity, as assigned by the scan."],
+                cell: (r) => sevBadge(r.severity),
+              },
               // `.small` rides on a span inside the cell rather than on `className`, and the
               // three columns below do the same. `dataTable` puts `col.className` on the <th>
               // too — which is what the numeric tables on this page WANT — but `.small` is
               // 12px against the heading's own 11px, so spending it there would enlarge three
               // headings to shrink three columns.
-              { key: "signals", label: "Signals", cell: (r) => small(signalText(r)) },
-              { key: "first_seen", label: "First seen", cell: (r) => small(fmtDate(r.first_seen)) },
+              {
+                key: "signals",
+                label: "Signals",
+                help: ["Which exploitation signals fired on this finding — CISA KEV, a known "
+                  + "exploit, or EPSS above the rule's threshold."],
+                cell: (r) => small(signalText(r)),
+              },
+              {
+                key: "first_seen",
+                label: "First seen",
+                help: ["When this finding was first detected."],
+                cell: (r) => small(fmtDate(r.first_seen)),
+              },
               {
                 key: "resolved_at",
                 label: "Resolved",
+                help: ["When this finding was resolved. Blank while it is still open."],
                 // A row still open has no resolution date, and the black dash that used to
                 // stand here read as a value in the same ink as the dates above it. `absent()`
                 // is a Node, so it replaces the whole cell content rather than being wrapped.
@@ -663,6 +682,14 @@ export async function renderProgram(main, _params, ctx) {
         {
           key: "month",
           label: "Month",
+          help: {
+            lines: [
+              "The calendar month this row summarizes.",
+              "'In progress' means the month is still running; 'reconstructed' predates the "
+              + "first saved scan.",
+            ],
+            term: "reconstructed",
+          },
           cell: (m) => {
             const tags = [];
             if (m.partial) tags.push("in progress");
@@ -676,10 +703,23 @@ export async function renderProgram(main, _params, ctx) {
           key: "openAtStart",
           label: "Open at start",
           className: "num",
+          help: ["The open backlog at the start of the month."],
           cell: (m) => m.openAtStart.toLocaleString(),
         },
-        { key: "opened", label: "Opened", className: "num", cell: (m) => m.opened.toLocaleString() },
-        { key: "closed", label: "Closed", className: "num", cell: (m) => m.closed.toLocaleString() },
+        {
+          key: "opened",
+          label: "Opened",
+          className: "num",
+          help: ["Findings that became open during the month."],
+          cell: (m) => m.opened.toLocaleString(),
+        },
+        {
+          key: "closed",
+          label: "Closed",
+          className: "num",
+          help: ["Findings that were resolved during the month."],
+          cell: (m) => m.closed.toLocaleString(),
+        },
         {
           key: "mmcr",
           label: "Close rate",
@@ -772,8 +812,19 @@ export async function renderProgram(main, _params, ctx) {
     }
     capacityHost.append(dataTable({
       columns: [
-        { key: "asOf", label: "As of", cell: (r) => fmtDate(r.asOf) },
-        { key: "verdictText", label: "Projected", cell: (r) => r.verdictText },
+        {
+          key: "asOf",
+          label: "As of",
+          help: ["The scan this projection was made as of."],
+          cell: (r) => fmtDate(r.asOf),
+        },
+        {
+          key: "verdictText",
+          label: "Projected",
+          help: ["The net-capacity verdict this page would have shown on that scan — gaining "
+            + "ground, keeping up or falling behind."],
+          cell: (r) => r.verdictText,
+        },
         {
           key: "realisedText",
           label: "What happened",
@@ -782,7 +833,12 @@ export async function renderProgram(main, _params, ctx) {
             "share of the backlog open at its start. Positive means ground was gained."],
           cell: (r) => r.realisedText,
         },
-        { key: "agreedText", label: "Agreed", cell: (r) => r.agreedText },
+        {
+          key: "agreedText",
+          label: "Agreed",
+          help: ["Whether the following month's real outcome matched the projected verdict."],
+          cell: (r) => r.agreedText,
+        },
       ],
       rows: view.rows,
     }));

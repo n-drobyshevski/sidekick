@@ -10,7 +10,7 @@
 // register's: which words it defines, and whether the definitions still say what they were
 // moved here to say.
 
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { allEntries, findEntry } from "../src/client/js/helpContent.js";
 
@@ -33,6 +33,15 @@ const EXPECTED_IDS = [
   // of; "Remediation capacity" is the one figure on Program that is a COMPARISON (close rate
   // against arrival rate) rather than a count, which is exactly the thing a reader gets wrong.
   "sla-band", "capacity",
+  // P1.4: sixteen register-neutral entries ported from gas_devsecops/helpContent.js (`scan`
+  // rewritten for a register with no separate sync word — see the entry's own comment) plus
+  // three new OS-specific ones. Added for the column headings, section labels and page headers
+  // this package gives their first definition — see gas/test/pagesHelp.test.js and
+  // gas/test/columnHelp.test.js for where each one is actually reached.
+  "scan", "disappearance", "sla-target", "awaiting-fix", "two-clocks",
+  "kev", "known-exploit", "epss", "sla-edge", "returned",
+  "rail-status", "compaction", "sealed", "episode", "unclassified", "reconstructed",
+  "internet-exposed", "age", "actionable-age",
 ];
 
 // Long enough for the three-line entries in the file (the longest first-two line today is 218
@@ -230,13 +239,37 @@ describe("os: the measurement decisions the seeded entries encode", () => {
 // the sentence it handed over.
 describe("os: the seeded entries reach their call sites", () => {
   const src = (rel) => readFileSync(new URL("../src/client/js/" + rel, import.meta.url), "utf8");
+  // history.js and data.js joined the list in P1.4 — that package's own wiring (`scan`,
+  // `sealed`, `compaction`, `returned`) lives there, not in the original five.
   const SOURCES = [
     "app.js", "pages/attribution.js", "pages/executive.js", "pages/mttr.js",
-    "pages/overview.js", "pages/program.js",
+    "pages/overview.js", "pages/program.js", "pages/history.js", "pages/data.js",
   ].map(src).join("\n");
 
-  it("names every entry id at least once, across the six pages the copy came from", () => {
-    const unreached = ENTRIES.map((e) => e.id).filter((id) => !SOURCES.includes(`"${id}"`));
+  // The original 21 (P7) plus the two later additions (sla-band, capacity) — the ids THIS
+  // describe block's claim is actually about: a definition lifted out of one of these pages'
+  // own `tip(` call sites has to be reached by at least one of them, or the migration left a
+  // sentence stranded. P1.4's sixteen ported-from-gas_devsecops entries and three new ones did
+  // NOT come out of any page here — they are new copy, not moved copy, so "must reach a call
+  // site" is not a claim this block makes about them. Several are wired anyway (`scan`,
+  // `sealed`, `compaction`, `reconstructed`, `returned`, `sla-target`) — see
+  // gas/test/columnHelp.test.js and gas/test/pagesHelp.test.js for the sweep that covers P1.4's
+  // OWN wiring, in the other direction (a referenced id must be defined, not that every defined
+  // id must be referenced).
+  const MIGRATED_IDS = [
+    "quick-refresh", "rule-health",
+    "km-median", "naive-median", "vendor-fix-wait",
+    "mttr-by-dimension", "mttr-contribution", "median-mttr-by-dimension",
+    "triage-funnel", "risk-tiers",
+    "coverage", "efficiency",
+    "cell-tp", "cell-fp", "cell-fn", "cell-tn",
+    "cell-unclassified-remediated", "cell-unclassified-open",
+    "no-captured-signal", "coverage-efficiency-trend", "rule-sensitivity",
+    "sla-band", "capacity",
+  ];
+
+  it("names every migrated entry id at least once, across the pages the copy came from", () => {
+    const unreached = MIGRATED_IDS.filter((id) => !SOURCES.includes(`"${id}"`));
     expect(unreached, "seeded entries no call site reaches").toEqual([]);
   });
 
@@ -259,5 +292,101 @@ describe("os: the seeded entries reach their call sites", () => {
     for (const phrase of MOVED) {
       expect(SOURCES, `a page still restates: "${phrase}"`).not.toContain(phrase);
     }
+  });
+});
+
+// =========================================================================================
+//  P1.4 — every literal glossary id a page reaches for has to be a real entry
+// =========================================================================================
+//
+// The direction the block above does NOT check: a page can reference an id the book has never
+// heard of (a typo, a rename that missed one call site) and nothing before this package would
+// have caught it — findEntry() degrades a bad id to a plain label rather than throwing, on
+// purpose (a renamed id must not crash the page), which is exactly why it has to be caught
+// here, at build time, instead.
+//
+// FOUR SHAPES, ONE SWEEP. `term: "x"` covers every `tip(..., { term })`, `tipLabel(x, {
+// term })`, `pageHeader({ help: { term } })` and a dataTable column's `help: { term }`.
+// `glossaryTip(content, "x")` and `bookTip(node, "x")` are read by finding the call's own
+// balanced parens and taking the LAST double-quoted kebab-case literal inside them — the id is
+// always the final positional argument in every call site this register has, and the `content`
+// argument never accidentally matches: it is prose (spaces, punctuation, capitals), not
+// kebab-case.
+function referencedGlossaryIds(src) {
+  const ids = new Set();
+  for (const m of src.matchAll(/\bterm:\s*"([a-z][a-z0-9-]*)"/g)) ids.add(m[1]);
+  for (const fn of ["glossaryTip", "bookTip"]) {
+    let i = 0;
+    for (;;) {
+      const start = src.indexOf(fn + "(", i);
+      if (start === -1) break;
+      const open = start + fn.length;
+      let depth = 0;
+      let j = open;
+      for (; j < src.length; j++) {
+        if (src[j] === "(") depth++;
+        else if (src[j] === ")") {
+          depth--;
+          if (depth === 0) break;
+        }
+      }
+      const args = src.slice(open + 1, j);
+      const literals = [...args.matchAll(/"([a-z][a-z0-9-]*)"/g)];
+      if (literals.length) ids.add(literals[literals.length - 1][1]);
+      i = j + 1;
+    }
+  }
+  return ids;
+}
+
+describe("os: referencedGlossaryIds (the sweep function itself)", () => {
+  it("finds a term: id, a glossaryTip id and a bookTip id in one snippet", () => {
+    const snippet = `
+      const a = tip(label, lines, { term: "risk-tiers" });
+      const b = glossaryTip(el("span", {}, "Triage funnel"), "triage-funnel");
+      const c = bookTip(btn, "cell-tp");
+    `;
+    expect([...referencedGlossaryIds(snippet)].sort())
+      .toEqual(["cell-tp", "risk-tiers", "triage-funnel"]);
+  });
+
+  // PERTURBATION: does the sweep actually SEE an id the book does not define, or does it only
+  // ever report ids that happen to already be real (which would make the "every referenced id
+  // is defined" test below vacuous — passing because nothing is ever flagged, not because
+  // nothing is ever wrong)?
+  it("reports an id the book does not define — the perturbation this sweep exists for", () => {
+    const snippet = 'sectionLabel("Something", { term: "not-a-real-glossary-id" });';
+    const found = referencedGlossaryIds(snippet);
+    expect(found.has("not-a-real-glossary-id")).toBe(true);
+    // And the book genuinely does not carry it — otherwise the line above would prove nothing.
+    expect(findEntry("not-a-real-glossary-id")).toBeNull();
+  });
+});
+
+describe("os: every page's literal glossary id is a real entry", () => {
+  const PAGES_DIR = new URL("../src/client/js/pages/", import.meta.url);
+  const pageFiles = readdirSync(PAGES_DIR).filter((f) => f.endsWith(".js"));
+  const appSrc = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
+  const definedIds = new Set(ENTRIES.map((e) => e.id));
+
+  it("sweeps app.js and every pages/*.js file — EXCEPT executive.js", () => {
+    // executive.js is mid-rewrite on a sibling branch that also appends the five ids it
+    // references (half-life, lower-bound, censoring, fix-next, movement) to this same book;
+    // neither of those five exists here yet, so sweeping it now would fail on a page this
+    // package is explicitly forbidden from touching. Remove this exclusion in the next
+    // package, once that branch has merged and the five ids are in the book.
+    expect(pageFiles).toContain("executive.js");
+    const swept = pageFiles.filter((f) => f !== "executive.js");
+    expect(swept.length).toBe(pageFiles.length - 1);
+
+    const problems = [];
+    for (const file of [...swept.map((f) => "pages/" + f), "app.js"]) {
+      const src = file === "app.js" ? appSrc
+        : readFileSync(new URL("../src/client/js/" + file, import.meta.url), "utf8");
+      for (const id of referencedGlossaryIds(src)) {
+        if (!definedIds.has(id)) problems.push(`${file} references undefined id "${id}"`);
+      }
+    }
+    expect(problems).toEqual([]);
   });
 });

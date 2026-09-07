@@ -2,13 +2,18 @@
 // `tip` carries `{ term }` or a `bookTip` names one. The tip card shows the first two lines
 // (gas_shared/ui/tipPlace.js's `glossaryTipLines`); the Key sheet page shows the whole entry.
 //
-// EVERY ENTRY HERE WAS ALREADY WRITTEN, SOMEWHERE ELSE. That is the whole reason this file
-// exists rather than being new copy: the register had 21 glossary-shaped definitions living
-// inside 27 `tip(` call sites, and not one of those call sites passed `term:` — so a reader
+// 42 ENTRIES NOW, NOT THE 23 THIS FILE OPENED WITH. The first 21 (P7) were lifted out of this
+// register's own `tip(` call sites — not one of those call sites passed `term:`, so a reader
 // who wanted the rest of a definition had nowhere to go, and the two pages that both define
-// the Kaplan–Meier median had two copies of the sentence that could drift apart. Each entry
-// below names the call site it came from, so the next reader can check the two still agree,
-// and every one of those call sites now reaches this file instead of restating it.
+// the Kaplan–Meier median had two copies of the sentence that could drift apart. Two more
+// (`sla-band`, `capacity`) followed for figures a page assumed a reader already had. P1.4
+// then ported sixteen register-neutral entries from `gas_devsecops/helpContent.js` — a scan
+// there is still the RECORD a sync writes, so `scan` is rewritten here to be the act and the
+// record both, since this register has no separate sync — and added three OS-specific ones
+// (`internet-exposed`, `age`, `actionable-age`) the exploitability-first Overview page needed
+// and had none of. Each of the first 21 names the call site it came from, so the next reader
+// can check the two still agree, and every one of those call sites now reaches this file
+// instead of restating it.
 //
 // WHAT IS AND IS NOT A TERM. An entry is a word this register uses in a way a reader could
 // reasonably get wrong, or a figure whose definition encodes a measurement decision — which
@@ -250,6 +255,182 @@ const ENTRIES = [
     lines: [
       "Only capacity absorbs inflow: the verdict compares the close rate with the arrival rate, not a count.",
       "Gaining ground, keeping up and falling behind are the three readings of that comparison, with a dead band so a flat month is not a verdict.",
+    ],
+  },
+
+  // =======================================================================================
+  //  P1.4 — sixteen register-neutral entries ported from gas_devsecops, plus three new
+  //  OS-specific ones. None of these came from a call site already carrying the sentence —
+  //  every one is genuinely new copy on this page's tables and section headings, which is
+  //  why they read differently from the block above.
+  // =======================================================================================
+  {
+    // Rewritten for this register rather than ported verbatim: gas_devsecops keeps "sync"
+    // (the act, one run over three registers) and "scan" (the record one register's run
+    // leaves) apart, because one sync writes three scan rows. This register's own operation
+    // is already named "scan" (gas/DESIGN.md §5 — "the noun is scan, not sync"; there is no
+    // separate sync word here at all), so the entry has to be both halves at once: the act of
+    // reading Wiz, and the row it leaves in Scan History.
+    id: "scan",
+    term: "Scan",
+    lines: [
+      "The act, and the record it leaves: running one reads the register from Wiz and saves a row in Scan History for what it found.",
+      "Wiz's own detectors run continuously and are a different thing — this word names the read-and-save operation this app runs, on demand.",
+    ],
+  },
+  {
+    id: "disappearance",
+    term: "Dated by disappearance",
+    lines: [
+      "A finding dated resolved at the first scan that stopped returning it, because the API publishes no resolution date for it.",
+      "An upper bound whose error is the interval between two scans: \"gone by 12 Aug\", never \"resolved 12 Aug\".",
+      "Until two scans have run and findings have begun to disappear between them, a register dated this way reads near-zero — an absence of observations, not a fast team.",
+    ],
+  },
+  {
+    id: "sla-target",
+    term: "SLA target",
+    lines: [
+      "The remediation window for a severity, in days.",
+      "In SLA means resolved on or before the target — the comparison is inclusive.",
+    ],
+  },
+  {
+    id: "awaiting-fix",
+    term: "Awaiting a vendor fix",
+    lines: [
+      "An open finding whose vendor has not published a fixed version yet.",
+      "Counting the wait for a vendor as remediation time measures the vendor, not the team, so these findings are reported separately.",
+    ],
+  },
+  {
+    id: "two-clocks",
+    term: "The two clocks",
+    lines: [
+      "Detection to remediation is one clock; it includes any time spent waiting for a vendor fix to exist.",
+      "The actionable clock is the second: it starts once a fix becomes available, and is the only one the team controls.",
+      "Both are published, because either alone can be read as the whole story.",
+    ],
+  },
+  {
+    id: "kev",
+    term: "On KEV",
+    lines: [
+      "CISA's Known Exploited Vulnerabilities catalogue: CVEs with reliable evidence that someone, somewhere, has actually exploited them.",
+      "Observed exploitation of the CVE — not a statement that this finding is reachable here. It raises the priority of a finding; it does not decide it.",
+      "A row Wiz never evaluated against the catalogue is unknown, not absent from it, which is why these counts are reported as a floor.",
+    ],
+  },
+  {
+    id: "known-exploit",
+    term: "Known exploit",
+    lines: [
+      "Public exploit code exists for the CVE.",
+      "A weaker claim than KEV and a different one: code being published is not the same as exploitation having been observed. A CVE can carry this and not be on KEV, and the reverse.",
+    ],
+  },
+  {
+    id: "epss",
+    term: "EPSS score",
+    lines: [
+      "Exploit Prediction Scoring System: the estimated probability that a CVE will be exploited in the next 30 days.",
+      "A FORECAST, not an observation — the one signal here that says what may happen rather than what has. It is a probability, so a high score on a large register still describes many findings that will never be attacked.",
+    ],
+  },
+  {
+    id: "sla-edge",
+    term: "SLA edge",
+    lines: [
+      "The day count that splits one severity's open findings into late and not late — its own SLA target, read against the age buckets.",
+      "A deadline rarely lands on a bucket's boundary, so a bucket is usually part in and part out; a rule is drawn on the chart only where every severity shares one exact edge.",
+    ],
+  },
+  {
+    id: "returned",
+    term: "Returned",
+    lines: [
+      "Seen again after it had been resolved. Its clock restarted on this sighting.",
+      "The earlier episode is not in this figure — a returned finding's age counts only from the return.",
+    ],
+  },
+  {
+    id: "rail-status",
+    term: "Rail status",
+    lines: [
+      "Only exceptions speak: a scan running, a scan that failed, no register collected, never scanned, an unreadable date, or stale.",
+      "Never-scanned outranks stale: a register nobody has looked at is unmeasured, not old.",
+    ],
+  },
+  {
+    id: "compaction",
+    term: "Compaction",
+    lines: [
+      "Sealing rolls the oldest closed findings into exact episode rows and prunes their raw archives — MTTR and every trend stay identical.",
+      "The two most recent full scans are never candidates, and the dry run states what would go before anything goes.",
+    ],
+  },
+  {
+    id: "sealed",
+    term: "Sealed",
+    lines: [
+      "A saved scan whose closed findings compaction has already rolled into episode rows and whose raw archive has been pruned.",
+      "A sealed scan can't be deleted from Scan History — its archive was reclaimed when it was sealed.",
+    ],
+  },
+  {
+    id: "episode",
+    term: "Episode",
+    lines: [
+      "One finding's settled lifetime — first seen, how it ended, when — kept after the scan that carried it was sealed.",
+      "The clock survives compaction; the per-scan observations behind it do not. A finding seen again after its episode begins a new one.",
+    ],
+  },
+  {
+    id: "unclassified",
+    term: "Unclassified",
+    lines: [
+      "A finding no exploit signal was ever captured for, so the high-risk rule could not place it either way.",
+      "Not the same as low risk: absent is never zero. It is reported separately rather than folded into a corner of the matrix or the tier breakdown.",
+    ],
+  },
+  {
+    id: "reconstructed",
+    term: "Reconstructed",
+    lines: [
+      "A point whose figures were rebuilt rather than directly observed, because it falls before this register's first saved scan.",
+      "Marked so it is not read as measured — the backlog it describes is real, but nobody was looking in real time.",
+    ],
+  },
+  {
+    // NEW — Overview's exploitability funnel and hero both gate on this and neither had a
+    // definition: "…and reachable from outside" (the funnel) and the hero's "on a host
+    // reachable from outside" clause.
+    id: "internet-exposed",
+    term: "Internet exposed",
+    lines: [
+      "A host reachable from outside the network, as reported by the current scan.",
+      "Captured only in the scan snapshot, not the durable ledger, so it can't be replayed over older scans or trended.",
+    ],
+  },
+  {
+    // NEW — the simpler of the two clocks Overview's "Median open age" mini and the oldest-
+    // findings table both draw on, and the one `two-clocks` above promises a sibling for.
+    id: "age",
+    term: "Age",
+    lines: [
+      "Time since a finding was first detected, whether or not a fix is available yet.",
+      "The simpler of the two clocks this register keeps — see The two clocks for the one that starts later.",
+    ],
+  },
+  {
+    // NEW — the clock MTTR's SLA columns actually measure against (a vendor fix's
+    // availability date, not first detection), named so "Open past SLA" and "In SLA" stop
+    // being silent about which clock they read.
+    id: "actionable-age",
+    term: "Actionable age",
+    lines: [
+      "Time since a fix became available for an open finding — the clock the team actually controls.",
+      "Undefined while no fix has appeared yet; those findings are awaiting a vendor fix instead.",
     ],
   },
 ];
