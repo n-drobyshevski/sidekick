@@ -417,6 +417,168 @@ describe("registerRowsModel — secrets", () => {
 });
 
 // --------------------------------------------------------------------------------------- //
+//  4b. The three row-level filters
+// --------------------------------------------------------------------------------------- //
+//
+// `status` has existed on `RowPageParams` since this endpoint was written and NO PAGE EVER
+// SENT IT, so every register opened on open-plus-resolved with no way to ask for one. The
+// two secrets filters are new here, and they are new for the reason the secrets page has no
+// severity control: severity on that register grades a DETECTION, so what a reader triages on
+// is whether the credential is LIVE and how confident the detector was. Both are refused on
+// the other two scopes the same way `severities` is refused on this one — ignored, and echoed
+// back as null rather than left as a control that silently does nothing.
+
+/** Secrets rows with a real spread on BOTH new axes, including the blank cases. */
+function mixedSecretsRow(i: number): BaseRow {
+  const base = secretsRow(i);
+  const states = ["VALID", "INVALID", "UNKNOWN", "ERROR", "", null];
+  const grades = ["High", "Medium", "Low"];
+  return {
+    ...base,
+    finding_key: `secrets:mix${i}`,
+    validation_state: states[i % states.length] as string | null,
+    confidence: (i % 7 === 0 ? null : grades[i % grades.length]) as string | null,
+  };
+}
+
+describe("registerRowsModel — the status filter, on every scope", () => {
+  it("splits the register into open and resolved, and the two add up to all", () => {
+    const all = registerRowsModel("sca", { pageSize: 250, status: "all" });
+    const open = registerRowsModel("sca", { pageSize: 250, status: "open" });
+    const resolved = registerRowsModel("sca", { pageSize: 250, status: "resolved" });
+    // scaRow() resolves every tenth row of 1,000.
+    expect(all["total"]).toBe(1000);
+    expect(open["total"]).toBe(900);
+    expect(resolved["total"]).toBe(100);
+    expect((open["total"] as number) + (resolved["total"] as number)).toBe(all["total"]);
+    for (const r of resolved["rows"] as BaseRow[]) expect(r.status).toBe("RESOLVED");
+    for (const r of open["rows"] as BaseRow[]) expect(r.status).toBe("OPEN");
+  });
+
+  it("an unrecognised status is 'all', not an empty register", () => {
+    const bogus = registerRowsModel("sca", { pageSize: 250, status: "OPENISH" });
+    expect(bogus["status"]).toBe("all");
+    expect(bogus["total"]).toBe(1000);
+  });
+});
+
+/**
+ * PERTURBATIONS (run 2026-09-06, then reverted) — two, because two different rules are at
+ * work and one guard passing does not exercise the other:
+ *
+ *   1. `rowValidationState` stopped mapping blank to UNKNOWN (`return String(v ?? "")
+ *      .trim().toUpperCase();`), which is the tempting simplification:
+ *        FAIL  … > BLANK AND NULL BOTH COUNT AS UNKNOWN …
+ *          AssertionError: expected 10 to be 30
+ *      Twenty of thirty never-checked rows vanished from a "Never checked" filter.
+ *   2. The confidence allow-list stopped being derived from the population
+ *      (`normFilterList(p?.confidence)` with no `.filter`):
+ *        FAIL  … > an unknown value falls back to NO filter rather than to an empty page
+ *          AssertionError: expected +0 to be 60
+ *      A typo in the hash answered "0 findings", which is a measurement about a population
+ *      nobody asked for.
+ */
+describe("registerRowsModel — validation and confidence are secrets-only", () => {
+  beforeEach(() => {
+    H.rows = Array.from({ length: 60 }, (_, i) => mixedSecretsRow(i));
+  });
+
+  it("a credential-state filter narrows the register to that state", () => {
+    const all = registerRowsModel("secrets", { pageSize: 250 });
+    const live = registerRowsModel("secrets", { pageSize: 250, validation: ["VALID"] });
+    expect(all["total"]).toBe(60);
+    expect(live["total"]).toBe(10); // 60 rows, six states cycled
+    expect(live["validation"]).toEqual(["VALID"]);
+    for (const r of live["rows"] as BaseRow[]) expect(r.validation_state).toBe("VALID");
+  });
+
+  it("BLANK AND NULL BOTH COUNT AS UNKNOWN — the unmeasured state, not a fourth one", () => {
+    // secretsLifecycle.ts rule 2: UNKNOWN, ERROR, null and blank are all UNMEASURED, and the
+    // ledger stores whichever of them Wiz sent. A "Never checked" filter matching only the
+    // literal string would drop every row whose column is empty — most of the live register.
+    const unknown = registerRowsModel("secrets", { pageSize: 250, validation: ["UNKNOWN"] });
+    expect(unknown["total"]).toBe(30); // the literal UNKNOWN, plus "" and null
+    const seen = new Set((unknown["rows"] as BaseRow[]).map((r) => String(r.validation_state ?? "")));
+    expect([...seen].sort()).toEqual(["", "UNKNOWN"]);
+  });
+
+  it("takes several states at once, and a comma string as well as an array", () => {
+    const two = registerRowsModel("secrets", { pageSize: 250, validation: ["VALID", "INVALID"] });
+    expect(two["total"]).toBe(20);
+    const asString = registerRowsModel("secrets", { pageSize: 250, validation: "valid,invalid" });
+    expect(asString["total"]).toBe(20);
+    expect(asString["validation"]).toEqual(["VALID", "INVALID"]);
+  });
+
+  it("a confidence filter narrows on the grades the population actually carries", () => {
+    const high = registerRowsModel("secrets", { pageSize: 250, confidence: ["HIGH"] });
+    expect(high["confidence"]).toEqual(["HIGH"]);
+    expect(high["total"]).toBeGreaterThan(0);
+    expect(high["total"]).toBeLessThan(60);
+    for (const r of high["rows"] as BaseRow[]) {
+      expect(String(r.confidence).toUpperCase()).toBe("HIGH");
+    }
+  });
+
+  it("matches the tenant's own spelling — 'High' in the rows, HIGH in the request", () => {
+    // `SecretInstanceConfidence` is the tenant's vocabulary: the live tenant returns "High"
+    // while the dev fixture writes "HIGH". A case-sensitive compare would answer an empty
+    // register on the real one.
+    const rows = registerRowsModel("secrets", { pageSize: 250, confidence: ["high"] });
+    expect(rows["total"]).toBeGreaterThan(0);
+  });
+
+  it("an unknown value falls back to NO filter rather than to an empty page", () => {
+    const bogusState = registerRowsModel("secrets", { pageSize: 250, validation: ["MAYBE"] });
+    expect(bogusState["total"]).toBe(60);
+    expect(bogusState["validation"]).toBeNull();
+    const bogusGrade = registerRowsModel("secrets", { pageSize: 250, confidence: ["EXTREME"] });
+    expect(bogusGrade["total"]).toBe(60);
+    expect(bogusGrade["confidence"]).toBeNull();
+  });
+
+  it("the two filters intersect rather than union", () => {
+    const both = registerRowsModel("secrets", {
+      pageSize: 250, validation: ["VALID"], confidence: ["HIGH"],
+    });
+    const live = registerRowsModel("secrets", { pageSize: 250, validation: ["VALID"] });
+    const high = registerRowsModel("secrets", { pageSize: 250, confidence: ["HIGH"] });
+    expect(both["total"] as number)
+      .toBeLessThanOrEqual(Math.min(live["total"] as number, high["total"] as number));
+    for (const r of both["rows"] as BaseRow[]) {
+      expect(r.validation_state).toBe("VALID");
+      expect(String(r.confidence).toUpperCase()).toBe("HIGH");
+    }
+  });
+
+  it("applies AFTER the status filter, not instead of it", () => {
+    const open = registerRowsModel("secrets", {
+      pageSize: 250, status: "open", validation: ["VALID"],
+    });
+    for (const r of open["rows"] as BaseRow[]) {
+      expect(r.status).toBe("OPEN");
+      expect(r.validation_state).toBe("VALID");
+    }
+    const all = registerRowsModel("secrets", { pageSize: 250, validation: ["VALID"] });
+    expect(open["total"] as number).toBeLessThanOrEqual(all["total"] as number);
+  });
+
+  it("is IGNORED on sca and sast, and says so by echoing null", () => {
+    H.rows = Array.from({ length: 100 }, (_, i) => scaRow(i));
+    for (const scope of ["sca", "sast"] as Scope[]) {
+      const filtered = registerRowsModel(scope, {
+        pageSize: 250, validation: ["VALID"], confidence: ["HIGH"],
+      });
+      const plain = registerRowsModel(scope, { pageSize: 250 });
+      expect(filtered["validation"], scope).toBeNull();
+      expect(filtered["confidence"], scope).toBeNull();
+      expect(filtered["secretFiltersSupported"], scope).toBe(false);
+      expect(filtered["total"], scope).toBe(plain["total"]);
+    }
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
 //  5. Perturbations — each guard, broken on purpose, then reverted
 // --------------------------------------------------------------------------------------- //
 //

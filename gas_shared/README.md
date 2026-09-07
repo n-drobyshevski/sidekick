@@ -21,9 +21,9 @@ read the tree as `"type": "module"`.
 | `api.js` | the `google.script.run` bridge and the `{ok,data}` envelope |
 | `store.js` | the bootstrap cache, the SWR RPC cache and hash routing |
 | `icons.js` | node-kind SVG (512 lines; only `ui/nodeCell.js` and `ui/uiIcons.js` reach it) |
-| `ui/` | 31 component modules plus `index.js`, the one import surface, and `helpPage.js` — a page, not a component, so deliberately not in the barrel |
+| `ui/` | 34 component modules plus `index.js`, the one import surface, and `helpPage.js` — a page, not a component, so deliberately not in the barrel |
 | `styles/` | nine stylesheets: `tokens.base.css` first, `overrides.css` last |
-| `test/contracts/` | eleven spec factories the apps register from their own test files |
+| `test/contracts/` | sixteen spec factories the apps register from their own test files |
 | `test/testConfig.js` | a manifest fixture, for tests that reach a module reading one |
 | `test/domStub.js` | a DOM small enough to render a component into, for a repo with no jsdom |
 
@@ -187,6 +187,72 @@ each hands this module the result rather than a promise.
 The class prefix is `.health-`, not `.diag-`, because `gas_ai/src/client/js/ui/diagList.js`
 already owns `.diag-list` / `.diag-row` / `.diag-warn` for an unrelated concept.
 
+## Three primitives for a page with too many words
+
+The density wave's finding was that these registers are *correct* and *wordy*: a `denomNote`
+paragraph under every figure card (22 of them across three register pages, 13 on Secrets
+alone), a five-column table with a prose "Reading" column wherever two yes/no questions cross,
+and a figure that says where a number is but never where it is going. Three modules, all
+additive, all with a pure model half a contract can hold and a thin DOM half that cannot be
+wrong in an interesting way.
+
+**`ui/quad.js` — two yes/no questions crossed.** `quadModel({rows, cols, cells, total, unit})`
+returns the four corners in one fixed order with their shares, their "N of M *unit*" short
+forms and one `aria` sentence stating every corner in words; `quadTable(model, {ariaLabel,
+cellHelp})` draws them as a real table with `<th scope="col">` / `<th scope="row">` axes rather
+than as a grid of divs with a label bolted on. It knows nothing about severity — no `sev*`
+class, no import of `severity.js` — because the first caller is the secrets register, whose
+`test/pagesLit.test.js` gate 4/7 forbids a severity axis in that page's executable code, and a
+shared component is exactly the back door such a gate cannot see through. Two refusals rather
+than two defaults: an unmeasured `count` is `absentText` and contributes NO share (a zero in
+one corner of a 2x2 is a strong claim), and a corner with no `label` is refused outright,
+because `data-tone` is the third cue and never the first. The share is read against the
+caller's stated `total`, not against the sum of the corners — those are the same number only
+when the cross partitions the population, and the confusion matrix on the program lane leaves
+its unclassified rows outside.
+
+**`ui/sparkline.js` — a series as one line, at the size of a word.** `sparkPath(points, {w, h,
+pad})` is pure and returns `{d, n, gaps, first, last, min, max, end}`; `sparkline(points,
+{label, w, h, className})` wraps it in a `role="img"` SVG stroked in `currentColor`, with an
+emphasised end dot and no animation at all — so there is no `prefers-reduced-motion`
+alternative owed. It refuses each point BY TYPE before any cast, and the reason is the one
+CLAUDE.md has now recorded three times: `Number(null)`, `Number("")`, `Number([])` and
+`Number(false)` are all `0` and all finite, so the one-line `points.map(Number)
+.filter(Number.isFinite)` rewrite plots every scan that never ran on the floor of the chart
+and drags the whole line's scale down with it. A refused point is a GAP that keeps its x
+position and breaks the line — dropping it instead would fix the floor and get the slope
+wrong, which is the only thing a sparkline is read for. The `aria-label` always states first,
+last, low, high and the number of readings; a caller's own `label` NAMES the series and never
+replaces those figures. Its class is `.sparkline`, not `.spark`, because `gas` already owns
+`.spark` for the bordered per-tier card on its Overview page and its own sheet loads after
+`components.css` — the same collision, and the same resolution, as `.health-` over `.diag-`.
+The two CANVAS `sparkline(canvas, values)` functions in `gas`'s and `gas_devsecops`'s own
+`charts.js` are untouched: they are reached through a namespace so nothing resolves
+ambiguously, they are near-duplicates of each other, and folding them in here would be a
+behaviour change to two shipped charts rather than an addition.
+
+**`ui/figures.js` gains `figureCard` / `figureCardModel` — the denominator, one level down.**
+A rate without its denominator is not a measurement, so the sentence stays; what moves is
+where it is drawn. `figureCard({label, value, sub, chip, help, denominator})` builds the same
+`kpiCard` and PREPENDS the denominator to the tip lines on the card's own label (resolving
+`help` through the three shapes `tipLines()` already knows, so a `{term}` card keeps the
+book's copy *and* its route to the entry), then writes the sentence to `data-denominator` on
+the card node — the same claim `denomNote` has always made, and the reason a test can read
+what a reader reads. `denomNote` itself is untouched and still exported: a denominator printed
+over a table is still a paragraph. `figureCardModel` is the DOM-free half, and it takes an
+optional resolver for one narrow reason — `tipLines({term})` reaches
+`appConfig().findHelpEntry`, which THROWS when nothing configured it, and a contract that
+installed a manifest to get past that would install it for every other file sharing the
+vitest worker.
+
+**`--hatch`, and the class over it.** One token in `styles/tokens.base.css` holding the
+repeating-linear-gradient that means THIS PART IS NOT A MEASUREMENT, plus a `.hatch` utility
+in `components.css`. It is ink at an alpha rather than a hue, which is the one kind of fill
+forced-colors inverts toward the forced foreground while keeping its alpha — so it survives
+High Contrast without `forced-color-adjust: none` pinning near-black onto a possibly-black
+ground. It is for NEW work: `axisBar`'s hatch and `.sevbar-seg--empty`'s keep their own rules,
+because repointing them changes shipped pictures and belongs in its own measured round.
+
 ## The five-token accent contract
 
 The severity palette is byte-identical across all four surfaces — a severity means the same
@@ -300,6 +366,9 @@ registerTokenContract({ describe, it, expect, appRoot: new URL("../", import.met
 | `help.js` | `ui/helpPage.js`'s behaviour: the search field, the `?term=` deep link, `/` to focus, Escape to clear, and the pure `helpModel()` underneath it all. Registered by `gas/` and `gas_devsecops/`; `gas_ai/` keeps its own bespoke lexicon page and does not register this one — see "The one page that IS shared" above |
 | `relativeAge.js` | the one clock-relative label ("3 hours ago") — refuses null/undefined/blank/`[]`/`false` BEFORE any `Number()`/`Date.parse()` cast, with a perturbation proving the tempting cast-first rewrite fails on exactly those inputs |
 | `syncCaption.js` | the rail's freshness sentence — that `app.js` calls the shared `syncCaption()` rather than growing its own `Math.floor(Date.now() - Date.parse(...))` day-count back. `ctx.railHasSyncZone: false` (only `gas_hub`, which hands `createAppShell` no `railFooter` and has no freshness sentence at all) turns the first half into a NAMED skip and leaves the `Math.floor` prohibition running — a prohibition is exactly the kind of rule an app with no caption today can still break tomorrow |
+| `quad.js` | `ui/quad.js`'s 2x2: the fixed corner order, shares read against the STATED total rather than the corner sum, an unmeasured count that is absent and never a zero, and a refusal for any corner carrying a tone without a word. Three perturbations reproduce the tempting wrong version inline — a cast-first count, a defaulted label, a renormalised share — and show each one disagreeing with the shipped model on the same input |
+| `sparkline.js` | `ui/sparkline.js`'s path: every point refused by type BEFORE any cast, a gap that keeps its x position and breaks the line, and the label that always states first/last/low/high. Two perturbations, because there are two wrong answers here and only one of them is obvious — the cast-first rewrite (gaps plotted at 0, the floor moved) and the filter-them-out rewrite (the floor right, the slope wrong) |
+| `figureCard.js` | `ui/figures.js`'s `figureCard`: the denominator PREPENDED to the tip lines, stamped on `data-denominator`, and drawn as no paragraph. Perturbed three ways — dropped from the lines (the attribute check still passes and the reader is told nothing), appended instead of prepended (buried under a three-line glossary entry), and merged into a bare `{lines}` (identical on screen, and every migrated card loses its route to the book) |
 
 `gas_devsecops/test/shared.test.js` is the worked example.
 

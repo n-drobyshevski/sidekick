@@ -42,8 +42,17 @@
 // unit letter in a sentence or drop the pluralisation a reader expects from prose. Both stay,
 // under their own names, and neither one is the other's fallback.
 
+// A CYCLE, AND IT IS SAFE — say so here rather than leave the next reader to work it out.
+// `controls.js` imports `absentText` from this file and this file imports `kpiCard` from it.
+// Neither side touches the other at MODULE SCOPE: `valueOrAbsent` reads `absentText` inside a
+// function, `figureCard` calls `kpiCard` inside a function. ES modules (and esbuild's flat
+// bundle) hoist function declarations, so whichever body runs first, nothing is read before
+// it is initialised. A top-level read across this edge — a lookup table built at import time,
+// say — would be a TDZ error at boot rather than a lint warning, so keep both sides lazy.
 import { el } from "./dom.js";
 import { pluralize } from "./format.js";
+import { kpiCard } from "./controls.js";
+import { tipLines } from "./tip.js";
 
 /**
  * The em dash these formatters print, AS A STRING — the one spelling, exported.
@@ -211,4 +220,91 @@ export function relativeAge(ts) {
  */
 export function denomNote(sentence) {
   return el("p", { class: "small muted", "data-denominator": sentence }, sentence);
+}
+
+/**
+ * The denominator sentence, and where a reader finds it — ONE LEVEL DOWN, not under the card.
+ *
+ * WHAT CHANGED AND WHY. `denomNote` above is the sentence as a paragraph, and 22 of them
+ * were on the `gas_devsecops` register pages at once (13 on Secrets alone), stacked under a
+ * row of figure cards. The sentence is right and it has to exist — a rate without its
+ * denominator is not a measurement — but printing all of it on the surface is what turned
+ * four figures into four figures and ninety words. DESIGN.md's ladder puts the number and
+ * the picture on the surface and the provenance ONE level down, behind a visible signifier;
+ * `tipLabel`'s dotted-underline trigger on the card's own label is that signifier, and it is
+ * already keyboard-reachable and already one tab stop.
+ *
+ * THE SENTENCE IS STILL WRITTEN INTO THE DOM, on `data-denominator`, for exactly the reason
+ * `denomNote` writes it there: a test can then read what a reader reads rather than
+ * asserting that some node happens to sit nearby. `denomNote` itself is UNCHANGED and still
+ * exported — the pages that print a denominator over a table rather than over a card still
+ * want a paragraph.
+ *
+ * @param {object} spec
+ * @param {*} spec.label      the card's label; becomes the tip trigger when there is copy
+ * @param {*} spec.value      the figure
+ * @param {*} [spec.sub]      the short form on the surface ("12 of 40 secrets")
+ * @param {*} [spec.chip]     a chip beside the value
+ * @param {*} [spec.help]     any `tipLabel` shape — a string, lines, `{term}`, `{lines, term}`
+ * @param {string} [spec.denominator]  the sentence, prepended to the tip's lines
+ */
+export function figureCard({ label, value, sub, chip, help, denominator }) {
+  const merged = figureCardModel({ help, denominator });
+  // NO DENOMINATOR, NO MERGE — `help` goes to kpiCard untouched, so a card that gained
+  // nothing behaves EXACTLY as it did. That matters for the `{term}` shape specifically:
+  // untouched, it reaches `glossaryTip`, which renders `glossaryTipLines`'s `aka` field;
+  // merged, it reaches `tip(content, lines, {term})`, and `tipLines()` carries only the
+  // lines. A card that gains a denominator therefore trades its "also known as" line for the
+  // sentence — measured before choosing it: `gas_devsecops/helpContent.js` declares `aka` on
+  // ZERO entries (gas has none either; gas_ai has 42 and no figureCard call site), so no card
+  // migrating in this wave loses anything. Should an `aka` ever land on a term a figure card
+  // uses, the fix is to resolve it here rather than to widen `tipLines`, which every other
+  // primitive shares.
+  const tipHelp = merged.denominator ? tipShape(merged) : (help || null);
+  const card = kpiCard(label, value, sub || "", chip || null, tipHelp);
+  if (merged.denominator) card.setAttribute("data-denominator", merged.denominator);
+  return card;
+}
+
+/**
+ * What a reader of that card would be told, as data — the DOM-free half.
+ *
+ * A DENOMINATOR IS PREPENDED, NEVER APPENDED. It is the first thing the tip says because it
+ * is the thing the figure cannot be read without; the glossary's general definition of the
+ * term follows it.
+ *
+ * `resolve` IS INJECTABLE FOR ONE REASON, and it is not testability in general. `tipLines`
+ * resolves a bare `{term}` through `appConfig().findHelpEntry`, so calling it with that shape
+ * from a test with no manifest THROWS — and `appConfig()` throwing on an unset manifest is a
+ * deliberate refusal this module must not undermine by defaulting one. A contract hands over
+ * its own resolver for that one shape; every other shape (a string, an array, `{lines}`,
+ * nothing at all) never reaches the manifest and runs under the default.
+ *
+ * @param {{help?: *, denominator?: *}} spec
+ * @param {Function} [resolve]  `(help) => string[]|null`, default `tipLines`
+ * @returns {{lines: (string[]|null), term: (string|null), denominator: (string|null)}}
+ */
+export function figureCardModel({ help, denominator }, resolve = tipLines) {
+  const sentence = typeof denominator === "string" && denominator.trim() !== ""
+    ? denominator
+    : null;
+  const term = help && typeof help === "object" && !Array.isArray(help) && help.term
+    ? help.term
+    : null;
+  const own = (help ? resolve(help) : null) || [];
+  const lines = sentence ? [sentence, ...own] : own.slice();
+  return { lines: lines.length ? lines : null, term, denominator: sentence };
+}
+
+/**
+ * The merged model as the `help` shape `tipLabel` takes.
+ *
+ * `{lines, term}` rather than `{term}`: the lines are already resolved, and the term rides
+ * along so the trigger still navigates to the book's entry on activation. With no lines and
+ * no term there is nothing to say, and `null` is what leaves the label a plain label.
+ */
+function tipShape(model) {
+  if (model.lines) return { lines: model.lines, term: model.term };
+  if (model.term) return { term: model.term };
+  return null;
 }

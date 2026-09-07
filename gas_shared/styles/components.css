@@ -198,6 +198,43 @@
   color: var(--text-2);
 }
 
+/* ---------------------------------------------------------------------- sparkline */
+/* A series as one line, at the size of a word (ui/sparkline.js). It sits where a change chip
+   sits — beside a figure, qualifying it — which is why it lives here rather than with the
+   charts: it is a mark on a card, not a picture with axes.
+
+   `.sparkline`, NOT `.spark`: gas/src/client/styles/pages.css already owns `.spark` for the
+   bordered per-tier CARD on its Overview page, and that sheet loads AFTER this one, so a
+   shared `.spark` here would reach those cards for every property they do not set —
+   `color: var(--text-2)` would grey out `.spark__value`, which carries a size and a weight
+   and inherits its ink. The same collision, and the same resolution, as `.health-` over
+   `.diag-`. See ui/sparkline.js's header.
+
+   MONOTONE INK, NOT THE BRAND. The stroke is `currentColor`, so the line takes whatever ink
+   the card around it is set in and a caller can recolour one by class rather than by option.
+   The default is the same neutral `.axis-bar` chose for the same reason: a row of accent
+   sparklines would spend, per card, the colour DESIGN.md rations for severity and state —
+   and on gas_devsecops the accent could not carry a 1px line at all (`--accent` is 1.52:1 on
+   white, a FILL token; see that app's DESIGN.md).
+
+   NO TRANSITION AND NO KEYFRAMES, so there is deliberately no prefers-reduced-motion block
+   to keep in step: the picture is static the first time it paints. */
+.sparkline { display: inline-block; vertical-align: middle; color: var(--text-2); overflow: visible; }
+/* Nothing measured. The SVG is still in the flow — its aria-label says "not measured" — and
+   the box keeps its width so a column of cards does not reflow when one register has no
+   history yet. */
+.sparkline[data-empty] { color: var(--text-3); }
+
+/* The line is drawn in currentColor, which forced-colors resolves to the forced foreground
+   for text but NOT for an SVG paint server — an inherited `color` at an alpha
+   (`--text-2` is rgba(0,0,0,.65)) is what the stroke reads, and against a forced dark ground
+   that is near-black on black. Pinning `CanvasText` here is the whole fix: no
+   forced-color-adjust, no background to preserve, just the one inherited value the stroke
+   and the end dot both take. */
+@media (forced-colors: active) {
+  .sparkline { color: CanvasText; }
+}
+
 /* ------------------------------------------------------------------------ meters */
 /* Meter base: a rounded track with a proportional fill (ui/data.js meter()). The AARS
    score meters, the stat-list meters, the detail sheet's pillar bars and the facet count
@@ -238,6 +275,89 @@
 .meter--stat { flex: 0 0 52px; width: 52px; height: 6px; }
 .meter--facet { height: 3px; overflow: visible; }
 .meter--facet .meter-fill { background: rgba(0, 0, 0, 0.32); }
+
+/* ------------------------------------------------------------------------- hatch */
+/* The one "not measured" fill for new work, as a utility class over the --hatch token (see
+   tokens.base.css for why it is ink-at-an-alpha and why the three existing hatches keep
+   their own rules). A texture is not a fact, so nothing may be hatched without a word beside
+   it saying what was not measured — the same rule `data-tone` obeys two sections down. */
+.hatch { background-image: var(--hatch); }
+
+/* -------------------------------------------------------------------------- quad */
+/* Two yes/no questions crossed (ui/quad.js). A real table, ruled by hairlines like every
+   other surface here, with the two axis words as `<th scope>` headers rather than as prose
+   in a Reading column.
+
+   THE NUMBER STAYS IN INK AND ONLY THE WORD TAKES THE TONE. That is the Two-Token discipline
+   applied to a cell instead of a badge: the tint is a 12% wash of the state's own hue (the
+   same three values .pill.ok/.warn/.bad carry), the label sits on it in the darkened --ok /
+   --warn / --bad text token that clears 4.5:1 there, and the count and the share stay
+   neutral so a column of figures reads as figures. */
+.quad {
+  width: 100%; border-collapse: collapse; table-layout: fixed;
+  margin: var(--space-3) 0 var(--space-4);
+}
+.quad th, .quad td {
+  border: 1px solid var(--hairline);
+  padding: var(--space-3);
+  text-align: left;
+  vertical-align: top;
+  /* `table-layout: fixed` already stops the grid widening past its container; this stops a
+     long unbroken reading inside one corner from doing it instead, at 360px where three
+     tracks are ~110px each. */
+  overflow-wrap: break-word;
+}
+/* Both axes wear the label step: they are names, not readings. */
+.quad thead th, .quad tbody th, .quad .quad-axes {
+  background: var(--surface);
+  font-size: var(--fs-label); font-weight: 600; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--text-3);
+}
+/* The empty corner names both axes and heads neither, so it is a td (a th here would be
+   announced as a header for the row and the column under it). The column axis is set to the
+   right and the row axis to the left, so each name points at the headings it governs — the
+   diagonal a hand-drawn 2x2 gets for free. */
+.quad .quad-axes { font-size: var(--fs-micro); }
+.quad-axes__col { display: block; text-align: right; }
+.quad-axes__row { display: block; text-align: left; margin-top: var(--space-half); }
+
+.quad-cell { background: var(--page); }
+.quad-num {
+  display: block;
+  font-size: var(--fs-display-sm); font-weight: 600; line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+}
+.quad-label { display: block; margin-top: var(--space-half); font-size: var(--fs-body); }
+.quad-share {
+  display: block; margin-top: var(--space-half);
+  font-size: var(--fs-label); color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+/* The caller's own alarm chip, when a corner carries one. */
+.quad-cell .pill { margin-top: var(--space-2); }
+
+.quad-cell[data-tone="ok"] { background: rgba(21, 128, 61, 0.12); }
+.quad-cell[data-tone="ok"] .quad-label { color: var(--ok); }
+.quad-cell[data-tone="warn"] { background: rgba(161, 98, 7, 0.12); }
+.quad-cell[data-tone="warn"] .quad-label { color: var(--warn); }
+.quad-cell[data-tone="bad"] { background: rgba(185, 28, 28, 0.12); }
+.quad-cell[data-tone="bad"] .quad-label { color: var(--bad); }
+
+/* Forced colours discard the three tints, and that is the right outcome rather than a defect
+   to force through: these are HUED washes, and `forced-color-adjust: none` on one would pin a
+   hue onto a ground that may be black (the measurement in the severity note above is what
+   separates the two cases — an achromatic fill survives the substitution, a hued one has to
+   be pinned, and pinning is only safe where the mark has no text of its own).
+
+   A quad cell HAS text of its own — the word IS the state, per DESIGN.md's "never colour
+   alone" — so nothing is lost by letting the wash go. What would be lost is the fact that a
+   corner is flagged at all, so the three toned corners take a drawn edge instead. It does not
+   tell ok from warn from bad; their words already do that. */
+@media (forced-colors: active) {
+  .quad-cell[data-tone="ok"],
+  .quad-cell[data-tone="warn"],
+  .quad-cell[data-tone="bad"] { outline: 2px solid CanvasText; outline-offset: -4px; }
+}
 
 /* --------------------------------------------------------------------- severity */
 .sev-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: var(--space-2); vertical-align: 1px; }
@@ -477,17 +597,63 @@
   text-align: inherit;
   cursor: help;
 }
-/* Term triggers only. The chip base above and the tag base below it are all inline-flex or
-   inline-block — atomic inline boxes, which do not take a parent's text-decoration — so a
-   trigger wrapping a pill, a badge or the "?" mark is left alone by this rule without needing
-   a selector to say so. The underline lands on bare words, which is exactly where it is the
-   only affordance available. */
-.tip-trigger--term {
+/* EVERY TRIGGER, NOT ONLY A TERM-BACKED ONE — and the modifier this rule replaced is the
+   reason it has to be said out loud. `ui/tip.js`'s `markTerm()` adds `.tip-trigger--term`
+   solely when the help carries a `{term}`, and for a long time that modifier was the ONLY
+   thing carrying the underline. A tip built from bare `{ lines }` — a section heading, a stat
+   name, a column heading, a kpi label — therefore rendered as plain text with nothing but
+   `cursor: help` to say it was a control: DESIGN.md's own rule for The Tip ("visible before
+   anything is hovered, because a definition nobody can see is not help") broken by the shape
+   of the caller's help object rather than by anything a reader could see. Measured across the
+   three register apps with `gas_devsecops/dev/density.mjs`'s `tipsSignified` count, on each
+   app's own dev server at 1280 and 640. gas_devsecops fixed it app-locally first (f95f895,
+   after measuring executive 6 of 9 triggers signified, mttr 19/22, sca 12/19, sast 9/16,
+   secrets 28/41, data 2/6); with that local rule in place and this one still absent, the two
+   siblings were carrying it unfixed — gas 12 unsignified (executive's "Median MTTR (KM)";
+   mttr's four chart-card headings and four SLA column headings; program's "Close rate",
+   "High-risk net", "Cross-check") and gas_ai 5 (config's "Not on an AI asset", compliance's
+   "Compliance posture", scans' "Landscape reach", "By kind", "Decision-tree axis coverage"),
+   plus 16 more on gas_ai's Key sheet whenever an entry is counted but unresolved. One app's
+   local fix is not a design system's answer, so the rule lives here: after it,
+   `tipsSignified == tips` on every route of all three, seeded and unseeded.
+
+   `.tip-trigger--term` KEEPS BEING EMITTED and is deliberately not deleted: it is the
+   behavioural hook for "activate to reach this word's entry in the Key sheet" (`markTerm`
+   registers the navigation on it), which is a different fact from "this is defined". Only its
+   decoration block is gone from this file, because it had become a byte-identical duplicate of
+   the one below.
+
+   (0,1,0) IS ENOUGH, AND THAT IS MEASURED RATHER THAN ASSUMED. The full reset above needs
+   `.tip-trigger.tip-trigger` (0,2,0) to beat the dozen `<context> button` rules at (0,1,1)
+   that load after this file — but not one of them sets `text-decoration`: the only three
+   `text-decoration` declarations anywhere outside this block are `.appbar-hub`, the nav link
+   in `base.css` and `gas_hub`'s tile anchor, none of which is a trigger or an ancestor
+   context of one, and `--term` itself has always shipped as a single-class rule nothing
+   overrode. Copying the doubled-class treatment here would state a conflict that does not
+   exist.
+
+   NO :not() / :has() GUARD FOR A PILL-, BADGE- OR CHIP-WRAPPED TRIGGER, for the reason the
+   deleted comment gave and which is now the reason no guard is needed at all: the chip base
+   above (`.sev-badge, .aars-chip, .pill, .filter-chip, .combo-cond`) and the tag base beside
+   it (`.domain-chip, .fw-tag`) are inline-flex or inline-block, and an atomic inline box does
+   not take an ancestor's `text-decoration` in the first place. So this rule paints on exactly
+   the bare words where a line is the only affordance available, and paints nothing on a
+   trigger built by wrapping a mark that already carries its own boundary. Confirmed in the
+   browser at 1280px on every `.pill`-wrapped trigger the three dev seeds actually render —
+   gas_ai's "capped" on a node-budgeted Security Graph, and gas_devsecops's "Dry run", "At or
+   below random", "Secrets excluded (N)" and "Exposure and overdue: not applicable": computed
+   `text-decoration-line` is `underline` on the button and `none` inside the pill, and the pill
+   paints no line beside a bare-word trigger that now does. Two things this rule does NOT reach
+   either, measured the same way: an already-interactive `tip()` target keeps its own node and
+   never gets the class at all (every `[data-tip]` anchor that is not a `.tip-trigger` — a
+   combobox, an appbar link, a graph `<g>`, a `button.prog-cell` — reads `none`), and
+   `.tip-mark`, the bare "?" affordance, is inline-flex like the chips. */
+.tip-trigger {
   text-decoration: underline dotted rgba(0, 0, 0, 0.32);
   text-underline-offset: 3px;
   text-decoration-thickness: 1px;
 }
-.tip-trigger--term:hover { text-decoration-color: currentColor; }
+.tip-trigger:hover { text-decoration-color: currentColor; }
 .tip-trigger:focus-visible {
   outline: 2px solid var(--accent-text); outline-offset: 2px; border-radius: var(--radius-sm);
 }

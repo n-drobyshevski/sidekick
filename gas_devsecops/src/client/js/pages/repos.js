@@ -26,11 +26,17 @@
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { pagedTable } from "./sca.js";
 import {
-  absentText, boundedDays, chartTable, chartTableModel, clear, dataTable, days1, denomNote, el,
-  emptyState, errorState, firstRunNotice, fmtCount, glossaryTip, kpiCard, num, onPageTeardown,
-  pageHeader, pct1, sectionLabel, skeletonStack,
+  absentText, boundedDays, chartTable, chartTableModel, clear, days1, denomNote, el,
+  emptyState, errorState, figureCard, firstRunNotice, fmtCount, meter, num, onPageTeardown,
+  pageHeader, pct1, sectionLabel, skeletonStack, uiIcon,
 } from "../ui.js";
+// `verdictMark` is `pages/program.js`'s own dot-and-word for a capacity verdict, promoted to
+// `ui/verdict.js` in this same wave so this page's Capacity column can draw the identical
+// mark rather than the plain word `VERDICT_LABEL[r.verdict]` printed alone — see that
+// module's header for the DOM and the tone mapping.
+import { verdictMark } from "../ui/verdict.js";
 
 const OVERALL = "OVERALL";
 
@@ -161,7 +167,7 @@ export function ownershipView() {
   };
 }
 
-/** One row of the per-repo / per-language table, formatted for `dataTable`. */
+/** One row of the per-repo / per-language table, formatted for `pagedTable`'s columns. */
 export function tableRow(row) {
   const foothold = num(row.assets_with_high_risk_pct);
   return {
@@ -176,6 +182,39 @@ export function tableRow(row) {
     halfLife: halfLifeView(row),
     verdict: capacityVerdict(row),
   };
+}
+
+/**
+ * Which glyph and word the Foothold cell draws, from `tableRow`'s own already-pinned
+ * Yes/No/percentage/absent text — the decision that can be wrong, kept separate from the
+ * `<span>` around it so it can be tested without a DOM.
+ *
+ * ONLY THE TWO ENDS GET A GLYPH. `tableRow.footholdText` is "Yes" at 100%, "No" at 0%, a
+ * plain percentage in between (a language grouping several repositories, most of which will
+ * never land on an exact 0 or 100), and `absentText` when nothing was measured — a percentage
+ * is not a verdict, so it stays plain text rather than borrowing a glyph that would claim one.
+ */
+export function footholdCellKind(footholdText) {
+  if (footholdText === "Yes") return "yes";
+  if (footholdText === "No") return "no";
+  if (footholdText === absentText) return "absent";
+  return "value";
+}
+
+/**
+ * The percentage a repository/language's coverage meter may be filled to — or NULL, which
+ * draws no meter. Mirrors `pages/program.js`'s `signalMeterPct`: the refusal happens on the
+ * value `tableRow` already read through `num()` (refuse-before-cast), never on a second,
+ * confident `Number(...)` taken at render time — `meter(Number(row.coverageP50))` would draw
+ * an empty 0% track beside an unmeasured cell, which is a picture asserting a coverage of zero
+ * where nothing was measured at all.
+ *
+ * @param {{coverageP50?: number|null}|null|undefined} row  a `tableRow` result
+ * @returns {number|null}
+ */
+export function coverageMeterPct(row) {
+  const pct = row && row.coverageP50;
+  return typeof pct === "number" && Number.isFinite(pct) ? pct : null;
 }
 
 /**
@@ -287,19 +326,25 @@ export async function renderRepos(host, _params, _ctx) {
       }));
       return;
     }
-    const densityCard = kpiCard("Median findings per repository", fmtCount(d.p50), "");
-    densityCard.append(denomNote(
-      `p25 ${fmtCount(d.p25)} · p75 ${fmtCount(d.p75)}, across ${fmtCount(d.assets)} repositories `
-      + `(${fmtCount(d.openFindings)} open findings). Never a mean — the distribution is long-tailed.`,
-    ));
-    const footholdCard = kpiCard(
-      glossaryTip("Foothold rate", "foothold"),
-      f.pct === null ? absentText : pct1(f.pct),
-      "",
-    );
-    footholdCard.append(denomNote(
-      f.assets ? `Of ${fmtCount(f.assets)} repositories.` : "No repositories measured.",
-    ));
+    // FIGURE CARDS, NOW — R3's ladder. The numbers a reader compares (p25/p75, the repository
+    // count) stay on the surface as the card's `sub`; the "never a mean" method clause moves
+    // to the label's own tip, and the full sentence still lands on `data-denominator` so a
+    // test reads what a reader reads (see `test/pagesLit.test.js` gate 3/7).
+    const densityCard = figureCard({
+      label: "Median findings per repository",
+      value: fmtCount(d.p50),
+      sub: `p25 ${fmtCount(d.p25)} · p75 ${fmtCount(d.p75)} across ${fmtCount(d.assets)} repositories`,
+      denominator:
+        `p25 ${fmtCount(d.p25)} · p75 ${fmtCount(d.p75)}, across ${fmtCount(d.assets)} repositories `
+        + `(${fmtCount(d.openFindings)} open findings). Never a mean — the distribution is long-tailed.`,
+    });
+    const footholdCard = figureCard({
+      label: "Foothold rate",
+      value: f.pct === null ? absentText : pct1(f.pct),
+      sub: f.assets ? `Of ${fmtCount(f.assets)} repositories` : "No repositories measured",
+      help: { term: "foothold" },
+      denominator: f.assets ? `Of ${fmtCount(f.assets)} repositories.` : "No repositories measured.",
+    });
     densityHost.append(densityCard, footholdCard);
   }
 
@@ -338,11 +383,34 @@ export async function renderRepos(host, _params, _ctx) {
       { key: "open", label: "Open findings", className: "num", cell: (r) => fmtCount(r.openFindings) },
       {
         key: "foothold", label: "Foothold", className: "num", help: { term: "foothold" },
-        cell: (r) => r.footholdText,
+        // A verdict at the two ends (Yes/No) draws a glyph AND the word — colour never
+        // carries it alone, per R5. A percentage in between (a language spanning several
+        // repositories) is not a verdict and stays plain text; absent stays this app's one
+        // absence mark. `footholdCellKind` is the pure decision this reads.
+        cell: (r) => {
+          const kind = footholdCellKind(r.footholdText);
+          if (kind === "yes") {
+            return el("span", { class: "cell-verdict cell-verdict--ok" }, uiIcon("check", 14), "Yes");
+          }
+          if (kind === "no") {
+            return el("span", { class: "cell-verdict cell-verdict--muted" }, uiIcon("not", 14), "No");
+          }
+          return r.footholdText;
+        },
       },
       {
         key: "coverage", label: "Coverage (p50)", className: "num", help: { term: "coverage" },
-        cell: (r) => pct1(r.coverageP50),
+        // The percentage plus a picture of it, `decorative` because the figure is already in
+        // words right beside it (`.rate-with-meter` — the same recipe MTTR & SLA's rate cells
+        // use). `coverageMeterPct` refuses null BEFORE any cast, so an unmeasured cell draws
+        // no meter rather than an empty one asserting a coverage of zero.
+        cell: (r) => {
+          const pct = coverageMeterPct(r);
+          if (pct === null) return absentText;
+          return el("span", { class: "rate-with-meter" },
+            pct1(r.coverageP50),
+            meter(pct, { className: "meter--stat", decorative: true }));
+        },
       },
       {
         key: "halfLife", label: "Half-life", className: "num", help: { term: "half-life" },
@@ -350,11 +418,30 @@ export async function renderRepos(host, _params, _ctx) {
       },
       {
         key: "capacity", label: "Capacity", className: "num", help: { term: "capacity" },
-        cell: (r) => (r.verdict ? VERDICT_LABEL[r.verdict] : absentText),
+        cell: (r) => verdictMark(r.verdict, r.verdict ? VERDICT_LABEL[r.verdict] : absentText),
       },
     );
-    target.append(dataTable({ columns, rows, emptyText: `No ${plural} measured yet.` }));
-    target.append(denomNote(`${rows.length.toLocaleString()} ${rows.length === 1 ? singular : plural} shown.`));
+    // PAGED, like every other unbounded table in this app. `rows` is one row per repository
+    // (or per language) and the estate is not small: the whole list was rendered at once
+    // here, so a reader met several hundred rows with no footer, no page size and nothing
+    // saying how many there were beyond the count line below. `pagedTable` (sca.js) sorts
+    // and pages client-side, which is right for a list the page already holds in full —
+    // unlike the per-finding register, which is server-paged because it is 18,800 rows.
+    //
+    // THE SORT IS THE ONE THIS TABLE ALREADY HAD: most open findings first, tie-broken on
+    // the group key so equal counts do not reshuffle between paints. `rows` arrives sorted
+    // that way and `sortRows` re-states it rather than changing it.
+    target.append(pagedTable({
+      columns,
+      rows,
+      sortSpec: { value: (r) => r.openFindings, descending: true, tiebreak: (r) => r.key },
+      emptyText: `No ${plural} measured yet.`,
+    }));
+    // "MEASURED", NOT "SHOWN", NOW THAT THE TABLE PAGES. The count is the whole set this
+    // page holds; the pager above it states which slice of that set is on screen. Leaving
+    // the old word would have the two lines disagree — "312 repositories shown" directly
+    // under a footer reading 1-25 of 312.
+    target.append(denomNote(`${fmtCount(rows.length)} ${rows.length === 1 ? singular : plural} measured.`));
   }
 
   function renderHalfLifeChart(model) {

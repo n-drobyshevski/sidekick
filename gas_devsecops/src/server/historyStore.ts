@@ -44,11 +44,40 @@ export function recordDaily(stats: unknown, now: number = Date.now()): void {
   writeGzJson(subfolder(FOLDER), fileName(utcDay(now)), stats);
 }
 
-/** Every recorded day's stats, ascending by date. Malformed file names are skipped. */
-export function listHistory(): HistoryEntry[] {
-  const days = listNames(FOLDER)
+/**
+ * The recorded days, ascending. ISO names sort lexicographically, which is the whole reason
+ * the file name is the date: "newest" is `max(names)` with no file opened to find out.
+ * Malformed names are skipped.
+ */
+function recordedDays(): string[] {
+  return listNames(FOLDER)
     .map((n) => NAME_RE.exec(n)?.[1])
     .filter((d): d is string => Boolean(d))
     .sort();
-  return days.map((date) => ({ date, stats: readGzJson(subfolder(FOLDER), fileName(date)) }));
+}
+
+/** Every recorded day's stats, ascending by date. Malformed file names are skipped. */
+export function listHistory(): HistoryEntry[] {
+  return recordedDays()
+    .map((date) => ({ date, stats: readGzJson(subfolder(FOLDER), fileName(date)) }));
+}
+
+/**
+ * The NEWEST day's entry, or null when nothing has been recorded — ONE file read, whatever
+ * the register's age.
+ *
+ * WHY THIS EXISTS RATHER THAN `listHistory().slice(-1)`, which is the obvious one-liner and
+ * costs a Drive read plus a gunzip plus a parse PER RECORDED DAY to answer a question about
+ * one of them. A register that syncs daily has one file per day, so a year of history is 365
+ * reads. `readModels.ts` has both kinds of caller and they price differently: the Scan
+ * History model genuinely wants the whole series and pays for it once behind a DURABLE
+ * cache, while the secrets register wants one block off the last sync and sits behind a
+ * one-hour cache — up to 24 recomputations a day, which is 365 reads each. The listing is
+ * the same call either way; what this saves is every read but one.
+ */
+export function latestHistory(): HistoryEntry | null {
+  const days = recordedDays();
+  if (days.length === 0) return null;
+  const date = days[days.length - 1]!;
+  return { date, stats: readGzJson(subfolder(FOLDER), fileName(date)) };
 }

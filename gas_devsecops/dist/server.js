@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "8e1065a5f115" : "dev";
+  var BUILD_ID = true ? "5d573a951b2b" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -6342,12 +6342,20 @@ var Server = (() => {
   function recordDaily(stats, now = Date.now()) {
     writeGzJson(subfolder(FOLDER), fileName(utcDay(now)), stats);
   }
-  function listHistory() {
-    const days = listNames(FOLDER).map((n2) => {
+  function recordedDays() {
+    return listNames(FOLDER).map((n2) => {
       var _a;
       return (_a = NAME_RE.exec(n2)) == null ? void 0 : _a[1];
     }).filter((d) => Boolean(d)).sort();
-    return days.map((date) => ({ date, stats: readGzJson(subfolder(FOLDER), fileName(date)) }));
+  }
+  function listHistory() {
+    return recordedDays().map((date) => ({ date, stats: readGzJson(subfolder(FOLDER), fileName(date)) }));
+  }
+  function latestHistory() {
+    const days = recordedDays();
+    if (days.length === 0) return null;
+    const date = days[days.length - 1];
+    return { date, stats: readGzJson(subfolder(FOLDER), fileName(date)) };
   }
 
   // src/server/readModelStore.ts
@@ -6931,6 +6939,21 @@ var Server = (() => {
     const s2 = String(v != null ? v : "").toLowerCase();
     return s2 === "open" || s2 === "resolved" ? s2 : "all";
   }
+  var SECRET_VALIDATION_STATES = ["VALID", "INVALID", "UNKNOWN", "ERROR"];
+  function normFilterList(v) {
+    const raw = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
+    const out = [];
+    for (const item of raw) {
+      if (item === null || item === void 0) continue;
+      const s2 = String(item).trim().toUpperCase();
+      if (s2 && !out.includes(s2)) out.push(s2);
+    }
+    return out;
+  }
+  function rowValidationState(v) {
+    const s2 = String(v != null ? v : "").trim().toUpperCase();
+    return s2 === "" ? "UNKNOWN" : s2;
+  }
   function registerRowsModel(scope, p) {
     var _a;
     const n2 = norm(p);
@@ -6939,7 +6962,21 @@ var Server = (() => {
     const severities = severityFilterSupported ? n2.severities : null;
     const scoped = visibleRows(snap.rows, { ...n2, scope, severities });
     const status = normRowStatus(p == null ? void 0 : p.status);
-    const rows = status === "all" ? scoped : scoped.filter((r) => isOpen7(r.status) === (status === "open"));
+    const byStatus = status === "all" ? scoped : scoped.filter((r) => isOpen7(r.status) === (status === "open"));
+    const isSecrets = scope === "secrets";
+    const validation = isSecrets ? normFilterList(p == null ? void 0 : p.validation).filter((v) => SECRET_VALIDATION_STATES.includes(v)) : [];
+    const grades = isSecrets ? Array.from(new Set(scoped.map((r) => {
+      var _a2;
+      return String((_a2 = r.confidence) != null ? _a2 : "").trim().toUpperCase();
+    }))).filter((v) => v !== "") : [];
+    const confidence = isSecrets ? normFilterList(p == null ? void 0 : p.confidence).filter((v) => grades.includes(v)) : [];
+    const rows = validation.length || confidence.length ? byStatus.filter((r) => {
+      var _a2;
+      if (validation.length && !validation.includes(rowValidationState(r.validation_state))) {
+        return false;
+      }
+      return !confidence.length || confidence.includes(String((_a2 = r.confidence) != null ? _a2 : "").trim().toUpperCase());
+    }) : byStatus;
     const def = REGISTER_ROW_DEFAULT_SORT[scope];
     const columns = registerRowColumns(scope);
     const asked = typeof (p == null ? void 0 : p.sort) === "string" ? p.sort : "";
@@ -6974,13 +7011,42 @@ var Server = (() => {
       status,
       severities,
       severityFilterSupported,
+      // Null, not [], for "no filter applied" — and null on the two scopes that cannot carry
+      // one at all, the same shape `severities` takes above. An empty array would read as a
+      // filter that matched nothing.
+      validation: validation.length ? validation : null,
+      confidence: confidence.length ? confidence : null,
+      secretFiltersSupported: isSecrets,
       showNoFix: n2.showNoFix
     };
+  }
+  var HISTORY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+  function latestSecretsTwins() {
+    const entry = latestHistory();
+    const stats = entry && entry.stats;
+    if (!stats || typeof stats !== "object" || Array.isArray(stats)) return null;
+    const scopes = stats["scopes"];
+    if (!Array.isArray(scopes)) return null;
+    const block = scopes.find((s2) => s2 && typeof s2 === "object" && s2["scope"] === "secrets");
+    const twins = block ? block["twins"] : null;
+    if (!twins || typeof twins !== "object" || Array.isArray(twins)) return null;
+    const t = twins;
+    const keys = t["keys"];
+    const folded = t["folded"];
+    if (typeof keys !== "number" || !Number.isFinite(keys)) return null;
+    if (typeof folded !== "number" || !Number.isFinite(folded)) return null;
+    if (!("medianGapDays" in t)) return null;
+    const gap = t["medianGapDays"];
+    if (gap !== null && (typeof gap !== "number" || !Number.isFinite(gap))) return null;
+    const date = entry.date;
+    const asOf = typeof date === "string" && HISTORY_DAY_RE.test(date) ? date : null;
+    return { twins: { keys, folded, medianGapDays: gap }, asOf };
   }
   function buildSecrets(n2) {
     const snap = baseSnapshot();
     const rows = visibleRows(snap.rows, { ...n2, scope: "secrets", severities: null });
     const secretRows = rows;
+    const fold = latestSecretsTwins();
     return {
       asOf: snap.now,
       scope: "secrets",
@@ -7000,7 +7066,14 @@ var Server = (() => {
         confidence: bySegment(secretRows, "confidence"),
         secret_kind: bySegment(secretRows, "secret_kind")
       },
-      signalCoverage: signalCoverage(rows)
+      signalCoverage: signalCoverage(rows),
+      // THE FOLD THIS SYNC ACTUALLY DID, AND THE DAY IT WAS MEASURED — or neither key is here.
+      // See `latestSecretsTwins` for where the only durable copy lives, why an absence is never
+      // a zero, and why the date rides beside the block instead of inside it. SPREAD rather
+      // than assigned so a refusal omits the keys entirely: `twins: null` would be a third
+      // shape for the client to read where two already say everything it can say, and
+      // `twinsAsOf: null` would be a date claim about a fold that has no date.
+      ...fold ? { twins: fold.twins, ...fold.asOf ? { twinsAsOf: fold.asOf } : {} } : {}
     };
   }
   function secretsModel(p) {
@@ -7127,13 +7200,11 @@ var Server = (() => {
     return n2.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
   }
   function buildHistory(n2) {
-    var _a;
     const snap = baseSnapshot();
     const clock = ledgerClock(n2.scope);
     const scansAll = loadScanRows();
     const scans = (n2.scope ? scansAll.filter((s2) => s2.scope === n2.scope) : scansAll).slice().reverse();
     const rows = visibleRows(snap.rows, n2);
-    const { overall } = mttrFromLedger(rows, { now: snap.now });
     const movementRows = movementPopulation(snap.rows, n2);
     const movement2 = {};
     const movementNote = {};
@@ -7165,9 +7236,17 @@ var Server = (() => {
         tracked: rows.length,
         open: rows.filter((r) => isOpen7(r.status)).length,
         resolvedAllTime: rows.filter((r) => !isOpen7(r.status)).length,
-        // The KM median, NOT the naive closed-only one, and its lower bound beside it: where the
-        // curve never reaches half there is no median to print and the bound is what is true.
-        medianMttr: (_a = overall.mttr_median) != null ? _a : null,
+        // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
+        // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
+        // plain median over resolved rows. The page drew THAT one, captioned with the
+        // `half-life` glossary term, which defines a Kaplan-Meier figure that keeps still-open
+        // findings as censored evidence. On the dev seed the two disagree by a factor of three:
+        // 93 days against the MTTR page's "at least 297 days" over the same population, because
+        // the plain median drops the 416 rows that have not closed yet. The naive field is
+        // retired rather than left on the wire beside the honest one — a payload key nothing
+        // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
+        // than no key", applied to a payload field) — so `km` is the only median this page can
+        // publish, and where the curve never reaches half `medianLowerBound` is what is true.
         km: shipKM(kaplanMeier(rows))
       },
       // `mttrPageTrendSlice` reads both of these keys.
@@ -8178,7 +8257,12 @@ var Server = (() => {
         pageSize: r["pageSize"],
         sort: r["sort"],
         dir: r["dir"],
-        status: r["status"]
+        status: r["status"],
+        // SECRETS-ONLY, and forwarded for every scope on purpose: `registerRowsModel` is the
+        // one place that decides a scope cannot carry them, exactly as it decides `severities`
+        // cannot bite on secrets. Vetting here as well would put that rule in two files.
+        validation: r["validation"],
+        confidence: r["confidence"]
       };
       const model = registerRowsModel(scope, params);
       return { ...model, rows: registerRowsSlice(model["rows"], scope) };

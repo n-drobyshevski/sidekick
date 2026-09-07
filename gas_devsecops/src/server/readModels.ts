@@ -178,7 +178,7 @@ import {
   loadTrend,
   previousSeverityCounts,
 } from "./ledgerStore";
-import { listHistory } from "./historyStore";
+import { latestHistory, listHistory } from "./historyStore";
 import { activeJob } from "./jobsStore";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
 import { BASE_FILTER_WORDS } from "./wizQueries";
@@ -1047,6 +1047,10 @@ export interface RowPageParams extends ModelParams {
   dir?: unknown;
   /** "open" | "resolved" | anything else = "all". */
   status?: unknown;
+  /** SECRETS ONLY: credential states to keep (VALID/INVALID/UNKNOWN/ERROR). */
+  validation?: unknown;
+  /** SECRETS ONLY: detector confidence grades to keep, matched against what the rows carry. */
+  confidence?: unknown;
 }
 
 export type RowStatusFilter = "all" | "open" | "resolved";
@@ -1054,6 +1058,42 @@ export type RowStatusFilter = "all" | "open" | "resolved";
 function normRowStatus(v: unknown): RowStatusFilter {
   const s = String(v ?? "").toLowerCase();
   return s === "open" || s === "resolved" ? s : "all";
+}
+
+/** The four values `validation_state` can carry, per `domain/secretsLifecycle.ts`. */
+const SECRET_VALIDATION_STATES = ["VALID", "INVALID", "UNKNOWN", "ERROR"] as const;
+
+/**
+ * A requested filter list, uppercased and de-duplicated, from an array or a comma string.
+ *
+ * Refuses null/undefined/blank BEFORE any cast — `String(null)` is `"null"`, which would
+ * become a filter value matching nothing and narrow a register to zero rows while looking
+ * like a measurement.
+ */
+function normFilterList(v: unknown): string[] {
+  const raw: unknown[] = Array.isArray(v)
+    ? v
+    : typeof v === "string" ? v.split(",") : [];
+  const out: string[] = [];
+  for (const item of raw) {
+    if (item === null || item === undefined) continue;
+    const s = String(item).trim().toUpperCase();
+    if (s && !out.includes(s)) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * A row's credential state for filtering: BLANK IS UNKNOWN, not a fourth thing.
+ *
+ * `secretsLifecycle.ts`'s rule 2 is that UNKNOWN, ERROR, null and blank are all UNMEASURED;
+ * the ledger stores whichever of them Wiz sent. A "Never checked" filter that matched only
+ * the literal string UNKNOWN would silently drop every row whose column is empty — which on
+ * this tenant is most of the register.
+ */
+function rowValidationState(v: unknown): string {
+  const s = String(v ?? "").trim().toUpperCase();
+  return s === "" ? "UNKNOWN" : s;
 }
 
 /**
@@ -1096,9 +1136,48 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
   const scoped = visibleRows(snap.rows, { ...n, scope, severities });
 
   const status = normRowStatus(p?.status);
-  const rows = status === "all"
+  const byStatus = status === "all"
     ? scoped
     : scoped.filter((r) => isOpen(r.status) === (status === "open"));
+
+  // TWO SECRETS-ONLY FILTERS, APPLIED AFTER THE STATUS ONE — and refused everywhere else the
+  // way `severities` is refused HERE. Severity is this register's non-axis (it grades a
+  // detection, not whether a credential is live); the axes that answer the question a reader
+  // came with are the credential's own state and the detector's confidence, and until now
+  // neither could be asked for on the per-finding table.
+  //
+  // THE CONFIDENCE ALLOW-LIST IS MEASURED, NOT WRITTEN DOWN. `SecretInstanceConfidence` is
+  // the tenant's vocabulary, not this app's — the live tenant spells it "High" while the dev
+  // fixture spells it "HIGH" — so the accepted values are the DISTINCT VALUES THE SCOPED
+  // POPULATION ACTUALLY CARRIES, uppercased. A hard-coded list would refuse a grade this
+  // tenant uses, or accept one it does not and quietly return an empty register.
+  //
+  // AN UNRECOGNISED VALUE FALLS BACK TO NO FILTER rather than to an empty page, matching the
+  // `sort` fallback directly above: a hand-edited hash is where these arrive, and answering
+  // a typo with "0 findings" states a measurement about a population nobody asked for. The
+  // applied lists are echoed back in the payload, so the client can see what actually bit.
+  const isSecrets = scope === "secrets";
+  const validation = isSecrets
+    ? normFilterList(p?.validation)
+      .filter((v) => (SECRET_VALIDATION_STATES as readonly string[]).includes(v))
+    : [];
+  const grades = isSecrets
+    ? Array.from(new Set(scoped.map((r) => String(r.confidence ?? "").trim().toUpperCase())))
+      .filter((v) => v !== "")
+    : [];
+  const confidence = isSecrets
+    ? normFilterList(p?.confidence).filter((v) => grades.includes(v))
+    : [];
+
+  const rows = validation.length || confidence.length
+    ? byStatus.filter((r) => {
+      if (validation.length && !validation.includes(rowValidationState(r.validation_state))) {
+        return false;
+      }
+      return !confidence.length
+        || confidence.includes(String(r.confidence ?? "").trim().toUpperCase());
+    })
+    : byStatus;
 
   const def = REGISTER_ROW_DEFAULT_SORT[scope]!;
   const columns = registerRowColumns(scope);
@@ -1140,6 +1219,12 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
     status,
     severities,
     severityFilterSupported,
+    // Null, not [], for "no filter applied" — and null on the two scopes that cannot carry
+    // one at all, the same shape `severities` takes above. An empty array would read as a
+    // filter that matched nothing.
+    validation: validation.length ? validation : null,
+    confidence: confidence.length ? confidence : null,
+    secretFiltersSupported: isSecrets,
     showNoFix: n.showNoFix,
   };
 }
@@ -1164,6 +1249,80 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
  * REMOVED IS NOT ROTATED. `removalVsRotation` is the 2x2 of the two independent events, and
  * `removedNotRotated` is what the page leads with.
  */
+/**
+ * THIS SYNC'S OWN TWIN FOLD, off the newest per-day history blob — or NOTHING AT ALL.
+ *
+ * WHERE THE FIGURE ACTUALLY LIVES, and it is not where this register's own comments said it
+ * did. `reconcile()` computes `TwinStats` and hands it back; `persistFlatScan` receives it and
+ * returns it BESIDE the row it builds; the `ScanRow` it pushes has no `twins` field, and
+ * `TAB_HEADERS[TABS.scans]` has no such column — so there has never been a scan row to read it
+ * off, and `writeGrid` would have dropped it if there had been. `ledgerStore`'s `twins` is on
+ * the transient `ScopeOutcome` handed to the sync's caller and dies with the request. The one
+ * DURABLE copy is `scanJobs.ts`'s `dailyStats()`, which puts `twins` into the per-sync stats
+ * `historyStore.recordDaily` writes as `history/<YYYY-MM-DD>.json.gz`. That is the grain the
+ * figure belongs at anyway: the fold is a property of one reconcile pass, not of a row.
+ *
+ * REFUSE, NEVER SUBSTITUTE. No entry, a sweep whose newest sync never looked at secrets, or a
+ * block that is not a `TwinStats` ships NOTHING — the key is omitted — and never
+ * `emptyTwinStats()`. `{keys: 0, folded: 0}` is a MEASUREMENT: it says a sync looked and found
+ * no credential reported against both a repository and a branch. The client's `twinFoldView`
+ * already tells the two apart ("Twin fold: not measured on this sync" against "0 twins
+ * folded"), and `test/wordsOneLevelDown.test.js` pins the distinction with a reproduced
+ * cast-first rewrite that reads four of five absent shapes as a measured zero. Sending a zero
+ * for an absence walks straight into it.
+ *
+ * EVERY FIELD IS REFUSED BY TYPE BEFORE ANY CAST, the same rule the client half applies, and
+ * all three must be present: `Number(null)` is 0 and finite, so a `keys` of null cast here
+ * would arrive on the page as a confident fold of nothing. `medianGapDays` is legitimately
+ * `null` whenever nothing folded — that is a real value and it travels — but a MISSING key is
+ * a block this app did not write, and a block this app did not write is not a measurement.
+ *
+ * THE DATE TRAVELS BESIDE THE STATS, BECAUSE A CLOCK HAS TO SAY WHERE IT STARTED
+ * (PRODUCT.md's seventh principle). The blob is one file per UTC day, latest write wins, so
+ * this is the last sync recorded on the last day anything was recorded — which can be
+ * Tuesday's fold read on Friday. `twinsAsOf` is the day that file names, shipped as a SIBLING
+ * rather than folded into the block: `twins` has to stay a faithful `TwinStats` of exactly
+ * `{keys, folded, medianGapDays}`, because the client's absent-vs-measured-zero decision keys
+ * on those three fields and a fourth one in there would be a fourth thing to interpret.
+ *
+ * THE DAY, NOT THE INSTANT. `dailyStats` also writes an `at` timestamp, and it is tempting to
+ * prefer it — but the FILE's grain is the day (a second sync the same day overwrites the
+ * first), so a precise time read off it would claim more than the store can keep. The day is
+ * what the file name means and the day is what is published.
+ *
+ * A DATE THAT DID NOT ARRIVE IS NOT TODAY. A malformed or missing date omits `twinsAsOf` and
+ * the stats still ship: the fold was measured, only its day is unknown, and the page states
+ * the fold without a date rather than substituting one. Same refusal the stats make.
+ */
+const HISTORY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function latestSecretsTwins(): { twins: Rec; asOf: string | null } | null {
+  const entry = latestHistory();
+  const stats = entry && entry.stats;
+  if (!stats || typeof stats !== "object" || Array.isArray(stats)) return null;
+  const scopes = (stats as Rec)["scopes"];
+  if (!Array.isArray(scopes)) return null;
+  const block = (scopes as Rec[])
+    .find((s) => s && typeof s === "object" && s["scope"] === "secrets");
+  const twins = block ? block["twins"] : null;
+  if (!twins || typeof twins !== "object" || Array.isArray(twins)) return null;
+  const t = twins as Rec;
+  const keys = t["keys"];
+  const folded = t["folded"];
+  if (typeof keys !== "number" || !Number.isFinite(keys)) return null;
+  if (typeof folded !== "number" || !Number.isFinite(folded)) return null;
+  if (!("medianGapDays" in t)) return null;
+  const gap = t["medianGapDays"];
+  if (gap !== null && (typeof gap !== "number" || !Number.isFinite(gap))) return null;
+  // Refused by type before any cast, like the three above. `listHistory`/`latestHistory`
+  // derive the date from the file NAME through the same regex, so a bad one here means the
+  // store's own naming contract broke — which is a reason to say nothing about the day, not
+  // a reason to invent one.
+  const date = entry.date;
+  const asOf = typeof date === "string" && HISTORY_DAY_RE.test(date) ? date : null;
+  return { twins: { keys, folded, medianGapDays: gap }, asOf };
+}
+
 function buildSecrets(n: NormParams): Rec {
   const snap = baseSnapshot();
   // Scope is pinned; severities are deliberately NOT applied. showNoFix cannot bite either —
@@ -1172,6 +1331,7 @@ function buildSecrets(n: NormParams): Rec {
   // its fields, for the same reason `registerRowsModel` does — see that call's comment.
   const rows = visibleRows(snap.rows, { ...n, scope: "secrets", severities: null });
   const secretRows = rows as unknown as SecretRow[];
+  const fold = latestSecretsTwins();
 
   return {
     asOf: snap.now,
@@ -1193,6 +1353,13 @@ function buildSecrets(n: NormParams): Rec {
       secret_kind: bySegment(secretRows, "secret_kind"),
     },
     signalCoverage: signalCoverage(rows),
+    // THE FOLD THIS SYNC ACTUALLY DID, AND THE DAY IT WAS MEASURED — or neither key is here.
+    // See `latestSecretsTwins` for where the only durable copy lives, why an absence is never
+    // a zero, and why the date rides beside the block instead of inside it. SPREAD rather
+    // than assigned so a refusal omits the keys entirely: `twins: null` would be a third
+    // shape for the client to read where two already say everything it can say, and
+    // `twinsAsOf: null` would be a date claim about a fold that has no date.
+    ...(fold ? { twins: fold.twins, ...(fold.asOf ? { twinsAsOf: fold.asOf } : {}) } : {}),
   };
 }
 
@@ -1442,7 +1609,6 @@ function buildHistory(n: NormParams): Rec {
     .reverse(); // newest first, as the table draws it
 
   const rows = visibleRows(snap.rows, n);
-  const { overall } = mttrFromLedger(rows as unknown as Rec[], { now: snap.now });
 
   const movementRows = movementPopulation(snap.rows, n);
   const movement: Rec = {};
@@ -1478,9 +1644,17 @@ function buildHistory(n: NormParams): Rec {
       tracked: rows.length,
       open: rows.filter((r) => isOpen(r.status)).length,
       resolvedAllTime: rows.filter((r) => !isOpen(r.status)).length,
-      // The KM median, NOT the naive closed-only one, and its lower bound beside it: where the
-      // curve never reaches half there is no median to print and the bound is what is true.
-      medianMttr: overall.mttr_median ?? null,
+      // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
+      // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
+      // plain median over resolved rows. The page drew THAT one, captioned with the
+      // `half-life` glossary term, which defines a Kaplan-Meier figure that keeps still-open
+      // findings as censored evidence. On the dev seed the two disagree by a factor of three:
+      // 93 days against the MTTR page's "at least 297 days" over the same population, because
+      // the plain median drops the 416 rows that have not closed yet. The naive field is
+      // retired rather than left on the wire beside the honest one — a payload key nothing
+      // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
+      // than no key", applied to a payload field) — so `km` is the only median this page can
+      // publish, and where the curve never reaches half `medianLowerBound` is what is true.
       km: shipKM(kaplanMeier(rows)),
     },
     // `mttrPageTrendSlice` reads both of these keys.

@@ -507,8 +507,29 @@ describe("sast — the disappearance-dating caveat is on the page", () => {
     expect(SAST.clock.caveat).toMatch(/absence of observations, not a fast team/);
   });
 
-  it("renders it as body copy rather than leaving it in a comment", () => {
-    expect(SAST_SRC).toMatch(/el\("p", \{\}, vm\.clock\.caveat\)/);
+  /**
+   * THE OBSOLETE CLAIM, NAMED. This case used to read "renders it as body copy rather than
+   * leaving it in a comment" and pinned the literal `el("p", {}, vm.clock.caveat)`. Two
+   * different things were bundled into that one regex: that the caveat REACHES A READER
+   * (still true, and what this file exists to hold), and that it does so as a paragraph
+   * (a rendering decision, and the one the density wave changed).
+   *
+   * WHAT CHANGED AND WHY. The caveat is 85 words — the longest single block on the page —
+   * and it opened the section whose three cards say the same thing in six words each
+   * ("createdAt … a real date" / "Disappearance … an estimate" / "Not applicable"), with the
+   * hero's own stat row already reading "Resolved N — dated by disappearance". It is now the
+   * FIRST TIP LINE on that section's heading, ahead of the `disappearance` glossary entry the
+   * same trigger routes to: rendered DOM, keyboard-reachable, and one level down rather than
+   * two. What is NOT allowed is the caveat going back to being a comment or a constant
+   * nothing draws, so both halves are pinned below — the sentence is passed to a renderer,
+   * and it is passed as the caveat rather than retyped.
+   */
+  it("renders it where a reader can reach it, rather than leaving it in a comment", () => {
+    expect(SAST_CODE).toMatch(/lines: \[vm\.clock\.caveat\]/);
+    expect(SAST_CODE).toMatch(/term: "disappearance"/);
+    // …and the sentence itself is still the exported constant, not a second copy typed into
+    // the page: `SAST.clock.caveat === DISAPPEARANCE_CAVEAT` is the case above.
+    expect((SAST_CODE.match(/vm\.clock\.caveat/g) || []).length).toBe(1);
   });
 
   it("names both ends of the clock and which is which", () => {

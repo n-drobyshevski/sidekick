@@ -30,9 +30,9 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absent, absentText, clear, dataTable, days1, el, emptyState, errorState, fmtCount, fmtDate,
-  fmtDateTime, fmtDays, heroStat, kpiCard, num, pageHeader, pluralize, sectionLabel, sevBadge,
-  skeleton, statRow, statusPill,
+  absent, absentText, clear, dataTable, days1, disclosure, el, emptyState, errorState, fmtCount,
+  fmtDate, fmtDateTime, fmtDays, heroStat, num, pageHeader, pluralize, sectionLabel, sevKeyRow,
+  sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -499,6 +499,14 @@ export function fixNextView(payload, boot) {
     items,
     unranked,
     unrankedSentence,
+    // THE SAME TWO NUMBERS, ON THE SURFACE. Wave A's ladder puts the figure and the picture
+    // first and the accounting one level down: this line is what the reader sees, and
+    // `unrankedSentence` above — unchanged, still the four reasons with a count each — is
+    // what the `disclosure` under it holds. Dropping the sentence and keeping only this would
+    // be the "top 8 and nothing else" the sentence was written against; printing both on the
+    // surface is what made the section 55 words of prose under a list of eight.
+    rankedShort: fmtCount(ranked) + " of " + fmtCount(openTotal) + " open "
+      + pluralize(openTotal, "finding") + " ranked",
     ranked,
     openTotal,
     empty: items.length === 0,
@@ -510,10 +518,15 @@ export function fixNextView(payload, boot) {
         + pluralize(findingsCut, "finding") + " are not drawn — the list is capped at "
         + fmtCount(num(block.limit, items.length)) + "."
       : null,
-    // The links land on the register, not on the repository: no register page reads a
-    // repository filter out of the hash today (`readRegisterParams` takes `sev` and `nofix`
-    // and nothing else). Saying so costs a sentence; a link that silently ignores half of
-    // what it promised costs a reader's trust in every other link on the page.
+    // NO LONGER RENDERED, AND KEPT ANYWAY. The links land on the register, not on the
+    // repository: no register page reads a repository filter out of the hash today
+    // (`readRegisterParams` takes `sev` and `nofix` and nothing else). That was a whole
+    // paragraph on the front door explaining what a link does NOT do — a caveat about an
+    // affordance nobody had used yet, and the one block on this page whose fate was DELETE
+    // rather than disclose. The field stays because `test/executiveFixNext.test.js` asserts
+    // the claim on the MODEL ("unfiltered", "no repository filter yet"), which is the right
+    // place for it: the day a register page grows a repository filter, that test is what says
+    // this sentence is now false.
     linkNote: "Each link opens that register unfiltered — the register pages take a severity"
       + " filter and a fix-availability switch, and no repository filter yet.",
   };
@@ -736,30 +749,57 @@ export async function renderExecutive(host, params, _ctx) {
 
     // NO `route`: the h1 is in the title block appended once at the top of renderExecutive.
     heroHost.append(pageHeader({
-      hero: heroStat(
-        "Remediation half-life",
-        view.value,
-        view.qualifier,
-        { term: "half-life" },
-      ),
+      hero: heroStat("Remediation half-life", view.value, view.qualifier, heroHelp(view)),
       aside: renderMovement(payload),
       // "Tracked 0 · Resolved 0 · Still open 0" is three zeros over a ledger nobody has read.
       // The hero's own "Not measured" and its qualifier already carry the honest version, and
       // the panel above names what the counts wait on.
       stats: first && first.show ? [] : stats,
     }));
-
-    if (view.isLowerBound) {
-      heroHost.append(el("p", { class: "small muted" },
-        "The survival curve never falls to half within the observed window, so there is no"
-        + " median to publish. What is true is the bound above: more than half of what is"
-        + " tracked is still open, so the half-life is at least that long."));
-    } else if (!view.measured) {
-      heroHost.append(el("p", { class: "small muted" },
-        "No lifecycle has a readable clock yet. This is “not measured”, not zero —"
-        + " the half-life needs at least one observation to rest on."));
-    }
     heroHost.append(curveNote());
+  }
+
+  /**
+   * The hero label's tip: the STATE picks the lines, and the LABEL picks the term.
+   *
+   * Two paragraphs used to sit under the hero — 43 words explaining the bound, 23 explaining
+   * "not measured" — and each was the second statement of something the VALUE already says:
+   * `kmHalfLifeView` renders the bound as "at least 41 days" and the absence as "Not
+   * measured", in the 2rem slot, before either paragraph was reached. Those words stay on the
+   * surface (R2: an honesty statement never leaves the page for a tip); the EXPLANATION moves
+   * one level down, onto the label, behind the dotted trigger.
+   *
+   * THE TERM DOES NOT MOVE WITH THE STATE, and a first draft had it doing so — routing to
+   * `lower-bound` whenever the value was a bound. Reviewed and reversed: the trigger sits on
+   * the words "Remediation half-life", so the entry it navigates to on Enter is that figure's
+   * own definition, whatever the figure happens to read this week. A control whose
+   * destination changes with the data is a control a reader cannot learn. The state-specific
+   * sentence LEADS the lines instead, which is the same shape `figureCard` uses for a
+   * denominator — the specific reading first, the book's general one behind it — and
+   * `lower-bound` stays reachable from the Key sheet, which lists every entry.
+   */
+  function heroHelp(view) {
+    if (view.isLowerBound) {
+      return {
+        term: "half-life",
+        lines: [
+          "The survival curve never falls to half within the observed window, so there is no"
+          + " median to publish.",
+          "More than half of what is tracked is still open, so the half-life is at least the"
+          + " longest thing observed — which is the figure above.",
+        ],
+      };
+    }
+    if (!view.measured) {
+      return {
+        term: "half-life",
+        lines: [
+          "No lifecycle has a readable clock yet. This is “not measured”, not zero — the"
+          + " half-life needs at least one observation to rest on.",
+        ],
+      };
+    }
+    return { term: "half-life" };
   }
 
   /**
@@ -769,12 +809,23 @@ export async function renderExecutive(host, params, _ctx) {
    * hero draws. The CURVE itself is not in this payload — `execMttrSlice` ships two scalars
    * — so this points at the page that has it rather than drawing an empty box on the front
    * door or paying 170 KB for a chart the landing page was sliced to avoid.
+   *
+   * ONE LINE NOW, AND THE PROVENANCE IS THE TIP. The sentence "This page is sent the estimate
+   * only, not the curve behind it" is the reason the link exists, so it belongs ON the link's
+   * own words rather than after them: a cross-reference is the one kind of block R2 calls a
+   * DELETE candidate outright, and this is what is left once the reference itself is all that
+   * survives.
    */
   function curveNote() {
     return el("p", { class: "small muted" },
-      "The survival curve, its censor markers and the per-severity split are on ",
-      el("a", { class: "linklike", href: "#/mttr" }, "MTTR & SLA"),
-      ". This page is sent the estimate only, not the curve behind it.");
+      tipLabel("Survival curve", {
+        lines: [
+          "This page is sent the estimate only, not the curve behind it — the curve, its"
+          + " censor markers and the per-severity split are on MTTR & SLA.",
+        ],
+      }),
+      " → ",
+      el("a", { class: "linklike", href: "#/mttr" }, "MTTR & SLA"));
   }
 
   /**
@@ -816,8 +867,13 @@ export async function renderExecutive(host, params, _ctx) {
   function renderMovement(payload) {
     const open = openMovementView(payload && payload.movement);
     const half = executiveMovementView(payload && payload.weekTrend);
+    // THE METHOD SENTENCE IS NOW THE LABEL'S DEFINITION. "A rising count is worse. The
+    // comparison is between two syncs, not between two calendar dates…" is what the word
+    // "Movement" MEANS here; printed as a third line under the rows it was 27 words of body
+    // copy inside a header aside that must not out-weigh the hero beside it. The `movement`
+    // entry carries it verbatim, and the trigger's dotted underline is the signifier.
     const box = el("div", { class: "page-strip" },
-      el("div", { class: "kpi-label" }, "Movement"));
+      el("div", { class: "kpi-label" }, tipLabel("Movement", { term: "movement" })));
 
     if (!open.show) {
       box.append(el("div", { class: "small muted" },
@@ -827,9 +883,6 @@ export async function renderExecutive(host, params, _ctx) {
         movementRow("All registers", open.total),
         ...open.rows.map((r) => movementRow(r.label, r))));
       box.append(el("div", { class: "small muted" }, open.dates));
-      box.append(el("div", { class: "small muted" },
-        "A rising count is worse. The comparison is between two syncs, not between two"
-        + " calendar dates — a register only learns anything on the days it looks."));
     }
 
     if (half.show) {
@@ -860,12 +913,11 @@ export async function renderExecutive(host, params, _ctx) {
     clear(fixHost);
     if (!view.show) return;
 
-    fixHost.append(sectionLabel("Fix next"));
-    fixHost.append(el("p", { class: "small muted" },
-      "Ranked by what cannot wait rather than by severity: a credential somebody confirmed is"
-      + " live, then a dependency finding with a published fix that is already late, then a"
-      + " critical weakness in first-party code that is already late. Grouped by repository,"
-      + " because that is the smallest unit somebody can be asked to own."));
+    // THE RANKING RULE IS A DEFINITION, so it lives where a definition lives. The 52-word
+    // lede said what "Fix next" means; the heading now says it through the `fix-next` entry,
+    // which is the same three clauses in the book's own voice. Nothing about the rule is a
+    // task constraint or an honesty statement, which is what R2 keeps on the surface.
+    fixHost.append(sectionLabel("Fix next", { term: "fix-next" }));
 
     if (view.empty) {
       fixHost.append(emptyState("Nothing is ranked.", view.emptyReason));
@@ -896,32 +948,78 @@ export async function renderExecutive(host, params, _ctx) {
       fixHost.append(list);
     }
 
-    fixHost.append(el("p", { class: "small muted" }, view.unrankedSentence));
+    // "10 of 416 open findings ranked" on the surface; the four reasons behind the other 406
+    // in a closed `disclosure` under it. NOT a tip: the sentence is an ACCOUNTING, four counts
+    // with a reason each, and a hover card is the wrong shape for something a reader may want
+    // to read twice and compare against the register pages. A disclosure is the second of the
+    // two channels R1 allows, and its summary is the visible signifier.
+    fixHost.append(el("p", { class: "small muted" }, view.rankedShort));
+    fixHost.append(disclosure(
+      "Why the rest are not ranked",
+      el("p", { class: "small muted" }, view.unrankedSentence),
+    ));
+    // KEPT ON THE SURFACE. A cap is a task constraint — the reader is looking at a list that
+    // stops before the backlog does, and a count of what was cut off the end is exactly the
+    // kind of statement R2 refuses to move behind a signifier.
     if (view.cutNote) fixHost.append(el("p", { class: "small muted" }, view.cutNote));
-    fixHost.append(el("p", { class: "small muted" }, view.linkNote));
   }
 
   // -------------------------------------------------------------------------- severity
 
+  /**
+   * The distribution as ONE PICTURE, which is the picture both register pages already draw.
+   *
+   * WHAT THIS REPLACES. Five or six `kpiCard`s — a bordered, surface-tinted box per severity,
+   * each holding a badge, a count and the word "open" — reading left to right as six figures
+   * of equal weight. A distribution drawn as six equal boxes is the one thing a distribution
+   * is not: the reader has to compare six numbers to recover the shape, and 12 CRITICAL beside
+   * 12 INFO looked identical. `sevSegmentBar` + `sevKeyRow` is the same data as a shape with
+   * every count still written out beside it, and it is what `sca.js` and `sast.js` put in
+   * their own headers, so the front door and the registers say this in one vocabulary.
+   *
+   * A ZERO LEVEL KEEPS ITS KEY, and that is why the entries are built from `view.tiles`
+   * rather than through `sevEntries` (which filters `count > 0` — right for a register page's
+   * hero, wrong here). `executiveSeverityView` includes every level in the order deliberately:
+   * "a missing tile reads as a render that failed; an honest 0 does not", and the key row is
+   * where that honest 0 now lives. The BAR is drawn only when something is open — a `--lg`
+   * bar with every segment at flex-grow 0 is an empty bordered box, which is the "broken
+   * widget" `sca.js`'s own comment records.
+   */
   function renderSeverity(payload) {
     const view = executiveSeverityView(payload, boot.severityOrder);
     clear(sevHost);
+    // The 45-word method note is a DEFINITION of the axis — what a severity grades, and the
+    // one register where it grades something other than what a reader would assume — so it
+    // sits on the heading rather than under the picture.
+    const label = sectionLabel("Open findings by severity", {
+      lines: [
+        "Severity is the grade Wiz put on the detection, counted over OPEN findings only.",
+        "On the secrets register it grades the detection and not whether the credential is"
+        + " live, which is why that register is segmented differently on its own page.",
+      ],
+    });
+    sevHost.append(label);
     if (!view.show) {
-      sevHost.append(sectionLabel("Open findings by severity"));
       sevHost.append(emptyState("No severity tally recorded yet."));
       return;
     }
-    sevHost.append(sectionLabel("Open findings by severity"));
-    const row = el("div", { class: "kpi-row" });
-    for (const t of view.tiles) {
-      row.append(kpiCard(sevBadge(t.sev), fmtCount(t.count), "open"));
+    const entries = view.tiles.map((t) => ({ sev: t.sev, count: t.count }));
+    if (view.open > 0) {
+      sevHost.append(sevSegmentBar(entries.filter((e) => e.count > 0), {
+        size: "lg",
+        // CAPPED, because `.sevbar` is `width: 100%` and this is the only one of these bars
+        // in the app that is not inside a header column. Measured at 1280: uncapped it drew
+        // 1,140px of saturated severity fill across the page — the "wall of red and orange"
+        // DESIGN.md's anti-references name, from a component that reads correctly at the
+        // ~440px the register pages give it. A strip, not a band.
+        width: "min(100%, 44rem)",
+        label: "Open findings by severity: "
+          + entries.map((e) => fmtCount(e.count) + " " + e.sev).join(", "),
+      }));
     }
-    sevHost.append(row);
+    sevHost.append(sevKeyRow(entries));
     sevHost.append(el("p", { class: "small muted" },
-      fmtCount(view.open) + " open of " + fmtCount(view.total) + " tracked. Severity is the"
-      + " grade Wiz put on the detection; on the secrets register it grades the detection and"
-      + " not whether the credential is live, which is why that register is segmented"
-      + " differently on its own page."));
+      fmtCount(view.open) + " open of " + fmtCount(view.total) + " tracked."));
     if (view.note) sevHost.append(el("p", { class: "small muted" }, view.note));
   }
 
@@ -1011,7 +1109,25 @@ export async function renderExecutive(host, params, _ctx) {
           key: "km",
           label: "Half-life",
           className: "num",
-          help: { term: "half-life" },
+          // THE COLUMN HEADING IS WHERE A COLUMN'S CAVEATS BELONG — asked once, not once per
+          // row, which is `ui/tip.js`'s own rule for a definition. Two paragraphs used to
+          // follow this table: "three registers, three clocks" (which is a fact about THIS
+          // column — why the three figures are never summed) and the dash footnote (which is
+          // a fact about what a cell in THIS column holds when the curve never falls to half).
+          // Both are here now. `{term, lines}` keeps the trigger's route to the `half-life`
+          // entry while the lines say what the entry cannot: what this particular table did.
+          help: {
+            term: "half-life",
+            lines: [
+              "Three registers, three clocks. The same CVE arriving through a dependency and"
+              + " through first-party code is two findings with two clocks, so these are never"
+              + " summed into one number.",
+              ...(view.anyBoundMissing
+                ? ["A dash means that register's curve never falls to half. Its lower bound is"
+                  + " not in this payload; MTTR & SLA publishes it."]
+                : []),
+            ],
+          },
           cell: (r) => r.kmText,
         },
       ],
@@ -1020,18 +1136,12 @@ export async function renderExecutive(host, params, _ctx) {
     }));
     // The key, and only where marks were actually drawn. A legend for a picture nobody can see
     // is a claim that a measurement happened.
+    // The key stays: it is the picture's UNIT, without which the marks are decoration. The
+    // two paragraphs that used to follow it are now lines on the Half-life column's own
+    // heading — see the column spec above.
     if (anyMarks) {
       registerHost.append(el("p", { class: "small muted" },
         "One mark = " + fmtCount(unit) + " open findings."));
-    }
-    registerHost.append(el("p", { class: "small muted" },
-      "Three registers, three clocks. The same CVE arriving through a dependency and through"
-      + " first-party code is two findings with two clocks, so these are never summed into one"
-      + " number."));
-    if (view.anyBoundMissing) {
-      registerHost.append(el("p", { class: "small muted" },
-        "A dash means that register's curve never falls to half. Its lower bound is not in"
-        + " this payload; MTTR & SLA publishes it."));
     }
   }
 
@@ -1079,15 +1189,30 @@ export async function renderExecutive(host, params, _ctx) {
         // it as "none" would invert the most deliberate choice in this product.
         + " · " + (s.severities ? "severities " + s.severities : "all severities"),
       ))));
+    // A CROSS-LINK IS A LINK. The 37 words around this one explained what Scan history is
+    // sent and repeated the rail's own call to action; the first is provenance and rides on
+    // the phrase, the second was the third copy of "Run sync" on one page — the rail button
+    // is the control, and this page's first-run panel already names it.
     scanHost.append(el("p", { class: "small muted" },
-      "What that sync changed is on ",
-      el("a", { class: "linklike", href: "#/history" }, "Scan history"),
-      ", which is the page sent the per-scan arrival and closure counts — one row per register"
-      + " per sync. Run another with the Run sync button in the rail."));
+      tipLabel("What that sync changed", {
+        lines: [
+          "Scan history is the page sent the per-scan arrival and closure counts — one row"
+          + " per register per sync.",
+        ],
+      }),
+      " → ",
+      el("a", { class: "linklike", href: "#/history" }, "Scan history")));
+    // A STATE, DRAWN AS A STATE. "Dry run" is what these figures ARE, and a pill is the
+    // component this design system already has for a state: two words plus a tint, with the
+    // sentence behind it. As a 21-word paragraph it read as a footnote to the caption above
+    // rather than as a qualifier on every number on the page.
     if (!boot.hasCredentials) {
-      scanHost.append(el("p", { class: "small muted" },
-        "No Wiz credentials are configured, so these figures come from a dry run rather than"
-        + " from the tenant."));
+      scanHost.append(el("p", { class: "small muted" }, statusPill("neutral", "Dry run", {
+        lines: [
+          "No Wiz credentials are configured, so these figures come from a dry run rather"
+          + " than from the tenant.",
+        ],
+      })));
     }
   }
 }
