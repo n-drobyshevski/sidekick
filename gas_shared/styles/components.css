@@ -87,6 +87,11 @@
 .page-header > .stat-list, .cov-header .stat-list, .inv-header .stat-list { grid-column: 1 / -1; }
 
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); margin: 0 0 var(--space-5); }
+/* One tile per row, for a kpi-row inside a half-width card. The auto-fit track above keeps
+   packing tiles across while each clears its 160px floor, which inside a `.card-pair` column
+   means two tiles at ~400px — enough for the figure, not enough for the sentence under it,
+   which then wraps to three lines. Opt-in, so every full-width strip is unchanged. */
+.kpi-row--column { grid-template-columns: 1fr; }
 .kpi-card { padding: var(--space-3) var(--space-4); }
 /* The chip slot kpiCard has always had and nothing used: a small qualifier riding beside the
    figure rather than under it, so a card can carry a state without a second line. The
@@ -1111,6 +1116,12 @@
 .chart-table__body table.data td, .chart-table__body table.data th {
   padding: var(--space-1) var(--space-2);
 }
+/* The pager under a paged disclosure (ui/chartTable.js). tables.css gives `.table-footer` a
+   register's spacing — space-3 above it, so a page-level table clears the wrap's border. Here
+   it sits inside a chart card whose rows are already on the tighter padding two rules up, and
+   the register's gap left the controls floating away from the figures they page. Only the
+   spacing is restated; the strip itself is the same component every register uses. */
+.chart-table__body .table-footer { margin-top: var(--space-2); }
 
 /* =========================================================================================
    SIX SHARED COMPONENTS THAT ARRIVED HERE WITHOUT THEIR CLOTHES

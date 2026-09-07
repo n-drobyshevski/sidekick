@@ -66,7 +66,9 @@ export {
   sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./severity.js";
 export { dataTable, meter, pager, progressBar, tableFooter } from "./data.js";
-export { chartTable, chartTableModel, survivalTableModel } from "./chartTable.js";
+export {
+  chartTable, chartTableModel, chartTablePaged, survivalTableModel,
+} from "./chartTable.js";
 export {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, compareValues, nullsLast, pageForSize, pageOf, sortRows,
   triState,

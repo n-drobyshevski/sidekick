@@ -1279,7 +1279,13 @@ function paintSca(host, vm, filters) {
       + " measures the vendor and the team at once and names neither.",
     ],
   },
-    el("div", { class: "kpi-row" },
+    // ONE COLUMN, because this card is now half the page wide. `.kpi-row`'s default track is
+    // `repeat(auto-fit, minmax(160px, 1fr))`, which still fits both figures side by side in
+    // ~800px — and two 160px-floor tiles in a 400px column each is a figure with its
+    // explanatory sub-line wrapped to three rows. Stacked, each tile gets the full width of
+    // the card and its sentence stays on one line. The two counts are also a SPLIT of one
+    // population (112 + 168 = 280), which reads down a column as naturally as across a row.
+    el("div", { class: "kpi-row kpi-row--column" },
       figureCard({
         label: vm.clocks.awaitingVendor.label,
         value: fmtCount(vm.clocks.awaitingVendor.count),
@@ -1300,8 +1306,6 @@ function paintSca(host, vm, filters) {
       }),
     ),
   );
-  host.append(clocks);
-
   // ------------------------------------------------------------- exploitation signals
   //
   // ONE BAR PER SIGNAL, AND THE LEGEND CARRIES THE WORDS. What was here: a five-column table
@@ -1309,15 +1313,25 @@ function paintSca(host, vm, filters) {
   // paragraph per row underneath, ~110 words for three signals, to say how one population
   // divided three ways. `signalRow` draws that division and prints all three counts in the
   // legend beside it; the reading and the denominator are the row label's tip lines.
-  host.append(sectionCard("Exploitation signals", {
-    term: "sca",
-    lines: [
-      "Three states, never two: a signal Wiz never evaluated is unknown, not clean, and"
-      + " rendering it as a No is what makes an unassessed finding look assessed.",
-    ],
-  },
-    el("div", { class: "signal-rows" },
-      ...vm.signals.map((s) => signalRow(s, { unit: "dependency findings" }))),
+  // THE TWO CLOCKS AND THE SIGNALS SHARE A ROW, and they earn it as a reading rather than as
+  // a layout: both divide the SAME 280 open findings, once by who the wait belongs to (a
+  // vendor or the team) and once by what is known about exploitation. Stacked, each spent most
+  // of a full-width card on empty space — two stat tiles and three bars are narrow content —
+  // and the reader had to scroll one out of view to see the other. `.card-pair` is the
+  // primitive the breakdowns below already use; below 1100px it is one column, which is what
+  // each card was on its own.
+  host.append(el("div", { class: "card-pair" },
+    clocks,
+    sectionCard("Exploitation signals", {
+      term: "sca",
+      lines: [
+        "Three states, never two: a signal Wiz never evaluated is unknown, not clean, and"
+        + " rendering it as a No is what makes an unassessed finding look assessed.",
+      ],
+    },
+      el("div", { class: "signal-rows" },
+        ...vm.signals.map((s) => signalRow(s, { unit: "dependency findings" }))),
+    ),
   ));
 
   // ------------------------------------------------------------------ aging + tiers

@@ -1203,8 +1203,24 @@ function paintSecrets(host, vm, filters) {
     host.append(segmentCard(seg));
   }
 
+  // -------------------------------------------------- exposure + breakdowns, two to a row
+  // FOUR NARROW CARDS IN ONE GRID. The exposure histogram and the three concentration
+  // breakdowns are the same shape — a label, a count, one more narrow column — so each drew
+  // ~1,400px of empty card to its right at full width, and comparing "By repository" with
+  // "By owning project" meant scrolling past a screen of white. `.card-pair` is the primitive
+  // already used for the validation/confidence pair at the top of this page and for the sca
+  // and sast breakdowns; it carries the grid trap with it (`min-width: 0` on the items,
+  // because a grid item's default `min-width: auto` refuses to shrink below its content and
+  // would push a table's track past 1fr and draw the card's border off the pane).
+  //
+  // ONE CONTAINER RATHER THAN TWO HAND-MADE PAIRS. The exposure card leads the four and the
+  // three breakdowns follow it in payload order, which is the reading order the page already
+  // had; grid flows them 2+2 without any of the four being told which row it is on. Below
+  // 1100px it is one column, which is what each card already was.
+  const narrowCards = el("div", { class: "card-pair" });
+
   // ------------------------------------------------------------------------ exposure
-  host.append(sectionCard("How long the exposure has run", {
+  narrowCards.append(sectionCard("How long the exposure has run", {
     lines: [vm.aging.denominator],
   },
     el("div", { class: "table-host" }, dataTable({
@@ -1237,7 +1253,7 @@ function paintSecrets(host, vm, filters) {
   // fact about the METHOD of the table under it — so it is a line on the table's own heading
   // rather than a paragraph beneath it, once per dimension.
   for (const dim of vm.concentration) {
-    host.append(sectionCard(dim.label, { lines: [dim.denominator] },
+    narrowCards.append(sectionCard(dim.label, { lines: [dim.denominator] },
       el("div", { class: "table-host" }, dataTable({
         columns: [
           { key: "key", label: "Group", cell: (r) => r.key },
@@ -1249,6 +1265,8 @@ function paintSecrets(host, vm, filters) {
       })),
     ));
   }
+
+  host.append(narrowCards);
 
   // ------------------------------------------------------------- oldest repositories
   host.append(sectionCard("Where the oldest exposure sits", null,
