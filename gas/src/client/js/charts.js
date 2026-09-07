@@ -38,8 +38,17 @@ const HAIRLINE = "#e6e6e9";
 // canvas cannot read. gas_shared/test/contracts/tokens.js pins the two to each other.
 export const ACCENT = "#2563eb";
 
-const reducedMotion =
-  window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+// `typeof window !== "undefined"` GUARDS A MODULE-SCOPE READ, not a runtime preference — this
+// file's own header states it is imported for its Chart.js-FREE exports (`groupPalette`,
+// `TIER_*`, `fmtDuration`) by code that never touches a canvas, and P1.1 added the first such
+// caller outside a browser: `pages/mttr.js`'s pure view models (`kmHalfLifeView` et al.),
+// reached from a plain Node vitest file with no DOM. Before this guard, importing THIS file at
+// all — even only for `groupPalette` — threw `ReferenceError: window is not defined` before a
+// single test could run; `charts.test.js`-shaped assertions on the Chart.js-free exports were
+// never actually possible. The browser gets the exact same value it always did: the `&&`
+// short-circuits identically once `window` exists.
+const reducedMotion = typeof window !== "undefined" && window.matchMedia
+  && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // Group digits and append a unit, so figures inside charts follow the same "tabular,
 // thousands-separated, the-number-is-the-product" rule as the rest of the app (canvas

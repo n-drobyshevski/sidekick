@@ -11,12 +11,14 @@
 
 import { capacityHindcastView, VERDICT } from "./programCapacity.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { rateView } from "./mttr.js";
+import { rateCell } from "./_rates.js";
 import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, bookTip, clear, dataTable, downloadText, el, emptyState, errorState,
-  fmtDate, glossaryTip, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge,
-  skeleton, statusPill, tableFooter, tip, toast,
+  DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, clear, dataTable, downloadText,
+  el, emptyState, errorState, fmtDate, glossaryTip, num, openSheet, pageHeader, pct1, scopeBar,
+  sectionLabel, sevBadge, skeleton, statusPill, tableFooter, tip, toast,
 } from "../ui.js";
 
 // Matrix cells, in reading order. `key` matches the server's `matrix_cell` / cohort quadrant
@@ -46,14 +48,29 @@ const CELLS = {
   unknownOpen: { abbr: "", word: "Unclassified, still open", term: "cell-unclassified-open" },
 };
 
-/** Percent to one decimal, or an em dash when the denominator was empty (never a fake 0%). */
-function pct(v) {
-  return v === null || v === undefined ? "—" : v.toFixed(1) + "%";
-}
+/**
+ * Percent to one decimal, or the shared muted dash — `ui/figures.js`'s `pct1`, not a second
+ * copy. `pct` USED TO BE its own function here, checking `v === null || v === undefined` before
+ * casting (already correct — this page never had the `Number(null)` defect) and hand-typing the
+ * dash it returned. `pct1` does the identical arithmetic through the shared `num()` allowlist
+ * (a superset: it also refuses `""`/`[]`/`false` rather than only `null`/`undefined` by
+ * identity) and returns the ONE spelling of the dash (`ui/figures.js`'s `absentText`) instead of
+ * a hand-typed literal — the port this page had not yet made.
+ */
+const pct = pct1;
 
-/** Percent with no decimals, for dense table cells. */
+/**
+ * Percent with no decimals, for dense table cells — the monthly capacity table, the hero's
+ * "Monthly close rate" mini, and the methodology's unclassified-share clause. Kept as its own
+ * format rather than collapsing onto `pct1` (one decimal) or `./_rates.js`'s `fmtPct` (also one
+ * decimal): a close rate read to a tenth of a percent is false precision at these row counts,
+ * and the rounding grain is the whole reason this page has never used `pct1` for it. Refuses
+ * through the shared `num()` allowlist and returns the shared `absentText` rather than the
+ * hand-typed "—" this used to carry — see `pct` above for why that swap is safe.
+ */
 function pct0(v) {
-  return v === null || v === undefined ? "—" : Math.round(v) + "%";
+  const n = num(v);
+  return n === null ? absentText : Math.round(n) + "%";
 }
 
 /**
@@ -62,12 +79,22 @@ function pct0(v) {
  * `pct` and `pct0` above have to keep returning STRINGS: three call sites each concatenate them
  * into a sentence (the range beside a rate, the hero source line, the methodology arithmetic),
  * and `absent()` is a Node, which `+` would render as "[object HTMLSpanElement]". So the muted
- * dash arrives here instead, at the two call sites that are real cells. The defect it closes is
- * the one `absent()` exists for: a black "—" in a numeric column reads with exactly the weight
- * of a measured figure, and this one sits directly under a column of real close rates.
+ * dash arrives here instead, at the two call sites that are real cells (the hero's "Monthly
+ * close rate" mini and the unclassified-share pill's own wording).
+ *
+ * NOT `rateCell` (`./_rates.js`, imported below for the one cell that does fit its shape — see
+ * the "Close rate" column in `renderCapacity`). `capOverall.mmcrMean` and the unclassified share
+ * are bare percentages with no single count attached at this call site to serve as
+ * `rateView`'s denominator: the mean's own base ("N complete month(s)") is a sentence in the
+ * note paragraph below the table, not a count sitting beside the mini, and the unclassified
+ * share's base is `m.total`, already stated in the same sentence this value is embedded in.
+ * Forcing either through `rateCell`'s figure-then-denominator-line shape would either need a
+ * denominator slot this page's compact minis do not have, or repeat a count the sentence
+ * already gives.
  */
 function pct0Cell(v) {
-  return v === null || v === undefined ? absent() : pct0(v);
+  const n = num(v);
+  return n === null ? absent() : pct0(n);
 }
 
 /**
@@ -640,9 +667,20 @@ export async function renderProgram(main, _params, ctx) {
           label: "Close rate",
           className: "num num--key",
           help: ["Closed during the month as a share of the backlog open at its start."],
-          // A month with no backlog at its start has no close rate, and the black dash `pct0`
-          // returned for it read as a measured figure in a column of measured figures.
-          cell: (m) => pct0Cell(m.mmcr),
+          // `rateView`/`rateCell` (./mttr.js, ./_rates.js), not `pct0Cell` — this is the one
+          // percent on this page with an already-computed single-count denominator sitting in
+          // the very same row (`openAtStart`), so a reader can see what the rate was taken over
+          // without the arithmetic living only in the help tip above. `rateView(null, 0, …)`
+          // is exactly "a month with no backlog at its start has no close rate" — the same
+          // absence `pct0Cell` used to draw as a bare muted dash — but now with the population
+          // named ("0 open at start") instead of just a figure with nothing beside it. One
+          // visible change from the old cell: `rateView`'s `fmtPct` prints one decimal
+          // (./_rates.js), where `pct0` printed none — a reader now sees "45.0%" rather than
+          // "45%" in this one column.
+          cell: (m) => rateCell(rateView(
+            m.mmcr, m.openAtStart, m.openAtStart.toLocaleString() + " open at start",
+            "no backlog was open at the start of the month",
+          )),
         },
         {
           key: "highRiskNet",

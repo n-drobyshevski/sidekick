@@ -13,7 +13,16 @@
 //                  risk metric, not about a number.
 //   span.js        `fmtSpan` — hours/days/months/years on one scale. It is not `fmtDays` and
 //                  not `days1`; see the module header for the table of what the three do to
-//                  the same input, and why renaming it was the honest move.
+//                  the same input, and why renaming it was the honest move. P1.1 converged
+//                  every OTHER MTTR duration onto the shared pair and left `fmtSpan` at its
+//                  surviving call sites — the ones where a fleet's open backlog genuinely spans
+//                  hours to years and a fixed grain would either read as "0.0 d" or bury a
+//                  years-old CRITICAL in four-digit days: `pages/mttr.js` (the per-severity and
+//                  by-domain KM-median/p90 table columns, the naive-median secondary stat, the
+//                  MTTR-p90 and open-age-p90 hero minis), `pages/executive.js` (the by-domain
+//                  table's KM-median column and the week-over-week trend badge's magnitude),
+//                  `pages/data.js` (the per-repository median-MTTR column) and
+//                  `pages/history.js` (the KPI band's own median-MTTR tile).
 //   nvd.js         a CVE's page at NIST. No sibling register has a CVE.
 //   scopeBar.js    WHICH two scopes this register has (a Wiz/Domain tag, a support group).
 //                  The chips themselves are the shared `filterChipRow` now.
