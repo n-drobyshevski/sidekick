@@ -5,12 +5,14 @@ import { groupPalette } from "../charts.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
-import { fmtPct } from "./_rates.js";
+import { denominatorNode, fmtPct, rateCell } from "./_rates.js";
 import { agingTableModel, barsTableModel, trendTableModel } from "./_charts.js";
 import {
-  absent, absentText, changeChip, chartTable, chartTableModel, clear, dataTable, el, emptyState,
-  errorState, firstRunNotice, fmtDays, fmtSpan, glossaryTip, num, openSheet, pageHeader,
-  scopeBar, sectionLabel, segmented, sevBadge, skeleton, survivalTableModel, tip,
+  absent, absentText, boundedDays, changeChip, chartTable, clear, dataTable,
+  el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, heroLines,
+  heroStat, meter, num, openSheet, pageHeader, pluralize, scopeBar, sectionLabel,
+  segmented, sevBadge, skeleton, sparkLabel, sparkPath, sparkline, statRow, survivalTableModel,
+  tip, tipLabel,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -124,20 +126,43 @@ function toggleRow(ariaLabel, options, current, onPick) {
   });
 }
 
-// A chart card whose title row can carry an inline toggle on the right (via .chart-head)
-// and whose title can be a helpTip (methodology moves off the always-on caption onto a
-// hover, matching the table columns' convention). `box` is the .chart-box element.
+// THE ONE CHART CARD ON THIS PAGE, and it is now the only one in the register.
+//
+// `./_charts.js` carried a SECOND `chartCard(title, note, draw, table, help)` — ported from
+// gas_devsecops/pages/sca.js for parity and, by its own header's admission, never called by
+// any of this app's four chart pages. That file is deleted of it now rather than kept as an
+// unused export: two functions of one name, one of them dead, is the shape a later reader
+// picks the wrong one out of.
+//
+// WHY THIS ONE SURVIVED THE MERGE RATHER THAN THAT ONE. The ported card OWNS its canvas and
+// its `loadCharts()` call, which is right for a chart drawn unconditionally off data already
+// in hand — and wrong for every one of this page's eight call sites. Six of them hand in a
+// pre-built `.chart-box` because the card carries an inline toggle (`opts.toggle`, the
+// KM/naive clock, the survival window, the distribution view) or swaps two canvases inside one
+// box for the by-domain lens; the `renderCharts` grid batches every one of its `loadCharts()`
+// resolutions into a single `painters` pass rather than one promise per card. Taking the
+// ported shape would have meant dropping a feature at each of those sites or writing the
+// conditional twice. So the survivor is the one that takes a `box` and leaves the drawing to
+// the caller.
+//
+// WHAT IT GAINED FOR THE PER-SEVERITY FAN. `opts.head` replaces the `<h3>` outright, which is
+// what lets a fan card lead with a severity BADGE instead of a text title — colour is never
+// the only cue on a grid of six curves (PRODUCT.md, Accessibility), so the badge's dot AND
+// word have to be the card's heading. `opts.note` is the `.chart-note` line under it, which is
+// where each card states its own half-life in words. Both are optional and every existing call
+// site is byte-unchanged.
 //
 // `opts.table` IS THE CANVAS'S DATA-TABLE ALTERNATIVE — a `chartTable(...)` node, appended
-// after `box`. This is the ONE `.chart-card` shape this page uses; a caller that needs a
-// table hands it here rather than this file growing a second card-building function the way
-// gas_devsecops's `chartCard` (ported, unused, into `./_charts.js`) already is one.
+// after `box`.
 function chartCard(title, box, opts = {}) {
-  const h3 = opts.helpLines
-    ? el("h3", {}, tip(title, opts.helpLines))
-    : el("h3", {}, title);
-  const head = opts.toggle ? el("div", { class: "chart-head" }, h3, opts.toggle) : h3;
-  return el("div", { class: "chart-card" }, head, box, opts.table || null);
+  const h3 = opts.head
+    ? null
+    : opts.helpLines ? el("h3", {}, tip(title, opts.helpLines)) : el("h3", {}, title);
+  const head = opts.head
+    ? opts.head
+    : opts.toggle ? el("div", { class: "chart-head" }, h3, opts.toggle) : h3;
+  return el("div", { class: "chart-card" },
+    head, opts.note ? el("p", { class: "chart-note" }, opts.note) : null, box, opts.table || null);
 }
 
 // ------------------------------------------------------------------------- view models
@@ -289,15 +314,287 @@ export function rmstView(km) {
   };
 }
 
+/**
+ * The hero: the register's half-life, with the estimator's own three counts beside it.
+ *
+ * Ported from gas_devsecops's copy and adapted to this register's summary shape — `rowCount`
+ * is the tracked-lifecycle count here and the qualifier names it, because "56 observations"
+ * over a page whose every other figure is counted in lifecycles reads as a second population.
+ *
+ * The CENSORED count IS the qualifier. The estimate is only honest because the still-open
+ * findings stayed in as right-censored observations, so the sentence never prints the median
+ * without them.
+ */
+export function mttrHeroView(mttr) {
+  const km = (mttr && mttr.remediation && mttr.remediation.km) || null;
+  const half = kmHalfLifeView(km);
+  const events = num(km && km.events, 0);
+  const censored = num(km && km.censored, 0);
+  const total = num(km && km.total, 0);
+  const rowCount = num(mttr && mttr.rowCount, 0);
+  const resolved = num(mttr && mttr.overall && mttr.overall.resolved, 0);
+  const open = num(mttr && mttr.overall && mttr.overall.open, 0);
+  const unknown = (mttr && mttr.perSev && mttr.perSev.UNKNOWN) || {};
+  const unclassified = num(unknown.open, 0) + num(unknown.resolved, 0);
+  return {
+    ...half,
+    events,
+    censored,
+    total,
+    rowCount,
+    resolved,
+    open,
+    unclassified,
+    qualifier: rowCount
+      ? fmtCount(rowCount) + " tracked " + pluralize(rowCount, "lifecycle")
+        + " in the durable base · " + fmtCount(resolved) + " resolved · "
+        + fmtCount(open) + " open"
+        + (unclassified > 0
+          ? " · " + fmtCount(unclassified) + " unclassified severity"
+          : "")
+      : "No tracked lifecycles yet.",
+    // The estimator's own split, said separately from the register's counts above. `total` is
+    // what the curve was fitted over and it is NOT `rowCount`: a row with no readable clock is
+    // in the register and outside the estimate.
+    estimator: total
+      ? fmtCount(total) + " observations · " + fmtCount(events) + " closed (events) · "
+        + fmtCount(censored) + " still open (censored)"
+      : "No observations yet.",
+  };
+}
+
+/**
+ * The half-life trend, as ONE array read by two things.
+ *
+ * `renderCharts` plots it as the "MTTR over time" line; `renderHero` draws the same readings
+ * as a `sparkline` in the header's aside slot, because "297 days" over a half-life that has
+ * been falling for four readings is a different fact from the same 297 over one that doubled
+ * — and the trend was already on the wire. `ui/chartTable.js`'s one rule is that a picture and
+ * its table are handed the SAME array; the same reasoning covers two pictures, so the filter
+ * lives here and the page passes the result to both rather than each deriving its own.
+ *
+ * A slot with no `date` is dropped rather than plotted: the x axis is the date. A slot whose
+ * `km_median_days` is null is KEPT — that is a gap in the line, and dropping it would compress
+ * time and get the slope wrong in both pictures.
+ */
+export function halfLifeTrendPoints(trends) {
+  const raw = trends && Array.isArray(trends.trend) ? trends.trend : [];
+  return raw.filter((p) => p && p.date);
+}
+
+/**
+ * One small-multiple card per severity: the curve, and the sentence that has to carry the card
+ * if the colour cannot.
+ *
+ * THE COLOUR IS NEVER THE ONLY CUE, and on a grid of six curves that rule bites hardest — the
+ * red/orange/amber severity band is a measured colourblind risk (HIGH and MEDIUM sit 1.6 apart
+ * under deuteranopia). So every card carries the severity BADGE (dot plus the word) and a
+ * caption that states the half-life in words. A reader who sees no colour at all reads the
+ * same six facts.
+ *
+ * `caption` says "at least N days" wherever the median is absent and a bound is not — the
+ * middle case `kmHalfLifeView` exists for, restated per card because a card is read on its own
+ * and a dash beside a drawn curve reads as a broken chart rather than as a censored one.
+ *
+ * A SEVERITY WITH NO CURVE IS SKIPPED RATHER THAN DRAWN EMPTY. `kmPerSev` only holds the
+ * severities that had rows, and a severity whose curve came back with no steps has nothing to
+ * plot — an axis with no staircase asserts "measured, and flat", which is a different claim
+ * from "nothing here". `skipped` names them so the page can say so in one line, rather than
+ * letting a severity vanish from a grid whose own summary table still lists it.
+ *
+ * @param {object|null|undefined} remediation  `mttr.remediation`
+ * @param {string[]} order                     boot.palette.order
+ */
+export function severityCurvesView(remediation, order) {
+  const per = (remediation && remediation.kmPerSev) || {};
+  const levels = (order || []).concat(["UNKNOWN"]).filter((s, i, a) => a.indexOf(s) === i);
+  const present = levels.filter((sev) => per[sev]);
+  const hasSteps = (sev) => Array.isArray(per[sev].curve) && per[sev].curve.length > 0;
+  const cards = present.filter(hasSteps).map((sev) => {
+    const km = per[sev];
+    const half = kmHalfLifeView(km);
+    const events = num(km.events, 0);
+    const censored = num(km.censored, 0);
+    return {
+      sev,
+      curve: km.curve,
+      median: km.median === undefined ? null : km.median,
+      mean: km.mean === undefined ? null : km.mean,
+      half,
+      events,
+      censored,
+      total: num(km.total, 0),
+      caption: (half.measured ? "Half-life " + half.value : "Half-life not measured")
+        + ". " + fmtCount(events) + " " + pluralize(events, "event") + ", "
+        + fmtCount(censored) + " censored.",
+    };
+  });
+  cards.skipped = present.filter((sev) => !hasSteps(sev));
+  return cards;
+}
+
+/** `insights.AGE_BUCKET_LABELS`, mirrored — the client bundle cannot import the TypeScript
+ *  domain. Only a FALLBACK: the server ships `remediation.aging.labels` from that same
+ *  constant and `agingView` prefers what it was sent, so a bucket edit reaches this page from
+ *  one place. */
+export const AGE_BUCKET_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"];
+
+/** How each severity's SLA deadline reads against a bucket boundary. `exact` severities sit ON
+ *  an edge (7 / 30 / 90), so everything to the right of their bucket is wholly late; the other
+ *  two land mid-bucket and their own bucket is part in, part out. */
+const SLA_EDGE_WORDS = [
+  "the first bucket", "the 8-30d bucket", "the 31-90d bucket", "the 90+d bucket",
+];
+
+/**
+ * Open findings by age, against the per-severity SLA edge.
+ *
+ * WHY THIS SECTION EXISTS BESIDE "Remediation by severity". That table is the same open
+ * population reduced to one ratio per severity, and a ratio cannot say whether the breaches
+ * are eight days late or eight hundred.
+ *
+ * THE EDGE IS PER SEVERITY, WHICH IS WHY THERE IS USUALLY NO SINGLE LINE TO DRAW.
+ * `SLA_TARGETS` is 7 / 14 / 30 / 90 / 180 days, so CRITICAL's deadline falls at the end of the
+ * first bar and INFO's past the end of the last one. `charts.js::stackedAgeBar` takes ONE
+ * `slaEdgeAfter` index, so a rule is emitted only when every severity drawn agrees on it AND
+ * that shared edge is exact — otherwise one drawn line would claim an edge five sixths of the
+ * chart does not have. The legend line under the chart and the table's "Past SLA for" column
+ * carry it in every other case, which is also the non-colour route to the same fact.
+ *
+ * `unaged` IS A ROW COUNT, NOT A ZERO. The server counts open findings with no readable
+ * `first_seen` separately rather than bucketing them as young; `sum(row.total) + unaged` is
+ * the open population, and the caption prints the remainder whenever it is non-zero.
+ */
+export function agingView(remediation, order) {
+  const aging = (remediation && remediation.aging) || {};
+  const perSev = aging.perSev || {};
+  const labels = Array.isArray(aging.labels) && aging.labels.length
+    ? aging.labels.slice()
+    : AGE_BUCKET_LABELS.slice();
+  const slaEdge = aging.slaEdge || {};
+  const slaTargets = aging.slaTargets || {};
+  const slaEdgeExact = aging.slaEdgeExact || {};
+  const unaged = num(aging.unaged, 0);
+  const totalOpen = num(aging.totalOpen, 0);
+
+  // The same filter `stackedAgeBar` applies to its datasets (`palette.order.filter((s) =>
+  // perSev[s])`), so the table lists the bars that were drawn and no others.
+  const sevs = (order || []).concat(["UNKNOWN"])
+    .filter((s, i, a) => a.indexOf(s) === i)
+    .filter((s) => perSev[s]);
+
+  const edgeOf = (sev) => num(slaEdge[sev]);
+
+  const rows = labels.map((label, i) => {
+    const counts = {};
+    let total = 0;
+    let totalKnown = true;
+    for (const sev of sevs) {
+      const v = num((perSev[sev] || [])[i]);
+      counts[sev] = v;
+      // A total is only a total if every cell in the row was measured. Summing a null as a
+      // zero to keep the column tidy is the exact move `ui/figures.js` exists to refuse.
+      if (v === null) totalKnown = false;
+      else total += v;
+    }
+    return {
+      label,
+      counts,
+      total: totalKnown ? total : null,
+      // Severities for which EVERY finding in this bucket is already past its deadline.
+      breaches: sevs.filter((sev) => {
+        const e = edgeOf(sev);
+        return e !== null && i > e;
+      }),
+    };
+  });
+
+  const edges = sevs.map((sev) => {
+    const bucket = edgeOf(sev);
+    const target = num(slaTargets[sev]);
+    const exact = slaEdgeExact[sev] === true;
+    return {
+      sev,
+      target,
+      bucket,
+      exact,
+      sentence: bucket === null || target === null
+        ? sev + " has no SLA target, so no edge is stated for it."
+        : sev + " deadline " + target + " d falls "
+          + (exact ? "at the end of " : "inside ")
+          + (SLA_EDGE_WORDS[bucket] || "the last bucket")
+          + (exact
+            ? " — everything to its right is late."
+            : " — that bucket is part in, part out, and everything to its right is late."),
+    };
+  });
+
+  // One rule only when it is true of every bar drawn: the same bucket for all of them, and
+  // that bucket an exact boundary. Otherwise null, and the legend below the chart carries the
+  // edge — a single dashed line over six severities with five different deadlines would be a
+  // claim the data does not support.
+  const edgeAfter = edges.length
+    && edges.every((e) => e.exact && e.bucket !== null && e.bucket === edges[0].bucket)
+    ? edges[0].bucket
+    : null;
+
+  return {
+    show: !(totalOpen === 0 && unaged === 0),
+    labels,
+    perSev,
+    sevs,
+    rows,
+    edges,
+    edgeAfter,
+    unaged,
+    totalOpen,
+    // The origin, carried on the heading. PRODUCT.md's sixth principle: a clock says what it
+    // measured from and what it did with the rows it could not measure.
+    denominator: fmtCount(totalOpen) + " open "
+      + pluralize(totalOpen, "finding") + " with a readable age, measured from first detection"
+      + " to now. Resolved findings are not in this chart at all."
+      + (unaged > 0
+        ? " " + fmtCount(unaged) + " further open " + pluralize(unaged, "finding")
+          + (unaged === 1 ? " carries" : " carry")
+          + " no first-seen date and " + (unaged === 1 ? "is" : "are") + " bucketed nowhere."
+        : ""),
+  };
+}
+
+/**
+ * "CRITICAL 7 d, HIGH 14 d, ..." — the SLA-edge sentences as one line of figures.
+ *
+ * WHAT IT REPLACES: a list of one ~22-word sentence per severity, which is a table drawn as
+ * paragraphs — rows whose only varying content is a severity and a number. Those numbers, in
+ * the bars' own order, read against the bucket labels the chart's x axis already prints, place
+ * every edge; `sla-edge` in the glossary carries what the sentences said in general.
+ *
+ * THE TARGETS ARE THE PAYLOAD'S, NEVER A LITERAL. `agingView` reads them from
+ * `aging.slaTargets`, which the domain's `SLA_TARGETS` writes, so a deadline edited there
+ * moves this line. A severity with NO target says so rather than being dropped or rendered
+ * "null d": no target is exactly why that severity has no edge, and it is the one thing this
+ * line could say that the chart cannot.
+ *
+ * @param {Array<{sev: string, target: number|null}>} edges  `agingView(...).edges`
+ * @returns {string|null}  null when there is nothing to draw a legend for
+ */
+export function slaEdgeLegend(edges) {
+  const list = Array.isArray(edges) ? edges : [];
+  if (!list.length) return null;
+  return list
+    .map((e) => e.sev + " " + (num(e.target) === null ? "no target" : e.target + " d"))
+    .join(" · ");
+}
+
 // ------------------------------------------------------------------------ page formatters
 
-// Open-past-SLA cell, shared by the hero mini, the per-severity table, and the
+// Open-past-SLA cell, shared by the per-severity table and the
 // by-domain table: "632 (77%)" — the breached count with its share of the open
 // population in parentheses. "0" when nothing is open (pct is null then, not a fake
 // 0%); the muted em dash when the payload doesn't carry this metric at all (e.g. a
 // stale pre-remediation cache).
 //
-// ALL THREE CALL SITES ARE NODE CHILD POSITIONS, which is what lets the missing case be
+// BOTH CALL SITES ARE NODE CHILD POSITIONS, which is what lets the missing case be
 // `absent()` — a stale cache used to put a black dash beside three live counts, in the ink of a
 // measurement. The dash INSIDE the parenthesis stays a string, and it is `absentText` now
 // rather than a hand-typed literal — the one spelling ui/figures.js exists to make universal
@@ -323,18 +620,14 @@ function fmtOpenPastSla(o) {
   return `${breached.toLocaleString()} (${pctText})`;
 }
 
-// Awaiting-vendor-fix summary for the hero mini: "N (x% of open)"; the shared `absentText` dash
-// when the payload doesn't carry the segment at all (a stale pre-actionable cache) — a hand-
-// typed "—" before this port. pctOfOpen is null when nothing is open, so the share is dropped
-// rather than shown as a fake 0%.
-function fmtAwaiting(a) {
-  if (!a || a.overall === null || a.overall === undefined) return absentText;
-  const pctVal = num(a.pctOfOpen);
-  const pct = pctVal === null ? "" : ` (${pctVal.toFixed(0)}% of open)`;
-  return `${a.overall.toLocaleString()}${pct}`;
-}
+// `fmtAwaiting` USED TO LIVE HERE - "N (x% of open)", glued onto the end of the hero's
+// source sentence. Awaiting-a-vendor-fix is a `statRow` in the header strip now
+// (`awaitingStatRow`), which splits the count from its share: the count is the figure, the
+// share is the meter, and the sub-line names the open backlog they were taken over. One
+// formatter producing one string out of two figures had nowhere to put a denominator,
+// which is exactly why it carried none.
 
-// The wait for a vendor fix to EXIST, as the hero's second source line. Reads the same KMResult
+// The wait for a vendor fix to EXIST, as the last of the hero's qualifying lines. Reads the same KMResult
 // shape `kmHalfLifeView` above reads (the server ships the KM summary without its curve — no
 // chart plots these), so the bound wording ("at least X days", never the old "> X d" glyph) is
 // shared with the hero and with gas_devsecops's identical helper.
@@ -383,7 +676,10 @@ function latencyLine(vendor, disclosure) {
   // scan's own population counts, which no glossary entry can carry. So the card keeps its
   // sharper words and `term` only adds the route to the general definition.
   return tip(
-    [el("div", { class: "hero-src" }, `Wait for a vendor fix \u2014 ${parts.join(" \u00b7 ")}`)],
+    // `.hero-line`, not `.hero-src`: this sits inside `heroStat`'s sub slot now, where
+    // components.css's `.page-hero-sub .hero-line` is what makes it read as its own
+    // statement rather than as a continuation of the sentence above it.
+    [el("div", { class: "hero-line" }, `Wait for a vendor fix \u2014 ${parts.join(" \u00b7 ")}`)],
     detail,
     { term: "vendor-fix-wait" },
   );
@@ -410,14 +706,20 @@ const SWAP_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" st
 // carries the "Computing MTTR" announcement the old muted "Computing…" text used to give. The
 // caller leaves the by-domain host (below the fold, whole-chain only) cleared.
 function renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost }) {
+  // The `.page-header` shape the real hero is now, not the `.hero`/`.hero-minis` block it used
+  // to be: label, hero figure, two sub-lines, the aside strip, and a five-cell stat list.
+  // A skeleton that mirrors a layout the page no longer builds is a reflow on every load.
   clear(heroHost).append(
-    el("div", { class: "hero", role: "status", "aria-label": "Computing MTTR" },
-      el("div", { style: "display:flex; align-items:baseline; gap:32px; flex-wrap:wrap" },
-        skeleton("title", { width: "150px" }),
-        skeleton("stat", { width: "96px" })),
-      el("div", { style: "margin-top:10px" }, skeleton("line", { width: "60%" })),
-      el("div", { class: "hero-minis" },
-        ...[0, 1, 2, 3].map(() => el("div", {},
+    el("div", { class: "page-header", role: "status", "aria-label": "Computing MTTR" },
+      el("div", { class: "page-hero" },
+        el("div", { style: "margin-bottom:8px" }, skeleton("line", { width: "150px" })),
+        skeleton("stat", { width: "180px" }),
+        el("div", { style: "margin-top:10px" }, skeleton("line", { width: "70%" }))),
+      el("div", { class: "page-strip trend-aside" },
+        el("div", { style: "margin-bottom:8px" }, skeleton("line", { width: "120px" })),
+        skeleton("line", { width: "220px" })),
+      el("div", { class: "stat-list" },
+        ...[0, 1, 2, 3, 4].map(() => el("div", { class: "stat-row" },
           el("div", { style: "margin-bottom:8px" }, skeleton("line", { width: "84px" })),
           skeleton("stat", { width: "56px" }))))),
   );
@@ -468,9 +770,17 @@ export async function renderMttr(main, _params, ctx) {
   const heroHost = el("div", {});
   const chartsHost = el("div", {});
   const survivalHost = el("div", {});
+  // The per-severity survival fan and the open-backlog age distribution. Both are pure
+  // functions of the SUMMARY payload (`remediation.kmPerSev` and `remediation.aging`), so both
+  // get their own host and their own `mttrPaintPlan` slot rather than riding on the
+  // Distribution card's toggle — the fan is not a second view of the overall curve, it is six
+  // curves the overall one cannot show, and the aging bars measure the OPEN population the
+  // survival curve deliberately excludes.
+  const fanHost = el("div", {});
+  const agingHost = el("div", {});
   const slaHost = el("div", {});
   const byDomainHost = el("div", {});
-  main.append(heroHost, chartsHost, survivalHost, slaHost, byDomainHost);
+  main.append(heroHost, chartsHost, survivalHost, fanHost, slaHost, agingHost, byDomainHost);
 
   // Scope comes from the header switcher — a domain or a support group, at most one of them;
   // "" = no filter on that dimension.
@@ -547,6 +857,8 @@ export async function renderMttr(main, _params, ctx) {
     // leaves the charts / SLA table showing the old scope's numbers. The skeleton mirrors the
     // real layout so the swap to live content doesn't reflow; by-domain stays cleared.
     renderMttrSkeleton({ heroHost, chartsHost, survivalHost, slaHost });
+    clear(fanHost);
+    clear(agingHost);
     clear(byDomainHost);
     const params = { domain, supportGroup, severities: scopeParam() };
 
@@ -580,12 +892,21 @@ export async function renderMttr(main, _params, ctx) {
       const plan = mttrPaintPlan({
         mttr, page: pageData, pagePainted, summaryChanged, pageChanged, scoped: chipsSuppressed(),
       });
-      if (plan.hero) {
-        guard("the MTTR hero", heroHost,
-          () => renderHero(mttr, plan.historyChips ? pageData.trends : { history: [] }));
-      }
+      // THE WHOLE `trends` OBJECT TRAVELS TO THE HERO NOW, and under a scope too. This read
+      // `plan.historyChips ? pageData.trends : { history: [] }`, which blanked the trend
+      // whenever the chips were suppressed — but `historyChips` is a fact about the
+      // `mttr_history` SNAPSHOTS, which are register-wide and cannot be diffed against a
+      // scoped figure. The reconstructed `trend` beside them IS scoped (api.ts's
+      // `mttrTrendData` hands `loadTrend` the pre-filtered base rows), and it is what the
+      // header's sparkline draws — so blanking it under a scope cost the aside its entire
+      // picture for a reason that was never about it. `renderHero` re-derives the chip
+      // suppression from `chipsSuppressed()` itself, which is why one flag can go.
+      const heroTrends = pageData ? pageData.trends : { history: [], trend: [] };
+      if (plan.hero) guard("the MTTR hero", heroHost, () => renderHero(mttr, heroTrends));
       if (plan.survival) guard("the distribution", survivalHost, () => renderSurvivalCurve(mttr));
+      if (plan.fan) guard("the per-severity clock", fanHost, () => renderFan(mttr));
       if (plan.sla) guard("the SLA table", slaHost, () => renderSla(mttr));
+      if (plan.aging) guard("open findings by age", agingHost, () => renderAging(mttr));
       if (plan.charts) renderCharts(pageData.trends, mttr);
       if (plan.byDomain) {
         guard("the by-domain breakdown", byDomainHost, () => renderByDomain(pageData.byDomain, mttr));
@@ -606,7 +927,8 @@ export async function renderMttr(main, _params, ctx) {
       .then(onSummary).catch((e) => {
         if (seq !== loadSeq) return;
         console.error("[mttr] getMttr failed:", e);
-        clear(chartsHost); clear(survivalHost); clear(slaHost); clear(byDomainHost);
+        clear(chartsHost); clear(survivalHost); clear(fanHost); clear(slaHost);
+        clear(agingHost); clear(byDomainHost);
         clear(heroHost).append(errorState("Couldn't load remediation data.", {
           detail: String((e && e.message) || e),
         }));
@@ -1140,6 +1462,29 @@ export async function renderMttr(main, _params, ctx) {
     }, `Open ${dim.noun} breakdown →`));
   }
 
+  /**
+   * The hero strip: ONE figure, one qualifying curve, and the supporting facts as a stat row.
+   *
+   * WHAT MOVED AND WHY. This page used to build its own `.hero` block: a 2rem KM median, a
+   * second `kpi-value` naive median beside it, a `.hero-src` sentence, a `latencyLine`, and a
+   * four-tile `.hero-minis` band — five different figure weights invented on this page and
+   * nowhere else in the register, against the shared `pageHeader({hero, aside, stats})` that
+   * Executive and Coverage & efficiency already use. It is that component now: `heroStat` is
+   * the single hero value (DESIGN.md: at most one per page), the two secondary sentences are
+   * `heroLines` under it, and the minis are `statRow`s — which is what buys them a `meter`
+   * slot the hand-rolled tile never had.
+   *
+   * NO `route` HERE. The page's `<h1>` is in the title block appended once at the top of
+   * `renderMttr`; `test/contracts/pageHeader.js` allows exactly one `route:` header per page,
+   * so this one carries the figure and its stats and no heading. Two stacked `.page-header`
+   * blocks is the shape gas_devsecops's own MTTR page has.
+   *
+   * WHAT DID NOT MOVE. The change chips stay, and stay suppressed under a scope — the
+   * `mttr_history` snapshots are register-wide while these values are scoped, so diffing them
+   * shows a fake delta (`chipsSuppressed`, which records the release where a scope was added
+   * to the RPC and never joined that predicate). "not measured" stays the visible VALUE
+   * wherever a base is empty, and "at least N days" stays the visible hero value on a bound.
+   */
   function renderHero(mttr, trends) {
     clear(heroHost);
     if (!mttr.rowCount) {
@@ -1162,132 +1507,514 @@ export async function renderMttr(main, _params, ctx) {
       }
       return;
     }
-    const hist = trends.history;
+
+    const hist = (trends && trends.history) || [];
     const prev = hist.length > 1 ? hist[hist.length - 2] : null;
     // The prev snapshot (mttr_history) is global across domain/support/severity, while the
     // current values are scoped by the active filters. Diffing them would show a fake delta
     // (a small domain's 5d vs the global 45d prev reads as "−40d"), so only show the change
     // chips at the unscoped whole-register / all-severities view where the populations match.
-    // EVERY SCOPE THE SHELL CAN HOLD HAS TO BE LISTED HERE, and for one release one was not:
-    // the VC Domain dimension was threaded through this page's RPC but never joined this
-    // predicate, so a domain-scoped median was diffed against the whole-register snapshot and
-    // drew exactly the fake "−40d" the paragraph above warns about. That dimension has since
-    // merged into `domain`; the lesson is that this line is part of adding a scope.
-    // The vendor-fix filter folds in too: with it off, the current values exclude no-fix
-    // findings while mttr_history's snapshots never did, so a chip would diff filtered
-    // against unfiltered populations exactly like a domain/support/severity scope would.
+    // EVERY SCOPE THE SHELL CAN HOLD HAS TO BE LISTED IN `chipsSuppressed`, and for one release
+    // one was not: the VC Domain dimension was threaded through this page's RPC but never
+    // joined that predicate, so a domain-scoped median was diffed against the whole-register
+    // snapshot and drew exactly the fake "−40d" this paragraph warns about.
     const scoped = chipsSuppressed();
 
-    // `remediation` is additive on the server (see the plan) — a stale cached response
-    // from before the rollout won't carry it, so every read below is optional-chained and
-    // every affected mini/cell degrades to "—" rather than throwing.
+    // `remediation` is additive on the server (see the plan) — a stale cached response from
+    // before a rollout won't carry it, so every read below is optional-chained and every
+    // affected row degrades to "not measured" rather than throwing.
     const rem = mttr.remediation;
-    const km = rem?.km; // KMResult — the primary MTTR methodology now
+    const km = rem?.km; // KMResult — the primary MTTR methodology
+    const view = mttrHeroView(mttr);
     // Actionable-clock open-past-SLA, falling back to the from-detection value for a stale
     // pre-actionable cache (both share the {open, breached, pct} shape).
     const openPastSla = rem?.openPastSlaActionable?.overall ?? rem?.openPastSla?.overall;
     const overallPctiles = rem?.pctiles?.overall; // {p50, p90, count}
-    // Censoring-aware overall p90 (same survival curve as the KM median), replacing the naive
-    // closed-only p90. `undefined` means a stale pre-kmP90 cache → fall back to the naive p90;
-    // `null` means present but unobservable under censoring → renders "—" (never the naive one).
+    // Censoring-aware overall p90 (same survival curve as the KM median). `undefined` means a
+    // stale pre-kmP90 cache → fall back to the naive p90; `null` means present but
+    // unobservable under censoring, which `kmP90View` renders as an absence with a reason.
     const overallKmP90 = rem?.kmP90;
     const awaiting = rem?.awaiting; // {perSev, overall, openTotal, pctOfOpen}
 
-    const minis = el("div", { class: "hero-minis" });
-    // The four numbers a reader acts on beside the headline MTTR: how much resolved on
-    // time, how much open work has already breached, the slow tail, and how old the open
-    // backlog is. The naive closed-only comparison now lives on the "MTTR over time"
-    // toggle, the actionable clock is dropped from the default view, and awaiting-vendor-fix
-    // moves to the source line below — so this band matches Overview's 3–4-tile rhythm.
-    const miniDefs = [
-      // "of resolved" makes the survivorship explicit: In-SLA % scores only resolved
-      // findings, so it can look healthy while the open backlog ages (Open past SLA next).
-      // A null slaPct is "no resolved findings to score", not a rate — so the mini shows the
-      // muted dash rather than a black one sitting at the weight of the three real figures
-      // beside it.
-      ["In SLA (of resolved)", mttr.slaPct !== null ? `${mttr.slaPct.toFixed(1)}%` : absent(),
-        !scoped && prev && prev.sla_pct !== null && mttr.slaPct !== null
-          ? changeChip(mttr.slaPct, prev.sla_pct, { invert: true, suffix: "%" }) : null],
-      // Open findings already past their SLA target — unlike In SLA %, this scores open
-      // findings too. Up is worse, same as every other count-of-risk chip here, so no invert.
-      ["Open past SLA", fmtOpenPastSla(openPastSla),
-        !scoped && prev && prev.open_past_sla !== null && prev.open_past_sla !== undefined &&
-          openPastSla && openPastSla.breached !== null && openPastSla.breached !== undefined
-          ? changeChip(openPastSla.breached, prev.open_past_sla) : null],
-      ["MTTR p90", fmtSpan(overallKmP90 !== undefined ? overallKmP90 : overallPctiles?.p90), null],
-      // p90 of open-finding age, not the single oldest — labelled to match the table below.
-      ["Open age p90", fmtSpan(mttr.oldestDays),
-        !scoped && prev && prev.oldest_open_days !== null && mttr.oldestDays !== null
-          ? changeChip(mttr.oldestDays, prev.oldest_open_days, { fmt: fmtSpan }) : null],
-    ].filter(Boolean);
-    for (const [label, value, chip] of miniDefs) {
-      minis.append(el("div", {},
-        el("div", { class: "mini-label" }, label),
-        el("div", { class: "mini-value num" }, value, chip || null),
-      ));
-    }
-    const resolved = mttr.overall.resolved ?? 0;
-    const open = mttr.overall.open ?? 0;
-    // Findings whose severity never normalized to a real value — counted in every total
-    // above (rowCount, resolved, open) but invisible in the per-severity table unless the
-    // UNKNOWN row below is present. Surfacing the count here makes that gap legible instead
-    // of silently letting hero and table totals disagree.
-    const unclassified = (mttr.perSev.UNKNOWN?.open ?? 0) + (mttr.perSev.UNKNOWN?.resolved ?? 0);
-    // The metric itself (label + value) is the hover/focus target — no separate "i" glyph.
-    // No change chip on either KM stat: mttr_history only ever persisted the naive median
-    // (now a mini above), never a KM series, so there's nothing to diff against.
-    // The single hero value (DESIGN.md: at most one per page). The mean (KM · RMST) is no
-    // longer a second headline stat — it survives as a marker on the survival curve below,
-    // pointed to from the glossary entry's last line, so no methodology is lost.
-    //
-    // THE SAME DEFINITION pages/executive.js's hero carries, and the two used to be two
-    // hand-kept copies that had already drifted a word apart. One entry, both call sites:
-    // helpContent.js's `km-median`, which folds in the two lines only this copy had (the
-    // disappears-between-scans rule and the RMST marker on the curve below).
-    const metric = glossaryTip(
-      [
-        el("div", { class: "label" }, "Median MTTR (Kaplan–Meier)" + (domain ? ` — ${domain}` : "")),
-        el("div", { class: "hero-value num" }, kmHalfLifeView(km).value),
-      ],
-      "km-median",
+    const overallSla = rateView(
+      mttr.slaPct, view.resolved, fmtCount(view.resolved) + " resolved",
     );
-    // Secondary metric beside the hero — the naive median (closed findings only), the biased
-    // comparison the KM headline corrects for. Deliberately a step below the 2rem hero value
-    // (DESIGN.md: one hero value per page) while still reading beside the headline. It's the
-    // one MTTR figure with a persisted history series, so it keeps the change chip (only at
-    // the unscoped view, where the current population matches the global snapshot).
-    const naiveChip = !scoped && prev && prev.median_days !== null && prev.median_days !== undefined
-      && km?.naiveMedian !== null && km?.naiveMedian !== undefined
-      ? changeChip(km.naiveMedian, prev.median_days, { fmt: fmtSpan })
-      : null;
-    const naiveStat = glossaryTip(
-      [
-        el("div", { class: "label" }, "Median (naive, closed)"),
-        el("div", { class: "kpi-value num" }, fmtSpan(km?.naiveMedian), naiveChip),
-      ],
-      "naive-median",
-    );
-    // Awaiting-vendor-fix moves off its own tile onto the source line — the honest-state
-    // context stays legible without spending a KPI slot. Dropped when the vendor-fix filter
-    // is off (the count arrives zeroed and the page-level honesty note already covers it).
-    const awaitingClause = boot.settings.showNoFix !== false && awaiting && awaiting.overall
-      ? ` · ${fmtAwaiting(awaiting)} awaiting vendor fix`
-      : "";
-    heroHost.append(
-      el("div", { class: "hero" },
-        el("div", { style: "display:flex; align-items:baseline; gap:32px; flex-wrap:wrap" },
-          metric, naiveStat),
-        el("div", { class: "hero-src" },
-          `${mttr.rowCount.toLocaleString()} tracked lifecycle(s) in the durable base · ` +
-          `${resolved.toLocaleString()} resolved · ${open.toLocaleString()} open` +
-          (unclassified > 0
-            ? ` · ${unclassified.toLocaleString()} unclassified severity`
-            : "") +
-          awaitingClause),
-        latencyLine(rem?.vendorLatency, rem?.disclosureLatency),
-        minis,
+
+    heroHost.append(pageHeader({
+      hero: heroStat(
+        "Remediation half-life" + (domain ? " — " + domain : ""),
+        view.value,
+        heroLines(
+          view.qualifier,
+          naiveClause(km, prev, scoped),
+          latencyLine(rem?.vendorLatency, rem?.disclosureLatency),
+        ),
+        heroHelp(view),
       ),
+      aside: trendAside(halfLifeTrendPoints(trends)),
+      stats: [
+        slaStatRow(overallSla, prev, scoped),
+        pastSlaStatRow(openPastSla, prev, scoped),
+        p90StatRow(overallKmP90 !== undefined ? overallKmP90 : overallPctiles?.p90, km),
+        openAgeStatRow(mttr, prev, scoped),
+        ...(awaiting && awaiting.overall !== null && awaiting.overall !== undefined
+          && boot.settings.showNoFix !== false
+          ? [awaitingStatRow(awaiting)]
+          : []),
+      ],
+    }));
+  }
+
+  /**
+   * The naive closed-only median, as the hero's second sentence rather than a second figure.
+   *
+   * It used to be a `kpi-value` beside the 2rem hero, which is two headline figures on one
+   * page — DESIGN.md allows one. It is the BIASED comparison the Kaplan–Meier headline exists
+   * to correct for, so it belongs beside the estimate as a qualifier, not opposite it as a
+   * rival. It is also the one MTTR figure with a persisted history series, so it keeps its
+   * change chip — at the unscoped view only, where the snapshot describes the same population.
+   */
+  function naiveClause(km, prev, scoped) {
+    const naive = km?.naiveMedian ?? null;
+    const chip = !scoped && prev && prev.median_days !== null && prev.median_days !== undefined
+      && naive !== null
+      ? changeChip(naive, prev.median_days, { fmt: fmtSpan })
+      : null;
+    return el("span", {},
+      tipLabel("Median (naive, closed)", { term: "naive-median" }),
+      ": ",
+      el("span", { class: "num" }, fmtSpan(naive)),
+      chip);
+  }
+
+  /**
+   * The hero label's tip: the STATE picks the lines, and the LABEL picks the term.
+   *
+   * `kmHalfLifeView` puts "at least 297 days" in the 2rem slot, so the words are already on the
+   * surface and only the explanation moves. The term stays `half-life` in every state — the
+   * trigger is on the words "Remediation half-life", so that is the entry Enter goes to, and a
+   * control whose destination changes with the data is one a reader cannot learn. The bound's
+   * own sentence LEADS the lines instead; `lower-bound` stays reachable from the Key sheet, and
+   * `km-median` from this page's own title header.
+   */
+  function heroHelp(view) {
+    if (!view.isLowerBound) return { term: "half-life" };
+    return {
+      term: "half-life",
+      lines: [
+        "The curve never falls to half within the observed window, so there is no median to"
+        + " publish.",
+        "More than half of what is tracked is still open; the bound above is what is actually"
+        + " true.",
+      ],
+    };
+  }
+
+  /**
+   * The header's one qualifying aside: where this number is GOING.
+   *
+   * `pageHeader({aside})` is documented for exactly this ("a small curve"), and it was empty on
+   * this page while the series it wants sat in the "MTTR over time" card a screen further down.
+   * `sparkline` is inline SVG with no library, `role="img"`, and an `aria-label` that always
+   * states first / last / low / high — so the picture has a text alternative and the caption
+   * underneath does not have to be one.
+   *
+   * BORDERLESS AND CAPPED (`.trend-aside`, pages.css): DESIGN.md's Hero Stat rule is that the
+   * hero's dominance comes from size and whitespace, so a bordered card here would out-weigh it.
+   *
+   * FEWER THAN TWO READINGS DRAWS THE LABEL, NEVER NOTHING. `sparkPath` returns `d: ""` for a
+   * single reading (one point is not a trend) and for none at all; `sparkLabel` is the words for
+   * both cases, and they are printed as the caption rather than the picture silently
+   * disappearing from a slot that is there on every other paint. AND WHEN NOTHING IS DRAWN THE
+   * BOX GOES WITH IT: this aside is a single strip, so an empty 220x40 box between the label and
+   * the caption is a hole with nothing to align to.
+   *
+   * A NULL READING IS A GAP, NOT A ZERO. `km_median_days` is null on every reconstructed date
+   * whose curve never reached half, and `halfLifeTrendPoints` keeps those slots so the x axis
+   * stays time rather than compressing to the measured readings; `sparkPath` counts them and
+   * the caption prints the count.
+   */
+  function trendAside(points) {
+    const list = Array.isArray(points) ? points : [];
+    const values = list.map((p) => p.km_median_days);
+    const model = sparkPath(values, { w: 220, h: 40 });
+    const measured = model.gaps
+      ? fmtCount(model.n) + " of " + fmtCount(values.length) + " readings measured"
+      : fmtCount(model.n) + " readings";
+    // A FLAT SERIES SAYS IT IS FLAT. "199 days to 199 days" is two readings of one fact; the
+    // sparkline draws a straight line for exactly this case and the caption should agree with
+    // the picture rather than restate an endpoint twice.
+    const range = model.first === model.last
+      ? "flat at " + fmtDays(model.first)
+      : fmtDays(model.first) + " to " + fmtDays(model.last);
+    // FEWER THAN TWO READINGS STILL OWES A DENOMINATOR, and on this register that is the
+    // NORMAL case rather than the edge one. Measured on the dev harness: 211 evaluated dates,
+    // exactly ONE of which carries a half-life — the register's curve does not reach half on
+    // any earlier date, so `km_median_days` is null on the other 210. `sparkLabel` alone says
+    // "one reading, 31.9 days", which reads as a young series rather than as an old one nobody
+    // could measure, so the gap count joins it whenever there are gaps to name.
+    const caption = model.n >= 2
+      ? measured + ", " + range
+      : model.gaps
+        ? sparkLabel(model, "", "days") + " (" + measured + ")"
+        : sparkLabel(model, "", "days");
+    return el("div", { class: "page-strip trend-aside" },
+      el("div", { class: "kpi-label" }, tipLabel("Half-life over time", {
+        lines: [
+          "One reading per saved scan, plus one per day of pre-scan history reconstructed from"
+          + " first-detection dates.",
+          "The full line, and which readings are reconstructed, is in the MTTR over time card"
+          + " below.",
+        ],
+      })),
+      (model.d || model.end)
+        ? sparkline(values, {
+          label: "Remediation half-life over time", unit: "days", w: 220, h: 40,
+        })
+        : null,
+      el("div", { class: "small muted" }, caption));
+  }
+
+  /**
+   * "In SLA (of resolved)" as a stat cell rather than a bare percentage.
+   *
+   * The `meter` is `statRow`'s own slot and takes the rate; a rate with no base gets NO meter
+   * rather than an empty track, because `meter(null)` would resolve to a confident 0% fill —
+   * `Number(null)` is 0 and finite, CLAUDE.md's third recording of it — over a population
+   * nobody measured. The empty case keeps its own words in both places: "not measured" is the
+   * value (`rateView.text`), and the missing population is named in the sub-line.
+   */
+  function slaStatRow(rate, prev, scoped) {
+    const chip = !scoped && prev && prev.sla_pct !== null && prev.sla_pct !== undefined
+      && rate.measured
+      ? changeChip(rate.value, prev.sla_pct, { invert: true, suffix: "%" })
+      : null;
+    return statRow(
+      "In SLA (of resolved)",
+      chip ? el("span", {}, rate.text, chip) : rate.text,
+      rate.baseEmpty ? "nothing has closed yet" : "of " + rate.denominatorLabel,
+      meterPctFor(rate),
+      {
+        term: "sla-target",
+        lines: [
+          rate.baseEmpty
+            ? "Resolved inside the SLA window: not measured — nothing has closed yet, so there"
+              + " is no resolved population to compare against the target."
+            : "Taken over what CLOSED: of the findings that resolved, the share that resolved"
+              + " on or before their severity's target.",
+          "The clock starts when a vendor fix became available, and the comparison is"
+          + " inclusive — on or before the target.",
+        ],
+      },
     );
+  }
+
+  /**
+   * "Open past SLA" — the COUNT, with its share of the open backlog as the meter.
+   *
+   * TWO DIFFERENT DENOMINATORS SIT IN THIS STRIP and mixing them is the mistake this shape
+   * stops. "In SLA" is taken over RESOLVED findings; this one is taken over OPEN findings — of
+   * the ones still running, how many have already blown it. A single "SLA %" over everything
+   * would be neither, and the two sub-lines name their own base for that reason.
+   */
+  function pastSlaStatRow(openPastSla, prev, scoped) {
+    const open = num(openPastSla && openPastSla.open, 0);
+    const breached = num(openPastSla && openPastSla.breached);
+    const rate = rateView(
+      openPastSla && openPastSla.pct, open, fmtCount(open) + " open",
+      "no finding is open",
+    );
+    const chip = !scoped && prev && prev.open_past_sla !== null
+      && prev.open_past_sla !== undefined && breached !== null
+      ? changeChip(breached, prev.open_past_sla)
+      : null;
+    const value = fmtCount(breached);
+    return statRow(
+      "Open past SLA",
+      chip ? el("span", {}, value, chip) : value,
+      rate.baseEmpty ? rate.emptyLabel : rate.text + " of " + rate.denominatorLabel,
+      meterPctFor(rate),
+      {
+        term: "sla-target",
+        lines: [
+          "Taken over what is still RUNNING: of the findings still open, the share already past"
+          + " their severity's target, measured from when a vendor fix became available.",
+          "Unlike In SLA — which only scores findings that closed — an aged-out open CRITICAL"
+          + " counts here.",
+        ],
+      },
+    );
+  }
+
+  /** The slow tail, and the sub-line it is allowed to carry — `kmP90View` owns the three-state
+   *  decision (measured / the curve never reached it / nothing has closed at all). */
+  function p90StatRow(p90, km) {
+    const p = kmP90View(p90, km);
+    return statRow("MTTR p90", p.value, p.note, null, {
+      term: "half-life",
+      lines: [
+        "Kaplan–Meier 90th-percentile time-to-remediation — the slow tail, read off the same"
+        + " survival curve as the half-life above.",
+        "Censoring-aware, so a wave of fresh fast-patched findings cannot bias it low.",
+      ],
+    });
+  }
+
+  /** How old the open backlog is — the p90 of open-finding age, not the single oldest. */
+  function openAgeStatRow(mttr, prev, scoped) {
+    const chip = !scoped && prev && prev.oldest_open_days !== null
+      && prev.oldest_open_days !== undefined && mttr.oldestDays !== null
+      ? changeChip(mttr.oldestDays, prev.oldest_open_days, { fmt: fmtSpan })
+      : null;
+    const value = fmtSpan(mttr.oldestDays);
+    return statRow(
+      "Open age p90",
+      chip ? el("span", {}, value, chip) : value,
+      "nine in ten open findings are younger",
+      null,
+      { term: "age" },
+    );
+  }
+
+  /**
+   * "Awaiting vendor fix" as a stat cell, with its share of the open backlog as the meter.
+   *
+   * The figure is the COUNT of open findings with no published fix; the meter is that count's
+   * share of the open backlog, which is the rate the old source-line sentence carried. Both
+   * were in one clause before, and the count was the only one of the two a reader could act on.
+   * Dropped entirely when the vendor-fix filter is off — the count arrives zeroed then, and a
+   * zero that means "we excluded them" is exactly the zero this register refuses to print.
+   */
+  function awaitingStatRow(awaiting) {
+    const openTotal = num(awaiting.openTotal, 0);
+    const rate = rateView(
+      awaiting.pctOfOpen, openTotal, fmtCount(openTotal) + " open findings",
+      "no finding is open",
+    );
+    return statRow(
+      "Awaiting vendor fix",
+      fmtCount(awaiting.overall),
+      rate.baseEmpty ? rate.emptyLabel : rate.text + " of " + rate.denominatorLabel,
+      meterPctFor(rate),
+      {
+        term: "awaiting-fix",
+        lines: [
+          "Open findings with no published fix. Those sit outside every deadline until a fix"
+          + " exists, which is why the actionable clock starts there and not at detection.",
+          "They are still counted in the survival estimate above as censored observations —"
+          + " dropping them would leave only the findings that got fixed.",
+        ],
+      },
+    );
+  }
+
+  /**
+   * The fan: one small-multiple survival curve per severity, above the summary table that
+   * reduces each of them to three numbers.
+   *
+   * WHY IT EXISTS. `remediation.kmMedianPerSev` / `kmP90PerSev` have shipped for releases and
+   * the staircase they were read off was thrown away on the server — so no surface in this
+   * register could compare severity survival SHAPES, and three fixed statistics cannot say
+   * that CRITICAL closes fast and then stalls, or that LOW never moves at all. `kmPerSev` is
+   * that same curve, narrowed by the SAME `shipKM` on the server, so the fan and the table are
+   * two views of ONE estimate rather than two estimates.
+   *
+   * COLOUR IS NEVER THE ONLY CUE. Six curves in one grid is where PRODUCT.md's accessibility
+   * bar bites hardest — the red/orange/amber band separates by 1.6 under deuteranopia — so
+   * every card carries the severity BADGE as its heading and a caption stating the half-life
+   * in words, and the marker legend inside each canvas names the severity rather than "all".
+   *
+   * A SEVERITY WITH NO STEPS IS SKIPPED AND SAID. An axis with no staircase asserts
+   * "measured, and flat"; the severity simply had nothing to plot. Vanishing from a grid whose
+   * own table still lists the severity is the absence a reader would read as a bug, so the
+   * skipped ones are named in one line under the fan.
+   */
+  function renderFan(mttr) {
+    clear(fanHost);
+    // See `renderAging` for why: on an unread ledger the hero's first-run notice is the whole
+    // page, and a heading with nothing under it reads as a measured emptiness.
+    if (!mttr.rowCount) return;
+    const cards = severityCurvesView(mttr.remediation, boot.palette.order);
+    const skipped = cards.skipped || [];
+    if (!cards.length && !skipped.length) return;
+
+    fanHost.append(sectionLabel("The clock, by severity", {
+      term: "half-life",
+      lines: [
+        "Each severity's curve here and its row in the table below are one estimate read two"
+        + " ways — the table is that curve's median, its lower bound and its P90.",
+        "Open findings are in every curve as right-censored observations, so a staircase that"
+        + " stops stepping is a severity that stopped closing.",
+      ],
+    }));
+
+    if (cards.length) {
+      const grid = el("div", { class: "sev-fan" });
+      const pending = [];
+      for (const card of cards) {
+        const canvas = el("canvas", {
+          "aria-label": "Kaplan–Meier survival curve for " + card.sev + " findings",
+        });
+        grid.append(chartCard(null, el("div", { class: "chart-box" }, canvas), {
+          head: el("div", { class: "sev-fan__head" }, sevBadge(card.sev)),
+          note: card.caption,
+          // The same `card.curve` reference the wrapper below is handed, named once — the one
+          // rule ui/chartTable.js exists to enforce.
+          table: chartTable({
+            canvas,
+            caption: "Every step of this severity's curve: weeks and days since detection, and"
+              + " the share of " + card.sev + " findings still open after that step.",
+            model: survivalTableModel(card.curve),
+          }),
+        }));
+        pending.push({ canvas, card });
+      }
+      fanHost.append(grid);
+      loadCharts().then((charts) => {
+        for (const { canvas, card } of pending) {
+          charts.survivalCurve(
+            canvas,
+            card.curve,
+            // Two KM markers and no closed-only comparison: `shipKM` does not send
+            // `naiveMedian`/`naiveMean` per severity, and inventing a marker the payload does
+            // not carry is how a card would claim a statistic nobody computed.
+            { median: card.median, mean: card.mean },
+            // The severity FILL, read off the bootstrap palette — never the register blue,
+            // which would make six cards one colour. `scope` is what stops each card's legend
+            // claiming "all": the diamond here is THIS severity's restricted mean.
+            {
+              color: boot.palette.colors[card.sev],
+              subject: "for " + card.sev + " findings",
+              scope: card.sev,
+            },
+          );
+        }
+      }).catch(() => {
+        for (const { canvas } of pending) chartUnavailable(canvas);
+      });
+    }
+
+    if (skipped.length) {
+      // NOT A DASH AND NOT A GAP IN THE GRID. These severities have rows and an estimate; what
+      // they have not got is a single event to step down on, so there is no staircase to draw.
+      fanHost.append(el("p", { class: "small muted" },
+        "No curve drawn for " + skipped.join(", ") + " — "
+        + (skipped.length === 1 ? "that severity has" : "those severities have")
+        + " no closed finding to step the estimate down on yet."));
+    }
+  }
+
+  /**
+   * The open backlog as a SHAPE, with the SLA edge said out loud.
+   *
+   * WHY THIS SECTION EXISTS BESIDE the per-severity table above it. That table's "Open past
+   * SLA" is the same open population reduced to one ratio per severity, and a ratio cannot say
+   * whether the breaches are eight days late or eight hundred.
+   *
+   * The table under the canvas is built from the SAME `vm.labels` / `vm.perSev` the chart
+   * wrapper is handed, named once here — `ui/chartTable.js`'s one rule. Its "Past SLA for"
+   * column is the accessible half of the edge: a reader who cannot see a dashed rule, or for
+   * whom no rule was drawn because the five deadlines disagree, still reads which severities
+   * are wholly late in each bar.
+   *
+   * NO TOTAL COLUMN, deliberately, and `pages/_charts.js`'s `agingTableModel` header has the
+   * reason: a stacked total looks obvious and is not, because a null bucket count would have
+   * to be summed as a zero to produce one. `agingView` computes a null-poisoned `row.total`
+   * for exactly that case and the section's own `chart-note` carries the population instead.
+   */
+  function renderAging(mttr) {
+    clear(agingHost);
+    // FIRST RUN STOPS AT THE NOTICE. On an unread ledger every section below the hero reads a
+    // population of exactly zero, and `renderHero`'s `firstRunNotice` already carries the one
+    // sentence this page owes a reader — so a heading over an "no open findings to age yet"
+    // box would be a second answer to a question already answered, in words that sound like a
+    // measurement ("there are none") rather than like an absence ("nobody has looked").
+    // `renderCharts` has made this same test since it was written; the two new sections join
+    // it rather than inventing a third convention.
+    if (!mttr.rowCount) return;
+    const vm = agingView(mttr.remediation, boot.palette.order);
+    const heading = sectionLabel("Open findings by age", {
+      term: "age",
+      lines: [
+        "Open findings only, aged from first detection to now — a resolved finding stopped"
+        + " ageing and its lifetime is the survival curve's subject, not this one's.",
+        vm.denominator,
+      ],
+    });
+    // The base every bar is counted over, on the heading itself — the same
+    // `[data-denominator]` contract every rate on this page carries, for a section whose
+    // figure is a distribution rather than a single rate.
+    heading.setAttribute("data-denominator", String(vm.totalOpen));
+    agingHost.append(heading);
+
+    if (!vm.show) {
+      agingHost.append(emptyState(
+        "No open findings to age yet.",
+        "This chart counts open findings only, measured from first detection to now.",
+      ));
+      return;
+    }
+
+    const canvas = el("canvas", {
+      "aria-label": "Open findings by age bucket and severity",
+    });
+    // `agingTableModel` builds the bucket column and one column per severity DRAWN, filtered
+    // exactly the way `stackedAgeBar` filters its datasets. The breach column is appended
+    // rather than folded into that shared builder: it is a fact about THIS register's SLA
+    // targets, and the same builder serves the resolution-bucket histogram above, which has
+    // no deadline to be past.
+    const model = agingTableModel(vm.labels, vm.perSev, vm.sevs, "Age bucket");
+    model.columns.push({ key: "past", label: "Past SLA for", align: "text" });
+    model.rows.forEach((row, i) => {
+      const breaches = vm.rows[i] ? vm.rows[i].breaches : [];
+      row.push(breaches.length ? breaches.join(", ") : absentText);
+    });
+    const card = el("div", { class: "chart-card" },
+      // BOTH COUNTS, NO SENTENCE. "N open with a readable age" is the denominator and
+      // "M undated" is the population the bars cannot hold — the second is an honesty
+      // statement and stays on the surface as a number and the word for it, while the full
+      // origin sentence it came from is a line on the heading above.
+      el("p", { class: "chart-note" },
+        fmtCount(vm.totalOpen) + " open with a readable age"
+        + (vm.unaged > 0 ? " · " + fmtCount(vm.unaged) + " undated" : "")),
+      el("div", { class: "chart-box" }, canvas),
+      chartTable({
+        canvas,
+        caption: "Every bar of the stack as a count: one row per age bucket, one column per"
+          + " severity drawn, and which severities are already past their deadline in that"
+          + " bucket.",
+        model,
+      }));
+    agingHost.append(card);
+
+    // ONE LEGEND LINE INSTEAD OF FIVE SENTENCES. `agingView` writes a ~22-word sentence per
+    // severity and they are near-identical — a table drawn as paragraphs, whose only varying
+    // content is a severity and a number. The numbers themselves, in the order the bars are
+    // stacked and read against the bucket labels the x axis already prints, place every edge;
+    // `sla-edge` carries what the sentences said in general. NOTHING IS HARD-CODED: `e.target`
+    // is whatever the payload's `slaTargets` holds, so a deadline edited in the domain moves
+    // this line with it, and a severity with no target says so rather than printing "null d".
+    const legend = slaEdgeLegend(vm.edges);
+    if (legend) {
+      agingHost.append(el("p", { class: "small muted" },
+        tipLabel("SLA edges", { term: "sla-edge" }), ": ", legend));
+    }
+
+    loadCharts().then((charts) => {
+      charts.stackedAgeBar(
+        canvas,
+        vm.labels,
+        vm.perSev,
+        // EXACTLY the severities the table lists — `stackedAgeBar`'s own
+        // `palette.order.filter((s) => perSev[s])` cannot then draw a series the table omits
+        // or omit one it lists.
+        { order: vm.sevs, colors: boot.palette.colors },
+        "Open findings by age bucket and severity, measured from first detection.",
+        vm.edgeAfter === null ? {} : { slaEdgeAfter: vm.edgeAfter, slaEdgeLabel: "SLA" },
+      );
+    }).catch(() => {
+      chartUnavailable(canvas);
+    });
   }
 
   /** The distribution — one card that toggles between the Kaplan–Meier survival curve
@@ -1300,6 +2027,15 @@ export async function renderMttr(main, _params, ctx) {
     clear(survivalHost);
     const rem = mttr.remediation;
     if (!rem) return;
+    // THE SAME FIRST-RUN GATE THE TWO SECTIONS BELOW NOW MAKE, and this one is a fix rather
+    // than a new rule. MEASURED at `?noseed#/mttr`: the page rendered the first-run notice and
+    // then a "Distribution" heading over "Not enough resolved findings yet to draw the
+    // distribution — it appears once the first remediation is recorded", which is a true
+    // sentence about a register that HAS been read and a misleading one about a register that
+    // has not. `renderCharts` already returned early on this exact test; this section did not,
+    // and adding two more sections beside it would have made three headings over three empty
+    // boxes under one notice.
+    if (!mttr.rowCount) return;
     const hasCurve = !!rem.km?.curve?.length;
     const hasBuckets = !!(rem.buckets && rem.buckets.total);
     if (!hasCurve && !hasBuckets) {
@@ -1620,6 +2356,49 @@ export async function renderMttr(main, _params, ctx) {
     });
   }
 
+  /**
+   * The `meter--stat` that goes beside a rate — or NOTHING at all where there is no rate.
+   *
+   * The decision is `meterPctFor` and lives at module scope, pure, because `ui/data.js`'s
+   * `meter(value)` opens with `Number(value) || 0`: a null fills to 0%, and a 0% track beside
+   * the words "not measured" is a confident zero in picture form. `decorative` because the
+   * percentage is printed next to it — `ui/data.js`'s own contract for a meter whose figure is
+   * already in words.
+   */
+  function rateMeter(rate) {
+    const pct = meterPctFor(rate);
+    return pct === null ? null : meter(pct, { className: "meter--stat", decorative: true });
+  }
+
+  /** `rateCell` with the meter folded in — the shared cell, plus this table's third encoding. */
+  function withMeter(rate) {
+    const cell = rateCell(rate);
+    const bar = rateMeter(rate);
+    if (bar) cell.insertBefore(bar, cell.childNodes[1] || null);
+    cell.className = "rate-with-meter";
+    return cell;
+  }
+
+  /**
+   * Open-past-SLA as a count, its share, a meter and the base — the four encodings of one
+   * fact, where `fmtOpenPastSla` gave two of them glued into one string.
+   *
+   * `fmtOpenPastSla` stays, at the by-domain table, whose own comment argues for it: a dense
+   * per-group table with a denominator sentence under every cell buys a reader nothing the
+   * parenthetical does not already give. This table is five rows of severity, where the base
+   * genuinely differs per row and the meter is what makes the column comparable at a glance.
+   */
+  function pastSlaCell(o) {
+    if (!o || o.open === null || o.open === undefined) return absent();
+    const open = num(o.open, 0);
+    const rate = rateView(o.pct, open, fmtCount(open) + " open", "no finding is open here");
+    return el("span", { class: "rate-with-meter" },
+      el("span", { class: "num" }, fmtCount(num(o.breached, 0))),
+      el("span", { class: "small muted" }, " (" + rate.text + ") "),
+      rateMeter(rate),
+      denominatorNode(rate));
+  }
+
   function renderSla(mttr) {
     clear(slaHost);
     // The per-severity breakdown (table + posture bars) follows the severity dropdown,
@@ -1641,6 +2420,34 @@ export async function renderMttr(main, _params, ctx) {
       const km = mttr.remediation?.kmMedianPerSev?.[sev];
       return km !== undefined ? km : mttr.perSev[sev].mttr_median;
     };
+    /**
+     * The half-life cell, and the bound it is finally allowed to publish.
+     *
+     * P1.1 left this column printing a bare dash wherever the curve never fell to half,
+     * because the server shipped `kmMedianPerSev` and nothing else — so a severity whose
+     * median is genuinely unobservable was indistinguishable from one nobody measured. The
+     * bound is on the wire now (`kmLowerBoundPerSev`), and a bound is a TRUE STATEMENT: the
+     * median is at LEAST that far out.
+     *
+     * "≥ N d" here, not the hero's "at least N days", and README.md fixes that split on
+     * purpose: prose says "at least N" (`kmHalfLifeView`, the hero and each fan caption), a
+     * numeric CELL says "≥ N" (`ui/figures.js`'s `boundedDays`, which is the one
+     * implementation of it). The glyph is "≥" and never ">" — the bound is inclusive, and ">"
+     * claims something strictly stronger than the estimator showed.
+     *
+     * `bounded` rides beside the string so the cell can mute what it is not, rather than a
+     * caller parsing the text back out of it.
+     */
+    const kmMedianCell = (sev) => {
+      const median = kmMedianOf(sev);
+      const bound = mttr.remediation?.kmLowerBoundPerSev?.[sev];
+      const view = boundedDays(median, bound);
+      if (view.text === absentText) return absent();
+      return view.bounded
+        ? el("span", { class: "num" }, view.text,
+          el("span", { class: "small muted" }, " (lower bound)"))
+        : view.text;
+    };
     const kmP90Of = (sev) => {
       const km = mttr.remediation?.kmP90PerSev?.[sev];
       return km !== undefined ? km : mttr.remediation?.pctiles?.perSev?.[sev]?.p90;
@@ -1661,10 +2468,18 @@ export async function renderMttr(main, _params, ctx) {
           key: "kmMedian",
           label: "Median MTTR (KM)",
           className: "num",
-          help: ["Kaplan–Meier median time-to-remediation for this severity — the principal MTTR " +
-            "figure. Still-open findings count as censored instead of being ignored, so it isn't " +
-            "biased low by fresh fast-patched vulns."],
-          cell: (sev) => fmtSpan(kmMedianOf(sev)),
+          help: {
+            term: "half-life",
+            lines: [
+              "Kaplan–Meier median time-to-remediation for this severity — the principal MTTR "
+              + "figure. Still-open findings count as censored instead of being ignored, so it "
+              + "isn't biased low by fresh fast-patched vulns.",
+              "\u201c\u2265 N d\u201d means this severity's curve never fell to half inside the "
+              + "observed window, so the median is at least that far out and no exact figure "
+              + "exists to print.",
+            ],
+          },
+          cell: kmMedianCell,
         },
         {
           key: "kmP90",
@@ -1686,26 +2501,51 @@ export async function renderMttr(main, _params, ctx) {
         {
           key: "openPastSla",
           label: "Open past SLA",
-          className: "num",
-          help: ["Open findings already older than their severity's SLA target, measured from when " +
-            "a vendor fix became available. Unlike In-SLA % (which only scores resolved " +
-            "findings), an aged-out open CRITICAL counts here."],
-          cell: (sev) => fmtOpenPastSla(
+          // TWO DIFFERENT DENOMINATORS SIT IN THIS TABLE and mixing them is the mistake this
+          // shape stops, so each column says its own rather than a paragraph under the table
+          // saying both. A column heading is asked once, which is `ui/tip.js`'s whole rule for
+          // where a definition lives — and it is one tab stop for the column instead of one
+          // per row.
+          help: {
+            lines: [
+              "Taken over what is still RUNNING: of the findings still open at this severity, "
+              + "the share already past the target, measured from when a vendor fix became "
+              + "available.",
+              "Unlike In SLA — which only scores findings that CLOSED — an aged-out open "
+              + "CRITICAL counts here. A single SLA percentage over everything would be "
+              + "neither of the two.",
+            ],
+          },
+          // The count AND the rate AND the base. The count alone hides how big the backlog it
+          // came out of is; the rate alone hides how many findings that actually is; the meter
+          // is the third encoding and the only one that can be compared down a column at a
+          // glance. It is `decorative` because both figures are printed beside it.
+          cell: (sev) => pastSlaCell(
             mttr.remediation?.openPastSlaActionable?.perSev?.[sev]
             ?? mttr.remediation?.openPastSla?.perSev?.[sev]),
         },
         {
           key: "slaPct",
           label: "In SLA (of resolved)",
-          className: "num",
-          help: ["Share of resolved findings closed within their severity's SLA target — " +
-            "CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d."],
-          // Null is "nothing resolved at this severity yet", which is not a 0% and not a
-          // measured dash either — hence the muted one.
-          cell: (sev) => {
-            const pct = mttr.perSev[sev].sla_pct;
-            return pct !== null ? `${pct.toFixed(0)}%` : absent();
+          help: {
+            term: "sla-target",
+            lines: [
+              "Taken over what CLOSED: of the findings that resolved at this severity, the "
+              + "share that resolved on or before the target. The comparison is inclusive.",
+              "Targets are CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d.",
+            ],
           },
+          // `rateCell(rateView(...))` — the figure, then the base it was taken over in a
+          // `[data-denominator]` node under it. A null `sla_pct` is "nothing resolved at this
+          // severity yet", which `rateView` reports as `baseEmpty`: the cell then reads "not
+          // measured" over the population it WOULD have been taken over, rather than a bare
+          // dash that cannot say which of the two absences it is.
+          cell: (sev) => withMeter(rateView(
+            mttr.perSev[sev].sla_pct,
+            num(mttr.perSev[sev].resolved, 0),
+            fmtCount(num(mttr.perSev[sev].resolved, 0)) + " resolved",
+            "nothing has closed at this severity",
+          )),
         },
       ],
       // The UNKNOWN severity (findings whose severity never normalized to a real value) is

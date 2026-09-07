@@ -1,6 +1,15 @@
-// The chart-table helpers this register's four chart-bearing pages share: the eager
-// "chartCard" shape ported from gas_devsecops/src/client/js/pages/sca.js, and the
+// The chart-table helpers this register's four chart-bearing pages share: the
 // `chartTableModel` builders each of gas/charts.js's wrappers needs.
+//
+// `chartCard` USED TO LIVE HERE AND IS GONE. It was ported from
+// gas_devsecops/src/client/js/pages/sca.js "for parity", and this file's own header then
+// recorded that none of this app's four chart pages could call it without dropping a feature
+// — a toggle, a conditional branch, a two-canvas lens swap, or `renderCharts`'s single
+// batched `loadCharts()` pass. It stayed exported and uncalled for a whole wave. Two
+// functions of one name in one package, one of them dead, is how a later reader reaches for
+// the wrong one; `pages/mttr.js`'s own `chartCard` is the survivor and its header says why it
+// was the one that fit. `headingDenominator` went with it — it existed only to build that
+// card's heading.
 //
 // THE DEFECT THIS FILE EXISTS TO REMOVE. Every chart on mttr.js, overview.js, program.js and
 // history.js used to be `<canvas role="img">` and nothing else — no table a screen reader
@@ -13,17 +22,11 @@
 // `survivalTableModel` already does for the Kaplan–Meier curve both this app and
 // gas_devsecops share.
 //
-// `agingTableModel` / `severityCountsTableModel` / `chartCard` / `headingDenominator` are
-// PORTED, byte-for-byte in shape, from gas_devsecops/src/client/js/pages/sca.js — this
-// register draws the identical stacked-age-bar and severity-bar charts, over the identical
-// `{labels, perSev}` / `{counts, order}` shapes, so a second implementation would be a second
-// place for the two to drift. `chartCard` is kept for parity with that sibling (a page whose
-// chart is gated by data already in hand, drawn unconditionally, wants exactly this shape) —
-// none of this app's own call sites turned out to fit it unmodified without either dropping a
-// feature (a toggle, a conditional "not enough history" branch, a two-canvas lens swap) or
-// restructuring a conditional this package has no reason to touch, so every real call site
-// below builds its own `.chart-card` inline and hangs a `chartTable` off it directly. See each
-// page's own comments for why.
+// `agingTableModel` / `severityCountsTableModel` are PORTED, byte-for-byte in shape, from
+// gas_devsecops/src/client/js/pages/sca.js — this register draws the identical
+// stacked-age-bar and severity-bar charts, over the identical `{labels, perSev}` /
+// `{counts, order}` shapes, so a second implementation would be a second place for the two to
+// drift.
 //
 // `trendTableModel` / `pieTableModel` / `barsTableModel` / `scatterTableModel` /
 // `sparkTableModel` are new here — gas draws chart shapes gas_devsecops does not (a group pie,
@@ -33,63 +36,7 @@
 // there, so this file adds no formatter of its own (`gas/test/figures.test.js`'s sweep forbids
 // a page-local `num`/`fmtCount`/`pct` — this file lives under `pages/` and is swept too).
 
-import {
-  chartTable, chartTableModel, el, figureCardModel, num, onPageTeardown, tipLabel,
-} from "../ui.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
-
-/**
- * The denominator merge, for `chartCard`'s heading — ported unchanged from
- * gas_devsecops/src/client/js/pages/sca.js's private helper of the same name (it shares it
- * with `sectionCard` there; this file only ever needed the `chartCard` half). Returns null
- * unless there is really a sentence to prepend, which is what keeps a `help` with no
- * `denominator` key on the plain `tipLabel(title, help)` path.
- */
-function headingDenominator(help) {
-  if (!help || typeof help !== "object" || Array.isArray(help) || !help.denominator) return null;
-  const merged = figureCardModel({ help, denominator: help.denominator });
-  return merged.denominator ? merged : null;
-}
-
-/**
- * A chart card that survives a deployment whose policy refuses the charts bundle — ported
- * unchanged in shape from gas_devsecops/src/client/js/pages/sca.js's `chartCard`.
- *
- * `table` is the canvas's data-table alternative: `{ caption, model }`, where `model` is
- * already built by `chartTableModel` / `survivalTableModel` / one of the builders below from
- * THE SAME array the `draw` callback is about to hand the wrapper. It renders EAGERLY, before
- * `loadCharts()` is even asked — so the case this card exists for (the bundle refused,
- * `chartUnavailable(canvas)`) is also the case where the figures are the only thing left, and
- * they are already on screen.
- *
- * Kept for parity with the sibling this register ports its analytics from; see this file's
- * header for why none of THIS app's own four pages currently calls it.
- */
-export function chartCard(title, note, draw, table = null, help = null) {
-  const canvas = el("canvas");
-  const merged = headingDenominator(help);
-  const card = el("section", { class: "chart-card" },
-    el("h3", { class: "section-label" },
-      merged ? tipLabel(title, { lines: merged.lines, term: merged.term }) : tipLabel(title, help)),
-    note ? el("p", { class: "chart-note" }, note) : null,
-    el("div", { class: "chart-box" }, canvas),
-    table ? chartTable({ canvas, caption: table.caption, model: table.model }) : null,
-  );
-  if (merged) card.setAttribute("data-denominator", merged.denominator);
-  loadCharts()
-    .then((api) => {
-      draw(api, canvas);
-      onPageTeardown(() => {
-        try {
-          api.destroyChart(canvas);
-        } catch (e) {
-          /* the canvas is already detached — nothing left to destroy */
-        }
-      });
-    })
-    .catch(() => chartUnavailable(canvas));
-  return card;
-}
+import { chartTableModel, num } from "../ui.js";
 
 /**
  * The stacked age bar's series as a table model — ported unchanged from
