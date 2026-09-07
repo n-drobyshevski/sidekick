@@ -252,6 +252,67 @@ const ENTRIES = [
       "Gaining ground, keeping up and falling behind are the three readings of that comparison, with a dead band so a flat month is not a verdict.",
     ],
   },
+  // ---------------------------------------------------------------- the Executive front door
+  //
+  // FIVE ENTRIES PORTED FROM gas_devsecops, WITH ONE WORD CHANGED THROUGHOUT. That register
+  // calls the operation a sync; MANIFEST.sync here says `{ noun: "scan" }` and the rail's
+  // button says "Run scan", so an entry that said "sync" would send a reader looking for a
+  // control this app does not have (gas/DESIGN.md §5). `km-median` stays exactly as it is —
+  // pages/mttr.js reaches for it, and its own "> X d" reading is a fact about THAT page's
+  // table columns; `half-life` is the front door's own hero, whose value reads "at least N
+  // days" instead. Two spellings of one estimator is a real difference, not a duplicate.
+  {
+    // pages/executive.js's hero label, and its by-domain half-life column.
+    id: "half-life",
+    term: "Remediation half-life",
+    lines: [
+      "How long it takes for half of what is open today to be remediated.",
+      "Read off a Kaplan–Meier survival curve, so findings that are still open count as evidence rather than being dropped.",
+      "Preferred to a mean because remediation is long-tailed: a mean moves when a batch of easy findings closes, and can improve while real exposure does not.",
+    ],
+  },
+  {
+    // pages/executive.js's by-domain footnote — what a dash in the half-life column means.
+    id: "lower-bound",
+    term: "Lower bound",
+    lines: [
+      "A duration the curve never reached: more than half of what was tracked is still open, so the median is at least this far out and cannot be read exactly.",
+      "Prose says \"at least N days\" and a figure says \"≥ N\" — one notation per context, and inclusive either way, which is why \"more than\" would be a different claim.",
+    ],
+  },
+  {
+    // pages/executive.js's "Still open" stat row.
+    id: "censoring",
+    term: "Censored",
+    lines: [
+      "A finding that is still open has been open at least this long, but we do not know how long it will end up taking.",
+      "Dropping those rows and averaging what is left is the single most common way a remediation figure flatters its owner.",
+      "The curve keeps them as right-censored observations, which is what makes the half-life honest.",
+    ],
+  },
+  {
+    // pages/executive.js's "Fix next" section heading. This is the RANKING RULE, and it is a
+    // definition rather than a caveat: without it the list is eight owners in an order nobody
+    // can check.
+    id: "fix-next",
+    term: "Fix next",
+    lines: [
+      "Ranked by what cannot wait rather than by severity: a known-exploited finding on a reachable host, then an exploitable finding already past its window, then a critical one already past its window.",
+      "Grouped by the team or subscription that would be asked, because that is the smallest unit somebody can be asked to own.",
+    ],
+  },
+  {
+    // pages/executive.js's "Movement" aside. The method sentence used to sit under the rows as
+    // its own paragraph; the rows already carry the pills and the raw pair, so what was left
+    // to say is what the comparison is BETWEEN, which is a definition.
+    id: "movement",
+    term: "Movement",
+    lines: [
+      "The open backlog now against the same register a week or more of scanning ago. A rising count is worse.",
+      "The comparison is between two scans, not between two calendar dates — a register only learns anything on the days it looks.",
+      "The two scans have to be at least a week apart. Closer than that and no comparison is published rather than a noisy one.",
+    ],
+  },
 ];
 
 /** One entry by id, or null. Callers render nothing rather than guessing. */

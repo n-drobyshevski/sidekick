@@ -33,6 +33,16 @@ const EXPECTED_IDS = [
   // of; "Remediation capacity" is the one figure on Program that is a COMPARISON (close rate
   // against arrival rate) rather than a count, which is exactly the thing a reader gets wrong.
   "sla-band", "capacity",
+  // FIVE MORE, ADDITIVE, WITH THE EXECUTIVE REWRITE. Each is a word that page now uses in a
+  // way a reader could get wrong, and each is reached from a real trigger on it: the hero
+  // label (`half-life`), the "Still open" stat row (`censoring`), the by-domain footnote
+  // saying what a dash in the half-life column is (`lower-bound`), the "Fix next" heading —
+  // which is a RANKING RULE, the one thing that makes a list of eight owners checkable — and
+  // the "Movement" aside's own definition (`movement`). Ported from gas_devsecops with "sync"
+  // swapped for this register's noun. `km-median` is untouched and still reached from
+  // pages/mttr.js: the two entries define the same estimator at two different call sites with
+  // two different notations ("> X d" in a table cell, "at least N days" in a hero).
+  "half-life", "lower-bound", "censoring", "fix-next", "movement",
 ];
 
 // Long enough for the three-line entries in the file (the longest first-two line today is 218

@@ -206,23 +206,36 @@ registerEmptyStateContract({
   // three separate absences saying it three different ways) rather than through the one
   // shared component every other first-run state on this page uses. `data`'s two remain
   // deliberately unconverted — see below, unchanged from the original finding.
-  firstRunRoutes: ["attribution", "executive", "history", "mttr", "overview"],
+  //
+  // `executive` LEFT THIS LIST WITH THE P2.2 REWRITE, and the reason is the component rather
+  // than the claim. That page no longer draws `firstRunNotice` — a one-line box saying the
+  // ledger has not been read — because it now draws the ITEMISED first-run panel its sibling
+  // does: `emptyState(heading, hint, { variant: "firstrun", items })`, one row per withheld
+  // figure naming what unlocks it and which control does the unlocking (see
+  // `executiveFirstRunView` and `test/executiveFirstRun.test.js`, which holds the panel's
+  // shape and its zero-suppression). It is a STRONGER statement than the shared notice, not a
+  // dropped one, and gas_devsecops's own registration excludes `executive` for exactly this
+  // reason. Keeping it here would force the page back to the weaker component, or to drawing
+  // both — two absences saying the same thing in two voices, which is what this whole
+  // contract exists to stop.
+  firstRunRoutes: ["attribution", "history", "mttr", "overview"],
   // `data`'s two are section notes inside Report and Export ("No scan saved yet — run a scan
   // to generate a report"), which name the specific thing that section cannot do; replacing
   // them with one page-wide notice would say less, in a bigger box, twice. Registering `data`
   // here to make the list look symmetrical would be the tail wagging the page.
   //
-  // `attribution`, `executive` AND `overview` CANNOT CARRY A DATE, and for the same reason:
-  // each one's only `firstRunNotice(` call renders inside `if (!boot.latestScan)` (or its
-  // equivalent branch, on executive.js's page-level notice) — `synced: false` is a literal
-  // there, never a value derived at render time, so there is never a scan to date. Same shape
-  // as gas_devsecops's `data` route (`gas_devsecops/test/shared.test.js`).
+  // `attribution` AND `overview` CANNOT CARRY A DATE, and for the same reason: each one's only
+  // `firstRunNotice(` call renders inside `if (!boot.latestScan)` — `synced: false` is a
+  // literal there, never a value derived at render time, so there is never a scan to date.
+  // Same shape as gas_devsecops's `data` route (`gas_devsecops/test/shared.test.js`).
+  // `executive` is off both lists together (see above): it dates its own panel, from
+  // `executiveFirstRunView`'s `synced`, through a component this contract does not measure.
   // `mttr` and `history` are NOT here: both pass `at:` on the branch where a scan exists but
   // tracked nothing (`synced: true`), so the contract's own regex finds a dated call in each
   // file even though each ALSO carries an undated `synced: false` branch for the no-scan-at-
   // all case — the check is file-level ("does this route ever date its notice"), not
   // per-call, and both routes do.
-  firstRunNoAt: ["attribution", "executive", "overview"],
+  firstRunNoAt: ["attribution", "overview"],
 });
 
 // =========================================================================================
