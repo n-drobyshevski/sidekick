@@ -808,8 +808,35 @@ describe("historyModel", () => {
     expect(m.kpis.tracked).toBe(8);
     expect(m.kpis.open).toBe(5);
     expect(m.kpis.resolvedAllTime).toBe(3);
-    expect(m.kpis.medianMttr).toBe(10);
     expect(m.kpis.km.total).toBe(8);
+  });
+
+  /**
+   * WHY `kpis.medianMttr` IS GONE, AND WHAT THIS FIXTURE SAYS ABOUT IT.
+   *
+   * The retired claim was `expect(m.kpis.medianMttr).toBe(10)` — `overall.mttr_median`, the
+   * plain median over the three rows that CLOSED. It was true of the field and false of the
+   * card that drew it: the Scan History KPI band captions that figure with the `half-life`
+   * glossary term, which defines a Kaplan-Meier estimate that keeps still-open findings in as
+   * right-censored evidence (PRODUCT.md's seventh principle — the clock has to say what it
+   * did with the rows it could not measure).
+   *
+   * THIS FIXTURE IS THE SUBSTITUTION IN MINIATURE. Eight tracked, three closed, five still
+   * open: the curve never falls to half, so there is NO Kaplan-Meier median to publish at all
+   * and the honest figure is a lower bound of 69 days. The retired field answered 10 — a
+   * confident number, seven times smaller, over a population that is five-eighths unmeasured.
+   * On the dev seed the same substitution reads 93 days against "at least 297 days".
+   *
+   * So the pin moves to the two fields the client now reads, and the naive one is asserted
+   * ABSENT rather than merely unused: a payload key nothing reads is the next reader's trap.
+   */
+  it("publishes the Kaplan-Meier half-life — a bound where there is no median, and no naive median beside it", () => {
+    const m = historyModel(ALL) as any;
+    expect(m.kpis.km.median).toBeNull();
+    expect(m.kpis.km.medianLowerBound).toBe(69);
+    expect(m.kpis.km.events).toBe(3); // the three that closed
+    expect(m.kpis.km.censored).toBe(5); // the five the plain median would have dropped
+    expect("medianMttr" in m.kpis).toBe(false);
   });
 
   it("reports per-scope scan coverage", () => {

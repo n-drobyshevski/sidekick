@@ -61,6 +61,15 @@ import {
 } from "../ui.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import { movementBarsModel, movementBlocks } from "./historyModel.js";
+// THE HALF-LIFE DECISION, NOT A SECOND COPY OF IT. `kmHalfLifeView` is the one function that
+// turns a shipped KM result into the three honest outcomes — a measured median, a lower bound
+// ("at least N days"), or "Not measured" — and the MTTR page's hero already draws through it.
+// This page's fourth KPI card publishes the same statistic over the same population, so it
+// takes the same chooser: two implementations of one decision is how the two surfaces would
+// come to disagree again. Reaching across a page module is the established shape here
+// (`program.js` imports `fmtCount`/`fmtDays` from mttr.js already; `chartCard` below comes
+// from `sca.js`); mttr.js has no module-level side effects and no import path back here.
+import { kmHalfLifeView } from "./mttr.js";
 // The chart-card shell with its eager data-table alternative and its "chart unavailable"
 // fallback, reached ACROSS a page module the way `program.js` already reaches for it. It is
 // declared in sca.js because that is where it was first needed; a fourth copy here would be
@@ -151,8 +160,24 @@ export function groupBySync(scans) {
   }));
 }
 
-/** The headline KPIs: tracked / open / resolved, plus the derived resolved SHARE with its
- *  own denominator — the one rate this page's KPI band can honestly publish. */
+/**
+ * The headline KPIs: tracked / open / resolved, the derived resolved SHARE with its own
+ * denominator — the one rate this page's KPI band can honestly publish — and the half-life.
+ *
+ * THE FOURTH CARD PUBLISHED THE WRONG STATISTIC, and the payload's own comment said so. It
+ * read `kpis.medianMttr` — `overall.mttr_median`, the plain median over the rows that have
+ * CLOSED — under the `half-life` glossary term, which defines a Kaplan-Meier figure that
+ * keeps still-open findings in as censored evidence. Those are two different claims about two
+ * different populations, and on the dev seed they are not close: 93 days here against "at
+ * least 297 days" on the MTTR page and in the executive summary, over the same 554 rows,
+ * because the plain median drops the 416 that are still open. So the band reads `kpis.km` —
+ * already on the wire, over the same `visibleRows` population `buildMttr` measures — through
+ * `kmHalfLifeView`, and `medianMttr` is gone from the payload rather than left for the next
+ * reader to pick up.
+ *
+ * `halfLife` IS THE VIEW OBJECT, NOT A STRING. The caller renders `.value` and may style or
+ * caption off `.isLowerBound` / `.measured`; nothing reads meaning back out of the string.
+ */
 export function kpiView(kpis) {
   const k = kpis || {};
   const tracked = num(k.tracked, 0);
@@ -161,13 +186,13 @@ export function kpiView(kpis) {
     tracked,
     open: num(k.open, 0),
     resolvedAllTime: resolved,
-    medianMttr: k.medianMttr === null || k.medianMttr === undefined ? null : num(k.medianMttr),
+    halfLife: kmHalfLifeView(k.km),
     resolvedSharePct: tracked > 0 ? (resolved / tracked) * 100 : null,
   };
 }
 
 /**
- * THE THREE KPI SERIES, AS SLOTS — one entry per trend point, a non-number left as a GAP.
+ * THE FOUR KPI SERIES, AS SLOTS — one entry per trend point, a non-number left as a GAP.
  *
  * WHY THE CARDS GET A LINE AT ALL. Three of the four figures in the band say where a number
  * IS and none of them said where it is GOING, while the series they are the last point of sat
@@ -198,6 +223,15 @@ export function kpiSparkSeries(trend) {
     }),
     open: points.map((p) => num(p.open)),
     resolved: points.map((p) => num(p.resolved)),
+    // THE HALF-LIFE LINE, AND IT IS MOSTLY GAPS ON PURPOSE. `km_median_days` arrives already
+    // masked server-side (`trend.withKmMedian`, see the module header): a date whose curve
+    // never reached half carries `null`, and on the dev seed 205 of 208 dates are exactly
+    // that. `kmMedianPoints` below FILTERS those nulls, because the Chart.js line at the foot
+    // of this page plots against real dates and can simply not draw them; a sparkline has
+    // only slots, so dropping them here would compress 208 dates into 3 and draw a shape
+    // nothing measured. The gap keeps its place and breaks the line, and `sparkCaption` says
+    // "3 of 208 readings measured" so the empty 98% cannot be read as flat.
+    kmMedian: points.map((p) => num(p.km_median_days)),
   };
 }
 
@@ -224,6 +258,29 @@ export function sparkCaption(model, format) {
     ? "flat at " + fmt(model.first)
     : fmt(model.first) + " to " + fmt(model.last);
   return readings + ", " + range;
+}
+
+/**
+ * The half-life card's caption — the series' own shape, PLUS THE ANCHOR IT WAS READ AT.
+ *
+ * THE FIGURE AND THE LINE ARE NOT THE SAME INSTANT, and without the anchor a reader is owed
+ * an explanation nothing on the card gives. The value above is `kpis.km`, a curve fitted at
+ * REQUEST TIME over every visible row. The line under it is `km_median_days`, one reading per
+ * saved scan plus one per reconstructed pre-scan day, each replaying the register — and its
+ * own `awaitingFixAsOf` — as it stood on THAT date, with any date whose curve never reached
+ * half dropped. On the dev seed the card says "at least 297 days" and the line is flat at
+ * 199: a difference in what was measured, not an arithmetic error. Naming the anchor is what
+ * makes it read as the first.
+ *
+ * NOTHING TO ANCHOR WHEN NOTHING WAS READ. `sparkCaption` answers "Not measured" for a series
+ * with no readings at all; dating that would put a scan behind a figure no scan produced.
+ *
+ * `fmtDays` IS THE FORMAT, matching the tile above it — see `renderKpis` for the `fmtDays`
+ * vs `days1` split.
+ */
+export function kmSparkCaption(model) {
+  const caption = sparkCaption(model, fmtDays);
+  return model && model.n >= 1 ? caption + " — as of each saved scan" : caption;
 }
 
 /** The KM-median line, nulls filtered — the client half of "kmSkipMask respected" (see the
@@ -588,14 +645,22 @@ export async function renderHistory(host, _params, _ctx) {
    * `d: ""` for one reading and for none — one point is not a trend, and a line through it
    * would claim a direction nothing measured — so the caption is printed on its own and the
    * card says "Not measured" where that is what happened.
+   *
+   * `opts.unit` AND `opts.caption` ARE FOR THE ONE CARD WHOSE SERIES IS NOT A COUNT. Three of
+   * the four are findings, and `fmtCount` (the caption's default) and a bare `aria-label`
+   * number are right for those. The half-life is days, and it is also the one series whose
+   * readings are anchored somewhere other than the figure above them — so it passes its own
+   * caption function (`kmSparkCaption`) rather than this one growing a second decision.
    */
-  function sparkCard(card, values, name) {
+  function sparkCard(card, values, name, opts) {
+    const o = opts || {};
     const model = sparkPath(values, { w: 120, h: 28 });
     const strip = el("div", { class: "kpi-spark" });
     if (model.n >= 2) {
-      strip.append(sparkline(values, { label: name, w: 120, h: 28 }));
+      strip.append(sparkline(values, { label: name, w: 120, h: 28, unit: o.unit || "" }));
     }
-    strip.append(el("span", { class: "kpi-spark__cap" }, sparkCaption(model)));
+    strip.append(el("span", { class: "kpi-spark__cap" },
+      o.caption ? o.caption(model) : sparkCaption(model)));
     card.append(strip);
     return card;
   }
@@ -618,20 +683,35 @@ export async function renderHistory(host, _params, _ctx) {
         ));
         return card;
       })(), series.resolved, "Findings resolved over time"),
-      // NO SPARKLINE ON THIS ONE, AND THE REASON IS A DEFECT RATHER THAN A GAP IN THE PAYLOAD.
-      // The obvious series to draw here is `km_median_days`, which this page already plots at
-      // its foot — but that is the KAPLAN-MEIER median, and this card's value is
-      // `kpis.medianMttr`, which is `overall.mttr_median`: the plain median over resolved rows
-      // only. On the dev seed the card reads 93 days while the last measured KM point reads
-      // 198.5, because the KM estimate keeps the 416 still-open findings as censored
-      // observations and the plain median drops them. A line under the figure is read as
-      // "where this number is going", so drawing one statistic under another would make an
-      // existing inconsistency louder rather than saying anything true. Recorded here, not
-      // fixed: which of the two this card should publish is a server-side decision.
+      // THE SPARKLINE THAT THE FIX UNBLOCKED. This card carried no line, and the comment here
+      // named the reason: the card published `kpis.medianMttr` (the plain median over closed
+      // rows) while the only series to draw under it was `km_median_days` (Kaplan-Meier). A
+      // line under a figure is read as "where this number is going", so drawing one statistic
+      // under another would have made an existing inconsistency louder. The card publishes
+      // the KM median now (`kpiView`'s doc comment has the full account), so the series and
+      // the figure are finally the same statistic and the line says something true.
       //
-      // KPI TILE, NOT A TABLE CELL — `fmtDays` is the prose/KPI-tile duration format
-      // ("93 days"), `days1` the table-cell one ("92.8 d"); this card had the two crossed.
-      kpiCard(glossaryTip("Median MTTR", "half-life"), fmtDays(v.medianMttr)),
+      // THE ANCHOR IS IN THE CAPTION BECAUSE THEY ARE STILL NOT THE SAME INSTANT: the figure
+      // is fitted at request time, each reading on the line is fitted as of a saved scan.
+      // `kmSparkCaption` above is where that sentence lives and why.
+      //
+      // KPI TILE, NOT A TABLE CELL — `kmHalfLifeView` publishes the prose form ("41 days",
+      // "at least 297 days"), which is what a tile takes; `boundedDays`'s "≥ 297.0 d" is the
+      // numeric-cell notation and belongs in a table (README.md, above the Pages table). This
+      // card had the two crossed once already, in the other direction.
+      //
+      // ONE STATISTIC, ONE NAME. The label read "Median MTTR" while the MTTR page's hero
+      // called the same figure, over the same population, "Remediation half-life" — and both
+      // pointed at the same `half-life` glossary entry, which is itself titled "Remediation
+      // half-life". A reader comparing the two pages had to work out that the two names were
+      // one number; the wave that ended with this fix was called "one vocabulary for
+      // figures", and a second name under one term is exactly the drift it exists to stop.
+      sparkCard(
+        kpiCard(glossaryTip("Remediation half-life", "half-life"), v.halfLife.value),
+        series.kmMedian,
+        "Remediation half-life over time",
+        { unit: "days", caption: kmSparkCaption },
+      ),
     );
   }
 
@@ -1010,7 +1090,7 @@ export async function renderHistory(host, _params, _ctx) {
         // dropped, which is what makes the median honest as of each replayed date — is what
         // `censoring` MEANS on this chart, and it qualified nothing that is printed. The term
         // moves from `half-life` to `censoring` for the same reason: `half-life` is what the
-        // figure IS and it is already reachable from the Median MTTR card two sections up,
+        // figure IS and it is already reachable from the half-life card two sections up,
         // while nothing on this page routed to the method that makes the line trustworthy.
         el("h3", { class: "section-label" }, tipLabel("MTTR trend (KM median)", {
           term: "censoring",

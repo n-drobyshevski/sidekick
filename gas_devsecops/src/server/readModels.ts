@@ -1527,7 +1527,6 @@ function buildHistory(n: NormParams): Rec {
     .reverse(); // newest first, as the table draws it
 
   const rows = visibleRows(snap.rows, n);
-  const { overall } = mttrFromLedger(rows as unknown as Rec[], { now: snap.now });
 
   const movementRows = movementPopulation(snap.rows, n);
   const movement: Rec = {};
@@ -1563,9 +1562,17 @@ function buildHistory(n: NormParams): Rec {
       tracked: rows.length,
       open: rows.filter((r) => isOpen(r.status)).length,
       resolvedAllTime: rows.filter((r) => !isOpen(r.status)).length,
-      // The KM median, NOT the naive closed-only one, and its lower bound beside it: where the
-      // curve never reaches half there is no median to print and the bound is what is true.
-      medianMttr: overall.mttr_median ?? null,
+      // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
+      // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
+      // plain median over resolved rows. The page drew THAT one, captioned with the
+      // `half-life` glossary term, which defines a Kaplan-Meier figure that keeps still-open
+      // findings as censored evidence. On the dev seed the two disagree by a factor of three:
+      // 93 days against the MTTR page's "at least 297 days" over the same population, because
+      // the plain median drops the 416 rows that have not closed yet. The naive field is
+      // retired rather than left on the wire beside the honest one — a payload key nothing
+      // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
+      // than no key", applied to a payload field) — so `km` is the only median this page can
+      // publish, and where the curve never reaches half `medianLowerBound` is what is true.
       km: shipKM(kaplanMeier(rows)),
     },
     // `mttrPageTrendSlice` reads both of these keys.

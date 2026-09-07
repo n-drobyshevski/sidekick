@@ -295,6 +295,31 @@ describe("halfLifeTrendPoints: the sparkline and the line chart read the SAME se
     expect(measuredOnly.length).not.toBe(halfLifeTrendPoints(trends).length);
   });
 
+  /**
+   * WHEN THE PICTURE IS REFUSED, THE BOX GOES WITH IT — on this page, and deliberately not on
+   * Scan History.
+   *
+   * `sparkPath` refuses a run narrower than its own end dot (`MIN_TREND_SPAN_PX`), and this
+   * series is exactly that shape on the dev seed: 3 readings in 208 slots, adjacent at the
+   * right-hand edge, 2.09px of run inside a 220px box. The shared module MARKS the node
+   * (`data-empty="narrow"`) rather than deciding what a layout should do about it, because
+   * the two callers want opposite things: this aside is a single strip, where an empty
+   * 220x40 box is a hole between the label and the caption, while the Scan History band is
+   * four cards side by side, where the same empty strip keeps the fourth caption on the other
+   * three's baseline. What must not happen is the decision drifting from the picture — so the
+   * gate reads the same `model` the strip was measured with, not a second `sparkPath` call.
+   */
+  it("the aside drops the box when nothing was drawn, off the model it already measured", () => {
+    expect(MTTR_SRC).toMatch(/\(model\.d \|\| model\.end\)\s*\n?\s*\? sparkline\(values, \{/);
+    // One `sparkPath` in `trendAside`: the gate cannot be measured against a second one.
+    expect((MTTR_SRC.match(/sparkPath\(/g) || []).length).toBe(1);
+    // And Scan History keeps its strip on every paint — the opposite answer, same attribute.
+    const historySrc = readFileSync(
+      new URL("../src/client/js/pages/history.js", import.meta.url), "utf8",
+    );
+    expect(historySrc).toMatch(/strip\.append\(el\("span", \{ class: "kpi-spark__cap" \}/);
+  });
+
   it("the page derives it ONCE and hands the same array to both renderers", () => {
     expect(MTTR_SRC).toMatch(/const trendPoints = halfLifeTrendPoints\(payload && payload\.trends\)/);
     expect(MTTR_SRC).toMatch(/renderHero\(mttr, first, trendPoints\)/);

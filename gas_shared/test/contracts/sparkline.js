@@ -121,6 +121,73 @@ export function registerSparklineContract(ctx) {
       expect(m.end).not.toBeNull();
     });
 
+    /**
+     * THE SAME REFUSAL, REACHED FROM THE OTHER SIDE, and the case the `n < 2` branch above
+     * cannot see. A MASKED series has real readings that land on top of each other:
+     * `km_median_days` on the dev seed is 3 readings in 208 slots, all adjacent at the
+     * right-hand edge, so the drawn run comes out 1.12px wide in the Scan History card's
+     * 120px box and 2.09px in the MTTR aside's 220px one. At that width the path and the end
+     * dot (`r: 2`, four pixels across) are the same mark, and what a reader sees is a dot —
+     * which asserts a value and says nothing about direction, the one thing a sparkline is
+     * for. So below `MIN_TREND_SPAN_PX` nothing is drawn: no path AND no end dot.
+     *
+     * `n`, `gaps`, `first` and `last` are untouched, which is what keeps the words true —
+     * `sparkLabel` and every caller's caption are built from those, so a reader is still told
+     * "3 of 208 readings measured, flat at 199 days".
+     */
+    it("readings too close together to separate draw nothing at all — no path AND no dot", () => {
+      // 208 slots, three adjacent readings at the end: the dev seed's own shape.
+      const masked = Array.from({ length: 208 }, (_, i) => (i >= 205 ? 198.5 : null));
+      const m = sparkPath(masked, { w: 120, h: 28, pad: 2 });
+      expect(m.n).toBe(3);
+      expect(m.gaps).toBe(205);
+      expect(m.spanPx).toBeLessThan(4);
+      expect(m.d).toBe("");
+      expect(m.end).toBeNull();
+      // The words the caption and the label are built from survive it.
+      expect(m.first).toBe(198.5);
+      expect(m.last).toBe(198.5);
+      expect(sparkLabel(m, "", "days")).toContain("3 readings");
+      expect(sparkLabel(m, "", "days")).toContain("205 not measured");
+    });
+
+    it("the same three readings SPREAD OVER the same slots draw normally — it is the span, not the count", () => {
+      const spread = Array.from({ length: 208 }, (_, i) => ([0, 104, 207].includes(i) ? 198.5 : null));
+      const m = sparkPath(spread, { w: 120, h: 28, pad: 2 });
+      expect(m.n).toBe(3);
+      expect(m.gaps).toBe(205);
+      expect(m.spanPx).toBe(116);
+      expect(m.d).not.toBe("");
+      expect(m.end).not.toBeNull();
+    });
+
+    it("spanPx is measured between the first and last MEASURED slots, not over the whole box", () => {
+      expect(sparkPath([1, 2, 3], BOX).spanPx).toBe(100); // BOX is w:100, pad:0
+      expect(sparkPath([1, 2, null], BOX).spanPx).toBe(50);
+      expect(sparkPath([null, null, 3], BOX).spanPx).toBe(0); // one reading: n < 2 answers first
+      expect(sparkPath([], BOX).spanPx).toBe(0);
+    });
+
+    /**
+     * PERTURBATION. The obvious body — draw whenever there are two readings, whatever their
+     * span — is what shipped before this rule, and it is what put a stray dot on the Scan
+     * History half-life card. Reproduced inline and never applied to the module, so the
+     * shipped guard and the defective alternative are both present and disagree on one input.
+     */
+    it("PERTURBATION PROOF: drawing on n >= 2 alone paints a 1px run as a dot beside its own caption", () => {
+      const masked = Array.from({ length: 208 }, (_, i) => (i >= 205 ? 198.5 : null));
+      const drawnOnCountAlone = (model) => model.n >= 2; // the anti-pattern
+      const m = sparkPath(masked, { w: 120, h: 28, pad: 2 });
+      expect(drawnOnCountAlone(m)).toBe(true); // it would draw...
+      expect(m.spanPx).toBeCloseTo(1.12, 2); // ...this much line, under a 4px dot
+      expect(m.d).toBe(""); // and the shipped rule refuses it
+      // A real series is not caught by the span rule, so this is a narrower guard than
+      // "never draw a masked series" would be.
+      const real = sparkPath([10, 8, 6], BOX);
+      expect(drawnOnCountAlone(real)).toBe(true);
+      expect(real.d).not.toBe("");
+    });
+
     it("an empty or non-array input is answered, not thrown at", () => {
       for (const nothing of [[], null, undefined, "nope", 12]) {
         const m = sparkPath(nothing, BOX);

@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0e89e5628356" : "dev";
+  var BUILD_ID = true ? "02a0b957edc1" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -7162,13 +7162,11 @@ var Server = (() => {
     return n2.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
   }
   function buildHistory(n2) {
-    var _a;
     const snap = baseSnapshot();
     const clock = ledgerClock(n2.scope);
     const scansAll = loadScanRows();
     const scans = (n2.scope ? scansAll.filter((s2) => s2.scope === n2.scope) : scansAll).slice().reverse();
     const rows = visibleRows(snap.rows, n2);
-    const { overall } = mttrFromLedger(rows, { now: snap.now });
     const movementRows = movementPopulation(snap.rows, n2);
     const movement2 = {};
     const movementNote = {};
@@ -7200,9 +7198,17 @@ var Server = (() => {
         tracked: rows.length,
         open: rows.filter((r) => isOpen7(r.status)).length,
         resolvedAllTime: rows.filter((r) => !isOpen7(r.status)).length,
-        // The KM median, NOT the naive closed-only one, and its lower bound beside it: where the
-        // curve never reaches half there is no median to print and the bound is what is true.
-        medianMttr: (_a = overall.mttr_median) != null ? _a : null,
+        // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
+        // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
+        // plain median over resolved rows. The page drew THAT one, captioned with the
+        // `half-life` glossary term, which defines a Kaplan-Meier figure that keeps still-open
+        // findings as censored evidence. On the dev seed the two disagree by a factor of three:
+        // 93 days against the MTTR page's "at least 297 days" over the same population, because
+        // the plain median drops the 416 rows that have not closed yet. The naive field is
+        // retired rather than left on the wire beside the honest one — a payload key nothing
+        // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
+        // than no key", applied to a payload field) — so `km` is the only median this page can
+        // publish, and where the curve never reaches half `medianLowerBound` is what is true.
         km: shipKM(kaplanMeier(rows))
       },
       // `mttrPageTrendSlice` reads both of these keys.

@@ -33,7 +33,9 @@ import { readFileSync } from "node:fs";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { movementBarsModel, movementView } from "../src/client/js/pages/historyModel.js";
-import { kpiSparkSeries, sparkCaption } from "../src/client/js/pages/history.js";
+import {
+  kmMedianPoints, kmSparkCaption, kpiSparkSeries, sparkCaption,
+} from "../src/client/js/pages/history.js";
 import { sparkPath } from "../../gas_shared/ui/sparkline.js";
 
 const HISTORY_SRC = readFileSync(
@@ -423,7 +425,7 @@ describe("failure of presence: renderHistory declares no const the first paint c
 });
 
 // =========================================================================================
-//  The KPI band's three series
+//  The KPI band's four series
 // =========================================================================================
 
 const TREND = [
@@ -433,10 +435,13 @@ const TREND = [
 ];
 
 describe("kpiSparkSeries: absent is never zero, and a gap keeps its place", () => {
-  it("reads the three series off the payload's own points, in order", () => {
+  it("reads the four series off the payload's own points, in order", () => {
     const s = kpiSparkSeries(TREND);
     expect(s.open).toEqual([10, 8, 6]);
     expect(s.resolved).toEqual([0, 2, 4]);
+    // The half-life line, gap included: the first date's curve never reached half, and
+    // `trend.withKmMedian` already shipped that as `km_median_days: null`.
+    expect(s.kmMedian).toEqual([null, 4, 5]);
     // tracked = open + resolved: the rows first seen by that date, which is exactly what the
     // "Tracked (all-time)" card counts — and on the dev seed the last point (416 + 138) lands
     // on the card's own 554.
@@ -477,7 +482,91 @@ describe("kpiSparkSeries: absent is never zero, and a gap keeps its place", () =
   it("survives a payload with no trend at all", () => {
     for (const bad of [null, undefined, "", 0, {}]) {
       expect(kpiSparkSeries(bad).open, JSON.stringify(bad)).toEqual([]);
+      expect(kpiSparkSeries(bad).kmMedian, JSON.stringify(bad)).toEqual([]);
     }
+  });
+
+  /**
+   * A SKIPPED DATE IS A GAP HERE AND A DROPPED POINT AT THE FOOT OF THE PAGE, and the two
+   * pictures differ on purpose. `kmMedianPoints` FILTERS `km_median_days: null` because the
+   * Chart.js line plots against a real date axis and can simply not draw those dates. A
+   * sparkline has only slots: filtering there would compress 208 dates into 3 and draw a
+   * slope over an interval nothing measured. So the same masked series goes two ways, and
+   * this is the case that says which is which.
+   */
+  it("keeps the skipped dates as slots, where the dated chart drops them", () => {
+    const s = kpiSparkSeries(TREND);
+    expect(s.kmMedian).toHaveLength(3);
+    expect(sparkPath(s.kmMedian).gaps).toBe(1);
+    expect(kmMedianPoints(TREND).map((p) => p.y)).toEqual([4, 5]); // the dated line, filtered
+  });
+
+  it("refuses a half-life reading BY TYPE before any cast — a gap, never a 0-day half-life", () => {
+    for (const bad of [null, undefined, "", [], false, "n/a", {}]) {
+      expect(kpiSparkSeries([{ km_median_days: bad }]).kmMedian, JSON.stringify(bad))
+        .toEqual([null]);
+    }
+    // The cast-first rewrite this refuses, reproduced: `Number(null)` is 0 and it is finite,
+    // so every skipped date would plot as a register that remediates half its findings the
+    // day it finds them — the flattering direction, and 205 of 208 points on the dev seed.
+    expect([null, 4].map((v) => Number(v))).toEqual([0, 4]);
+    expect(Number.isFinite(Number(null))).toBe(true);
+  });
+});
+
+describe("the half-life sparkline names the instant it was read at", () => {
+  /**
+   * THE FIGURE AND THE LINE ARE NOT THE SAME INSTANT. The card above is `kpis.km`, fitted at
+   * REQUEST TIME over every visible row; each reading on the line is fitted as of a saved
+   * scan, replaying `awaitingFixAsOf` for that date, with any date whose curve never reached
+   * half dropped. On the dev seed the card says "at least 297 days" and the line is flat at
+   * 199. Without the anchor that gap reads as an arithmetic error rather than as two
+   * different measurements, which is the whole reason this function exists rather than the
+   * card just calling `sparkCaption`.
+   */
+  it("appends the anchor to a measured series", () => {
+    expect(kmSparkCaption(sparkPath([199, 199, 199])))
+      .toBe("3 readings, flat at 199 days — as of each saved scan");
+  });
+
+  it("formats in days, matching the tile above it — not the bare counts the other three take", () => {
+    // `fmtDays` is the prose/tile duration format; `fmtCount` (sparkCaption's default) would
+    // print "41 to 12" over a card reading "41 days".
+    expect(kmSparkCaption(sparkPath([41, 12]))).toBe("2 readings, 41 days to 12 days — as of each saved scan");
+  });
+
+  it("names the gaps, so 205 unmeasured dates cannot read as a flat line", () => {
+    expect(kmSparkCaption(sparkPath([null, null, 4, 5])))
+      .toBe("2 of 4 readings measured, 4 days to 5 days — as of each saved scan");
+  });
+
+  it("dates nothing when nothing was read — an anchor on an empty series is a scan that never happened", () => {
+    expect(kmSparkCaption(sparkPath([]))).toBe("Not measured");
+    expect(kmSparkCaption(sparkPath([null, null]))).toBe("Not measured");
+    expect(kmSparkCaption(null)).toBe("Not measured");
+  });
+
+  it("one reading is still anchored — it is a reading, and it came from a scan", () => {
+    expect(kmSparkCaption(sparkPath([199]))).toBe("One reading, 199 days — as of each saved scan");
+  });
+
+  /**
+   * PERTURBATION, reproduced inline the way `contracts/relativeAge.js` does it: a caption
+   * that is just `sparkCaption(model, fmtDays)`. Every assertion about readings, gaps and
+   * range still passes; what is lost is the one sentence that keeps a reader from reading
+   * "at least 297 days" over a line flat at 199 as a contradiction.
+   */
+  it("a caption without the anchor would say nothing false and still leave the gap unexplained", () => {
+    const model = sparkPath([199, 199, 199]);
+    const withoutAnchor = sparkCaption(model, (d) => `${d} days`);
+    expect(withoutAnchor).toBe("3 readings, flat at 199 days");
+    expect(kmSparkCaption(model)).not.toBe(withoutAnchor);
+    expect(kmSparkCaption(model)).toMatch(/as of each saved scan$/);
+  });
+
+  it("and the card actually passes it — the DOM half read as text", () => {
+    expect(HISTORY_SRC).toMatch(/caption: kmSparkCaption/);
+    expect(HISTORY_SRC).toMatch(/series\.kmMedian/);
   });
 });
 

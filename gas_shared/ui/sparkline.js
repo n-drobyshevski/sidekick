@@ -17,6 +17,22 @@
 // again at the next reading it actually has. `test/contracts/sparkline.js` reproduces the
 // cast-first rewrite inline and shows it plotting the floor.
 //
+// A LINE SHORTER THAN THE MARK THAT ENDS IT IS NOT A LINE, and that is the same refusal as
+// "one point is not a trend" reached from the other side. `n < 2` catches a series with too
+// few readings; it does not catch one whose readings are real but land on top of each other,
+// which is what a MASKED series does — `km_median_days` on the dev seed carries 3 readings in
+// 208 slots, all at the right-hand edge, so the drawn run is 1.12px wide inside a 120px box
+// (2.09px inside the 220px one). Below `MIN_TREND_SPAN_PX` the path and the end dot are the
+// same mark: the dot is `r: 2`, four pixels across, so a run shorter than that is literally
+// smaller than its own terminator. What a reader then sees is a dot — and a dot asserts a
+// value with no direction, which is the one thing this component exists to show. So nothing
+// is drawn at all and the node is marked `data-empty="narrow"`, the same hook `data-empty`
+// already gives the no-readings case, for a stylesheet that wants the box out of the layout.
+// NOTHING IS LOST TO ANY READER: `aria-label` still states first / last / low / high / how
+// many, and every caller in this repo prints a visible caption saying how many of how many
+// slots were measured. The one reading case still draws its dot — there the dot IS the whole
+// honest picture, one measurement located in time, and the caption says "one reading".
+//
 // NO ANIMATION, AND NOTHING TO REDUCE. There is no transition and no draw-on animation, so
 // there is no `prefers-reduced-motion` alternative to keep in step — the picture is static
 // the first time it paints. That is deliberate rather than unfinished: a sparkline animating
@@ -48,6 +64,15 @@
 import { svgEl } from "../icons.js";
 import { fmtCount, num } from "./figures.js";
 
+/**
+ * The narrowest run that can still read as a line, in the viewBox's own units.
+ *
+ * FOUR IS THE END DOT'S OWN DIAMETER (`r: 2` in `sparkline` below), which is what makes it a
+ * measurement rather than a taste: a run shorter than the mark drawn on top of it cannot be
+ * seen as a run at all. At the 96px default box that is ~4% of the width. See the header.
+ */
+export const MIN_TREND_SPAN_PX = 4;
+
 /** Two decimals is under a tenth of a pixel at these sizes, and keeps `d` diffable. */
 function xy(v) {
   return Math.round(v * 100) / 100;
@@ -63,15 +88,18 @@ function xy(v) {
  * @param {{w?: number, h?: number, pad?: number}} [opts]  the box the line is drawn in, and
  *   the inset that keeps a stroke at the extremes from being clipped by the viewBox edge.
  * @returns {{d: string, n: number, gaps: number, first: *, last: *, min: *, max: *,
- *            end: ({x: number, y: number}|null)}}
+ *            spanPx: number, end: ({x: number, y: number}|null)}}
  *   `n` counts the readings that were really numbers and `gaps` the slots that were not, so
  *   a caller can say what the picture left out. `first`/`last`/`min`/`max` are over the
  *   MEASURED readings only, and are null when there were none. FEWER THAN TWO measured
  *   readings yields `d: ""` — one point is not a trend, and a line drawn through it would
  *   claim a direction nothing measured — but `end` still carries the one reading's
- *   coordinates, so a lone dot can be drawn where a line cannot. The geometry lives HERE and
- *   only here: the end dot re-derived from a second copy of this arithmetic is a drift
- *   waiting for the first caller who changes `pad`.
+ *   coordinates, so a lone dot can be drawn where a line cannot. `spanPx` is how wide the
+ *   drawn run actually comes out, first measured slot to last, and BELOW
+ *   `MIN_TREND_SPAN_PX` both `d` and `end` are empty: see the header for why a run narrower
+ *   than its own end dot is refused rather than painted as a stray mark. The geometry lives
+ *   HERE and only here: the end dot re-derived from a second copy of this arithmetic is a
+ *   drift waiting for the first caller who changes `pad`.
  */
 export function sparkPath(points, opts = {}) {
   const { w = 96, h = 24, pad = 2 } = opts;
@@ -100,11 +128,26 @@ export function sparkPath(points, opts = {}) {
 
   let lastIndex = values.length - 1;
   while (lastIndex >= 0 && values[lastIndex] === null) lastIndex--;
+  const firstIndex = values.findIndex((v) => v !== null);
   const end = lastIndex < 0
     ? null
     : { x: xy(xOf(lastIndex)), y: xy(yOf(values[lastIndex])) };
+  // HOW WIDE THE PICTURE ACTUALLY COMES OUT — first measured slot to last, in the box's own
+  // units, whatever the gaps between them. Not `slots.length`: 3 readings in 208 slots occupy
+  // whatever the 3 slots span, which is 1.12px when they are adjacent and the full width when
+  // they are the first, the middle and the last.
+  const spanPx = firstIndex < 0 ? 0 : xy(xOf(lastIndex) - xOf(firstIndex));
 
-  if (n < 2) return { d: "", n, gaps, first, last, min, max, end };
+  if (n < 2) return { d: "", n, gaps, first, last, min, max, spanPx, end };
+
+  // TOO NARROW TO BE A LINE — the `n < 2` refusal above, reached from the other side, and the
+  // header has the measurement. `end` goes with the path deliberately: a lone dot where a run
+  // could not be drawn is the exact mark this refuses, because it asserts a value and says
+  // nothing about direction. The words survive — `sparkLabel` and every caller's caption are
+  // built from `n`/`gaps`/`first`/`last`, none of which this branch touches.
+  if (spanPx < MIN_TREND_SPAN_PX) {
+    return { d: "", n, gaps, first, last, min, max, spanPx, end: null };
+  }
 
   // A RUN OF ONE would be an `M` with nothing after it — invisible under `fill: none`. The
   // stroke's round cap turns a zero-length segment into a dot, so an isolated reading still
@@ -135,7 +178,23 @@ export function sparkPath(points, opts = {}) {
   });
   closeRun();
 
-  return { d: parts.join(" "), n, gaps, first, last, min, max, end };
+  return { d: parts.join(" "), n, gaps, first, last, min, max, spanPx, end };
+}
+
+/**
+ * Why nothing was painted, as the value of `data-empty` — or null where something was.
+ *
+ * ONE ATTRIBUTE, TWO REASONS, AND `[data-empty]` STILL MATCHES BOTH. `components.css`'s
+ * `.sparkline[data-empty]` rule and any app rule that wants the box out of the layout key on
+ * the attribute's presence, so the narrow case joins them without a second selector; the
+ * VALUE is there for a stylesheet or a test that needs to tell "nobody measured anything"
+ * from "the readings were real and landed on top of each other". They are different facts
+ * about the register and the caption beside them says so in words.
+ */
+function emptyReason(model) {
+  if (model.n === 0) return "";
+  if (!model.d && !model.end) return "narrow";
+  return null;
 }
 
 /**
@@ -163,8 +222,10 @@ export function sparkline(points, opts = {}) {
     role: "img",
     "aria-label": sparkLabel(model, label, unit),
     // Nothing was drawn at all — a caller styling the empty case (a dashed baseline, say)
-    // needs to be able to see the difference between "no readings" and "one reading".
-    "data-empty": model.n === 0 ? "" : null,
+    // needs to be able to see the difference between "no readings" and "one reading". A
+    // series whose readings were too close together to draw is the third such case; see
+    // `emptyReason`.
+    "data-empty": emptyReason(model),
   });
 
   if (model.d) {

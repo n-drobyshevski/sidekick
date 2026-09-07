@@ -1072,6 +1072,14 @@ export async function renderMttr(host, params, _ctx) {
    * single reading (one point is not a trend) and for none at all; `sparkLabel` is the words
    * for both cases, and they are printed as the caption rather than the picture silently
    * disappearing from a slot that is there on every other paint.
+   *
+   * AND WHEN NOTHING IS DRAWN, THE BOX GOES WITH IT — here, not on Scan History, and the two
+   * answers are why the shared module marks the node instead of deciding. `sparkPath` refuses
+   * a run narrower than its own end dot (`MIN_TREND_SPAN_PX`), which is exactly this series on
+   * the dev seed. This aside is a single strip, so an empty 220x40 box between the label and
+   * the caption is a hole with nothing to align to; the Scan History KPI band is four cards
+   * side by side, where the same empty strip keeps the fourth card's caption on the same
+   * baseline as the other three. Same model, same attribute, opposite layout answer.
    */
   function trendAside(points) {
     const list = Array.isArray(points) ? points : [];
@@ -1079,11 +1087,12 @@ export async function renderMttr(host, params, _ctx) {
     const model = sparkPath(values, { w: 220, h: 40 });
     // THE GAPS ARE IN THE CAPTION, NOT ONLY IN THE aria-label. Measured on the dev seed: 208
     // evaluated dates, 3 of which carry a half-life — the register's curve does not reach half
-    // on any earlier date, so `km_median_days` is null there and the line is three readings
-    // wide at the right-hand edge. That is the honest picture (the Chart.js line at the foot
-    // of this page draws exactly the same shape), but a caption reading "3 readings" over a
-    // 220px box would let a reader take the empty 97% for a flat line rather than for dates
-    // nobody could measure. `sparkPath` counts the gaps; this prints them.
+    // on any earlier date, so `km_median_days` is null there and the three readings sit
+    // adjacent at the right-hand edge. THE PICTURE IS NOW REFUSED FOR THAT SHAPE (2.09px of
+    // run under a 4px dot; see `sparkPath`'s header), which makes this caption the whole
+    // reading rather than a qualifier on one — a caption saying "3 readings" over a 220px box
+    // would let a reader take the empty 97% for a flat line rather than for dates nobody
+    // could measure. `sparkPath` counts the gaps; this prints them.
     const measured = model.gaps
       ? fmtCount(model.n) + " of " + fmtCount(values.length) + " readings measured"
       : fmtCount(model.n) + " readings";
@@ -1104,9 +1113,14 @@ export async function renderMttr(host, params, _ctx) {
           "The full line, and which readings are reconstructed, is at the foot of this page.",
         ],
       })),
-      sparkline(values, {
-        label: "Remediation half-life over time", unit: "days", w: 220, h: 40,
-      }),
+      // Nothing drawn, no box — see the doc comment above for why this page answers that
+      // differently from the Scan History band. `model` is the one this strip was measured
+      // with, so the decision cannot drift from the picture.
+      (model.d || model.end)
+        ? sparkline(values, {
+          label: "Remediation half-life over time", unit: "days", w: 220, h: 40,
+        })
+        : null,
       el("div", { class: "small muted" }, caption));
   }
 

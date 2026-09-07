@@ -308,13 +308,101 @@ describe("history: three rows per sync, one per register", () => {
 
 describe("history: KPIs, KM points and the SLA-trend gap", () => {
   it("kpiView derives the one honest rate this KPI band can publish, with its denominator", () => {
-    const v = kpiView({ tracked: 100, open: 40, resolvedAllTime: 60, medianMttr: 3.5 });
+    const v = kpiView({
+      tracked: 100, open: 40, resolvedAllTime: 60, km: { median: 3.5, medianLowerBound: 3.5 },
+    });
     expect(v.resolvedSharePct).toBeCloseTo(60, 5);
     expect(v.tracked).toBe(100);
   });
 
   it("kpiView never divides by zero into a fake rate", () => {
     expect(kpiView({ tracked: 0, open: 0, resolvedAllTime: 0 }).resolvedSharePct).toBeNull();
+  });
+
+  /**
+   * THE FOURTH CARD, AND WHY THE `medianMttr` FIXTURE ABOVE BECAME A `km` ONE.
+   *
+   * The retired claim: the KPI band's half-life card publishes `kpis.medianMttr`, i.e.
+   * `overall.mttr_median` — the plain median over the rows that CLOSED. The card is captioned
+   * with the `half-life` glossary term, which defines a Kaplan-Meier figure that keeps
+   * still-open findings in as censored evidence, so the field and the caption were two
+   * different claims about two different populations. On the dev seed the card read 93 days
+   * while the MTTR page read "at least 297 days" over the same 554 rows. `medianMttr` is gone
+   * from the payload (readModels.ts's `buildHistory`) and the band reads `kpis.km` through
+   * `kmHalfLifeView` — the same chooser the MTTR page's hero draws with.
+   *
+   * NOTE ON WHAT THE OLD FIXTURE ACTUALLY PINNED: nothing about the median. It passed
+   * `medianMttr: 3.5` and asserted only `resolvedSharePct` and `tracked`, so the defect could
+   * never have failed here. The three outcomes below are the guard that was missing.
+   */
+  describe("the half-life card publishes the KM figure, in the tile's own notation", () => {
+    it("a measured median is the number itself", () => {
+      const v = kpiView({
+        tracked: 8, open: 3, resolvedAllTime: 5, km: { median: 41, medianLowerBound: 41 },
+      });
+      expect(v.halfLife)
+        .toEqual({ measured: true, value: "41 days", isLowerBound: false, days: 41 });
+    });
+
+    it("no median but a bound is PROSE — \"at least N days\", never a table cell's \"\u2265 N\"", () => {
+      const v = kpiView({
+        tracked: 554, open: 416, resolvedAllTime: 138, km: { median: null, medianLowerBound: 297 },
+      });
+      expect(v.halfLife.value).toBe("at least 297 days");
+      expect(v.halfLife.isLowerBound).toBe(true);
+      // THE PERTURBATION THIS PAIR EXISTS FOR. `boundedDays(null, 297).text` is "\u2265 297.0 d"
+      // — correct in a numeric cell and wrong in a KPI tile. README.md fixes one notation per
+      // context, and history.js's `renderKpis` had the two crossed once already, in the other
+      // direction (`days1` where `fmtDays` belonged). A tile that took the cell's form would
+      // still satisfy `isLowerBound` and every count on the card.
+      expect(v.halfLife.value).not.toMatch(/[\u2265>]/);
+      expect(v.halfLife.value).not.toMatch(/\bd\b/);
+    });
+
+    it("neither is \"Not measured\" — NOT a zero, and NOT a fallback to the retired naive median", () => {
+      // `medianMttr` is handed in on purpose: this is the defect trying to come back. A
+      // `kpiView` that fell through to it when the curve has no median would answer
+      // "93 days" here, which is exactly the figure the Scan History card used to publish.
+      const v = kpiView({
+        tracked: 554, open: 554, resolvedAllTime: 0, medianMttr: 93,
+        km: { median: null, medianLowerBound: null },
+      });
+      expect(v.halfLife)
+        .toEqual({ measured: false, value: "Not measured", isLowerBound: false, days: null });
+      expect(v.medianMttr).toBeUndefined();
+    });
+
+    it("a payload with no km block at all says so, rather than throwing or printing a 0", () => {
+      expect(kpiView({ tracked: 1, open: 1, resolvedAllTime: 0 }).halfLife.value)
+        .toBe("Not measured");
+      expect(kpiView(null).halfLife.value).toBe("Not measured");
+      expect(kpiView({ km: null }).halfLife.measured).toBe(false);
+    });
+
+    it("the card renders the view object's own string — no second chooser in the DOM half", () => {
+      // The DOM half read as text, this file's established split (see the module header).
+      // What must be true: the tile's value is `v.halfLife.value` verbatim, so every outcome
+      // pinned above is what a reader actually reads.
+      expect(HISTORY_SRC)
+        .toMatch(/glossaryTip\("Remediation half-life", "half-life"\), v\.halfLife\.value/);
+      expect(HISTORY_SRC).not.toMatch(/v\.medianMttr/);
+    });
+
+    /**
+     * ONE STATISTIC, ONE NAME. The retired claim is the label "Median MTTR", which this card
+     * carried while the MTTR page's hero called the same figure over the same population
+     * "Remediation half-life" — both pointing at the `half-life` glossary entry, itself
+     * titled "Remediation half-life". Nothing was wrong with the arithmetic; what was wrong
+     * is that a reader moving between the two pages had to work out that two names were one
+     * number, which is the drift the "one vocabulary for figures" wave exists to stop.
+     */
+    it("the card is named for the statistic, in the same words as the glossary and the MTTR hero", () => {
+      expect(HISTORY_SRC).not.toMatch(/kpiCard\(glossaryTip\("Median MTTR"/);
+      const mttrSrc = readFileSync(
+        new URL("../src/client/js/pages/mttr.js", import.meta.url), "utf8",
+      );
+      expect(mttrSrc).toContain('heroStat("Remediation half-life"');
+    });
   });
 
   it("kmMedianPoints filters the skipped points (km_median_days: null) — the server-applied kmSkipMask", () => {
