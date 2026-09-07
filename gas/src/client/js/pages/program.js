@@ -18,9 +18,9 @@ import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, chartTable, clear, dataTable,
-  downloadText, el, emptyState, errorState, fmtDate, glossaryTip, meter, num, openSheet,
-  pageHeader, pct1, quadModel, quadTable, scopeBar, sectionLabel, sevBadge, skeleton,
-  statusPill, tableFooter, tip, tipLabel, toast,
+  denomNote, downloadText, el, emptyState, errorState, figureCard, fmtDate, glossaryTip,
+  heroStat, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable, scopeBar,
+  sectionLabel, sevBadge, skeleton, statRow, statusPill, tableFooter, tipLabel, toast,
 } from "../ui.js";
 
 // Matrix cells, in reading order. `key` matches the server's `matrix_cell` / cohort quadrant
@@ -303,6 +303,66 @@ export function confusionSeverityRows(perSev) {
   });
 }
 
+/**
+ * The hero pair, decided rather than drawn: coverage, efficiency, the prevalence floor and
+ * the verdict the efficiency card's chip carries. Ported in the SAME shape as
+ * gas_devsecops's own `coverageEfficiencyView` — this page's `boundedRateView`/`confusionView`
+ * were already ported from there unchanged, so the two sibling registers make the same claim
+ * the same way instead of reinventing it per app.
+ *
+ * `beatsRandom` IS COMPUTED HERE, CLIENT-SIDE, rather than on the server: `p.matrix` already
+ * carries `prevalence` and the two rates, so this is arithmetic over fields the page already
+ * has, not a new measurement — and it stays a THREE-STATE flag rather than a boolean.
+ * "Not prioritising" is a strong claim, so it is null (no verdict) rather than false unless
+ * BOTH halves of the comparison are actually measured.
+ *
+ * @param {object} p  `api_getProgramPage`'s `program` object
+ */
+export function programHeroView(p) {
+  const m = (p && p.matrix) || {};
+  const coverage = boundedRateView(
+    m.coverage, m.tp + m.fn,
+    (m.tp + m.fn).toLocaleString() + " classified high-risk findings",
+    "no finding has been classified high risk",
+  );
+  const efficiency = boundedRateView(
+    m.efficiency, m.tp + m.fp,
+    (m.tp + m.fp).toLocaleString() + " classified remediations",
+    "no classified finding has been remediated",
+  );
+  const prevalence = num(m.prevalence);
+  return {
+    coverage,
+    efficiency,
+    prevalence,
+    prevalenceText: prevalence === null ? "not measured" : pct(prevalence),
+    beatsRandom: efficiency.measured && prevalence !== null
+      ? efficiency.point > prevalence
+      : null,
+  };
+}
+
+/**
+ * A bounded rate's one visible sub-line: the denominator short form, then the interval when
+ * there is one to show. The base and a real bound never leave the surface, because a bound is
+ * an honesty statement and not an explanation of one.
+ *
+ * NARROWER THAN gas_devsecops's OWN `rateSub`, ON PURPOSE. That version's no-bounds branch
+ * adds "no unclassified rows, so this point is the whole interval" — a clause that used to be
+ * unreachable here (`boundsNode` returned nothing at all in this case, before this package),
+ * so porting it verbatim would have PRINTED FOURTEEN NEW WORDS on a case the page previously
+ * said nothing about. Measured on the dev seed: program's overall word count rose 394 → 406
+ * with the full clause and proseBlocks/proseWords held exactly steady at 8/251 — the fourteen
+ * words were real, just short enough (under `PROSE_MIN_WORDS`) to hide from the block count.
+ * Dropped rather than kept, matching this package's own brief (`sub: "of N classified
+ * remediations"`, no tail) and the "measure, don't add" spirit of a close-out package.
+ */
+function rateSub(rate) {
+  if (rate.baseEmpty) return rate.emptyLabel;
+  const base = "of " + rate.denominatorLabel;
+  return rate.boundsText ? base + " · bounds " + rate.boundsText : base;
+}
+
 /** The `meter--stat` beside a by-severity coverage/efficiency figure — the DOM half of
  *  `meterPctFor`. Decorative: the rate's own text already prints the figure beside it. */
 function severityMeter(rate) {
@@ -320,30 +380,6 @@ function severityMeter(rate) {
  */
 function small(...kids) {
   return el("span", { class: "small" }, ...kids);
-}
-
-/**
- * The hero rate's own bare value, or the muted dash — the DOM half of `boundedRateView`'s
- * `measured` flag. A Node child position (the coverage hero value and the efficiency stat
- * beside it), so an unmeasured rate draws `absent()` rather than the plain-ink string
- * `boundedRateView` itself returns for a table cell.
- */
-function rateNode(rate) {
-  return rate.measured ? rate.text : absent();
-}
-
-/**
- * The uncertainty the unclassified population implies, as a subordinate clause beside the
- * rate: "bounds 50.0% to 66.7%" — `boundedRateView`'s own `boundsText`, worded as a clause
- * rather than a bare range. Rendered only when there is real doubt (`hasBounds`); with every
- * finding classified the bounds collapse onto the point and the figure stands bare.
- *
- * This is the honest-state device the whole page hangs on: the width of the bracket IS the
- * size of the unclassified bucket, so missing data cannot hide behind a confident-looking
- * number.
- */
-function boundsNode(rate) {
-  return rate.hasBounds ? el("span", { class: "prog-range" }, "bounds " + rate.boundsText) : null;
 }
 
 /**
@@ -448,16 +484,14 @@ export async function renderProgram(main, _params, ctx) {
   }
 
   function renderSkeleton() {
+    // `skeleton("stat")` in a bare `role="status"` div, matching Executive's own loading
+    // shape — not a hand-built `.hero`/`.hero-minis` block. The shared `pageHeader` shape
+    // this page's real hero draws now has no local markup for a skeleton to mimic, and
+    // Executive's front door already solved "what does this look like before the RPC lands".
     clear(heroHost).append(
-      el("div", { class: "hero", role: "status", "aria-label": "Computing coverage" },
-        el("div", { style: "display:flex; align-items:baseline; gap:32px; flex-wrap:wrap" },
-          skeleton("title", { width: "150px" }),
-          skeleton("stat", { width: "96px" })),
-        el("div", { style: "margin-top:10px" }, skeleton("line", { width: "60%" })),
-        el("div", { class: "hero-minis" },
-          ...[0, 1, 2, 3].map(() => el("div", {},
-            el("div", { style: "margin-bottom:8px" }, skeleton("line", { width: "84px" })),
-            skeleton("stat", { width: "56px" }))))),
+      el("div", { role: "status", "aria-label": "Computing coverage and efficiency" },
+        skeleton("line", { width: "220px" }),
+        skeleton("stat", { width: "260px", height: "56px" })),
     );
     clear(matrixHost).append(
       el("div", { style: "margin:28px 0 12px" }, skeleton("line", { width: "180px" })),
@@ -469,95 +503,97 @@ export async function renderProgram(main, _params, ctx) {
   // ------------------------------------------------------------------------ hero
 
   /**
-   * One hero value (DESIGN.md allows exactly one per page): coverage — the risk-facing
-   * number. Efficiency sits beside it a step down, the same `metric` + secondary-stat
-   * pairing the MTTR page uses for its KM and naive medians, so the pair reads together
-   * without a second 2rem figure competing.
+   * The shared header now, not a hand-built `.hero`/`.hero-minis`/`.hero-src` block — the
+   * same `pageHeader({hero, aside, stats})` shape Executive and MTTR & SLA already draw.
+   * Coverage is the ONE hero value DESIGN.md allows per page; efficiency rides in the
+   * header's aside slot rather than in a second hero, because neither figure means anything
+   * without the other — widen the rule and coverage climbs while efficiency falls. NO
+   * `route`: the h1 is in the title block `renderProgram` appends once, ahead of every host.
    */
   function renderHero(p) {
     clear(heroHost);
     const m = p.matrix;
-    // `boundedRateView` — ported from gas_devsecops — replaces the ad hoc `rateText`/
-    // `rangeNode` pair this page carried before this package: the same refuse-before-cast
-    // logic, but shared with the by-severity table below rather than typed twice.
-    const covRate = boundedRateView(
-      m.coverage, m.tp + m.fn,
-      (m.tp + m.fn).toLocaleString() + " classified high-risk findings",
-      "no finding has been classified high risk",
-    );
-    const effRate = boundedRateView(
-      m.efficiency, m.tp + m.fp,
-      (m.tp + m.fp).toLocaleString() + " classified remediations",
-      "no classified finding has been remediated",
-    );
-    // `tip(..., { term })` RATHER THAN `glossaryTip`, AND THE ONE LINE THAT STAYS IS WHY.
-    // Each of these tips opened with THIS scan's arithmetic — "TP / (TP + FN) — here 412 of
-    // 1,204" — which no glossary entry can carry and which is the part that makes the rate
-    // checkable rather than asserted. So the figure-bearing line stays in place and `term`
-    // adds the route; the two general lines each tip used to carry (what the bracketed range
-    // means, why the pair is never published apart) moved into helpContent.js, where the
-    // Efficiency entry can finally state the prevalence floor without restating it here.
-    const cov = tip(
-      [
-        el("div", { class: "label" }, "Remediation coverage"),
-        el("div", { class: "hero-value num" }, rateNode(covRate), boundsNode(covRate)),
-        denominatorNode(covRate),
-      ],
-      [
-        "Of every finding the active rule calls high risk, the share that has been " +
-          "remediated. TP / (TP + FN) — here " + m.tp.toLocaleString() + " of " +
-          (m.tp + m.fn).toLocaleString() + ".",
-      ],
-      { term: "coverage" },
-    );
-    const eff = tip(
-      [
-        el("div", { class: "label" }, "Efficiency"),
-        el("div", { class: "kpi-value num" }, rateNode(effRate), boundsNode(effRate)),
-        denominatorNode(effRate),
-      ],
-      [
-        "Of everything remediated, the share that was actually high risk. TP / (TP + FP) — " +
-          "here " + m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() + ".",
-        m.prevalence !== null
-          ? "Picking findings at random would score about " + pct(m.prevalence) +
-            " here, because that is the share of classified findings that are high risk."
-          : null,
-      ].filter(Boolean),
-      { term: "efficiency" },
-    );
-
-    const minis = el("div", { class: "hero-minis" });
+    const view = programHeroView(p);
+    const covRate = view.coverage;
+    const effRate = view.efficiency;
     const capOverall = p.capacity || {};
     const capHigh = p.capacityHighRisk || {};
-    const miniDefs = [
-      ["High risk, still open", m.fn.toLocaleString(), null],
-      ["High risk, remediated", m.tp.toLocaleString(), null],
-      [
-        "Monthly close rate",
-        pct0Cell(capOverall.mmcrMean),
-        capOverall.oneInN
-          ? el("span", { class: "prog-range" }, "1 in " + capOverall.oneInN.toFixed(1))
-          : null,
-      ],
-      ["Net capacity (high risk)", verdictPill(capHigh.verdict), null],
-    ];
-    for (const [label, value, extra] of miniDefs) {
-      minis.append(el("div", {},
-        el("div", { class: "mini-label" }, label),
-        el("div", { class: "mini-value num" }, value, extra || null)));
-    }
 
-    heroHost.append(
-      el("div", { class: "hero" },
-        el("div", { style: "display:flex; align-items:baseline; gap:32px; flex-wrap:wrap" },
-          cov, eff),
-        el("div", { class: "hero-src" },
-          m.total.toLocaleString() + " tracked lifecycle(s) · " +
-          m.classified.toLocaleString() + " classified (" + pct0(m.signalCoveragePct) + ") · " +
-          m.unknown.toLocaleString() + " with no captured exploit signal"),
-        minis),
-    );
+    // `tip(..., { term })` RATHER THAN `glossaryTip`, AND THE ONE LINE THAT STAYS IS WHY.
+    // Each tip opens with THIS scan's arithmetic — "TP / (TP + FN) — here 412 of 1,204" —
+    // which no glossary entry can carry and which is the part that makes the rate checkable
+    // rather than asserted. The general lines each tip used to carry (what the bracketed
+    // range means, why the pair is never published apart) live in helpContent.js now.
+    const aside = figureCard({
+      label: "Efficiency",
+      value: effRate.text,
+      sub: rateSub(effRate),
+      // THE VERDICT IS THE CARD'S CHIP, drawn only when `beatsRandom` is FALSE, never when it
+      // is null — "not prioritising" needs both halves of the comparison measured.
+      chip: view.beatsRandom === false
+        ? statusPill("warn", "At or below random", {
+          lines: [
+            "Efficiency is at or below prevalence (" + view.prevalenceText + "), which is"
+            + " what a program selecting findings at random would score.",
+            "That is a verdict on the rule, not on the team.",
+          ],
+        })
+        : null,
+      help: {
+        term: "efficiency",
+        lines: [
+          "Of everything remediated, the share that was actually high risk. TP / (TP + FP) —"
+          + " here " + m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() + ".",
+          m.prevalence !== null
+            ? "Picking findings at random would score about " + pct(m.prevalence) +
+              " here, because that is the share of classified findings that are high risk."
+            : null,
+        ].filter(Boolean),
+      },
+    });
+
+    heroHost.append(pageHeader({
+      hero: heroStat(
+        "Remediation coverage",
+        covRate.text,
+        // THE CLASSIFIED-COUNT LINE IS THE QUALIFIER. "N tracked lifecycle(s), N classified
+        // (X%), N with no captured exploit signal" is the population EVERY figure on this
+        // page is drawn from — the same job `executiveHeroView`'s qualifier does on the
+        // front door — and the unclassified count stays on the surface because it is the
+        // Outside: the population the rule refused to score, not an aside about the rate.
+        m.total.toLocaleString() + " tracked lifecycle(s) · " +
+        m.classified.toLocaleString() + " classified (" + pct0(m.signalCoveragePct) + ") · " +
+        m.unknown.toLocaleString() + " with no captured exploit signal",
+        {
+          term: "coverage",
+          lines: [
+            "Of every finding the active rule calls high risk, the share that has been " +
+              "remediated. TP / (TP + FN) — here " + m.tp.toLocaleString() + " of " +
+              (m.tp + m.fn).toLocaleString() + ".",
+          ],
+        },
+      ),
+      aside,
+      stats: [
+        statRow("High risk, still open", m.fn.toLocaleString(), null),
+        statRow("High risk, remediated", m.tp.toLocaleString(), null),
+        statRow(
+          "Monthly close rate",
+          capOverall.oneInN
+            ? el("span", {}, pct0Cell(capOverall.mmcrMean),
+              el("span", { class: "prog-range" }, "1 in " + capOverall.oneInN.toFixed(1)))
+            : pct0Cell(capOverall.mmcrMean),
+          null,
+        ),
+        statRow("Net capacity (high risk)", verdictPill(capHigh.verdict), null),
+      ],
+    }));
+
+    // THE BOUND IS AN HONESTY STATEMENT, so it stays on the surface — a paragraph under the
+    // hero rather than a line inside the tip that explains what it means. `denomNote` is the
+    // one shared component for exactly this: a rate's own base and bracket, printed where a
+    // reader sees it with nothing to hover.
+    heroHost.append(denomNote(rateSub(covRate)));
 
     // Honest state, stated where it cannot be missed rather than buried in the methodology
     // block: a rate computed over a thin slice of the register is not a rate for the

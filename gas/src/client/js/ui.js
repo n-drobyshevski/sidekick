@@ -17,12 +17,14 @@
 //                  every OTHER MTTR duration onto the shared pair and left `fmtSpan` at its
 //                  surviving call sites — the ones where a fleet's open backlog genuinely spans
 //                  hours to years and a fixed grain would either read as "0.0 d" or bury a
-//                  years-old CRITICAL in four-digit days: `pages/mttr.js` (the per-severity and
-//                  by-domain KM-median/p90 table columns, the naive-median secondary stat, the
-//                  MTTR-p90 and open-age-p90 hero minis), `pages/executive.js` (the by-domain
-//                  table's KM-median column and the week-over-week trend badge's magnitude),
-//                  `pages/data.js` (the per-repository median-MTTR column) and
-//                  `pages/history.js` (the KPI band's own median-MTTR tile).
+//                  years-old CRITICAL in four-digit days: `pages/mttr.js` (the by-domain
+//                  table's KM-median, naive-median and p90 columns, the hero's naive-median
+//                  clause and its change chip, the open-age-p90 stat row and its change chip,
+//                  and the by-severity table's MTTR p90 column), `pages/executive.js` (the
+//                  by-domain table's KM-median column) and `pages/data.js` (the per-repository
+//                  median-MTTR column). `pages/history.js` no longer calls it at all — its own
+//                  KPI band's median-MTTR tile is gone, and the week-over-week trend badge
+//                  `pages/executive.js` once carried is gone too.
 //   nvd.js         a CVE's page at NIST. No sibling register has a CVE.
 //   scopeBar.js    WHICH two scopes this register has (a Wiz/Domain tag, a support group).
 //                  The chips themselves are the shared `filterChipRow` now.

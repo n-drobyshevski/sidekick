@@ -142,33 +142,44 @@ describe("executiveSeverityView — the numbers the picture is drawn from", () =
   // they were about different populations — the display-severity setting was CRITICAL+HIGH,
   // and `filterSeverities` keeps UNKNOWN alongside every gate. Two totals on one page that
   // disagree by four, with nothing saying why, read as arithmetic that has gone wrong.
-  it("names BOTH populations, and the reason they differ, when UNKNOWN rides the gate", () => {
-    const v = sevView({
-      order: ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"],
-      scope: ["CRITICAL", "HIGH"],
-      scoped: true,
-      payload: { flatScan: true, counts: { CRITICAL: 27, HIGH: 39, UNKNOWN: 4 }, total: 70 },
+  it("names BOTH populations on the surface, and moves the reason they differ to `explain`",
+    () => {
+      const v = sevView({
+        order: ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"],
+        scope: ["CRITICAL", "HIGH"],
+        scoped: true,
+        payload: { flatScan: true, counts: { CRITICAL: 27, HIGH: 39, UNKNOWN: 4 }, total: 70 },
+      });
+      expect(v.open).toBe(66);
+      expect(v.openAll).toBe(70);
+      // BOTH FIGURES ON THE SURFACE, in one short line — no reader has to hover anything to see
+      // that 66 and 70 are different counts.
+      expect(v.populationLine).toBe("66 open at the shown severities · 70 including UNKNOWN");
+      // THE REASON THEY DIFFER IS AN EXPLANATION, one level down, for `renderSeverity` to hang
+      // on a `tipLabel` over that same line.
+      expect(v.populationExplain).toEqual([
+        "The figures elsewhere on this page count 70; this picture counts only the 66 at the"
+        + " severities it shows.",
+        "A severity gate always keeps findings graded UNKNOWN, and this picture has no level"
+        + " to draw them at.",
+      ]);
     });
-    expect(v.open).toBe(66);
-    expect(v.openAll).toBe(70);
-    expect(v.populationLine).toBe(
-      "66 open findings at the severities this page shows. The figures above count 70:"
-      + " a severity gate always keeps findings graded UNKNOWN, and this picture has no level"
-      + " to draw them at.",
-    );
-  });
 
-  // And it says the one number when there is only one — "66 open findings, of 66" is a caveat
-  // about nothing.
-  it("states a single total where the two populations are the same", () => {
-    const v = sevView({
-      scoped: true,
-      payload: { flatScan: true, counts: { CRITICAL: 2, HIGH: 3, MEDIUM: 0, LOW: 0 }, total: 5 },
+  // And it says the one number when there is only one — "66 open findings, of 66" was a caveat
+  // about nothing, and there is nothing left to explain either.
+  it("states a single total where the two populations are the same, with nothing to explain",
+    () => {
+      const v = sevView({
+        scoped: true,
+        payload: {
+          flatScan: true, counts: { CRITICAL: 2, HIGH: 3, MEDIUM: 0, LOW: 0 }, total: 5,
+        },
+      });
+      expect(v.open).toBe(5);
+      expect(v.openAll).toBe(5);
+      expect(v.populationLine).toBe("5 open findings.");
+      expect(v.populationExplain).toBeNull();
     });
-    expect(v.open).toBe(5);
-    expect(v.openAll).toBe(5);
-    expect(v.populationLine).toBe("5 open findings.");
-  });
 
   // THE SECOND TOTAL IS THE GATE'S POPULATION, NOT THE REGISTER'S, and getting that wrong is
   // what the first attempt did: summing every level put "of 113" beside a picture of 66 while
@@ -184,7 +195,8 @@ describe("executiveSeverityView — the numbers the picture is drawn from", () =
     expect(v.open).toBe(66);
     expect(v.openAll).toBe(70);
     expect(v.openAll).not.toBe(113);
-    expect(v.populationLine).toContain("The figures above count 70:");
+    expect(v.populationLine).toContain("70 including UNKNOWN");
+    expect(v.populationExplain.join(" ")).toContain("count 70");
   });
 
   // `SELECTABLE_SEVERITIES` (src/domain/config.ts) is SEVERITY_ORDER minus UNKNOWN, so UNKNOWN
@@ -198,6 +210,7 @@ describe("executiveSeverityView — the numbers the picture is drawn from", () =
     });
     expect(v.openAll).toBe(v.open);
     expect(v.populationLine).toBe("1,559 open findings.");
+    expect(v.populationExplain).toBeNull();
   });
 
   // A count in flight is not a count of zero. The scoped path has nothing to draw until the
@@ -209,6 +222,7 @@ describe("executiveSeverityView — the numbers the picture is drawn from", () =
     expect(v.open).toBeNull();
     expect(v.openAll).toBeNull();
     expect(v.populationLine).toBeNull();
+    expect(v.populationExplain).toBeNull();
   });
 
   // A LEVEL WITH ZERO OPEN FINDINGS KEEPS ITS KEY. `sevEntries` (gas_shared) filters

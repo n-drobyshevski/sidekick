@@ -21,7 +21,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  boundedRateView, confusionSeverityRows, confusionView,
+  boundedRateView, confusionSeverityRows, confusionView, programHeroView,
 } from "../src/client/js/pages/program.js";
 
 function matrixFixture(over) {
@@ -190,5 +190,62 @@ describe("confusionSeverityRows: null coverage vs. a measured zero", () => {
   it("emits nothing for an empty perSev, rather than a row of zeroes", () => {
     expect(confusionSeverityRows({})).toEqual([]);
     expect(confusionSeverityRows(null)).toEqual([]);
+  });
+});
+
+// =========================================================================================
+//  programHeroView — the pair `renderHero` now hands to `pageHeader({hero, aside, stats})`
+// =========================================================================================
+//
+// Ported in the SAME shape as gas_devsecops's own `coverageEfficiencyView`: coverage and
+// efficiency are the same `boundedRateView` calls `renderHero` always made, and `beatsRandom`
+// is the one new decision — a THREE-STATE verdict, not a boolean, because "not prioritising"
+// is a strong enough claim to need both halves of the comparison measured.
+
+describe("programHeroView", () => {
+  it("carries the same coverage/efficiency boundedRateView already computes", () => {
+    const view = programHeroView({ matrix: matrixFixture() });
+    expect(view.coverage.text).toBe("20.0%");
+    expect(view.coverage.hasBounds).toBe(true);
+    expect(view.efficiency.text).toBe("28.6%");
+  });
+
+  it("reads the prevalence floor, or says it was not measured", () => {
+    expect(programHeroView({ matrix: matrixFixture() }).prevalenceText).toBe("20.0%");
+    expect(programHeroView({ matrix: matrixFixture({ prevalence: null }) }).prevalenceText)
+      .toBe("not measured");
+  });
+
+  it("verdicts efficiency against prevalence only on 'at or below', never on 'better'", () => {
+    // Efficiency (28.6%) beats prevalence (20%): no verdict chip should fire, which is
+    // `beatsRandom: true` — the chip is drawn only when the flag is FALSE.
+    expect(programHeroView({ matrix: matrixFixture() }).beatsRandom).toBe(true);
+
+    // Efficiency AT prevalence is "at or below" — the inequality is strict (`>`), so equal
+    // reads as false, not as a tie with no verdict.
+    expect(programHeroView({
+      matrix: matrixFixture({ efficiency: { point: 20, lo: 20, hi: 20 }, prevalence: 20 }),
+    }).beatsRandom).toBe(false);
+
+    // Efficiency BELOW prevalence.
+    expect(programHeroView({
+      matrix: matrixFixture({ efficiency: { point: 10, lo: 10, hi: 10 }, prevalence: 20 }),
+    }).beatsRandom).toBe(false);
+  });
+
+  it("gives no verdict at all when either half is unmeasured", () => {
+    expect(programHeroView({
+      matrix: matrixFixture({ efficiency: { point: null, lo: null, hi: null } }),
+    }).beatsRandom).toBeNull();
+    expect(programHeroView({
+      matrix: matrixFixture({ prevalence: null }),
+    }).beatsRandom).toBeNull();
+  });
+
+  it("reads a missing matrix as nothing measured, rather than throwing", () => {
+    const view = programHeroView({});
+    expect(view.coverage.measured).toBe(false);
+    expect(view.efficiency.measured).toBe(false);
+    expect(view.beatsRandom).toBeNull();
   });
 });
