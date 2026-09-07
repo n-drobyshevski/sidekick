@@ -524,3 +524,49 @@ describe("the insights cache namespace moves when the payload's shape does", () 
     expect(note).toContain("movementOpen");
   });
 });
+
+describe("scanHistoryData's namespace moves when kpis stops carrying medianMttr", () => {
+  // THE CLAIM: `kpis.medianMttr` — the naive, closed-rows-only median — used to sit under a
+  // card the only sparkline drawn beside it (`km_median_days`) is fitted for, and the two are
+  // different statistics over different populations (pages/historyModel.js's `kpiView` has the
+  // full account). A stale `scanHistory3` entry serving `medianMttr` after this change would
+  // let a reader who never re-scanned keep seeing the WRONG number under the "Remediation
+  // half-life" label, rather than the KM figure the label actually names — so the namespace
+  // has to move, the same convention `execInsightsSlice`'s "insights6" → "insights7" above
+  // pins for the same reason.
+  const API = readFileSync(
+    fileURLToPath(new URL("../src/server/api.ts", import.meta.url)), "utf8",
+  );
+
+  /** The ACTIVE namespace literal `durablyCached` is actually called with — not the prose
+   *  above it, which names every prior namespace on purpose and must keep doing so. */
+  const active = [...API.matchAll(/durablyCached\(\s*"(scanHistory\d*)"/g)].map((m) => m[1]);
+
+  it("names scanHistory4, exactly once, as the namespace it caches under", () => {
+    expect(active).toEqual(["scanHistory4"]);
+  });
+
+  it("no longer caches under scanHistory3", () => {
+    expect(active).not.toContain("scanHistory3");
+    // ...while the transition stays DOCUMENTED, which is the whole convention: the comment
+    // block above the literal is the change log, and losing the line would lose the reason.
+    expect(API).toContain(String.raw`"scanHistory3" → "scanHistory4"`);
+  });
+
+  it("the bump line names what left (medianMttr) and why the KM figure can't replace it in place", () => {
+    const idx = API.indexOf(String.raw`"scanHistory3" → "scanHistory4"`);
+    expect(idx).toBeGreaterThan(-1);
+    const note = API.slice(idx, idx + 1400);
+    expect(note).toContain("medianMttr");
+    // The reason it's not simply ADDED alongside the old key: a clock-drifting KM figure must
+    // not enter the durable L2 store this namespace bumps — the note says so, not just that
+    // something moved.
+    expect(note).toMatch(/drift with the clock/);
+  });
+
+  it("getScanHistory ships kmMedian / kmMedianLowerBound instead, read off cachedMttrData()", () => {
+    expect(API).toMatch(/kmMedian:\s*km\?\.\["median"\]/);
+    expect(API).toMatch(/kmMedianLowerBound:\s*km\?\.\["medianLowerBound"\]/);
+    expect(API).toContain("cachedMttrData(undefined)");
+  });
+});

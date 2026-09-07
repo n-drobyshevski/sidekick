@@ -379,18 +379,17 @@ describe("os: every page's literal glossary id is a real entry", () => {
   const appSrc = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
   const definedIds = new Set(ENTRIES.map((e) => e.id));
 
-  it("sweeps app.js and every pages/*.js file — EXCEPT executive.js", () => {
-    // executive.js is mid-rewrite on a sibling branch that also appends the five ids it
-    // references (half-life, lower-bound, censoring, fix-next, movement) to this same book;
-    // neither of those five exists here yet, so sweeping it now would fail on a page this
-    // package is explicitly forbidden from touching. Remove this exclusion in the next
-    // package, once that branch has merged and the five ids are in the book.
+  it("sweeps app.js and every pages/*.js file, executive.js included", () => {
+    // The exclusion this test used to carry is gone: it existed only while executive.js's
+    // rewrite (on a sibling branch) was appending the five ids it references — half-life,
+    // lower-bound, censoring, fix-next, movement — to this same book, and sweeping it before
+    // that branch merged would have failed on a page this package was forbidden from
+    // touching. That branch has landed and all five ids are in ENTRIES now, so the exclusion
+    // is removed rather than left standing over a condition that no longer holds.
     expect(pageFiles).toContain("executive.js");
-    const swept = pageFiles.filter((f) => f !== "executive.js");
-    expect(swept.length).toBe(pageFiles.length - 1);
 
     const problems = [];
-    for (const file of [...swept.map((f) => "pages/" + f), "app.js"]) {
+    for (const file of [...pageFiles.map((f) => "pages/" + f), "app.js"]) {
       const src = file === "app.js" ? appSrc
         : readFileSync(new URL("../src/client/js/" + file, import.meta.url), "utf8");
       for (const id of referencedGlossaryIds(src)) {

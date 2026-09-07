@@ -7,10 +7,14 @@ import { call } from "../../../../../gas_shared/api.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, chartTable, clear, confirmDialog, dataTable, el, emptyState, errorState, firstRunNotice, fmtDateTime, fmtSpan, kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
+  absent, chartTable, clear, confirmDialog, dataTable, denomNote, el, emptyState, errorState,
+  firstRunNotice, fmtDateTime, glossaryTip, kpiCard, num, pageHeader, pluralize, relativeAge,
+  sectionLabel, sparkPath, sparkline, statusPill, tableFooter, tipAnchor, toast,
 } from "../ui.js";
 import { trendTableModel } from "./_charts.js";
-import { movementView } from "./historyModel.js";
+import {
+  kmSparkCaption, kpiSparkSeries, kpiView, movementView, sparkCaption,
+} from "./historyModel.js";
 
 // The rows-per-page the table OPENS on. It is no longer the only size available: the footer
 // below carries a rows-per-page select, so this is a starting point rather than a ceiling.
@@ -82,9 +86,16 @@ export async function renderHistory(main, _params, ctx) {
   let pageSize = PAGE_SIZE;
   let anySample = false;
 
+  // Held so a trend arriving AFTER the KPI band's own fetch has already painted can redraw
+  // the four sparklines without the KPI band waiting on the heavier fetch — see paintTrends.
+  let latestTrend = [];
+  let lastKpis = null;
+  let lastScans = [];
+
   // Severity scope for the trend charts: the app-wide display setting, so the two trends
   // here read the same severities the rest of the app does. It scopes only the charts; the
-  // KPI band and saved-scans table stay the raw ledger, which is all-severity by design.
+  // KPI band and saved-scans table stay the raw ledger, which is all-severity by design —
+  // both carry the "All severities" pill below for exactly that reason.
   const sevScope = boot.settings.displaySeverities?.length
     ? [...boot.settings.displaySeverities]
     : [...boot.palette.selectable];
@@ -92,6 +103,21 @@ export async function renderHistory(main, _params, ctx) {
   // entry); otherwise the chosen subset, which the server keeps alongside UNKNOWN.
   const scopeParam = () =>
     sevScope.length === boot.palette.selectable.length ? null : [...sevScope];
+
+  /**
+   * "All severities", ON THE SECTION'S OWN HEADING — the state as a pill, the sentence behind
+   * it. The KPI band and the saved-scans table read the raw ledger regardless of the display-
+   * severity setting (see the comment above); the trend charts at the foot of the page are the
+   * ones scoped to it. The pill is rebuilt each time rather than appended once so a re-paint
+   * (a background SWR refresh) never leaves a second copy behind.
+   */
+  function severityWidePill(heading, lines) {
+    const existing = heading.querySelector(".heading-pill");
+    if (existing) existing.remove();
+    heading.append(el("span", { class: "heading-pill" },
+      statusPill("neutral", "All severities", { lines })));
+    return heading;
+  }
 
   // KPI band + saved-scans table (the primary content, and the cheaper slice). Unscoped by
   // severity: the table is the raw scan ledger and its KPIs are all-severity by design.
@@ -103,12 +129,18 @@ export async function renderHistory(main, _params, ctx) {
 
   const noticeHost = el("div", {});
   const freshLine = el("p", { class: "section-note" });
+  // HELD, NOT STATIC. `kpiLabelHost` carries the "Snapshot" heading and its pill — the KPI
+  // band was the one section on this page with no heading of its own, so it also had nowhere
+  // for the "All severities" pill (below) to live; `scansLabelHost` carries the saved-scans
+  // heading, whose denominator and pill both depend on the row count a paint delivers.
+  const kpiLabelHost = el("div", {});
   const kpiRow = el("div", { class: "kpi-row" });
+  const scansLabelHost = el("div", {});
   const scansHost = el("div", {});
   const movementHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid", style: "margin-top:20px" });
   main.append(
-    noticeHost, freshLine, kpiRow, sectionLabel("Saved scans", { term: "scan" }), scansHost,
+    noticeHost, freshLine, kpiLabelHost, kpiRow, scansLabelHost, scansHost,
     sectionLabel("What moved the number", { lines: [
       "Two tables, not one: an API-confirmed resolution and a finding that merely stopped "
       + "appearing in a scan are counted separately, because only one of them is a confirmed "
@@ -160,7 +192,34 @@ export async function renderHistory(main, _params, ctx) {
     }));
   }
 
+  /**
+   * A card, and the series it is the last reading of. Ported from
+   * gas_devsecops/src/client/js/pages/history.js's own `sparkCard` — see that module's header
+   * for the shape's full rationale (fewer than two measured readings draws the words, never
+   * an empty box; the aria-label on `sparkline` itself always states first/last/low/high/how
+   * many, so the caption is not carrying that job alone).
+   *
+   * `opts.caption`, WHEN GIVEN, IS A PRE-COMPUTED STRING rather than a callback — unlike the
+   * ported original. The one caller that needs anything beyond the values array
+   * (`kmSparkCaption`, the half-life card) reads the raw trend rows for their DATES, which a
+   * `sparkPath` model no longer carries; computing that string once, before calling this
+   * function, is simpler than growing a second signature just for that one card.
+   */
+  function sparkCard(card, values, name, opts) {
+    const o = opts || {};
+    const model = sparkPath(values, { w: 120, h: 28 });
+    const strip = el("div", { class: "kpi-spark" });
+    if (model.n >= 2) {
+      strip.append(sparkline(values, { label: name, w: 120, h: 28, unit: o.unit || "" }));
+    }
+    strip.append(el("span", { class: "kpi-spark__cap" }, o.caption || sparkCaption(model)));
+    card.append(strip);
+    return card;
+  }
+
   function paintKpis(kpis, scans) {
+    lastKpis = kpis;
+    lastScans = scans;
     clear(noticeHost);
     // A scan has run (the page-wide gate above already refused otherwise), but it saved no
     // lifecycle the ledger tracks — a measured "nothing here", dated to that scan. `firstRunNotice`
@@ -172,6 +231,7 @@ export async function renderHistory(main, _params, ctx) {
         at: boot.latestScan.ts,
         hint: "The saved scan tracked no findings, so there is nothing here to measure yet.",
       }));
+      clear(kpiLabelHost);
       clear(kpiRow);
       freshLine.textContent = "";
       freshLine.style.display = "none";
@@ -185,11 +245,40 @@ export async function renderHistory(main, _params, ctx) {
       ? `Last scan ${relativeAge(newest.ts)} — ${fmtDateTime(newest.ts)}.`
       : "";
     freshLine.style.display = newest ? "" : "none";
+
+    clear(kpiLabelHost).append(severityWidePill(sectionLabel("Snapshot"), [
+      "Tracked, open, resolved and the remediation half-life cover every severity in the "
+      + "ledger — they are not narrowed to the display severities set in Settings.",
+      "The trend charts at the foot of the page ARE scoped to them.",
+    ]));
+
+    const v = kpiView(kpis);
+    const series = kpiSparkSeries(latestTrend);
     clear(kpiRow).append(
-      kpiCard("Tracked (all-time)", kpis.tracked.toLocaleString()),
-      kpiCard("Currently open", kpis.open.toLocaleString()),
-      kpiCard("Resolved all-time", kpis.resolvedAllTime.toLocaleString()),
-      kpiCard("Median MTTR", fmtSpan(kpis.medianMttr)),
+      sparkCard(kpiCard("Tracked (all-time)", v.tracked.toLocaleString()),
+        series.tracked, "Findings tracked over time"),
+      sparkCard(kpiCard("Currently open", v.open.toLocaleString()),
+        series.open, "Open findings over time"),
+      sparkCard((() => {
+        const card = kpiCard("Resolved (all-time)", v.resolvedAllTime.toLocaleString());
+        card.append(denomNote(
+          v.resolvedSharePct === null
+            ? "No findings tracked yet."
+            : `${v.resolvedSharePct.toFixed(1)}% of ${v.tracked.toLocaleString()} tracked.`,
+        ));
+        return card;
+      })(), series.resolved, "Findings resolved over time"),
+      // ONE STATISTIC, ONE NAME. This card used to publish `kpis.medianMttr` — the plain
+      // median over CLOSED rows — under this exact label, while the only line ever drawn
+      // under it was the Kaplan–Meier series. `kpiView`'s own doc comment has the full
+      // account; `v.halfLife` is the same three-outcome decision the MTTR page's hero
+      // renders, over the same population.
+      sparkCard(
+        kpiCard(glossaryTip("Remediation half-life", "half-life"), v.halfLife.value),
+        series.halfLife,
+        "Remediation half-life over time",
+        { unit: "days", caption: kmSparkCaption(latestTrend) },
+      ),
     );
   }
 
@@ -245,11 +334,14 @@ export async function renderHistory(main, _params, ctx) {
     }
     movementHost.append(
       el("p", { class: "section-note" }, view.sentence),
-      el("div", {
-        style: "display:grid; gap:16px; grid-template-columns:repeat(auto-fit,minmax(280px,1fr))",
-      },
-      causeTable("Measured remediation", view.measuredRows),
-      causeTable("Administrative", view.administrativeRows)),
+      // `.chart-row--pair`, not the hand-rolled inline grid this used to carry: the same
+      // narrower-than-`.chart-row` floor (300px, measured against a TABLE's own content
+      // rather than a chart's — pages.css's own comment) that this page's Trends charts
+      // already share, so the two-tables-not-one layout below is drawn with the page's own
+      // grid rule instead of a private copy of it.
+      el("div", { class: "chart-row chart-row--pair" },
+        causeTable("Measured remediation", view.measuredRows),
+        causeTable("Administrative", view.administrativeRows)),
     );
     if (view.asideRows.length) {
       movementHost.append(el("ul", { class: "small", style: "margin:12px 0 0; padding-left:18px" },
@@ -258,9 +350,31 @@ export async function renderHistory(main, _params, ctx) {
     }
   }
 
+  /**
+   * The saved-scans heading — "Saved scans", the row count as its own denominator sentence
+   * (in `data-denominator` as well as the tip, so a test can read what a reader reads), and
+   * the same "All severities" pill the KPI band carries: this table is the raw scan ledger,
+   * one row per saved scan at whatever severities THAT scan covered, never narrowed to the
+   * display-severity setting.
+   */
+  function scansHeading(rowCount) {
+    const denominator = rowCount
+      ? `${rowCount.toLocaleString()} scan ${pluralize(rowCount, "row")} saved.`
+      : null;
+    const heading = denominator
+      ? sectionLabel("Saved scans", { term: "scan", lines: [denominator] })
+      : sectionLabel("Saved scans", { term: "scan" });
+    if (denominator) heading.setAttribute("data-denominator", denominator);
+    return severityWidePill(heading, [
+      "This table lists every saved scan — it is not narrowed to the display severities set "
+      + "in Settings. The trend charts below ARE scoped to them.",
+    ]);
+  }
+
   // ---- saved scans table (paginated, sortable, sticky delete bar) with delete flow
   function paintScans(scans) {
     anySample = scans.some((s) => isSample(s.mode));
+    clear(scansLabelHost).append(scansHeading(scans.length));
     if (scans.length) renderScans(scans);
     else clear(scansHost).append(emptyState(
       "No scans saved yet.",
@@ -501,6 +615,13 @@ export async function renderHistory(main, _params, ctx) {
   // paintTrends clears chartsHost when it runs — the "Computing trends…" placeholder, or the
   // previously drawn charts on a severity re-apply, are replaced with the fresh scoped pair.
   function paintTrends(trends) {
+    // HELD FOR THE KPI BAND'S OWN SPARKLINES, and repainted here rather than waited on there:
+    // `api_getScanHistory` (the KPI band's fetch) is the cheaper of the two calls and must not
+    // block on this heavier one, so the four cards draw first with whatever `latestTrend`
+    // already holds (nothing, on a cold load) and redraw the moment a trend arrives — the same
+    // "cheap slice first" shape `historyPromise` / `loadTrends` already run in parallel for.
+    latestTrend = Array.isArray(trends.trend) ? trends.trend : [];
+    if (lastKpis) paintKpis(lastKpis, lastScans);
     clear(chartsHost);
     if (!trends.trend.length) {
       chartsHost.append(emptyState(
@@ -542,8 +663,20 @@ export async function renderHistory(main, _params, ctx) {
             { key: "y", label: "Half-life", format: "days" },
           ], { dateKey: "x" }),
         }))
-      : el("p", { class: "chart-empty muted" },
-        "Not enough remediation history to estimate a KM median trend yet.");
+      // `.chart-empty` IS `position: absolute; inset: 0` (pages.css) — an OVERLAY meant to sit
+      // inside a `.chart-box` (`position: relative; height: 240px`, tables.css), which is
+      // exactly the box the `hasKm` branch above builds. This branch used to hand the bare
+      // `<p class="chart-empty">` straight to `.chart-card` (no `.chart-box` in between), so
+      // its nearest POSITIONED ancestor was `.app-body` (gas_shared/styles/base.css, the shell
+      // around `main`, which itself scrolls and is never positioned) — the note pinned itself
+      // to the top of that ancestor's box, painted across whatever `main`'s own scroll had at
+      // the top (the KPI band / Saved scans table), and stayed there while the real page
+      // content scrolled underneath it. Wrapping it in its own `.chart-box` gives it the same
+      // local containing block `chartUnavailable` (chartsLoader.js) and the `hasKm` branch
+      // both rely on, so it centers inside ITS OWN 240px card instead of escaping the page.
+      : el("div", { class: "chart-box" },
+        el("p", { class: "chart-empty muted" },
+          "Not enough remediation history to estimate a KM median trend yet."));
 
     chartsHost.append(
       el("div", { class: "chart-card" }, el("h3", {}, "Open vs resolved"),

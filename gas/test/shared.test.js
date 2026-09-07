@@ -38,6 +38,8 @@ import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/to
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
 import { relativeAge } from "../../gas_shared/ui/figures.js";
+import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
+import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
@@ -406,6 +408,15 @@ registerDiagnosticsContract({
 // =========================================================================================
 registerRelativeAgeContract({ ...base, relativeAge });
 registerSyncCaptionContract(base);
+
+// =========================================================================================
+//  A gap is not a zero — the shared sparkline component, now that Scan History draws one
+// =========================================================================================
+//
+// `pages/historyModel.js`'s `kpiSparkSeries`/`kmSparkCaption` build on `sparkPath`/
+// `sparkLabel` directly, so this register's own KPI-band sparklines are held to the same
+// refuse-before-cast contract `gas_devsecops`'s Scan History page already registers.
+registerSparklineContract({ ...base, sparkPath, sparkLabel });
 
 // =========================================================================================
 //  The hub link: one rule, this register's boundary and the shared header gate
