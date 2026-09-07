@@ -18,7 +18,7 @@
 // real `api.ts` surface a client actually calls.
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { bootServer, teardownServer } from "./gasEnv";
+import { bootServer, resetServerMemos, teardownServer } from "./gasEnv";
 import type { Rec } from "../src/domain/util";
 
 type ServerModule = Awaited<ReturnType<typeof bootServer>>;
@@ -246,5 +246,80 @@ describe("by-id lookups are unscoped", () => {
     const result = server.api.getJobStatus({ jobId: "no-such-job" }) as unknown as Rec;
     expect(result["ok"]).toBe(true);
     expect(result["data"]).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  4. The scope survives a tab reload
+// --------------------------------------------------------------------------------------- //
+//
+// EVERY OTHER CASE IN THIS FILE SETS THE VIEW AND READS IT BACK INSIDE ONE EXECUTION, and
+// that is precisely the arrangement in which a scope that is never persisted still passes:
+// `settingsStore` holds a per-execution memo (`settingsMemo`), so `setProjectView` ->
+// `bootstrap` in the same request is answered out of module state without the settings tab
+// being consulted at all. A reload is the opposite arrangement — the memo dies with the
+// request and the value has to come back off the tab — and nothing here covered it.
+//
+// `resetServerMemos()` IS a reload, for this purpose and exactly this one: it drops
+// `settingsMemo` and every other per-execution memo while leaving the fake Spreadsheet — the
+// durable store — standing. A full `bootServer()` would NOT be a reload; it resets the fake
+// platform's Script Properties too, so the next call fails with "Missing Script Property
+// LEDGER_SPREADSHEET_ID" (measured, 2026-09-07). That is a fresh install, which is a
+// different question and would have made this suite look like it was testing persistence
+// while testing provisioning.
+//
+// THE GAP THESE THREE CLOSE, MEASURED (2026-09-07). `saveSettings` was perturbed to drop
+// `projectView` from the rows it writes to the settings tab while still assigning
+// `settingsMemo` — a register that loses its scope on EVERY reload. Observed:
+//
+//   Tests  2 failed | 13 passed (15)
+//     x bootstrap reports the same scope after every memo is dropped
+//     x and the ROWS stay narrowed too, not just the header's own count
+//
+// Every one of this file's other thirteen cases stayed GREEN through it. So the coverage
+// that existed before said nothing at all about whether the scope is stored; it said only
+// that a memo answers within one request.
+//
+// The third case was perturbed separately: `setProjectView` was made to skip the write for
+// an empty slug (the shape of "an empty view means no choice yet"). Observed, over this file
+// and test/api.test.ts: `Tests 2 failed | 59 passed (61)` — this file's clearing case, plus
+// api.test.ts's own "clears the scope back to \"\"" — and the two reload cases above stayed
+// green, which is why clearing is a case of its own rather than a fourth expect above.
+describe("failure of absence: the project view survives a new execution (a tab reload)", () => {
+  it("bootstrap reports the same scope after every memo is dropped", async () => {
+    setProjectView("leaf-a");
+    const before = ok(server.api.bootstrap({}))["scope"];
+    expect(before).toMatchObject({ projectView: "leaf-a", shown: 3, register: 7 });
+
+    await resetServerMemos();
+
+    const after = ok(server.api.bootstrap({}))["scope"];
+    expect(after, "the scope did not survive a new execution").toEqual(before);
+  });
+
+  it("and the ROWS stay narrowed too, not just the header's own count", () => {
+    // The two halves of this page can disagree — that is the trap section 2 of this file is
+    // built around — so a reload has to be checked on both. A restored header count over an
+    // unscoped row list would read as a working scope and serve the whole register.
+    setProjectView("leaf-b");
+    return resetServerMemos().then(() => {
+      const data = ok(server.api.bootstrap({}));
+      expect(data["scope"]).toMatchObject({ projectView: "leaf-b", shown: 3 });
+      const rows = ok(server.api.getRegisterRows({ scope: "sast" }));
+      expect((rows["rows"] as Rec[]).map((r) => r["finding_key"])).toEqual(["sast#b"]);
+    });
+  });
+
+  it("clearing the scope survives a reload too — an empty view is a CHOICE, not a default", () => {
+    // The direction that a naive "restore whatever is stored, falling back to the register"
+    // fix gets wrong: if a cleared view were persisted as absent and absent meant "restore the
+    // last one", unscoping would not stick. It has to come back as the empty string it was
+    // saved as.
+    setProjectView("leaf-a");
+    setProjectView("");
+    return resetServerMemos().then(() => {
+      expect(ok(server.api.bootstrap({}))["scope"])
+        .toMatchObject({ projectView: "", shown: 7, register: 7 });
+    });
   });
 });
