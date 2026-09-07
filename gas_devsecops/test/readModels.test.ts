@@ -46,6 +46,11 @@ const H = vi.hoisted(() => ({
    *  never from a model's own params. `""` (the default) is "no scope", same as an unset
    *  Settings field. */
   projectView: "",
+  /** `historyStore`'s per-UTC-day blobs, ascending — one file per day, latest write wins.
+   *  `secretsModel` reads its twin fold off the NEWEST one; `historyModel` ships the array. */
+  history: [] as { date: string; stats: unknown }[],
+  /** Which historyStore reader each model reached for, in order — "list" or "latest". */
+  historyReads: [] as string[],
 }));
 
 function memo(name: string, params: unknown, compute: () => unknown): unknown {
@@ -106,7 +111,17 @@ vi.mock("../src/server/ledgerStore", () => ({
 }));
 
 vi.mock("../src/server/historyStore", () => ({
-  listHistory: () => [{ date: "2026-03-01", stats: { open: 5 } }],
+  listHistory: () => {
+    H.historyReads.push("list");
+    return H.history;
+  },
+  // The real one is a single Drive read of `max(names)` — see `historyStore.ts` for why it is
+  // not `listHistory().slice(-1)`. Here it is the last element for the same reason: the
+  // fixture list is ascending by date, exactly as the folder listing sorts.
+  latestHistory: () => {
+    H.historyReads.push("latest");
+    return H.history.length ? H.history[H.history.length - 1]! : null;
+  },
 }));
 
 vi.mock("../src/server/jobsStore", () => ({
@@ -314,6 +329,8 @@ beforeEach(() => {
   H.cellCountThrows = false;
   H.computeDepths.length = 0;
   H.projectView = "";
+  H.history = [{ date: "2026-03-01", stats: { open: 5 } }];
+  H.historyReads.length = 0;
   seed();
   __resetModelMemosForTest();
   vi.stubGlobal("console", { ...console, warn: () => {}, log: () => {} });
@@ -635,6 +652,185 @@ describe("secretsModel has no severity axis", () => {
     expect(m.timeToRevoke.censored).toBe(1); // k1, measured live
     expect(m.timeToRevoke.excludedUnmeasured).toBe(1); // k3, nobody looked
     expect(m.timeToRevoke.total).toBe(3);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  secretsModel — the twin fold, and the absence that is not a zero
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * A day's history blob, in the shape `scanJobs.ts`'s `dailyStats()` actually writes: a
+ * `scopes[]` with one entry per scope the sync committed, each carrying that scope's `twins`.
+ * Only the fields this reader touches are filled in — the rest of `dailyStats` (deltas, mttr,
+ * pages) is not what is under test and a fixture pretending otherwise would rot with it.
+ */
+function historyDay(date: string, scopes: { scope: string; twins?: unknown }[]) {
+  return { date, stats: { sync_id: `sync-${date}`, at: `${date}T02:00:00Z`, scopes } };
+}
+
+function freshSecrets(): any {
+  H.store.clear();
+  __resetModelMemosForTest();
+  return secretsModel(ALL) as any;
+}
+
+/**
+ * WHY THIS BLOCK IS READ OFF THE HISTORY BLOB AT ALL, since three of this register's own
+ * comments said it came from the scan row: it never did. `reconcile()` returns `TwinStats`,
+ * `persistFlatScan` gets it and returns it BESIDE the row, and the row it pushes has no such
+ * field — `ScanRow` is eleven fields and `TAB_HEADERS[TABS.scans]` has no twins column, so
+ * `writeGrid` would have dropped it. `ledgerStore`'s copy is on the transient `ScopeOutcome`.
+ * The one durable copy is the per-UTC-day blob `dailyStats()` writes, which is what these
+ * cases hand the reader.
+ *
+ * THE FAILURE THESE GUARD AGAINST IS A ZERO WHERE THERE WAS AN ABSENCE. `emptyTwinStats()` is
+ * right there, it type-checks, and it turns "no sync has reported a fold" into "a sync looked
+ * and found none" — a claim about a measurement nobody made. The client cannot recover from
+ * it: `twinFoldView` prints "0 twins folded" for `{keys: 0, folded: 0}` because that IS the
+ * honest reading of a measured zero.
+ */
+describe("secretsModel: the twin fold is read from the newest per-sync history blob", () => {
+  it("ships the newest entry's secrets block verbatim", () => {
+    H.history = [historyDay("2026-03-02", [
+      { scope: "sca", twins: { keys: 99, folded: 99, medianGapDays: 99 } },
+      { scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } },
+    ])];
+    expect(freshSecrets().twins).toEqual({ keys: 6, folded: 7, medianGapDays: 19.94 });
+  });
+
+  /**
+   * THE DAY RIDES BESIDE THE BLOCK, and both halves of that matter.
+   *
+   * BESIDE: `twins` has to stay exactly `{keys, folded, medianGapDays}`, because that is what
+   * the client's absent-vs-measured-zero decision reads and a fourth field in there is a
+   * fourth thing to interpret. So the date is its own payload key.
+   *
+   * AT ALL: the blob is one file per UTC day, latest write wins, so this can be Tuesday's
+   * fold read on Friday. PRODUCT.md's seventh principle — a clock has to say where it started
+   * — is the reason the page is given something to say it with.
+   */
+  it("dates the fold with the blob's own day, as a sibling key", () => {
+    H.history = [historyDay("2026-03-02", [
+      { scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } },
+    ])];
+    const m = freshSecrets();
+    expect(m.twinsAsOf).toBe("2026-03-02");
+    // The block itself stays a faithful TwinStats — three fields, no fourth.
+    expect(Object.keys(m.twins).sort()).toEqual(["folded", "keys", "medianGapDays"]);
+  });
+
+  it.each([
+    ["a date that is not a day", "yesterday"],
+    ["a date that is a timestamp", "2026-03-02T02:00:00Z"],
+    ["a numeric date", 20260302],
+    ["an empty date", ""],
+    ["no date at all", undefined],
+  ])("%s ships the fold UNDATED rather than dating it now", (_label, date) => {
+    H.history = [{
+      date,
+      stats: { scopes: [{ scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } }] },
+    } as any];
+    const m = freshSecrets();
+    // The fold was measured; only its day is unknown. Both facts survive.
+    expect(m.twins).toEqual({ keys: 6, folded: 7, medianGapDays: 19.94 });
+    expect("twinsAsOf" in m).toBe(false);
+  });
+
+  it("no fold means no date either — an absence dates nothing", () => {
+    H.history = [];
+    const m = freshSecrets();
+    expect("twins" in m).toBe(false);
+    expect("twinsAsOf" in m).toBe(false);
+  });
+
+  it("takes the NEWEST day, not the oldest — the fold is a property of the last sync", () => {
+    H.history = [
+      historyDay("2026-03-01", [{ scope: "secrets", twins: { keys: 1, folded: 1, medianGapDays: 3 } }]),
+      historyDay("2026-03-02", [{ scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } }]),
+    ];
+    const twins = freshSecrets().twins;
+    expect(twins.folded).toBe(7);
+    expect(twins.folded).not.toBe(1); // the oldest entry's own answer
+  });
+
+  it("a measured zero travels — a sync that looked and folded nothing said something", () => {
+    H.history = [historyDay("2026-03-02", [
+      { scope: "secrets", twins: { keys: 0, folded: 0, medianGapDays: null } },
+    ])];
+    expect(freshSecrets().twins).toEqual({ keys: 0, folded: 0, medianGapDays: null });
+  });
+
+  it.each([
+    ["no history at all", [] as unknown[]],
+    ["a newest sweep that never looked at secrets", [historyDay("2026-03-02", [
+      { scope: "sca", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } },
+      { scope: "sast", twins: { keys: 0, folded: 0, medianGapDays: null } },
+    ])]],
+    ["a secrets scope carrying no twins block", [historyDay("2026-03-02", [{ scope: "secrets" }])]],
+    ["stats that are not an object", [{ date: "2026-03-02", stats: null }]],
+    ["stats with no scopes array", [{ date: "2026-03-02", stats: { sync_id: "s" } }]],
+  ])("%s ships NOTHING — the key is absent, never emptyTwinStats()", (_label, history) => {
+    H.history = history as any;
+    const m = freshSecrets();
+    expect("twins" in m).toBe(false);
+    expect(m.twins).toBeUndefined();
+  });
+
+  it.each([
+    ["keys null", { keys: null, folded: 0, medianGapDays: null }],
+    ["keys a numeric STRING", { keys: "6", folded: 7, medianGapDays: 19.94 }],
+    ["folded missing", { keys: 6, medianGapDays: 19.94 }],
+    ["folded an empty string", { keys: 6, folded: "", medianGapDays: null }],
+    ["folded an empty array", { keys: 6, folded: [], medianGapDays: null }],
+    ["folded false", { keys: 6, folded: false, medianGapDays: null }],
+    ["NaN", { keys: 6, folded: NaN, medianGapDays: null }],
+    ["no medianGapDays key at all", { keys: 6, folded: 7 }],
+    ["a medianGapDays that is not a number", { keys: 6, folded: 7, medianGapDays: "19.94" }],
+    ["an array where the block should be", []],
+  ])("a malformed block (%s) ships NOTHING", (_label, twins) => {
+    H.history = [historyDay("2026-03-02", [{ scope: "secrets", twins }])];
+    expect("twins" in freshSecrets()).toBe(false);
+  });
+
+  /**
+   * THE GUARD, WHERE IT ACTUALLY BITES. Every case above would still pass against a reader
+   * that answered `emptyTwinStats()` for an absence IF the assertion were only "the numbers
+   * are right when there are numbers". What separates the two readers is that one of them
+   * makes an absence and a measured zero into the SAME BYTES on the wire, after which no
+   * client can tell them apart — `twinFoldView` prints "0 twins folded" for `{keys: 0,
+   * folded: 0, medianGapDays: null}` because that is the honest reading of a measured zero.
+   * So the two payloads are built here and compared directly.
+   */
+  it("an absence and a measured zero are different payloads, and the wire keeps them apart", () => {
+    H.history = [historyDay("2026-03-02", [
+      { scope: "secrets", twins: { keys: 0, folded: 0, medianGapDays: null } },
+    ])];
+    const measuredZero = freshSecrets();
+    H.history = [];
+    const absent = freshSecrets();
+
+    expect(measuredZero.twins).toEqual({ keys: 0, folded: 0, medianGapDays: null });
+    expect("twins" in absent).toBe(false);
+    // The line that fails against `emptyTwinStats()`: the substitution makes these identical.
+    expect(JSON.stringify(absent.twins)).not.toBe(JSON.stringify(measuredZero.twins));
+    // And the substitution reproduced, so the two readers are present at once and disagree.
+    const substituting = (block: unknown) => block ?? { keys: 0, folded: 0, medianGapDays: null };
+    expect(substituting(absent.twins)).toEqual(measuredZero.twins);
+  });
+
+  it("costs ONE history read, not one per recorded day", () => {
+    // `latestHistory` exists for this: `listHistory().slice(-1)` reads and gunzips every day's
+    // blob to answer a question about one of them, and `secretsModel` sits behind a one-hour
+    // cache rather than the durable one. The mock counts calls; the shape of the saving is in
+    // `historyStore.ts`'s own comment.
+    H.history = [
+      historyDay("2026-03-01", [{ scope: "secrets", twins: { keys: 1, folded: 1, medianGapDays: 3 } }]),
+      historyDay("2026-03-02", [{ scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } }]),
+    ];
+    freshSecrets();
+    expect(H.historyReads).toEqual(["latest"]);
+    expect(H.historyReads).not.toContain("list");
   });
 });
 

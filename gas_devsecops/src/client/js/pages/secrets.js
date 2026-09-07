@@ -88,12 +88,24 @@ import { populationLine } from "./registerModel.js";
  * IT IS A DATED, ONE-OFF MEASUREMENT — NOT A LIVE FIGURE THIS PAGE RECOMPUTES. The 187/135/
  * 19.9-day numbers came from one read of one tenant and stay fixed here whether or not this
  * scan's own population still spans that many twins; the fold itself IS applied fresh every
- * sync (`reconcile.ts`'s `foldSecretTwins`), only its own SIZE is not re-measured on screen.
- * The real fix is to ship the scan row's `twins` (`TwinStats`, already on the server —
- * `ledgerStore.ts`) onto `secretsModel` and render `twinAudit().sentence` here instead of a
- * frozen string; CLAUDE.md's own entry on this fold names the per-row auditability that is
- * still missing (`twin_count` / `twin_first_seen_spread_days` on each row). Flagged as a
- * follow-up, not done in this package.
+ * sync (`reconcile.ts`'s `foldSecretTwins`), only its own SIZE is not re-measured in THIS
+ * sentence. The live size is now beside it — `twinFold` below carries this sync's own
+ * `{keys, folded, medianGapDays}` — so the two are deliberately different kinds of statement:
+ * a dated tenant measurement explaining the mechanism, and a figure off the last sync.
+ *
+ * WHAT THIS COMMENT USED TO CLAIM, AND WHY IT WAS WRONG. It said the fix was to ship "the
+ * scan row's `twins` (`TwinStats`, already on the server — `ledgerStore.ts`)". There is no
+ * such field on the scan row: `ScanRow` is eleven fields and `TAB_HEADERS[TABS.scans]` has no
+ * twins column, so `writeGrid` would have dropped it even if reconcile's stats had been put
+ * there; `ledgerStore`'s `twins` is on the transient `ScopeOutcome` and dies with the
+ * request. The only durable copy is the per-sync history blob `scanJobs.ts`'s `dailyStats()`
+ * writes, and that is what `readModels.ts`'s `latestSecretsTwins` now reads.
+ *
+ * STILL MISSING, unchanged by this: the PER-ROW audit trail CLAUDE.md's own entry on this
+ * fold names (`twin_count` / `twin_first_seen_spread_days` on each row). `registerModel.js`'s
+ * `twinCell` is already written for those and degrades to "absent" because nothing populates
+ * them. Seeing WHICH row disagreed by 285 days is not what the register-wide aggregate below
+ * answers.
  */
 export const TWIN_NOTE =
   "One secret at one line is reported twice by Wiz — once against the repository and once "
@@ -116,31 +128,55 @@ export const TWIN_NOTE =
  * The median gap is refused separately: `TwinStats.medianGapDays` is null whenever nothing
  * folded, so a fold of zero rows has a real count and no gap, and the line says exactly that.
  *
+ * AND THE LINE SAYS WHEN IT WAS MEASURED, because a clock has to say where it started
+ * (PRODUCT.md's seventh principle). The figure comes off the newest per-UTC-day history blob
+ * — one file per day, latest write wins — so on a register nobody has synced since Tuesday
+ * this is Tuesday's fold read on Friday. `asOf` is the day that file names, and it arrives as
+ * its own payload field (`twinsAsOf`) rather than inside the stats, so the three fields the
+ * absent-vs-measured decision keys on stay exactly the three fields of a `TwinStats`.
+ *
+ * A DATE THAT DID NOT ARRIVE IS NOT TODAY. Refused before any cast, like the counts: a
+ * missing or unparseable day prints the fold WITHOUT one rather than dating it now, which
+ * would be the same substitution as reading an absent fold as a zero, one field along.
+ *
+ * THE UNMEASURED LINE TAKES NO DATE, whatever is passed beside it — it makes no claim about
+ * a measurement, so there is nothing to date.
+ *
+ * `fmtDate` IS THE APP'S OWN FORMATTER, not a hand-rolled slice. It renders in the display
+ * zone, which is ahead of UTC, so a UTC day never reads back as the day before.
+ *
  * @param {{keys?: *, folded?: *, medianGapDays?: *}|null|undefined} twins
+ * @param {*} [asOf]  the blob's UTC day, `YYYY-MM-DD` — anything else is no date at all
  * @returns {{measured: boolean, keys: (number|null), folded: (number|null),
- *            medianGapDays: (number|null), line: string}}
+ *            medianGapDays: (number|null), asOf: (string|null), line: string}}
  */
-export function twinFoldView(twins) {
+export function twinFoldView(twins, asOf) {
   const t = twins && typeof twins === "object" && !Array.isArray(twins) ? twins : null;
   const keys = t ? num(t.keys) : null;
   const folded = t ? num(t.folded) : null;
   const gap = t ? num(t.medianGapDays) : null;
+  const day = typeof asOf === "string" && asOf !== "" && !Number.isNaN(Date.parse(asOf))
+    ? asOf
+    : null;
   if (keys === null || folded === null) {
     return {
       measured: false,
       keys: null,
       folded: null,
       medianGapDays: null,
+      asOf: null,
       line: "Twin fold: not measured on this sync",
     };
   }
   const gapText = gap === null ? "no birth-date gap recorded" : `median gap ${days1(gap)}`;
+  const when = day === null ? "" : ` · measured ${fmtDate(day)}`;
   return {
     measured: true,
     keys,
     folded,
     medianGapDays: gap,
-    line: `${fmtCount(folded)} ${pluralize(folded, "twin")} folded · ${gapText}`,
+    asOf: day,
+    line: `${fmtCount(folded)} ${pluralize(folded, "twin")} folded · ${gapText}${when}`,
   };
 }
 
@@ -472,11 +508,21 @@ export function secretsModel(payload, opts) {
     // above is 120 words of mechanism with three frozen tenant numbers in the middle of it,
     // and the `twin` glossary entry says the same three things in the book's own voice. What
     // the entry CANNOT say is what this sync's own fold did, so that is what the page prints
-    // — one line, read off the payload, or the words for its absence. `sec.twins` is the
-    // scan row's `TwinStats` (`ledgerStore.ts` already computes it); `readModels.ts` does not
-    // ship it to this page yet, so today this reads "not measured on this sync" on every
-    // tenant, which is the honest form of a number nobody sent rather than a zero.
-    twinFold: twinFoldView(sec.twins),
+    // — one line, read off the payload, or the words for its absence.
+    //
+    // `sec.twins` IS THE PER-SYNC HISTORY BLOB'S OWN BLOCK, not a scan-row column: the scan
+    // row has never carried one (`readModels.ts`'s `latestSecretsTwins` has the full trace,
+    // and this comment claimed the opposite for a whole wave). The server REFUSES rather than
+    // substituting — no blob, a sweep that skipped secrets, or a malformed block omits the
+    // key — so an absence arrives here as `undefined` and `twinFoldView` says "not measured
+    // on this sync", which is a different sentence from a measured "0 twins folded" and must
+    // stay one.
+    //
+    // `twinsAsOf` IS A SIBLING FIELD, NOT PART OF THE BLOCK. The blob is per-UTC-day and
+    // latest-write-wins, so a fold can be days old; the day it names rides beside the stats
+    // so `twins` stays exactly the three fields of a `TwinStats`. A missing date prints the
+    // fold undated rather than as of today.
+    twinFold: twinFoldView(sec.twins, sec.twinsAsOf),
     resolvedNote:
       "A secret finding leaving this register means the string is out of HEAD. It does not "
       + "mean the credential is safe, and it does not mean the old commit is unreadable.",

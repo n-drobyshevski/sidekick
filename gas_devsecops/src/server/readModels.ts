@@ -178,7 +178,7 @@ import {
   loadTrend,
   previousSeverityCounts,
 } from "./ledgerStore";
-import { listHistory } from "./historyStore";
+import { latestHistory, listHistory } from "./historyStore";
 import { activeJob } from "./jobsStore";
 import { cellCount, gridSize, TAB_HEADERS, TABS } from "./sheetsDb";
 import { BASE_FILTER_WORDS } from "./wizQueries";
@@ -1249,6 +1249,80 @@ export function registerRowsModel(scope: Scope, p?: RowPageParams): Rec {
  * REMOVED IS NOT ROTATED. `removalVsRotation` is the 2x2 of the two independent events, and
  * `removedNotRotated` is what the page leads with.
  */
+/**
+ * THIS SYNC'S OWN TWIN FOLD, off the newest per-day history blob — or NOTHING AT ALL.
+ *
+ * WHERE THE FIGURE ACTUALLY LIVES, and it is not where this register's own comments said it
+ * did. `reconcile()` computes `TwinStats` and hands it back; `persistFlatScan` receives it and
+ * returns it BESIDE the row it builds; the `ScanRow` it pushes has no `twins` field, and
+ * `TAB_HEADERS[TABS.scans]` has no such column — so there has never been a scan row to read it
+ * off, and `writeGrid` would have dropped it if there had been. `ledgerStore`'s `twins` is on
+ * the transient `ScopeOutcome` handed to the sync's caller and dies with the request. The one
+ * DURABLE copy is `scanJobs.ts`'s `dailyStats()`, which puts `twins` into the per-sync stats
+ * `historyStore.recordDaily` writes as `history/<YYYY-MM-DD>.json.gz`. That is the grain the
+ * figure belongs at anyway: the fold is a property of one reconcile pass, not of a row.
+ *
+ * REFUSE, NEVER SUBSTITUTE. No entry, a sweep whose newest sync never looked at secrets, or a
+ * block that is not a `TwinStats` ships NOTHING — the key is omitted — and never
+ * `emptyTwinStats()`. `{keys: 0, folded: 0}` is a MEASUREMENT: it says a sync looked and found
+ * no credential reported against both a repository and a branch. The client's `twinFoldView`
+ * already tells the two apart ("Twin fold: not measured on this sync" against "0 twins
+ * folded"), and `test/wordsOneLevelDown.test.js` pins the distinction with a reproduced
+ * cast-first rewrite that reads four of five absent shapes as a measured zero. Sending a zero
+ * for an absence walks straight into it.
+ *
+ * EVERY FIELD IS REFUSED BY TYPE BEFORE ANY CAST, the same rule the client half applies, and
+ * all three must be present: `Number(null)` is 0 and finite, so a `keys` of null cast here
+ * would arrive on the page as a confident fold of nothing. `medianGapDays` is legitimately
+ * `null` whenever nothing folded — that is a real value and it travels — but a MISSING key is
+ * a block this app did not write, and a block this app did not write is not a measurement.
+ *
+ * THE DATE TRAVELS BESIDE THE STATS, BECAUSE A CLOCK HAS TO SAY WHERE IT STARTED
+ * (PRODUCT.md's seventh principle). The blob is one file per UTC day, latest write wins, so
+ * this is the last sync recorded on the last day anything was recorded — which can be
+ * Tuesday's fold read on Friday. `twinsAsOf` is the day that file names, shipped as a SIBLING
+ * rather than folded into the block: `twins` has to stay a faithful `TwinStats` of exactly
+ * `{keys, folded, medianGapDays}`, because the client's absent-vs-measured-zero decision keys
+ * on those three fields and a fourth one in there would be a fourth thing to interpret.
+ *
+ * THE DAY, NOT THE INSTANT. `dailyStats` also writes an `at` timestamp, and it is tempting to
+ * prefer it — but the FILE's grain is the day (a second sync the same day overwrites the
+ * first), so a precise time read off it would claim more than the store can keep. The day is
+ * what the file name means and the day is what is published.
+ *
+ * A DATE THAT DID NOT ARRIVE IS NOT TODAY. A malformed or missing date omits `twinsAsOf` and
+ * the stats still ship: the fold was measured, only its day is unknown, and the page states
+ * the fold without a date rather than substituting one. Same refusal the stats make.
+ */
+const HISTORY_DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function latestSecretsTwins(): { twins: Rec; asOf: string | null } | null {
+  const entry = latestHistory();
+  const stats = entry && entry.stats;
+  if (!stats || typeof stats !== "object" || Array.isArray(stats)) return null;
+  const scopes = (stats as Rec)["scopes"];
+  if (!Array.isArray(scopes)) return null;
+  const block = (scopes as Rec[])
+    .find((s) => s && typeof s === "object" && s["scope"] === "secrets");
+  const twins = block ? block["twins"] : null;
+  if (!twins || typeof twins !== "object" || Array.isArray(twins)) return null;
+  const t = twins as Rec;
+  const keys = t["keys"];
+  const folded = t["folded"];
+  if (typeof keys !== "number" || !Number.isFinite(keys)) return null;
+  if (typeof folded !== "number" || !Number.isFinite(folded)) return null;
+  if (!("medianGapDays" in t)) return null;
+  const gap = t["medianGapDays"];
+  if (gap !== null && (typeof gap !== "number" || !Number.isFinite(gap))) return null;
+  // Refused by type before any cast, like the three above. `listHistory`/`latestHistory`
+  // derive the date from the file NAME through the same regex, so a bad one here means the
+  // store's own naming contract broke — which is a reason to say nothing about the day, not
+  // a reason to invent one.
+  const date = entry.date;
+  const asOf = typeof date === "string" && HISTORY_DAY_RE.test(date) ? date : null;
+  return { twins: { keys, folded, medianGapDays: gap }, asOf };
+}
+
 function buildSecrets(n: NormParams): Rec {
   const snap = baseSnapshot();
   // Scope is pinned; severities are deliberately NOT applied. showNoFix cannot bite either —
@@ -1257,6 +1331,7 @@ function buildSecrets(n: NormParams): Rec {
   // its fields, for the same reason `registerRowsModel` does — see that call's comment.
   const rows = visibleRows(snap.rows, { ...n, scope: "secrets", severities: null });
   const secretRows = rows as unknown as SecretRow[];
+  const fold = latestSecretsTwins();
 
   return {
     asOf: snap.now,
@@ -1278,6 +1353,13 @@ function buildSecrets(n: NormParams): Rec {
       secret_kind: bySegment(secretRows, "secret_kind"),
     },
     signalCoverage: signalCoverage(rows),
+    // THE FOLD THIS SYNC ACTUALLY DID, AND THE DAY IT WAS MEASURED — or neither key is here.
+    // See `latestSecretsTwins` for where the only durable copy lives, why an absence is never
+    // a zero, and why the date rides beside the block instead of inside it. SPREAD rather
+    // than assigned so a refusal omits the keys entirely: `twins: null` would be a third
+    // shape for the client to read where two already say everything it can say, and
+    // `twinsAsOf: null` would be a date claim about a fold that has no date.
+    ...(fold ? { twins: fold.twins, ...(fold.asOf ? { twinsAsOf: fold.asOf } : {}) } : {}),
   };
 }
 

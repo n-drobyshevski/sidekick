@@ -288,6 +288,62 @@ describe("twinFoldView — a fold nobody reported is not a fold of nothing", () 
     expect(defective({ folded: null }).line).toBe("0 twins folded");
   });
 
+  /**
+   * THE FOLD IS DATED, BECAUSE A CLOCK HAS TO SAY WHERE IT STARTED — PRODUCT.md's seventh
+   * principle, the one this register adds to the shared six.
+   *
+   * The figure comes off the newest per-UTC-day history blob (`readModels.ts`'s
+   * `latestSecretsTwins`), one file per day, latest write wins. On a register nobody has
+   * synced since Tuesday, "7 twins folded" read on Friday is Tuesday's number, and until the
+   * day was on the line nothing on screen said so. The same requirement the Scan History
+   * sparkline's caption meets with "as of each saved scan".
+   */
+  it("names the day it was measured, in the app's own date format", () => {
+    const view = twinFoldView({ keys: 6, folded: 7, medianGapDays: 19.94 }, "2026-06-15");
+    expect(view.line).toBe("7 twins folded · median gap 19.9 d · measured 2026-06-15");
+    expect(view.asOf).toBe("2026-06-15");
+  });
+
+  it("a measured zero is dated too — it is a measurement and it happened on a day", () => {
+    expect(twinFoldView({ keys: 0, folded: 0, medianGapDays: null }, "2026-06-15").line)
+      .toBe("0 twins folded · no birth-date gap recorded · measured 2026-06-15");
+  });
+
+  it("A DATE THAT DID NOT ARRIVE IS NOT TODAY: the fold prints undated", () => {
+    for (const bad of [undefined, null, "", 0, [], false, "not a date", {}, NaN]) {
+      const view = twinFoldView({ keys: 6, folded: 7, medianGapDays: 19.94 }, bad);
+      expect(view.asOf, JSON.stringify(bad)).toBe(null);
+      expect(view.line, JSON.stringify(bad))
+        .toBe("7 twins folded · median gap 19.9 d");
+      expect(view.line, JSON.stringify(bad)).not.toContain("measured");
+    }
+  });
+
+  it("the unmeasured line takes no date, whatever is passed beside it", () => {
+    const view = twinFoldView(null, "2026-06-15");
+    expect(view.line).toBe("Twin fold: not measured on this sync");
+    expect(view.asOf).toBe(null);
+  });
+
+  /**
+   * PERTURBATION, reproduced inline. The tempting shape is "we know roughly when this was —
+   * default it to now", which reads as a kindness and publishes a measurement date nobody
+   * recorded. It is the same substitution as reading an absent fold as a zero, one field
+   * along: today's date on a fold that may be a week old is a stronger claim than no date,
+   * and the reader has no way to tell.
+   */
+  it("defaulting a missing date to today would date a fold nobody dated", () => {
+    const defective = (twins, asOf) => {
+      const day = asOf || new Date().toISOString().slice(0, 10); // the anti-pattern
+      return `${twins.folded} twins folded · measured ${day}`;
+    };
+    const today = new Date().toISOString().slice(0, 10);
+    expect(defective({ folded: 7 }, null)).toContain(today);
+    const shipped = twinFoldView({ keys: 6, folded: 7, medianGapDays: 19.94 }, null);
+    expect(shipped.line).not.toContain(today);
+    expect(shipped.line).not.toContain("measured");
+  });
+
   it("refuses a median gap on its own terms, never as a zero-day gap", () => {
     const view = twinFoldView({ keys: 3, folded: 4, medianGapDays: null });
     expect(view.medianGapDays).toBe(null);
