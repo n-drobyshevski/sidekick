@@ -26,7 +26,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  deltaChipView, executiveFirstRunView, fixNextView, openMovementView,
+  deltaChipView, executiveFirstRunView, fixNextQuery, fixNextView, openMovementView,
 } from "../src/client/js/pages/executive.js";
 
 const SRC = readFileSync(
@@ -297,13 +297,69 @@ describe("os: fixNextView", () => {
     }
   });
 
-  it("links every group at the register that lists its findings", () => {
-    expect(view.items.map((i) => i.href)).toEqual(["#/overview", "#/overview"]);
+  // THE LINK LANDS ON A SUPERSET OF THE GROUP, NEVER A SUBSET — the one rule this mapping
+  // has to keep. A link that lands on fewer rows than the card counted makes the register
+  // look like it lost them, and the reader has no way to tell which number is wrong.
+  it("links every group at the register, filtered to what its tier MEANS", () => {
+    expect(view.items.map((i) => i.href)).toEqual([
+      // Tier 1 is `has_kev === true` on a reachable host, with no SLA gate and no fix gate
+      // (domain/fixNext.ts's `classify`). `exposed=1` is the only half the register can
+      // narrow; the KEV half deliberately is not — see below.
+      "#/overview?status=open&exposed=1",
+      // Tiers 2 and 3 both require `fix_available_at` present and past SLA. `fix=fixable` is
+      // exactly the first; the register has no SLA filter, so the second is left wide.
+      "#/overview?status=open&fix=fixable",
+    ]);
     expect(view.items[0].linkLabel).toMatch(/Open the OS vulnerabilities register/);
-    // And it says what the link does NOT do: no register page reads a tier or an owner out of
-    // the hash yet, so the link opens the whole register.
-    expect(view.linkNote).toMatch(/unfiltered/);
-    expect(view.linkNote).toMatch(/later package wires the filter/);
+    expect(view.linkNote).toMatch(/filtered to that group's tier/);
+    expect(view.linkNote).not.toMatch(/unfiltered/);
+    expect(view.linkNote).not.toMatch(/later package wires the filter/);
+  });
+
+  it("sends no tier= param, because riskTier and fixNext do not ask the same question", () => {
+    // THE MAPPING THAT LOOKS RIGHT AND IS A SUBSET. The register's `tier` filter is
+    // `program.riskTier`, which answers "kev" only when the operator's RISK RULE has the KEV
+    // clause enabled (`firedSignals` tests `rule.kev && row.has_kev === true`). `fixNext`
+    // tier 1 reads `has_kev` directly and asks the rule nothing. With the KEV clause off in
+    // Settings, every tier-1 row classifies as exploit / epss / none / unknown and
+    // `tier=kev` would land on a table missing all of them.
+    for (const href of view.items.map((i) => i.href)) {
+      expect(href, href).not.toMatch(/[?&]tier=/);
+    }
+  });
+
+  it("sends no supportGroup= param — the register never reads one out of the hash", () => {
+    // `fixNext.ts` publishes `params.supportGroup` for exactly this link, and the register
+    // cannot use it: the support-group scope is `activeSupportGroup` in `app.js`, module
+    // state set only by the header switcher. A `supportGroup=` param here would be a key
+    // nothing reads — the table would open unscoped while the link claimed otherwise.
+    expect(view.items[0].owner).toBe("CS-CORE-PLATFORM");
+    expect(view.items[0].ownerKind).toBe("supportGroup");
+    for (const href of view.items.map((i) => i.href)) {
+      expect(href, href).not.toMatch(/supportGroup/);
+    }
+  });
+
+  it("the query is a superset of the tier: every filter it sends is a fixNext precondition", () => {
+    // Read against `classify` clause by clause. `status=open` is safe on every tier —
+    // `fixNext` ranks OPEN rows only (`isOpenStatus` gates the loop).
+    const tier1 = new URLSearchParams(view.items[0].href.split("?")[1]);
+    expect(tier1.get("status")).toBe("open");
+    expect(tier1.get("exposed")).toBe("1");
+    expect(tier1.get("fix")).toBeNull();  // tier 1 has NO fix gate: a KEV row on a reachable
+    // host ranks whether or not a patch exists, because the action is to take it off the
+    // internet. `fix=fixable` here would drop the vendor-blocked half of the tier.
+
+    const tier2 = new URLSearchParams(view.items[1].href.split("?")[1]);
+    expect(tier2.get("status")).toBe("open");
+    expect(tier2.get("fix")).toBe("fixable");
+    expect(tier2.get("exposed")).toBeNull();  // tiers 2 and 3 have no exposure gate.
+  });
+
+  it("fixNextQuery answers per tier and nothing else", () => {
+    expect(fixNextQuery(1)).toBe("?status=open&exposed=1");
+    expect(fixNextQuery(2)).toBe("?status=open&fix=fixable");
+    expect(fixNextQuery(3)).toBe("?status=open&fix=fixable");
   });
 
   // THE FAILURE THIS GUARDS. A dash inside a running sentence reads as punctuation, not as an
