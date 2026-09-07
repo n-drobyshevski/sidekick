@@ -394,11 +394,89 @@ const PINNED: PinSpec[] = [
 
 for (const spec of PINNED) nodes.push(pinnedNode(spec, nodes.length + 1));
 
+// ------------------------------------------ the branch a dry-run scan could never produce
+//
+// EVERY RESOLVED ROW IN THE SEEDED LEDGER WAS `resolution_src: "api"`, and that is a fact
+// about the harness rather than about registers. `dryRunScan` (src/server/scanJobs.ts) closes
+// findings by stamping `resolvedAt` on them — an API-declared resolution, the branch
+// `reconcile.ts` takes at "API-declared resolution closes a currently-open row". The OTHER
+// branch, the one this register's whole provenance vocabulary exists for, is DISAPPEARANCE: a
+// finding that was in the previous scan, is absent from this one, and whose severity that scan
+// covered, is resolved and dated by THE SCAN THAT FIRST MISSED IT — an upper bound, not a
+// measurement (`reconcile.ts`'s disappearance pass). Measured before this block: 0 rows in the
+// seeded ledger carried `resolution_src: "disappeared"`, so "Gone by" was unreachable locally
+// in every state but hypothetical, and so was the finding sheet's bounded-date row.
+//
+// HOW IT IS REACHED WITHOUT MOVING ANY OTHER NUMBER. These six rows are appended AFTER the
+// generation loop and the pinned rows, they call `rnd()` NOWHERE, and `dev/boot.js` withholds
+// them from the fifth seed scan onward through `withholdVanishing()` below. So:
+//
+//   - every previously generated node stays byte-identical (the seeded stream is untouched);
+//   - `dryRunScan`'s "resolve the first `seq` open findings" walks `nodes.filter(open)` in
+//     order and `seq` never exceeds 7, while these six sit at the very END of a ~166-node
+//     list — so which findings get an API resolution does not change either;
+//   - by the last seed scan all six have left the register, so the OPEN counts every other
+//     figure on every page is built from are unchanged. Only `resolved` grows, by six, and
+//     six rows now carry a bounded death date.
+//
+// The withheld set is a module-level Set behind a getter rather than a rebuilt array: `nodes`
+// is read once per `dryRunScan` call, so a getter is the one place a "the tenant stopped
+// returning these" event can be modelled without a second SAMPLE_FLAT.
+const VANISHING: PinSpec[] = [
+  // Two internet-reachable exploitable rows, so a "Gone by" row is reachable under the
+  // `exposed=1` filter the Executive's tier-1 link lands on.
+  { cve: "CVE-2026-90101", asset: EXPOSED_ASSETS[0], severity: "HIGH", ageDays: 64,
+    kev: false, exploit: true, epss: 0.31, fixed: true },
+  { cve: "CVE-2026-90102", asset: EXPOSED_ASSETS[1], severity: "CRITICAL", ageDays: 38,
+    kev: true, exploit: true, epss: 0.55, fixed: true },
+  // Two ordinary internal rows across two severities, so the register's severity strip and
+  // the resolved-only view both have more than one level to draw.
+  { cve: "CVE-2026-90103", asset: INTERNAL_ASSET, severity: "MEDIUM", ageDays: 91,
+    kev: false, exploit: false, epss: 0.02, fixed: true },
+  { cve: "CVE-2026-90104", asset: INTERNAL_ASSET, severity: "LOW", ageDays: 17,
+    kev: false, exploit: false, epss: 0.01, fixed: true },
+  // One with no exploit signal captured at all — an `unknown`-tier row that leaves, so the
+  // tier filter and the bounded date can be seen together.
+  { cve: "CVE-2026-90105", asset: INTERNAL_ASSET, severity: "HIGH", ageDays: 143,
+    kev: null, exploit: null, epss: null, fixed: true },
+  // One vendor-blocked row. A finding can stop being returned while still awaiting a patch —
+  // the host was decommissioned, or the package was removed — and dating THAT as a
+  // remediation is exactly the reading "Gone by" exists to qualify.
+  { cve: "CVE-2026-90106", asset: EXPOSED_ASSETS[0], severity: "HIGH", ageDays: 22,
+    kev: false, exploit: true, epss: 0.12, fixed: false },
+];
+
+/** The ids `withholdVanishing()` drops. Read by `dev/boot.js` through the global below. */
+const VANISHING_IDS: string[] = [];
+for (const spec of VANISHING) {
+  const idx = nodes.length + 1;
+  nodes.push(pinnedNode(spec, idx));
+  VANISHING_IDS.push(`vf_pin-${String(idx).padStart(4, "0")}`);
+}
+
+/** Ids currently withheld from the sample. Empty until `dev/boot.js` asks. */
+const withheld = new Set<string>();
+
 export const SAMPLE_FLAT = {
   data: {
     vulnerabilityFindings: {
-      nodes,
+      // A GETTER, so the "tenant" can answer differently across scans without a second
+      // fixture. `dryRunScan` reads this once per scan and copies each node before mutating
+      // it, so nothing here is ever written through.
+      get nodes(): Rec[] {
+        return withheld.size ? nodes.filter((n) => !withheld.has(n["id"] as string)) : nodes;
+      },
       pageInfo: { hasNextPage: false, endCursor: null },
     },
   },
+};
+
+// The dev harness's one hook into the fixture. On `globalThis` rather than exported because
+// `dev/boot.js` is a plain script that runs beside the bundled `Server` IIFE and has no
+// module graph to import through. Dev-only in the strictest sense: `dev/` is never bundled,
+// and this file is swapped in only by `dev/serve.mjs`'s esbuild alias.
+(globalThis as Rec)["__devWithholdVanishing"] = (on: boolean): number => {
+  withheld.clear();
+  if (on) for (const id of VANISHING_IDS) withheld.add(id);
+  return withheld.size;
 };

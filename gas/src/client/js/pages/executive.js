@@ -458,6 +458,46 @@ const TIER_KINDS = { 1: "bad", 2: "warn", 3: "neutral" };
  * so in one sentence, because a section that silently disappears is indistinguishable from a
  * register with nothing to fix.
  */
+/**
+ * THE QUERY A FIX-NEXT LINK LANDS ON, and the one rule it has to keep: THE FILTERED TABLE
+ * MUST BE A SUPERSET OF THE GROUP, never a subset. A link that lands on fewer rows than the
+ * card counted makes the register look like it lost them.
+ *
+ * Read off `domain/fixNext.ts`'s own `classify`, clause by clause:
+ *
+ *   tier 1  `exposureKnown && has_kev === true && exposedKeys.has(key)` — no SLA gate and no
+ *           fix gate. So: `status=open&exposed=1`.
+ *   tier 2  `awaiting_vendor_fix !== true`, past SLA, `fix_available_at` present, and
+ *           (`has_kev` or `has_exploit`). So: `status=open&fix=fixable`.
+ *   tier 3  the same minus the exploit signals, plus `severity === CRITICAL`. Same query.
+ *
+ * WHY NO `tier=kev` ON TIER 1, WHICH IS THE OBVIOUS-LOOKING MAPPING AND IS WRONG. The
+ * register's `tier` filter is `program.riskTier`, and `riskTier` returns "kev" only when the
+ * operator's RISK RULE has the KEV clause enabled (`firedSignals` tests `rule.kev &&
+ * row.has_kev === true`). `fixNext` tier 1 reads `has_kev` directly and asks the rule
+ * nothing. With the KEV clause switched off in Settings every tier-1 row classifies as
+ * `exploit`, `epss`, `none` or `unknown`, and `tier=kev` would land on a table missing all of
+ * them — a strict SUBSET, which is the one thing this link may not be. The same argument
+ * rules `tier=kev,exploit` out of tier 2. The register has no SLA filter either, so the
+ * lateness half of tiers 2 and 3 simply is not narrowed; a superset is the correct answer.
+ *
+ * THE OWNER DOES NOT TRAVEL, and that is a measurement rather than a preference.
+ * `fixNext.ts` publishes `params.supportGroup` for exactly this link, but the register's
+ * support-group scope is `activeSupportGroup` in `app.js` — module state, set only by the
+ * header switcher and NEVER read out of the hash. A `supportGroup=` param on this URL would
+ * be a key nothing reads: the table would open unscoped while the link claimed otherwise.
+ * Teaching `overview.js` to read it instead would put two scopes on one page — a header
+ * saying "all groups" over a table showing one — which is the incoherence the single-scope
+ * rule in `app.js` exists to prevent. So the link narrows by TIER only, the card beside it
+ * names the owner, and the register's own header is where a reader narrows to it.
+ */
+export function fixNextQuery(tier) {
+  const parts = tier === 1
+    ? ["status=open", "exposed=1"]
+    : ["status=open", "fix=fixable"];
+  return "?" + parts.join("&");
+}
+
 export function fixNextView(payload, boot) {
   const first = executiveFirstRunView(payload, boot);
   const block = (payload && payload.fixNext) || null;
@@ -525,7 +565,7 @@ export function fixNextView(payload, boot) {
       meta,
       // `route` is "overview" for every group the server ranks; read rather than hard-coded,
       // so a later tier that lives on another page arrives correctly without a client edit.
-      href: "#/" + String(g.route || "overview"),
+      href: "#/" + String(g.route || "overview") + fixNextQuery(tier),
       linkLabel: "Open the OS vulnerabilities register",
     };
   });
@@ -598,7 +638,8 @@ export function fixNextView(payload, boot) {
       ? null
       : "Tier 1 could not be measured: the last scan carried no exposure field, so a"
         + " known-exploited finding on a reachable host cannot be told from one that is not.",
-    linkNote: "Each link opens the register unfiltered; a later package wires the filter.",
+    linkNote: "Each link opens the register filtered to that group's tier — a superset "
+      + "of the group, since the register cannot narrow by owner from a link.",
   };
 }
 

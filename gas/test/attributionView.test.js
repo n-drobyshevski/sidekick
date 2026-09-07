@@ -79,7 +79,9 @@ function callArgs(name, src) {
  * appearing anywhere else, and the "allowlist is not decorative" check below stops this entry
  * outliving the gap it names once that sibling package lands.
  */
-const MIX_ALLOWLIST = new Set(["overview.js"]);
+// Empty since the register package (P3.2) removed overview.js's copy: the sweep now holds every
+// page to zero exceptions, which is what the non-decorative check above is for.
+const MIX_ALLOWLIST = new Set([]);
 
 describe("attribution.js's severity mix is the shared component, not a private copy", () => {
   it("grep-equivalent, comment-stripped: no page outside MIX_ALLOWLIST declares its own "

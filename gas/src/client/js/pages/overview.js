@@ -22,13 +22,23 @@ import {
   groupPalette, tierPalette,
 } from "../charts.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
-import { populationLine, slaConsumedCaption } from "./overviewModel.js";
+import { overviewHeroView, populationLine, slaConsumedCaption } from "./overviewModel.js";
 import { agingTableModel, pieTableModel, trendTableModel } from "./_charts.js";
-import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, chartTable, clear, dataTable, days1, el, emptyState, errorState, firstRunNotice,
-  fmtDate, fmtDays, glossaryTip, kpiCard, measuredEmpty, num, nvdUrl, openSheet, pageHeader,
-  scopeBar, segmented, sectionLabel, skeleton, tableFooter, tip, tipAnchor, tipLabel,
+  PROVENANCE_HELP, PROVENANCE_LABEL, activeRegisterFilters, filterSentence, fixLabel,
+  provenance, readRegisterParams, registerFirstRunView, registerParamPatch,
+} from "./registerModel.js";
+import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
+import { rateCell } from "./_rates.js";
+import { meterPctFor, rateView } from "./mttr.js";
+import { call } from "../../../../../gas_shared/api.js";
+import { bootstrap, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
+import {
+  DEFAULT_PAGE_SIZE, absent, chartTable, clear, closeActiveSheet, dataTable, days1, el,
+  emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, heroStat, kpiCard,
+  measuredEmpty, num, nvdUrl, openSheet, pageHeader, pct1, scopeBar, sectionLabel, segmented,
+  sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow,
+  tableFooter, tip, tipAnchor, tipLabel, togglePills, triCell,
 } from "../ui.js";
 
 // Rows per page in the "Oldest open findings" panel's pagination. The server ships
@@ -107,11 +117,18 @@ const GROUP_DIMENSIONS = [
   ["cve", "CVE"],
 ];
 
-// Oldest-open panel toggle views: [payload key, label]. "findings" lists individual
-// findings; the rest key insights.oldest.{byAsset,bySupportGroup,byDomain} and rank each
-// entity by its 90+ day open backlog.
+// Oldest-open panel toggle views: [payload key, label]. Each keys
+// insights.oldest.{byAsset,bySupportGroup,byDomain} and ranks that entity by its 90+ day
+// open backlog.
+//
+// THE "Findings" VIEW IS GONE AND IT WAS THE REGISTER ALL ALONG. It listed individual
+// findings with five columns and no key, from a payload capped at 100 rows, inside a
+// drawer — a worse copy of the findings table now at the foot of the page, which is the
+// whole ledger, server-sorted, with a per-row drill-down. Two tables of findings on one
+// page, disagreeing about how many there are, is not a choice a reader should have to
+// make; the panel keeps the three GROUPED rankings, which the register table genuinely
+// cannot draw, and links to the register for the fourth.
 const OLDEST_VIEWS = [
-  ["findings", "Findings"],
   ["byAsset", "Assets"],
   ["bySupportGroup", "Support groups"],
   ["byDomain", "Domains"],
@@ -136,6 +153,13 @@ const SLA_TARGETS_DAYS = { CRITICAL: 7, HIGH: 14, MEDIUM: 30, LOW: 90, INFO: 180
 const AGE_BUCKET_FIRST_EDGE = 7;
 
 export async function renderOverview(main, params, ctx) {
+  // A SHEET OUTLIVES THE PAINT THAT OPENED IT. `openSheet`'s own hook closes on a change of
+  // ROUTE NAME only (gas_shared/ui/sheet.js), and every control in the findings toolbar below
+  // rewrites this route's QUERY PARAMS — so a filter change repaints the page under an open
+  // finding sheet still wired to the previous render's rows, leaving a scrim over the new
+  // page with nothing on screen explaining why. Closing here, at the top of every paint,
+  // covers both paths.
+  closeActiveSheet();
   const boot = await bootstrap();
 
   // Which severities scope every section on this page: the app-wide display setting,
@@ -215,10 +239,11 @@ export async function renderOverview(main, params, ctx) {
     setParams({ by: groupKeys.join(",") });
   }
 
-  // The hero — one per page, borderless (DESIGN.md). "Act now" is the page's whole argument
-  // in one figure: of everything open, this is what carries both evidence of exploitation and
-  // a way in. It is deliberately allowed to be small.
-  const heroHost = el("div", { class: "hero" });
+  // The hero — one per page (DESIGN.md). "Act now" is the page's whole argument in one
+  // figure: of everything open, this is what carries both evidence of exploitation and a way
+  // in. It is deliberately allowed to be small. `renderHero` fills this host with a second
+  // `pageHeader` carrying no route, so the page still has exactly one h1.
+  const heroHost = el("div", {});
   const insightsHost = el("div", {}, el("p", { class: "muted" }, "Computing insights…"));
   main.append(heroHost, insightsHost);
 
@@ -260,69 +285,84 @@ export async function renderOverview(main, params, ctx) {
     return sevScope.length === boot.palette.selectable.length ? null : [...sevScope];
   }
 
-  /** The hero: one figure, borderless, no card (DESIGN.md allows exactly one per page).
+  /**
+   * THE HERO STRIP — a second `pageHeader`, deliberately with no `route`.
    *
-   *  "Act now" is the page's argument compressed to a number — open findings that carry
-   *  BOTH evidence of exploitation (KEV or a public exploit) and a way in (a host reachable
-   *  from outside). It is meant to be small. On a register where every row is Critical, a
-   *  count of everything is not a priority; the intersection is.
+   * `pageHeader({ route })` is what draws an `<h1>`, and this page already has one: the
+   * static header at the top, whose `?` defines the PAGE ("risk-tiers"). Passing no route
+   * here is the opt-out the shared component offers (gas_shared/ui/controls.js), so the page
+   * keeps exactly one h1 while this block gets the header's three levels — hero, aside,
+   * stat strip — instead of the hand-rolled `.hero` / `.hero-minis` / `.mini-*` markup it
+   * used to carry. The `?` on the hero LABEL defines the FIGURE, which is a different
+   * question from the one the h1's `?` answers.
    *
-   *  When the scan predates the exposure fields the intersection is unknowable, so the hero
-   *  falls back to the KEV count and says so rather than printing a confident zero. */
+   * The decision of WHAT it says is `overviewHeroView` (pages/overviewModel.js) — pure, and
+   * exercised in node, because the interesting cases are payload shapes (a scan that carried
+   * no exposure field, an unread ledger, a median nobody measured) rather than pixels.
+   */
   function renderHero(insights) {
     clear(heroHost);
-    const loaded = insights && insights.flatScan;
-    const f = loaded ? insights.funnel : null;
-    const exposureKnown = !!(f && f.exposureKnown);
-    const value = !loaded ? null
-      : exposureKnown ? f.exposed : (insights.tiers?.perTier?.kev ?? 0);
-    const source = !loaded
-      ? "…"
-      : exposureKnown
-        ? "On the CISA KEV catalog or with a public exploit, on a host reachable from "
-          + `outside · open findings, scan ${fmtDate(insights.scan.ts)}`
-        : "On the CISA KEV catalog. Internet exposure was not captured in this scan, so the "
-          + "narrower figure can't be computed.";
-    heroHost.append(
-      el("span", { class: "label" }, "Act now"),
-      el("div", { class: "hero-value num" }, value === null ? "…" : value.toLocaleString()),
-      el("p", { class: "hero-src" }, source),
+    const loaded = !!(insights && insights.flatScan);
+    // The register-level first run, which is NOT the page-level one above: `!boot.latestScan`
+    // means nobody ever scanned, and this means a scan ran and the ledger still holds nothing
+    // in scope. Both end in a dash rather than in a zero.
+    const firstRun = registerFirstRunView(
+      loaded && insights.population ? insights.population.inScope : 0,
+      !!boot.latestScan,
+      boot.latestScan ? boot.latestScan.ts : null,
     );
-    // The provenance line used to be a `title` attribute, which el() now throws on — and it
-    // was carrying real content (which clock "Past SLA" is measured on), not a restatement of
-    // the label, so a native tooltip no keyboard or touch reader could open was the wrong
-    // place for it. tipAnchor, not tip(): these tiles are figures, not controls, and turning
-    // four of them into buttons would add four tab stops to a hero that has none.
-    const mini = (v, label, help) => {
-      const node = el("div", {},
-        el("div", { class: "mini-value num" }, v),
-        el("div", { class: "mini-label" }, label));
-      return help ? tipAnchor(node, () => [help]) : node;
-    };
-    const past = loaded && insights.pastSla ? insights.pastSla.overall : null;
-    const aw = loaded ? insights.awaiting : null;
-    const median = loaded ? insights.medianOpenAge : null;
-    heroHost.append(el("div", { class: "hero-minis" },
-      mini(loaded ? (f.open || 0).toLocaleString() : "…", "Open"),
-      mini(past ? past.breached.toLocaleString() : "…", "Past SLA",
-        "On the vendor-fix clock, matching the MTTR page — a finding with no patch "
-        + "available yet is not counted as a breach."),
-      mini(aw ? (aw.overall || 0).toLocaleString() : "…", "Awaiting vendor fix"),
-      // absent(), not a typed dash: no median open age means the insights payload never
-      // measured one, and the muted dash is the app's one way of saying that.
-      // Hero-mini prose gets `fmtDays` ("412 days"), not `days1` ("412.0 d", the table-cell
-      // grain the two dataTable columns below take) — the Rule this package converges every
-      // page's day formatting on.
-      mini(median === null || median === undefined ? absent() : fmtDays(median),
-        "Median open age"),
-    ));
-    // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the severity gate the
-    // last scan applied, and the base filters every query carries. Quiet on purpose: it is
-    // provenance, not a figure, and it is the only place on the page that says the register is
-    // a filtered slice rather than the fleet. Null (an older cached payload with no
-    // `population` block) draws nothing rather than half a sentence.
-    const provenance = loaded ? populationLine(insights) : null;
-    if (provenance) heroHost.append(el("p", { class: "small muted" }, provenance.text));
+    const view = overviewHeroView(loaded ? insights : null, firstRun);
+
+    const openSevs = sevEntries(openBySeverity(insights), boot.palette.order);
+    // WHAT THE FIGURES WERE MEASURED OVER — the in-scope count, the severity gate the last
+    // scan applied, and the base filters every query carries. Quiet on purpose: provenance,
+    // not a figure, and the only place on the page that says the register is a filtered slice
+    // rather than the fleet. Null (an older cached payload with no `population` block, or a
+    // register nobody has read) draws nothing rather than half a sentence.
+    const population = loaded && !view.firstRun ? populationLine(insights) : null;
+    const aside = openSevs.length || population
+      ? el("div", { class: "page-strip" },
+        openSevs.length
+          ? [
+            sevSegmentBar(openSevs, { size: "md", label: "Open findings by severity" }),
+            sevKeyRow(openSevs),
+          ]
+          : null,
+        population ? el("p", { class: "small muted" }, population.text) : null,
+      )
+      : null;
+
+    heroHost.append(pageHeader({
+      hero: heroStat("Act now", view.value,
+        view.qualifier + (view.scanTs ? " Scan " + fmtDate(view.scanTs) + "." : ""),
+        view.lines.length ? { lines: view.lines } : null),
+      aside,
+      stats: view.stats.map(statFromView),
+    }));
+  }
+
+  /** One `statRow` from the view model's description of it. A `rate` stat carries its base
+   *  through `rateCell`/`rateView` (pages/_rates.js, pages/mttr.js) and fills a meter only
+   *  where the rate was really measured — `meterPctFor` returns null otherwise, and
+   *  `meter()`'s own `Number(value) || 0` would draw a confident 0% fill without it. */
+  function statFromView(stat) {
+    const help = stat.term
+      ? (stat.lines ? { lines: stat.lines, term: stat.term } : { term: stat.term })
+      : (stat.lines || null);
+    if (stat.kind !== "rate") return statRow(stat.name, stat.value, stat.sub, null, help);
+    const rate = rateView(stat.pct, stat.denominator, stat.denominatorLabel, stat.emptyLabel);
+    return statRow(stat.name, rateCell(rate), stat.sub, meterPctFor(rate), help);
+  }
+
+  /** Open findings per severity, off `sevStats` — the per-severity `{total, open, resolved}`
+   *  block. `counts` beside it is the whole current scan (open AND resolved), so a strip
+   *  built from it would be a different population from every figure around it. */
+  function openBySeverity(insights) {
+    const stats = insights && insights.sevStats ? insights.sevStats : null;
+    if (!stats) return {};
+    const out = {};
+    for (const sev of boot.palette.order) out[sev] = num(stats[sev] && stats[sev].open, 0);
+    return out;
   }
 
   function renderInsights(insights) {
@@ -356,6 +396,10 @@ export async function renderOverview(main, params, ctx) {
       onclick: () => openSheet((body) => renderBreakdown(body),
         { title: "Breakdown", subtitle: "Group open findings by any dimension and drill in." }),
     }, "Explore breakdown →"));
+    // THE REGISTER ITSELF, LAST. Everything above is an aggregate over the population; this
+    // is the population. It sits at the foot because a reader arrives with a question the
+    // figures answer and leaves with a row they have to act on.
+    renderRegister(insights);
   }
 
   // ------------------------------------------------------------------- triage funnel
@@ -722,7 +766,7 @@ export async function renderOverview(main, params, ctx) {
    *  server ships all 100 rows of the view it answers for, and an RPC behind every Next click
    *  would trade the one thing this panel does well for bytes that do not matter. */
   function renderOldestPanel() {
-    let view = "findings";
+    let view = "byAsset";
     // Fetched views, by name. Lives as long as the open drawer.
     const loaded = new Map();
     // Current page within the active view, reset to 0 whenever the view switches.
@@ -773,10 +817,7 @@ export async function renderOverview(main, params, ctx) {
     }
 
     function paint() {
-      const individual = view === "findings";
-      caption.textContent = individual
-        ? "Longest-open findings, oldest first."
-        : "Ranked by open findings older than 90 days.";
+      caption.textContent = "Ranked by open findings older than 90 days.";
       if (!loaded.has(view)) {
         clear(tableHost).append(el("div", { role: "status", "aria-label": "Loading ranked rows" },
           ...[0, 1, 2, 3, 4].map(() =>
@@ -808,9 +849,8 @@ export async function renderOverview(main, params, ctx) {
           },
         ]
         : [];
-      clear(tableHost).append(individual
-        ? oldestFindingsTable(pageRows)
-        : oldestGroupTable(pageRows, OLDEST_VIEWS.find(([v]) => v === view)[1], extraCols));
+      clear(tableHost).append(
+        oldestGroupTable(pageRows, OLDEST_VIEWS.find(([v]) => v === view)[1], extraCols));
       // The footer, not the bare pager it used to draw. Two things were wrong: the pager
       // printed the count unpluralised, so a one-row ranking read "1 rows"; and ten rows was
       // the only page size a reader could ever have, on a panel whose payload is a hundred.
@@ -830,62 +870,58 @@ export async function renderOverview(main, params, ctx) {
     }
 
     ensure();
+    // THE FOURTH VIEW IS A LINK, NOT A TABLE. Individual findings live in the register at
+    // the foot of the page, which holds all of them rather than the ranking's first hundred
+    // and can say what each one is; asking the same question twice on one page is how two
+    // counts of one population end up on one screen. `navigate` (not `setParams`) because
+    // the answer is a shareable URL — and because only a real hash change re-enters the
+    // route, which is what repaints the table under the new order.
+    const toRegister = el("button", {
+      type: "button",
+      class: "linklike",
+      onclick: () => {
+        closeActiveSheet();
+        // THE SECTION THAT IS ON SCREEN NOW IS NOT THE ONE TO SCROLL TO, and three measured
+        // wrong answers are why this is not a one-liner (seeded harness, 1280x900, the
+        // section sitting 3,355px down a `<main>` that is the scroll container):
+        //
+        //   `setTimeout(…, 0)`      `renderOverview` awaits `api_getInsights` before
+        //                           `renderRegister` runs, so there is no new `#findings` yet.
+        //                           Measured `scrollTop: 0`.
+        //   scroll on first sight   The first frame finds the PREVIOUS render's section, still
+        //                           in the DOM because the repaint has not started, and scrolls
+        //                           to it as the page is torn down under it. Measured
+        //                           `scrollTop: 52` against a target at 3,355.
+        //   scroll on a fresh node  Better, and still early: the section arrives carrying a
+        //                           SKELETON and the table that replaces it is taller.
+        //
+        // So: a DIFFERENT node from the one on screen now, carrying real rows. The budget is
+        // frames rather than a timer because what is being waited on is a paint; when it runs
+        // out the section is scrolled to anyway, which is right for the one case where no
+        // repaint is coming — a reader who was already at this exact sort order, where the
+        // hash does not change and no `hashchange` fires.
+        const prevSection = document.getElementById("findings");
+        const hashBefore = location.hash;
+        navigate("overview", { by: groupKeys.join(","), sort: "age_days", dir: "desc" });
+        const repainting = location.hash !== hashBefore;
+        let framesLeft = 240;
+        const seek = () => {
+          const target = document.getElementById("findings");
+          const fresh = !repainting || (target && target !== prevSection);
+          const painted = target && target.querySelector("table.data tbody tr");
+          if (target && fresh && (painted || framesLeft <= 0)) {
+            target.scrollIntoView({ block: "start", behavior: "auto" });
+            return;
+          }
+          if (framesLeft-- > 0) requestAnimationFrame(seek);
+        };
+        requestAnimationFrame(seek);
+      },
+    }, "Open the findings table, oldest first \u2192");
     return el("div", { class: "chart-card" },
       el("h3", {}, "Oldest open findings"),
-      toggle, tableHost, footerHost, caption);
-  }
-
-  /** Ranked table of individual oldest open findings (CVE · Asset · Subscription · Severity · Age). */
-  function oldestFindingsTable(rows) {
-    // Dated to the scan the ranking was measured against: an empty ranking under a header
-    // that already says "oldest open findings" reads as broken unless it says when it looked.
-    if (!rows || !rows.length) {
-      return measuredEmpty("No open findings to rank.", { at: lastInsights?.scan?.ts });
-    }
-    // The dashes are absent(): a finding with no CVE, asset or subscription recorded is a
-    // finding the scan told us nothing about for that column, and a dash in the same ink as
-    // the values beside it claims otherwise.
-    const columns = [
-      {
-        key: "cve",
-        label: "CVE",
-        help: ["The finding's CVE identifier, where Wiz reports one."],
-        cell: (r) => (r.cve && r.cve !== "(none)"
-          ? el("a", { href: nvdUrl(r.cve), target: "_blank", rel: "noopener" }, r.cve)
-          : (r.cve || absent())),
-      },
-      {
-        key: "asset",
-        label: "Asset",
-        help: ["The host workload carrying this finding."],
-        cell: (r) => r.asset || absent(),
-      },
-      {
-        key: "subscription",
-        label: "Subscription",
-        help: ["The cloud subscription the asset belongs to."],
-        cell: (r) => r.subscription || absent(),
-      },
-      // Severity is the dot AND the word — never the colour alone.
-      {
-        key: "severity",
-        label: "Severity",
-        help: ["The finding's severity, as assigned by the scan."],
-        cell: (r) => [
-          el("span", { class: "sev-dot", "aria-hidden": "true",
-            style: `background:${boot.palette.colors[r.severity] || "var(--text-3)"}` }),
-          sevTitle(r.severity),
-        ],
-      },
-      {
-        key: "age",
-        label: "Age",
-        className: "num",
-        help: { term: "age" },
-        cell: (r) => days1(r.ageDays),
-      },
-    ];
-    return dataTable({ columns, rows });
+      toggle, tableHost, footerHost, caption,
+      el("p", { class: "small muted" }, toRegister));
   }
 
   /** Ranked table of the 90+ day open backlog per group (Group [· extras] · 90+ days · Open ·
@@ -1063,6 +1099,328 @@ export async function renderOverview(main, params, ctx) {
       el("h2", { class: "section-label" }, "Where it concentrates"), toggle));
     insightsHost.append(listHost, noteHost);
     paintList();
+  }
+
+
+  // ------------------------------------------------------------- the findings themselves
+
+  /**
+   * THE REGISTER'S OWN ROWS — server-paged, server-sorted, one per finding.
+   *
+   * Every other read model on this page is an AGGREGATE, and the one question a reader
+   * arrives with ("show me the findings, and let me sort them") had no answer on the page at
+   * all. `api_getRegisterRows` is the endpoint that does: the whole ledger, not a page the
+   * browser holds, so a click on a heading re-fetches rather than re-sorting an array in
+   * hand. The ordering rule lives on the server (`domain/pagePayload.ts`'s
+   * `sortRegisterRows`) and this component only ever reads back what the server ordered.
+   *
+   * EVERY CONTROL WRITES THE URL, through `navigate` and never `setParams`.
+   * `history.replaceState` fires no `hashchange`, so a filter would rewrite the URL and leave
+   * the page showing the previous fetch — and, more to the point, a filtered register has to
+   * be a LINK somebody can send. That is what lets the Executive page's fix-next list land on
+   * a filtered table rather than on the whole register.
+   */
+  function renderRegister(insights) {
+    const filters = readRegisterParams(params);
+    const scanTs = insights && insights.scan ? insights.scan.ts : null;
+    const section = el("section", { id: "findings" });
+    section.append(sectionLabel("Findings", {
+      lines: [
+        "Every finding the register holds, open and resolved, one row each — server-paged "
+        + "and server-sorted, so pressing a heading asks for a different order rather than "
+        + "re-arranging what is already on screen.",
+        "Open a row for everything the register knows about that finding.",
+      ],
+    }));
+    section.append(registerToolbar(filters, insights));
+    section.append(registerRowsTable(filters, scanTs));
+    insightsHost.append(section);
+  }
+
+  /** Rewrite the hash with one filter changed, KEEPING the params this page owns for other
+   *  reasons (`by`, the breakdown grouping path). A control that silently dropped them would
+   *  reset the drawer every time somebody changed a tier. The page index resets on any filter
+   *  change: page 4 of the old set is not page 4 of the new one. */
+  function goFilters(filters, patch) {
+    navigate("overview", {
+      by: groupKeys.join(","),
+      ...registerParamPatch({ ...filters, page: 0 }),
+      ...patch,
+    });
+  }
+
+  /** Status, fix availability, tier and reachability, as one toolbar. */
+  function registerToolbar(filters, insights) {
+    const bar = el("div", { class: "toolbar" });
+
+    bar.append(el("div", { class: "toolbar-group" },
+      el("span", { class: "small muted" }, "State"),
+      segmented({
+        options: [
+          { value: "open", label: "Open",
+            title: "Only findings still in the register." },
+          { value: "resolved", label: "Resolved",
+            title: "Only findings that have left it. Read the State word beside each one: a "
+              + "resolution can be an observed event or a scan that stopped seeing it." },
+          { value: "all", label: "All",
+            title: "Open and resolved together, the whole register." },
+        ],
+        value: filters.status,
+        ariaLabel: "Findings: state",
+        onChange: (v) => goFilters(filters, { status: v === "open" ? "" : v }),
+      })));
+
+    bar.append(el("div", { class: "toolbar-group" },
+      el("span", { class: "small muted" }, "Fix"),
+      segmented({
+        options: [
+          { value: "all", label: "All", title: "Every row, whatever the vendor has published." },
+          { value: "fixable", label: "Fix available",
+            title: "Only rows where a vendor fix has been observed, which are the ones whose "
+              + "actionable clock has started." },
+          { value: "awaiting", label: "Awaiting vendor fix",
+            title: "Only open rows with no published patch. They are waiting on a vendor, "
+              + "not on a team, and they sit outside the SLA clock entirely." },
+        ],
+        value: filters.fix,
+        ariaLabel: "Findings: fix availability",
+        onChange: (v) => goFilters(filters, { fix: v === "all" ? "" : v }),
+      })));
+
+    // NEUTRAL PILLS, NOT SEVERITY PILLS. `togglePills` defaults to `pillClass: "sev-pill"`
+    // and `sevClass: true`, which would stamp a `sev-kev` class onto a control that is not a
+    // severity filter — and a tier is emphatically not a severity here (gas/README.md,
+    // "exploitability is the spine, not severity"). `unknown` KEEPS ITS PILL AND ITS WORD:
+    // it is a measurement gap, and a filter that silently omitted it would make the rows
+    // nobody looked at unreachable from this table.
+    bar.append(el("div", { class: "toolbar-group" },
+      el("span", { class: "small muted" }, "Tier"),
+      togglePills({
+        options: TIER_ORDER.map((t) => ({ value: t, label: TIER_LABELS[t] })),
+        selected: filters.tier,
+        ariaLabel: "Findings: risk tier",
+        pillClass: "kind-pill",
+        sevClass: false,
+        onToggle: (t) => {
+          const next = new Set(filters.tier);
+          if (next.has(t)) next.delete(t);
+          else next.add(t);
+          goFilters(filters, { tier: TIER_ORDER.filter((x) => next.has(x)).join(",") });
+        },
+      })));
+
+    // THE EXPOSURE TOGGLE IS DISABLED WITH A REASON, not hidden and not silently satisfied.
+    // `exposureKnown: false` means the last scan carried no exposure field at all, so
+    // applying the filter would answer "0 internet-facing findings" — a measurement — where
+    // the truth is that nothing looked. A disabled control does not reliably take the
+    // pointer/focus events a bare tooltip needs, which is why the reason arrives through
+    // `tipAnchor` on a wrapper rather than through `tip()` on the button itself.
+    const supported = !!(insights && insights.funnel && insights.funnel.exposureKnown);
+    const exposedBtn = el("button", {
+      type: "button",
+      class: "kind-pill",
+      "aria-pressed": filters.exposed ? "true" : "false",
+      disabled: supported ? null : "",
+      onclick: () => goFilters(filters, { exposed: filters.exposed ? "" : "1" }),
+    }, "Internet-reachable only");
+    bar.append(el("div", { class: "toolbar-group" },
+      el("span", { class: "small muted" }, "Reachability"),
+      supported
+        ? exposedBtn
+        : el("span", { class: "tip-disabled-wrap" },
+          tipAnchor(exposedBtn, () => [
+            "The last scan carried no exposure field, so a reachable host cannot be told "
+            + "from one that is not. Filtering on it would answer 0 — a measurement — where "
+            + "the truth is that nothing looked.",
+          ]))));
+    return bar;
+  }
+
+  /** The columns, with a definition on every heading. Every `sortable` key is a member of
+   *  `REGISTER_ROW_COLUMNS`, so the server never falls back to its default order behind a
+   *  heading a reader just pressed. */
+  function registerColumns() {
+    return [
+      {
+        // SEVERITY SORTS BY MEANING, and the server ranks it against `SEVERITY_ORDER` where
+        // CRITICAL is 0 — so ASCENDING is worst-first. A register that defaulted this column
+        // to descending would open on LOW.
+        key: "severity", label: "Severity", sortable: true,
+        help: ["The finding's severity as the scan assigned it. Sorted by MEANING rather "
+          + "than alphabetically: ascending is worst-first."],
+        cell: (r) => sevBadge(r.severity),
+      },
+      {
+        key: "cve", label: "CVE", sortable: true,
+        help: ["The finding's CVE identifier. The link opens its NVD entry."],
+        cell: (r) => (r.cve
+          ? el("a", { href: nvdUrl(r.cve), target: "_blank", rel: "noopener" }, r.cve)
+          : absent()),
+      },
+      {
+        key: "risk_tier", label: "Tier", sortable: true,
+        help: { term: "unclassified", lines: [
+          "Which exploit signal put this finding where it is, under the risk rule in force. "
+          + "Unclassified is a measurement gap, not a low score.",
+        ] },
+        cell: (r) => (r.risk_tier ? (TIER_LABELS[r.risk_tier] || r.risk_tier) : absent()),
+      },
+      {
+        key: "asset_name", label: "Asset", sortable: true,
+        help: ["The host workload carrying this finding."],
+        cell: (r) => r.asset_name || absent(),
+      },
+      {
+        key: "subscription_name", label: "Subscription", sortable: true,
+        help: ["The cloud subscription the asset belongs to."],
+        cell: (r) => r.subscription_name || absent(),
+      },
+      {
+        key: "support_group", label: "Support group", sortable: true,
+        help: ["The owning group, from the subscription map. A dash is a gap in attribution, "
+          + "not a finding nobody owns."],
+        cell: (r) => r.support_group || absent(),
+      },
+      {
+        key: "first_seen", label: "First seen", sortable: true,
+        help: ["The first scan that returned this finding, where the detection clock starts."],
+        cell: (r) => fmtDate(r.first_seen),
+      },
+      {
+        key: "awaiting_vendor_fix", label: "Fix", sortable: true,
+        help: { term: "awaiting-fix" },
+        cell: (r) => fixLabel(r.awaiting_vendor_fix),
+      },
+      {
+        key: "has_kev", label: "KEV", sortable: true,
+        help: { term: "kev" },
+        cell: (r) => triCell(r.has_kev),
+      },
+      {
+        key: "has_exploit", label: "Exploit", sortable: true,
+        help: { term: "known-exploit" },
+        cell: (r) => triCell(r.has_exploit),
+      },
+      {
+        key: "epss", label: "EPSS", className: "num", sortable: true,
+        help: { term: "epss" },
+        cell: (r) => (r.epss === null || r.epss === undefined
+          ? absent() : pct1(Number(r.epss) * 100)),
+      },
+      {
+        key: "internet_exposed", label: "Reachable", sortable: true,
+        help: { term: "internet-exposed", lines: [
+          "A dash is not a No: either the scan carried no exposure field, or the finding is "
+          + "no longer in the current frame at all, which every row resolved by "
+          + "disappearance is.",
+        ] },
+        cell: (r) => triCell(r.internet_exposed),
+      },
+      {
+        key: "age_days", label: "Age", className: "num", sortable: true,
+        help: { term: "age" },
+        cell: (r) => days1(r.age_days),
+      },
+      {
+        // The server sorts the raw `status` column; the word below is a rendering of it and
+        // of `resolution_src` / `reopened_count`, which ride the same row unsorted.
+        key: "status", label: "State", sortable: true,
+        help: { term: "returned", lines: [
+          PROVENANCE_HELP.bounded,
+          PROVENANCE_HELP.returned,
+        ] },
+        cell: (r) => PROVENANCE_LABEL[provenance(r)],
+      },
+    ];
+  }
+
+  /** The paged table itself. `swrCall` for the first page (a revisit paints from the session
+   *  cache while it revalidates); a plain `call` for every navigation after it, because a
+   *  reader who pressed Next is asking for something the cache cannot already hold. */
+  function registerRowsTable(filters, scanTs) {
+    const state = {
+      page: filters.page, pageSize: DEFAULT_PAGE_SIZE, sort: filters.sort, dir: filters.dir,
+    };
+    const host = el("div", { class: "table-host" });
+    let first = true;
+
+    function requestParams() {
+      const p = {
+        domain: ctx.domain || "", supportGroup: ctx.supportGroup || "",
+        severities: scopeParam(),
+        page: state.page, pageSize: state.pageSize, sort: state.sort, dir: state.dir,
+        status: filters.status, fix: filters.fix,
+      };
+      if (filters.tier.length) p.tier = filters.tier.join(",");
+      if (filters.exposed) p.exposed = true;
+      return p;
+    }
+
+    function load() {
+      host.replaceChildren(skeletonStack(5, {
+        widths: ["100%", "100%", "100%", "90%", "70%"],
+      }));
+      const p = requestParams();
+      const send = first ? swrCall("api_getRegisterRows", p) : call("api_getRegisterRows", p);
+      first = false;
+      send.then((data) => paint(data || {})).catch((e) => {
+        host.replaceChildren(errorState("This table could not be loaded.", {
+          detail: e && e.message ? e.message : String(e),
+          onRetry: load,
+        }));
+      });
+    }
+
+    function paint(data) {
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      // The SERVER is the one source of truth for what it actually served — a clamped page
+      // or a sort it refused answers back through these, so the footer and the active
+      // heading never advertise a request the server declined.
+      state.page = num(data.page, state.page);
+      state.pageSize = num(data.pageSize, state.pageSize);
+      state.sort = data.sort || state.sort;
+      state.dir = data.dir === "asc" ? "asc" : "desc";
+      const table = dataTable({
+        columns: registerColumns(),
+        rows,
+        stickyHeader: true,
+        sort: { key: state.sort, descending: state.dir === "desc" },
+        onSort: (key) => {
+          state.dir = state.sort === key && state.dir === "desc" ? "asc" : "desc";
+          state.sort = key;
+          state.page = 0;
+          load();
+        },
+        // THE DRILL-DOWN, and `rows` is exactly the server page in hand — prev/next inside
+        // the sheet walks these and no more, because these are the rows the reader can see.
+        onRowOpen: (r) => openFindingSheet(r, { rows }),
+        rowLabel: (r) => findingRowLabel(r),
+        emptyText: "Nothing in this register.",
+      });
+      const footer = tableFooter({
+        page: state.page,
+        pageCount: num(data.pageCount, 1),
+        total: num(data.total, rows.length),
+        pageSize: state.pageSize,
+        onPage: (pg) => { state.page = pg; load(); },
+        onPageSize: (size, nextPage) => {
+          state.pageSize = size;
+          state.page = nextPage;
+          load();
+        },
+      });
+      // A FILTER THAT MATCHES NOTHING KEEPS ITS FIGURES, and says WHICH filters narrowed it.
+      // An unfiltered empty register is a different state and gets `emptyText` instead — a
+      // shared "nothing matched the current filters" there would name controls that are not
+      // doing anything.
+      const sentence = rows.length === 0 && activeRegisterFilters(filters)
+        ? filterSentence(filters) : null;
+      const notice = sentence ? measuredEmpty(sentence, { at: scanTs }) : null;
+      host.replaceChildren(table, footer, ...(notice ? [notice] : []));
+    }
+
+    load();
+    return host;
   }
 
 
@@ -1411,14 +1769,20 @@ export async function renderOverview(main, params, ctx) {
       }
       return el("tr", {},
         groupCell,
-        // Severity is the color strip plus the exact per-severity counts — never color alone.
+        // Severity is the shared distribution bar plus the exact per-severity counts —
+        // never color alone. `sevSegmentBar` at the in-row size replaced a private
+        // `mixStrip`/`mixText` pair that reimplemented the same geometry off
+        // `boot.palette` and spelled the counts a fourth way; the bar takes no `label`, so
+        // it is aria-hidden decoration and the visible text beside it is the announcement.
+        // `sevEntries` drops the empty levels, which is what makes an all-zero group render
+        // as `absent()` rather than as an empty rectangle.
         el("td", {},
           el("div", { class: "mix-cell" },
-            mixStrip(node.sevCounts),
+            sevSegmentBar(sevEntries(node.sevCounts, boot.palette.order), { size: "xs" }),
             // absent() rather than a typed dash: a group with no severity counts had none
             // reported, which is not the same as a group whose mix is empty by measurement.
             el("span", { class: "mix-text small muted num" },
-              mixText(node.sevCounts) || absent()))),
+              sevSpoken(sevEntries(node.sevCounts, boot.palette.order)) || absent()))),
         el("td", { class: "num" }, node.assets.toLocaleString()),
         el("td", { class: "num" }, node.total.toLocaleString()),
         el("td", { class: "num" }, node.open.toLocaleString()),
@@ -1427,29 +1791,4 @@ export async function renderOverview(main, params, ctx) {
     }
   }
 
-  // ----------------------------------------------------------------------- helpers
-
-  /** Proportional severity-mix bar. Decorative: the exact counts are carried by the visible
-   *  .mix-text span the caller renders beside it, so the strip is aria-hidden to avoid a
-   *  double announcement. Color is never the sole cue. */
-  function mixStrip(sevCounts) {
-    const total = boot.palette.order.reduce((a, s) => a + (sevCounts[s] || 0), 0);
-    const strip = el("div", { class: "mix-strip", "aria-hidden": "true" });
-    if (!total) return strip;
-    for (const s of boot.palette.order) {
-      if (!sevCounts[s]) continue;
-      const span = el("span", {});
-      span.style.width = `${(sevCounts[s] / total) * 100}%`;
-      span.style.background = boot.palette.colors[s];
-      strip.append(span);
-    }
-    return strip;
-  }
-
-  function mixText(sevCounts) {
-    return boot.palette.order
-      .filter((s) => sevCounts[s])
-      .map((s) => `${s} ${sevCounts[s]}`)
-      .join(" · ");
-  }
 }
