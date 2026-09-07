@@ -13,6 +13,7 @@ import { domainNames, validateDomains, compileDomains, assignDomain, assignDomai
 import { coverage, ruleHealth, supportGroupBreakdown, unassignedLifecycles, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import type { BaseRow } from "../domain/ledgerCore";
+import { fixNext } from "../domain/fixNext";
 import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
 import { normalizeSeverity } from "../domain/severity";
@@ -42,9 +43,9 @@ import * as insights from "../domain/insights";
 import * as program from "../domain/program";
 import * as settingsImpact from "../domain/settingsImpact";
 import {
-  execGroupSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice, mttrGroupTrendSlice,
-  jobSummarySlice, mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice,
-  programTrendSlice, scanRowsSlice,
+  execGroupSlice, execInsightsSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice,
+  mttrGroupTrendSlice, jobSummarySlice, mttrPageTrendSlice, oldestOpenSlice,
+  overviewInsightsSlice, programTrendSlice, scanRowsSlice,
 } from "../domain/pagePayload";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
@@ -476,6 +477,14 @@ function insightsData(p?: unknown): Rec {
   // One pass over the frame, read by both the `exploit` block and the risk ladder's
   // exposure join below.
   const exploitSummaryScoped = insights.exploitSummary(recsVisible);
+  // HOISTED OUT OF `riskLadder` because `fixNext` reads the same two answers, and neither is
+  // free: `exposedVulnKeys` is a full pass over every frame record, and the rule decides how
+  // every row on this page classifies. Hoisting rather than returning them from `riskLadder`
+  // keeps it visible that the ranked list and the triage funnel are reading ONE join and ONE
+  // rule — two passes would eventually disagree about which hosts are reachable, and the page
+  // would print a tier-1 count the funnel's `exposed` step contradicts.
+  const rule = settingsStore.getRiskRule().rule;
+  const exposedKeys = exposedVulnKeys(recsVisible, exploitSummaryScoped.exposureKnown);
   return {
     flatScan: true,
     domain,
@@ -505,7 +514,26 @@ function insightsData(p?: unknown): Rec {
     // print different unclassified counts for one fleet (pinned in test/program.test.ts).
     ...riskLadder(
       recsVisible, baseVisible as unknown as Rec[], base as unknown as Rec[],
-      severities, showNoFix, exploitSummaryScoped,
+      severities, showNoFix, exploitSummaryScoped, rule, exposedKeys,
+    ),
+    // WHAT TO DO ON MONDAY, and what the list left out. The Executive front door reads this
+    // (via `execInsightsSlice`); the Overview does not, and `overviewInsightsSlice` drops it.
+    // Computed HERE rather than in a read-model of its own so both pages share one `cached()`
+    // entry — see the note on `execInsightsSlice`.
+    fixNext: fixNext(baseVisible as unknown as Parameters<typeof fixNext>[0], {
+      exposedKeys,
+      exposureKnown: exploitSummaryScoped.exposureKnown,
+      rule,
+      slaTargets: SLA_TARGETS,
+    }),
+    // Open-backlog movement across at least a week of SCANS — the different question from
+    // `movement` below, which reports the latest scan's reconcile deltas (one day of news on
+    // a daily register). Reads the same `baseVisible` and the same severity gate, so the two
+    // blocks describe one population. Also Executive-only.
+    movementOpen: insights.openMovement(
+      baseVisible as unknown as Parameters<typeof insights.openMovement>[0],
+      ledgerStore.loadScanRows() as unknown as Parameters<typeof insights.openMovement>[1],
+      { severities },
     ),
     // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
     // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
@@ -546,6 +574,28 @@ function insightsData(p?: unknown): Rec {
 }
 
 /**
+ * Frame -> ledger join: the `vuln_key`s of findings on an internet-reachable host.
+ *
+ * `hasWideInternetExposure` is a CURRENT-SCAN fact and not a ledger column, so exposure can
+ * only ever be answered by joining the frame. When the frame predates those keys the caller
+ * passes `exposureKnown: false` and the set stays EMPTY — which is why every consumer has to
+ * carry the flag beside it: an empty set here means "we could not look", not "nothing is
+ * reachable", and the two render differently (CLAUDE.md, "The Outside").
+ */
+function exposedVulnKeys(recsVisible: Rec[], exposureKnown: boolean): Set<string> {
+  const out = new Set<string>();
+  if (!exposureKnown) return out;
+  for (const r of recsVisible) {
+    if (r["vulnerableAsset.hasWideInternetExposure"] === true
+      || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
+      const k = String(r["_vuln_key"] ?? "");
+      if (k) out.add(k);
+    }
+  }
+  return out;
+}
+
+/**
  * The Overview page's risk-ladder block: tiers, the triage funnel, the tier trend, aging
  * stacked by tier, concentration, and the one SLA figure.
  *
@@ -575,21 +625,12 @@ function riskLadder(
   // Passed in rather than recomputed: `insightsData` already ran it for the `exploit`
   // field, and it is a full pass over every frame record.
   exposure: insights.ExploitSummary,
+  // Both hoisted into `insightsData` so `fixNext` reads the same answers this block does —
+  // see the note there. They were computed in here until the ranked list needed them too.
+  rule: program.RiskRule,
+  exposedKeys: Set<string>,
 ): Rec {
-  const rule = settingsStore.getRiskRule().rule;
   const tierOf = (r: Rec) => program.riskTier(r as unknown as program.RiskRow, rule);
-
-  // Frame -> ledger join for the funnel's exposure step.
-  const exposedKeys = new Set<string>();
-  if (exposure.exposureKnown) {
-    for (const r of recsVisible) {
-      if (r["vulnerableAsset.hasWideInternetExposure"] === true
-        || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
-        const k = String(r["_vuln_key"] ?? "");
-        if (k) exposedKeys.add(k);
-      }
-    }
-  }
 
   const agingTier = insights.ageBucketsBy(
     baseVisible as unknown as Parameters<typeof insights.ageBucketsBy>[0],
@@ -637,7 +678,15 @@ const cachedInsightsData = (p?: unknown) =>
     // "insights5" → "insights6": the payload gained `slaConsumed` (open findings by tenth of
     // their SLA window, plus the past-window and no-window counts that are not drawn); a
     // stale insights5 entry has none of it and the section would render as a measured zero.
-    "insights6",
+    // "insights6" → "insights7": the payload gained `fixNext` (the Executive front door's
+    // ranked list plus its unranked accounting) and `movementOpen` (open-backlog movement
+    // across at least a week of scans). A stale insights6 entry carries NEITHER, and both are
+    // read unconditionally by `execInsightsSlice`, so an Executive page served one would paint
+    // a front door with no ranked list and no movement block for up to an hour after deploy —
+    // which reads as a register with nothing to do rather than as a cache miss. The key is
+    // unchanged: both new figures are computed from `baseVisible`, the risk rule and the scan
+    // log, every one of which the existing key already covers.
+    "insights7",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1885,8 +1934,28 @@ const cachedExecutiveSeverityCounts = (p?: unknown) =>
 
 export function getExecutivePage(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
+  // THE EXACT THREE PARAMS THE OVERVIEW SENDS, rebuilt rather than forwarded.
+  //
+  // `cachedInsightsData` keys on {domain, supportGroup, supportGroups, severities, showNoFix,
+  // riskRuleVersion}; the last two it reads off settings itself, and the Overview's
+  // `insightsParams()` (client/js/pages/overview.js) sends exactly {domain, supportGroup,
+  // severities} — no `supportGroups`, so `readStringArray` answers `[]` on both sides. Passing
+  // those three and nothing else is therefore the SAME key, and the Executive lands on the
+  // entry the Overview warmed (or warms the one it will read) instead of computing a second
+  // copy of `baseVisible`.
+  //
+  // Rebuilt rather than forwarding `p` because forwarding would make the match an accident of
+  // what the Executive's client happens to send today: the moment that page gains a param the
+  // Overview does not have, the key would diverge silently and the sharing would be gone with
+  // no symptom but a slower first paint.
+  const insightsParams = {
+    domain,
+    supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+    severities: readSeverities(p),
+  };
   return run(() => ({
     mttr: execMttrSlice(cachedMttrData(p)),
+    ...(execInsightsSlice(cachedInsightsData(insightsParams)) ?? {}),
     // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
     // domain yields a single row, so a domain scope splits by support group within it instead.
     byDomain: execGroupSlice(

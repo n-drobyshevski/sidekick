@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "63bd87ef3b0a" : "dev";
+  var BUILD_ID = true ? "4d978f844c53" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -703,8 +703,8 @@ var Server = (() => {
     try {
       const bytes = blob.getBytes();
       const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
-      return JSON.parse(text);
+      const text2 = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+      return JSON.parse(text2);
     } catch (e) {
       console.warn(`Failed to parse archive blob: ${e}`);
       return null;
@@ -1415,11 +1415,11 @@ var Server = (() => {
     const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
     return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
   }
-  function parseSeverities(text) {
-    if (typeof text !== "string" || !text) return null;
+  function parseSeverities(text2) {
+    if (typeof text2 !== "string" || !text2) return null;
     let vals;
     try {
-      vals = JSON.parse(text);
+      vals = JSON.parse(text2);
     } catch {
       return null;
     }
@@ -3247,6 +3247,151 @@ var Server = (() => {
     return summarize(work, opts.now);
   }
 
+  // src/domain/fixNext.ts
+  var FIX_NEXT_LIMIT = 8;
+  var TIER_LABELS = {
+    1: "Known exploited, reachable",
+    2: "Exploitable and late",
+    3: "Critical and late"
+  };
+  function finite(v) {
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  function text(v) {
+    if (v === null || v === void 0) return null;
+    const s = String(v).trim();
+    return s === "" ? null : s;
+  }
+  function pastSla(row, targets) {
+    const age = finite(row.actionable_age_days);
+    if (age === null) return null;
+    const target = finite(targets[normalizeSeverity(row.severity)]);
+    if (target === null) return null;
+    return age > target;
+  }
+  function hasFix(row) {
+    return row.fix_available_at !== null && row.fix_available_at !== void 0;
+  }
+  function classify(row, rule, targets, exposedKeys, exposureKnown) {
+    if (exposureKnown && row.has_kev === true && exposedKeys.has(row.vuln_key)) {
+      return { tier: 1 };
+    }
+    if (row.awaiting_vendor_fix === true) return { reason: "noFix" };
+    const late = pastSla(row, targets);
+    if (late === null) return { reason: "other" };
+    if (!late) return { reason: "insideSla" };
+    const fixed = hasFix(row);
+    if (fixed && (row.has_kev === true || row.has_exploit === true)) return { tier: 2 };
+    if (fixed && normalizeSeverity(row.severity) === "CRITICAL") return { tier: 3 };
+    return riskTier(row, rule) === "unknown" ? { reason: "unclassified" } : { reason: "other" };
+  }
+  function ownerOf(row) {
+    const sg = text(row._supportGroup);
+    if (sg !== null) return { owner: sg, kind: "supportGroup" };
+    const sub = text(row.subscription_name);
+    if (sub !== null) return { owner: sub, kind: "subscription" };
+    return { owner: null, kind: null };
+  }
+  function fixNext(rows, opts) {
+    var _a, _b, _c;
+    const now = opts.now === void 0 ? Date.now() : opts.now;
+    const targets = (_a = opts.slaTargets) != null ? _a : SLA_TARGETS;
+    const limit = opts.limit === void 0 ? FIX_NEXT_LIMIT : Math.max(0, Math.trunc(opts.limit));
+    const exposedKeys = (_b = opts.exposedKeys) != null ? _b : /* @__PURE__ */ new Set();
+    const exposureKnown = opts.exposureKnown === true;
+    const tiers = { 1: 0, 2: 0, 3: 0 };
+    const unranked = { noFix: 0, unclassified: 0, insideSla: 0, other: 0 };
+    const buckets = /* @__PURE__ */ new Map();
+    let openTotal = 0;
+    let ranked = 0;
+    for (const row of rows) {
+      if (!isOpenStatus(row.status)) continue;
+      openTotal += 1;
+      const verdict = classify(row, opts.rule, targets, exposedKeys, exposureKnown);
+      if ("reason" in verdict) {
+        unranked[verdict.reason] += 1;
+        continue;
+      }
+      ranked += 1;
+      tiers[String(verdict.tier)] += 1;
+      const { owner, kind } = ownerOf(row);
+      const key = verdict.tier + "\0" + (owner === null ? "" : owner);
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = {
+          tier: verdict.tier,
+          owner,
+          ownerKind: kind,
+          count: 0,
+          assets: /* @__PURE__ */ new Set(),
+          cves: /* @__PURE__ */ new Map(),
+          oldestAgeDays: null,
+          domains: /* @__PURE__ */ new Set(),
+          domainMissing: false
+        };
+        buckets.set(key, bucket);
+      }
+      bucket.count += 1;
+      const asset = text(row.asset_name);
+      if (asset !== null) bucket.assets.add(asset);
+      const cve = text(row.cve);
+      if (cve !== null) bucket.cves.set(cve, ((_c = bucket.cves.get(cve)) != null ? _c : 0) + 1);
+      const age = finite(row.age_days);
+      if (age !== null && (bucket.oldestAgeDays === null || age > bucket.oldestAgeDays)) {
+        bucket.oldestAgeDays = age;
+      }
+      const dom = text(row._domain);
+      if (dom === null) bucket.domainMissing = true;
+      else bucket.domains.add(dom);
+    }
+    const all = [...buckets.values()].map((b) => {
+      let topCve = null;
+      for (const [cve, count] of b.cves) {
+        if (topCve === null || count > topCve.count || count === topCve.count && cve < topCve.cve) {
+          topCve = { cve, count };
+        }
+      }
+      return {
+        tier: b.tier,
+        label: TIER_LABELS[b.tier],
+        owner: b.owner,
+        ownerKind: b.ownerKind,
+        // One domain only when EVERY row in the group agreed on it. A row with no domain
+        // at all disagrees too — "some of these are Not attributable" is not "all SAP".
+        domain: b.domains.size === 1 && !b.domainMissing ? [...b.domains][0] : null,
+        count: b.count,
+        assets: b.assets.size,
+        topCve,
+        // One decimal. `age_days` is a float carrying sub-second precision that no reader
+        // wants and every group pays bytes for; the page rounds it to whole days anyway.
+        oldestAgeDays: b.oldestAgeDays === null ? null : Math.round(b.oldestAgeDays * 10) / 10,
+        route: "overview",
+        params: {
+          ...b.ownerKind === "supportGroup" && b.owner !== null ? { supportGroup: b.owner } : {},
+          tier: b.tier
+        }
+      };
+    }).sort((a, b) => {
+      var _a2, _b2, _c2, _d;
+      return a.tier - b.tier || b.count - a.count || ((_a2 = b.oldestAgeDays) != null ? _a2 : -1) - ((_b2 = a.oldestAgeDays) != null ? _b2 : -1) || String((_c2 = a.owner) != null ? _c2 : "").localeCompare(String((_d = b.owner) != null ? _d : ""));
+    });
+    const groups = all.slice(0, limit);
+    const cutRows = all.slice(limit);
+    return {
+      groups,
+      tiers,
+      unranked,
+      ranked,
+      openTotal,
+      groupsTotal: all.length,
+      groupsCut: cutRows.length,
+      findingsCut: cutRows.reduce((n, g) => n + g.count, 0),
+      limit,
+      exposureKnown,
+      asOf: now
+    };
+  }
+
   // src/domain/remediation.ts
   var DAY_MS3 = 864e5;
   var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
@@ -4525,7 +4670,7 @@ var Server = (() => {
         cls: classifyRisk(r, rule)
       })
     );
-    const round1 = (v) => v === null ? null : Math.round(v * 10) / 10;
+    const round12 = (v) => v === null ? null : Math.round(v * 10) / 10;
     return points.map((p) => {
       const d = parseTs(p.date);
       let tp = 0;
@@ -4552,11 +4697,11 @@ var Server = (() => {
       }
       return {
         ...p,
-        coverage_pct: round1(tp + fn > 0 ? tp / (tp + fn) * 100 : null),
-        efficiency_pct: round1(tp + fp > 0 ? tp / (tp + fp) * 100 : null),
+        coverage_pct: round12(tp + fn > 0 ? tp / (tp + fn) * 100 : null),
+        efficiency_pct: round12(tp + fp > 0 ? tp / (tp + fp) * 100 : null),
         high_risk_open: fn,
         high_risk_remediated: tp,
-        unknown_pct: round1(counted > 0 ? unknown / counted * 100 : null)
+        unknown_pct: round12(counted > 0 ? unknown / counted * 100 : null)
       };
     });
   }
@@ -5489,6 +5634,105 @@ var Server = (() => {
       hasPrevious: scanCount > 1
     };
   }
+  var MOVEMENT_MIN_GAP_DAYS = 7;
+  var MOVEMENT_DAY_MS = 864e5;
+  function round1(n) {
+    return Math.round(n * 10) / 10;
+  }
+  function openAsOf(row, d) {
+    const first = parseTs(row.first_seen);
+    if (first === null || first > d) return false;
+    const resolved = parseTs(row.resolved_at);
+    return resolved === null || resolved > d;
+  }
+  var NO_TOTAL = { open: 0, prevOpen: 0, delta: 0 };
+  function openMovement(rows, scans, opts = {}) {
+    var _a, _b, _c, _d, _e;
+    const minGapDays = opts.minGapDays === void 0 ? MOVEMENT_MIN_GAP_DAYS : opts.minGapDays;
+    const gate2 = (_a = opts.severities) != null ? _a : null;
+    const instants = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => a - b);
+    const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+    if (!instants.length) {
+      return {
+        comparable: false,
+        reason: "noScan",
+        since: null,
+        until: null,
+        gapDays: null,
+        rows: [],
+        total: { ...NO_TOTAL }
+      };
+    }
+    const until = instants[instants.length - 1];
+    if (instants.length === 1) {
+      return {
+        comparable: false,
+        reason: "oneScan",
+        since: null,
+        until: iso(until),
+        gapDays: null,
+        rows: [],
+        total: { ...NO_TOTAL }
+      };
+    }
+    let since = null;
+    for (let i = instants.length - 2; i >= 0; i -= 1) {
+      if ((until - instants[i]) / MOVEMENT_DAY_MS >= minGapDays) {
+        since = instants[i];
+        break;
+      }
+    }
+    if (since === null) {
+      return {
+        comparable: false,
+        reason: "tooClose",
+        since: null,
+        until: iso(until),
+        // The WIDEST span the log can offer, not the nearest gap: "the saved scans span 3 days"
+        // is the fact a reader needs, and it is what makes "run again next week" the obvious
+        // next move rather than a mystery.
+        gapDays: round1((until - instants[0]) / MOVEMENT_DAY_MS),
+        rows: [],
+        total: { ...NO_TOTAL }
+      };
+    }
+    const nowBySev = /* @__PURE__ */ new Map();
+    const thenBySev = /* @__PURE__ */ new Map();
+    const present3 = /* @__PURE__ */ new Set();
+    let open = 0;
+    let prevOpen = 0;
+    for (const row of rows) {
+      const s = normalizeSeverity(row.severity);
+      if (isOpen3(row.status)) {
+        nowBySev.set(s, ((_b = nowBySev.get(s)) != null ? _b : 0) + 1);
+        present3.add(s);
+        open += 1;
+      }
+      if (openAsOf(row, since)) {
+        thenBySev.set(s, ((_c = thenBySev.get(s)) != null ? _c : 0) + 1);
+        present3.add(s);
+        prevOpen += 1;
+      }
+    }
+    const wanted = new Set(present3);
+    if (gate2 !== null) for (const s of gate2) wanted.add(normalizeSeverity(s));
+    const out = [];
+    for (const s of SEVERITY_ORDER) {
+      if (!wanted.has(s)) continue;
+      const n = (_d = nowBySev.get(s)) != null ? _d : 0;
+      const p = (_e = thenBySev.get(s)) != null ? _e : 0;
+      out.push({ severity: s, open: n, prevOpen: p, delta: n - p });
+    }
+    return {
+      comparable: true,
+      reason: null,
+      since: iso(since),
+      until: iso(until),
+      gapDays: round1((until - since) / MOVEMENT_DAY_MS),
+      rows: out,
+      total: { open, prevOpen, delta: open - prevOpen }
+    };
+  }
   var GROUP_COLUMNS = {
     domain: "_domain",
     supportGroup: "_supportGroup",
@@ -5830,11 +6074,17 @@ var Server = (() => {
     return pickRows(scans, SCAN_ROW_KEYS);
   }
   var OLDEST_VIEWS = ["findings", "byAsset", "bySupportGroup", "byDomain"];
+  var OVERVIEW_OMIT = /* @__PURE__ */ new Set(["oldest", "fixNext", "movementOpen"]);
   function overviewInsightsSlice(insights) {
     if (!insights || typeof insights !== "object") return null;
     const out = {};
-    for (const [k, v] of Object.entries(insights)) if (k !== "oldest") out[k] = v;
+    for (const [k, v] of Object.entries(insights)) if (!OVERVIEW_OMIT.has(k)) out[k] = v;
     return out;
+  }
+  function execInsightsSlice(insights) {
+    if (!insights || typeof insights !== "object") return null;
+    const i = insights;
+    return { fixNext: i["fixNext"], movement: i["movementOpen"], scan: i["scan"] };
   }
   function oldestOpenSlice(insights, view) {
     const known = OLDEST_VIEWS.includes(view) ? view : "findings";
@@ -8880,6 +9130,8 @@ var Server = (() => {
     const baseVisible = filterNoFixBase(base, showNoFix);
     const latestFlat = latestFlatScanRow();
     const exploitSummaryScoped = exploitSummary(recsVisible);
+    const rule = getRiskRule2().rule;
+    const exposedKeys = exposedVulnKeys(recsVisible, exploitSummaryScoped.exposureKnown);
     return {
       flatScan: true,
       domain,
@@ -8913,7 +9165,28 @@ var Server = (() => {
         base,
         severities,
         showNoFix,
-        exploitSummaryScoped
+        exploitSummaryScoped,
+        rule,
+        exposedKeys
+      ),
+      // WHAT TO DO ON MONDAY, and what the list left out. The Executive front door reads this
+      // (via `execInsightsSlice`); the Overview does not, and `overviewInsightsSlice` drops it.
+      // Computed HERE rather than in a read-model of its own so both pages share one `cached()`
+      // entry — see the note on `execInsightsSlice`.
+      fixNext: fixNext(baseVisible, {
+        exposedKeys,
+        exposureKnown: exploitSummaryScoped.exposureKnown,
+        rule,
+        slaTargets: SLA_TARGETS
+      }),
+      // Open-backlog movement across at least a week of SCANS — the different question from
+      // `movement` below, which reports the latest scan's reconcile deltas (one day of news on
+      // a daily register). Reads the same `baseVisible` and the same severity gate, so the two
+      // blocks describe one population. Also Executive-only.
+      movementOpen: openMovement(
+        baseVisible,
+        loadScanRows(),
+        { severities }
       ),
       // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
       // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
@@ -8952,19 +9225,20 @@ var Server = (() => {
       movement: movement(baseVisible, latestFlat, loadScanRows().length)
     };
   }
-  function riskLadder(recsVisible, baseVisible, base, severities, showNoFix, exposure) {
+  function exposedVulnKeys(recsVisible, exposureKnown) {
     var _a;
-    const rule = getRiskRule2().rule;
-    const tierOf = (r) => riskTier(r, rule);
-    const exposedKeys = /* @__PURE__ */ new Set();
-    if (exposure.exposureKnown) {
-      for (const r of recsVisible) {
-        if (r["vulnerableAsset.hasWideInternetExposure"] === true || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
-          const k = String((_a = r["_vuln_key"]) != null ? _a : "");
-          if (k) exposedKeys.add(k);
-        }
+    const out = /* @__PURE__ */ new Set();
+    if (!exposureKnown) return out;
+    for (const r of recsVisible) {
+      if (r["vulnerableAsset.hasWideInternetExposure"] === true || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
+        const k = String((_a = r["_vuln_key"]) != null ? _a : "");
+        if (k) out.add(k);
       }
     }
+    return out;
+  }
+  function riskLadder(recsVisible, baseVisible, base, severities, showNoFix, exposure, rule, exposedKeys) {
+    const tierOf = (r) => riskTier(r, rule);
     const agingTier = ageBucketsBy(
       baseVisible,
       tierOf
@@ -9010,7 +9284,15 @@ var Server = (() => {
       // "insights5" → "insights6": the payload gained `slaConsumed` (open findings by tenth of
       // their SLA window, plus the past-window and no-window counts that are not drawn); a
       // stale insights5 entry has none of it and the section would render as a measured zero.
-      "insights6",
+      // "insights6" → "insights7": the payload gained `fixNext` (the Executive front door's
+      // ranked list plus its unranked accounting) and `movementOpen` (open-backlog movement
+      // across at least a week of scans). A stale insights6 entry carries NEITHER, and both are
+      // read unconditionally by `execInsightsSlice`, so an Executive page served one would paint
+      // a front door with no ranked list and no movement block for up to an hour after deploy —
+      // which reads as a register with nothing to do rather than as a cache miss. The key is
+      // unchanged: both new figures are computed from `baseVisible`, the risk rule and the scan
+      // log, every one of which the existing key already covers.
+      "insights7",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -9980,19 +10262,28 @@ var Server = (() => {
     );
   };
   function getExecutivePage(p) {
-    var _a;
+    var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
-    return run(() => ({
-      mttr: execMttrSlice(cachedMttrData(p)),
-      // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
-      // domain yields a single row, so a domain scope splits by support group within it instead.
-      byDomain: execGroupSlice(
-        domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
-      ),
-      // Already minimal — four scalars and a per-severity tally — so these two ship whole.
-      weekTrend: cachedExecutiveWeekTrend(p),
-      severityCounts: cachedExecutiveSeverityCounts(p)
-    }));
+    const insightsParams = {
+      domain,
+      supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+      severities: readSeverities(p)
+    };
+    return run(() => {
+      var _a2;
+      return {
+        mttr: execMttrSlice(cachedMttrData(p)),
+        ...(_a2 = execInsightsSlice(cachedInsightsData(insightsParams))) != null ? _a2 : {},
+        // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
+        // domain yields a single row, so a domain scope splits by support group within it instead.
+        byDomain: execGroupSlice(
+          domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
+        ),
+        // Already minimal — four scalars and a per-severity tally — so these two ship whole.
+        weekTrend: cachedExecutiveWeekTrend(p),
+        severityCounts: cachedExecutiveSeverityCounts(p)
+      };
+    });
   }
   var MOVEMENT_WINDOW_DAYS = 28;
   function movementNoteFor(win) {

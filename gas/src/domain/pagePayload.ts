@@ -197,11 +197,39 @@ const OLDEST_VIEWS = ["findings", "byAsset", "bySupportGroup", "byDomain"] as co
  * Measured on the seeded estate: `oldest` was 16,434 of 18,064 bytes, 91% of the payload, for
  * four ranked views of up to 100 rows each — of which the panel renders ten rows of one.
  */
+const OVERVIEW_OMIT = new Set(["oldest", "fixNext", "movementOpen"]);
+
 export function overviewInsightsSlice(insights: unknown): Rec | null {
   if (!insights || typeof insights !== "object") return null;
   const out: Rec = {};
-  for (const [k, v] of Object.entries(insights as Rec)) if (k !== "oldest") out[k] = v;
+  for (const [k, v] of Object.entries(insights as Rec)) if (!OVERVIEW_OMIT.has(k)) out[k] = v;
   return out;
+}
+
+/**
+ * The Executive front door's slice of the SAME `insightsData` payload the Overview reads.
+ *
+ * `fixNext` and `movementOpen` are computed inside `insightsData` rather than in a read-model
+ * of their own, and that is the whole reason this slice exists. Both need `baseVisible` —
+ * loadBaseRows, attachSupportGroups, attachBizDomains, a per-row resolveDomainName and three
+ * filter passes — plus the frame-to-ledger exposure join. Computing them separately would
+ * rebuild all of it for a second cache entry; computing them here means the Executive reads
+ * the entry the Overview warmed, and the Overview reads the entry the Executive warmed. So the
+ * ONLY thing that differs between the two pages is which keys travel.
+ *
+ * Written as an enumeration rather than an omit, unlike `overviewInsightsSlice` above, for the
+ * same reason the two `exec*` slices are: on Executive the payload is overwhelmingly for
+ * somebody else, so naming the three survivors is the shorter and more honest statement —
+ * `insightsData` carries eighteen keys and this page reads two of them plus the scan stamp.
+ *
+ * `scan` travels because a ranked list and a movement comparison are both AS OF a scan, and a
+ * front door that cannot say when it last looked is the "unmeasured register renders as a
+ * register of zeroes" failure with extra steps.
+ */
+export function execInsightsSlice(insights: unknown): Rec | null {
+  if (!insights || typeof insights !== "object") return null;
+  const i = insights as Rec;
+  return { fixNext: i["fixNext"], movement: i["movementOpen"], scan: i["scan"] };
 }
 
 /**
