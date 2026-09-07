@@ -5,9 +5,11 @@ import { groupPalette } from "../charts.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
+import { fmtPct } from "./_rates.js";
 import {
-  absent, changeChip, clear, dataTable, el, emptyState, errorState, fmtSpan, glossaryTip,
-  openSheet, pageHeader, scopeBar, sectionLabel, sevBadge, skeleton, tip,
+  absent, absentText, changeChip, clear, dataTable, el, emptyState, errorState, fmtDays,
+  fmtSpan, glossaryTip, num, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge, skeleton,
+  tip,
 } from "../ui.js";
 
 // Keep in sync with RESOLUTION_BUCKET_LABELS in src/domain/remediation.ts (the client
@@ -131,6 +133,157 @@ function chartCard(title, box, opts = {}) {
   return el("div", { class: "chart-card" }, head, box);
 }
 
+// ------------------------------------------------------------------------- view models
+//
+// Ported from gas_devsecops/src/client/js/pages/mttr.js, which states the general rule this
+// register was still breaking: a duration whose curve never crosses the estimator's threshold
+// is a LOWER BOUND, not a missing value, and it is written "at least N days" in prose — never
+// "> N d" (the glyph this page used to print, in kmMedianText below, before this port).
+
+/**
+ * The half-life decision, in ONE place, for every surface that draws it.
+ *
+ * Three outcomes, three different claims:
+ *
+ *   median present         "41 days"           a measured median
+ *   median null + bound    "at least 41 days"  the curve never reached half. The bound is the
+ *                                              longest observation, so the median is at LEAST
+ *                                              that far out. `isLowerBound` is true.
+ *   neither                "Not measured"      nothing to rest on. NOT zero.
+ *
+ * Rendering the middle case as a bare number would publish a median nobody observed;
+ * collapsing it to a dash would throw away a true statement. So it is published, prefixed,
+ * and flagged — and the flag is what a caller styles or captions off, never the string.
+ *
+ * IDENTICAL TO gas_devsecops's COPY — this register's KMResult (`remediation.km`, see
+ * src/server/api.ts) carries the same `{median, medianLowerBound, ...}` shape, so nothing
+ * here needed adapting.
+ *
+ * @param {object|null|undefined} km  a shipped KMResult (`{median, medianLowerBound, …}`)
+ * @returns {{measured: boolean, value: string, isLowerBound: boolean, days: number|null}}
+ */
+export function kmHalfLifeView(km) {
+  const median = km && km.median !== null && km.median !== undefined ? Number(km.median) : null;
+  const bound = km && km.medianLowerBound !== null && km.medianLowerBound !== undefined
+    ? Number(km.medianLowerBound)
+    : null;
+  if (median !== null && Number.isFinite(median)) {
+    return { measured: true, value: fmtDays(median), isLowerBound: false, days: median };
+  }
+  if (bound !== null && Number.isFinite(bound)) {
+    return {
+      measured: true,
+      value: "at least " + fmtDays(bound),
+      isLowerBound: true,
+      days: bound,
+    };
+  }
+  return { measured: false, value: "Not measured", isLowerBound: false, days: null };
+}
+
+/**
+ * A rate and the base it was taken over, as one object. Ported unchanged from
+ * gas_devsecops/mttr.js — see that module's header for the full rationale (a denominator of
+ * zero is not a zero percent; `baseEmpty` names the missing population instead of gluing a
+ * "0 resolved" onto "not measured").
+ *
+ * @param {number|null|undefined} pct  a percentage the server already computed, or null
+ * @param {number} denominator         the base it was taken over
+ * @param {string} denominatorLabel    what that base counts, in words
+ * @param {string} [emptyLabel]        what to say instead when that base is empty
+ */
+export function rateView(pct, denominator, denominatorLabel, emptyLabel) {
+  const den = Number(denominator);
+  const value = pct === null || pct === undefined ? null : Number(pct);
+  const hasBase = Number.isFinite(den) && den > 0;
+  const usable = hasBase && value !== null && Number.isFinite(value);
+  return {
+    measured: usable,
+    value: usable ? value : null,
+    text: usable ? fmtPct(value) : "not measured",
+    denominator: Number.isFinite(den) ? den : null,
+    denominatorLabel,
+    baseEmpty: !hasBase,
+    emptyLabel: emptyLabel || "nothing has been measured to take it over",
+  };
+}
+
+/**
+ * P90, and the sub-line it is allowed to carry.
+ *
+ * ADAPTED FOR THIS REGISTER'S SHAPE. gas_devsecops ships the overall P90 nested on the KM
+ * result itself (`km.p90`); this server ships it as a SIBLING of `km`
+ * (`remediation.kmP90`, src/server/api.ts) — so this takes the p90 value and the KM result
+ * separately rather than reading a `.p90` field that does not exist here. The three-state
+ * shape (present / curve-never-reaches-it / nothing-closed) is otherwise identical.
+ *
+ *   p90 present        "41 days"  "nine in ten close by here"
+ *   events, no p90     "—"        the curve never reached nine in ten inside the window
+ *   no events at all   "—"        nothing has closed, so there is no percentile to place
+ *
+ * @param {number|null|undefined} p90  `remediation.kmP90`
+ * @param {object|null|undefined} km   `remediation.km`, read here only for its event count
+ */
+export function kmP90View(p90, km) {
+  // `num`, not `Number`. `Number("")` is 0 and 0 is finite, so a blank P90 arriving from a
+  // hand-edited cell would have rendered "0 days" under "nine in ten close by here" — the
+  // exact shape CLAUDE.md names, one line below a comment about not doing it.
+  const raw = num(p90);
+  const events = num(km && km.events, 0);
+  if (raw !== null) {
+    return { measured: true, value: fmtDays(raw), days: raw, note: "nine in ten close by here" };
+  }
+  return {
+    measured: false,
+    value: absentText,
+    days: null,
+    note: events > 0
+      ? "the curve never reaches nine in ten inside the observed window"
+      : "nothing has closed yet, so there is no percentile to place",
+  };
+}
+
+/**
+ * The percentage a `meter` may be filled to — or NULL, which draws no meter at all.
+ *
+ * Ported unchanged. `ui/data.js`'s `meter(value)` opens with `Number(value) || 0`, so a null,
+ * blank or absent rate resolves to a confident 0% fill without this guard — CLAUDE.md's
+ * `Number(null)` trap wearing a meter.
+ *
+ * @param {{measured?: boolean, value?: number}|null|undefined} rate  a `rateView` result
+ * @returns {number|null}
+ */
+export function meterPctFor(rate) {
+  if (!rate || rate.measured !== true) return null;
+  const pct = num(rate.value);
+  return pct === null ? null : pct;
+}
+
+/**
+ * The restricted mean, and the "≥" it earns when survival never reached zero. Ported unchanged
+ * — this register's KMResult carries `mean` / `meanTruncated` / `restrictionTime` in the same
+ * shape (src/domain/remediation.ts). Not currently drawn on this page (see the render
+ * functions below); exported so a caller — this page's own future RMST stat, or a sibling
+ * page — has one implementation to reach for rather than a second copy.
+ */
+export function rmstView(km) {
+  const mean = km && km.mean !== null && km.mean !== undefined ? Number(km.mean) : null;
+  if (mean === null || !Number.isFinite(mean)) {
+    return { measured: false, text: "Not measured", truncated: false, restrictionTime: null };
+  }
+  const truncated = !!(km && km.meanTruncated);
+  return {
+    measured: true,
+    truncated,
+    text: (truncated ? "≥ " : "") + fmtDays(mean),
+    restrictionTime: km && km.restrictionTime !== null && km.restrictionTime !== undefined
+      ? Number(km.restrictionTime)
+      : null,
+  };
+}
+
+// ------------------------------------------------------------------------ page formatters
+
 // Open-past-SLA cell, shared by the hero mini, the per-severity table, and the
 // by-domain table: "632 (77%)" — the breached count with its share of the open
 // population in parentheses. "0" when nothing is open (pct is null then, not a fake
@@ -139,37 +292,57 @@ function chartCard(title, box, opts = {}) {
 //
 // ALL THREE CALL SITES ARE NODE CHILD POSITIONS, which is what lets the missing case be
 // `absent()` — a stale cache used to put a black dash beside three live counts, in the ink of a
-// measurement. The dash INSIDE the parenthesis stays a string: it is interpolated into the
-// template below, where a Node would render as "[object HTMLSpanElement]".
+// measurement. The dash INSIDE the parenthesis stays a string, and it is `absentText` now
+// rather than a hand-typed literal — the one spelling ui/figures.js exists to make universal
+// (it is interpolated into the template below, where a Node would render as
+// "[object HTMLSpanElement]").
+//
+// NOT ROUTED THROUGH `rateView`/`rateCell` (this page's own rate vocabulary, above, and
+// ./_rates.js): this is a COUNT with its rate glued into the same string ("632 (77%)"), not a
+// rate alone, and `rateCell`'s shape (the figure, then a denominator SENTENCE on its own line)
+// has no slot for a leading count. Forcing this into that shape would add a denominator line
+// under every cell in a dense table for no reader benefit the existing parenthetical doesn't
+// already give.
 function fmtOpenPastSla(o) {
   if (!o || o.open === null || o.open === undefined) return absent();
   if (!o.open) return "0";
-  const pct = o.pct !== null && o.pct !== undefined ? `${o.pct.toFixed(0)}%` : "—";
-  return `${(o.breached ?? 0).toLocaleString()} (${pct})`;
+  const pct = num(o.pct);
+  const pctText = pct === null ? absentText : `${pct.toFixed(0)}%`;
+  // `num(v, 0)`, not `?? 0`: a stale payload that carries `open` but somehow not `breached`
+  // (a shape this metric has never actually shipped, but the allowlist costs nothing) now
+  // refuses a non-numeric `breached` the same way every other formatter in this file does,
+  // instead of `??`'s narrower null/undefined-only check.
+  const breached = num(o.breached, 0);
+  return `${breached.toLocaleString()} (${pctText})`;
 }
 
-// Awaiting-vendor-fix summary for the hero mini: "N (x% of open)"; "—" when the payload
-// doesn't carry the segment at all (a stale pre-actionable cache). pctOfOpen is null when
-// nothing is open, so the share is dropped rather than shown as a fake 0%.
+// Awaiting-vendor-fix summary for the hero mini: "N (x% of open)"; the shared `absentText` dash
+// when the payload doesn't carry the segment at all (a stale pre-actionable cache) — a hand-
+// typed "—" before this port. pctOfOpen is null when nothing is open, so the share is dropped
+// rather than shown as a fake 0%.
 function fmtAwaiting(a) {
-  if (!a || a.overall === null || a.overall === undefined) return "—";
-  const pct = a.pctOfOpen !== null && a.pctOfOpen !== undefined
-    ? ` (${a.pctOfOpen.toFixed(0)}% of open)` : "";
+  if (!a || a.overall === null || a.overall === undefined) return absentText;
+  const pctVal = num(a.pctOfOpen);
+  const pct = pctVal === null ? "" : ` (${pctVal.toFixed(0)}% of open)`;
   return `${a.overall.toLocaleString()}${pct}`;
 }
 
-// The wait for a vendor fix to EXIST, as the hero's second source line. Reads the same
-// {median, medianLowerBound} shape fmtKmMedian does (the server ships the KM summary without
-// its curve — no chart plots these), so the "> X d" heavy-censoring rendering is shared.
+// The wait for a vendor fix to EXIST, as the hero's second source line. Reads the same KMResult
+// shape `kmHalfLifeView` above reads (the server ships the KM summary without its curve — no
+// chart plots these), so the bound wording ("at least X days", never the old "> X d" glyph) is
+// shared with the hero and with gas_devsecops's identical helper.
 //
 // Renders NOTHING rather than a dash when the payload predates the clocks (a stale cache) or
 // when nothing in the population could be measured at all: a row whose fix availability was
 // never observed is unmeasured, and a page that printed "0 d" for it would be inventing the
-// one number this whole metric exists to stop inventing.
+// one number this whole metric exists to stop inventing. `kmHalfLifeView` itself would print
+// "Not measured" for that state — a fine hero answer, and the wrong one for a clause that
+// would rather say nothing than qualify a "from" with nothing behind it ("Not measured from
+// our first detection" reads as a sentence fragment, not an absence).
 function latencyClause(l) {
   if (!l || !l.segments) return null; // stale pre-latency cache
   if (!l.events && !l.censored) return null; // nothing measured — say nothing, not zero
-  return fmtKmMedian(l);
+  return kmHalfLifeView(l).value;
 }
 
 // Both clocks on one line, with the segment split in the help tip. Null when neither clock
@@ -209,37 +382,14 @@ function latencyLine(vendor, disclosure) {
   );
 }
 
-// Kaplan-Meier median formatter: the exact day count, "> X d" when the curve never drops to
-// 50% within the observed window (heavy censoring — the true median is at least that far
-// out), or nothing at all when there's no KM result (a stale pre-KM cached payload). `km` is a
-// KMResult (or the null/undefined stand-in for one).
-//
-// SPLIT IN TWO BECAUSE THE MISSING CASE HAS TWO DESTINATIONS. `latencyLine` interpolates the
-// result into a sentence, where a Node cannot go; the hero puts it in a `<div>`, where a bare
-// "—" arrives at 2rem in the same ink as a measured median. So `kmMedianText` is the one place
-// the KM shape is read, `fmtKmMedian` keeps the string for the sentence, and `kmMedianCell`
-// hands the Node to the one call site that is really a cell. `executive.js`'s copy of this
-// formatter has only the cell call site, so it returns the Node directly.
-function kmMedianText(km) {
-  if (!km) return null;
-  if (km.median !== null && km.median !== undefined) return fmtSpan(km.median);
-  if (km.medianLowerBound !== null && km.medianLowerBound !== undefined) {
-    return `> ${fmtSpan(km.medianLowerBound)}`;
-  }
-  return null;
-}
-
-/** The string form, for anything that concatenates or interpolates it. */
-function fmtKmMedian(km) {
-  const text = kmMedianText(km);
-  return text === null ? "—" : text;
-}
-
-/** The Node form, for a cell — the missing case is muted rather than measured-looking. */
-function kmMedianCell(km) {
-  const text = kmMedianText(km);
-  return text === null ? absent() : text;
-}
+// `kmMedianText` / `fmtKmMedian` / `kmMedianCell` USED TO LIVE HERE. They read the same
+// `{median, medianLowerBound}` shape `kmHalfLifeView` (above) does, and the missing branch
+// printed "> X d" — the WRONG GLYPH: a curve that never falls to half puts the median AT LEAST
+// that far out, an inclusive lower bound, and ">" claims something stronger the estimator never
+// showed. `kmHalfLifeView(km).value` is the direct replacement at both call sites below (the
+// hero, a Node position, and `latencyClause` above, a sentence position) — it already returns a
+// plain string ("41 days" / "at least 41 days" / "Not measured"), so no cell/text split is
+// needed here any more.
 
 // Circular-arrows (refresh) glyph for the by-domain panel's single lens-swap button. Inline
 // SVG with stroke:currentColor so it inherits the button's ink, like NAV_ICONS / CHEVRON_ICON.
@@ -1009,7 +1159,7 @@ export async function renderMttr(main, _params, ctx) {
     const metric = glossaryTip(
       [
         el("div", { class: "label" }, "Median MTTR (Kaplan–Meier)" + (domain ? ` — ${domain}` : "")),
-        el("div", { class: "hero-value num" }, kmMedianCell(km)),
+        el("div", { class: "hero-value num" }, kmHalfLifeView(km).value),
       ],
       "km-median",
     );

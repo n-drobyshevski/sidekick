@@ -26,8 +26,9 @@
 // node — the split scanProgress.js and capacity.js already use, and for the same reason.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
+import { kmHalfLifeView } from "./mttr.js";
 import {
-  absent, clear, dataTable, el, emptyState, errorState, fmtDateTime, fmtSpan, glossaryTip,
+  clear, dataTable, el, emptyState, errorState, fmtDateTime, fmtSpan, glossaryTip,
   heroLines,
   num, pageHeader, scopeBar, sectionLabel, skeleton, statusPill, tip, tipAnchor,
 } from "../ui.js";
@@ -47,25 +48,17 @@ function nice(s) {
   return s[0] + s.slice(1).toLowerCase();
 }
 
-// Kaplan–Meier median formatter (mirrors pages/mttr.js fmtKmMedian — the client bundle can't
-// import the TS domain module): the exact day count, "> X d" when the curve never drops to 50%
-// within the observed window (heavy censoring, so the true median is at least that far out), or
-// the muted em dash when there's no KM result at all (a stale pre-KM cached payload).
-//
-// THE MISSING CASE IS A NODE HERE AND A STRING IN mttr.js, and the divergence is deliberate.
-// This copy has exactly one call site — the hero value, a Node child position — while mttr.js's
-// copy is also interpolated into `latencyLine`'s sentence, where a Node cannot go, so that one
-// keeps returning a string and hands the Node case to a separate cell helper. What `absent()`
-// fixes is that a hand-typed "—" arrives in the same ink and the same 2rem weight as a measured
-// median, which asserts a measurement nobody made.
-function fmtKmMedian(km) {
-  if (!km) return absent();
-  if (km.median !== null && km.median !== undefined) return fmtSpan(km.median);
-  if (km.medianLowerBound !== null && km.medianLowerBound !== undefined) {
-    return `> ${fmtSpan(km.medianLowerBound)}`;
-  }
-  return absent();
-}
+// `fmtKmMedian` USED TO LIVE HERE, mirroring pages/mttr.js's own copy of the same formatter —
+// the exact day count, or "> X d" when the curve never drops to 50% within the observed window.
+// THAT GLYPH WAS WRONG: heavy censoring means the median is AT LEAST that far out, an inclusive
+// lower bound, and ">" claims something stronger the estimator never showed. `kmHalfLifeView`
+// (`./mttr.js`, ported from gas_devsecops, which never had this bug) is the fix, imported above
+// rather than kept as a second copy — and it is an INTERIM, minimal swap: this page's own
+// hero-value call site below is the only thing that changes, not the rest of this view, which a
+// later package rewrites. Where mttr.js's copy kept a Node/string split for its two call sites,
+// this page has exactly one — the hero value, a Node child position — and `kmHalfLifeView(km)
+// .value` is already a plain string ("41 days" / "at least 41 days" / "Not measured"), so no
+// split is needed here either.
 
 // Small week-over-week trend badge for the hero: a ↑/↓ arrow + magnitude coloured by whether the KM
 // MTTR rose (worse, red) or fell (better, green) over the last 7 days, with a muted "vs last week"
@@ -340,7 +333,7 @@ export async function renderExecutive(main, _params, ctx) {
     const metric = glossaryTip(
       [
         el("div", { class: "label" }, `Median MTTR (Kaplan–Meier)${scopeSuffix}`),
-        el("div", { class: "exec-hero-value num" }, fmtKmMedian(km)),
+        el("div", { class: "exec-hero-value num" }, kmHalfLifeView(km).value),
       ],
       "km-median",
     );

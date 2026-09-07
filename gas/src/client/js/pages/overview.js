@@ -25,8 +25,9 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { populationLine, slaConsumedCaption } from "./overviewModel.js";
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, dataTable, el, emptyState, errorState, fmtDate, glossaryTip, kpiCard, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter, tip,
-  tipAnchor, tipLabel,
+  absent, clear, dataTable, days1, el, emptyState, errorState, fmtDate, fmtDays, glossaryTip,
+  kpiCard, num, nvdUrl, openSheet, pageHeader, scopeBar, sectionLabel, skeleton, tableFooter,
+  tip, tipAnchor, tipLabel,
 } from "../ui.js";
 
 // Rows per page in the "Oldest open findings" panel's pagination. The server ships
@@ -47,28 +48,42 @@ function sevTitle(sev) {
   return sev.charAt(0) + sev.slice(1).toLowerCase();
 }
 
-// Whole-day label for an age in days ("412d"). The server ships fractional day counts.
-//
-// NOT `fmtDays`, and the rename is what stops an accident rather than a style preference:
-// the barrel now carries a `fmtDays` of its own (gas_shared/ui/figures.js, "412 days") and a
-// `fmtSpan` (ui/span.js, "1.1y"), and THIS one is neither. A page that later adds `fmtDays`
-// to its import list would have shadowed or redeclared it silently.
-function fmtAgeDays(n) {
-  return `${Math.round(n).toLocaleString()}d`;
-}
+// `fmtAgeDays` USED TO LIVE HERE: a hand-rolled whole-day label ("412d") with no null check at
+// all — `Math.round(n)` on a null/undefined `n` is `NaN`, printing the unparseable "NaNd" rather
+// than either a confident zero or an honest absence. It predated `ui/figures.js`'s shared day
+// formatters and its own header explained why it kept a third name rather than becoming a
+// silent second `fmtDays` — a real distinction from `fmtSpan` (ui/span.js, which changes UNIT
+// across three orders of magnitude) but not from the shared pair `figures.js` already ships:
+// `days1` ("412.0 d") for a table cell and `fmtDays` ("412 days") for hero/tile prose are
+// exactly the two grains this formatter was reinventing under a third name and a fourth
+// spelling ("412d", no space, no decimal, rounded). Its three call sites below now take the
+// shared formatter that matches their POSITION — the Rule this package converges every page
+// on: hero/tile prose -> `fmtDays`, table cells -> `days1`.
 
 /** Streamlit-style signed delta chip vs a previous value: arrow + absolute change +
  *  "· ±N%". A rising count is worse (red), falling is better (green), unchanged shows a
- *  neutral ±0. Returns null when there's no previous value to compare against. */
+ *  neutral ±0. Returns null when there's no previous value to compare against.
+ *
+ *  `num()`, not the hand-rolled `previous === null || previous === undefined ||
+ *  Number.isNaN(previous)` check this used to open with: that guard read `current` with a bare
+ *  subtraction, so `current - previous` on a null `current` was `0 - previous` (`Number(null)`
+ *  is 0) rather than a refusal — a confident, signed chip over a count nobody measured. Both
+ *  arguments now go through the same allowlist before either is compared or subtracted. The
+ *  one caller on this page (`renderTiers`) always passes real numbers (`t.perTier[tier] || 0`,
+ *  `prev[tier] || 0`), so this closes a gap nothing here can currently reach today rather than
+ *  a reproducible one — the same "a stale cache could still hit this" discipline the removed
+ *  `fmtAgeDays` comment above stated outright. */
 function deltaChip(current, previous) {
-  if (previous === null || previous === undefined || Number.isNaN(previous)) return null;
-  const delta = current - previous;
+  const c = num(current);
+  const p = num(previous);
+  if (c === null || p === null) return null;
+  const delta = c - p;
   if (!delta) return el("span", { class: "sev-delta flat", "aria-label": "unchanged" }, "±0");
   const rising = delta > 0;
   const arrow = rising ? "▲" : "▼";
   const sign = rising ? "+" : "−";
   const mag = Math.abs(delta).toLocaleString();
-  const pct = previous ? Math.round(Math.abs((delta / previous) * 100)) : null;
+  const pct = p ? Math.round(Math.abs((delta / p) * 100)) : null;
   // The ▲/▼ glyph is decorative; restate direction in words so this reads in the same
   // vocabulary as changeChip for assistive tech.
   const aria = `${rising ? "up" : "down"} ${mag}${pct !== null ? `, ${pct} percent` : ""}`;
@@ -282,7 +297,10 @@ export async function renderOverview(main, params, ctx) {
       mini(aw ? (aw.overall || 0).toLocaleString() : "…", "Awaiting vendor fix"),
       // absent(), not a typed dash: no median open age means the insights payload never
       // measured one, and the muted dash is the app's one way of saying that.
-      mini(median === null || median === undefined ? absent() : fmtAgeDays(median),
+      // Hero-mini prose gets `fmtDays` ("412 days"), not `days1` ("412.0 d", the table-cell
+      // grain the two dataTable columns below take) — the Rule this package converges every
+      // page's day formatting on.
+      mini(median === null || median === undefined ? absent() : fmtDays(median),
         "Median open age"),
     ));
     // WHAT THE FIGURES ABOVE WERE MEASURED OVER — the in-scope count, the severity gate the
@@ -765,7 +783,7 @@ export async function renderOverview(main, params, ctx) {
           style: `background:${boot.palette.colors[r.severity] || "var(--text-3)"}` }),
         sevTitle(r.severity),
       ] },
-      { key: "age", label: "Age", className: "num", cell: (r) => fmtAgeDays(r.ageDays) },
+      { key: "age", label: "Age", className: "num", cell: (r) => days1(r.ageDays) },
     ];
     return dataTable({ columns, rows });
   }
@@ -787,7 +805,7 @@ export async function renderOverview(main, params, ctx) {
       { key: "open", label: "Open", className: "num",
         cell: (g) => g.openCount.toLocaleString() },
       { key: "oldest", label: "Oldest", className: "num",
-        cell: (g) => fmtAgeDays(g.oldestDays) },
+        cell: (g) => days1(g.oldestDays) },
     ];
     return dataTable({ columns, rows });
   }
