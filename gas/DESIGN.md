@@ -113,19 +113,23 @@ rule in `CLAUDE.md` about "sync" being the correct word for a dry-run fallback d
 to this register: it has a real scan with a real battery (`src/server/scanJobs.ts`), not a
 dry-run stand-in, so "scan" is not a euphemism, it is the operation's name.
 
-## 6. The Executive shape (a later package's rule, stated here first)
+## 6. The Executive shape (adopted 2026-09-08)
 
-Every other GAS sidekick's front door is a full-width page header: hero stat, one
-qualifying aside, a stat strip closed by a hairline (`../DESIGN.md`'s Page Header and Hero
-Stat sections). This app's Executive page is still the exception: a centred single 720px
-column (`.exec`), inherited from the Streamlit build before the shared header existed. That
-retires in a later package of this wave, which repoints Executive at the shared
-`pageHeader()` shape (hero stat plus aside plus the movement strip this package's CSS intake
-above already carries: `.fixnext*`, `.movement-rows`, `.movement-block`), so the front door
-reads like every other register's rather than like a leadership one-pager bolted onto a
-sidebar app. Written here as the rule the later package implements, not as a change this one
-makes: `.exec`/`.exec-hero`/`.hero*` stay in `styles/pages.css` untouched until that package
-lands and deletes them alongside the page module that draws them.
+Every GAS sidekick's front door is now the same shape, this one included: a static title
+block (the only `h1`, which waits on no RPC), then a metric header from the shared
+`pageHeader()`: the hero stat ("Remediation half-life", read through `kmHalfLifeView` so a
+censored curve prints "at least N days" and an unread ledger prints "Not measured"), a
+movement aside of per-severity rows against the newest scan a week or more older, and a
+stat strip closed by a hairline; then Fix next, an ordered list of (tier, owner) groups with
+its denominator ("25 of 70 open findings ranked") and a disclosure naming every unranked
+reason with its count; then the open severity strip with its key row; then the by-domain
+table; then the last-scan block. The centred 720px `.exec` column and the page-level Run
+scan button are gone (one control in one place, the rail), and so is every `.exec*` and
+`.hero*` rule. An honesty statement (a bound, a refusal, a cut, the population caveat)
+stays on the surface; an explanation moves onto the nearest label's tip or into the
+disclosure. Measured against the DevSecOps front door on its own harness (272 words, 2
+prose blocks): 276 words, 9 prose blocks, the difference being the eight ranked meta lines,
+which carry the count, hosts, leading CVE, age and domain that its shorter list omits.
 
 ## 7. The formatter table
 

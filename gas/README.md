@@ -804,10 +804,27 @@ includes resolved) with the **real server bundle running in the browser** agains
 in-memory fakes of the GAS services (`dev/gas-shims.js`: SpreadsheetApp, DriveApp,
 Properties/Lock/Cache/Script services; gzip is an identity transform, which the
 magic-byte sniff in `archiveStore` tolerates). `dev/boot.js` runs `setup()`, seeds
-7 backdated dry-run scans (the clock is shifted per scan so MTTR/trend have shape),
+8 backdated dry-run scans (the clock is shifted per scan so MTTR/trend have shape,
+and eight daily scans span the seven days an open-backlog comparison needs),
 and shims `google.script.run` onto `Server.api`. The dry-run sample is amplified to
 ~170 findings across ~26 assets via an esbuild alias (`dev/sampleData.dev.ts`) that
 exists only in the dev build — `dist/server.js` and the pushed bundle are untouched.
+
+### Measuring a page (`npm run density`)
+
+`npm run density -- --port <port> --playwright <path to a playwright package>` runs
+gas_devsecops's rendered-page walker (`../gas_devsecops/dev/density.mjs --root .`) over
+this app's own `PAGES` table and prints, per route, the words, prose blocks, bare numbers,
+table cells, pictures and visible definition triggers a reader actually meets, plus any
+horizontal overflow at 1280, 640 and 360px; `--diff before.json after.json` compares two
+runs. Run it alone: two Playwright clients against one `dev/serve.mjs` (which rebuilds on
+every load) can serve a page whose server bundle never arrived. The 2026-09-08 parity wave
+(`1c2ad3d` to `676b58e`) measured, at 1280px: Overview 0 to 210 table cells and 2 to 11
+definitions (the findings table and the finding sheet), MTTR 5 to 16 pictures and 12 to 24
+definitions (the per-severity survival fan and the aging edge), History 1 to 6 pictures and
+0 to 13 definitions, Program 2 to 9 pictures and 9 to 23 definitions, the help key 23 to 47
+entries, and no route overflowing at any width (three did at 360px before). A page whose
+figures move while its prose count does not is what the walker is for.
 
 Each page load rebuilds and reseeds: edit `src/client/**` (or `src/server/**`) and
 refresh. State is in-memory only; nothing persists across reloads. Anything that
