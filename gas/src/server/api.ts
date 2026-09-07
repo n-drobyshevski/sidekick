@@ -2317,12 +2317,13 @@ function movementNoteFor(win: program.MovementWindow): string {
 function scanHistoryData(): Rec {
   const scanRows = ledgerStore.loadScanRows();
   const scans = scanRows.slice().reverse(); // newest first
-  // KPI band only: drop no-fix findings when the toggle is off, so tracked/open/resolved/
-  // median match the rest of the dashboard. The scans table (+ delete flow) stays unfiltered.
+  // KPI band only: drop no-fix findings when the toggle is off, so tracked/open/resolved
+  // match the rest of the dashboard. The scans table (+ delete flow) stays unfiltered.
   const base = visibleBase(ledgerStore.loadBaseRows() as unknown as Rec[]) as unknown as BaseRow[];
   const open = base.filter((r) => r.status === "OPEN").length;
   const resolved = base.filter((r) => r.status === "RESOLVED").length;
-  const { overall } = mttrFromLedger(base as unknown as Rec[]);
+  // NO KM HERE, AND NO NAIVE MEDIAN EITHER — see the namespace comment below for where the
+  // fourth KPI card's statistic actually gets computed and why it cannot live in this function.
   // The decomposition runs over the SAME `base` the KPI band counts, so "the open count moved
   // N" and "Currently open" cannot describe two different populations on one page.
   const win = program.movementWindowScans(scanRows as unknown as Rec[], MOVEMENT_WINDOW_DAYS);
@@ -2342,7 +2343,6 @@ function scanHistoryData(): Rec {
       tracked: base.length,
       open,
       resolvedAllTime: resolved,
-      medianMttr: overall.mttr_median ?? null,
     },
   };
 }
@@ -2352,14 +2352,48 @@ const cachedScanHistoryData = () =>
   // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
   // "scanHistory2" → "scanHistory3": the payload carries the movement decomposition now, and a
   // stale entry would serve the section's empty state over a window that is measurable.
-  durablyCached("scanHistory3", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
+  // "scanHistory3" → "scanHistory4": `kpis` DROPS `medianMttr` — the naive median over
+  // CLOSED rows only, which the fourth KPI card used to publish under the "Remediation
+  // half-life" label while the only series drawn under it (`km_median_days`, mttrTrendData)
+  // is the Kaplan–Meier estimate. Those are two different statistics over two different
+  // populations (the naive figure drops every still-open row), so a stale `scanHistory3`
+  // entry serving `medianMttr` under a KM-labelled card would render a real but WRONG number
+  // rather than an absence — bump so none can. The KM figure itself is deliberately NOT part
+  // of this durable blob: `kaplanMeier` right-censors every open finding at `Date.now()`
+  // (domain/remediation.ts's `openAge`), so it belongs to the class `readModelStore.ts`'s own
+  // header calls out as "drift with the clock at zero data change" and reserves for an
+  // L1-only cache with a short TTL — baking it into `durablyCached`'s Drive-backed L2 would
+  // let it go stale for up to the 7-day backstop between scans, which is exactly the mistake
+  // that header exists to prevent. `getScanHistory` below merges it in fresh, off
+  // `cachedMttrData()` (a plain `cached()`, 1h TTL) rather than a second `kaplanMeier(base)`
+  // pass: `mttrData(undefined)` scopes to `{domain:"", supportGroup:"", severities:null}`,
+  // which is `scopedBaseRows("","")` (the whole ledger, untouched) through `filterSeverities`
+  // (a no-op on `null`) through `visibleBase` — byte-for-byte this function's own `base` —
+  // so the two share both the population and the `showNoFix` gate, and reusing the MTTR
+  // page's already-cached estimate is the correct answer, not a shortcut.
+  durablyCached("scanHistory4", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
 
 export function getScanHistory(_p?: unknown): ApiResult {
   return run(() => {
     const d = cachedScanHistoryData() as Rec;
+    // kmMedian / kmMedianLowerBound: read off cachedMttrData()'s own KM estimate, OUTSIDE the
+    // durable read above — see the namespace comment on cachedScanHistoryData for why a KM
+    // figure may not enter that cache. cachedMttrData(undefined) is the whole-register, all-
+    // severities, current-showNoFix-toggle scope, which is exactly `scanHistoryData`'s own
+    // `base` population.
+    const mttr = cachedMttrData(undefined) as Rec;
+    const km = ((mttr["remediation"] as Rec | undefined)?.["km"] ?? null) as Rec | null;
     // The scans tab, narrowed to the ten columns the table draws. Projected here rather than
     // in the cached compute so `scanHistory2` keeps its shape and no namespace moves.
-    return { ...d, scans: scanRowsSlice(d["scans"]) };
+    return {
+      ...d,
+      scans: scanRowsSlice(d["scans"]),
+      kpis: {
+        ...(d["kpis"] as Rec),
+        kmMedian: km?.["median"] ?? null,
+        kmMedianLowerBound: km?.["medianLowerBound"] ?? null,
+      },
+    };
   });
 }
 

@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "0acd03453e27" : "dev";
+  var BUILD_ID = true ? "143b6607b205" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -10593,13 +10593,11 @@ var Server = (() => {
     return `No scan at least ${MOVEMENT_WINDOW_DAYS} days older than the latest one` + (win.days === null ? "" : ` \u2014 the saved scans span ${win.days} days`) + ".";
   }
   function scanHistoryData() {
-    var _a;
     const scanRows = loadScanRows();
     const scans = scanRows.slice().reverse();
     const base = visibleBase(loadBaseRows());
     const open = base.filter((r) => r.status === "OPEN").length;
     const resolved = base.filter((r) => r.status === "RESOLVED").length;
-    const { overall } = mttrFromLedger(base);
     const win = movementWindowScans(scanRows, MOVEMENT_WINDOW_DAYS);
     const movement2 = win.since !== null ? movementDecomposition(
       base,
@@ -10614,8 +10612,7 @@ var Server = (() => {
       kpis: {
         tracked: base.length,
         open,
-        resolvedAllTime: resolved,
-        medianMttr: (_a = overall.mttr_median) != null ? _a : null
+        resolvedAllTime: resolved
       }
     };
   }
@@ -10624,12 +10621,42 @@ var Server = (() => {
     // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
     // "scanHistory2" → "scanHistory3": the payload carries the movement decomposition now, and a
     // stale entry would serve the section's empty state over a window that is measurable.
-    durablyCached("scanHistory3", { showNoFix: getShowNoFix2() }, scanHistoryData)
+    // "scanHistory3" → "scanHistory4": `kpis` DROPS `medianMttr` — the naive median over
+    // CLOSED rows only, which the fourth KPI card used to publish under the "Remediation
+    // half-life" label while the only series drawn under it (`km_median_days`, mttrTrendData)
+    // is the Kaplan–Meier estimate. Those are two different statistics over two different
+    // populations (the naive figure drops every still-open row), so a stale `scanHistory3`
+    // entry serving `medianMttr` under a KM-labelled card would render a real but WRONG number
+    // rather than an absence — bump so none can. The KM figure itself is deliberately NOT part
+    // of this durable blob: `kaplanMeier` right-censors every open finding at `Date.now()`
+    // (domain/remediation.ts's `openAge`), so it belongs to the class `readModelStore.ts`'s own
+    // header calls out as "drift with the clock at zero data change" and reserves for an
+    // L1-only cache with a short TTL — baking it into `durablyCached`'s Drive-backed L2 would
+    // let it go stale for up to the 7-day backstop between scans, which is exactly the mistake
+    // that header exists to prevent. `getScanHistory` below merges it in fresh, off
+    // `cachedMttrData()` (a plain `cached()`, 1h TTL) rather than a second `kaplanMeier(base)`
+    // pass: `mttrData(undefined)` scopes to `{domain:"", supportGroup:"", severities:null}`,
+    // which is `scopedBaseRows("","")` (the whole ledger, untouched) through `filterSeverities`
+    // (a no-op on `null`) through `visibleBase` — byte-for-byte this function's own `base` —
+    // so the two share both the population and the `showNoFix` gate, and reusing the MTTR
+    // page's already-cached estimate is the correct answer, not a shortcut.
+    durablyCached("scanHistory4", { showNoFix: getShowNoFix2() }, scanHistoryData)
   );
   function getScanHistory(_p) {
     return run(() => {
+      var _a, _b, _c, _d;
       const d = cachedScanHistoryData();
-      return { ...d, scans: scanRowsSlice(d["scans"]) };
+      const mttr = cachedMttrData(void 0);
+      const km = (_b = (_a = mttr["remediation"]) == null ? void 0 : _a["km"]) != null ? _b : null;
+      return {
+        ...d,
+        scans: scanRowsSlice(d["scans"]),
+        kpis: {
+          ...d["kpis"],
+          kmMedian: (_c = km == null ? void 0 : km["median"]) != null ? _c : null,
+          kmMedianLowerBound: (_d = km == null ? void 0 : km["medianLowerBound"]) != null ? _d : null
+        }
+      };
     });
   }
   function runScan(p) {
