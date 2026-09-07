@@ -14,7 +14,7 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  PAGE_SIZES, absent, bookTip, clear, dataTable, downloadText, el, emptyState, errorState,
+  DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, bookTip, clear, dataTable, downloadText, el, emptyState, errorState,
   fmtDate, glossaryTip, openSheet, pageHeader, scopeBar, sectionLabel, sevBadge,
   skeleton, statusPill, tableFooter, tip, toast,
 } from "../ui.js";
@@ -398,7 +398,7 @@ export async function renderProgram(main, _params, ctx) {
     // member of the `sizes` list handed to tableFooter below or the <select> renders blank —
     // `sizeSelect.value = String(pageSize)` matches no option and the browser falls back to the
     // first entry, which would then lie about how many rows are on screen.
-    let pageSize = 50;
+    let pageSize = DEFAULT_PAGE_SIZE;
     openSheet((body) => {
       const host = el("div", {});
       body.append(host);

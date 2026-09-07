@@ -16,7 +16,7 @@
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  absent, clear, dataTable, el, emptyState, firstRunNotice, fmtDate, glossaryTip, kpiCard, pageHeader, settingsPanel, statusPill, tableFooter, tip,
+  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, firstRunNotice, fmtDate, glossaryTip, kpiCard, pageHeader, settingsPanel, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -72,7 +72,11 @@ export async function renderAttribution(main, params, ctx) {
   // Rows per RPC page. It used to be the literal 50 below and nothing could change it; the
   // table footer now offers the standard sizes, and the server pages against this value.
   // Deliberately NOT in the hash: the page number is what a shared link is about.
-  let pageSize = 50;
+  //
+  // THE SHARED CONSTANT, not a literal. A second copy of the number here is how this table
+  // would keep opening at 50 after the shared default moved — the change would look applied
+  // everywhere and silently miss the two pages that spelled it out themselves.
+  let pageSize = DEFAULT_PAGE_SIZE;
 
   main.append(pageHeader({
     route: "attribution",
