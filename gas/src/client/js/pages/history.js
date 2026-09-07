@@ -7,7 +7,7 @@ import { call } from "../../../../../gas_shared/api.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, confirmDialog, dataTable, el, emptyState, fmtDateTime, fmtSpan, kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
+  absent, clear, confirmDialog, dataTable, el, emptyState, errorState, firstRunNotice, fmtDateTime, fmtSpan, kpiCard, num, pageHeader, relativeAge, sectionLabel, statusPill, tableFooter, tipAnchor, toast,
 } from "../ui.js";
 import { movementView } from "./historyModel.js";
 
@@ -56,6 +56,24 @@ function deltaCell(n, { good = false, sign = "" } = {}) {
 export async function renderHistory(main, _params, ctx) {
   const boot = await bootstrap();
 
+  main.append(pageHeader({
+    route: "history",
+    lede: "Every saved scan retained in the durable ledger, with remediation trends.",
+  }));
+
+  // NOTHING HAS BEEN READ YET, and a page whose whole subject is history owes that fact
+  // ahead of anything else: no KPI band of zeros, no "No scans saved yet." table, no
+  // "Not enough scan history yet" chart — three separate absences restating the one thing
+  // `firstRunNotice` already says. `await bootstrap()` above, never a cached read, so
+  // `latestScan` is never a stale null.
+  if (!boot.latestScan) {
+    main.append(firstRunNotice({
+      synced: false,
+      hint: "Use “Run scan” in the sidebar to take the first measurement.",
+    }));
+    return;
+  }
+
   // Sort, page and page size persist across SWR repaints so a background refresh doesn't
   // reset the view.
   let sortDir = "desc";
@@ -82,18 +100,14 @@ export async function renderHistory(main, _params, ctx) {
     paintMovement(fresh);
   });
 
-  main.append(pageHeader({
-    route: "history",
-    lede: "Every saved scan retained in the durable ledger, with remediation trends.",
-  }));
-
+  const noticeHost = el("div", {});
   const freshLine = el("p", { class: "section-note" });
   const kpiRow = el("div", { class: "kpi-row" });
   const scansHost = el("div", {});
   const movementHost = el("div", {});
   const chartsHost = el("div", { class: "chart-grid", style: "margin-top:20px" });
   main.append(
-    freshLine, kpiRow, sectionLabel("Saved scans"), scansHost,
+    noticeHost, freshLine, kpiRow, sectionLabel("Saved scans"), scansHost,
     sectionLabel("What moved the number"),
     el("p", { class: "section-note" },
       "The change in the open count over the last 28-day window bounded by two saved scans, "
@@ -115,16 +129,49 @@ export async function renderHistory(main, _params, ctx) {
   function loadTrends() {
     swrCall("api_getMttrTrend", { severities: scopeParam() }, paintTrends)
       .then(paintTrends)
-      .catch((e) => console.error("[history] trends failed:", e));
+      .catch((e) => {
+        // A failure, not an absence: the placeholder above says "Computing trends…" forever
+        // otherwise, which reads as a hang rather than as the fetch that actually failed.
+        console.error("[history] trends failed:", e);
+        clear(chartsHost).append(errorState("Couldn't load trends.",
+          { detail: String((e && e.message) || e) }));
+      });
   }
   loadTrends();
 
-  const data = await historyPromise;
-  paintKpis(data.kpis, data.scans);
-  paintScans(data.scans);
-  paintMovement(data);
+  try {
+    const data = await historyPromise;
+    paintKpis(data.kpis, data.scans);
+    paintScans(data.scans);
+    paintMovement(data);
+  } catch (e) {
+    // A failure, not an absence — this page's whole subject is what HAS been measured, so
+    // announcing a fetch failure in the same voice as "nothing measured yet" would be the
+    // worst place in the register to confuse the two.
+    console.error("[history] api_getScanHistory failed:", e);
+    clear(kpiRow).append(errorState("Couldn't load scan history.", {
+      detail: String((e && e.message) || e),
+      onRetry: () => ctx.refresh(),
+    }));
+  }
 
   function paintKpis(kpis, scans) {
+    clear(noticeHost);
+    // A scan has run (the page-wide gate above already refused otherwise), but it saved no
+    // lifecycle the ledger tracks — a measured "nothing here", dated to that scan. `firstRunNotice`
+    // here, not `emptyState`: the KPI band is the one section this notice actually replaces,
+    // never the table or the trend charts, which keep their own honest empty states below.
+    if (kpis.tracked === 0) {
+      noticeHost.append(firstRunNotice({
+        synced: true,
+        at: boot.latestScan.ts,
+        hint: "The saved scan tracked no findings, so there is nothing here to measure yet.",
+      }));
+      clear(kpiRow);
+      freshLine.textContent = "";
+      freshLine.style.display = "none";
+      return;
+    }
     // Freshness: the ledger's whole value is recency, so state it plainly.
     const newest = scans && scans.length
       ? scans.reduce((m, s) => (!m || s.ts > m.ts ? s : m), null)

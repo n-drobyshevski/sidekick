@@ -119,14 +119,15 @@ export function renderCapacity(host, stats) {
   }
 
   host.append(
-    el("table", { class: "data capacity-table" },
-      el("thead", {},
-        el("tr", {},
-          el("th", {}, "Tab"),
-          el("th", { class: "num" }, "Grid"),
-          el("th", { class: "num" }, "Cells"),
-          el("th", {}, "Share of used"))),
-      body),
+    el("div", { class: "table-wrap" },
+      el("table", { class: "data capacity-table" },
+        el("thead", {},
+          el("tr", {},
+            el("th", {}, "Tab"),
+            el("th", { class: "num" }, "Grid"),
+            el("th", { class: "num" }, "Cells"),
+            el("th", {}, "Share of used"))),
+        body)),
     el("p", { class: "muted small" },
       "Counted as allocated grid cells — rows × columns — which is the measure the 10M-cell " +
       "limit enforces, so empty rows inside a tab's grid still count against it."),
