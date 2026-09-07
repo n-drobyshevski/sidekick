@@ -36,6 +36,12 @@ const EXPECTED_IDS = [
   // entry behind them. (No quoted ids in this comment: test/pagesHelp.test.js reads this
   // array as TEXT and would take one for a fourth entry.)
   "compaction", "sealed", "episode",
+  // The three exploitation signals. Each had been sharing the sca entry — the definition of
+  // the REGISTER — so the KEV column and all three rows of the signals card opened one card
+  // describing software composition analysis. Three signals that say different things about
+  // exploitation (observed / code published / forecast) need three entries, and the array
+  // grows to hold them.
+  "kev", "known-exploit", "epss",
   // Wave A's three. The claim this array makes is "the book holds exactly these ids", so it
   // GROWS with the book and never shrinks: `movement` is what the Executive aside's method
   // sentence became, `fix-next` the ranking rule that was a 52-word lede above the ranked

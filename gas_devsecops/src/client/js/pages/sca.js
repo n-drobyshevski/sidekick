@@ -1111,9 +1111,12 @@ export function scaModel(payload, opts) {
 
     // Absent is never zero — three signals, three states each.
     signals: [
-      signalFigure("has_kev", "CISA KEV", "sca", coverage.has_kev),
-      signalFigure("has_exploit", "Known exploit", "sca", coverage.has_exploit),
-      signalFigure("epss", "EPSS score", "sca", coverage.epss),
+      // Each signal carries ITS OWN glossary term. All three used to pass "sca" — the
+      // register's own entry — so every one of these rows opened the same card defining
+      // software composition analysis, on a page that is already the SCA register.
+      signalFigure("has_kev", "CISA KEV", "kev", coverage.has_kev),
+      signalFigure("has_exploit", "Known exploit", "known-exploit", coverage.has_exploit),
+      signalFigure("epss", "EPSS score", "epss", coverage.epss),
     ],
 
     severityAxis: p.severityAxis || { supported: true },
@@ -1565,7 +1568,9 @@ export function kevCaveatLine(signals) {
  */
 export function kevColumnHelp(signals) {
   const line = kevCaveatLine(signals);
-  return line ? { term: "sca", lines: [line] } : { term: "sca" };
+  // "kev", not "sca". The column is headed "On KEV"; anchoring it to the register's own entry
+  // answered a question the reader did not ask and left the one they did ask undefined.
+  return line ? { term: "kev", lines: [line] } : { term: "kev" };
 }
 
 /** The same sentence as a paragraph — kept for a caller that wants it on the surface. */

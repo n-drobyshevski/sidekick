@@ -188,6 +188,37 @@ const ENTRIES = [
       "Not closings over new arrivals, and not closings over the whole register: the denominator is that month's starting backlog.",
     ],
   },
+  // THE THREE EXPLOITATION SIGNALS, one entry each. They used to share the "sca" entry — the
+  // definition of the REGISTER — so hovering "CISA KEV", "Known exploit", "EPSS score" or the
+  // breakdown tables' "On KEV" column all answered "Software composition analysis: a known CVE
+  // in a third-party package at a version", which defines the page rather than the column
+  // under the pointer. Each signal says a different thing about exploitation, and the
+  // differences are the whole reason the page draws three rows instead of one.
+  {
+    id: "kev",
+    term: "On KEV",
+    lines: [
+      "CISA's Known Exploited Vulnerabilities catalogue: CVEs with reliable evidence that someone, somewhere, has actually exploited them.",
+      "Observed exploitation of the CVE — not a statement that this finding is reachable here. It raises the priority of a finding; it does not decide it.",
+      "A row Wiz never evaluated against the catalogue is unknown, not absent from it, which is why these counts are reported as a floor.",
+    ],
+  },
+  {
+    id: "known-exploit",
+    term: "Known exploit",
+    lines: [
+      "Public exploit code exists for the CVE.",
+      "A weaker claim than KEV and a different one: code being published is not the same as exploitation having been observed. A CVE can carry this and not be on KEV, and the reverse.",
+    ],
+  },
+  {
+    id: "epss",
+    term: "EPSS score",
+    lines: [
+      "Exploit Prediction Scoring System: the estimated probability that a CVE will be exploited in the next 30 days.",
+      "A FORECAST, not an observation — the one signal here that says what may happen rather than what has. It is a probability, so a high score on a large register still describes many findings that will never be attacked.",
+    ],
+  },
   {
     id: "signal-coverage",
     term: "Signal coverage",
