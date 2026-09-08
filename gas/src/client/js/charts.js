@@ -102,15 +102,109 @@ function fmtDay(day) {
   return `${String(d.getUTCDate()).padStart(2, "0")}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`;
 }
 
+/** The width of a `fmtDay` label, in multiples of the tick font size.
+ *
+ *  MEASURED, not estimated: `measureText` at the axis's own 12px system stack over a spread of
+ *  real labels gave 65.5px ("10-feb-2026") to 68.4px ("29-aug-2026") — 5.7 font sizes at the
+ *  widest. Every `fmtDay` string is exactly eleven characters of digits, lowercase and hyphens,
+ *  so this is a property of the FORMAT, not of one date. */
+export const DAY_LABEL_EMS = 5.7;
+
+/** Clear space demanded between two day labels on top of their own width. Chart.js's own
+ *  `autoSkipPadding` default is 3px per side; this is that, both sides. */
+export const TICK_LABEL_GUTTER_PX = 6;
+
+/** The centre-to-centre pixel distance two `fmtDay` labels need to clear each other. */
+export function dayLabelPitchPx(fontSize) {
+  return fontSize * DAY_LABEL_EMS + TICK_LABEL_GUTTER_PX;
+}
+
+/**
+ * Drop the second-to-last tick when the last one is a REMAINDER rather than a full step.
+ *
+ * WHY THIS IS UNAVOIDABLE WITH `bounds: "data"`. Chart.js's `generateTicks` anchors the tick
+ * grid on the bounds it is given: with `bounds: "data"` it sets `niceMin = rmin` and
+ * `niceMax = rmax` outright — the data's own min and max — and then steps from `rmin` by a nice
+ * `spacing` and appends `rmax` at the end. So the final gap is `span % spacing`, which is
+ * whatever the data happens to leave over: anywhere from 0 to a full step. Nothing about that
+ * is a misconfiguration; it is what pinning an axis to real data means.
+ *
+ * WHY CHART.JS DOES NOT CATCH IT ITSELF. It tries: the generator merges the last stepped tick
+ * INTO `rmax` when the two are within `relativeLabelSize(max, minSpacing, …)`. But that size is
+ * `0.75 * minSpacing * ('' + value).length` — measured on the RAW NUMBER. Our x values are epoch
+ * days, so `'' + 20704` is five characters, while `fmtDay` draws "29-aug-2026", eleven. Chart.js
+ * budgets for a label less than half the width of the one it will paint. `autoSkip` cannot
+ * rescue it either: it measures real label widths but assumes ticks are EVENLY spaced, and the
+ * remainder tick is precisely the one that is not.
+ *
+ * MEASURED on the dev harness at 2026-09-08, `#/mttr` → "Open vs resolved", 578px axis over
+ * 20494..20704 (210 days): ticks `[20494, 20544, 20594, 20644, 20694, 20704]`, gaps
+ * `[50, 50, 50, 50, 10]`. Ten days is 27px where the label is ~66px, so "29-aug-2026" and
+ * "08-sep-2026" printed directly on top of each other. The same axis on "SLA quality" left a
+ * 52-day final gap and read fine, which is the same generator on different data — the defect is
+ * the REMAINDER, not the chart.
+ *
+ * WHY THE SECOND-TO-LAST GOES, NOT THE LAST. The last tick is the data's own end — the "as of"
+ * date the reader is looking for, and the one the plotted line actually reaches. Dropping it
+ * instead would leave the axis labelled ten days short of where the series visibly ends, which
+ * reads as a chart cut off mid-series. Dropping its crowded neighbour just widens one gap.
+ *
+ * `bounds: "ticks"` was the other candidate and is worse: it rounds the axis out to the nice
+ * grid, which here would add 46 days of empty space past the last scan on a 210-day range and
+ * make a current register look a month stale. `dayAxis`'s own comment already rejects it.
+ *
+ * BOTH CONDITIONS ARE LOAD-BEARING, and a ratio alone was not enough — the first cut of this
+ * asked only whether the final gap was under half the step, and the 90d window walked straight
+ * through it: step 20 days, remainder 10, ratio exactly 0.5, and 10 days at that zoom is 64px
+ * under a 68px label. Pixels are the unit the collision actually happens in. The `< step` test
+ * stays beside it so this only ever touches the REMAINDER: an axis whose ticks are evenly
+ * spaced and merely crowded is autoSkip's job, and autoSkip does that one correctly.
+ *
+ * @param {Array<{value: number}>} ticks  as `generateTicks` built them, in ascending order
+ * @param {number} pxPerUnit  drawn pixels per axis unit (a day, here)
+ * @param {number} minPitchPx  centre-to-centre pixels two labels need — `dayLabelPitchPx()`
+ * @returns {Array<{value: number}>} the same array, or a copy one tick shorter
+ */
+export function dropRemainderTick(ticks, pxPerUnit, minPitchPx) {
+  if (!Array.isArray(ticks) || ticks.length < 3) return ticks;
+  const last = ticks[ticks.length - 1].value;
+  const prev = ticks[ticks.length - 2].value;
+  const step = prev - ticks[ticks.length - 3].value;
+  const finalGap = last - prev;
+  // Anything not measurable is left alone: a non-positive or non-finite step is not an evenly
+  // stepped axis, and with no usable pixel scale there is no collision to judge.
+  if (!Number.isFinite(step) || step <= 0) return ticks;
+  if (!Number.isFinite(finalGap) || finalGap <= 0) return ticks;
+  if (!Number.isFinite(pxPerUnit) || pxPerUnit <= 0) return ticks;
+  if (!Number.isFinite(minPitchPx) || minPitchPx <= 0) return ticks;
+  if (finalGap >= step) return ticks;                  // a full step: not a remainder
+  if (finalGap * pxPerUnit >= minPitchPx) return ticks; // a remainder, but a legible one
+  return [...ticks.slice(0, -2), ticks[ticks.length - 1]];
+}
+
 /** Switch a baseOptions() x scale to the proportional day axis. `xRange` ({min,max} in
  *  epoch days) pins the visible span — e.g. a "30d" window stays 30 days wide even when
- *  the data only reaches back a fortnight, showing honest empty space instead. */
+ *  the data only reaches back a fortnight, showing honest empty space instead.
+ *
+ *  `afterBuildTicks` is here because `bounds: "data"` GUARANTEES an uneven final gap, and this
+ *  axis draws labels far wider than the numbers Chart.js sizes them by. See `dropRemainderTick`
+ *  for the whole mechanism and the measurement. */
 function dayAxis(opts, xRange) {
   opts.scales.x.type = "linear";
   opts.scales.x.bounds = "data"; // don't stretch the axis past the data to a "nice" tick
   opts.scales.x.ticks.precision = 0; // whole days — a tick between two dates is nonsense
   opts.scales.x.ticks.maxTicksLimit = 8;
   opts.scales.x.ticks.callback = (v) => fmtDay(v);
+  // `setDimensions()` and the data-limits pass both run before `buildTicks()` (Chart.js's
+  // `Scale.update`), so `width`, `min` and `max` are all real by the time this fires — which is
+  // what lets the decision be made in PIXELS rather than in a ratio that has to guess at zoom.
+  opts.scales.x.afterBuildTicks = (scale) => {
+    const span = scale.max - scale.min;
+    const fontSize = scale.options?.ticks?.font?.size || FONT.size;
+    scale.ticks = dropRemainderTick(
+      scale.ticks, span > 0 ? scale.width / span : 0, dayLabelPitchPx(fontSize),
+    );
+  };
   if (xRange) {
     opts.scales.x.min = xRange.min;
     opts.scales.x.max = xRange.max;
