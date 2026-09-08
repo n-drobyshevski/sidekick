@@ -1440,7 +1440,24 @@ export async function renderMttr(main, _params, ctx) {
     // one skeleton pair on a cold load rather than a section that arrives late whole. What
     // changed is only WHEN that RPC fires: on render, since there is no longer a drawer-open
     // event to hang it on.
-    const chartHost = el("div", { role: "status", "aria-label": "Loading trend charts" },
+    // THE HOST OWNS THE GAP UNDER THE ROW, because nothing else does. `.chart-grid` sets its
+    // inter-card gutter (14px) and no bottom margin, and `.table-wrap` has no top margin — so
+    // the table butted straight against the cards' bottom border. MEASURED on the dev harness
+    // at 2026-09-08, walking every top-level block of all six routes: every other block-to-
+    // block gap in the app is 12px inside a section and 32px between sections, and this one
+    // pair was 0. It is the first `.chart-grid` in the app followed by a block with no top
+    // margin of its own, which is why the class never needed this and still does not get it —
+    // `.chart-grid { margin-bottom }` would collapse into every section label harmlessly but
+    // would also push the Trends row's `margin:4px 0 0` honesty note away from the row it
+    // qualifies, and that 4px is a deliberate hug, not an oversight.
+    //
+    // 16px, not 12: the row's own cards sit 14px apart, so a following block at 12 would be
+    // TIGHTER than the grid's internal gutter and read as a third cell. `.sev-fan` on this same
+    // page already states that shape — 12px between its cards, `margin-bottom: var(--space-4)`
+    // under the grid — and this is the same relationship one step up the gutter.
+    const chartHost = el("div", {
+      role: "status", "aria-label": "Loading trend charts", style: "margin-bottom:16px",
+    },
       el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
         ...[0, 1].map(() => el("div", { class: "chart-card" },
           el("div", { style: "margin-bottom:12px" }, skeleton("line", { width: "140px" })),
