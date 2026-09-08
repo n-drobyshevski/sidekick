@@ -1760,10 +1760,14 @@ export function getMttrPage(p?: unknown): ApiResult {
   }));
 }
 
-/** The by-group drawer's trend series, fetched when it opens. Repeats getMttrPage's dimension
- *  switch verbatim — it has to, both because the switch reads `domain` and because the params
- *  must match key-for-key to hit the entry that page already warmed. Deliberately NOT folded
- *  into `getGroupTrend`, which serves Overview's breakdown and is a different series. */
+/** The by-group section's trend series, fetched beside `getMttrPage` rather than inside it —
+ *  it is the per-point KM replay, the heavy half of that section, and keeping it out lets the
+ *  breakdown table paint with the page while these two charts land underneath it. (It used to
+ *  be fetched when a drawer opened; the section is on the page now, so the client fires this on
+ *  render. Nothing about the endpoint changed.) Repeats getMttrPage's dimension switch verbatim
+ *  — it has to, both because the switch reads `domain` and because the params must match
+ *  key-for-key to hit the entry that page already warmed. Deliberately NOT folded into
+ *  `getGroupTrend`, which serves Overview's breakdown and is a different series. */
 export function getMttrByDomainTrend(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
   return run(() => mttrGroupTrendSlice(

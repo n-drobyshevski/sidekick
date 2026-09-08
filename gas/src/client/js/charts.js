@@ -118,6 +118,33 @@ function dayAxis(opts, xRange) {
   opts.plugins.tooltip.callbacks.title = (items) => (items.length ? fmtDay(items[0].parsed.x) : "");
 }
 
+/**
+ * Flip a `baseOptions()` chart to horizontal bars — and UNDO the numeric defaults it put on
+ * the y scale, which is the whole reason this is a function rather than one assignment.
+ *
+ * `baseOptions()` builds y as the VALUE axis: `precision: 0`, `beginAtZero`, and
+ * `callback: localeNum`. Setting `indexAxis = "y"` makes y the CATEGORY axis, and Chart.js
+ * hands a category scale's tick callback the tick's INDEX, not its label — so `localeNum`
+ * formatted 0, 1, 2, 3, 4 and every bar chart drawn this way lost its category names. MEASURED
+ * on the dev harness at 2026-09-08, `#/mttr` → By domain: five coloured bars against a y axis
+ * reading "0 1 2 3 4", with the domain names nowhere on the card. The bars were identified by
+ * HUE ALONE, which is the one thing DESIGN.md's non-colour-signal rule forbids outright, and
+ * the reader could not name a single domain the chart was about.
+ *
+ * It went unseen because the two charts it hit lived inside a drawer, and the third
+ * (`severityBar`) is exported but drawn by no page here. Deleting the three keys is the fix:
+ * `beginAtZero` and `precision` are meaningless on a category scale, and with no `callback`
+ * Chart.js falls back to `getLabelForValue`, which is the label.
+ */
+function horizontalBars(opts) {
+  opts.indexAxis = "y";
+  delete opts.scales.y.ticks.callback;
+  delete opts.scales.y.ticks.precision;
+  delete opts.scales.y.beginAtZero;
+  opts.scales.y.grid = { display: false };
+  return opts;
+}
+
 function baseOptions(unit = "") {
   const suffix = unit ? " " + unit : "";
   return {
@@ -180,6 +207,46 @@ export function destroyChart(canvas) {
   destroyExisting(canvas);
 }
 
+/**
+ * Hide a canvas AND tear down whatever chart is on it — with the hide applied twice, once
+ * before the teardown and once after, because Chart.js undoes the first one.
+ *
+ * CHART.JS'S DESTROY RESTORES THE CANVAS'S PRE-CHART INLINE STYLES, AND `display` IS ONE OF
+ * THEM. `DomPlatform.initCanvas` records `{display, height, width}` off `canvas.style` at
+ * construction and forces `display: block`; `releaseContext` replays that record key by key on
+ * destroy. A canvas that was `display: ""` when its chart was built therefore comes back to
+ * `""` — visible — however many times the caller set it to `"none"` beforehand. The teardown
+ * sits behind the LAZY chart-bundle import (`chartsLoader.js`), so it always lands after the
+ * caller's synchronous hide, never before it.
+ *
+ * MEASURED on the dev harness at 2026-09-08, one click of the MTTR by-domain lens swap: the
+ * outgoing canvas came back as a bare 300x150 `display: inline` element inside a 240px
+ * `.chart-box` — Chart.js had also restored its `width`/`height` attributes — and pushed the
+ * incoming chart 150px down, over its own caption and into the table beneath it. The card
+ * looked broken; nothing had failed.
+ *
+ * `stillHidden` is re-read AFTER the await rather than captured, and it is why this is not
+ * simply `destroy(); hide()` inside the loader's `.then`. On the very first swap of a session
+ * the bundle may still be in flight, which is a window wide enough for a reader to swap back —
+ * and hiding unconditionally at the end of that window would blank the canvas that is now the
+ * live one.
+ *
+ * @param {{style: {display: string}}} canvas
+ * @param {() => Promise<{destroyChart: (c: unknown) => void}>} load  the lazy bundle loader
+ * @param {() => boolean} stillHidden  is this canvas STILL the one that should be hidden?
+ * @returns {Promise<void>} settles when the second hide has been applied (or skipped)
+ */
+export function hideChartWhenSettled(canvas, load, stillHidden) {
+  canvas.style.display = "none";
+  return load()
+    // A load that never resolves a bundle has no chart to destroy and no restore to undo, so
+    // the first hide already stands — the same fire-and-forget the callers had.
+    .then((charts) => charts.destroyChart(canvas), () => {})
+    .then(() => {
+      if (stillHidden()) canvas.style.display = "none";
+    });
+}
+
 /** Draws each bar's value just past its end (like the Streamlit severity chart). */
 const barEndLabels = {
   id: "barEndLabels",
@@ -240,14 +307,12 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
   const sevs = palette.order.filter((s) => counts[s]);
   describe(canvas, `Open findings by severity: ${
     sevs.map((s) => `${s} ${counts[s]}`).join(", ") || "none"}`);
-  const opts = baseOptions("findings");
-  opts.indexAxis = "y";
+  const opts = horizontalBars(baseOptions("findings"));
   opts.scales.x.beginAtZero = true;
   opts.scales.x.ticks.precision = 0;
   opts.scales.x.ticks.callback = localeNum;
   // Headroom so the end-of-bar value labels aren't clipped at the axis edge.
   opts.scales.x.grace = "8%";
-  opts.scales.y.grid = { display: false };
   opts.onClick = (_evt, elements) => {
     if (elements.length && onClickSeverity) onClickSeverity(sevs[elements[0].index]);
   };
@@ -1122,12 +1187,10 @@ export function mttrContributionBars(canvas, groups, opts = {}) {
     (groups.map((g) => `${g.label} ${fmtDuration(Number(g.value))}${dir(g.value)}`).join("; ") || "none") +
     (hasRef ? `; overall KM median ${fmtDuration(Number(overall))}.` : "."));
 
-  const opt = baseOptions("days");
-  opt.indexAxis = "y";
+  const opt = horizontalBars(baseOptions("days"));
   opt.scales.x.beginAtZero = true;
   opt.scales.x.grace = "12%"; // headroom so the end-of-bar day labels aren't clipped
   opt.scales.x.title = { display: true, text: "KM median (days)", font: FONT, color: INK2 };
-  opt.scales.y.grid = { display: false };
   opt.plugins.tooltip.callbacks.label = (ctx) => {
     const g = groups[ctx.dataIndex];
     const n = g.resolved ?? 0;
@@ -1244,15 +1307,13 @@ export function mttrImpactBars(canvas, rows, opts = {}) {
     (rows.map((r) => `${r.label} ${signed(Number(r.value) || 0)} — ${dir(Number(r.value) || 0)}`)
       .join("; ") || "none") + ".");
 
-  const opt = baseOptions("finding·days");
-  opt.indexAxis = "y";
+  const opt = horizontalBars(baseOptions("finding·days"));
   // No beginAtZero on the value (x) axis — bars grow from 0 in both directions, so forcing a
   // zero floor would clip the negative (held-down) bars. Chart.js includes 0 for a bar chart anyway.
   opt.scales.x.grace = "12%"; // headroom so the outer value labels aren't clipped on either side
   opt.scales.x.title = {
     display: true, text: "excess finding·days vs overall median", font: FONT, color: INK2,
   };
-  opt.scales.y.grid = { display: false };
   opt.plugins.tooltip.callbacks.label = (ctx) => {
     const r = rows[ctx.dataIndex];
     const v = Number(r.value) || 0;

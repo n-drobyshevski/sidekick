@@ -166,9 +166,11 @@ describe("every chart canvas ships a data-table alternative", () => {
     // Per file, measured on this branch:
     //   mttr.js     11  — survival curve, resolution-bucket histogram, MTTR-over-time,
     //                     open-vs-resolved, open-past-SLA, SLA-quality, the per-severity
-    //                     survival fan, open findings by age (8, on the main page);
-    //                     the by-domain drawer's contribution/median lens pair and its MTTR-by-
-    //                     domain line (3, inside a sheet that only renders when opened)
+    //                     survival fan, open findings by age (8); the by-domain section's
+    //                     contribution/median lens pair and its MTTR-by-domain line (3, which
+    //                     moved out of a drawer onto the page and paint once their own RPC
+    //                     lands — the COUNT is unchanged by that move, which is the point of
+    //                     counting source literals rather than rendered canvases)
     //   overview.js  6  — the per-tier trend small-multiples grid (one canvas literal, one
     //                     combined table for the whole grid — see tierTrendCard's own comment),
     //                     aging-by-tier, SLA-window-consumed, scan-over-scan open backlog, and

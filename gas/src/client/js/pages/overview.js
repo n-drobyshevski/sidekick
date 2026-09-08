@@ -19,7 +19,7 @@
 
 import {
   TIER_COLORS, TIER_GLYPHS, TIER_LABELS, TIER_ORDER, TIER_TEXT,
-  groupPalette, tierPalette,
+  groupPalette, hideChartWhenSettled, tierPalette,
 } from "../charts.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { overviewHeroView, populationLine, slaConsumedCaption } from "./overviewModel.js";
@@ -1467,10 +1467,14 @@ export async function renderOverview(main, params, ctx) {
       canvas.style.display = "";
     }
     function showMsg(canvas, msg, text) {
-      // Fire-and-forget: nothing to destroy if Chart.js never loaded (nothing was ever
-      // drawn), and the message swap below doesn't wait on it either way.
-      loadCharts().then((charts) => charts.destroyChart(canvas)).catch(() => {});
-      canvas.style.display = "none";
+      // Still fire-and-forget — the message swap below does not wait on the teardown, and
+      // there is nothing to destroy if Chart.js never loaded. What it is NOT is a plain
+      // `display = "none"`: Chart.js's destroy restores the canvas's pre-chart inline
+      // `display` and lands after this line, so the hidden canvas reappears above the message
+      // as a bare 300x150 box (see `charts.js::hideChartWhenSettled` for the measurement, taken
+      // on the MTTR page's lens swap — this card has the identical shape). The canvas stays
+      // hidden for exactly as long as the message is up, which is what the predicate reads.
+      hideChartWhenSettled(canvas, loadCharts, () => msg.style.display !== "none");
       msg.textContent = text;
       msg.style.display = "";
     }

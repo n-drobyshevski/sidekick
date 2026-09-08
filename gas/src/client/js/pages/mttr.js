@@ -1,7 +1,7 @@
 // MTTR & SLA — remediation performance from the durable ledger. Hero stat, trend
 // charts, per-severity SLA table, posture bars. Never fetches from Wiz.
 
-import { groupPalette } from "../charts.js";
+import { groupPalette, hideChartWhenSettled } from "../charts.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { mttrPaintPlan } from "./mttrPaintPlan.js";
@@ -10,7 +10,7 @@ import { agingTableModel, barsTableModel, trendTableModel } from "./_charts.js";
 import {
   absent, absentText, boundedDays, changeChip, chartTable, clear, dataTable,
   el, emptyState, errorState, firstRunNotice, fmtCount, fmtDays, fmtSpan, heroLines,
-  heroStat, meter, num, openSheet, pageHeader, pluralize, scopeBar, sectionLabel,
+  heroStat, meter, num, pageHeader, pluralize, scopeBar, sectionLabel,
   segmented, sevBadge, skeleton, sparkLabel, sparkPath, sparkline, statRow, survivalTableModel,
   tip, tipLabel,
 } from "../ui.js";
@@ -29,21 +29,34 @@ const RESOLUTION_LABELS = ["≤1d", "2–7d", "8–30d", "31–90d", "90+d"];
 // "By domain", not "By manual group": the split is over the RESOLVED domain — the `Wiz/Domain`
 // tag where the tenant wrote one, a manual group where it did not — so naming it after the
 // fallback mechanism would describe the smaller half of its own rows.
+//
+// `help` is the section label's tip, not a paragraph under it. The two lines it replaces were
+// a `<p class="small muted">` advertising what sat behind a "Open domain breakdown →" button;
+// with the section drawn on the page there is nothing left to advertise, and DESIGN.md §6's
+// rule applies — the population statement stays on the surface (it is what the split is over),
+// the explanation of how to read the two lenses moves onto the label's tip, where "The clock,
+// by severity" and "Open findings by age" directly above already keep theirs.
 const DOMAIN_DIM = {
   noun: "domain",
   Noun: "Domain",
   title: "By domain",
-  subtitle: "Per-domain remediation — each domain's contribution to the overall MTTR, its "
-    + "median vs the register, the KM median trend, and a full breakdown table.",
-  sheetSubtitle: "Remediation for each domain in the register.",
+  help: [
+    "Every domain in the register, split by the resolved Wiz/Domain tag where the tenant"
+    + " wrote one and by manual group where it did not.",
+    "The two cards read the same medians differently: contribution weights each domain's"
+    + " median by how much it closed, the median lens is the rate on its own.",
+  ],
 };
 const SUPPORT_GROUP_DIM = {
   noun: "support group",
   Noun: "Support group",
   title: "By support group",
-  subtitle: "Per-support-group remediation within this scope — each group's contribution to "
-    + "the overall MTTR, its median vs the register, the KM median trend, and a full breakdown table.",
-  sheetSubtitle: "Remediation for each support group in this scope.",
+  help: [
+    "Every support group inside the selected scope — the split by domain would be a single"
+    + " row here, so this one takes its place.",
+    "The two cards read the same medians differently: contribution weights each group's"
+    + " median by how much it closed, the median lens is the rate on its own.",
+  ],
 };
 
 // Timeframe presets for the Trends charts. null = no window (full history).
@@ -1003,22 +1016,26 @@ export async function renderMttr(main, _params, ctx) {
       canvas.style.display = "";
     }
     function showMsg(canvas, msg, text) {
-      // Fire-and-forget: nothing to destroy if Chart.js never loaded (nothing was ever
-      // drawn), and the message swap below doesn't wait on it either way.
-      loadCharts().then((charts) => charts.destroyChart(canvas)).catch(() => {});
-      canvas.style.display = "none";
+      // Still fire-and-forget — the message swap below does not wait on the teardown, and
+      // there is nothing to destroy if Chart.js never loaded. What it is NOT is a plain
+      // `display = "none"`: Chart.js's destroy restores the canvas's pre-chart inline
+      // `display` and lands after this line, so the hidden canvas reappears above the message
+      // as a bare 300x150 box (see `hideChartWhenSettled`'s own measurement). The canvas stays
+      // hidden for exactly as long as the message is up, which is what the predicate reads.
+      hideChartWhenSettled(canvas, loadCharts, () => msg.style.display !== "none");
       msg.textContent = text;
       msg.style.display = "";
     }
 
-    // EVERYTHING BELOW DERIVES FROM `trend`, WHICH NO LONGER ARRIVES WITH THE PAGE. The two
-    // per-scan x per-group series behind these charts were built and shipped on every MTTR
-    // load for a card that only exists inside a drawer. They are fetched when it opens now, so
-    // the section's eager cost is the table and the footnote — both bounded by group count.
+    // EVERYTHING BELOW DERIVES FROM `trend`, WHICH DOES NOT ARRIVE WITH THE PAGE. The two
+    // per-scan x per-group series behind these charts are the per-point KM replay — the heavy
+    // half of what this section costs — so `api_getMttrPage` does not carry them and
+    // `api_getMttrByDomainTrend` fetches them beside it. The section's page-payload cost is the
+    // table and the footnote, both bounded by group count.
     //
-    // The split is by data dependency, not by convenience: the table reads `byDomain.rows`,
-    // which stays eager because the drawer should open with content, and the awaiting footnote
-    // sums those rows before the drawer exists at all.
+    // The split is by data dependency, not by convenience: the table reads `byDomain.rows`, so
+    // it paints with the page and the charts land underneath it a beat later, and the awaiting
+    // footnote sums those same rows before any trend exists.
     function buildCharts(trend) {
       const groups = (trend && trend.groups) || [];
       const colors = groupPalette(groups);
@@ -1205,8 +1222,13 @@ export async function renderMttr(main, _params, ctx) {
         const [hideCanvas, hideMsg, hideTableHost] = view === "impact"
           ? [medianCanvas, medianMsg, medianTableHost]
           : [impactCanvas, impactMsg, impactTableHost];
-        loadCharts().then((charts) => charts.destroyChart(hideCanvas)).catch(() => {});
-        hideCanvas.style.display = "none";
+        // Tear the outgoing lens down and keep it hidden — Chart.js's destroy restores the
+        // canvas's pre-chart inline `display` and lands after any synchronous hide, which is
+        // what put a 300x150 ghost canvas inside this card's 240px box. The predicate re-reads
+        // `byDomainLens` rather than trusting `view`, so a swap back while the first teardown
+        // is still in flight leaves the live canvas alone.
+        hideChartWhenSettled(hideCanvas, loadCharts,
+          () => hideCanvas !== (byDomainLens === "impact" ? impactCanvas : medianCanvas));
         hideMsg.style.display = "none";
         clear(hideTableHost);
         if (view === "impact") paintImpact(); else paintMedian();
@@ -1216,7 +1238,11 @@ export async function renderMttr(main, _params, ctx) {
         applyLens(view);
       }
 
-      const chartPair = el("div", { class: "chart-grid", style: "align-items:start" },
+      // `chart-grid--2`, matching the skeleton this replaces and the Trends row above it. The
+      // bare `chart-grid` it used to carry is a 3-up template, which auto-fit collapses to two
+      // halves for two cards anyway — indistinguishable inside an 820px drawer, and a needless
+      // second answer to "how wide is a two-card row" now that the row is on the page.
+      const chartPair = el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
         lensCard,
         el("div", { class: "chart-card" },
           lineHead,
@@ -1397,69 +1423,60 @@ export async function renderMttr(main, _params, ctx) {
     // bucket of its own, "Not attributable", sorted last, so the population is a row you can
     // read rather than a number in a note under a table it is missing from.
 
-    // Progressive disclosure: the whole breakdown opens in a right-drawer instead of stacking
-    // on the page. The TABLE goes in immediately — it is already in hand, so the drawer opens
-    // with content rather than a spinner, which is a better drawer than the one this replaces.
-    // The charts follow when their series arrives.
+    // ON THE PAGE, NOT BEHIND A BUTTON. This section spent a while in a right-drawer opened by
+    // an "Open domain breakdown →" button, on a progressive-disclosure argument. It reads worse
+    // there than it does here, for three reasons the drawer could not fix: it is the last
+    // section of the page, so it stacks under nothing and crowds nothing; its table is eight
+    // columns wide and the drawer had to be widened to 820px to stop it cramping, which is a
+    // page's width asked for inside an overlay; and the two cards answer "who is dragging the
+    // headline figure" — the question the hero above raises — which is a poor thing to hide
+    // one click away from the figure that raises it. The drawer stays for a RECORD (one
+    // finding, one scan's query): a thing you inspect and dismiss, not a section of the page.
     //
-    // openSheet calls renderBody synchronously and ignores its return, and `body` is a live
-    // node already in the DOM, so appending later works — but it offers no loading or error
-    // state, so both are ours. The `isConnected` guard is the precedent scanProgress.js sets:
-    // the reader can close the drawer while the request is in flight.
-    function renderBody(body) {
-      const chartHost = el("div", { role: "status", "aria-label": "Loading trend charts" },
-        el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
-          ...[0, 1].map(() => el("div", { class: "chart-card" },
-            el("div", { style: "margin-bottom:12px" }, skeleton("line", { width: "140px" })),
-            el("div", { class: "chart-box" }, skeleton("chart"))))));
-      body.append(chartHost, tableWrap);
-      if (footnote) body.append(footnote);
+    // THE PAYLOAD SPLIT SURVIVES THE MOVE, and deliberately. `api_getMttrPage` still does not
+    // carry the two per-scan × per-group series behind these charts — the per-point KM replay
+    // is the heavy half — so the table and the footnote paint from the page payload already in
+    // hand and the charts fill in from their own RPC underneath. The visible cost of that is
+    // one skeleton pair on a cold load rather than a section that arrives late whole. What
+    // changed is only WHEN that RPC fires: on render, since there is no longer a drawer-open
+    // event to hang it on.
+    const chartHost = el("div", { role: "status", "aria-label": "Loading trend charts" },
+      el("div", { class: "chart-grid chart-grid--2", style: "align-items:start" },
+        ...[0, 1].map(() => el("div", { class: "chart-card" },
+          el("div", { style: "margin-bottom:12px" }, skeleton("line", { width: "140px" })),
+          el("div", { class: "chart-box" }, skeleton("chart"))))));
 
-      swrCall("api_getMttrByDomainTrend",
-        { domain, supportGroup, severities: scopeParam() },
-        (fresh) => absorbTrend(chartHost, fresh))
-        .then((t) => absorbTrend(chartHost, t))
-        .catch((e) => {
-          console.error("[mttr] getMttrByDomainTrend failed:", e);
-          if (!chartHost.isConnected) return;
-          clear(chartHost).append(errorState("Couldn't load the trend charts.",
-            { detail: String((e && e.message) || e) }));
-        });
-    }
+    byDomainHost.append(sectionLabel(dim.title, { lines: dim.help }));
+    byDomainHost.append(chartHost, tableWrap);
+    if (footnote) byDomainHost.append(footnote);
+
+    swrCall("api_getMttrByDomainTrend",
+      { domain, supportGroup, severities: scopeParam() },
+      (fresh) => absorbTrend(chartHost, fresh))
+      .then((t) => absorbTrend(chartHost, t))
+      .catch((e) => {
+        console.error("[mttr] getMttrByDomainTrend failed:", e);
+        if (!chartHost.isConnected) return;
+        clear(chartHost).append(errorState("Couldn't load the trend charts.",
+          { detail: String((e && e.message) || e) }));
+      });
 
     /** Swap the skeleton for the real chart pair. Re-entrant: swrCall fires again on
-     *  revalidation, and a second arrival must replace the first rather than stack beneath it. */
-    function absorbTrend(chartHost, trend) {
-      if (!chartHost.isConnected) return;
+     *  revalidation, and a second arrival must replace the first rather than stack beneath it.
+     *
+     *  The `isConnected` guard is MORE load-bearing here than it was in the drawer, not less.
+     *  It used to cover one race — the reader closing the sheet mid-flight. On the page it also
+     *  covers the section's own repaint: `renderByDomain` runs again on every `plan.byDomain`
+     *  tick and opens with `clear(byDomainHost)`, so a request in flight from the previous run
+     *  resolves against a `chartHost` that has been detached, and appending to it would paint
+     *  the old scope's charts into nothing. */
+    function absorbTrend(host, trend) {
+      if (!host.isConnected) return;
       const built = buildCharts(trend || {});
-      clear(chartHost).removeAttribute("aria-label");
-      chartHost.append(built.chartPair);
+      clear(host).removeAttribute("aria-label");
+      host.append(built.chartPair);
       requestAnimationFrame(built.paint);
     }
-
-    byDomainHost.append(sectionLabel(dim.title));
-    byDomainHost.append(el("p", { class: "small muted", style: "margin:-6px 0 10px" }, dim.subtitle));
-    byDomainHost.append(el("button", {
-      type: "button",
-      // Wider default than other sheets: this one carries a trend chart *and* a full data
-      // table (8 columns) side by side, which cramps hard at the shared 520px default. 820px
-      // gives the table room to breathe on a normal desktop viewport while still clamping to
-      // 94vw on narrow ones.
-      //
-      // `resizable: true` REPLACES `minWidth: 480` + `storageKey: "sheetWidthByDomain"`, which
-      // were gas's own sheet options and are not in the shared `openSheet`'s option set. It
-      // destructures a fixed list and ignores the rest silently, so this sheet had lost its
-      // drag-to-resize edge with nothing on screen or in the console saying so. The shared sheet
-      // owns both halves that those two options used to buy: it persists the width itself, under
-      // one key shared by every resizable sheet rather than a per-sheet one, and takes its floor
-      // from the `--sheet-w-record-min` custom property (520px) instead of a per-call number.
-      onclick: () => openSheet(renderBody, {
-        title: dim.title,
-        subtitle: dim.sheetSubtitle,
-        width: "min(820px, 94vw)",
-        resizable: true,
-      }),
-    }, `Open ${dim.noun} breakdown →`));
   }
 
   /**
