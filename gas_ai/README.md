@@ -384,6 +384,12 @@ against one `dev/serve.mjs` (which rebuilds on every load) can each be served a 
 bundle, the same collision the OS register's own wave measured first — never run the density
 walker and a screenshot sweep concurrently against the same harness.
 
+**Wave of 2026-09-09.** Tips per route at 1280px, seeded, before → after this wave: graph 1 → 1,
+inventory 4 → 8, problems 1 → 9, combos 1 → 3, config 1 → 10, compliance 2 → 12, scans 4 → 16,
+data 0 → 11, settings 0 → 0, help 1 → 1 (`aars` excluded — the walker sets no experimental flag,
+so it redirects and duplicates `problems`). A `?dry&noseed` zero-audit found 0 bare zeros on
+every route except Scoring Models (`aars`, 10; reported, not fixed).
+
 ### Which build is deployed?
 
 An Apps Script deployment can be stale three ways at once — the project holds an old

@@ -40,7 +40,7 @@ import {
   tierBadge,
 } from "./ui.js";
 
-/** The six headings, in reading order. Six headings and find-in-page beat a search box. */
+/** The eight headings, in reading order. Eight headings and find-in-page beat a search box. */
 export const FAMILIES = [
   { id: "graph", title: "Reading the graph" },
   { id: "signal", title: "Risk signals" },

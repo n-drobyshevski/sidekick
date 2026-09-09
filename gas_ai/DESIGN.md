@@ -567,18 +567,24 @@ ranked queue itself) and the one action that fills each ("Sync now — the butto
 and no aside. One header function rather than a first-run copy of it, so the hero's label
 cannot drift between the two states.
 
-**Numbers at wave close** (placeholder — filled once P2.1–P2.5 land and step 0's instruments
-re-run on `#/problems` at 1280px):
+**Numbers at wave close** (`#/problems` at 1280px, seeded `?dry`; baseline `c158c78` → close
+`6b5254b`, measured 2026-09-09):
 
 | metric | before (`c158c78`) | after |
 |---|---|---|
-| words | TBD | TBD |
-| proseBlocks | TBD | TBD |
-| numbers | TBD | TBD |
-| tableCells | TBD | TBD |
-| visuals (total) | TBD | TBD |
-| tips | TBD | TBD |
-| tipsSignified | TBD | TBD |
+| words | 52 | 141 |
+| proseBlocks | 0 | 1 |
+| numbers | 68 | 93 |
+| tableCells | 120 | 120 |
+| visuals (total) | 13 | 13 |
+| tips | 1 | 9 |
+| tipsSignified | 1 | 9 |
+
+The one prose block after the wave is the standing "Findings carry no lifecycle ledger." caveat
+under the movement aside (§9's own Aside paragraph above) — the page went from zero prose to
+naming, in words, the one thing its own movement reading cannot see. For comparison, the same
+walker over each sibling's own front door reads gas_devsecops's executive page at 272 words / 2
+prose blocks and gas's at 276 words / 9 prose blocks (both from that wave's own close).
 
 ## 10. The formatter table
 
@@ -624,23 +630,37 @@ concurrently against one harness: `dev/serve.mjs` rebuilds on every request, and
 clients racing that rebuild can each be served the other's half-built bundle — the OS
 register's own wave measured this collision first and it applies here unchanged.
 
-**Before / after** (placeholder — filled at the wave's close from `density-before.json` /
-`density-wave3.json`, the run step 0 recorded the baseline with):
+**Before / after** (`density-before.json` → `density-wave3.json`; baseline `c158c78` → close
+`6b5254b`, measured 2026-09-09; each cell reads words / proseBlocks / proseWords / numbers /
+tableCells / visuals / tips, in that order — `tipsReachable` and `tipsSignified` equal `tips` on
+every route, before and after, so they are not carried as separate columns):
 
-| route | words | proseBlocks | numbers | tableCells | visuals | tips | tipsSignified |
-|---|---|---|---|---|---|---|---|
-| graph | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| inventory | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| problems | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| combos | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| config | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| compliance | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| scans | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| aars | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| data | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| settings | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
-| help | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| route | before | after |
+|---|---|---|
+| graph | 124 / 0 / 0 / 22 / 0 / 15 / 1 | 124 / 0 / 0 / 22 / 0 / 15 / 1 |
+| inventory | 420 / 9 / 235 / 86 / 185 / 35 / 4 | 439 / 10 / 266 / 122 / 210 / 36 / 8 |
+| problems | 52 / 0 / 0 / 68 / 120 / 13 / 1 | 141 / 1 / 25 / 93 / 120 / 13 / 9 |
+| combos | 631 / 4 / 96 / 123 / 0 / 22 / 1 | 631 / 4 / 96 / 123 / 0 / 22 / 3 |
+| config | 112 / 1 / 17 / 55 / 40 / 1 / 1 | 114 / 1 / 17 / 56 / 40 / 1 / 10 |
+| compliance | 230 / 4 / 87 / 111 / 57 / 9 / 2 | 230 / 4 / 87 / 111 / 57 / 9 / 12 |
+| scans | 462 / 6 / 165 / 138 / 126 / 10 / 4 | 462 / 7 / 190 / 138 / 126 / 10 / 16 |
+| data | 131 / 4 / 93 / 63 / 63 / 0 / 0 | 131 / 4 / 93 / 98 / 90 / 0 / 11 |
+| settings | 117 / 3 / 57 / 5 / 0 / 0 / 0 | 117 / 3 / 57 / 5 / 0 / 0 / 0 |
+| help | 4311 / 62 / 3218 / 129 / 0 / 85 / 0 | 5455 / 74 / 4192 / 131 / 0 / 110 / 0 |
 
-Each cell is at 1280px, seeded (`?dry`, not `?dry&noseed`); a route that reads all-TBD after
-the wave closes is itself the finding CLAUDE.md warns against, not an oversight to fill in
-quietly.
+`aars` is dropped from this table rather than printed: the walker sets no experimental flag, so
+`#/aars` redirects to the default route and its row is byte-identical to `problems` — a
+duplicate, not a second measurement. Each cell is at 1280px, seeded (`?dry`, not
+`?dry&noseed`).
+
+Two routes moved on no metric, and both for the same reason: the change is state-dependent and
+invisible on a clean seeded load. Graph gained a first-run notice and an error state on a failed
+query, neither of which a seeded load reaches; Settings gained invalid-tab markers and the rail
+status dot moved outside `main`, neither of which a clean load's default tab shows. Overflow:
+none at 1280, 640 or 360px, before or after. A separate `?dry&noseed` zero-audit (unsynced)
+prints 0 bare zeros on every route except Scoring Models (`aars`, 10 — a Labs page with four
+lazy tabs and no honest single gate, reported and deferred rather than fixed here); before the
+wave, Cloud Configuration printed 4 bare zeros unsynced. The 90-load screenshot sweep (15 routes
+including five Settings tabs, at 1280/640/360, seeded and unsynced) found 0 overflow, 0 visible
+alerts and one transient console error — a dev-server rebuild collision on a single load, not
+reproducible across three isolated reloads.
