@@ -371,9 +371,11 @@ eleven routes it walks are `graph`, `inventory`, `problems`, `combos`, `config`,
 literal, never hand-typed, so a renamed or added route shows up next run with no second list
 to forget.
 
-The `density` script points at **8798**, not this app's own default 8788 — the four
-siblings' usual ports (8787/8788/8789/8790) are routinely held by other running dev servers,
-so measurement gets a port of its own; run the harness the walker expects with
+The `density` script points at **8798** — not the 8787 default `dev/serve.mjs` falls back to
+(`PORT` env var, `dev/serve.mjs:20`), nor the 8788 the hub convention assigns this app
+(`CLAUDE.md`'s port table: gas 8787, gas_ai 8788, gas_devsecops 8789, gas_hub 8790) — because
+the four siblings' usual ports are routinely held by other running dev servers, so measurement
+gets a port of its own; run the harness the walker expects with
 `PORT=8798 npm run dev` from this directory before calling `npm run density`. This app's
 `dev/serve.mjs` boots LIVE the moment `dev/.env.local` exists, so `?dry` is mandatory for a
 seeded read — the walker appends it to every URL itself, so a plain `npm run density` run is

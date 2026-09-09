@@ -476,7 +476,7 @@ reader before the dot itself — and it is visually hidden above 800px rather th
 defect `gas`'s own rail carried before its wave (CLAUDE.md: "above 800px `display:none` on the
 caption left nine pixels of `aria-hidden` colour with its explanation in a hover tip on a
 `<span>`"). The dot itself is a real `<button>`, takes focus, and navigates to `#/data` — the
-Data route holds the sync-history table (fact 16 of the parity plan) — so activating the one
+Data route holds the sync-history table (`pages/data.js:58, 146`) — so activating the one
 readout a reader cannot get from colour alone lands on the record it describes.
 
 ## 8. The noun is sync; `scans` are Wiz scan AREAS
@@ -486,7 +486,7 @@ record it wrote" — you run a sync, it saves scans, you browse scans, and "run 
 zone" are refused everywhere in that client's source. That sweep cannot port to this register
 verbatim, because this register has a THIRD sense of the word DevSecOps never needed:
 `scanContent.js`'s `SCAN_AREAS` — the surfaces Wiz itself scans (AI-SPM inventory, agent
-guardrails, and the rest of the twelve areas) — the "Wiz Scans" route, and every sentence on
+guardrails, and the rest of the ten areas) — the "Wiz Scans" route, and every sentence on
 that page naming one of them ("Every figure traces back to one of N Wiz scan areas"). A
 vocabulary sweep copied from `gas_devsecops` would flag every one of those as the forbidden
 "scan (noun) as a control" and be wrong to: an area is not the sync operation and not its
@@ -563,8 +563,8 @@ Beside the shared count/duration helpers this register draws from `gas_shared/ui
 `absentText` into for a table cell), this register keeps exactly one formatter of its own:
 `fmtBytes` (`pages/data.js:12`, a Drive-archive byte count with no shared analogue anywhere
 else in the design system). It stays local and is named here rather than promoted, the same
-way `gas_devsecops`'s own `fmtSpan` stays local to that register's MTTR page (`gas/DESIGN.md`
-§7).
+way `gas`'s own `fmtSpan` (`gas/src/client/js/ui/span.js`) stays local to that register's MTTR
+page (`gas/DESIGN.md` §7).
 
 `problems.js`'s own `formatShare` (`:658-661`, `Number(share) || 0` — a cast with no refusal
 first, the exact shape CLAUDE.md's working discipline names) is retired by package P1.1 in
