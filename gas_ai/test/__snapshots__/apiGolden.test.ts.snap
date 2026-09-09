@@ -651,6 +651,15 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "top10Share": 0,
       },
       "curve": [],
+      "movement": {
+        "previous": null,
+        "reasons": {
+          "previous": "noSync",
+          "week": "tooClose",
+        },
+        "spanDays": null,
+        "week": null,
+      },
       "rows": [],
       "total": 0,
       "totalProblems": 0,
@@ -1444,6 +1453,15 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     "data": {
       "all": true,
       "filtered": 0,
+      "movement": {
+        "previous": null,
+        "reasons": {
+          "previous": "noSync",
+          "week": "tooClose",
+        },
+        "spanDays": null,
+        "week": null,
+      },
       "page": 0,
       "pageCount": 1,
       "rankLeadsSort": false,
@@ -3101,6 +3119,43 @@ exports[`read endpoints > getActions answers the same shape 1`] = `
         "share": 1,
       },
     ],
+    "movement": {
+      "previous": {
+        "deltas": {
+          "carried": 2,
+          "new": 3,
+          "reopened": 1,
+          "resolved": 6,
+          "skippedNarrowedScope": 0,
+        },
+        "direction": "down",
+        "gapDays": 1,
+        "open": 32,
+        "prevOpen": 34,
+        "since": "2026-08-12T09:00:00.000Z",
+        "until": "2026-08-13T09:00:00Z",
+      },
+      "reasons": {
+        "previous": null,
+        "week": null,
+      },
+      "spanDays": 8,
+      "week": {
+        "deltas": {
+          "carried": 11,
+          "new": 22,
+          "reopened": 1,
+          "resolved": 9,
+          "skippedNarrowedScope": 0,
+        },
+        "direction": "up",
+        "gapDays": 7,
+        "open": 32,
+        "prevOpen": 18,
+        "since": "2026-08-06T09:00:00.000Z",
+        "until": "2026-08-13T09:00:00Z",
+      },
+    },
     "rows": [
       {
         "assets": 9,
@@ -14377,6 +14432,43 @@ exports[`read endpoints > getProblems answers the same shape 1`] = `
   "data": {
     "all": true,
     "filtered": 38,
+    "movement": {
+      "previous": {
+        "deltas": {
+          "carried": 2,
+          "new": 3,
+          "reopened": 1,
+          "resolved": 6,
+          "skippedNarrowedScope": 0,
+        },
+        "direction": "down",
+        "gapDays": 1,
+        "open": 32,
+        "prevOpen": 34,
+        "since": "2026-08-12T09:00:00.000Z",
+        "until": "2026-08-13T09:00:00Z",
+      },
+      "reasons": {
+        "previous": null,
+        "week": null,
+      },
+      "spanDays": 8,
+      "week": {
+        "deltas": {
+          "carried": 11,
+          "new": 22,
+          "reopened": 1,
+          "resolved": 9,
+          "skippedNarrowedScope": 0,
+        },
+        "direction": "up",
+        "gapDays": 7,
+        "open": 32,
+        "prevOpen": 18,
+        "since": "2026-08-06T09:00:00.000Z",
+        "until": "2026-08-13T09:00:00Z",
+      },
+    },
     "page": 0,
     "pageCount": 1,
     "rankLeadsSort": false,

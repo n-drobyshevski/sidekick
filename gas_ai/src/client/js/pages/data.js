@@ -8,6 +8,7 @@ import {
   prunePanel, registerWideNote, statRow,
   sectionLabel, skeleton, statusPill, toast,
 } from "../ui.js";
+import { ledgerDeltasOf } from "./dataModel.js";
 
 function fmtBytes(n) {
   if (!Number.isFinite(n)) return "—";
@@ -143,6 +144,14 @@ export async function renderData(main, _params, ctx) {
     // A count Wiz never reported is `absent()`, not a plain dash: a sync row that failed
     // before it counted anything must not read in the same ink as one that counted zero.
     const count = (n) => (n === null || n === undefined ? absent() : String(n));
+    // WHAT THE LIFECYCLE LEDGER DID ON EACH SYNC, beside what the sync collected. The three
+    // columns are one cell (`ledger_json`) read once per row: a sync recorded before the
+    // ledger existed carries none of them, and all three then read `absent()` together rather
+    // than three separate zeroes that would describe a quiet week nobody measured.
+    const delta = (key) => (r) => {
+      const d = ledgerDeltasOf(r);
+      return d === null ? absent() : String(d[key]);
+    };
     historyHost.append(dataTable({
       columns: [
         { key: "finished", label: "Finished", cell: (r) => fmtDateTime(r.finished_at) },
@@ -156,6 +165,18 @@ export async function renderData(main, _params, ctx) {
         { key: "nodes", label: "Nodes", className: "num", cell: (r) => count(r.node_count) },
         { key: "edges", label: "Edges", className: "num", cell: (r) => count(r.edge_count) },
         { key: "issues", label: "Issues", className: "num", cell: (r) => count(r.issue_count) },
+        {
+          key: "ledgerNew", label: "New", className: "num",
+          help: { term: "movement" }, cell: delta("new"),
+        },
+        {
+          key: "ledgerGone", label: "Gone", className: "num",
+          help: { term: "disappearance" }, cell: delta("resolved"),
+        },
+        {
+          key: "ledgerReturned", label: "Returned", className: "num",
+          help: { term: "episode" }, cell: delta("reopened"),
+        },
         { key: "calls", label: "API calls", className: "num", cell: (r) => count(r.api_calls) },
       ],
       rows: payload.rows,

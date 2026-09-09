@@ -474,7 +474,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "c5849b5d6efb" : "dev";
+  var BUILD_ID = true ? "f5b23bfa0ee2" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -16496,6 +16496,139 @@ var Server = (() => {
     };
   }
 
+  // src/domain/backlogMovement.ts
+  var MOVEMENT_MIN_GAP_DAYS = 7;
+  var MOVEMENT_DAY_MS = 864e5;
+  var DELTA_KEYS = ["new", "resolved", "reopened", "carried", "skippedNarrowedScope"];
+  function round1(n) {
+    return Math.round(n * 10) / 10;
+  }
+  function deltasOf(cell2) {
+    const counts = parseCounts(cell2, DELTA_KEYS, true);
+    if (!counts) return null;
+    const out = {};
+    for (const k of DELTA_KEYS) {
+      const n = counts[k];
+      if (n === null) return null;
+      out[k] = n;
+    }
+    return out;
+  }
+  function stepsOf(history) {
+    var _a5, _b;
+    const out = [];
+    for (const r of history) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      const atMs = parseTs(at);
+      if (!at || atMs === null) continue;
+      out.push({
+        at,
+        atMs,
+        scope: String((_b = r["register_scope"]) != null ? _b : ""),
+        deltas: deltasOf(r["ledger_json"])
+      });
+    }
+    out.sort((a, b) => a.atMs - b.atMs);
+    return out;
+  }
+  function stepBack(open, d) {
+    return open - d.new - d.reopened + d.resolved;
+  }
+  function directionOf(open, prevOpen) {
+    if (open > prevOpen) return "up";
+    if (open < prevOpen) return "down";
+    return "flat";
+  }
+  function stepRefusal(newer, older) {
+    if (newer.deltas === null || older.deltas === null) return "noLedger";
+    if (newer.deltas.skippedNarrowedScope > 0) return "rescoped";
+    if (!newer.scope || !older.scope || newer.scope !== older.scope) return "rescoped";
+    return null;
+  }
+  function backlogMovement(history, opts) {
+    const minGapDays = opts.minGapDays === void 0 ? MOVEMENT_MIN_GAP_DAYS : opts.minGapDays;
+    const anchor = Number.isFinite(opts.openNow) && opts.openNow >= 0 ? Math.floor(opts.openNow) : null;
+    const steps = anchor === null ? [] : stepsOf(history);
+    const n = steps.length;
+    const spanDays = n >= 2 ? round1((steps[n - 1].atMs - steps[0].atMs) / MOVEMENT_DAY_MS) : null;
+    const none = (previous2, week) => ({ previous: null, week: null, reasons: { previous: previous2, week }, spanDays });
+    if (n === 0) return none("noSync", "tooClose");
+    if (n === 1) return none("oneSync", "tooClose");
+    const latest = steps[n - 1];
+    const openNow = anchor;
+    let previous = null;
+    let previousReason = null;
+    const priorStep = steps[n - 2];
+    const priorRefusal = stepRefusal(latest, priorStep);
+    if (priorRefusal !== null) {
+      previousReason = priorRefusal;
+    } else {
+      const prevOpen = stepBack(openNow, latest.deltas);
+      previous = {
+        since: priorStep.at,
+        until: latest.at,
+        gapDays: round1((latest.atMs - priorStep.atMs) / MOVEMENT_DAY_MS),
+        deltas: { ...latest.deltas },
+        open: openNow,
+        prevOpen,
+        direction: directionOf(openNow, prevOpen)
+      };
+    }
+    let target = -1;
+    for (let i = n - 2; i >= 0; i -= 1) {
+      if ((latest.atMs - steps[i].atMs) / MOVEMENT_DAY_MS >= minGapDays) {
+        target = i;
+        break;
+      }
+    }
+    if (target < 0) {
+      return {
+        previous,
+        week: null,
+        reasons: { previous: previousReason, week: "tooClose" },
+        spanDays
+      };
+    }
+    const sum = {
+      new: 0,
+      resolved: 0,
+      reopened: 0,
+      carried: 0,
+      skippedNarrowedScope: 0
+    };
+    let open = openNow;
+    for (let k = n - 1; k > target; k -= 1) {
+      const refusal = stepRefusal(steps[k], steps[k - 1]);
+      if (refusal !== null) {
+        return {
+          previous,
+          week: null,
+          reasons: { previous: previousReason, week: refusal },
+          spanDays
+        };
+      }
+      const d = steps[k].deltas;
+      for (const key of DELTA_KEYS) sum[key] += d[key];
+      open = stepBack(open, d);
+    }
+    const older = steps[target];
+    return {
+      previous,
+      week: {
+        since: older.at,
+        until: latest.at,
+        gapDays: round1((latest.atMs - older.atMs) / MOVEMENT_DAY_MS),
+        deltas: sum,
+        open: openNow,
+        prevOpen: open,
+        direction: directionOf(openNow, open)
+      },
+      reasons: { previous: previousReason, week: null },
+      spanDays
+    };
+  }
+
   // src/domain/reach.ts
   var READ_TIME_EDGE_TYPES = [
     "HAS_ISSUE",
@@ -18145,6 +18278,10 @@ var Server = (() => {
       rankAdjacency: r.rankAdjacency
     };
   }
+  function problemsMovement(model) {
+    const openNow = model.rows.filter((r) => r.kind === "ISSUE").length;
+    return cached("backlogMovement1", { openNow }, () => backlogMovement(syncHistory(), { openNow }));
+  }
   function getProblems(p) {
     return run(() => {
       var _a5, _b;
@@ -18170,7 +18307,9 @@ var Server = (() => {
         // DERIVATION knobs the scores were computed against (rank.rankSignature), so a stored
         // score and a stored rule can be compared instead of assumed to match.
         rankSignature: model.rankSignature,
-        rankLeadsSort: model.rankLeadsSort
+        rankLeadsSort: model.rankLeadsSort,
+        // How the open ISSUE backlog moved since the last sync — see `problemsMovement`.
+        movement: problemsMovement(model)
       };
       if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
         return {
@@ -18217,7 +18356,10 @@ var Server = (() => {
         total: fullyRanked.length,
         totalProblems: model.rows.length,
         curve: coverCurve(fullyRanked, model.rows.length),
-        concentration: concentrationRatio(fullyRanked, model.rows.length)
+        concentration: concentrationRatio(fullyRanked, model.rows.length),
+        // The same block `getProblems` publishes, off the same model — the two modes of one
+        // page must not be able to state different movement.
+        movement: problemsMovement(model)
       };
     });
   }
