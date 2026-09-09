@@ -61,8 +61,15 @@
 @media (max-width: 640px) {
   .page-header { grid-template-columns: 1fr; }
 }
-/* The hero's supporting line, previously four near-identical rules. */
-.page-hero-sub, .cov-hero-sub, .inv-hero-sub, .help-hero-sub {
+/* The hero's supporting line, previously four near-identical rules.
+
+   F6 (2026-09-09): .cov-hero-sub and .inv-hero-sub are now GONE from the selector list, for
+   the same reason .cov-header/.inv-header/.comp-header left the rule above — gas_ai's parity
+   wave retired the classes from scans.js and inventory.js, and unlike those three this pair
+   left behind no retirement comment anywhere: `grep -rn "cov-hero-sub\|inv-hero-sub" gas/src
+   gas_ai/src gas_devsecops/src gas_hub/src gas_shared` finds nothing but this rule itself,
+   before the edit. .page-hero-sub and .help-hero-sub stay live. */
+.page-hero-sub, .help-hero-sub {
   font-size: var(--fs-label); color: var(--text-3); margin: var(--space-1) 0 0;
 }
 /* A hero sub-line that carries two sentences rather than one: the alarm the figure counts,
