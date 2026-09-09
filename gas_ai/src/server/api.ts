@@ -177,6 +177,7 @@ import { normalizeCompliancePosturePage } from "../domain/syncNormalize";
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
 import { comboDigest } from "../domain/comboDigest";
 import { backlogMovement, type BacklogMovement } from "../domain/backlogMovement";
+import { issueHalfLife, type IssueHalfLife } from "../domain/issueSurvival";
 import { estateReach, type EstateReach } from "../domain/reach";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
 import { clampInt, nowIso, type Rec } from "../domain/util";
@@ -2710,6 +2711,33 @@ function problemsMovement(model: ProblemsModel): BacklogMovement {
     backlogMovement(syncStore.syncHistory(), { openNow })) as BacklogMovement;
 }
 
+/**
+ * The issue half-life: a Kaplan-Meier survival curve over the whole lifecycle ledger.
+ *
+ * ONE DERIVATION, TWO ENDPOINTS, for the same reason `problemsMovement` above is one — the
+ * two modes of the Priorities page must not be able to state different figures about one
+ * population. Unlike movement it takes NO parameters: the estimate is over every row the
+ * ledger holds, not over the filtered or paged view a caller asked for, so a reader narrowing
+ * the register to one severity does not get a curve that quietly re-fits itself to the
+ * selection.
+ *
+ * READ RAW, NOT THROUGH `issueLedgerIndex()`. That index is keyed by `issueId` for a
+ * lookup — one row per id by construction — and this is a POPULATION figure over rows. Two
+ * ledger rows sharing an id would be a defect, and folding them silently into one before
+ * counting them is exactly the shape of hiding it. The read is behind `cached` either way, so
+ * reusing the index would buy nothing but that fold.
+ *
+ * L1 only. The cache namespace is `issueHalfLife1`, in this file's own suffix convention
+ * (`assetsModel2`, `backlogMovement1`, `issueLedgerIndex1`): the trailing digit is bumped when
+ * the SHAPE of what is stored changes, so a still-warm entry cannot answer a newer client with
+ * an older payload. Keyed on the data version like every other `cached` entry — and a sync is
+ * the only thing that can move a ledger row.
+ */
+function problemsHalfLife(): IssueHalfLife {
+  return cached("issueHalfLife1", null, () =>
+    issueHalfLife(syncStore.loadIssueLedger())) as IssueHalfLife;
+}
+
 export function getProblems(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
@@ -2743,6 +2771,8 @@ export function getProblems(p?: unknown): ApiResult {
       rankLeadsSort: model.rankLeadsSort,
       // How the open ISSUE backlog moved since the last sync — see `problemsMovement`.
       movement: problemsMovement(model),
+      // How long an issue survives in this register — see `problemsHalfLife`.
+      halfLife: problemsHalfLife(),
     };
 
     if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
@@ -2811,9 +2841,11 @@ export function getActions(p?: unknown): ApiResult {
       totalProblems: model.rows.length,
       curve: coverCurve(fullyRanked, model.rows.length),
       concentration: concentrationRatio(fullyRanked, model.rows.length),
-      // The same block `getProblems` publishes, off the same model — the two modes of one
-      // page must not be able to state different movement.
+      // The same two blocks `getProblems` publishes, off the same model and the same ledger —
+      // the two modes of one page must not be able to state different movement, or a
+      // different half-life.
       movement: problemsMovement(model),
+      halfLife: problemsHalfLife(),
     };
   });
 }

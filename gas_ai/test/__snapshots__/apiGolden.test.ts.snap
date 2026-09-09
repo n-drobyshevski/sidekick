@@ -651,6 +651,18 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         "top10Share": 0,
       },
       "curve": [],
+      "halfLife": {
+        "asOf": null,
+        "censored": 0,
+        "curve": [],
+        "events": 0,
+        "median": null,
+        "medianLowerBound": null,
+        "p90": null,
+        "returnedExcluded": 0,
+        "total": 0,
+        "unmeasurable": 0,
+      },
       "movement": {
         "previous": null,
         "reasons": {
@@ -1453,6 +1465,18 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     "data": {
       "all": true,
       "filtered": 0,
+      "halfLife": {
+        "asOf": null,
+        "censored": 0,
+        "curve": [],
+        "events": 0,
+        "median": null,
+        "medianLowerBound": null,
+        "p90": null,
+        "returnedExcluded": 0,
+        "total": 0,
+        "unmeasurable": 0,
+      },
       "movement": {
         "previous": null,
         "reasons": {
@@ -3119,6 +3143,55 @@ exports[`read endpoints > getActions answers the same shape 1`] = `
         "share": 1,
       },
     ],
+    "halfLife": {
+      "asOf": "2026-08-13T09:00:00Z",
+      "censored": 31,
+      "curve": [
+        {
+          "atRisk": 34,
+          "events": 3,
+          "s": 0.9117647058823529,
+          "t": 2,
+        },
+        {
+          "atRisk": 30,
+          "events": 1,
+          "s": 0.8813725490196078,
+          "t": 3,
+        },
+        {
+          "atRisk": 27,
+          "events": 1,
+          "s": 0.8487291212781409,
+          "t": 4,
+        },
+        {
+          "atRisk": 24,
+          "events": 1,
+          "s": 0.8133654078915518,
+          "t": 5,
+        },
+        {
+          "atRisk": 16,
+          "events": 1,
+          "s": 0.7625300698983297,
+          "t": 7,
+        },
+        {
+          "atRisk": 10,
+          "events": 1,
+          "s": 0.6862770629084968,
+          "t": 8,
+        },
+      ],
+      "events": 8,
+      "median": null,
+      "medianLowerBound": 8,
+      "p90": null,
+      "returnedExcluded": 1,
+      "total": 39,
+      "unmeasurable": 0,
+    },
     "movement": {
       "previous": {
         "deltas": {
@@ -14442,6 +14515,55 @@ exports[`read endpoints > getProblems answers the same shape 1`] = `
   "data": {
     "all": true,
     "filtered": 38,
+    "halfLife": {
+      "asOf": "2026-08-13T09:00:00Z",
+      "censored": 31,
+      "curve": [
+        {
+          "atRisk": 34,
+          "events": 3,
+          "s": 0.9117647058823529,
+          "t": 2,
+        },
+        {
+          "atRisk": 30,
+          "events": 1,
+          "s": 0.8813725490196078,
+          "t": 3,
+        },
+        {
+          "atRisk": 27,
+          "events": 1,
+          "s": 0.8487291212781409,
+          "t": 4,
+        },
+        {
+          "atRisk": 24,
+          "events": 1,
+          "s": 0.8133654078915518,
+          "t": 5,
+        },
+        {
+          "atRisk": 16,
+          "events": 1,
+          "s": 0.7625300698983297,
+          "t": 7,
+        },
+        {
+          "atRisk": 10,
+          "events": 1,
+          "s": 0.6862770629084968,
+          "t": 8,
+        },
+      ],
+      "events": 8,
+      "median": null,
+      "medianLowerBound": 8,
+      "p90": null,
+      "returnedExcluded": 1,
+      "total": 39,
+      "unmeasurable": 0,
+    },
     "movement": {
       "previous": {
         "deltas": {

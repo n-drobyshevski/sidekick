@@ -1041,6 +1041,52 @@ export const ENTRIES = [
     drawnOn: ["data", "combos", "inventory"],
     mark: () => statusPill("neutral", "↩"),
   },
+  {
+    id: "half-life",
+    term: "Issue half-life",
+    aka: "how long an issue survives in this register",
+    family: "lifecycle",
+    blurb:
+      "The point by which half of every issue this register has ever recorded had left it, " +
+      "measured from the sync that first saw the row to the sync that first stopped seeing " +
+      "it. It is a survival estimate rather than an average of the ones that closed: an " +
+      "average would drop every issue still open, and the ones still open are usually the " +
+      "slow ones the figure exists to catch. A shorter half-life means the register is " +
+      "being worked through rather than merely counted.",
+    drawnOn: ["problems"],
+    mark: () => statusPill("neutral", "½"),
+  },
+  {
+    id: "censoring",
+    term: "Still open, still counted",
+    aka: "right-censoring",
+    family: "lifecycle",
+    blurb:
+      "An issue that has not left the register has no departure date, and dropping it from " +
+      "the half-life would be the whole defect: those are the rows that have survived " +
+      "longest. So each one stays in as a partial observation — it is known to have lasted " +
+      "at least as long as the gap between its first and its last sighting, and it holds " +
+      "the estimate up for exactly that span before dropping out. That span runs to the " +
+      "LAST SIGHTING, not to today, which is why the figure only moves when a sync moves " +
+      "it and not merely because the page was opened later.",
+    drawnOn: ["problems"],
+    mark: () => statusPill("neutral", "+"),
+  },
+  {
+    id: "lower-bound",
+    term: "At least N days",
+    aka: "the half-life the register has not reached yet",
+    family: "lifecycle",
+    blurb:
+      "On a young register most issues are still open, so the survival estimate never falls " +
+      "to half and there is no half-life to report. Rather than print a centre nobody " +
+      "measured, the page publishes the longest lifetime it actually observed and says the " +
+      "half-life is at least that. The number will grow with the register until enough " +
+      "issues have left for the curve to cross, at which point it is replaced by the " +
+      "measured figure rather than added to it.",
+    drawnOn: ["problems"],
+    mark: () => statusPill("neutral", "≥"),
+  },
 
   // --------------------------------------------------------------- framework vocabularies
   {
@@ -1096,6 +1142,7 @@ const MEASURE_ROUTES = {
   "problem-axis-unknown-rate": ["aars"],
   "posture-tier-distribution": ["aars"],
   "issue-sla-tally": ["combos", "problems"],
+  "issue-half-life": ["problems"],
   "compliance-gaps": ["inventory", "config"],
   "compliance-gaps-unlinked": ["inventory"],
   "guardrail-coverage-pct": ["scans"],

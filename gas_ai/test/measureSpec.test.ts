@@ -132,6 +132,33 @@ describe("the two disciplines this file's own header pins", () => {
       expect(looksLikeMttr, spec.id).toBe(false);
     }
   });
+
+  // The other half of that refusal, and the reason it can stay narrow. The file used to
+  // publish NO time-to-remediation figure at all, on the ground that a censored mean is a
+  // number that flatters itself and "a median-with-censoring or a survival curve would be
+  // required first, and neither is implemented". The survival curve is implemented now, so
+  // the refusal has to shrink to exactly what it was ever about — the AVERAGE — rather than
+  // being quietly kept as a blanket ban on the whole subject. This `it` is what stops the
+  // record from being dropped again on a reading of the assertion above.
+  it("DOES publish the censored estimate the mean's refusal named as its prerequisite", () => {
+    const spec = MEASURE_SPECS.find((s) => s.id === "issue-half-life")!;
+    expect(spec, "issue-half-life was removed").toBeTruthy();
+    expect(spec.type).toBe("effectiveness");
+    expect(spec.measurementMethod).toBe("Objective");
+    // The ledger column the whole estimate turns on. `dataSource` is checked against
+    // TAB_HEADERS above; this checks that it is THIS ledger's departure date being read and
+    // not, say, the issue tab's own resolvedAt — which is the field the refusal was about.
+    expect(spec.dataSource).toMatch(/ai_issue_ledger\.disappeared_at/);
+    expect(spec.dataSource).toMatch(/ai_issue_ledger\.first_seen_at/);
+    expect(spec.dataSource).not.toMatch(/ai_issues\./);
+    // And the two limits that ride with the figure, stated in the record rather than only in
+    // the module: a departure is dated by absence, and a reopened row is not measured.
+    const prose = spec.scope + spec.measure + spec.formula + spec.timeBasedReference;
+    expect(prose).toMatch(/censor/i);
+    expect(prose).toMatch(/upper bound/i);
+    expect(prose).toMatch(/episode/i);
+    expect(spec.formula).toMatch(/issueSurvival/);
+  });
 });
 
 describe("effectiveness records about the MODEL say so, distinctly from impact records about the LANDSCAPE", () => {

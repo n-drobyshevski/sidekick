@@ -474,7 +474,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "3163594015b2" : "dev";
+  var BUILD_ID = true ? "e3e82d41fa36" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -16551,8 +16551,8 @@ var Server = (() => {
     const anchor = Number.isFinite(opts.openNow) && opts.openNow >= 0 ? Math.floor(opts.openNow) : null;
     const steps = anchor === null ? [] : stepsOf(history);
     const n = steps.length;
-    const spanDays = n >= 2 ? round1((steps[n - 1].atMs - steps[0].atMs) / MOVEMENT_DAY_MS) : null;
-    const none = (previous2, week) => ({ previous: null, week: null, reasons: { previous: previous2, week }, spanDays });
+    const spanDays2 = n >= 2 ? round1((steps[n - 1].atMs - steps[0].atMs) / MOVEMENT_DAY_MS) : null;
+    const none = (previous2, week) => ({ previous: null, week: null, reasons: { previous: previous2, week }, spanDays: spanDays2 });
     if (n === 0) return none("noSync", "tooClose");
     if (n === 1) return none("oneSync", "tooClose");
     const latest = steps[n - 1];
@@ -16587,7 +16587,7 @@ var Server = (() => {
         previous,
         week: null,
         reasons: { previous: previousReason, week: "tooClose" },
-        spanDays
+        spanDays: spanDays2
       };
     }
     const sum = {
@@ -16605,7 +16605,7 @@ var Server = (() => {
           previous,
           week: null,
           reasons: { previous: previousReason, week: refusal },
-          spanDays
+          spanDays: spanDays2
         };
       }
       const d = steps[k].deltas;
@@ -16625,7 +16625,118 @@ var Server = (() => {
         direction: directionOf(openNow, open)
       },
       reasons: { previous: previousReason, week: null },
-      spanDays
+      spanDays: spanDays2
+    };
+  }
+
+  // src/domain/issueSurvival.ts
+  var CROSSING_EPSILON = 1e-9;
+  var DAY_MS4 = 864e5;
+  function kmCurve(events, times) {
+    const curve = [];
+    let s = 1;
+    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
+      const atRisk = times.filter((x) => x >= t).length;
+      if (atRisk === 0) continue;
+      const d = events.filter((x) => x === t).length;
+      s *= 1 - d / atRisk;
+      curve.push({ t, s, atRisk, events: d });
+    }
+    return curve;
+  }
+  function kmQuantileFromCurve(curve, q) {
+    const threshold = 1 - q;
+    for (const p of curve) if (p.s <= threshold + CROSSING_EPSILON) return p.t;
+    return null;
+  }
+  function kmMedianFromCurve(curve) {
+    return kmQuantileFromCurve(curve, 0.5);
+  }
+  function kaplanMeier(observations) {
+    const events = [];
+    const times = [];
+    let censored = 0;
+    for (const o of observations) {
+      if (!Number.isFinite(o.t)) continue;
+      times.push(o.t);
+      if (o.event) events.push(o.t);
+      else censored += 1;
+    }
+    let longest = null;
+    for (const t of times) if (longest === null || t > longest) longest = t;
+    if (!events.length) {
+      return {
+        curve: [],
+        median: null,
+        medianLowerBound: longest,
+        p90: null,
+        events: 0,
+        censored,
+        total: times.length
+      };
+    }
+    const curve = kmCurve(events, times);
+    const median = kmMedianFromCurve(curve);
+    return {
+      curve,
+      median,
+      medianLowerBound: median === null ? longest : null,
+      p90: kmQuantileFromCurve(curve, 0.9),
+      events: events.length,
+      censored,
+      total: times.length
+    };
+  }
+  function spanDays(fromIso, toIsoValue) {
+    const from = parseTs(fromIso);
+    const to = parseTs(toIsoValue);
+    if (from === null || to === null) return null;
+    const days = (to - from) / DAY_MS4;
+    if (!Number.isFinite(days) || days < 0) return null;
+    return days;
+  }
+  function ledgerObservations(ledger) {
+    const obs = [];
+    let returnedExcluded = 0;
+    let unmeasurable = 0;
+    for (const row of ledger) {
+      const episode = row ? row.episode : void 0;
+      if (typeof episode !== "number" || !Number.isFinite(episode)) {
+        unmeasurable += 1;
+        continue;
+      }
+      if (episode > 1) {
+        returnedExcluded += 1;
+        continue;
+      }
+      const gone = row.disappearedAt;
+      if (gone !== null && gone !== void 0) {
+        const t2 = spanDays(row.firstSeenAt, gone);
+        if (t2 === null) unmeasurable += 1;
+        else obs.push({ t: t2, event: true });
+        continue;
+      }
+      const t = spanDays(row.firstSeenAt, row.lastSeenAt);
+      if (t === null) unmeasurable += 1;
+      else obs.push({ t, event: false });
+    }
+    return { obs, returnedExcluded, unmeasurable };
+  }
+  function issueHalfLife(ledger) {
+    const { obs, returnedExcluded, unmeasurable } = ledgerObservations(ledger);
+    let latest = null;
+    for (const row of ledger) {
+      if (!row) continue;
+      for (const value of [row.lastSeenAt, row.disappearedAt]) {
+        const ts = parseTs(value);
+        if (ts !== null && (latest === null || ts > latest)) latest = ts;
+      }
+    }
+    return {
+      ...kaplanMeier(obs),
+      returnedExcluded,
+      unmeasurable,
+      asOf: toIso(latest)
     };
   }
 
@@ -18302,6 +18413,9 @@ var Server = (() => {
     const openNow = model.rows.filter((r) => r.kind === "ISSUE").length;
     return cached("backlogMovement1", { openNow }, () => backlogMovement(syncHistory(), { openNow }));
   }
+  function problemsHalfLife() {
+    return cached("issueHalfLife1", null, () => issueHalfLife(loadIssueLedger()));
+  }
   function getProblems(p) {
     return run(() => {
       var _a5, _b;
@@ -18329,7 +18443,9 @@ var Server = (() => {
         rankSignature: model.rankSignature,
         rankLeadsSort: model.rankLeadsSort,
         // How the open ISSUE backlog moved since the last sync — see `problemsMovement`.
-        movement: problemsMovement(model)
+        movement: problemsMovement(model),
+        // How long an issue survives in this register — see `problemsHalfLife`.
+        halfLife: problemsHalfLife()
       };
       if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
         return {
@@ -18377,9 +18493,11 @@ var Server = (() => {
         totalProblems: model.rows.length,
         curve: coverCurve(fullyRanked, model.rows.length),
         concentration: concentrationRatio(fullyRanked, model.rows.length),
-        // The same block `getProblems` publishes, off the same model — the two modes of one
-        // page must not be able to state different movement.
-        movement: problemsMovement(model)
+        // The same two blocks `getProblems` publishes, off the same model and the same ledger —
+        // the two modes of one page must not be able to state different movement, or a
+        // different half-life.
+        movement: problemsMovement(model),
+        halfLife: problemsHalfLife()
       };
     });
   }

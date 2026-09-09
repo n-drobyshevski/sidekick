@@ -22,13 +22,27 @@
 //        (never ACTIVE alone — see `exploitationOfIssue` — but SUSPECTED still moves an
 //        outcome), so the queue an analyst triages from is not purely deterministic and
 //        must not be reported as if it were.
-//      - No record here computes an MTTR over closed issues. `IssueRow.resolvedAt` exists
-//        and could be subtracted from `createdAt`, but a mean over that population is
-//        CENSORED DATA: every still-open issue — usually the worst offenders, the ones a
-//        mean-time-to-remediate figure exists to catch — has no close date and would be
-//        silently excluded, understating the real remediation time. Rather than publish a
-//        number that flatters itself, this file publishes none; a median-with-censoring or
-//        a survival curve would be required first, and neither is implemented.
+//      - NO RECORD HERE AVERAGES OVER CLOSED ISSUES, and that refusal has not moved.
+//        `IssueRow.resolvedAt` exists and could be subtracted from `createdAt`, but an
+//        average over that population is CENSORED DATA: every still-open issue — usually
+//        the worst offenders, the ones such a figure exists to catch — has no close date
+//        and would be silently excluded, understating how long remediation really takes.
+//        A number that flatters itself by exactly the population it cannot see is worse
+//        than no number.
+//
+//        WHAT THAT REFUSAL NAMED AS THE PREREQUISITE NOW EXISTS. It read "a
+//        median-with-censoring or a survival curve would be required first, and neither is
+//        implemented"; `src/domain/issueSurvival.ts` implements the second, and
+//        `issue-half-life` below publishes it. The estimate is a Kaplan-Meier curve over
+//        `ai_issue_ledger.first_seen_at` to `ai_issue_ledger.disappeared_at`, with every
+//        still-open row kept IN as a right-censored observation running to its last
+//        sighting — so the rows an average would have dropped are the ones holding the
+//        curve up. The headline is the MEDIAN, and where survival never falls to half
+//        (the ordinary state of a young register) the record publishes the longest
+//        lifetime actually observed as a lower bound rather than a fabricated centre.
+//        Two limits ride with it and are stated in the record itself: the departure date
+//        is an upper bound whose error is the sync interval, and a reopened row is
+//        excluded and counted because the ledger stamps no per-episode start.
 //
 // 2. TIME-BASIS HONESTY. `sync_history` is the only append-only tab this app writes —
 //    every other data tab (`ai_assets`, `ai_issues`, `ai_findings`, …) is overwritten
@@ -423,6 +437,66 @@ export const MEASURE_SPECS: readonly MeasureSpec[] = [
     responsibleParties: "Security analysts; the operator who sets remediation SLAs upstream in Wiz.",
     dataSource: "ai_issues.due_at, ai_issues.status",
     reportingFormat: "Toxic Combinations KPI row (Past due); Priorities page's SLA-urgency tiebreak.",
+    measurementMethod: "Objective",
+    revisionDue: REVISION_DUE,
+  },
+
+  {
+    id: "issue-half-life",
+    goal:
+      "Say how long an issue actually survives in this register once it has been seen, so a "
+      + "reader can tell a backlog that is being worked through from one that is merely "
+      + "being counted. It is the one figure here computed from the register's OWN two "
+      + "dates rather than from a snapshot of today.",
+    scope:
+      "Every row of ai_issue_ledger at episode 1 — the whole lifetime of the ledger, not "
+      + "the open population and not a filtered view. Rows at episode 2 or higher are "
+      + "excluded and counted separately (returnedExcluded): a reopen clears the departure "
+      + "date and bumps the episode WITHOUT recording when the new episode began, so "
+      + "neither of that row's dates describes its current run. Findings are not in scope "
+      + "at all; they never enter the lifecycle ledger.",
+    measure:
+      "The Kaplan-Meier survival estimate over issue lifetimes in days, measured from this "
+      + "register's first sighting of a row to the sync that first failed to see it. "
+      + "Published as the median (the half-life: the point by which half of every issue the "
+      + "ledger has recorded had left it), the p90, and the counts of events, censored rows "
+      + "and rows that could not be measured. Where survival never falls to half, the "
+      + "median is null and medianLowerBound carries the longest lifetime observed.",
+    type: "effectiveness",
+    formula:
+      "issueSurvival.kaplanMeier(issueSurvival.ledgerObservations(ledger).obs) — "
+      + "src/domain/issueSurvival.ts. A departed row contributes an event at "
+      + "disappeared_at minus first_seen_at; an open row contributes a RIGHT-CENSORED "
+      + "observation at last_seen_at minus first_seen_at, which keeps it in the risk set "
+      + "instead of dropping it. Quantiles are the smallest event time with S(t) at or "
+      + "below 1 minus q, within CROSSING_EPSILON (1e-9) because S(t) is a running product "
+      + "and an exact crossing can land one ULP high.",
+    target:
+      "No numeric target. A shorter half-life is better in general, but this deployment "
+      + "encodes no remediation SLA for AI issues and the figure is a description of the "
+      + "register rather than a threshold it asserts. On a register where most rows are "
+      + "still open the honest reading is the lower bound, and the surface says 'at least "
+      + "N days' rather than showing a centre nobody measured.",
+    implementationEvidence:
+      "ai_issue_ledger is the one tab this app never overwrites, and it is written by "
+      + "reconcileIssueLedger on every sync. A non-zero event count is evidence that at "
+      + "least two syncs have run under a stable register scope; the earliest a lifecycle "
+      + "figure can exist at all is the second sync, and the ledger backfills nothing.",
+    timeBasedReference:
+      "TWO LIMITS, BOTH IN THE FIGURE. The departure date is the timestamp of the sync that "
+      + "first FAILED to see the row, so every event time is an upper bound whose error is "
+      + "the sync interval — Wiz never tells this register that an issue was fixed. And an "
+      + "open row is censored at its LAST SIGHTING rather than at the current time, which is "
+      + "what makes the estimate time-invariant per data version: it moves only when a sync "
+      + "moves it, never merely because a page was reloaded later. The ledger is per-entity "
+      + "history for issues, and the only such history this app keeps; for every other tab "
+      + "per-entity history requires Drive archive replay, which is not implemented.",
+    responsibleParties: "Security analysts; the operator who sets the sync cadence, which "
+      + "sets the precision of every departure date this measure reads.",
+    dataSource:
+      "ai_issue_ledger.first_seen_at, ai_issue_ledger.last_seen_at, "
+      + "ai_issue_ledger.disappeared_at, ai_issue_ledger.episode",
+    reportingFormat: "Priorities page header, as the half-life hero and its qualifier.",
     measurementMethod: "Objective",
     revisionDue: REVISION_DUE,
   },
