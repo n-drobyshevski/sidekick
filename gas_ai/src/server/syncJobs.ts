@@ -865,15 +865,19 @@ export function startSync(): StartResult {
  *
  * ONE GUARD, TWO WRITES, AND THE COUPLING IS THE POINT. `issue_count`, `ledger_json` and
  * `register_scope` on the synthetic rows are claims about a LEDGER, so they are written only
- * when the ledger was seeded on the same call. The state that makes the difference is
- * reachable today: `syncStore.resetData` clears the sync history and NOT `ai_issue_ledger`
- * (an existing defect, recorded and deliberately not fixed here), so a Reset followed by a
- * Sync arrives with an empty history and a real ledger. There, `seedIssueLedger` refuses —
- * and stamping `register_scope` on eight syncs that never ran would let the dry run resolve
- * that real ledger's absent rows BY ABSENCE against a scan nobody performed. Leaving the
- * stamp off makes `prevScopeSignature` null, which `reconcileIssueLedger` reads as UNKNOWN
- * and declines to resolve against. The trend still seeds, because that half never claimed to
- * be a measurement of issues.
+ * when the ledger was seeded on the same call. The state that USED TO make the difference
+ * reachable — `syncStore.resetData` clearing the sync history and NOT `ai_issue_ledger`, so a
+ * Reset followed by a Sync arrived with an empty history beside a real ledger — is CLOSED
+ * (F1: `resetData` clears the ledger too, for exactly this reason). `seedIssueLedger` can no
+ * longer meet a non-empty ledger on the one path that calls it.
+ *
+ * The guard stays anyway. It costs nothing on the path that reaches it now (an empty store,
+ * every time), and it is the only thing that would stop a FUTURE writer of `ai_issue_ledger`
+ * outside a reset from reaching this exact hazard again: stamping `register_scope` on eight
+ * syncs that never ran would let the dry run resolve that ledger's rows BY ABSENCE against a
+ * scan nobody performed. Leaving the stamp off makes `prevScopeSignature` null, which
+ * `reconcileIssueLedger` reads as UNKNOWN and declines to resolve against. The trend still
+ * seeds unconditionally, because that half never claimed to be a measurement of issues.
  */
 function seedDryRunHistory(endIso: string, registerScope: string): void {
   if (dataRowCount(TABS.syncHistory) > 0) return;

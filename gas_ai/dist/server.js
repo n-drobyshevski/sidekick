@@ -474,7 +474,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "7001e363cde5" : "dev";
+  var BUILD_ID = true ? "9603e20870b3" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12175,6 +12175,7 @@ var Server = (() => {
     overwrite(TABS.findings, []);
     overwrite(TABS.dataFindings, []);
     overwrite(TABS.syncHistory, []);
+    overwrite(TABS.issueLedger, []);
     trashGraphSnapshot();
     trashReadModels();
     commit();

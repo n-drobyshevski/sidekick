@@ -1,4 +1,4 @@
-// THE ISSUE LIFECYCLE LEDGER — the one tab in this app that is never overwritten.
+// THE ISSUE LIFECYCLE LEDGER — the one tab in this app that is never overwritten by a sync.
 //
 // WHAT IT EXISTS TO STOP. Every other tab here is a SNAPSHOT: `persistSync` calls
 // `overwrite(TABS.issues, …)` on each sync, and the issue query is filtered to
