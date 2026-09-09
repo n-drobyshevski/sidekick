@@ -34,13 +34,14 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
+  absent, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   errorState, firstRunNotice, heroStat, pageHeader,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
   trendScopeNote,
 } from "../ui.js";
+import { trendTableModel } from "./_charts.js";
 
 import { tipAnchor } from "../ui.js";
 
@@ -1156,6 +1157,17 @@ export async function renderInventory(main, params) {
             (present.length === SERIES.length - 1 ? " is" : " are") +
             " not charted: no sync in this window recorded a figure.")
         : null,
+      // THE SAME `trend`/`present` THE CHART WRAPPER READS BELOW, named once above and
+      // handed to both — `gas_shared/ui/chartTable.js`'s one rule. Only where the chart
+      // itself draws: below two points there is no line, and a table over a dangling,
+      // unattached canvas would wire `aria-details` to a node nothing on screen points at.
+      trend.length >= 2
+        ? chartTable({
+            canvas,
+            caption: "Counts over time",
+            model: trendTableModel(trend, present),
+          })
+        : null,
     );
 
     if (trend.length >= 2) {
@@ -1225,7 +1237,7 @@ export async function renderInventory(main, params) {
     }
 
     const cards = el("div", { class: "posture-trend-grid" },
-      chartCard({
+      postureTrendCard({
         title: "Where issues sit",
         points: adjacency,
         series: ADJACENCY_SERIES,
@@ -1236,7 +1248,7 @@ export async function renderInventory(main, params) {
         // hovers must not take an UNLINKED band as a measurement of relatedness.
         foot: adjacencyFoot(adjacency),
       }),
-      chartCard({
+      postureTrendCard({
         title: "Exploitation evidence",
         points: exploitation,
         series: EXPLOITATION_SERIES,
@@ -1247,7 +1259,7 @@ export async function renderInventory(main, params) {
         foot: "A sync whose exploitation pass was refused records no census and has no point "
           + "on this chart.",
       }),
-      chartCard({
+      postureTrendCard({
         title: "Open issues by category",
         points: categoryPoints,
         series: categorySeries(trend.categories),
@@ -1280,8 +1292,17 @@ export async function renderInventory(main, params) {
       + "point carries its own edge count.";
   }
 
-  /** One trend card: heading, sync count, the chart or the reason there isn't one, a note. */
-  function chartCard({ title, points, series, stacked, notes, label, foot }) {
+  /**
+   * One trend card: heading, sync count, the chart or the reason there isn't one, a note,
+   * and — where the chart actually drew — the same series as a table.
+   *
+   * NAMED `postureTrendCard`, not `chartCard`: the old name reads as one more shared
+   * component from `gas_shared/ui/` (`chartTable`, `chartTableModel` sit right beside it in
+   * every import list this file already carries), when it is in fact page-local and shaped
+   * for exactly the four posture cards below — a name a later reader could mistake for a
+   * primitive worth reaching for elsewhere.
+   */
+  function postureTrendCard({ title, points, series, stacked, notes, label, foot }) {
     const present = presentSeries(points, series);
     const gappy = gappySeries(points, present);
     const canvas = el("canvas", { "aria-label": label, role: "img" });
@@ -1304,6 +1325,12 @@ export async function renderInventory(main, params) {
             + "figure for every sync in this window. Those points are gaps, not zeros.")
         : null,
       foot ? el("p", { class: "chart-note" }, foot) : null,
+      // THE SAME `points`/`present` THE CHART WRAPPER READS BELOW, named once above and
+      // handed to both — only where the chart actually draws (see trendSection's own note
+      // on why a dangling canvas gets no disclosure).
+      points.length >= 2 && present.length
+        ? chartTable({ canvas, caption: title, model: trendTableModel(points, present) })
+        : null,
     );
 
     if (points.length >= 2 && present.length) {

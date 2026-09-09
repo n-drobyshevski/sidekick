@@ -31,12 +31,14 @@ import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.j
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  absent, absentText, clear, dataTable, debounce, el, emptyState, errorState, fmtCount, fmtDate,
+  absent, absentText, chartTable, clear, dataTable, debounce, el, emptyState, errorState,
+  fmtCount, fmtDate,
   glossaryTip, heroStat, measuredEmpty, num, pageHeader, pct1, plural, segmented, select,
   selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statRow,
   statusPill, tableFooter, tipMark, togglePills,
 } from "../ui.js";
+import { coverTableModel } from "./_charts.js";
 import {
   PAGE_SIZE, PROBLEM_SORT_DESC, RANK_REASON_LABEL, SEVERITY_RANK,
   applyProblemFilters, defaultProblemSort, prioritiesFirstRunView, problemFilterOptions,
@@ -678,6 +680,13 @@ export async function renderProblems(main, params) {
         ? el("div", { class: "chart-box", style: "height:124px" }, canvas)
         : el("p", { class: "page-hero-sub" },
             "Fewer than three actions close the whole board here."),
+      // THE SAME `curve` THE CHART WRAPPER READS BELOW, named once above and handed to
+      // both — `gas_shared/ui/chartTable.js`'s one rule. Only where the chart itself draws:
+      // below three actions there is no curve, and a table over a dangling, unattached
+      // canvas would wire `aria-details` to a node nothing on screen points at.
+      enough
+        ? chartTable({ canvas, caption: "Cumulative cover", model: coverTableModel(curve) })
+        : null,
     );
     // Laid out before Chart.js measures it, or it reads a 0x0 box — the same reason
     // inventory.js's trend chart defers its draw one frame. The rAF now waits on the bundle
