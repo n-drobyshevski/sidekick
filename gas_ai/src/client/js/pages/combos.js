@@ -131,6 +131,7 @@ export async function renderCombos(main, params) {
     lede: "Multi-condition risk patterns on AI assets: privileged access, sensitive data and " +
       "missing guardrails combined. Wiz severity is shown beside the adjusted severity " +
       "this register adds, never replaced by it.",
+    help: { term: "toxic-combination" },
   }));
 
   if (!boot.latestSync) {
@@ -428,7 +429,8 @@ export async function renderCombos(main, params) {
     bar.append(sectionLabel(
       shown.length === ranked.length
         ? "Patterns"
-        : "Patterns — " + shown.length + " of " + ranked.length));
+        : "Patterns — " + shown.length + " of " + ranked.length,
+      { term: "toxic-combination" }));
 
     const present = SEVERITY_RANK.filter((sev) =>
       ranked.some((g) => String(g.adjustedSeverity).toUpperCase() === sev));
@@ -860,22 +862,48 @@ export async function renderCombos(main, params) {
       },
     });
     const COLS = [
-      { key: "asset", label: "Asset", cell: (i) => i.assetName },
-      { key: "severity", label: "Adjusted", cell: (i) => sevBadge(i.adjustedSeverity) },
-      { key: "native", label: "Wiz native", cell: (i) => i.nativeSeverity },
+      {
+        key: "asset", label: "Asset",
+        help: { lines: ["The AI asset this issue is attached to."] },
+        cell: (i) => i.assetName,
+      },
+      { key: "severity", label: "Adjusted", help: { term: "adjusted-severity" },
+        cell: (i) => sevBadge(i.adjustedSeverity) },
+      { key: "native", label: "Wiz native", help: { term: "severity" },
+        cell: (i) => i.nativeSeverity },
       // above, decided from exploitation/impact/exposure/mission, not from Wiz severity.
       // The status the register used to collect and never show. statusPill carries the
       // word, so the state never rides on the tint alone.
       {
         key: "status",
         label: "Status",
+        help: { lines: [
+          "Wiz's own remediation status for this issue — In progress once somebody has " +
+          "started on it, Open otherwise. Every row here is unresolved either way.",
+        ] },
         cell: (i) => (i.status === "IN_PROGRESS"
           ? statusPill("warn", "In progress")
           : statusPill("neutral", "Open")),
       },
-      { key: "due", label: "Due", cell: (i) => dueChip(i.dueAt) || absent() },
-      { key: "account", label: "Account", cell: (i) => i.account || absent() },
-      { key: null, label: "Projects", cell: (i) => (i.projects || []).join(", ") || absent() },
+      {
+        key: "due", label: "Due",
+        help: { lines: [
+          "The SLA verdict for this issue's due date — Overdue, Due soon or on track — " +
+          "against Wiz's own deadline. A blank cell means Wiz set no deadline, not that one " +
+          "was met.",
+        ] },
+        cell: (i) => dueChip(i.dueAt) || absent(),
+      },
+      {
+        key: "account", label: "Account",
+        help: { lines: ["The cloud account or subscription the affected asset lives in."] },
+        cell: (i) => i.account || absent(),
+      },
+      {
+        key: null, label: "Projects",
+        help: { lines: ["Which Wiz projects the affected asset belongs to."] },
+        cell: (i) => (i.projects || []).join(", ") || absent(),
+      },
     ];
 
     // `dir` is 1/-1 against each column's natural first-click order (ISSUE_SORT_DESC),
@@ -889,6 +917,7 @@ export async function renderCombos(main, params) {
         key: col.key || `col-${i}`,
         label: col.label,
         sortable: !!col.key,
+        help: col.help,
         cell: col.cell,
       })),
       rows,

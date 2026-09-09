@@ -81,6 +81,7 @@ export async function renderConfigFindings(main, params, ctx) {
     route: "config",
     lede: "Wiz configuration findings for the AI security framework — what is failing, " +
       "grouped by the control that failed.",
+    help: { term: "cloud-findings" },
   }));
 
   // Fresh, not `bootstrapCached()`: this is the FIRST read this route makes of whether
@@ -416,17 +417,19 @@ export async function renderConfigFindings(main, params, ctx) {
     bodyHost.append(dataTable({
       columns: [
         {
-          key: "severity", label: "Severity", sortable: false,
+          key: "severity", label: "Severity", sortable: false, help: { term: "severity" },
           cell: (g) => sevBadge(g.severity),
         },
         {
           key: "rule", label: "Control", sortable: false,
+          help: { lines: ["Which Wiz control or policy every row in this group failed."] },
           cell: (g) => el("div", {},
             el("div", {}, g.ruleName || g.ruleShortId),
             el("div", { class: "small muted" }, g.ruleShortId)),
         },
         {
           key: "gaps", label: "Failing", sortable: false, className: "num",
+          help: { lines: ["How many resources under this control are currently failing it."] },
           cell: (g) => {
             const said = g.gaps + " of " + plural(g.resources, "resource") + " currently failing";
             return tipAnchor(
@@ -436,12 +439,17 @@ export async function renderConfigFindings(main, params, ctx) {
         },
         {
           key: "resources", label: "Resources", sortable: false, className: "num",
+          help: { lines: ["How many resources this control was evaluated against."] },
           cell: (g) => String(g.resources),
         },
         {
           key: "unlinked", label: "Off-inventory", sortable: false, className: "num",
           // Not a warning — a fact about where the control applies. It is the reason the
           // register's gap total and the inventory's per-asset counts differ.
+          help: { lines: [
+            "How many of this control's failing evaluations are against a resource the AI " +
+            "inventory does not track — a region, an access policy, no asset to open.",
+          ] },
           cell: (g) => (g.unlinked
             ? tipAnchor(
               el("span", {}, String(g.unlinked),
@@ -454,18 +462,20 @@ export async function renderConfigFindings(main, params, ctx) {
           // near-identical rows are one piece of work; this says how many owners that work
           // needs. Empty for an all-unlinked control, which is most of them here.
           key: "domains", label: "Domain", sortable: false,
+          help: { lines: ["Which Wiz/Domain tags the affected resources carry."] },
           cell: (g) => ((g.domains || []).length
             ? el("span", {}, g.domains.join(", "))
             : absent()),
         },
         {
-          key: "since", label: "Oldest", sortable: false,
+          key: "since", label: "Oldest", sortable: false, help: { term: "first-seen" },
           cell: (g) => (g.firstSeenAt
             ? el("span", { class: "small" }, fmtDate(g.firstSeenAt))
             : absent()),
         },
         {
           key: "iac", label: "IaC", sortable: false,
+          help: { lines: ["Whether Wiz traced this finding back to an Infrastructure-as-Code source."] },
           cell: (g) => (g.iac ? statusPill("neutral", String(g.iac)) : absent()),
         },
       ],
@@ -510,15 +520,20 @@ export async function renderConfigFindings(main, params, ctx) {
     const table = dataTable({
       stickyHeader: true,
       columns: [
-        { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
+        {
+          key: "severity", label: "Severity", sortable: true, help: { term: "severity" },
+          cell: (r) => sevBadge(r.severity),
+        },
         {
           key: "rule", label: "Control", sortable: true,
+          help: { lines: ["Which Wiz control or policy this finding failed."] },
           cell: (r) => el("div", {},
             el("div", {}, r.ruleName || r.name),
             el("div", { class: "small muted" }, r.ruleShortId)),
         },
         {
           key: "resource", label: "Resource", sortable: true,
+          help: { lines: ["The specific cloud resource Wiz evaluated this finding against."] },
           cell: (r) => el("div", {},
             el("div", {}, r.resourceName || r.resourceId),
             el("div", { class: "small muted" }, r.resourceType)),
@@ -527,24 +542,31 @@ export async function renderConfigFindings(main, params, ctx) {
           key: "domain", label: "Domain", sortable: false,
           // Blank for an unlinked finding, and it reads as the same em dash every other
           // absent cell uses. The AI asset column beside it says WHY.
+          help: { lines: ["Which Wiz/Domain tag the affected resource carries."] },
           cell: (r) => (r.domain
             ? el("span", {}, r.domain)
             : absent()),
         },
         {
           key: "linked", label: "AI asset", sortable: false,
+          help: { lines: [
+            "Whether this finding's resource matches an asset in the AI inventory — most " +
+            "findings do not, because they are evaluated against a region or a policy no " +
+            "asset models.",
+          ] },
           cell: (r) => (r.linked
             ? statusPill("neutral", "On inventory")
             : absent()),
         },
         {
           key: "status", label: "Status", sortable: true,
+          help: { lines: ["Whether Wiz's own evaluation currently reads this finding as failing."] },
           cell: (r) => (r.gap
             ? statusPill("bad", "Failing")
             : statusPill("neutral", r.status || absentText)),
         },
         {
-          key: "firstSeen", label: "First seen", sortable: true,
+          key: "firstSeen", label: "First seen", sortable: true, help: { term: "first-seen" },
           cell: (r) => (r.firstSeenAt
             ? el("span", { class: "small" }, fmtDate(r.firstSeenAt))
             : absent()),

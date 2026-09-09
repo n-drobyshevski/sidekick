@@ -290,9 +290,10 @@ function policyTable(policies) {
     panel: true,
     className: "comp-policy",
     columns: [
-      { key: "severity", label: "Severity", cell: (p) => sevBadge(p.severity) },
+      { key: "severity", label: "Severity", help: { term: "severity" }, cell: (p) => sevBadge(p.severity) },
       {
         key: "control", label: "Control",
+        help: { lines: ["The specific policy behind this subcategory, and which kind of evaluation it is."] },
         cell: (p) => el("div", {},
           el("div", {}, p.name),
           el("div", { class: "small muted" },
@@ -301,6 +302,7 @@ function policyTable(policies) {
       },
       {
         key: "checks", label: "Checks", className: "num",
+        help: { lines: ["How many resources passed, failed and were assessed under this policy."] },
         // Grouped, like the summary line above it and the register's Checks column.
         // Ungrouped here they read as a different quantity from the same numbers three
         // lines up — "1718" beside "194,309" looks like two ways of counting, not two

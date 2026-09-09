@@ -33,10 +33,10 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   absent, absentText, chartTable, clear, dataTable, debounce, el, emptyState, errorState,
   fmtCount, fmtDate,
-  glossaryTip, heroStat, measuredEmpty, num, pageHeader, pct1, plural, segmented, select,
+  heroStat, measuredEmpty, num, pageHeader, pct1, plural, segmented, select,
   selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statRow,
-  statusPill, tableFooter, tipMark, togglePills,
+  statusPill, tableFooter, togglePills,
 } from "../ui.js";
 import { coverTableModel } from "./_charts.js";
 import {
@@ -100,14 +100,14 @@ export async function renderProblems(main, params) {
   // figures and no `route`, so the page still owns exactly one h1.
   main.append(pageHeader({
     route: "problems",
-    // NINE WORDS, unchanged by either conversion. The cascade this page ranks by — Wiz's
-    // severity, then how soon it is due, then how long it has been open — is a definition,
-    // and DESIGN.md is explicit that a definition belongs in the tip that routes to its Help
-    // entry rather than in a paragraph above the thing it describes. An ARRAY, not a string:
-    // `el()` flattens its children, so the sentence and the tip that follows it land in the
-    // one `.page-hero-sub` line they used to share as a `<p>`.
-    lede: ["Every open issue and finding, ranked on one scale.",
-      glossaryTip(tipMark(), "priorities-rank")],
+    // NINE WORDS, unchanged. The cascade this page ranks by — Wiz's severity, then how soon
+    // it is due, then how long it has been open — is a definition, and DESIGN.md is explicit
+    // that a definition belongs in the tip that routes to its Help entry rather than in a
+    // paragraph above the thing it describes. P1.4 moved that tip off the lede (which used to
+    // carry it as a second array element) and onto the header's own `help`, the slot every
+    // other route's page-title tip already uses.
+    lede: "Every open issue and finding, ranked on one scale.",
+    help: { term: "priorities-rank" },
   }));
 
   // The front door earns the itemised panel — see problemView.js's own header for why this
@@ -493,24 +493,58 @@ export async function renderProblems(main, params) {
       // by a real control without multiplying the tab order by the row count.
       {
         key: "kind", label: "Kind",
+        help: { lines: [
+          "Whether this row is a Wiz issue or a Cloud Configuration finding — the two " +
+          "populations Priorities unions into one queue.",
+        ] },
         cell: (r) => statusPill("neutral", r.kind === "ISSUE" ? "Issue" : "Finding"),
       },
-      { key: "title", label: "Rule", cell: (r) => r.title },
-      { key: "asset", label: "Asset", cell: (r) => r.assetName },
+      {
+        key: "title", label: "Rule",
+        help: { lines: ["The Wiz rule or policy this row failed."] },
+        cell: (r) => r.title,
+      },
+      {
+        key: "asset", label: "Asset",
+        help: { lines: ["The AI asset this row is attached to, blank for an unlinked finding."] },
+        cell: (r) => r.assetName,
+      },
       // Null for an unlinked finding, for the same reason its asset id is — there is no
       // node to read a tag from. Same em dash every other absent cell uses.
-      { key: "domain", label: "Domain", cell: (r) => r.domain || absent() },
+      {
+        key: "domain", label: "Domain",
+        help: { lines: ["Which Wiz/Domain tag the affected asset carries."] },
+        cell: (r) => r.domain || absent(),
+      },
       { key: "severity", label: "Severity", help: { term: "adjusted-severity" },
         cell: (r) => sevBadge(r.severity) },
-      { key: "due", label: "Due", cell: (r) => dueChip(r.dueAt) || absent() },
+      {
+        key: "due", label: "Due",
+        help: { lines: [
+          "The SLA verdict for this row's due date — Overdue, Due soon or on track — " +
+          "against Wiz's own deadline. Blank means Wiz set no deadline, not that one was met.",
+        ] },
+        cell: (r) => dueChip(r.dueAt) || absent(),
+      },
       // The ranking's third level, shown because a reader should be able to see the order
       // they are being given rather than take it on trust.
-      { key: "firstSeen", label: "First seen", cell: (r) => fmtDate(r.firstSeenAt) || absent() },
+      {
+        key: "firstSeen", label: "First seen", help: { term: "first-seen" },
+        cell: (r) => fmtDate(r.firstSeenAt) || absent(),
+      },
       // The minimal model's own number, and the clauses behind it. Last column on purpose:
       // it is the newest reading on this row and the one a reader is least likely to be
       // looking for, and putting it left of Wiz's own severity would imply a precedence the
       // shipped default (`rank_leads_sort` off) does not give it.
-      { key: "rank", label: "Rank", className: "num", cell: (r) => rankCell(r) },
+      {
+        key: "rank", label: "Rank", className: "num",
+        help: { lines: [
+          "The experimental blended score — rule, clock, exploitation, adjacency — defined " +
+          "on the Scoring Models page. Nothing here sorts or filters by it unless Rank leads " +
+          "is turned on in Settings.",
+        ] },
+        cell: (r) => rankCell(r),
+      },
     ];
     // Which column reads as the active sort when the reader has chosen none: the server sends
     // one of two orders now, and an unmarked header cannot say which one arrived.
@@ -777,15 +811,35 @@ export async function renderProblems(main, params) {
     const COLS = [
       { key: "worstSeverity", label: "Worst", help: { term: "severity" },
         cell: (r) => (r.worstSeverity ? sevBadge(r.worstSeverity) : absent()) },
-      { key: "title", label: "Action", cell: (r) => r.title },
+      {
+        key: "title", label: "Action",
+        help: { lines: [
+          "The remediation this row collapses one or more problems into — a rule fix, a " +
+          "control change, one action that closes every problem sharing it.",
+        ] },
+        cell: (r) => r.title,
+      },
       {
         key: "kind", label: "Kind",
+        help: { lines: [
+          "Whether this action closes a Wiz issue, a Cloud Configuration finding, or both — " +
+          "the two populations Priorities unions into one queue.",
+        ] },
         cell: (r) => statusPill("neutral", r.kind === "ISSUE" ? "Issue" : "Finding"),
       },
-      { key: "closes", label: "Closes", className: "num", cell: (r) => String(r.problems) },
-      { key: "assets", label: "Assets", className: "num", cell: (r) => String(r.assets) },
+      {
+        key: "closes", label: "Closes", className: "num",
+        help: { lines: ["How many open problems this one action would close at once."] },
+        cell: (r) => String(r.problems),
+      },
+      {
+        key: "assets", label: "Assets", className: "num",
+        help: { lines: ["How many distinct assets this action touches."] },
+        cell: (r) => String(r.assets),
+      },
       {
         key: "severityMix", label: "Severity", sortable: false,
+        help: { lines: ["The severity mix across every problem this action collapses, worst first."] },
         cell: (r) => {
           const entries = sevEntries(r.severityMix, SEVERITY_RANK);
           return entries.length
@@ -797,22 +851,29 @@ export async function renderProblems(main, params) {
         // Whose problems this one action collapses. An action spanning three domains is
         // a coordination cost the "N collapse to M" headline hides.
         key: "domains", label: "Domain", sortable: false,
+        help: { lines: ["Which Wiz/Domain tags the affected assets carry."] },
         cell: (r) => ((r.domains || []).length
           ? el("span", {}, r.domains.join(", "))
           : absent()),
       },
       {
         key: "impact", label: "Business impact", sortable: false,
+        help: { lines: ["Which business-impact tags Wiz attached to the assets this action touches."] },
         cell: (r) => ((r.businessImpacts || []).length
           ? el("span", {}, r.businessImpacts.join(", "))
           : absent()),
       },
       {
         key: "signals", label: "Signals", sortable: false,
+        help: { lines: [
+          "The risk signals behind this action's problems — exploitation evidence, adjacency " +
+          "to the AI estate, a missing guardrail.",
+        ] },
         cell: (r) => actionSignalChips(r),
       },
       {
-        key: "firstSeen", label: "First seen", cell: (r) => (r.firstSeenAt
+        key: "firstSeen", label: "First seen", help: { term: "first-seen" },
+        cell: (r) => (r.firstSeenAt
           ? el("span", { class: "small" }, fmtDate(r.firstSeenAt))
           : absent()),
       },

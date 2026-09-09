@@ -501,14 +501,27 @@ function renderWeakestAreas(host, data, view, actions) {
     columns: [
       {
         key: "sub", label: "Subcategory",
+        help: { lines: ["Which framework and subcategory this row is closest to failing."] },
         cell: (r) => el("div", {},
           el("div", {}, extChip(r), r.title),
           el("div", { class: "small muted" }, r.frameworkName)),
       },
-      { key: "posture", label: "Compliance posture", cell: (r) => postureCell(r) },
-      { key: "checks", label: "Checks passing", className: "num", cell: (r) => checksCell(r) },
+      {
+        key: "posture", label: "Compliance posture",
+        help: { lines: [
+          "The percentage of evaluated policies passing under this subcategory. Every row " +
+          "here was scored — an unscored subcategory carries no posture and cannot be ranked.",
+        ] },
+        cell: (r) => postureCell(r),
+      },
+      {
+        key: "checks", label: "Checks passing", className: "num",
+        help: { lines: ["How many individual checks passed, of how many ran, under this subcategory."] },
+        cell: (r) => checksCell(r),
+      },
       {
         key: "failing", label: "Failing policies", className: "num",
+        help: { lines: ["How many distinct policies under this subcategory have at least one failing evaluation."] },
         cell: (r) => String(r.failingPolicyCount),
       },
     ],
@@ -583,16 +596,26 @@ function renderSharedControls(host, data) {
     columns: [
       {
         key: "control", label: "Control",
+        help: { lines: ["The failing framework control or policy, and which kind of evaluation it is."] },
         cell: (r) => el("div", {},
           el("div", {}, r.name),
           el("div", { class: "small muted" },
             [r.shortId, policyKindLabel(r.policyKind)].filter(Boolean).join(" · "))),
       },
-      { key: "severity", label: "Severity", cell: (r) => sevBadge(r.severity) },
-      { key: "raisedBy", label: "Raised by", cell: (r) => raisedByCell(r, order) },
-      { key: "failing", label: "Failing", className: "num", cell: (r) => String(r.failCount) },
+      { key: "severity", label: "Severity", help: { term: "severity" }, cell: (r) => sevBadge(r.severity) },
+      {
+        key: "raisedBy", label: "Raised by",
+        help: { lines: ["Which of the tracked frameworks raise this same control as a failure."] },
+        cell: (r) => raisedByCell(r, order),
+      },
+      {
+        key: "failing", label: "Failing", className: "num",
+        help: { lines: ["How many resources currently fail this control."] },
+        cell: (r) => String(r.failCount),
+      },
       {
         key: "remediation", label: "Remediation",
+        help: { lines: ["Whether Wiz can fix this control automatically, or a person has to."] },
         cell: (r) => (r.hasAutoRemediation
           ? el("span", { class: "comp-auto" }, "Auto-remediation")
           : absent()),

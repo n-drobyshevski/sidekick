@@ -118,7 +118,7 @@ export const ENTRIES = [
       "them — and the icon and the word are the KIND. Every kind draws its own mark, so a " +
       "glyph names one thing and one thing only. Colour is still never the only cue: the " +
       "icon rides beside the label, never instead of it.",
-    drawnOn: ["graph", "inventory"],
+    drawnOn: ["graph", "inventory", "scans"],
     mark: () => kindMark("AI_AGENT"),
     // The strip of every category, so the reader can match a tint on screen to a word.
     strip: () => CATEGORY_ORDER.map((cat) => ({ cat, label: CATEGORY_LABELS[cat] })),
@@ -821,7 +821,7 @@ export const ENTRIES = [
       "bucket, never a value the API returns. Every severity on every screen is a coloured " +
       "DOT plus the level WORD — the red, orange and amber sit close enough together that " +
       "the redundant cue is load-bearing, not decorative.",
-    drawnOn: ["combos", "inventory", "graph", "problems"],
+    drawnOn: ["combos", "inventory", "graph", "problems", "config", "compliance"],
     mark: () => sevBadge("CRITICAL"),
     count: (ctx) => {
       const c = ctx.boot.counts;
@@ -904,7 +904,7 @@ export const ENTRIES = [
       "scanned means no query runs at all. The state is DERIVED wherever a resolver can " +
       "decide it, so a missing figure steps back to Partial on its own rather than " +
       "asserting a number it cannot compute.",
-    drawnOn: ["scans"],
+    drawnOn: ["scans", "compliance", "inventory"],
     mark: () => glyph("●", "ok"),
     count: (ctx) => {
       const t = ctx.tally;
@@ -975,7 +975,7 @@ export const ENTRIES = [
       "RAN. Widening the scope changes what every one of those figures counts, not how " +
       "many rows it holds — and the stored register keeps counting the OLD categories " +
       "until the next sync applies the new one.",
-    drawnOn: ["settings"],
+    drawnOn: ["settings", "scans"],
     mark: () => statusPill("neutral", "Scope"),
     link: { label: "Open Settings → Register", route: "settings", params: { tab: "register" } },
   },
@@ -993,7 +993,7 @@ export const ENTRIES = [
       "page measures from the date a sync actually recorded. Nothing backfills it — a row " +
       "that predates the ledger has no earlier sighting to claim, and inventing one would " +
       "be a measurement nobody took.",
-    drawnOn: ["combos", "inventory"],
+    drawnOn: ["combos", "inventory", "config", "problems"],
     mark: () => statusPill("neutral", "First seen"),
   },
   {
@@ -1038,7 +1038,10 @@ export const ENTRIES = [
       "NOT record when each episode began — only how many there have been — so the gap " +
       "between one episode and the next cannot be priced, and no clock here spans two of " +
       "them.",
-    drawnOn: ["data", "combos", "inventory"],
+    // `data` was dropped here in P1.4: the sync-history "Returned" column now points at the
+    // "returned" entry (a per-sync count) instead, so Episode (the per-issue count) is
+    // reachable from these two routes' issue sheets only.
+    drawnOn: ["combos", "inventory"],
     mark: () => statusPill("neutral", "↩"),
   },
   {
@@ -1086,6 +1089,52 @@ export const ENTRIES = [
       "measured figure rather than added to it.",
     drawnOn: ["problems"],
     mark: () => statusPill("neutral", "≥"),
+  },
+  {
+    id: "returned",
+    term: "Returned",
+    aka: "how many came back in this one sync",
+    family: "lifecycle",
+    blurb:
+      "How many issues this one sync saw again after an earlier sync had stopped seeing them " +
+      "— the Gone column's mirror. It is a COUNT FOR THE SYNC, not a per-issue reading: an " +
+      "issue that returns twice in its life adds one to the Returned tally on each of the " +
+      "two syncs that caught it, and this count no more records when either absence began " +
+      "than Episode does — see Episode for the per-issue number this same event bumps on " +
+      "the row itself.",
+    drawnOn: ["data"],
+    mark: () => statusPill("neutral", "Returned"),
+  },
+  {
+    id: "rail-status",
+    term: "The rail status dot",
+    aka: "one dot, one sentence",
+    family: "lifecycle",
+    blurb:
+      "What the dot at the foot of the nav rail is currently saying, ranked by how " +
+      "actionable it is: a sync running right now beats one that just failed, which beats a " +
+      "register that has never been synced at all, which beats one whose sync date this app " +
+      "could not even read, which beats one that ran too long ago, which beats one that is " +
+      "current. A register nobody has ever synced is UNMEASURED, not stale, so \"never " +
+      "synced\" always outranks it. Dry-run decorates whichever of those states fired as an " +
+      "extra sentence — it never replaces the reading, because a dry-run register still has " +
+      "its own real sync history to be stale or current about.",
+    drawnOn: ["data"],
+    mark: () => statusPill("neutral", "●"),
+  },
+  {
+    id: "stale",
+    term: "Stale",
+    aka: "more than two days since the last sync",
+    family: "lifecycle",
+    blurb:
+      "The latest sync finished more than two days ago. The threshold is short on purpose: " +
+      "this register is meant to run daily, so two missed days already means the page is " +
+      "answering yesterday's question, and the dot says so before a reader has to notice the " +
+      "date themselves. A register that has never synced at all is never called stale — it " +
+      "is unmeasured, which the rail status dot ranks as the more urgent of the two.",
+    drawnOn: ["data"],
+    mark: () => statusPill("warn", "Stale"),
   },
 
   // --------------------------------------------------------------- framework vocabularies

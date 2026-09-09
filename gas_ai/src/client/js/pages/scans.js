@@ -70,6 +70,7 @@ export async function renderScans(main, params, ctx) {
         "Every figure traces back to one of " + SCAN_AREAS.length + " Wiz scan areas.",
         "What each one is asked for, what it reported, and where the answer lands.",
       ),
+      help: { term: "coverage-state" },
     }),
     // "what it reported in this tenant" used to end that sentence, and a project view made it
     // false — the figures below come from scoped endpoints. The split is the point and it is
@@ -177,7 +178,7 @@ export async function renderScans(main, params, ctx) {
     });
 
     guard("the register", registerHost, () => registerHost.append(
-      sectionLabel("The register"),
+      sectionLabel("The register", { term: "register-scope" }),
       register(ranked, diagram),
       el("p", { class: "small muted", style: "margin-top:14px" },
         "Sync cadence: daily at 05:00 Europe/Paris plus on-demand “Sync now”. Every figure above " +
@@ -220,7 +221,7 @@ export async function renderScans(main, params, ctx) {
       aside: strip,
       stats: [
         statRow("Last sync", fmtDate(sync.finished_at),
-          fmtDateTime(sync.finished_at)),
+          fmtDateTime(sync.finished_at), null, { term: "sync" }),
         statRow("Mode", dryRun ? "Dry-run" : "Live",
           dryRun ? "bundled sample dataset" : "against the configured Wiz tenant"),
         statRow("Records written", fmtCount(sync.node_count),
@@ -272,11 +273,24 @@ export async function renderScans(main, params, ctx) {
     const table = dataTable({
       className: "cov-register",
       columns: [
-        { key: "area", label: "Scan area", cell: (a) => el("span", { class: "cov-area" }, a.title) },
-        { key: "query", label: "Wiz query", cell: (a) => el("span", { class: "cov-q" }, a.query) },
-        { key: "figure", label: "Reported here", cell: figureCell },
+        {
+          key: "area", label: "Scan area",
+          help: { lines: ["Which Wiz scan area this register row covers."] },
+          cell: (a) => el("span", { class: "cov-area" }, a.title),
+        },
+        {
+          key: "query", label: "Wiz query",
+          help: { lines: ["The Wiz GraphQL query this app runs to collect the area."] },
+          cell: (a) => el("span", { class: "cov-q" }, a.query),
+        },
+        {
+          key: "figure", label: "Reported here",
+          help: { lines: ["The figure this app currently publishes for the area, when its state is Reporting."] },
+          cell: figureCell,
+        },
         {
           key: "lands", label: "Lands in",
+          help: { lines: ["Which page in this app shows the area's figures."] },
           cell: (a) => {
             const dest = destinationOf(a);
             return dest && a.state !== "unscanned"
@@ -450,16 +464,28 @@ export async function renderScans(main, params, ctx) {
       className: "reach-kinds",
       columns: [
         {
-          key: "kind", label: "Kind",
+          key: "kind", label: "Kind", help: { term: "node-kind" },
           cell: (k) => el("span", { class: k.ai ? "reach-kind-ai" : "" }, k.kind),
         },
-        { key: "total", label: "Rows", cell: (k) => el("span", { class: "num" }, String(k.total)) },
+        {
+          key: "total", label: "Rows",
+          help: { lines: ["How many rows of this kind sit in the persisted graph."] },
+          cell: (k) => el("span", { class: "num" }, String(k.total)),
+        },
         {
           key: "signal", label: "Carrying signal",
+          help: { lines: [
+            "How many of this kind's rows carry at least one risk signal this app reads " +
+            "— an issue, a finding, a toxic combination, a missing guardrail.",
+          ] },
           cell: (k) => el("span", { class: "num" }, k.signal + " of " + k.total),
         },
         {
           key: "ai", label: "AI landscape",
+          help: { lines: [
+            "Whether this kind counts toward the AI landscape inventory, or is substrate " +
+            "Wiz reports that this app does not track as an asset.",
+          ] },
           cell: (k) => (k.ai
             ? el("span", { class: "pill ok" }, "AI")
             : el("span", { class: "cov-none" }, "substrate")),

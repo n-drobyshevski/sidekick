@@ -202,6 +202,21 @@ describe("the entry list", () => {
       expect(e.term.length, e.id).toBeGreaterThan(0);
     }
   });
+
+  // P1.4: the lifecycle family started at 7 entries (movement, disappearance, episode,
+  // first-seen, half-life, censoring, lower-bound, from P2.2/P3.1/P2.5a) and gained
+  // rail-status, stale and returned here. The `term:` sweep below already covers whether
+  // each new id is reachable from real code; this `it` is the one place that would notice
+  // the family shrinking back under 10 if a later package merged two of them back together.
+  it("holds the issue lifecycle's own vocabulary — at least ten entries, and the three "
+    + "P1.4 added", () => {
+    const lifecycle = ENTRIES.filter((e) => e.family === "lifecycle");
+    expect(lifecycle.length).toBeGreaterThanOrEqual(10);
+    for (const id of ["rail-status", "stale", "returned"]) {
+      const entry = lifecycle.find((e) => e.id === id);
+      expect(entry, "lifecycle family has no entry " + id).toBeTruthy();
+    }
+  });
 });
 
 // The prose is the part of this page that rots silently. Nothing about a definition that

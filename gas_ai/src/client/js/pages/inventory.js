@@ -69,25 +69,33 @@ const FACET_LABELS = {
 
 /** Which columns can be sorted, and what each one is called in the header. */
 const COLUMNS = [
-  { key: "name", label: "Name", sort: "name" },
-  { key: "kind", label: "Kind", sort: "kind" },
-  { key: "cloud", label: "Cloud", sort: "cloud" },
-  { key: "region", label: "Region", sort: "region" },
+  { key: "name", label: "Name", sort: "name",
+    help: { lines: ["The asset's own name, as Wiz reports it."] } },
+  { key: "kind", label: "Kind", sort: "kind", help: { term: "node-kind" } },
+  { key: "cloud", label: "Cloud", sort: "cloud",
+    help: { lines: ["Which cloud provider hosts this asset."] } },
+  { key: "region", label: "Region", sort: "region",
+    help: { lines: ["The cloud region this asset runs in."] } },
   // The two counts, and the column that says how bad the worst of them is. Three columns
   // rather than one graded verdict: "4 open issues, worst of them HIGH, and 2 failing
   // controls" is three facts a reader can check against Wiz, where a single 0-100 score
   // was one number they had to take on trust. Sorting by "Issues" sorts by the COUNT and
   // by "Severity" by the worst — the same split, offered twice, because both are real
   // questions and neither implies the other.
-  { key: "severity", label: "Severity", sort: "severity" },
-  { key: "issues", label: "Issues", sort: "issues" },
-  { key: "findings", label: "Cloud findings", sort: "findings" },
-  { key: "combos", label: "Toxic combo", sort: "combos" },
-  { key: "guardrail", label: "Guardrail", sort: null },
+  { key: "severity", label: "Severity", sort: "severity", help: { term: "severity" } },
+  { key: "issues", label: "Issues", sort: "issues", help: { term: "open-issues" } },
+  { key: "findings", label: "Cloud findings", sort: "findings", help: { term: "cloud-findings" } },
+  { key: "combos", label: "Toxic combo", sort: "combos", help: { term: "toxic-combination" } },
+  { key: "guardrail", label: "Guardrail", sort: null, help: { term: "missing-guardrail" } },
   // The owning business domain, off the resource's own Wiz/Domain tag. Sortable because
   // it is an identity column like Cloud and Region, and read the same way: A-Z first.
-  { key: "domain", label: "Domain", sort: "domain" },
-  { key: "projects", label: "Projects", sort: null },
+  { key: "domain", label: "Domain", sort: "domain",
+    help: { lines: ["Which Wiz/Domain tag owns this asset, read live from its own tags."] } },
+  { key: "projects", label: "Projects", sort: null,
+    help: { lines: ["Which Wiz projects this asset belongs to."] } },
+  // No `help`: the heading is blank (the Graph button inside it names its own action), so
+  // there is no visible text for a dotted-underline trigger to sit beside — the same reason
+  // gas's own attribution.js columns went on an allowlist rather than carrying a `?`.
   { key: "actions", label: "", sort: null },
 ];
 
@@ -185,6 +193,7 @@ export async function renderInventory(main, params) {
     pageHeader({
       route: "inventory",
       lede: "Every AI asset from the last sync, ranked by what is open on it.",
+      help: { term: "open-issues" },
     }),
   );
 
@@ -1061,6 +1070,7 @@ export async function renderInventory(main, params) {
         label: col.label,
         sortable: !!col.sort,
         className: col.key === "name" ? "inv-name-col" : null,
+        help: col.help,
         cell: CELLS[col.key],
       })),
       rows,
@@ -1222,7 +1232,7 @@ export async function renderInventory(main, params) {
       });
     }
 
-    return el("div", { class: "inv-history" }, sectionLabel("History"), card);
+    return el("div", { class: "inv-history" }, sectionLabel("History", { term: "sync" }), card);
   }
 
   // ---- posture over time: the four series a sync records beside its counts

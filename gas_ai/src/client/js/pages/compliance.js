@@ -86,10 +86,29 @@ const SEGMENTED_MAX = 4;
  * element per row, either way.
  */
 const COLUMNS = [
-  { key: "name", label: "Category", cell: (r) => r.name },
-  { key: "posture", label: "Compliance posture", cell: (r) => r.posture },
-  { key: "checks", label: "Checks passing", cell: (r) => r.checks, className: "num" },
-  { key: "policies", label: "Policies", cell: (r) => r.policies, className: "num" },
+  {
+    key: "name", label: "Category",
+    help: { lines: ["The framework category or subcategory this row groups by."] },
+    cell: (r) => r.name,
+  },
+  {
+    key: "posture", label: "Compliance posture",
+    help: { lines: [
+      "The percentage of evaluated policies passing in this row, or a state pill — NO_" +
+      "RESOURCES, NO_POLICIES — where Wiz never scored it. A state pill is never a 0%.",
+    ] },
+    cell: (r) => r.posture,
+  },
+  {
+    key: "checks", label: "Checks passing", className: "num",
+    help: { lines: ["How many individual checks passed, of how many ran, in this row."] },
+    cell: (r) => r.checks,
+  },
+  {
+    key: "policies", label: "Policies", className: "num",
+    help: { lines: ["How many distinct framework policies apply to this row."] },
+    cell: (r) => r.policies,
+  },
 ];
 
 export async function renderCompliance(main, params, ctx) {
@@ -114,6 +133,7 @@ export async function renderCompliance(main, params, ctx) {
     // Nine words. The three grains it used to enumerate (category, subcategory, policy)
     // are the page's own structure, and the reader meets all three by scrolling.
     lede: "How this landscape scores against the frameworks Wiz tracks.",
+    help: { term: "coverage-state" },
   }));
 
   // Compliance can be empty for its OWN reason (no framework selected in Settings) after
