@@ -474,7 +474,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "ef135e824159" : "dev";
+  var BUILD_ID = true ? "3211d7be9077" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -6235,6 +6235,33 @@ var Server = (() => {
     return { byId, ids, shortIds };
   }
 
+  // src/domain/registerScope.ts
+  var CANDIDATE_CATEGORIES = [
+    { id: RISK_CATEGORY_ID, name: "AI Security" },
+    { id: "wct-id-3", name: "Vulnerability Assessment" },
+    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats" },
+    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security" },
+    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management" },
+    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management" }
+  ];
+  var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
+  function cleanCategoryIds(v) {
+    if (!Array.isArray(v)) return DEFAULT_CATEGORY_IDS.slice();
+    const seen = {};
+    const out = [];
+    for (const raw of v) {
+      if (typeof raw !== "string") continue;
+      const id = raw.trim();
+      if (!id || seen[id]) continue;
+      seen[id] = true;
+      out.push(id);
+    }
+    return out.length ? out : DEFAULT_CATEGORY_IDS.slice();
+  }
+  function registerScopeSignature(ids) {
+    return cleanCategoryIds(ids.slice()).slice().sort().join("|");
+  }
+
   // src/domain/scanVars.ts
   var MAX_LIST_VALUES = 40;
   var MAX_VALUE_LEN = 120;
@@ -8086,6 +8113,108 @@ var Server = (() => {
     { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
     { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 }
   ];
+  var SEED_SYNC_COUNT = 8;
+  var SEED_SYNC_DAY_MS = 864e5;
+  function seedSyncId(index) {
+    return "sync-sample-" + String(index + 1).padStart(2, "0");
+  }
+  function seedSyncAt(endIso, index) {
+    const end = new Date(endIso).getTime();
+    return new Date(end - (SEED_SYNC_COUNT - index) * SEED_SYNC_DAY_MS).toISOString();
+  }
+  var SEED_LEDGER_BIRTHS = [
+    // Sync 1 — the bulk of the register arrives, plus the first of the rows that will leave.
+    [
+      "iss-001",
+      "iss-002",
+      "iss-003",
+      "iss-004",
+      "iss-005",
+      "iss-006",
+      "iss-007",
+      "iss-008",
+      "iss-009",
+      "iss-010",
+      "iss-gone-01",
+      "iss-gone-07"
+    ],
+    ["iss-011", "iss-012", "iss-013", "iss-014", "iss-015", "iss-gone-02"],
+    ["iss-016", "iss-017", "iss-018", "iss-019", "iss-gone-08"],
+    ["iss-020", "iss-021", "iss-022", "iss-gone-03"],
+    ["iss-023", "iss-024", "iss-gone-04"],
+    ["iss-025", "iss-026", "iss-gone-05"],
+    ["iss-027", "iss-gone-06"],
+    ["iss-028", "iss-029"]
+  ];
+  var SEED_LEDGER_DEPARTURES = {
+    "iss-gone-07": 2,
+    "iss-gone-08": 4,
+    "iss-005": 6
+  };
+  function seedLedgerSpecs() {
+    const out = [];
+    SEED_LEDGER_BIRTHS.forEach((born, firstSeenIndex) => {
+      for (const issueId of born) {
+        const departure = SEED_LEDGER_DEPARTURES[issueId];
+        const disappearedIndex = departure === void 0 ? null : departure;
+        out.push({
+          issueId,
+          firstSeenIndex,
+          // A row that left was last SEEN on the sync before the one that missed it — that gap
+          // is the error bar on `disappearedAt`, and collapsing the two would erase it.
+          lastSeenIndex: disappearedIndex === null ? SEED_SYNC_COUNT - 1 : disappearedIndex - 1,
+          disappearedIndex
+        });
+      }
+    });
+    return out;
+  }
+  var SEED_LEDGER = {
+    history: [
+      { issueCount: 12, deltas: { new: 12, resolved: 0, reopened: 0, carried: 0, skippedNarrowedScope: 0 } },
+      { issueCount: 18, deltas: { new: 6, resolved: 0, reopened: 0, carried: 0, skippedNarrowedScope: 0 } },
+      { issueCount: 22, deltas: { new: 5, resolved: 1, reopened: 0, carried: 0, skippedNarrowedScope: 0 } },
+      { issueCount: 26, deltas: { new: 4, resolved: 0, reopened: 0, carried: 1, skippedNarrowedScope: 0 } },
+      { issueCount: 28, deltas: { new: 3, resolved: 1, reopened: 0, carried: 1, skippedNarrowedScope: 0 } },
+      { issueCount: 31, deltas: { new: 3, resolved: 0, reopened: 0, carried: 2, skippedNarrowedScope: 0 } },
+      { issueCount: 32, deltas: { new: 2, resolved: 1, reopened: 0, carried: 2, skippedNarrowedScope: 0 } },
+      { issueCount: 34, deltas: { new: 2, resolved: 0, reopened: 0, carried: 3, skippedNarrowedScope: 0 } }
+    ],
+    rows: seedLedgerSpecs()
+  };
+  var SEED_GONE_RULE_ID = "wc-id-2742";
+  var SEED_GONE_CREATED_LEAD_MS = 365 * SEED_SYNC_DAY_MS;
+  function seedLedgerRows(endIso, registerScope) {
+    const byId = {};
+    for (const issue2 of SEED_ISSUES) byId[issue2.id] = issue2;
+    return SEED_LEDGER.rows.map((spec) => {
+      var _a5, _b, _c;
+      const live = byId[spec.issueId];
+      const firstSeenAt = seedSyncAt(endIso, spec.firstSeenIndex);
+      const gone = spec.disappearedIndex;
+      const row = {
+        issueId: spec.issueId,
+        firstSeenSync: seedSyncId(spec.firstSeenIndex),
+        firstSeenAt,
+        lastSeenSync: seedSyncId(spec.lastSeenIndex),
+        lastSeenAt: seedSyncAt(endIso, spec.lastSeenIndex),
+        disappearedAt: gone === null ? null : seedSyncAt(endIso, gone),
+        resolutionSrc: gone === null ? null : "disappeared",
+        lastStatus: live ? live.status : "OPEN",
+        categories: live ? ((_a5 = live.categories) != null ? _a5 : []).slice() : [RISK_CATEGORY_ID],
+        ruleId: live ? live.ruleId : SEED_GONE_RULE_ID,
+        createdAt: live ? (_b = live.createdAt) != null ? _b : null : new Date(Date.parse(firstSeenAt) - SEED_GONE_CREATED_LEAD_MS).toISOString(),
+        // Null, not a fabricated deadline: a departed row nobody set an SLA on is a state the
+        // register really holds, and `rank.ts`'s UNMEASURED path needs one to exercise.
+        dueAt: live ? (_c = live.dueAt) != null ? _c : null : null,
+        registerScope,
+        // 1 on every seeded row. The dry run's reopen of `iss-005` is what makes the first 2,
+        // so a fixture that shipped one pre-set would make the reopen unobservable.
+        episode: 1
+      };
+      return row;
+    });
+  }
   var SEED_CONFIG_RULES = [
     {
       id: "rule-iam-159",
@@ -9134,33 +9263,6 @@ var Server = (() => {
       weights.push({ ruleId, weight });
     }
     return { ...base, ruleWeights: weights };
-  }
-
-  // src/domain/registerScope.ts
-  var CANDIDATE_CATEGORIES = [
-    { id: RISK_CATEGORY_ID, name: "AI Security" },
-    { id: "wct-id-3", name: "Vulnerability Assessment" },
-    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats" },
-    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security" },
-    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management" },
-    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management" }
-  ];
-  var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
-  function cleanCategoryIds(v) {
-    if (!Array.isArray(v)) return DEFAULT_CATEGORY_IDS.slice();
-    const seen = {};
-    const out = [];
-    for (const raw of v) {
-      if (typeof raw !== "string") continue;
-      const id = raw.trim();
-      if (!id || seen[id]) continue;
-      seen[id] = true;
-      out.push(id);
-    }
-    return out.length ? out : DEFAULT_CATEGORY_IDS.slice();
-  }
-  function registerScopeSignature(ids) {
-    return cleanCategoryIds(ids.slice()).slice().sort().join("|");
   }
 
   // src/domain/settingsLogic.ts
@@ -19509,31 +19611,51 @@ var Server = (() => {
     if (!hasWizCredentials()) return dryRunSync();
     return startLiveSync();
   }
-  function seedTrendHistory(endIso) {
+  function seedDryRunHistory(endIso, registerScope) {
     if (dataRowCount(TABS.syncHistory) > 0) return;
-    const DAY_MS4 = 864e5;
-    const end = new Date(endIso).getTime();
+    seedTrendHistory(endIso, registerScope, seedIssueLedger(endIso, registerScope));
+  }
+  function seedIssueLedger(endIso, registerScope) {
+    if (dataRowCount(TABS.issueLedger) > 0) return false;
+    appendRows(TABS.issueLedger, seedLedgerRows(endIso, registerScope).map(issueLedgerToRow));
+    return true;
+  }
+  function seedTrendHistory(endIso, registerScope, withLedger) {
+    if (dataRowCount(TABS.syncHistory) > 0) return;
     appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
-      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS4).toISOString();
+      const at = seedSyncAt(endIso, i);
+      const entry = withLedger ? SEED_LEDGER.history[i] : void 0;
       return {
-        sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
+        sync_id: seedSyncId(i),
         started_at: at,
         finished_at: at,
         status: "SUCCESS",
         mode: "dry-run",
         node_count: null,
         edge_count: null,
-        issue_count: null,
+        // The OPEN population this synthetic sync ended with, not the size of its register:
+        // the two differ by every row that had already left.
+        issue_count: entry ? entry.issueCount : null,
         api_calls: 0,
         snapshot_ref: null,
         error: null,
-        aars_severity_json: JSON.stringify(counts)
+        aars_severity_json: JSON.stringify(counts),
+        // What the ledger DID on this sync — the five transition counts, in the same shape
+        // `persistSync` writes for a real one. Without them every lifecycle figure has one
+        // comparable point, which is none.
+        ledger_json: entry ? JSON.stringify(entry.deltas) : null,
+        // LOAD-BEARING. `reconcileIssueLedger` reads the last committed row's scope as
+        // `prevScopeSignature`, and resolves by absence only when it EQUALS the scope the
+        // current sync applies. Absent here reads as UNKNOWN, and the dry run's six departures
+        // become six `skippedNarrowedScope` instead — the perturbation in test/seedLedger.test.ts
+        // measures exactly that.
+        register_scope: entry ? registerScope : null
       };
     }));
   }
   function dryRunSync() {
     const startedAt = nowIso();
-    seedTrendHistory(startedAt);
+    seedDryRunHistory(startedAt, registerScopeSignature(getIssueCategories2()));
     const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
     const doc = persistSync(
       seedGraphDoc(startedAt),
