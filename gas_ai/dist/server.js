@@ -474,7 +474,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0c6350a27619" : "dev";
+  var BUILD_ID = true ? "d47800a8f064" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12285,6 +12285,7 @@ var Server = (() => {
   // src/server/api.ts
   var api_exports = {};
   __export(api_exports, {
+    ISSUES_CLIENT_ALL_MAX: () => ISSUES_CLIENT_ALL_MAX,
     bootstrap: () => bootstrap,
     cancelSync: () => cancelSync2,
     expandAsset: () => expandAsset,
@@ -18203,16 +18204,36 @@ var Server = (() => {
       }, void 0, wizDataVersion());
     });
   }
+  var ISSUES_CLIENT_ALL_MAX = 1e3;
   function getIssues(p) {
     return run(() => {
       var _a5;
       const params = p != null ? p : {};
       const group = String((_a5 = params["group"]) != null ? _a5 : "");
-      return durablyCached("getIssues", { group }, () => {
-        let rows = viewIssues();
-        if (group) rows = rows.filter((i) => i.comboGroup === group);
-        return { rows: rows.map((r) => publicRow(r)) };
+      const page = clampInt(params["page"], 0, 0, Number.MAX_SAFE_INTEGER);
+      const pageSize = clampInt(params["pageSize"], DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE);
+      const groupRows = durablyCached("getIssues2", { group }, () => {
+        const rows = viewIssues();
+        const scoped = group ? rows.filter((i) => i.comboGroup === group) : rows;
+        return scoped.map((i) => publicRow(i));
       });
+      if (groupRows.length <= ISSUES_CLIENT_ALL_MAX) {
+        return {
+          all: true,
+          rows: groupRows,
+          filtered: groupRows.length,
+          page: 0,
+          pageCount: Math.max(1, Math.ceil(groupRows.length / pageSize))
+        };
+      }
+      const paged = pageOf(groupRows, page, pageSize);
+      return {
+        all: false,
+        rows: paged.rows,
+        filtered: groupRows.length,
+        page: paged.page,
+        pageCount: paged.pageCount
+      };
     });
   }
   function issueLedgerIndex() {

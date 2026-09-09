@@ -2309,15 +2309,72 @@ export function expandAsset(p?: unknown): ApiResult {
 
 // --------------------------------------------------------------------------- issues
 
+/**
+ * Row ceiling for ONE toxic-combination group's issue table, mirroring
+ * `problems.PROBLEMS_CLIENT_ALL_MAX` / `assetTable.CLIENT_ALL_MAX` /
+ * `configFindings.CONFIG_CLIENT_ALL_MAX`: under it the browser holds every row IN THE
+ * GROUP and filters/sorts/pages them locally — the exact shape `combos.js`'s issue table
+ * already used, unpaginated, before this ceiling existed. Past it the server pages, and
+ * `filtered` reports the GROUP's own count, never the register's, because the group
+ * filter always runs BEFORE the page is cut below, not after it.
+ */
+export const ISSUES_CLIENT_ALL_MAX = 1000;
+
 export function getIssues(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
     const group = String(params["group"] ?? "");
-    return durablyCached("getIssues", { group }, () => {
-      let rows = viewIssues();
-      if (group) rows = rows.filter((i) => i.comboGroup === group);
-      return { rows: rows.map((r) => publicRow(r as unknown as Rec)) };
-    });
+    // Absent and bogus alike refuse to 0/DEFAULT_PAGE_SIZE before either reaches pageOf,
+    // which does not itself guard a non-finite pageSize (`Math.max(1, Math.floor(NaN))`
+    // is NaN, not 1) — the same refuse-before-cast rule this file's `getProblems` neighbour
+    // gets right only by the accident of `||` treating NaN as falsy.
+    const page = clampInt(params["page"], 0, 0, Number.MAX_SAFE_INTEGER);
+    const pageSize = clampInt(params["pageSize"], DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE);
+
+    // "getIssues2": the cached SHAPE changed underneath this name — `{ rows }` alone,
+    // unpaginated, is what a still-warm "getIssues" entry (keyed on `group` alone, same as
+    // this one) would still answer with. Bumped in `assetsModel2`'s own convention: the
+    // digit moves when the STORED SHAPE changes, not when a derivation does — nothing about
+    // how a group's rows are chosen moved here.
+    //
+    // `publicRow` runs INSIDE the cached closure, same boundary the original single-shape
+    // `getIssues` drew, not outside it the way `getProblems` redacts its own already-slim
+    // `ProblemRow`. `IssueRow` is not slim — `projectRefs`, `frameworks`, `problemInput` and
+    // the rest of `VERDICT_ROW_KEYS` ride along on every row — so caching the RAW rows and
+    // redacting per request would persist the wide shape to the L2 Drive archive forever,
+    // never the shape any caller actually reads. Measured: moving the redaction outside
+    // grew the durable `getIssues2` file from 37,956 to 49,599 bytes (+11,643) for the same
+    // 32-row seed, an eleven-off-by-nothing regression `getStorageStats`'s own golden
+    // snapshot caught — the redaction is not free to defer.
+    const groupRows = durablyCached("getIssues2", { group }, () => {
+      const rows = viewIssues();
+      const scoped = group ? rows.filter((i) => i.comboGroup === group) : rows;
+      return scoped.map((i) => publicRow(i as unknown as Rec));
+    }) as Rec[];
+
+    if (groupRows.length <= ISSUES_CLIENT_ALL_MAX) {
+      return {
+        all: true,
+        rows: groupRows,
+        filtered: groupRows.length,
+        page: 0,
+        pageCount: Math.max(1, Math.ceil(groupRows.length / pageSize)),
+      };
+    }
+
+    // Past the ceiling. `groupRows` is already scoped to this one pattern — the group
+    // filter above ran BEFORE this page is cut, never after — so `filtered` reports the
+    // GROUP's size. Paging the whole register first and filtering the page afterward would
+    // instead report the register's size under this pattern's label, and a deep link into
+    // one narrow pattern would leaf through other patterns' rows.
+    const paged = pageOf(groupRows, page, pageSize);
+    return {
+      all: false,
+      rows: paged.rows,
+      filtered: groupRows.length,
+      page: paged.page,
+      pageCount: paged.pageCount,
+    };
   });
 }
 
@@ -2702,8 +2759,8 @@ function publicProblemRow(r: ProblemRow): Rec {
  * produced would be off by the finding population — a wrong number with no symptom.
  *
  * L1 only. The cache namespace is `backlogMovement1`, in this file's own suffix convention
- * (`assetsModel2`, `getIssues`): the trailing digit is bumped when the SHAPE of what is stored
- * changes, so a still-warm entry cannot answer a newer client with an older payload.
+ * (`assetsModel2`, `getIssues2`): the trailing digit is bumped when the SHAPE of what is
+ * stored changes, so a still-warm entry cannot answer a newer client with an older payload.
  */
 function problemsMovement(model: ProblemsModel): BacklogMovement {
   const openNow = model.rows.filter((r) => r.kind === "ISSUE").length;

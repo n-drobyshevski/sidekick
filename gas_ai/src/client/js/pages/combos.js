@@ -148,8 +148,9 @@ export async function renderCombos(main, params) {
   // Seeded from the URL so a filtered, sorted, expanded view is shareable — and held out
   // here so an SWR repaint restores it instead of throwing it away.
   const view = readComboParams(params);
-  // group id -> the rows api_getIssues answered with. Kept so a repaint re-renders the
-  // open table from memory rather than flashing a loading line at the analyst.
+  // group id -> the response api_getIssues answered with (`{all, rows, filtered, page,
+  // pageCount}`). Kept so a repaint re-renders the open table from memory rather than
+  // flashing a loading line at the analyst.
   const issueRows = new Map();
   let payload = null;
 
@@ -667,9 +668,9 @@ export async function renderCombos(main, params) {
   // --------------------------------------------------------------------- issue table
 
   async function loadIssues(group, mount) {
-    const cachedRows = issueRows.get(group.id);
-    if (cachedRows) {
-      renderIssues(group, mount, cachedRows);
+    const cachedPayload = issueRows.get(group.id);
+    if (cachedPayload) {
+      renderIssues(group, mount, cachedPayload);
       return;
     }
     clear(mount).append(el("div", { role: "status", "aria-label": "Loading issues" },
@@ -677,13 +678,17 @@ export async function renderCombos(main, params) {
       el("div", { style: "height:8px" }),
       skeleton("line", { height: "18px" })));
     try {
-      const res = await swrCall("api_getIssues", { group: group.id }, (fresh) => {
-        issueRows.set(group.id, fresh.rows || []);
-        if (view.open === group.id) renderIssues(group, mount, fresh.rows || []);
-      });
-      issueRows.set(group.id, res.rows || []);
+      const res = await swrCall(
+        "api_getIssues",
+        { group: group.id, page: view.page, pageSize: PAGE_SIZE },
+        (fresh) => {
+          issueRows.set(group.id, fresh);
+          if (view.open === group.id) renderIssues(group, mount, fresh);
+        },
+      );
+      issueRows.set(group.id, res);
       if (view.open !== group.id) return; // the analyst closed it while we were fetching
-      renderIssues(group, mount, res.rows || []);
+      renderIssues(group, mount, res);
     } catch (e) {
       clear(mount).append(errorState("Couldn't load the issues for this pattern.", {
         detail: String((e && e.message) || e),
@@ -691,8 +696,26 @@ export async function renderCombos(main, params) {
     }
   }
 
-  function renderIssues(group, mount, rows) {
+  /**
+   * `api_getIssues` answers `all: true` under ISSUES_CLIENT_ALL_MAX — the whole pattern's
+   * rows in hand, filtered/sorted/paged locally, `renderIssuesAll` below — or `all: false`
+   * past it, where the server already cut the page, `renderIssuesPaged`. The same
+   * two-mode split `problems.js` draws over the whole union with `renderAll`/`renderPaged`.
+   *
+   * The parameter is named `resp`, never `payload`: this file already uses the outer
+   * `payload` variable for `api_getToxicCombos`'s data, and shadowing it here would put
+   * two different fetches one word apart.
+   */
+  function renderIssues(group, mount, resp) {
     clear(mount);
+    if (resp.all) renderIssuesAll(group, mount, resp);
+    else renderIssuesPaged(group, mount, resp);
+  }
+
+  // ------------------------------------------------------ all-mode: the pattern in hand
+
+  function renderIssuesAll(group, mount, resp) {
+    const rows = resp.rows || [];
     const options = issueFilterOptions(rows);
     const filtered = applyIssueFilters(rows, view);
     const sorted = view.sort ? sortIssues(filtered, view.sort, view.dir) : filtered;
@@ -710,17 +733,71 @@ export async function renderCombos(main, params) {
         onPage: (next) => {
           view.page = next;
           persist();
-          renderIssues(group, mount, rows);
+          renderIssues(group, mount, resp);
         },
       }),
     );
   }
 
+  // -------------------------------------------------- paged mode: a large pattern only
+
+  /**
+   * Past ISSUES_CLIENT_ALL_MAX the server already applied the group filter and cut the
+   * page; account/project/search narrow only what's on screen, and a page change
+   * re-fetches — the same degrade `getProblems`'s own paged path accepts for its
+   * client-only affordances ("kind and search narrow only what's on screen, and changing
+   * the outcome or the page re-fetches").
+   */
+  function renderIssuesPaged(group, mount, resp) {
+    const rows = resp.rows || [];
+    const options = issueFilterOptions(rows);
+    const filtered = applyIssueFilters(rows, view);
+    const sorted = view.sort ? sortIssues(filtered, view.sort, view.dir) : filtered;
+
+    mount.append(
+      issueFilterBar(group, mount, rows, options, filtered.length, rows.length),
+      issueTable(mount, group, sorted),
+      tableFooter({
+        page: resp.page,
+        pageCount: resp.pageCount,
+        total: resp.filtered,
+        onPage: (next) => refetchIssues(group, mount, next),
+      }),
+    );
+  }
+
+  async function refetchIssues(group, mount, page) {
+    view.page = page;
+    persist();
+    clear(mount).append(el("div", { role: "status", "aria-label": "Loading issues" },
+      skeleton("line", { height: "18px" })));
+    try {
+      const fresh = await swrCall(
+        "api_getIssues",
+        { group: group.id, page, pageSize: PAGE_SIZE },
+        (f) => {
+          issueRows.set(group.id, f);
+          if (view.open === group.id) renderIssues(group, mount, f);
+        },
+      );
+      issueRows.set(group.id, fresh);
+      if (view.open !== group.id) return; // the analyst closed it while we were fetching
+      renderIssues(group, mount, fresh);
+    } catch (e) {
+      clear(mount).append(errorState("Couldn't load the issues for this pattern.", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function issueFilterBar(group, mount, rows, options, shownCount, totalCount) {
+    // The cached RESPONSE, not the `rows` array closed over above — in paged mode `rows` is
+    // only the current page, and re-rendering from it would drop the other pages' worth of
+    // context the footer still needs (`resp.filtered`/`page`/`pageCount`).
     const rerender = () => {
       view.page = 0;
       persist();
-      renderIssues(group, mount, rows);
+      renderIssues(group, mount, issueRows.get(group.id));
     };
 
     const search = el("input", {
@@ -807,6 +884,7 @@ export async function renderCombos(main, params) {
     const descending = view.sort && (ISSUE_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
 
     return dataTable({
+      stickyHeader: true,
       columns: COLS.map((col, i) => ({
         key: col.key || `col-${i}`,
         label: col.label,
@@ -820,7 +898,10 @@ export async function renderCombos(main, params) {
         view.sort = key;
         view.page = 0;
         persist();
-        renderIssues(group, mount, issueRows.get(group.id) || []);
+        // A re-sort reorders the page already in hand — the same local-only re-render
+        // `problems.js`'s own onSort does even past its own cap ("kind is always
+        // client-side, even in paged mode"); a column click never re-fetches.
+        renderIssues(group, mount, issueRows.get(group.id));
       },
       onRowOpen: (issue) => openIssueRow(issue),
       rowLabel: (issue) => "Issue on " + issue.assetName,
