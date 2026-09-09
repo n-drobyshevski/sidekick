@@ -4,14 +4,14 @@ A small Spark pipeline that pulls Wiz vulnerability findings into Delta, tracks 
 vulnerability's lifecycle across scans in a persistent ledger, and computes four metric families
 as query-able gold tables:
 
-| Metric | Question it answers | Formula |
-| --- | --- | --- |
-| **MTTR / SLA** | How fast are we closing risk? | Kaplan–Meier median over `resolved_at − first_seen`, counting still-open findings as right-censored; in-SLA is `mttr_days <= target` |
-| **Coverage** | Of all high-risk vulnerabilities, what share did we remediate? | `TP / (TP + FN)` |
-| **Efficiency** | Of everything we remediated, what share was actually high-risk? | `TP / (TP + FP)` |
-| **Capacity** | Can we close faster than risk arrives? | monthly `closed / open_at_start`, and `closed − opened` |
+| Metric         | Question it answers                                             | Formula                                                                                                                              |
+| -------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| **MTTR / SLA** | How fast are we closing risk?                                   | Kaplan–Meier median over `resolved_at − first_seen`, counting still-open findings as right-censored; in-SLA is `mttr_days <= target` |
+| **Coverage**   | Of all high-risk vulnerabilities, what share did we remediate?  | `TP / (TP + FN)`                                                                                                                     |
+| **Efficiency** | Of everything we remediated, what share was actually high-risk? | `TP / (TP + FP)`                                                                                                                     |
+| **Capacity**   | Can we close faster than risk arrives?                          | monthly `closed / open_at_start`, and `closed − opened`                                                                              |
 
-Coverage and efficiency come from the Cisco Kenna / Cyentia *Prioritization to Prediction*
+Coverage and efficiency come from the Cisco Kenna / Cyentia _Prioritization to Prediction_
 series. They are in direct tension, so the pipeline always emits both, never one alone — and
 P2P is the source of the **formulas**, not a benchmark these numbers can be read against. See
 [Reading coverage and efficiency](#reading-coverage-and-efficiency), which is the section to
@@ -26,12 +26,7 @@ The code side of the estate — library CVEs and static-analysis weaknesses — 
 rather than a scope of this one. It carries its own copy of everything here; see its README for
 what that costs and how the two are kept in step.
 
-This is a third surface over the same register as the Streamlit app and the Apps Script
-rebuild, not a replacement for either. `gas/` is the most complete of the three and is the
-reference implementation: the lifecycle rules are ported from `gas/src/domain/reconcile.ts`, the
-P2P family from `gas/src/domain/program.ts`, and Kaplan–Meier from
-`gas/src/domain/remediation.ts`. Where GAS and the older `wiz_dashboard/domain/` port disagree,
-GAS wins.
+This is a Databricks surface over the same register as the Apps Script rebuild. `gas/` is the most complete surface and is the reference implementation: the lifecycle rules are ported from `gas/src/domain/reconcile.ts`, the P2P family from `gas/src/domain/program.ts`, and Kaplan–Meier from `gas/src/domain/remediation.ts`. Where GAS and the older `wiz_dashboard/domain/` port disagree, GAS wins.
 
 ## Layout
 
@@ -77,8 +72,7 @@ win — that would fail as a confusing `AttributeError` rather than an import er
 notebook's first cell does this, and `06_run_and_verify` prints the `__file__` each module
 actually came from.
 
-`brick/` never imports `wiz_dashboard` — a Spark cluster has neither that package nor
-Streamlit. The shared constants are duplicated on purpose; `config.py` names its sources.
+`brick/` never imports `wiz_dashboard` — a Spark cluster does not carry that package. The shared constants are duplicated on purpose; `config.py` names its sources.
 
 ## The ledger, and why v2 exists
 
@@ -100,17 +94,17 @@ implementation; `brick/tests/test_ledger.py` replays that module's own golden fi
 (`gas/test/fixtures/reconcile.json`) scenario by scenario, so the port is checked against the
 standard rather than against itself.
 
-| Rule | |
-| --- | --- |
-| First sighting | OPEN, `first_seen = min(firstDetectedAt, scan ts)` |
-| Persisting | advance `last_seen`; `first_seen` stays earliest-known and never drifts later |
-| API-resolved | `resolvedAt` present, or status in `RESOLVED_STATUSES` → `resolution_src = 'api'` |
-| Disappearance | was OPEN, was in the previous scan covering its severity, absent now → `resolution_src = 'disappeared'` |
-| Reopen | a RESOLVED finding is active again → OPEN, `reopened_count++`, a new episode |
+| Rule           |                                                                                                         |
+| -------------- | ------------------------------------------------------------------------------------------------------- |
+| First sighting | OPEN, `first_seen = min(firstDetectedAt, scan ts)`                                                      |
+| Persisting     | advance `last_seen`; `first_seen` stays earliest-known and never drifts later                           |
+| API-resolved   | `resolvedAt` present, or status in `RESOLVED_STATUSES` → `resolution_src = 'api'`                       |
+| Disappearance  | was OPEN, was in the previous scan covering its severity, absent now → `resolution_src = 'disappeared'` |
+| Reopen         | a RESOLVED finding is active again → OPEN, `reopened_count++`, a new episode                            |
 
 A reopen "recomputes" `first_seen` rather than advancing it: it takes `min(firstDetectedAt, scan
 ts)`, the same formula a first sighting uses, and deliberately ignores the value already on the
-row. That breaks the earliest-known chain — the one place `first_seen` can move *later*. Note the
+row. That breaks the earliest-known chain — the one place `first_seen` can move _later_. Note the
 consequence: if Wiz still reports the original `firstDetectedAt`, the reopened episode inherits
 that date rather than starting from the reopen. That is the reference implementation's behaviour
 (`reconcile.ts:340`), and the surfaces have to agree.
@@ -144,16 +138,16 @@ Everything except the ledger is appended, never overwritten. Every row carries `
 ledger is the exception: it is `MERGE`d, so a vulnerability keeps one row and one history no
 matter how many times it is scanned.
 
-| Table | Grain | Contents |
-| --- | --- | --- |
-| `…wiz_os_findings_raw` | scan × finding | bronze: `node_json` as a string, plus `seq` (API order) |
-| `…wiz_os_findings` | scan × finding | silver: typed columns, `mttr_days`, `age_days`, `risk_class` |
-| **`…wiz_os_vuln_ledger`** | **one row per `vuln_key`** | **the durable base: `first_seen`, `last_seen`, `status`, `resolved_at`, `resolution_src`, `reopened_count`, the fix clock and the exploit signals** |
-| **`…wiz_os_scans`** | **one row per run** | **the run log: `scope`, `severities`, and the new/resolved/reopened deltas** |
-| `…wiz_os_metrics_mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, and the `snap_*` snapshot comparison |
-| `…wiz_os_metrics_program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
-| `…wiz_os_metrics_capacity` | scan × month × **`population`** | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
-| `…wiz_os_metrics_sensitivity` | scan × signal subset | the same confusion matrix and rates under each of the seven non-empty rules, with the configured one marked `active` |
+| Table                         | Grain                           | Contents                                                                                                                                            |
+| ----------------------------- | ------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `…wiz_os_findings_raw`        | scan × finding                  | bronze: `node_json` as a string, plus `seq` (API order)                                                                                             |
+| `…wiz_os_findings`            | scan × finding                  | silver: typed columns, `mttr_days`, `age_days`, `risk_class`                                                                                        |
+| **`…wiz_os_vuln_ledger`**     | **one row per `vuln_key`**      | **the durable base: `first_seen`, `last_seen`, `status`, `resolved_at`, `resolution_src`, `reopened_count`, the fix clock and the exploit signals** |
+| **`…wiz_os_scans`**           | **one row per run**             | **the run log: `scope`, `severities`, and the new/resolved/reopened deltas**                                                                        |
+| `…wiz_os_metrics_mttr`        | scan × severity (+ `OVERALL`)   | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, and the `snap_*` snapshot comparison       |
+| `…wiz_os_metrics_program`     | scan × severity (+ `OVERALL`)   | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage                                                              |
+| `…wiz_os_metrics_capacity`    | scan × month × **`population`** | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed`                                                 |
+| `…wiz_os_metrics_sensitivity` | scan × signal subset            | the same confusion matrix and rates under each of the seven non-empty rules, with the configured one marked `active`                                |
 
 The gold tables are computed from the ledger. The snapshot figures are still computed and
 published beside them as `snap_km_median`, `snap_mttr_median`, `snap_resolved`, `snap_open` —
@@ -173,10 +167,10 @@ published beside them as `snap_km_median`, `snap_mttr_median`, `snap_resolved`, 
 
 Each month appears twice, once per population, and **an unfiltered read doubles every count.**
 
-| `population` | |
-| --- | --- |
-| `all` | every finding. How much of the backlog moves in a month |
-| `high_risk` | high-risk lifecycles only. The population P2P v3 defines net remediation capacity over, and what `gas/src/server/api.ts:859` passes (`highRiskOnly: true`) |
+| `population` |                                                                                                                                                            |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `all`        | every finding. How much of the backlog moves in a month                                                                                                    |
+| `high_risk`  | high-risk lifecycles only. The population P2P v3 defines net remediation capacity over, and what `gas/src/server/api.ts:859` passes (`highRiskOnly: true`) |
 
 The two routinely disagree, and which one a number meant is not recoverable after the fact — so
 both are written and every reader has to say which. The `high_risk` rows carry no
@@ -218,19 +212,19 @@ the name keeps an OS run and an all-types run in separate tables. `--table_prefi
 That separation is structural, and `ledger.reconcile` still refuses to assume it: a prior row or
 an observation stating a scope other than the one it was asked for raises rather than being
 reconciled. Absence is remediation here, so a foreign prior is not a mislabelled input — every
-one of its rows is missing from this scan *by construction*, and all of them would close as
+one of its rows is missing from this scan _by construction_, and all of them would close as
 remediated, with real resolution dates and a delta that reads like a good week.
 
 ### Table layout
 
 Three tables carry a physical layout. The rest are left alone.
 
-| Table | `CLUSTER BY` | Deletion vectors | Why |
-| --- | --- | --- | --- |
-| `…vuln_ledger` | `vuln_key` | **on** | `vuln_key` is the MERGE's `ON` key |
-| `…findings_raw` | `scan_id` | off | every read of bronze filters on `scan_id` |
-| `…findings` | `scan_id` | off | same, plus the scan pin every page applies |
-| the four gold tables, `…scans` | — | — | 9–150 rows per scan; nothing to lay out |
+| Table                          | `CLUSTER BY` | Deletion vectors | Why                                        |
+| ------------------------------ | ------------ | ---------------- | ------------------------------------------ |
+| `…vuln_ledger`                 | `vuln_key`   | **on**           | `vuln_key` is the MERGE's `ON` key         |
+| `…findings_raw`                | `scan_id`    | off              | every read of bronze filters on `scan_id`  |
+| `…findings`                    | `scan_id`    | off              | same, plus the scan pin every page applies |
+| the four gold tables, `…scans` | —            | —                | 9–150 rows per scan; nothing to lay out    |
 
 **Deletion vectors are the half that pays.** Without them a `MERGE` that matches a row rewrites
 the entire file containing it, so the daily reconcile — which touches every finding the scan
@@ -246,7 +240,7 @@ cluster configured unlike the test suite is how a number stops being reproducibl
 
 **Clustering `vuln_key` is not what makes the MERGE fast, and it is worth knowing why.** A
 `vuln_key` is `id:<wiz-finding-id>` or `h:<sha>`; both are effectively random. Clustering gives
-files non-overlapping *ranges*, and a source holding every finding this scan saw spans the whole
+files non-overlapping _ranges_, and a source holding every finding this scan saw spans the whole
 range — so almost no file can be pruned. Random keys are the worst case for range-based
 skipping. It is still the right key (it is the only one the MERGE joins on, and point lookups do
 benefit), but the reason the reconcile gets cheaper is the deletion vectors.
@@ -277,11 +271,11 @@ existing register keeps its unclustered layout until someone migrates it — see
 reaches ~24,800 rows with 8,000 touched per scan, so a third of it is rewritten daily and there
 is real copy-on-write to avoid. Three runs a side, medians:
 
-| | median | Spark jobs |
-| --- | --- | --- |
-| unclustered (before) | 176.3 s | 910 |
-| clustered, no deletion vectors | 185.1 s | 910 |
-| clustered + deletion vectors | 206.4 s | 988 |
+|                                | median  | Spark jobs |
+| ------------------------------ | ------- | ---------- |
+| unclustered (before)           | 176.3 s | 910        |
+| clustered, no deletion vectors | 185.1 s | 910        |
+| clustered + deletion vectors   | 206.4 s | 988        |
 
 **Both cost. Neither pays.** Clustering alone is ~5% slower; deletion vectors add another ~12%
 and 78 Spark jobs per run.
@@ -301,7 +295,7 @@ every scan anyway, this layout is costing you and `delta.enableDeletionVectors` 
 arithmetic is the other way round — and the way to find out is to run `bench_pipeline.py` against
 numbers that look like yours rather than to trust either of us.
 
-Two things this *does* buy unconditionally: `--maintain` becomes safe to run (see
+Two things this _does_ buy unconditionally: `--maintain` becomes safe to run (see
 [Table layout](#table-layout) on bronze's accidental skipping), and the layout is declared rather
 than emergent.
 
@@ -311,10 +305,10 @@ than emergent.
 table names — one parameter, so a table can never disagree with what is inside it. Every row
 also carries a `scope` column, so it stays self-describing after a `UNION`.
 
-| Scope | Population |
-| --- | --- |
-| `os` (default) | OS-package CVEs on host workloads. Parity with `os_vulns.VARIABLES["filterBy"]` — `detectionMethod: OS`, `assetType: VIRTUAL_MACHINE`, `assetIsRepresentativeResource: false`, and the `openssl`/`python`/`vim` exclusions — so the numbers are comparable with the Streamlit dashboard's |
-| `all` | Every detection method and asset type: container SBOM, code libraries, OS, the lot |
+| Scope          | Population                                                                                                                                                                                                                                                                            |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `os` (default) | OS-package CVEs on host workloads. Parity with `os_vulns.VARIABLES["filterBy"]` — `detectionMethod: OS`, `assetType: VIRTUAL_MACHINE`, `assetIsRepresentativeResource: false`, and the `openssl`/`python`/`vim` exclusions — so the numbers are comparable with the GAS OS register's |
+| `all`          | Every detection method and asset type: container SBOM, code libraries, OS, the lot                                                                                                                                                                                                    |
 
 Both scopes share `status: ["OPEN", "RESOLVED"]` and `hasFix: true`, and neither is about
 scoping:
@@ -406,8 +400,8 @@ this is the most common way the setup goes wrong):
 > **Replace all six together.** The modules move in lockstep — v2's `metrics.py` writes a silver
 > frame that only v2's `run_pipeline.py` knows how to merge — so a half-updated folder imports
 > cleanly and then fails much later at something that looks unrelated. The first real v2 run hit
-> exactly this: 137,870 findings ingested, then *"A schema mismatch detected when writing to the
-> Delta table"*, which names neither the stale file nor the fix. Every module now carries a
+> exactly this: 137,870 findings ingested, then _"A schema mismatch detected when writing to the
+> Delta table"_, which names neither the stale file nor the fix. Every module now carries a
 > `MODULE_VERSION` and `run_pipeline` refuses to start when they disagree, but re-pasting the
 > whole set is what avoids the problem rather than merely diagnosing it.
 
@@ -434,7 +428,7 @@ To read the [notebooks](#notebooks) as well as run the pipeline, three more file
 
 These five are **not** in the six. A scheduled Job must never fail for want of Plotly, and it
 has no business carrying a one-shot migration either, so `run_pipeline` neither imports nor
-requires any of them — but if they *are* imported and their version disagrees, that is fatal for
+requires any of them — but if they _are_ imported and their version disagrees, that is fatal for
 the same reason the six are: a stale `figures.py` beside a fresh `metrics.py` draws a chart that
 contradicts the number printed above it, and a stale `import_bundle.py` seeds rows the current
 reconciler cannot continue. Same class of bug, quieter failure.
@@ -450,7 +444,7 @@ Three ways to get them there, all ending in the same place:
   finds the modules one directory up on its own. The only option that updates every file at once
   and tells you when your copy is stale, and the one to use if you want the notebooks.
 - **CLI** — `databricks workspace import-dir ./brick /Workspace/Users/<you>/wiz-metrics
-  --overwrite`. **`--overwrite` is not optional when refreshing:** without it existing files are
+--overwrite`. **`--overwrite` is not optional when refreshing:** without it existing files are
   skipped and only the new `ledger.py` lands, which is the mixed folder described above.
   Copies `tests/` too, harmlessly.
 
@@ -571,34 +565,34 @@ Resolved in this order: `--name=value` on the command line, then `dbutils.widget
 then the `NAME` environment variable, then the default. One code path covers Jobs, notebooks
 and a laptop.
 
-| Name | Default | |
-| --- | --- | --- |
-| `catalog` | — | **required**, no default; `hive_metastore` on a workspace without Unity Catalog |
-| `schema` | `wiz` | created only if it does not already exist |
-| `scope` | `os` | `os` or `all` — see [Scope](#scope). The code registers live in [`brick/devsecops/`](devsecops/README.md) and are a separate deployment |
-| `table_prefix` | `wiz_<scope>_` | pass empty to use bare table names |
-| `project_id` | — | optional `projectIdV2` restriction |
-| `wiz_api_url` | — | **required**, `https://api.<region>.app.wiz.io/graphql` |
-| `wiz_auth_url` | `https://auth.app.wiz.io/oauth/token` | override for a dedicated tenant |
-| `secret_scope` | — | scope holding `wiz-client-id` / `wiz-client-secret` |
-| `severities` | `CRITICAL,HIGH` | comma-separated; also recorded per scan and used by the disappearance guard |
-| `scan_id` | a random id | pass `{{job.run_id}}` on a scheduled Job — see [Retries](#retries-are-safe-if-you-pass-scan_id) |
-| `disappearance` | `scan_ts` | `scan_ts` or `midpoint` |
-| `rebuild_ledger` | `false` | replay bronze and rebuild the ledger from scratch — see [Backfill](#backfilling-from-existing-bronze) |
-| `shuffle_partitions` | `0` | `spark.sql.shuffle.partitions` for the run; `0` leaves the cluster's own setting alone |
-| `maintain` | `false` | run `OPTIMIZE` over the clustered tables and exit, ingesting nothing — see [Maintenance](#maintenance) |
-| `data_path` | — | write the register to this directory instead of a catalog — see [PoC storage](#poc-storage-running-with-no-catalog). With it set, `catalog` is not required |
-| `export_csv` | — | write every table to this directory as typed CSV and exit, ingesting nothing — see [The CSV register](#the-csv-register) |
-| `csv_path` | — | **make this directory the register**: restore it into Delta before the scan, export it back after. Implies no catalog, and a disposable Delta scratch — see [The CSV register](#the-csv-register) |
-| `csv_include_bronze` | `false` | include bronze in the export. Large, and nothing reads it back |
-| `csv_restore` | — | write a CSV export back out as the Delta register and exit. Overwrites — see [The CSV register](#the-csv-register) |
+| Name                 | Default                               |                                                                                                                                                                                                   |
+| -------------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `catalog`            | —                                     | **required**, no default; `hive_metastore` on a workspace without Unity Catalog                                                                                                                   |
+| `schema`             | `wiz`                                 | created only if it does not already exist                                                                                                                                                         |
+| `scope`              | `os`                                  | `os` or `all` — see [Scope](#scope). The code registers live in [`brick/devsecops/`](devsecops/README.md) and are a separate deployment                                                           |
+| `table_prefix`       | `wiz_<scope>_`                        | pass empty to use bare table names                                                                                                                                                                |
+| `project_id`         | —                                     | optional `projectIdV2` restriction                                                                                                                                                                |
+| `wiz_api_url`        | —                                     | **required**, `https://api.<region>.app.wiz.io/graphql`                                                                                                                                           |
+| `wiz_auth_url`       | `https://auth.app.wiz.io/oauth/token` | override for a dedicated tenant                                                                                                                                                                   |
+| `secret_scope`       | —                                     | scope holding `wiz-client-id` / `wiz-client-secret`                                                                                                                                               |
+| `severities`         | `CRITICAL,HIGH`                       | comma-separated; also recorded per scan and used by the disappearance guard                                                                                                                       |
+| `scan_id`            | a random id                           | pass `{{job.run_id}}` on a scheduled Job — see [Retries](#retries-are-safe-if-you-pass-scan_id)                                                                                                   |
+| `disappearance`      | `scan_ts`                             | `scan_ts` or `midpoint`                                                                                                                                                                           |
+| `rebuild_ledger`     | `false`                               | replay bronze and rebuild the ledger from scratch — see [Backfill](#backfilling-from-existing-bronze)                                                                                             |
+| `shuffle_partitions` | `0`                                   | `spark.sql.shuffle.partitions` for the run; `0` leaves the cluster's own setting alone                                                                                                            |
+| `maintain`           | `false`                               | run `OPTIMIZE` over the clustered tables and exit, ingesting nothing — see [Maintenance](#maintenance)                                                                                            |
+| `data_path`          | —                                     | write the register to this directory instead of a catalog — see [PoC storage](#poc-storage-running-with-no-catalog). With it set, `catalog` is not required                                       |
+| `export_csv`         | —                                     | write every table to this directory as typed CSV and exit, ingesting nothing — see [The CSV register](#the-csv-register)                                                                          |
+| `csv_path`           | —                                     | **make this directory the register**: restore it into Delta before the scan, export it back after. Implies no catalog, and a disposable Delta scratch — see [The CSV register](#the-csv-register) |
+| `csv_include_bronze` | `false`                               | include bronze in the export. Large, and nothing reads it back                                                                                                                                    |
+| `csv_restore`        | —                                     | write a CSV export back out as the Delta register and exit. Overwrites — see [The CSV register](#the-csv-register)                                                                                |
 
 `shuffle_partitions` is the one parameter that changes nothing about any published number, and
 it is unset by default on purpose. Spark's 200 is sized for a cluster moving real data, and a
 run here is a few dozen aggregations over one scan on the single-node cluster this README
 recommends — so a smaller number looks like free speed. Measured, it is not: over three runs a
 side at 20,000 findings, `64` produced the fastest single run and the tightest spread but a
-*worse* median than 200. Tune it against your own register with
+_worse_ median than 200. Tune it against your own register with
 [`bench_pipeline.py`](#benchmarking) rather than trusting either number.
 
 ### Retries are safe, if you pass `scan_id`
@@ -611,7 +605,7 @@ run then finds its own row in `…wiz_os_scans` and does nothing.
 Without it, `scan_id` is random and a retry looks like a brand-new scan. Also set
 `"max_concurrent_runs": 1` so two runs cannot reconcile against each other.
 
-If a run dies *between* the ledger MERGE and the scan-log write, the next run detects it — the
+If a run dies _between_ the ledger MERGE and the scan-log write, the next run detects it — the
 ledger carries the scan id, the log does not — and **refuses rather than double-counting**.
 Recover with `--rebuild_ledger`.
 
@@ -621,7 +615,7 @@ finishes — a full register is hundreds of thousands of JSON documents and one 
 them is a driver problem waiting to happen. So a crash mid-sweep leaves the batches that
 committed. Nothing reads them: bronze rows are only ever selected by a `scan_id` that has a
 `…wiz_os_scans` row, and a retry passing the same `--scan_id` clears them before re-ingesting.
-A run that dies mid-ingest and is *never* retried leaves orphaned bronze rows, which cost
+A run that dies mid-ingest and is _never_ retried leaves orphaned bronze rows, which cost
 storage and nothing else.
 
 ### Maintenance
@@ -633,7 +627,7 @@ python brick/run_pipeline.py --catalog=<catalog> --maintain=true \
 
 `--maintain` runs `OPTIMIZE` over the three [clustered tables](#table-layout) and exits without
 ingesting anything. It is what actually applies the clustering: a table declares its layout at
-creation, but a write only *lays data out* above a size threshold no single scan here reaches,
+creation, but a write only _lays data out_ above a size threshold no single scan here reaches,
 so without this the spec is a promise nothing keeps. On a clustered table `OPTIMIZE` clusters
 incrementally — it rewrites what is not already in place, not the whole table.
 
@@ -701,7 +695,7 @@ as roughly zero until enough history accumulates.
 
 **One caveat, and it matters.** v1 never recorded which severities a scan asked for, so replayed
 scans are assumed to have used the `--severities` you pass. If your history was collected under a
-different scope, pass *that* scope — otherwise the replay will resolve-by-disappearance severities
+different scope, pass _that_ scope — otherwise the replay will resolve-by-disappearance severities
 the original scans never covered, and invent remediation that never happened. Scans written by v2
 carry their own scope and are unaffected.
 
@@ -738,8 +732,8 @@ would re-open lifecycles it has since resolved, and appending an older scan log 
 own would hand the disappearance guard the wrong previous scan.
 
 `--force_import=true` **replaces the register**, not merely the two lifecycle tables. The gold
-tables are why: they are appended per scan and computed from the ledger *as it stood at that
-scan*, so rows written before a seed were derived from a ledger that started empty. Left in
+tables are why: they are appended per scan and computed from the ledger _as it stood at that
+scan_, so rows written before a seed were derived from a ledger that started empty. Left in
 place they sit in `04_scan_history` as a run whose MTTR reads near zero, beside seeded runs
 where it does not — a contradiction with nothing on the page to explain it. So a forced import
 overwrites the ledger and the scan log and empties bronze, silver and all four gold tables, and
@@ -764,9 +758,9 @@ GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE ON SCHEMA <catalog>.<schema> TO `
 **The two parameters that must match GAS**, because getting either wrong invents remediation
 that never happened:
 
-| | |
-| --- | --- |
-| `--severities` | the scope GAS was scanning. Absence of a severity nobody looked for is not a fix — the same caveat the bronze rebuild carries |
+|                |                                                                                                                                                                                                     |
+| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--severities` | the scope GAS was scanning. Absence of a severity nobody looked for is not a fix — the same caveat the bronze rebuild carries                                                                       |
 | `--project_id` | GAS's `WIZ_PROJECT_ID_V2`. GAS scans one Wiz project; `--scope=os` pins none unless asked. A wider or narrower population resolves-by-disappearance everything outside the overlap on the first run |
 
 Read `resolved_count` in that first run's summary before anything else. A plausible day's
@@ -783,13 +777,13 @@ entirely. Sealed `resolved_episodes` are folded in as ordinary RESOLVED rows, mi
 `ledgerCore.baseRows`, which unions them at read time: that union is the population GAS's own
 coverage and MTTR are computed over, so importing only the live ledger would shrink both.
 
-| Not carried | |
-| --- | --- |
-| `tags_json` | brick's ingest selects no asset tags, so nothing downstream would read it — and domain triage is unavailable here either way |
-| a back-dated actionable clock | `fix_date` / `fix_observed_at` arrive and are read (see [The actionable clock](#the-actionable-clock)), but the bundle carries no fix history beyond what each lifecycle's last observation held |
-| bronze, and therefore a back-dated gold trend | the bundle holds reconciled lifecycles, not raw findings. `<p>scans` shows the imported runs; the gold tables begin accumulating from the first brick run |
-| `mttr_history` | GAS's precomputed daily KPI series. It rides in the bundle and brick has no table for it |
-| several episodes for one `vuln_key` | brick's ledger is one row per key, so the most recently resolved wins; the import counts the rest |
+| Not carried                                   |                                                                                                                                                                                                  |
+| --------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `tags_json`                                   | brick's ingest selects no asset tags, so nothing downstream would read it — and domain triage is unavailable here either way                                                                     |
+| a back-dated actionable clock                 | `fix_date` / `fix_observed_at` arrive and are read (see [The actionable clock](#the-actionable-clock)), but the bundle carries no fix history beyond what each lifecycle's last observation held |
+| bronze, and therefore a back-dated gold trend | the bundle holds reconciled lifecycles, not raw findings. `<p>scans` shows the imported runs; the gold tables begin accumulating from the first brick run                                        |
+| `mttr_history`                                | GAS's precomputed daily KPI series. It rides in the bundle and brick has no table for it                                                                                                         |
+| several episodes for one `vuln_key`           | brick's ledger is one row per key, so the most recently resolved wins; the import counts the rest                                                                                                |
 
 Two things survive the import but not a **re-scan**, and both are worth knowing before reading a
 severity breakdown. GAS heals a blank severity from `vendorSeverity` / `nvdSeverity`
@@ -871,9 +865,9 @@ What is true is narrower, and worth knowing before you pass `--catalog=hive_meta
   `[REQUIRES_SINGLE_PART_NAMESPACE] spark_catalog requires a single-part namespace`, and it
   never reports "not found" — `databaseExists` returns `False` silently and `CREATE SCHEMA`
   dies inside Spark's own error formatter (`_LEGACY_ERROR_TEMP_1055`), which `ensure_schema`
-  then re-raises as a CREATE-SCHEMA *grant* problem it is not;
+  then re-raises as a CREATE-SCHEMA _grant_ problem it is not;
 - delta-spark's Python builder is the one call that genuinely cannot: `DeltaTable
-  .createIfNotExists(spark).tableName("a.b.c")` parses a two-part identifier and dies on the
+.createIfNotExists(spark).tableName("a.b.c")` parses a two-part identifier and dies on the
   second dot with `[PARSE_SYNTAX_ERROR] … pos 22`, before any catalog is consulted. That is
   `create_clustered`, which is why the local harness pre-creates the clustered tables by SQL
   DDL and lets `ensure_tables` no-op past them (`devlake/lake.py::precreate_clustered`).
@@ -955,18 +949,18 @@ table that must survive: `--rebuild_ledger` replays it, and everything else foll
 Two things have to be true: it persists, **and Spark executors can write to it**. Every write
 here is a distributed Delta write, which rules out one option that otherwise looks ideal.
 
-| | works | why |
-| --- | --- | --- |
-| `/Volumes/<cat>/<sch>/<vol>/…` | ✅ | needs a Unity Catalog **volume** — a much smaller ask than a schema you can create tables in, and Databricks' own recommendation for non-tabular data |
-| `dbfs:/…` | ✅ | where DBFS root still exists. Deprecated, and new workspaces are provisioned without it |
-| `s3://…`, `abfss://…`, `gs://…` | ✅ | needs credentials or an external location, but no catalog at all |
-| `/Workspace/…` | ❌ | persists, needs no catalog — and [**executors cannot write to workspace files**](https://docs.databricks.com/aws/en/files/workspace) |
-| `/tmp`, `/local_disk0`, relative | ❌ | wiped when the cluster terminates |
+|                                  | works | why                                                                                                                                                   |
+| -------------------------------- | ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `/Volumes/<cat>/<sch>/<vol>/…`   | ✅    | needs a Unity Catalog **volume** — a much smaller ask than a schema you can create tables in, and Databricks' own recommendation for non-tabular data |
+| `dbfs:/…`                        | ✅    | where DBFS root still exists. Deprecated, and new workspaces are provisioned without it                                                               |
+| `s3://…`, `abfss://…`, `gs://…`  | ✅    | needs credentials or an external location, but no catalog at all                                                                                      |
+| `/Workspace/…`                   | ❌    | persists, needs no catalog — and [**executors cannot write to workspace files**](https://docs.databricks.com/aws/en/files/workspace)                  |
+| `/tmp`, `/local_disk0`, relative | ❌    | wiped when the cluster terminates                                                                                                                     |
 
 `--data_path` **refuses** the last two rather than warning, because both failures are late and
 land on the data. An ephemeral path loses the register silently, overnight, and is discovered
 exactly when somebody first wants the history. `/Workspace` is subtler and worse: it can appear
-to work on a single-node cluster, where the driver *is* the executor, and then break the moment
+to work on a single-node cluster, where the driver _is_ the executor, and then break the moment
 the cluster is scaled — and workspace file permissions expire anyway (36 hours on interactive
 compute, 30 days for jobs), which disqualifies it as somewhere data lives. Its 500 MB cap is
 per file and would probably not have been the binding constraint; the executor rule is.
@@ -1029,8 +1023,8 @@ view named exactly as the table would be, and a temp view is valid anywhere Spar
 — the same trick `` delta.`<path>` `` plays — so every view, every panel and every `%sql` cell
 works untouched.
 
-**Why it is not `spark.read.csv`.** Every write Spark does is distributed, and *executors cannot
-write to workspace files* — which is also why `--data_path` refuses `/Workspace` outright. So
+**Why it is not `spark.read.csv`.** Every write Spark does is distributed, and _executors cannot
+write to workspace files_ — which is also why `--data_path` refuses `/Workspace` outright. So
 everything in `csvstore` is driver-side: `toPandas`, `open()`, `csv`. That is what makes
 `/Workspace` a legal destination for the CSV even though it is an illegal one for Delta.
 
@@ -1047,7 +1041,7 @@ tables, and a CSV file cannot be merged into. So `--csv_path` brackets the scan 
 3. **export** back to the same directory, last thing.
 
 The Delta side is deliberately disposable. With `--csv_path` set and no `--data_path`, it
-defaults to `dbfs:/tmp/wiz_scratch_<scope>` and the ephemeral-path refusal is *waived* — the
+defaults to `dbfs:/tmp/wiz_scratch_<scope>` and the ephemeral-path refusal is _waived_ — the
 guard exists because a register on ephemeral disk is lost overnight and discovered missing when
 somebody wants the history, and here there is no history in Delta to lose. Losing the scratch
 costs one restore.
@@ -1059,12 +1053,12 @@ meant to write CSV creates empty Delta tables in a production catalog instead.
 The first run has nothing to restore from. That is not an error — a missing manifest means an
 empty register, the run prints a note and carries on, and after it the directory exists.
 
-| you set | the register is | Delta is |
-| --- | --- | --- |
-| `--csv_path=/Workspace/…` | **the CSV directory** | per-run scratch on `dbfs:/tmp` |
-| `--csv_path` **and** `--data_path=<durable>` | the CSV directory | a durable mirror, kept between runs |
-| `--data_path=<dir>` alone | that Delta directory | the register |
-| `catalog` / `schema`, neither flag | **Delta tables in that catalog** | the register |
+| you set                                      | the register is                  | Delta is                            |
+| -------------------------------------------- | -------------------------------- | ----------------------------------- |
+| `--csv_path=/Workspace/…`                    | **the CSV directory**            | per-run scratch on `dbfs:/tmp`      |
+| `--csv_path` **and** `--data_path=<durable>` | the CSV directory                | a durable mirror, kept between runs |
+| `--data_path=<dir>` alone                    | that Delta directory             | the register                        |
+| `catalog` / `schema`, neither flag           | **Delta tables in that catalog** | the register                        |
 
 The last row is the one to be deliberate about: with neither flag set the run creates and writes
 tables in the catalog — and so does opening a read notebook, because `panels.context` calls
@@ -1081,7 +1075,7 @@ A Delta commit is atomic. A directory of CSVs and sidecars, which a notebook may
 a job rewrites it, is not. `_manifest.json` is written **last** by every export and checked by
 every load: it carries the module version and a row count per table.
 
-It cannot make the write atomic. It can make a torn one *detectable*: a row count that disagrees
+It cannot make the write atomic. It can make a torn one _detectable_: a row count that disagrees
 raises rather than quietly restoring a register missing half its ledger. An export with **no**
 manifest is read unverified rather than refused — one written by an older version is not
 automatically torn, and the failure worth catching is silence about a register that is.
@@ -1104,13 +1098,13 @@ register must be identical to the one over the Delta tables it came from.
 
 ### What it does and does not carry
 
-| | |
-| --- | --- |
-| **Bronze is excluded by default** | one JSON document per finding: the only table big enough to hit the workspace 500 MB per-file cap, and the only one nothing reads except `--rebuild_ledger`. `--csv_include_bronze=true` opts in — and **without it `--rebuild_ledger` has nothing to replay** in CSV-register mode, because the scratch Delta directory it would read is a fresh one |
-| **Arrays and structs are refused** | nothing in this register has one, and inventing a rendering that round-trips is worse than failing |
-| **No history, no clustering, no deletion vectors** | those live in the Delta log, and the log is the thing being thrown away each run. What the CSV carries is the current rows, which is what every metric reads |
+|                                                    |                                                                                                                                                                                                                                                                                                                                                       |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Bronze is excluded by default**                  | one JSON document per finding: the only table big enough to hit the workspace 500 MB per-file cap, and the only one nothing reads except `--rebuild_ledger`. `--csv_include_bronze=true` opts in — and **without it `--rebuild_ledger` has nothing to replay** in CSV-register mode, because the scratch Delta directory it would read is a fresh one |
+| **Arrays and structs are refused**                 | nothing in this register has one, and inventing a rendering that round-trips is worse than failing                                                                                                                                                                                                                                                    |
+| **No history, no clustering, no deletion vectors** | those live in the Delta log, and the log is the thing being thrown away each run. What the CSV carries is the current rows, which is what every metric reads                                                                                                                                                                                          |
 
-**Not how you migrate a register that is intact.** If the Delta side *is* the register — the
+**Not how you migrate a register that is intact.** If the Delta side _is_ the register — the
 `--data_path` / catalog rows above — what you migrate is the Delta directory:
 `CREATE TABLE … USING DELTA LOCATION` keeps the clustering, the deletion-vector property and the
 full history. The CSV round-trip is for the deployment where CSV is the register in the first
@@ -1119,7 +1113,7 @@ place.
 ### One thing about the workspace path, said once
 
 `/Workspace` file permissions **expire** — 36 hours on interactive compute, 30 days for jobs.
-That is a limit on *access*, not on the bytes, and it is the reason to keep a copy of the CSV
+That is a limit on _access_, not on the bytes, and it is the reason to keep a copy of the CSV
 directory somewhere outside the workspace if the history matters. Everything else in this mode
 is designed to be lost and restored; that directory is not.
 
@@ -1145,7 +1139,7 @@ decided whether the suite could use Delta.
 its own warehouse directory, so nothing they do can collide — which means how tests are spread
 across them is only ever a question of cost. `--dist loadgroup` is what lets `conftest.py`
 answer it: it pins `test_panels` and `test_notebooks` to one worker, because both read the
-session-scoped `live_tables` and session-scoped means *once per worker*, so splitting them would
+session-scoped `live_tables` and session-scoped means _once per worker_, so splitting them would
 build the whole live register twice. Everything else is left unpinned and handed out per test —
 including the two heaviest modules, `test_ledger_pipeline` and `test_import_bundle`, which build
 a private database per test and so parallelise all the way down.
@@ -1240,16 +1234,16 @@ Seven `.ipynb` pages under `notebooks/`, one per page of the GAS app, in the sam
 sidebar uses, plus a one-shot importer. Each answers one question with a headline, a small set
 of charts and a table you can sort and export. Run a cell, get a metric and its visualisation.
 
-| Notebook | The one question it answers |
-| --- | --- |
-| **`00_security_posture`** | How fast are we closing risk, how much is open right now, and is it getting worse? |
-| **`01_mttr_sla`** | How long does a vulnerability actually live once you stop excluding what is still open — and where is it slow? |
-| **`02_program_performance`** | Is remediation effort landing on the findings that matter, and can we close faster than risk arrives? |
-| **`03_os_vulnerabilities`** | What is exploitable, where does risk concentrate, and what moved since the last scan? |
-| **`04_scan_history`** | What has actually been measured, when, and how has the register moved across those measurements? |
-| **`05_estate`** | Can this register be attributed to an owner at all, and which parts of the estate carry the backlog? |
-| **`06_run_and_verify`** | Is the deployment sound, can I run a scan, and are the tables consistent? |
-| **`07_import_gas`** | Can this register start from the history the Apps Script app already has, instead of from today? |
+| Notebook                     | The one question it answers                                                                                    |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| **`00_security_posture`**    | How fast are we closing risk, how much is open right now, and is it getting worse?                             |
+| **`01_mttr_sla`**            | How long does a vulnerability actually live once you stop excluding what is still open — and where is it slow? |
+| **`02_program_performance`** | Is remediation effort landing on the findings that matter, and can we close faster than risk arrives?          |
+| **`03_os_vulnerabilities`**  | What is exploitable, where does risk concentrate, and what moved since the last scan?                          |
+| **`04_scan_history`**        | What has actually been measured, when, and how has the register moved across those measurements?               |
+| **`05_estate`**              | Can this register be attributed to an owner at all, and which parts of the estate carry the backlog?           |
+| **`06_run_and_verify`**      | Is the deployment sound, can I run a scan, and are the tables consistent?                                      |
+| **`07_import_gas`**          | Can this register start from the history the Apps Script app already has, instead of from today?               |
 
 `00`–`05` are **read-only about your data**. `06` is the only one that ingests, which is
 deliberate: a page somebody opens to check a number should not be one Run All away from a
@@ -1286,16 +1280,16 @@ support. Adding tags to `ingest.py` is the real fix.
 ### The asset fields are not fetched
 
 `config.FETCH_ASSET_FIELDS` is **False**. The live tenant no longer has the `vulnerableAsset`
-union members this query used, and GraphQL rejects the *whole request* rather than the
+union members this query used, and GraphQL rejects the _whole request_ rather than the
 sub-selection — so one unavailable field costs every scan. It is a constant rather than a
 deletion: `ingest._asset_selection` and its member list are intact, so a tenant that still has
 them turns the columns back on by flipping one line.
 
-| | |
-| --- | --- |
+|                          |                                                                                                                                                                                      |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | **NULL while it is off** | `asset_id`, `asset_name`, `asset_type`, `cloud`, `subscription_name`, `subscription_ext_id` — so `05_estate`, the by-subscription breakdowns and `risk_mix` have nothing to group on |
-| **Unaffected** | MTTR, SLA, coverage, efficiency, capacity, and the whole ledger. They read severity, status, timestamps and the exploit signals, none of which live on the asset |
-| **Identity unaffected** | `vuln_key` prefers the Wiz finding id, which is still selected. Only the fallback hash uses asset fields, and it is not reached |
+| **Unaffected**           | MTTR, SLA, coverage, efficiency, capacity, and the whole ledger. They read severity, status, timestamps and the exploit signals, none of which live on the asset                     |
+| **Identity unaffected**  | `vuln_key` prefers the Wiz finding id, which is still selected. Only the fallback hash uses asset fields, and it is not reached                                                      |
 
 Bronze written before the flag still holds the asset JSON, so `--rebuild_ledger` over that
 history repopulates those columns for the scans that captured them.
@@ -1328,18 +1322,18 @@ Two data facts the views correct on the way past, both of which the published ta
 
 ### Which engine draws what, and why
 
-**Plotly** draws anything where the *drawing* carries the argument: a NULL that must be a gap, a
+**Plotly** draws anything where the _drawing_ carries the argument: a NULL that must be a gap, a
 reference rule with a label, a staircase, direct labels, uncertainty bounds, or two series that
 must differ by more than hue. Databricks renders it live in the cell — pan, hover, legend
 toggling — so this is not the old static-PNG surface with a new library. It is also the only
-layer where the two rules below can be *tested*: a `Figure` is an object a test can interrogate.
+layer where the two rules below can be _tested_: a `Figure` is an object a test can interrogate.
 
 **The native chart editor** draws five things, all of them plain counts where the picker adds
 something code cannot: two stacked bars, a 100% stacked bar, and two pivot tables. **The native
 result grid** shows every table, because it sorts, filters, exports CSV and docks to a dashboard
 better than anything this repo would write — GAS's drawers and pagers are that grid here.
 
-**`displayHTML`** draws the surfaces where the number *is* the product: heroes, KPI bands,
+**`displayHTML`** draws the surfaces where the number _is_ the product: heroes, KPI bands,
 severity tiles, the confusion matrix. Never tabular data.
 
 Two conventions run through all of it, and both are enforced by tests rather than by review:
@@ -1366,19 +1360,19 @@ What ships instead, for each of the five, is:
 1. a markdown line above the cell beginning `Chart ▸`, naming the exact fields to set;
 2. the cell itself, whose **default rendering is already a correct, sortable, exportable table**.
 
-**The one-time workspace step.** Open each notebook, *Run all*, then for every `Chart ▸` header
+**The one-time workspace step.** Open each notebook, _Run all_, then for every `Chart ▸` header
 click **+ → Visualization** and set exactly the fields the recipe names. Then either:
 
 - **(a)** leave the charts in the workspace copy and accept that a `git pull` may drop them —
   re-creating one is a fifteen-second mechanical act, because the recipe is committed; or
-- **(b)** if a workspace admin has enabled *"Allow Git folders to export IPYNB outputs"*, commit
+- **(b)** if a workspace admin has enabled _"Allow Git folders to export IPYNB outputs"_, commit
   the notebook back and the visualisation travels with it.
 
 **(b) is workspace-configuration dependent and nothing in this repo can test it.** The failure is
 bounded by construction, which is the point: if the visualisation is never created, or is
 stripped on the way through Git, the reader sees a correct sorted table — never an error, never a
 wrong chart. That is a strictly better failure than "the whole document is rejected", and it is
-why only five of the visuals are native. The same *unverified UI guidance* caveat applies to the
+why only five of the visuals are native. The same _unverified UI guidance_ caveat applies to the
 menu paths in this section and to **Run accessed commands** below.
 
 `tests/test_notebooks.py` parses every `Chart ▸` recipe and checks each column it names against
@@ -1419,28 +1413,28 @@ reconstructed from exports.
 The formulas are P2P's. **The positive class is not**, and that is the whole of how to read
 these numbers.
 
-P2P scores a remediation strategy against an *independent* ground truth: exploitation observed
+P2P scores a remediation strategy against an _independent_ ground truth: exploitation observed
 in the wild, which lands on roughly 2–5% of CVEs. We have no such ground truth — only the
 signals in the risk rule. So `risk_class = high` **is our own prioritization rule**, and the
 confusion matrix measures what the register did against that rule rather than against reality.
 That is the same move the Kenna product makes (it scores against Kenna's own risk band), and it
 is a fair thing to measure. It is just not the thing P2P measures.
 
-| | P2P research | Kenna.VM product | here |
-| --- | --- | --- | --- |
-| Positive label | exploitation observed in the wild | Kenna risk score, high band | `KEV ∨ public exploit ∨ EPSS ≥ 0.1` |
-| Nature | retrospective ground truth | vendor prediction | our own rule |
-| Prevalence | ~2–5% of CVEs | vendor-set | rule-set — read `prevalence_pct` |
-| Unit | CVE (v1–v4), asset-centric from v5 | vulnerability instance | finding-instance (`vuln_key`) |
-| Window | a defined period | rolling period | cumulative over the ledger |
-| Unknown label | none — binary | none | first-class, with `_lo`/`_hi` bounds |
+|                | P2P research                       | Kenna.VM product            | here                                 |
+| -------------- | ---------------------------------- | --------------------------- | ------------------------------------ |
+| Positive label | exploitation observed in the wild  | Kenna risk score, high band | `KEV ∨ public exploit ∨ EPSS ≥ 0.1`  |
+| Nature         | retrospective ground truth         | vendor prediction           | our own rule                         |
+| Prevalence     | ~2–5% of CVEs                      | vendor-set                  | rule-set — read `prevalence_pct`     |
+| Unit           | CVE (v1–v4), asset-centric from v5 | vulnerability instance      | finding-instance (`vuln_key`)        |
+| Window         | a defined period                   | rolling period              | cumulative over the ledger           |
+| Unknown label  | none — binary                      | none                        | first-class, with `_lo`/`_hi` bounds |
 
 Four consequences, in the order they bite:
 
 - **Do not compare our efficiency to 18.5%.** P2P vol. 2's industry baseline of 70% coverage at
   18.5% efficiency, and vol. 4's finding that most firms never cross 50%, are computed against a
   much rarer positive class. Ours will read higher and mean less.
-- **`prevalence_pct` is the baseline that *is* a peer.** It is the share of classified findings
+- **`prevalence_pct` is the baseline that _is_ a peer.** It is the share of classified findings
   that are high risk — exactly the efficiency a program picking findings at random would score.
   Efficiency at or below prevalence means the programme is not prioritizing at all. It is
   published beside every rate and on the overview page for this reason.
@@ -1464,10 +1458,10 @@ signal subsets — KEV alone, EPSS alone, KEV-or-exploit, and so on — with the
 `active = true`. Ported from `gas/src/domain/program.ts::ruleSensitivity`.
 
 It answers **"how much does the headline depend on which signals I turned on?"** and nothing
-else. It is deliberately *not* P2P vol. 9's Figure 19, which plots candidate strategies against
+else. It is deliberately _not_ P2P vol. 9's Figure 19, which plots candidate strategies against
 observed exploitation; the subsets here are scored against themselves, so a subset cannot be
 "wrong" — a narrow rule simply reports high efficiency over a small high-risk population.
-Label it *rule sensitivity*, never *strategy comparison*.
+Label it _rule sensitivity_, never _strategy comparison_.
 
 What the table is good for is seeing the shape of the trade: each row carries `high_risk` and
 `unknown` alongside the two rates, so a subset that buys efficiency by shrinking the high-risk
@@ -1478,7 +1472,7 @@ the wild, which is why the default rule is an any-of over three signals rather t
 ## MTTR is Kaplan–Meier, not a mean of what closed
 
 Averaging `mttr_days` over resolved findings is survivorship bias with a respectable name. The
-findings that take longest are disproportionately the ones *still open*, so excluding them makes
+findings that take longest are disproportionately the ones _still open_, so excluding them makes
 remediation look faster than it is — and the gap widens exactly when a programme is falling
 behind, which is when you least want a flattering number.
 
@@ -1486,14 +1480,14 @@ behind, which is when you least want a flattering number.
 findings in the risk set as **right-censored** observations: "not closed yet" is evidence, just
 not the same evidence as "closed on day 40". Columns on `…metrics_mttr`:
 
-| Column | |
-| --- | --- |
-| `km_median` | the headline. Smallest time where survival falls to ≤ 50% |
-| `km_median_lower_bound` | set **only** when `km_median` is NULL, i.e. more than half of that severity is still open and the median does not exist yet. Report it as "> N d" rather than inventing a number |
-| `km_rmst` | restricted mean survival time — area under the curve out to the longest observed time |
-| `km_truncated` | survival never reached zero, so `km_rmst` is a floor rather than a mean |
-| `km_events` / `km_censored` | how much of the estimate rests on closures vs. still-open findings |
-| `mttr_mean` / `mttr_median` | the naive closed-only figures, kept for comparison with the Streamlit dashboard — the gap against `km_median` *is* the bias |
+| Column                      |                                                                                                                                                                                  |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `km_median`                 | the headline. Smallest time where survival falls to ≤ 50%                                                                                                                        |
+| `km_median_lower_bound`     | set **only** when `km_median` is NULL, i.e. more than half of that severity is still open and the median does not exist yet. Report it as "> N d" rather than inventing a number |
+| `km_rmst`                   | restricted mean survival time — area under the curve out to the longest observed time                                                                                            |
+| `km_truncated`              | survival never reached zero, so `km_rmst` is a floor rather than a mean                                                                                                          |
+| `km_events` / `km_censored` | how much of the estimate rests on closures vs. still-open findings                                                                                                               |
+| `mttr_mean` / `mttr_median` | the naive closed-only figures, kept for comparison with the earlier Python spec — the gap against `km_median` _is_ the bias                                                      |
 
 On the committed fixture the two differ by about 18%: naive 18.1d against a KM median of 21.3d.
 
@@ -1503,7 +1497,7 @@ Two implementation notes, both of which cost a wrong answer before they were cau
   substitute, but `log(0)` is NULL in Spark and `sum()` skips NULLs, so a step that resolves the
   entire remaining risk set would be ignored and survival would stay positive after everything
   had closed. A sticky zero flag handles it.
-- The median crossing is inclusive, and an exact tie is the *common* case — `0.75 × (1 − 1/3)` is
+- The median crossing is inclusive, and an exact tie is the _common_ case — `0.75 × (1 − 1/3)` is
   exactly 0.5 in IEEE. The `exp(Σ log f)` form returns `0.5000000000000001` for that same curve,
   which fails a bare `<= 0.5` and reports "no median" for a register whose median is real. Hence
   the tolerance in `SURVIVAL_TIE_EPS`.
@@ -1511,9 +1505,9 @@ Two implementation notes, both of which cost a wrong answer before they were cau
 ## Three things that are easy to get wrong
 
 **`null` is not `false`.** `has_kev`, `has_exploit` and `epss` stay nullable the whole way
-through. A NULL means the signal was *never captured*, which is not the same as observed-absent.
+through. A NULL means the signal was _never captured_, which is not the same as observed-absent.
 Coercing it to `false` inflates efficiency's numerator and deflates coverage's — both at once,
-and silently. Unclassified findings therefore leave *both* sides of every rate, are counted in
+and silently. Unclassified findings therefore leave _both_ sides of every rate, are counted in
 their own row, and drive the published `_lo` / `_hi` bounds, whose width is the size of the
 doubt. There is a regression test for exactly this.
 
@@ -1526,21 +1520,21 @@ the dashboard.
 
 ## The actionable clock
 
-`mttr_days` answers *how long did this finding live*. It is the wrong question to hold a team
+`mttr_days` answers _how long did this finding live_. It is the wrong question to hold a team
 to: for most of that time there was often nothing to install. The actionable clock answers
-*how long did it live once it could have been fixed*, and both are published, because the gap
+_how long did it live once it could have been fixed_, and both are published, because the gap
 between them is how much of the exposure was the vendor's.
 
 Five columns on every lifecycle (`ledger.lifecycle_frame`), ported from
 `gas/src/domain/ledgerCore.ts::baseRows`:
 
-| Column | |
-| --- | --- |
-| `fix_available_at` | when a fix first existed: `fix_date`, else `fix_observed_at` |
-| `actionable_from` | `greatest(first_seen, fix_available_at)` — **the clock never starts before detection** |
-| `mttr_actionable_days` | `resolved_at − actionable_from` |
-| `actionable_age_days` | for an open finding, `now − actionable_from` |
-| `awaiting_vendor_fix` | open, in a scope that HAS a vendor, and no fix available yet |
+| Column                 |                                                                                        |
+| ---------------------- | -------------------------------------------------------------------------------------- |
+| `fix_available_at`     | when a fix first existed: `fix_date`, else `fix_observed_at`                           |
+| `actionable_from`      | `greatest(first_seen, fix_available_at)` — **the clock never starts before detection** |
+| `mttr_actionable_days` | `resolved_at − actionable_from`                                                        |
+| `actionable_age_days`  | for an open finding, `now − actionable_from`                                           |
+| `awaiting_vendor_fix`  | open, in a scope that HAS a vendor, and no fix available yet                           |
 
 and on `…metrics_mttr`, per severity plus `OVERALL`: `mttr_actionable_mean`,
 `mttr_actionable_median`, `actionable_resolved`, `actionable_age_p50` / `_p90`, and
@@ -1581,7 +1575,7 @@ of it available on the GAS side:
   subscription and tag inputs. `subscription_name` / `subscription_ext_id` are on the ledger;
   **asset tags are not, because `ingest.py` does not select them** — adding that is an ingest
   change (a new field on every `vulnerableAsset` inline fragment), not a ledger one.
-- **No retention.** The ledger grows monotonically. The Streamlit side seals old scans into
+- **No retention.** The ledger grows monotonically. The Python ledger helper seals old scans into
   `resolved_episodes` (`wiz_dashboard/data/ledger.py::compact_ledger`); on Delta the equivalent
   levers are `VACUUM` and bronze retention, and a large register will eventually want both.
   Compaction is no longer on this list — [`--maintain`](#maintenance) runs `OPTIMIZE` over the

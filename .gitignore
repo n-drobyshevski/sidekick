@@ -8,8 +8,7 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 
-# Streamlit secrets / local config (never commit credentials)
-.streamlit/secrets.toml
+# Local Wiz credentials / config (never commit credentials)
 wiz_config.json
 
 # Local runtime cache

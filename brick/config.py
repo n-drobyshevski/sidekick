@@ -1,8 +1,7 @@
 """Constants for the Databricks pipeline.
 
-Deliberately duplicated rather than imported. ``brick/`` runs on a Spark cluster that has
-neither ``wiz_dashboard`` nor Streamlit installed, so it stays self-contained. The sources of
-truth these mirror:
+Deliberately duplicated rather than imported. ``brick/`` runs on a Spark cluster that does
+not carry ``wiz_dashboard``, so it stays self-contained. The sources of truth these mirror:
 
 * ``wiz_dashboard/config.py``      -- severity taxonomy, SLA targets, resolved statuses
 * ``gas/src/domain/insights.ts``   -- EPSS priority threshold
@@ -34,8 +33,8 @@ SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
 # Standard VM SLAs, in days.
 SLA_TARGETS = {"CRITICAL": 7, "HIGH": 14, "MEDIUM": 30, "LOW": 90, "INFO": 180}
 
-# Light-theme severity palette, mirrored from wiz_dashboard/config.py so a chart here and a
-# chart in the Streamlit app agree. Each colour clears 3:1 against white as a graphical mark.
+# Light-theme severity palette, mirrored from wiz_dashboard/config.py so the register
+# surfaces agree. Each colour clears 3:1 against white as a graphical mark.
 #
 # It is a deliberate heat ramp, not a categorical palette, and it does NOT pass a categorical
 # colourblind check: HIGH and MEDIUM sit ΔE 1.6 apart under deuteranopia and 6.7 apart even
@@ -87,7 +86,7 @@ _BASE = {
 }
 
 SCOPES = {
-    # OS-package CVEs on host workloads: the population the Streamlit dashboard measures.
+    # OS-package CVEs on host workloads: the OS register population.
     # Mirrors os_vulns.VARIABLES["filterBy"], minus its hardcoded projectIdV2 -- that is one
     # tenant's project and is exposed here as an opt-in `project_id` parameter instead.
     "os": {

@@ -26,10 +26,12 @@ BRICK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BRICK_DIR))
 
 import dbx  # noqa: E402
-import run_pipeline  # noqa: E402
-from config import SCOPES  # noqa: E402
 import ingest  # noqa: E402
-from config import FETCH_ASSET_FIELDS  # noqa: E402
+import run_pipeline  # noqa: E402
+from config import (
+    FETCH_ASSET_FIELDS,  # noqa: E402
+    SCOPES,  # noqa: E402
+)
 from ingest import QUERY, build_filter, describe_errors  # noqa: E402
 
 
@@ -263,7 +265,7 @@ def test_severity_filter_maps_info_to_the_api_spelling():
 
 
 def test_os_scope_matches_the_dashboards_population():
-    """Parity with os_vulns.VARIABLES["filterBy"], which is what the Streamlit app measures."""
+    """Parity with os_vulns.VARIABLES["filterBy"], the OS register population."""
     got = build_filter("os", ["CRITICAL"])
     assert got["detectionMethod"] == ["OS"]
     assert got["assetType"] == ["VIRTUAL_MACHINE"]
@@ -329,8 +331,13 @@ def test_the_query_still_parses_with_the_asset_omitted():
     assert "{}" not in QUERY.replace(" ", "")
     # The fields the metrics actually depend on are all still there.
     for field in (
-        "severity", "status", "firstDetectedAt", "resolvedAt",
-        "hasExploit", "hasCisaKevExploit", "epssProbability",
+        "severity",
+        "status",
+        "firstDetectedAt",
+        "resolvedAt",
+        "hasExploit",
+        "hasCisaKevExploit",
+        "epssProbability",
     ):
         assert field in QUERY
 
@@ -410,7 +417,7 @@ def _readme_module_tree() -> set:
     lines = README.read_text(encoding="utf-8").splitlines()
     start = next(i for i, line in enumerate(lines) if "this path goes on sys.path" in line)
     names = set()
-    for line in lines[start + 1:]:
+    for line in lines[start + 1 :]:
         if line.startswith("```"):
             break
         match = re.search(r"([A-Za-z_][A-Za-z0-9_]*\.py)", line)

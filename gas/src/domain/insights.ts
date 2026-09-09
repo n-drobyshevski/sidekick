@@ -2,16 +2,24 @@
 // risk concentration, aging buckets, scan-over-scan movement, top CVEs, and the
 // configurable breakdown that replaces the findings table.
 //
-// GAS-first module (no Python fixture parity — the Streamlit side is discontinued).
+// GAS-first module with no Python fixture parity.
 // Pure functions over plain arrays: current-scan frame records (dotted keys, `_sev`
 // normalized by findings.currentScan) or ledger base rows (durable lifecycle with
 // age_days). Each function documents which source it expects and why.
 
 import {
-  EPSS_PRIORITY_THRESHOLD, RESOLVED_STATUSES, SEVERITY_ORDER, SLA_TARGETS,
+  EPSS_PRIORITY_THRESHOLD,
+  RESOLVED_STATUSES,
+  SEVERITY_ORDER,
+  SLA_TARGETS,
 } from "./config";
 import type { BaseRow, ScanRow } from "./ledgerCore";
-import { type RiskRow, type RiskRule, RISK_TIER_ORDER, riskTier } from "./program";
+import {
+  type RiskRow,
+  type RiskRule,
+  RISK_TIER_ORDER,
+  riskTier,
+} from "./program";
 import { normalizeSeverity } from "./severity";
 import { parseTs, type Rec } from "./util";
 
@@ -34,10 +42,14 @@ function sev(r: Rec): string {
   return typeof s === "string" && s ? s : normalizeSeverity(r["severity"]);
 }
 
-
 function epssOf(r: Rec): number | null {
   const v = r["epssProbability"];
-  const n = typeof v === "number" ? v : typeof v === "string" && v.trim() !== "" ? Number(v) : NaN;
+  const n =
+    typeof v === "number"
+      ? v
+      : typeof v === "string" && v.trim() !== ""
+        ? Number(v)
+        : NaN;
   return Number.isFinite(n) ? n : null;
 }
 
@@ -79,8 +91,14 @@ export function severityStats(records: Rec[]): Record<string, SeverityStat> {
 /** Aggregate exploit signals over OPEN current-scan records (only the frame has them). */
 export function exploitSummary(records: Rec[]): ExploitSummary {
   const out: ExploitSummary = {
-    open: 0, kev: 0, exploit: 0, highEpss: 0, internetExposed: 0,
-    exposureKnown: records.some((r) => WIDE_KEY in r && r[WIDE_KEY] !== undefined),
+    open: 0,
+    kev: 0,
+    exploit: 0,
+    highEpss: 0,
+    internetExposed: 0,
+    exposureKnown: records.some(
+      (r) => WIDE_KEY in r && r[WIDE_KEY] !== undefined,
+    ),
   };
   for (const r of records) {
     if (!isOpen(r["status"])) continue;
@@ -89,7 +107,8 @@ export function exploitSummary(records: Rec[]): ExploitSummary {
     if (r["hasExploit"] === true) out.exploit += 1;
     const epss = epssOf(r);
     if (epss !== null && epss >= EPSS_PRIORITY_THRESHOLD) out.highEpss += 1;
-    if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true) out.internetExposed += 1;
+    if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true)
+      out.internetExposed += 1;
   }
   return out;
 }
@@ -105,8 +124,12 @@ export interface AgeBuckets {
  * (survives re-detection); rows without an age (resolved, or missing first_seen)
  * are skipped.
  */
-export function ageBuckets(rows: Pick<BaseRow, "severity" | "status" | "age_days">[]): AgeBuckets {
-  const { perKey, totalOpen } = ageBucketsBy(rows, (r) => normalizeSeverity(r.severity));
+export function ageBuckets(
+  rows: Pick<BaseRow, "severity" | "status" | "age_days">[],
+): AgeBuckets {
+  const { perKey, totalOpen } = ageBucketsBy(rows, (r) =>
+    normalizeSeverity(r.severity),
+  );
   return { perSev: perKey, totalOpen };
 }
 
@@ -114,17 +137,29 @@ export function ageBuckets(rows: Pick<BaseRow, "severity" | "status" | "age_days
  *  instead of by severity — which is the whole point on a register that scans one severity.
  *  `ageBuckets` is this function with the key fixed to severity; both skip rows with no
  *  finite age, so `totalOpen` here can be lower than the open count shown elsewhere. */
-export function ageBucketsBy<T extends { status: string; age_days: number | null }>(
+export function ageBucketsBy<
+  T extends { status: string; age_days: number | null },
+>(
   rows: T[],
   keyOf: (row: T) => string,
-): { perKey: Record<string, [number, number, number, number]>; totalOpen: number } {
+): {
+  perKey: Record<string, [number, number, number, number]>;
+  totalOpen: number;
+} {
   const perKey: Record<string, [number, number, number, number]> = {};
   let totalOpen = 0;
   for (const row of rows) {
     if (!isOpen(row.status)) continue;
     const age = row.age_days;
     if (typeof age !== "number" || !Number.isFinite(age)) continue;
-    const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+    const bucket =
+      age <= AGE_BUCKET_EDGES[0]
+        ? 0
+        : age <= AGE_BUCKET_EDGES[1]
+          ? 1
+          : age <= AGE_BUCKET_EDGES[2]
+            ? 2
+            : 3;
     const k = keyOf(row);
     if (!perKey[k]) perKey[k] = [0, 0, 0, 0];
     perKey[k][bucket] += 1;
@@ -203,16 +238,23 @@ export interface AgingDistribution {
 export function slaEdgeBucket(severity: unknown): number | null {
   const target = SLA_TARGETS[normalizeSeverity(severity)];
   if (typeof target !== "number" || !Number.isFinite(target)) return null;
-  return target <= AGE_BUCKET_EDGES[0] ? 0
-    : target <= AGE_BUCKET_EDGES[1] ? 1
-      : target <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+  return target <= AGE_BUCKET_EDGES[0]
+    ? 0
+    : target <= AGE_BUCKET_EDGES[1]
+      ? 1
+      : target <= AGE_BUCKET_EDGES[2]
+        ? 2
+        : 3;
 }
 
 /** True when a severity's deadline is exactly a bucket boundary, so the bucket it names is
  *  wholly inside the window and everything to its right is wholly outside it. */
 export function slaEdgeIsExact(severity: unknown): boolean {
   const target = SLA_TARGETS[normalizeSeverity(severity)];
-  return typeof target === "number" && (AGE_BUCKET_EDGES as readonly number[]).indexOf(target) >= 0;
+  return (
+    typeof target === "number" &&
+    (AGE_BUCKET_EDGES as readonly number[]).indexOf(target) >= 0
+  );
 }
 
 /**
@@ -237,9 +279,14 @@ export function agingDistribution(
       unaged += 1;
       continue;
     }
-    const bucket = age <= AGE_BUCKET_EDGES[0] ? 0
-      : age <= AGE_BUCKET_EDGES[1] ? 1
-        : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+    const bucket =
+      age <= AGE_BUCKET_EDGES[0]
+        ? 0
+        : age <= AGE_BUCKET_EDGES[1]
+          ? 1
+          : age <= AGE_BUCKET_EDGES[2]
+            ? 2
+            : 3;
     perSev[s]![bucket] += 1;
     totalOpen += 1;
   }
@@ -294,7 +341,12 @@ export interface OldestOpen {
 
 type OldestRow = Pick<
   BaseRow,
-  "cve" | "severity" | "status" | "asset_name" | "subscription_name" | "age_days"
+  | "cve"
+  | "severity"
+  | "status"
+  | "asset_name"
+  | "subscription_name"
+  | "age_days"
 > & {
   _domain?: unknown;
   _supportGroup?: unknown;
@@ -319,7 +371,9 @@ function rankGroups(
   rows: OldestRow[],
   keyFn: (r: OldestRow) => string,
   topN: number,
-  meta?: (r: OldestRow) => Partial<Pick<OldestGroup, "subscription" | "domain">>,
+  meta?: (
+    r: OldestRow,
+  ) => Partial<Pick<OldestGroup, "subscription" | "domain">>,
 ): OldestGroup[] {
   const groups = new Map<string, OldestGroup>();
   for (const row of rows) {
@@ -328,13 +382,28 @@ function rankGroups(
     const raw = keyFn(row);
     const key = raw && raw.trim() !== "" ? raw : "(none)";
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...(meta ? meta(row) : {}) }));
+    if (!g)
+      groups.set(
+        key,
+        (g = {
+          key,
+          agedCount: 0,
+          openCount: 0,
+          oldestDays: 0,
+          ...(meta ? meta(row) : {}),
+        }),
+      );
     g.openCount += 1;
     if (age > AGED_OPEN_EDGE) g.agedCount += 1;
     if (age > g.oldestDays) g.oldestDays = age;
   }
   return [...groups.values()]
-    .sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key))
+    .sort(
+      (a, b) =>
+        b.agedCount - a.agedCount ||
+        b.oldestDays - a.oldestDays ||
+        a.key.localeCompare(b.key),
+    )
     .slice(0, topN);
 }
 
@@ -360,11 +429,20 @@ export function oldestOpen(rows: OldestRow[], topN = 7): OldestOpen {
     }));
   return {
     findings,
-    byAsset: rankGroups(rows, (r) => String(r.asset_name ?? ""), topN, (r) => ({
-      subscription: String(r.subscription_name ?? ""),
-      domain: String(r._domain ?? ""),
-    })),
-    bySupportGroup: rankGroups(rows, (r) => String(r._supportGroup ?? ""), topN),
+    byAsset: rankGroups(
+      rows,
+      (r) => String(r.asset_name ?? ""),
+      topN,
+      (r) => ({
+        subscription: String(r.subscription_name ?? ""),
+        domain: String(r._domain ?? ""),
+      }),
+    ),
+    bySupportGroup: rankGroups(
+      rows,
+      (r) => String(r._supportGroup ?? ""),
+      topN,
+    ),
     byDomain: rankGroups(rows, (r) => String(r._domain ?? ""), topN),
   };
 }
@@ -384,16 +462,28 @@ export interface Movement {
  */
 export function movement(
   baseRows: Pick<BaseRow, "status" | "first_scan_id" | "last_scan_id">[],
-  latestFlatScan: Pick<ScanRow, "scan_id" | "new_count" | "resolved_count" | "reopened_count"> | null,
+  latestFlatScan: Pick<
+    ScanRow,
+    "scan_id" | "new_count" | "resolved_count" | "reopened_count"
+  > | null,
   scanCount: number,
 ): Movement {
   if (!latestFlatScan) {
-    return { newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: scanCount > 1 };
+    return {
+      newCount: 0,
+      resolvedCount: 0,
+      reopenedCount: 0,
+      persisting: 0,
+      hasPrevious: scanCount > 1,
+    };
   }
   let persisting = 0;
   for (const row of baseRows) {
     if (!isOpen(row.status)) continue;
-    if (row.last_scan_id === latestFlatScan.scan_id && row.first_scan_id !== latestFlatScan.scan_id) {
+    if (
+      row.last_scan_id === latestFlatScan.scan_id &&
+      row.first_scan_id !== latestFlatScan.scan_id
+    ) {
       persisting += 1;
     }
   }
@@ -449,7 +539,10 @@ function round1(n: number): number {
 }
 
 /** Open as of instant `d`: born by then, and not dated closed before it. */
-function openAsOf(row: Pick<BaseRow, "first_seen" | "resolved_at">, d: number): boolean {
+function openAsOf(
+  row: Pick<BaseRow, "first_seen" | "resolved_at">,
+  d: number,
+): boolean {
   const first = parseTs(row.first_seen);
   if (first === null || first > d) return false;
   const resolved = parseTs(row.resolved_at);
@@ -477,7 +570,10 @@ export interface OpenMovement {
 }
 
 type MovementScan = { ts?: unknown; shape?: unknown };
-type MovementRow = Pick<BaseRow, "severity" | "status" | "first_seen" | "resolved_at">;
+type MovementRow = Pick<
+  BaseRow,
+  "severity" | "status" | "first_seen" | "resolved_at"
+>;
 
 const NO_TOTAL = { open: 0, prevOpen: 0, delta: 0 };
 
@@ -495,9 +591,14 @@ const NO_TOTAL = { open: 0, prevOpen: 0, delta: 0 };
 export function openMovement(
   rows: MovementRow[],
   scans: MovementScan[],
-  opts: { minGapDays?: number; now?: number; severities?: string[] | null } = {},
+  opts: {
+    minGapDays?: number;
+    now?: number;
+    severities?: string[] | null;
+  } = {},
 ): OpenMovement {
-  const minGapDays = opts.minGapDays === undefined ? MOVEMENT_MIN_GAP_DAYS : opts.minGapDays;
+  const minGapDays =
+    opts.minGapDays === undefined ? MOVEMENT_MIN_GAP_DAYS : opts.minGapDays;
   const gate = opts.severities ?? null;
 
   const instants = scans
@@ -506,19 +607,30 @@ export function openMovement(
     .filter((t): t is number => t !== null)
     .sort((a, b) => a - b);
 
-  const iso = (ms: number) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+  const iso = (ms: number) =>
+    new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
 
   if (!instants.length) {
     return {
-      comparable: false, reason: "noScan", since: null, until: null, gapDays: null,
-      rows: [], total: { ...NO_TOTAL },
+      comparable: false,
+      reason: "noScan",
+      since: null,
+      until: null,
+      gapDays: null,
+      rows: [],
+      total: { ...NO_TOTAL },
     };
   }
   const until = instants[instants.length - 1] as number;
   if (instants.length === 1) {
     return {
-      comparable: false, reason: "oneScan", since: null, until: iso(until), gapDays: null,
-      rows: [], total: { ...NO_TOTAL },
+      comparable: false,
+      reason: "oneScan",
+      since: null,
+      until: iso(until),
+      gapDays: null,
+      rows: [],
+      total: { ...NO_TOTAL },
     };
   }
 
@@ -647,7 +759,11 @@ export interface GroupNode {
  * tree stays bounded. Aggregates cover all records (open + resolved) like the old flat
  * breakdown; kev/exploit flag whether any finding in the group carries them.
  */
-export function groupTree(records: Rec[], keys: string[], perLevelCap = 20): GroupNode[] {
+export function groupTree(
+  records: Rec[],
+  keys: string[],
+  perLevelCap = 20,
+): GroupNode[] {
   if (!keys.length || !records.length) return [];
   const [key, ...rest] = keys;
   const column = GROUP_COLUMNS[key];
@@ -655,7 +771,10 @@ export function groupTree(records: Rec[], keys: string[], perLevelCap = 20): Gro
   const buckets = new Map<string, Rec[]>();
   for (const r of records) {
     const raw = r[column];
-    const k = raw === null || raw === undefined || String(raw).trim() === "" ? "(none)" : String(raw);
+    const k =
+      raw === null || raw === undefined || String(raw).trim() === ""
+        ? "(none)"
+        : String(raw);
     let arr = buckets.get(k);
     if (!arr) buckets.set(k, (arr = []));
     arr.push(r);
@@ -676,15 +795,26 @@ export function groupTree(records: Rec[], keys: string[], perLevelCap = 20): Gro
       if (r["hasExploit"] === true) exploit = true;
     }
     const node: GroupNode = {
-      key: k, dim: key, total: recs.length, open, assets: assets.size,
-      sevCounts, kev, exploit, children: [],
+      key: k,
+      dim: key,
+      total: recs.length,
+      open,
+      assets: assets.size,
+      sevCounts,
+      kev,
+      exploit,
+      children: [],
     };
     return { recs, node };
   });
-  rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
+  rows.sort(
+    (a, b) =>
+      b.node.total - a.node.total || a.node.key.localeCompare(b.node.key),
+  );
   const kept = rows.slice(0, perLevelCap);
   if (rest.length) {
-    for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
+    for (const row of kept)
+      row.node.children = groupTree(row.recs, rest, perLevelCap);
   }
   return kept.map((row) => row.node);
 }
@@ -764,8 +894,13 @@ export function triageFunnel(
   exposureKnown: boolean,
 ): TriageFunnel {
   const out: TriageFunnel = {
-    open: 0, intel: 0, exploitable: 0, exposed: 0, overdue: 0,
-    unclassified: 0, exposureKnown,
+    open: 0,
+    intel: 0,
+    exploitable: 0,
+    exposed: 0,
+    overdue: 0,
+    unclassified: 0,
+    exposureKnown,
   };
   for (const row of rows) {
     if (!isOpen(row.status)) continue;
@@ -783,7 +918,12 @@ export function triageFunnel(
     const target = SLA_TARGETS[normalizeSeverity(row.severity)];
     const age = row.actionable_age_days;
     // Strict `>`, matching remediation.openPastSla — a finding on its due date is in SLA.
-    if (typeof target === "number" && typeof age === "number" && Number.isFinite(age) && age > target) {
+    if (
+      typeof target === "number" &&
+      typeof age === "number" &&
+      Number.isFinite(age) &&
+      age > target
+    ) {
       out.overdue += 1;
     }
   }
@@ -814,18 +954,27 @@ export interface Concentration {
  * findings" would put a group that closed everything above one that closed nothing. This
  * counts and ranks open rows only.
  */
-export function concentration(records: Rec[], dims: string[], topN = 5): Concentration {
+export function concentration(
+  records: Rec[],
+  dims: string[],
+  topN = 5,
+): Concentration {
   const perDim: Record<string, ConcentrationRow[]> = {};
   const moreDim: Record<string, number> = {};
   for (const dim of dims) {
     const column = GROUP_COLUMNS[dim];
     if (!column) continue;
-    const buckets = new Map<string, { open: number; assets: Set<string>; kev: number }>();
+    const buckets = new Map<
+      string,
+      { open: number; assets: Set<string>; kev: number }
+    >();
     for (const r of records) {
       if (!isOpen(r["status"])) continue;
       const raw = r[column];
-      const k = raw === null || raw === undefined || String(raw).trim() === ""
-        ? "(none)" : String(raw);
+      const k =
+        raw === null || raw === undefined || String(raw).trim() === ""
+          ? "(none)"
+          : String(raw);
       let b = buckets.get(k);
       if (!b) buckets.set(k, (b = { open: 0, assets: new Set(), kev: 0 }));
       b.open += 1;
@@ -834,7 +983,12 @@ export function concentration(records: Rec[], dims: string[], topN = 5): Concent
       if (r["hasCisaKevExploit"] === true) b.kev += 1;
     }
     const rows = [...buckets.entries()]
-      .map(([key, b]) => ({ key, open: b.open, assets: b.assets.size, kev: b.kev }))
+      .map(([key, b]) => ({
+        key,
+        open: b.open,
+        assets: b.assets.size,
+        kev: b.kev,
+      }))
       .sort((a, b) => b.open - a.open || a.key.localeCompare(b.key));
     perDim[dim] = rows.slice(0, topN);
     moreDim[dim] = Math.max(0, rows.length - topN);
@@ -850,7 +1004,9 @@ export function concentration(records: Rec[], dims: string[], topN = 5): Concent
  * on an even count, matching the percentile convention the MTTR page already uses. Rows with
  * no finite age are skipped, so this reports on the rows it could actually measure.
  */
-export function openAgeMedian(rows: Pick<BaseRow, "status" | "age_days">[]): number | null {
+export function openAgeMedian(
+  rows: Pick<BaseRow, "status" | "age_days">[],
+): number | null {
   const ages: number[] = [];
   for (const row of rows) {
     if (!isOpen(row.status)) continue;
@@ -897,7 +1053,18 @@ export function openAgeMedian(rows: Pick<BaseRow, "status" | "age_days">[]): num
 // stays pure over its arguments and a test can state the window it means. The call site
 // (api.ts) imports the constant.
 
-export const SLA_DECILE_LABELS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"] as const;
+export const SLA_DECILE_LABELS = [
+  "0",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "6",
+  "7",
+  "8",
+  "9",
+] as const;
 
 export interface SlaConsumed {
   /** Tenth-of-window labels, "0".."9" — bucket k is time used, 9-k is time left. */
@@ -946,7 +1113,8 @@ export function slaConsumedDeciles(
     // age < w and w > 0, so the quotient is in [0, 1) and the floor is in 0..9 already; the
     // clamp holds against a float landing one ULP high at the top of the range.
     const k = Math.min(9, Math.max(0, Math.floor((10 * age) / w)));
-    const arr = out.perSev[s] ?? (out.perSev[s] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
+    const arr =
+      out.perSev[s] ?? (out.perSev[s] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     arr[k] += 1;
     out.totalOpen += 1;
   }

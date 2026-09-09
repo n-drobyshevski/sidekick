@@ -60,16 +60,6 @@ import functools
 import operator
 from typing import List, Optional
 
-from pyspark.sql import Column, DataFrame, Window
-from pyspark.sql import functions as F
-from pyspark.sql.types import (
-    BooleanType,
-    DoubleType,
-    StringType,
-    StructField,
-    StructType,
-)
-
 from config import (
     NET_CAPACITY_BAND_PCT,
     OVERALL,
@@ -78,9 +68,18 @@ from config import (
     RESOLUTION_API,
     RESOLUTION_DISAPPEARED,
     RESOLVED_STATUSES,
-    RiskRule,
     SEVERITY_ORDER,
     SLA_TARGETS,
+    RiskRule,
+)
+from pyspark.sql import Column, DataFrame, Window
+from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    BooleanType,
+    DoubleType,
+    StringType,
+    StructField,
+    StructType,
 )
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
@@ -293,9 +292,9 @@ def km_curve(df: DataFrame):
     usually still open, so ``max(curve.t) < km_restriction_time`` is the normal case, not a bug.
     Likewise the censored rows leave no row of their own. That is why both come back together.
     """
-    work = df.withColumn(
-        "_duration", F.coalesce(F.col("mttr_days"), F.col("age_days"))
-    ).withColumn("_is_event", F.col("mttr_days").isNotNull().cast("int"))
+    work = df.withColumn("_duration", F.coalesce(F.col("mttr_days"), F.col("age_days"))).withColumn(
+        "_is_event", F.col("mttr_days").isNotNull().cast("int")
+    )
     work = work.filter(F.col("_duration").isNotNull())
 
     # Per-severity and OVERALL in one pass: duplicate every row under the OVERALL label.
@@ -405,21 +404,25 @@ def kaplan_meier(df: DataFrame) -> DataFrame:
 
     out = totals.join(summary, "severity", "left")
     # ...plus the final rectangle S_m · (τ − t_m), which is what carries the censored tail.
-    out = out.withColumn(
-        "km_rmst",
-        F.when(
-            F.col("_area_sum").isNotNull(),
-            F.col("_area_sum")
-            + F.col("_s_final") * (F.col("km_restriction_time") - F.col("_t_final")),
-        ),
-    ).withColumn(
-        # Survival never reached zero by τ, so the RMST is a floor, not a mean. Say so.
-        "km_truncated",
-        F.coalesce(F.col("_s_final") > 0, F.lit(False)),
-    ).withColumn(
-        # Only meaningful when the median was never reached; otherwise it is noise.
-        "km_median_lower_bound",
-        F.when(F.col("km_median").isNull(), F.col("km_restriction_time")),
+    out = (
+        out.withColumn(
+            "km_rmst",
+            F.when(
+                F.col("_area_sum").isNotNull(),
+                F.col("_area_sum")
+                + F.col("_s_final") * (F.col("km_restriction_time") - F.col("_t_final")),
+            ),
+        )
+        .withColumn(
+            # Survival never reached zero by τ, so the RMST is a floor, not a mean. Say so.
+            "km_truncated",
+            F.coalesce(F.col("_s_final") > 0, F.lit(False)),
+        )
+        .withColumn(
+            # Only meaningful when the median was never reached; otherwise it is noise.
+            "km_median_lower_bound",
+            F.when(F.col("km_median").isNull(), F.col("km_restriction_time")),
+        )
     )
 
     return out.drop("_area_sum", "_s_final", "_t_final")
@@ -432,8 +435,10 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
     """
     work = df.withColumn("sla_target", sla_target_col(F.col("severity")))
 
-    per_sev = work.groupBy("severity").agg(*_mttr_aggs()).withColumn(
-        "sla_target", sla_target_col(F.col("severity"))
+    per_sev = (
+        work.groupBy("severity")
+        .agg(*_mttr_aggs())
+        .withColumn("sla_target", sla_target_col(F.col("severity")))
     )
     # The OVERALL SLA percentage is total-compliant over total-resolved, not a mean of the
     # per-severity percentages -- each row carries its own target, so one pass gets it right.
@@ -455,9 +460,9 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
         F.when(F.col("severity") == OVERALL, F.col("oldest_open_days")),
     )
 
-    # The censoring-aware estimate rides alongside the naive one. `mttr_median` stays because
-    # it is what the Streamlit dashboard shows and dropping it would make the two surfaces
-    # incomparable -- but `km_median` is the one to report, and it is normally larger.
+    # The censoring-aware estimate rides alongside the naive one. `mttr_median` stays for
+    # comparison with the earlier Python spec, but `km_median` is the one to report, and it is
+    # normally larger.
     return combined.join(kaplan_meier(df), "severity", "left")
 
 
@@ -693,9 +698,7 @@ def signal_breakdown(df: DataFrame, rule: RiskRule) -> DataFrame:
     false_col = F.lit(False)
     return df.agg(
         count_when(F.col("has_kev").eqNullSafe(True) if rule.kev else false_col, "kev"),
-        count_when(
-            F.col("has_exploit").eqNullSafe(True) if rule.exploit else false_col, "exploit"
-        ),
+        count_when(F.col("has_exploit").eqNullSafe(True) if rule.exploit else false_col, "exploit"),
         count_when(
             (epss_observed & (F.col("epss") >= F.lit(rule.epss_threshold)))
             if rule.epss
@@ -704,9 +707,7 @@ def signal_breakdown(df: DataFrame, rule: RiskRule) -> DataFrame:
         ),
         count_when(F.col("risk_class") == "high", "any_of"),
         count_when(F.col("has_kev").isNull() if rule.kev else false_col, "kev_missing"),
-        count_when(
-            F.col("has_exploit").isNull() if rule.exploit else false_col, "exploit_missing"
-        ),
+        count_when(F.col("has_exploit").isNull() if rule.exploit else false_col, "exploit_missing"),
         count_when(~epss_observed if rule.epss else false_col, "epss_missing"),
     )
 
@@ -754,9 +755,7 @@ def rule_sensitivity(df: DataFrame, active: RiskRule) -> DataFrame:
     """
     frames: List[DataFrame] = []
     for label, kev, exploit, epss in RULE_SUBSETS:
-        rule = RiskRule(
-            kev=kev, exploit=exploit, epss=epss, epss_threshold=active.epss_threshold
-        )
+        rule = RiskRule(kev=kev, exploit=exploit, epss=epss, epss_threshold=active.epss_threshold)
         # classify_risk overwrites `risk_class`, so a frame already classified under the active
         # rule is a valid input -- which is what the caller has.
         frames.append(
@@ -772,11 +771,7 @@ def rule_sensitivity(df: DataFrame, active: RiskRule) -> DataFrame:
             # cannot be what distinguishes the active row.
             .withColumn(
                 "active",
-                F.lit(
-                    kev == active.kev
-                    and exploit == active.exploit
-                    and epss == active.epss
-                ),
+                F.lit(kev == active.kev and exploit == active.exploit and epss == active.epss),
             )
         )
     return _finalize_matrix(functools.reduce(DataFrame.unionByName, frames))
@@ -826,18 +821,15 @@ def capacity_by_month(
 
     # The month grid, built lazily from a one-row bounds frame so no driver round-trip is
     # needed. Months with no activity must still appear -- a silent gap reads as a good month.
-    grid = (
-        rows.agg(F.date_trunc("month", F.min("first_detected_at")).alias("start"))
-        .select(
-            F.explode(
-                F.sequence(F.col("start"), current_month, F.expr("INTERVAL 1 MONTH"))
-            ).alias("month")
+    grid = rows.agg(F.date_trunc("month", F.min("first_detected_at")).alias("start")).select(
+        F.explode(F.sequence(F.col("start"), current_month, F.expr("INTERVAL 1 MONTH"))).alias(
+            "month"
         )
     )
 
-    opened = rows.groupBy(
-        F.date_trunc("month", F.col("first_detected_at")).alias("month")
-    ).agg(F.count(F.lit(1)).cast("long").alias("opened"))
+    opened = rows.groupBy(F.date_trunc("month", F.col("first_detected_at")).alias("month")).agg(
+        F.count(F.lit(1)).cast("long").alias("opened")
+    )
     closed = (
         rows.filter(F.col("resolved_at").isNotNull())
         .groupBy(F.date_trunc("month", F.col("resolved_at")).alias("month"))
@@ -901,23 +893,25 @@ def capacity_by_month(
     # whose history was rebuilt from bronze this can leave few months standing, or none --
     # which is why `months_counted` is published beside it. A small honest sample beats a large
     # confident one built out of months nobody watched.
-    counted = months.filter(
-        ~F.col("partial") & ~F.col("reconstructed") & F.col("mmcr").isNotNull()
-    )
+    counted = months.filter(~F.col("partial") & ~F.col("reconstructed") & F.col("mmcr").isNotNull())
     summary = counted.agg(
         F.avg("mmcr").alias("mmcr_mean"),
         F.avg("net_pct").alias("mean_net_pct"),
         F.count(F.lit(1)).cast("long").alias("months_counted"),
     ).crossJoin(months.agg(F.sum("net").cast("long").alias("net_total")))
 
-    summary = summary.withColumn(
-        # The P2P v3 idiom: "we close about 1 in N of the backlog each month".
-        "one_in_n",
-        F.when(F.col("mmcr_mean") > 0, 100 / F.col("mmcr_mean")),
-    ).withColumn(
-        "overall_verdict",
-        F.when(F.col("months_counted") > 0, _verdict(F.col("mean_net_pct"))),
-    ).drop("mean_net_pct")
+    summary = (
+        summary.withColumn(
+            # The P2P v3 idiom: "we close about 1 in N of the backlog each month".
+            "one_in_n",
+            F.when(F.col("mmcr_mean") > 0, 100 / F.col("mmcr_mean")),
+        )
+        .withColumn(
+            "overall_verdict",
+            F.when(F.col("months_counted") > 0, _verdict(F.col("mean_net_pct"))),
+        )
+        .drop("mean_net_pct")
+    )
 
     return months.crossJoin(summary)
 
@@ -985,8 +979,7 @@ def observation_window_days(df: DataFrame, now_ts: str) -> DataFrame:
     now = F.lit(now_ts).cast("timestamp")
     return df.agg(
         (
-            (F.unix_timestamp(now) - F.unix_timestamp(F.min("first_detected_at")))
-            / SECONDS_PER_DAY
+            (F.unix_timestamp(now) - F.unix_timestamp(F.min("first_detected_at"))) / SECONDS_PER_DAY
         ).alias("observation_window_days")
     )
 

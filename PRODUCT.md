@@ -15,7 +15,7 @@ The common thread: both arrive with a question about risk and want an answer the
 
 ## Product Purpose
 
-A Streamlit dashboard over Wiz vulnerability findings. It pulls OS-level CVE data (live via a Wiz service account, or bundled sample data in dry-run mode), then turns it into the views a security org actually operates on: severity breakdowns, an overview of what needs attention, per-finding drill-downs, and the primary lens, **MTTR and SLA remediation analytics** tracked over time with a persistent scan history.
+The maintained register surfaces pull Wiz vulnerability data into operational views for a security organization: severity breakdowns, what needs attention, per-finding drill-downs, and MTTR / SLA remediation analytics tracked over time with durable scan history.
 
 The product exists to answer "how fast are we closing risk, and are we meeting our targets" with numbers a team can trust enough to act on and stake a report on. Success is when an analyst opens it and knows what to fix next within seconds, and a leader opens it and can state the org's remediation posture without asking anyone.
 
@@ -40,14 +40,14 @@ All four were called out explicitly. Steer away from every one:
 2. **Severity is signal, not theater.** Reserve color, weight, and emphasis for real risk. When everything is loud, nothing is. A critical finding should stand out precisely because the rest of the interface is quiet.
 3. **Legible to both desks.** Every primary surface must work for the analyst scanning for the next fix and the leader reading posture. Density serves the analyst; an unambiguous top line serves the leader. Neither audience should have to translate.
 4. **Earned familiarity.** Use the conventions of best-in-class tools (Linear, Stripe, Notion-grade product UI) so the interface disappears into the task. Standard affordances, consistent component vocabulary screen to screen, no invented controls for standard jobs.
-5. **Honest state.** The dashboard already runs in dry-run mode, keeps a last-known-good snapshot, and tracks scan freshness. The design must tell the truth about its data: what was scanned, when, whether it's sample or live, and what an empty or stale view actually means. Never imply confidence the data doesn't support.
+5. **Honest state.** The dashboard already keeps scan history and tracks scan freshness. The design must tell the truth about its data: what was scanned, when, whether it's sample or live, and what an empty or stale view actually means. Never imply confidence the data doesn't support.
 6. **The representation is not the work.** A headline that improves while no fix landed is a finding, not a success. The register must be able to say why a number moved: a filter change, a gate change and a remediation are three different causes with one shape on screen, and a figure that cannot tell them apart is producing a report about itself.
 
 ## Accessibility & Inclusion
 
 Target **WCAG 2.1 AA**, holding the bar the codebase already sets:
 
-- Body text at or above 4.5:1 against its background; large text at or above 3:1. The severity *text* tokens are deliberately darkened from the *fill* tokens to clear 4.5:1 on pale tints; keep that split.
-- Visible focus indicators on every interactive element (the focus-ring rules are a11y-critical and must never be removed).
+- Body text at or above 4.5:1 against its background; large text at or above 3:1. The severity _text_ tokens are deliberately darkened from the _fill_ tokens to clear 4.5:1 on pale tints; keep that split.
+- Visible focus indicators on every interactive element; focus-ring rules are a11y-critical and must never be removed.
 - A `prefers-reduced-motion` alternative for every animation.
 - **Non-color signals are mandatory** for severity and status. Color alone never carries meaning; pair it with a dot, glyph, label, or position. The red/orange/amber severity proximity is a known colorblind risk, so the redundant cues are load-bearing, not decorative.

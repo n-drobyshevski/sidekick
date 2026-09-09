@@ -60,18 +60,6 @@ import functools
 import operator
 from typing import List, Optional
 
-from pyspark.sql import Column, DataFrame, Window
-from pyspark.sql import functions as F
-from pyspark.sql.types import (
-    ArrayType,
-    BooleanType,
-    DoubleType,
-    LongType,
-    StringType,
-    StructField,
-    StructType,
-)
-
 from config import (
     AI_VERDICTS_HIGH,
     ASSET_GROUP_UNKNOWN,
@@ -85,11 +73,22 @@ from config import (
     RESOLUTION_API,
     RESOLUTION_DISAPPEARED,
     RESOLVED_STATUSES,
-    RiskRule,
-    SastRiskRule,
     SEVERITY_ORDER,
     SLA_TARGETS,
     SOURCES,
+    RiskRule,
+    SastRiskRule,
+)
+from pyspark.sql import Column, DataFrame, Window
+from pyspark.sql import functions as F
+from pyspark.sql.types import (
+    ArrayType,
+    BooleanType,
+    DoubleType,
+    LongType,
+    StringType,
+    StructField,
+    StructType,
 )
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
@@ -414,10 +413,14 @@ def _joined_cwes(weaknesses: Column) -> Column:
     finding unclassified rather than low risk. That is the module header's correctness trap
     applied to a second rule.
     """
-    ids = F.array_sort(F.array_distinct(F.filter(
-        F.transform(weaknesses, lambda w: F.trim(w["id"])),
-        lambda x: x.isNotNull() & (F.length(x) > 0),
-    )))
+    ids = F.array_sort(
+        F.array_distinct(
+            F.filter(
+                F.transform(weaknesses, lambda w: F.trim(w["id"])),
+                lambda x: x.isNotNull() & (F.length(x) > 0),
+            )
+        )
+    )
     return F.when(F.size(ids) > 0, F.array_join(ids, ","))
 
 
@@ -468,9 +471,9 @@ def km_curve(df: DataFrame):
     usually still open, so ``max(curve.t) < km_restriction_time`` is the normal case, not a bug.
     Likewise the censored rows leave no row of their own. That is why both come back together.
     """
-    work = df.withColumn(
-        "_duration", F.coalesce(F.col("mttr_days"), F.col("age_days"))
-    ).withColumn("_is_event", F.col("mttr_days").isNotNull().cast("int"))
+    work = df.withColumn("_duration", F.coalesce(F.col("mttr_days"), F.col("age_days"))).withColumn(
+        "_is_event", F.col("mttr_days").isNotNull().cast("int")
+    )
     work = work.filter(F.col("_duration").isNotNull())
 
     # Per-severity and OVERALL in one pass: duplicate every row under the OVERALL label.
@@ -580,21 +583,25 @@ def kaplan_meier(df: DataFrame) -> DataFrame:
 
     out = totals.join(summary, "severity", "left")
     # ...plus the final rectangle S_m · (τ − t_m), which is what carries the censored tail.
-    out = out.withColumn(
-        "km_rmst",
-        F.when(
-            F.col("_area_sum").isNotNull(),
-            F.col("_area_sum")
-            + F.col("_s_final") * (F.col("km_restriction_time") - F.col("_t_final")),
-        ),
-    ).withColumn(
-        # Survival never reached zero by τ, so the RMST is a floor, not a mean. Say so.
-        "km_truncated",
-        F.coalesce(F.col("_s_final") > 0, F.lit(False)),
-    ).withColumn(
-        # Only meaningful when the median was never reached; otherwise it is noise.
-        "km_median_lower_bound",
-        F.when(F.col("km_median").isNull(), F.col("km_restriction_time")),
+    out = (
+        out.withColumn(
+            "km_rmst",
+            F.when(
+                F.col("_area_sum").isNotNull(),
+                F.col("_area_sum")
+                + F.col("_s_final") * (F.col("km_restriction_time") - F.col("_t_final")),
+            ),
+        )
+        .withColumn(
+            # Survival never reached zero by τ, so the RMST is a floor, not a mean. Say so.
+            "km_truncated",
+            F.coalesce(F.col("_s_final") > 0, F.lit(False)),
+        )
+        .withColumn(
+            # Only meaningful when the median was never reached; otherwise it is noise.
+            "km_median_lower_bound",
+            F.when(F.col("km_median").isNull(), F.col("km_restriction_time")),
+        )
     )
 
     return out.drop("_area_sum", "_s_final", "_t_final")
@@ -607,8 +614,10 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
     """
     work = df.withColumn("sla_target", sla_target_col(F.col("severity")))
 
-    per_sev = work.groupBy("severity").agg(*_mttr_aggs()).withColumn(
-        "sla_target", sla_target_col(F.col("severity"))
+    per_sev = (
+        work.groupBy("severity")
+        .agg(*_mttr_aggs())
+        .withColumn("sla_target", sla_target_col(F.col("severity")))
     )
     # The OVERALL SLA percentage is total-compliant over total-resolved, not a mean of the
     # per-severity percentages -- each row carries its own target, so one pass gets it right.
@@ -630,9 +639,9 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
         F.when(F.col("severity") == OVERALL, F.col("oldest_open_days")),
     )
 
-    # The censoring-aware estimate rides alongside the naive one. `mttr_median` stays because
-    # it is what the Streamlit dashboard shows and dropping it would make the two surfaces
-    # incomparable -- but `km_median` is the one to report, and it is normally larger.
+    # The censoring-aware estimate rides alongside the naive one. `mttr_median` stays for
+    # comparison with the earlier Python spec, but `km_median` is the one to report, and it is
+    # normally larger.
     return combined.join(kaplan_meier(df), "severity", "left")
 
 
@@ -732,9 +741,7 @@ def _cve_clauses(rule: RiskRule) -> List[tuple]:
 
     clauses = []
     if rule.kev:
-        clauses.append(
-            ("kev", F.col("has_kev").eqNullSafe(True), F.col("has_kev").isNotNull())
-        )
+        clauses.append(("kev", F.col("has_kev").eqNullSafe(True), F.col("has_kev").isNotNull()))
     if rule.exploit:
         clauses.append(
             ("exploit", F.col("has_exploit").eqNullSafe(True), F.col("has_exploit").isNotNull())
@@ -758,9 +765,7 @@ def cwe_matches_exploited(cwe: Column) -> Column:
     ``config.CWE_ANCESTORS`` for why that map is deliberately incomplete and what it costs.
     """
     ids = F.split(cwe, ",")
-    lifted = F.transform(
-        ids, lambda c: F.coalesce(F.create_map(*_ancestor_pairs())[c], c)
-    )
+    lifted = F.transform(ids, lambda c: F.coalesce(F.create_map(*_ancestor_pairs())[c], c))
     listed = F.array(*[F.lit(c) for c in sorted(EXPLOITED_CWES)])
     return F.arrays_overlap(F.array_union(ids, lifted), listed)
 
@@ -1027,33 +1032,34 @@ def subsets_for(active) -> List[tuple]:
         rows = []
         for label, cwe, ai_verdict, critical in SAST_RULE_SUBSETS:
             rule = SastRiskRule(cwe=cwe, ai_verdict=ai_verdict, critical=critical)
-            rows.append((
-                label,
-                rule,
-                {"rule_cwe": cwe, "rule_ai_verdict": ai_verdict, "rule_critical": critical},
-                (cwe, ai_verdict, critical)
-                == (active.cwe, active.ai_verdict, active.critical),
-            ))
+            rows.append(
+                (
+                    label,
+                    rule,
+                    {"rule_cwe": cwe, "rule_ai_verdict": ai_verdict, "rule_critical": critical},
+                    (cwe, ai_verdict, critical) == (active.cwe, active.ai_verdict, active.critical),
+                )
+            )
         return rows
 
     rows = []
     for label, kev, exploit, epss in RULE_SUBSETS:
-        rule = RiskRule(
-            kev=kev, exploit=exploit, epss=epss, epss_threshold=active.epss_threshold
+        rule = RiskRule(kev=kev, exploit=exploit, epss=epss, epss_threshold=active.epss_threshold)
+        rows.append(
+            (
+                label,
+                rule,
+                {
+                    "rule_kev": kev,
+                    "rule_exploit": exploit,
+                    "rule_epss": epss,
+                    "epss_threshold": rule.epss_threshold,
+                },
+                # The three booleans only, matching program.ts -- the threshold is inherited, so it
+                # cannot be what distinguishes the active row.
+                (kev, exploit, epss) == (active.kev, active.exploit, active.epss),
+            )
         )
-        rows.append((
-            label,
-            rule,
-            {
-                "rule_kev": kev,
-                "rule_exploit": exploit,
-                "rule_epss": epss,
-                "epss_threshold": rule.epss_threshold,
-            },
-            # The three booleans only, matching program.ts -- the threshold is inherited, so it
-            # cannot be what distinguishes the active row.
-            (kev, exploit, epss) == (active.kev, active.exploit, active.epss),
-        ))
     return rows
 
 
@@ -1088,9 +1094,7 @@ def rule_sensitivity(df: DataFrame, active) -> DataFrame:
         # classify_risk overwrites `risk_class`, so a frame already classified under the active
         # rule is a valid input -- which is what the caller has.
         frame = (
-            classify_risk(df, rule)
-            .groupBy(F.lit(label).alias("rule_label"))
-            .agg(*_matrix_aggs())
+            classify_risk(df, rule).groupBy(F.lit(label).alias("rule_label")).agg(*_matrix_aggs())
         )
         for column, value in flags.items():
             frame = frame.withColumn(column, F.lit(value))
@@ -1146,18 +1150,15 @@ def capacity_by_month(
 
     # The month grid, built lazily from a one-row bounds frame so no driver round-trip is
     # needed. Months with no activity must still appear -- a silent gap reads as a good month.
-    grid = (
-        rows.agg(F.date_trunc("month", F.min("first_detected_at")).alias("start"))
-        .select(
-            F.explode(
-                F.sequence(F.col("start"), current_month, F.expr("INTERVAL 1 MONTH"))
-            ).alias("month")
+    grid = rows.agg(F.date_trunc("month", F.min("first_detected_at")).alias("start")).select(
+        F.explode(F.sequence(F.col("start"), current_month, F.expr("INTERVAL 1 MONTH"))).alias(
+            "month"
         )
     )
 
-    opened = rows.groupBy(
-        F.date_trunc("month", F.col("first_detected_at")).alias("month")
-    ).agg(F.count(F.lit(1)).cast("long").alias("opened"))
+    opened = rows.groupBy(F.date_trunc("month", F.col("first_detected_at")).alias("month")).agg(
+        F.count(F.lit(1)).cast("long").alias("opened")
+    )
     closed = (
         rows.filter(F.col("resolved_at").isNotNull())
         .groupBy(F.date_trunc("month", F.col("resolved_at")).alias("month"))
@@ -1221,23 +1222,25 @@ def capacity_by_month(
     # whose history was rebuilt from bronze this can leave few months standing, or none --
     # which is why `months_counted` is published beside it. A small honest sample beats a large
     # confident one built out of months nobody watched.
-    counted = months.filter(
-        ~F.col("partial") & ~F.col("reconstructed") & F.col("mmcr").isNotNull()
-    )
+    counted = months.filter(~F.col("partial") & ~F.col("reconstructed") & F.col("mmcr").isNotNull())
     summary = counted.agg(
         F.avg("mmcr").alias("mmcr_mean"),
         F.avg("net_pct").alias("mean_net_pct"),
         F.count(F.lit(1)).cast("long").alias("months_counted"),
     ).crossJoin(months.agg(F.sum("net").cast("long").alias("net_total")))
 
-    summary = summary.withColumn(
-        # The P2P v3 idiom: "we close about 1 in N of the backlog each month".
-        "one_in_n",
-        F.when(F.col("mmcr_mean") > 0, 100 / F.col("mmcr_mean")),
-    ).withColumn(
-        "overall_verdict",
-        F.when(F.col("months_counted") > 0, _verdict(F.col("mean_net_pct"))),
-    ).drop("mean_net_pct")
+    summary = (
+        summary.withColumn(
+            # The P2P v3 idiom: "we close about 1 in N of the backlog each month".
+            "one_in_n",
+            F.when(F.col("mmcr_mean") > 0, 100 / F.col("mmcr_mean")),
+        )
+        .withColumn(
+            "overall_verdict",
+            F.when(F.col("months_counted") > 0, _verdict(F.col("mean_net_pct"))),
+        )
+        .drop("mean_net_pct")
+    )
 
     return months.crossJoin(summary)
 
@@ -1336,8 +1339,9 @@ def _asset_group(column: Column = None) -> Column:
     they are all "we do not know", and one named group says so where a NULL silently drops the
     row out of a `groupBy`.
     """
-    return F.coalesce(column if column is not None else F.col("language"),
-                      F.lit(ASSET_GROUP_UNKNOWN))
+    return F.coalesce(
+        column if column is not None else F.col("language"), F.lit(ASSET_GROUP_UNKNOWN)
+    )
 
 
 def _with_assets(df: DataFrame) -> DataFrame:
@@ -1349,9 +1353,7 @@ def _with_assets(df: DataFrame) -> DataFrame:
     it has no asset ids, so the table comes back empty and says nothing rather than something
     wrong.
     """
-    return df.filter(
-        F.col("asset_id").isNotNull() & (F.length(F.trim(F.col("asset_id"))) > 0)
-    )
+    return df.filter(F.col("asset_id").isNotNull() & (F.length(F.trim(F.col("asset_id"))) > 0))
 
 
 def _per_asset(rows: DataFrame, observed_from=None) -> DataFrame:
@@ -1374,9 +1376,9 @@ def _per_asset(rows: DataFrame, observed_from=None) -> DataFrame:
         opened_in_window = F.sum(
             F.when(F.col("first_detected_at") >= window_start, 1).otherwise(0)
         ).cast("long")
-        closed_in_window = F.sum(
-            F.when(F.col("resolved_at") >= window_start, 1).otherwise(0)
-        ).cast("long")
+        closed_in_window = F.sum(F.when(F.col("resolved_at") >= window_start, 1).otherwise(0)).cast(
+            "long"
+        )
         open_at_start = F.sum(
             F.when(
                 (F.col("first_detected_at") < window_start)
@@ -1385,9 +1387,7 @@ def _per_asset(rows: DataFrame, observed_from=None) -> DataFrame:
             ).otherwise(0)
         ).cast("long")
 
-    per_asset = rows.groupBy(
-        F.col("asset_id"), _asset_group().alias("asset_group")
-    ).agg(
+    per_asset = rows.groupBy(F.col("asset_id"), _asset_group().alias("asset_group")).agg(
         F.sum(F.when(F.col("is_open"), 1).otherwise(0)).cast("long").alias("density"),
         F.max(F.when(high_open, F.lit(True)).otherwise(F.lit(False))).alias("has_foothold"),
         F.sum(F.when((F.col("risk_class") == "high") & ~F.col("is_open"), 1).otherwise(0))
@@ -1404,12 +1404,10 @@ def _per_asset(rows: DataFrame, observed_from=None) -> DataFrame:
     # An asset with no high-risk findings at all has no coverage -- NULL, not 0%, for the same
     # reason `safe_pct` returns NULL over an empty denominator. Including it as a zero would
     # drag the median down with assets that had nothing to remediate.
-    return per_asset.withColumn(
-        "asset_coverage_pct", safe_pct(F.col("tp"), F.col("tp") + F.col("fn"))
-    ).withColumn(
-        "net_pct", safe_pct(F.col("closed") - F.col("opened"), F.col("open_at_start"))
-    ).withColumn(
-        "verdict", F.when(F.col("net_pct").isNotNull(), _verdict(F.col("net_pct")))
+    return (
+        per_asset.withColumn("asset_coverage_pct", safe_pct(F.col("tp"), F.col("tp") + F.col("fn")))
+        .withColumn("net_pct", safe_pct(F.col("closed") - F.col("opened"), F.col("open_at_start")))
+        .withColumn("verdict", F.when(F.col("net_pct").isNotNull(), _verdict(F.col("net_pct"))))
     )
 
 
@@ -1444,9 +1442,9 @@ def _asset_aggs(window_months: Column) -> List[Column]:
         .alias("assets_with_high_risk"),
         # v5 Fig 20, "median proportion of vulnerabilities closed per month", per asset and then
         # medianed across the group. NULL when the observation window is unknown.
-        F.percentile(
-            safe_pct(F.col("closed"), F.col("open_at_start")) / window_months, 0.5
-        ).alias("mmcr_p50"),
+        F.percentile(safe_pct(F.col("closed"), F.col("open_at_start")) / window_months, 0.5).alias(
+            "mmcr_p50"
+        ),
         # v5 Fig 21, as three shares that sum to 100 over the assets with a defined net flow.
         share(verdict == "falling-behind", "falling_behind_pct"),
         share(verdict == "keeping-up", "maintaining_pct"),
@@ -1542,9 +1540,7 @@ def _asset_half_life(df: DataFrame) -> DataFrame:
     )
 
 
-def asset_profile_populations(
-    df: DataFrame, now_ts: str, *, observed_from=None
-) -> DataFrame:
+def asset_profile_populations(df: DataFrame, now_ts: str, *, observed_from=None) -> DataFrame:
     """``asset_profile`` over both populations, stacked and tagged with ``population``.
 
     Same shape and same reasoning as ``capacity_populations``: `all` answers "how much does a
@@ -1562,8 +1558,7 @@ def observation_window_days(df: DataFrame, now_ts: str) -> DataFrame:
     now = F.lit(now_ts).cast("timestamp")
     return df.agg(
         (
-            (F.unix_timestamp(now) - F.unix_timestamp(F.min("first_detected_at")))
-            / SECONDS_PER_DAY
+            (F.unix_timestamp(now) - F.unix_timestamp(F.min("first_detected_at"))) / SECONDS_PER_DAY
         ).alias("observation_window_days")
     )
 
