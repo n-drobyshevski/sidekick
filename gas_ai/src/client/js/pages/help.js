@@ -80,7 +80,7 @@ import { CATEGORY_LABELS, kindIcon, svgEl } from "../../../../../gas_shared/icon
 import { ROUTE_ICONS } from "../routeIcons.js";
 import { bootstrap, bootstrapCached, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, debounce, el, fmtDateTime, heroLines, motionOk, onPageTeardown,
+  clear, debounce, el, fmtDateTime, heroLines, motionOk, num, onPageTeardown,
   pageHeader, plural, sectionLabel,
   statusPill, tip, uiIcon,
 } from "../ui.js";
@@ -225,7 +225,7 @@ export async function renderHelp(main, params, _ctx) {
       boot,
       kpis,
       digest,
-      total: (kpis && kpis.aiAssets) || 0,
+      total: num(kpis && kpis.aiAssets),
       tally: null,
     };
     // resolveAreas wants the same payload shape the coverage page hands it, so the limits

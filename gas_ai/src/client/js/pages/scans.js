@@ -35,8 +35,8 @@ import {
 import { svgEl } from "../../../../../gas_shared/icons.js";
 import { openAreaSheet } from "./scanSheet.js";
 import {
-  absent, clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
-  appendAll, pageHeader,
+  absent, absentText, clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtCount,
+  fmtDate, fmtDateTime, appendAll, pageHeader,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
@@ -187,9 +187,10 @@ export async function renderScans(main, params, ctx) {
         fmtDateTime(sync.finished_at)),
       statRow("Mode", dryRun ? "Dry-run" : "Live",
         dryRun ? "bundled sample dataset" : "against the configured Wiz tenant"),
-      statRow("Records written", String(sync.node_count || 0),
-        "assets · " + (sync.edge_count || 0) + " edges · " + (sync.issue_count || 0) + " issues"),
-      statRow("Wiz API calls", String(sync.api_calls || 0), "in that sync"),
+      statRow("Records written", fmtCount(sync.node_count),
+        "assets · " + fmtCount(sync.edge_count) + " edges · " + fmtCount(sync.issue_count)
+        + " issues"),
+      statRow("Wiz API calls", fmtCount(sync.api_calls), "in that sync"),
     );
 
     return el("div", { class: "cov-header" }, hero, strip, stats);
@@ -245,7 +246,7 @@ export async function renderScans(main, params, ctx) {
             const dest = destinationOf(a);
             return dest && a.state !== "unscanned"
               ? el("span", { class: "cov-lands" }, dest.title)
-              : el("span", { class: "cov-none" }, "—");
+              : absent();
           },
         },
         {
@@ -282,7 +283,7 @@ export async function renderScans(main, params, ctx) {
 
   function figureCell(area) {
     if (!area.figure) {
-      return el("span", { class: "cov-none" }, "—");
+      return absent();
     }
     return el("span", { class: "cov-figure" },
       el("span", { class: "cov-figure-value num" }, area.figure.value),
@@ -377,7 +378,7 @@ export async function renderScans(main, params, ctx) {
     return el("div", { class: "card stat-list" },
       statRow(
         "Impact-tagged",
-        known ? tagged.covered + " of " + tagged.total : "—",
+        known ? tagged.covered + " of " + tagged.total : absentText,
         "carry a Wiz business-impact tier — read off the asset's own projects on the "
         + "inventory hop, so this measures the tenant's tagging discipline, not what this "
         + "pipeline reached",
@@ -395,7 +396,7 @@ export async function renderScans(main, params, ctx) {
       : null;
     const parts = [
       register
-        ? (share === null ? "—" : share + "%") + " of every register row is AI-kinded"
+        ? (share === null ? absentText : share + "%") + " of every register row is AI-kinded"
           + (register.total ? " (" + register.covered + " of " + register.total + ")" : "")
         : null,
       largest
@@ -476,7 +477,7 @@ export async function renderScans(main, params, ctx) {
       const pct = known ? Math.round(axes[axis.key] * 100) : null;
       list.append(statRow(
         axis.label,
-        known ? pct + "%" : "—",
+        known ? pct + "%" : absentText,
         known ? "known, of " + population + " decided" : "nothing decided yet",
         known ? pct : null,
       ));

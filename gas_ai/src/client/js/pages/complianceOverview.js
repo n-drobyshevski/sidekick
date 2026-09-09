@@ -46,7 +46,8 @@ import {
   subcategoryDetail,
 } from "./complianceShared.js";
 import {
-  absent, dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank, statRow,
+  absent, absentText, dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank,
+  statRow,
 } from "../ui.js";
 
 import { tip } from "../ui.js";
@@ -390,7 +391,7 @@ function railRow(row, meanPct, actions, fiveRsScope, data) {
   kids.push(el("span", {
     class: `comp-fw-pct${scored ? "" : " comp-fw-pct--dash"}`,
     "aria-hidden": "true",
-  }, scored ? `${railPct}%` : "—"));
+  }, scored ? `${railPct}%` : absentText));
 
   // Every inner part of this row is aria-hidden, so railAriaLabel() is the only place the
   // framework's reading exists in full — the percentage, how many policies are failing, the

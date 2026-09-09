@@ -28,6 +28,7 @@ import {
   claimOffsets,
   diagRow,
   absent,
+  absentText,
   claimRail,
   clear,
   closeActiveSheet,
@@ -1598,7 +1599,7 @@ export async function renderAarsRules(main, _params, ctx) {
                     : `rule ${hit.index + 1} — ${hit.points} pts`,
                 ),
                 el("span", { class: "codebook-row__seen small muted" },
-                  seen ? `${seen} ${seen === 1 ? "asset" : "assets"}` : "—"),
+                  seen ? `${seen} ${seen === 1 ? "asset" : "assets"}` : absentText),
                 el("span", { class: "codebook-row__act" }, add),
               ),
             );
@@ -1849,7 +1850,7 @@ export async function renderAarsRules(main, _params, ctx) {
       setText(s.name, sev);
       const [lo, hi] = ranges[sev];
       const n = counts ? counts[sev] ?? 0 : null;
-      setText(s.meta, hi < lo ? "—" : `${lo}–${hi}${n === null ? "" : ` · ${n}`}`);
+      setText(s.meta, hi < lo ? absentText : `${lo}–${hi}${n === null ? "" : ` · ${n}`}`);
     }
     BANDS.forEach((band, i) => {
       const v = draft.bands[band.key];
