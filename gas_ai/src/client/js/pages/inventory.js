@@ -36,7 +36,7 @@ import {
 import {
   absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
   emptyState, errorState, pageHeader,
-  DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtDate, kpiCard, plural,
+  DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
   trendScopeNote,
@@ -438,9 +438,9 @@ export async function renderInventory(main, params) {
 
     const hero = el("div", { class: "inv-hero" },
       el("div", { class: "kpi-label" }, "AI assets"),
-      el("div", { class: "hero-value num" }, String(kpis.aiAssets ?? 0)),
+      el("div", { class: "hero-value num" }, fmtCount(kpis.aiAssets)),
       el("div", { class: "inv-hero-sub" },
-        `${kpis.agents ?? 0} agents · ${kpis.agenticIdentities ?? 0} agentic identities`),
+        `${fmtCount(kpis.agents)} agents · ${fmtCount(kpis.agenticIdentities)} agentic identities`),
     );
 
     // The three counts, which is what this header claims now that it claims no verdict.
@@ -475,8 +475,8 @@ export async function renderInventory(main, params) {
       term);
     const verdict = el("div", { class: "inv-verdict" },
       el("div", { class: "inv-count-row" },
-        countStat("Open issues", kpis.openIssues ?? 0, "issues"),
-        countStat("Cloud findings", kpis.complianceGaps ?? 0, "findings"),
+        countStat("Open issues", num(kpis.openIssues), "issues"),
+        countStat("Cloud findings", num(kpis.complianceGaps), "findings"),
         countStat("Posture fails", postureFails, "postureFails")),
       el("p", { class: "sev-strip-note" },
         "Counts, not a score" +
@@ -525,20 +525,18 @@ export async function renderInventory(main, params) {
         " · assets, not issues — the bar in each row counts those"),
     );
 
-    const coverage = kpis.guardrailCoveragePct;
+    const coverage = num(kpis.guardrailCoveragePct);
     const stats = el("div", { class: "card stat-list" },
-      statRow("Guardrail coverage",
-        coverage === null || coverage === undefined ? "—" : `${coverage}%`,
-        "agents protected by a guardrail",
-        coverage === null || coverage === undefined ? null : coverage,
+      statRow("Guardrail coverage", pct1(coverage),
+        "agents protected by a guardrail", coverage,
         { term: "missing-guardrail" }),
-      statRow("Sensitive data access", String(kpis.sensitiveAccess ?? 0), "AI assets",
+      statRow("Sensitive data access", fmtCount(kpis.sensitiveAccess), "AI assets",
         null, { term: "sensitive-data" }),
-      statRow("Reaches classified data", String(kpis.dataFindings ?? 0),
+      statRow("Reaches classified data", fmtCount(kpis.dataFindings),
         "classified findings reachable from an AI asset", null, { term: "sensitive-data" }),
       statRow("Frameworks scored",
-        posture && posture.scoredFrameworks !== undefined ? String(posture.scoredFrameworks) : "—",
-        "of " + (posture ? posture.frameworks ?? 0 : 0) + " collected",
+        fmtCount(posture && posture.scoredFrameworks),
+        "of " + fmtCount(posture ? posture.frameworks : null) + " collected",
         null, { term: "coverage-state" }),
     );
 

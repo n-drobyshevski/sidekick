@@ -14,7 +14,7 @@
 // and glyphs belong in the view, the classification itself always comes from the server
 // (`node.state`), so the two cannot disagree about which state a row is IN.
 
-import { dataTable, el, fmtDateTime, meter, plural, scopeNote, sevBadge } from "../ui.js";
+import { absent, dataTable, el, fmtDateTime, meter, plural, scopeNote, sevBadge } from "../ui.js";
 
 import { lookupGap } from "../codebook.js";
 import { tip, tipAnchor, tipMark } from "../ui.js";
@@ -140,7 +140,7 @@ export function postureCell(node) {
  */
 export function checksCell(node) {
   const total = node.passCount + node.failCount;
-  if (!total) return el("span", { class: "comp-posture-dash" }, "—");
+  if (!total) return absent();
   return el("span", { class: "num" },
     `${node.passCount.toLocaleString()} / ${total.toLocaleString()}`);
 }

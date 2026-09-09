@@ -19,6 +19,7 @@
 // means "trust the order the server sent."
 
 import { dueRank } from "../../../../../gas_shared/ui/format.js";
+import { absentText } from "../../../../../gas_shared/ui/figures.js";
 
 export const KIND_VALUES = ["ISSUE", "FINDING"];
 export const SEVERITY_RANK = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"];
@@ -219,7 +220,7 @@ export function rankCellModel(row) {
   const untimed = scored && r.rankTimed === false;
   return {
     scored,
-    score: scored ? r.rankScore.toFixed(2) : "—",
+    score: scored ? r.rankScore.toFixed(2) : absentText,
     untimed,
     // The basis is named where there is one, because "overdue by 40 days" and "born 40 days
     // ago with no deadline set" are both a measured clock and are not the same reading.

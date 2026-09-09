@@ -31,8 +31,8 @@ import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.j
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, glossaryTip, heroStat,
-  pageHeader, plural, segmented, select, selectField, sevBadge,
+  absent, absentText, clear, dataTable, debounce, el, emptyState, errorState, fmtCount, fmtDate,
+  glossaryTip, heroStat, num, pageHeader, pct1, plural, segmented, select, selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statRow,
   statusPill, tableFooter, tipMark, togglePills,
 } from "../ui.js";
@@ -256,12 +256,16 @@ export async function renderProblems(main, params) {
   // on the page rather than silently vanishing from every count.
   function kpiRow(fresh) {
     const counts = fresh.severityCounts || {};
-    const total = Number(fresh.total || 0);
+    // `counts[sev] || 0` stays a bare reducer: it is a census lookup over the fetched union,
+    // and a severity nobody has right now IS a measured zero, not an absence. `fresh.total`
+    // is a different kind of field — a scalar the server sends once, not derived from a
+    // lookup — so it refuses before it casts, the same as every other top-level figure below.
+    const total = num(fresh.total);
     const rated = SEVERITY_CARDS.reduce((n, sev) => n + (counts[sev] || 0), 0);
     const stats = SEVERITY_CARDS.map((sev) =>
       statRow(sevLabel(sev), String(counts[sev] || 0), "open problems", null,
         { term: "severity" }));
-    if (total > rated) {
+    if (total !== null && total > rated) {
       stats.push(statRow("Unrated", String(total - rated), "no severity from Wiz"));
     }
     // The union's SIZE is the page's subject; the severity split is what qualifies it. As
@@ -271,7 +275,7 @@ export async function renderProblems(main, params) {
     return pageHeader({
       // NO `route`, SO NO h1: the page's heading is in the header above this one. This used
       // to need `{ heading: "div" }` on heroStat; heroStat renders no heading at all now.
-      hero: heroStat("Open problems", String(total), "issues ∪ findings, the whole union"),
+      hero: heroStat("Open problems", fmtCount(total), "issues ∪ findings, the whole union"),
       stats,
     });
   }
@@ -604,9 +608,16 @@ export async function renderProblems(main, params) {
    *  headline this whole feature exists to produce (`concentrationRatio`, actions.ts). */
   function actionHeadline(data) {
     const c = data.concentration || {};
-    const problems = c.problems ?? data.totalProblems ?? 0;
-    const actions = c.actions ?? data.total ?? 0;
-    const pctText = formatShare(c.top10Share);
+    // `??` already refuses to fall through on a real zero — the bug this package fixes is
+    // the TERMINAL fallback, which used to be a bare `0` rather than "never measured".
+    const problems = num(c.problems ?? data.totalProblems);
+    const actions = num(c.actions ?? data.total);
+    // Inlined rather than a page-local `formatShare` wrapper: `share` is a 0..1 fraction and
+    // `pct1` takes a percentage, so the multiply-by-100 has to happen AFTER the refusal, never
+    // before — `num(c.top10Share) * 100` on a null share is `null * 100 === 0`, the exact
+    // "cast reads a real zero" trap this whole package exists to close, just one call deeper.
+    const top10Share = num(c.top10Share);
+    const pctText = top10Share === null ? absentText : pct1(top10Share * 100);
 
     const curve = data.curve || [];
     const enough = curve.length >= 3;
@@ -643,21 +654,14 @@ export async function renderProblems(main, params) {
     // three levels of emphasis instead of four blocks saying one thing.
     return pageHeader({
       // NO `route`, so no h1 — see the header above.
-      hero: heroStat("Open problems", String(problems),
+      hero: heroStat("Open problems", fmtCount(problems),
         "issues ∪ findings, the whole union"),
       aside,
       stats: [
-        statRow("Collapse to", String(actions), "distinct remediation actions"),
+        statRow("Collapse to", fmtCount(actions), "distinct remediation actions"),
         statRow("Top 10 close", pctText, "of every open problem, ranked by cover"),
       ],
     });
-  }
-
-  /** 94.7%, not 94.7000000000001% or a bare "95%" that hides how close the top 10 came to
-   *  the whole board — one decimal, trimmed only when it would read as ".0". */
-  function formatShare(share) {
-    const v = Math.round((Number(share) || 0) * 1000) / 10;
-    return (Number.isInteger(v) ? String(v) : v.toFixed(1)) + "%";
   }
 
   function actionToolbar(options) {
@@ -731,7 +735,7 @@ export async function renderProblems(main, params) {
           const entries = sevEntries(r.severityMix, SEVERITY_RANK);
           return entries.length
             ? sevSegmentBar(entries, { size: "xs", label: sevSpoken(entries) })
-            : el("span", { class: "muted small" }, "—");
+            : absent();
         },
       },
       {
@@ -740,13 +744,13 @@ export async function renderProblems(main, params) {
         key: "domains", label: "Domain", sortable: false,
         cell: (r) => ((r.domains || []).length
           ? el("span", {}, r.domains.join(", "))
-          : el("span", { class: "muted small" }, "—")),
+          : absent()),
       },
       {
         key: "impact", label: "Business impact", sortable: false,
         cell: (r) => ((r.businessImpacts || []).length
           ? el("span", {}, r.businessImpacts.join(", "))
-          : el("span", { class: "muted small" }, "—")),
+          : absent()),
       },
       {
         key: "signals", label: "Signals", sortable: false,
@@ -755,7 +759,7 @@ export async function renderProblems(main, params) {
       {
         key: "firstSeen", label: "First seen", cell: (r) => (r.firstSeenAt
           ? el("span", { class: "small" }, fmtDate(r.firstSeenAt))
-          : el("span", { class: "small muted" }, "—")),
+          : absent()),
       },
     ];
     const descending = view.aSort && (ACTION_SORT_DESC[view.aSort] ? view.aDir === 1 : view.aDir === -1);
@@ -803,7 +807,7 @@ export async function renderProblems(main, params) {
     if (r.autoRemediable) chips.push(statusPill("ok", "Auto-remediable"));
     if (r.iac) chips.push(statusPill("neutral", "IaC ×" + r.iac));
     if (r.ignored) chips.push(statusPill("warn", "Ignored ×" + r.ignored));
-    if (!chips.length) return el("span", { class: "muted small" }, "—");
+    if (!chips.length) return absent();
     return el("div", { style: "display:flex; gap:6px; flex-wrap:wrap" }, ...chips);
   }
 

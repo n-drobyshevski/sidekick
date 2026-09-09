@@ -3,14 +3,14 @@
 import { call, } from "../../../../../gas_shared/api.js";
 import { bootstrap, bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, appendAll, clear, confirmDialog, dataTable, el, emptyState, errorState, heroLines,
-  firstRunNotice, fmtDateTime, pageHeader,
+  absent, absentText, appendAll, clear, confirmDialog, dataTable, el, emptyState, errorState,
+  heroLines, firstRunNotice, fmtDateTime, pageHeader,
   prunePanel, registerWideNote, statRow,
   sectionLabel, skeleton, statusPill, toast,
 } from "../ui.js";
 
 function fmtBytes(n) {
-  if (!Number.isFinite(n)) return "—";
+  if (!Number.isFinite(n)) return absentText;
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;

@@ -21,8 +21,8 @@
 import { bootstrapCached, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
-  absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,
-  pageHeader, statRow,
+  absent, absentText, clear, dataTable, debounce, el, emptyState, errorState, fmtCount, fmtDate,
+  heroStat, num, outcomeBadge, pageHeader, statRow,
   plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, tableFooter,
   skeletonStack, statusPill, togglePills,
   scopeNote,
@@ -213,10 +213,15 @@ export async function renderConfigFindings(main, params, ctx) {
           onToggle: (sev) => toggleFacet("severities", sev),
         }));
     }
+    // `totals.gaps`/`totals.controls` are scalar server figures, not census lookups — a
+    // genuinely missing one refuses before it casts and prints the em dash, never a "0
+    // distinct controls" that reads as a measured, empty register.
+    const gaps = num(totals.gaps);
+    const controlsCount = num(totals.controls);
     headHost.append(pageHeader({
       // NO `route`, SO NO h1: the page's heading is in the header above this one.
-      hero: heroStat("Failing controls", String(totals.gaps ?? 0),
-        plural(totals.controls ?? 0, "distinct control")),
+      hero: heroStat("Failing controls", fmtCount(gaps),
+        controlsCount === null ? absentText : plural(controlsCount, "distinct control")),
       aside: strip,
       stats: headerStats,
     }));
@@ -386,7 +391,7 @@ export async function renderConfigFindings(main, params, ctx) {
           key: "since", label: "Oldest", sortable: false,
           cell: (g) => (g.firstSeenAt
             ? el("span", { class: "small" }, fmtDate(g.firstSeenAt))
-            : el("span", { class: "small muted" }, "—")),
+            : absent()),
         },
         {
           key: "iac", label: "IaC", sortable: false,
@@ -453,25 +458,25 @@ export async function renderConfigFindings(main, params, ctx) {
           // absent cell uses. The AI asset column beside it says WHY.
           cell: (r) => (r.domain
             ? el("span", {}, r.domain)
-            : el("span", { class: "small muted" }, "—")),
+            : absent()),
         },
         {
           key: "linked", label: "AI asset", sortable: false,
           cell: (r) => (r.linked
             ? statusPill("neutral", "On inventory")
-            : el("span", { class: "small muted" }, "—")),
+            : absent()),
         },
         {
           key: "status", label: "Status", sortable: true,
           cell: (r) => (r.gap
             ? statusPill("bad", "Failing")
-            : statusPill("neutral", r.status || "—")),
+            : statusPill("neutral", r.status || absentText)),
         },
         {
           key: "firstSeen", label: "First seen", sortable: true,
           cell: (r) => (r.firstSeenAt
             ? el("span", { class: "small" }, fmtDate(r.firstSeenAt))
-            : el("span", { class: "small muted" }, "—")),
+            : absent()),
         },
       ],
       rows: slice,

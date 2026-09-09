@@ -739,7 +739,7 @@ export function openAssetSheet(assetId, opts = {}) {
             list.append(sheetRow({
               badge: sevBadge(f.severity),
               title: f.ruleName || f.name || f.ruleShortId,
-              meta: [el("span", { class: "small muted" }, f.ruleShortId || "—")],
+              meta: [el("span", { class: "small muted" }, f.ruleShortId || absentText)],
               fix: f.remediation,
               // The row is a door: the whole record — rule description, remediation
               // template, the Rego that decided this — is one fetch away rather than
@@ -1526,8 +1526,8 @@ export function openConfigFindingSheet(findingId, opts = {}) {
           pane.append(el("dl", { class: "kv kv--cols2" },
             ...kvIf("Rule", f.ruleShortId),
             ...kvIf("Rule id", f.ruleId ? idValue(f.ruleId) : ""),
-            ...kvRow("Status", f.status || "—"),
-            ...kvRow("Result", f.result || "—"),
+            ...kvRow("Status", f.status || absentText),
+            ...kvRow("Result", f.result || absentText),
             ...kvIf("Counts as a gap", gap ? "Yes" : "No"),
             ...kvIf("Source", f.source),
             ...kvIf("First seen", f.firstSeenAt ? fmtDate(f.firstSeenAt) : ""),
