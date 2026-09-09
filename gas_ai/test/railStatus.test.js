@@ -48,6 +48,44 @@ describe("precedence: running beats everything", () => {
     });
     expect(s.detail).toBe("250 records so far");
   });
+
+  // THE ONE THAT MATTERS. A job row missing BOTH counts (an old row shape, or a phase where
+  // the server has not stamped a count yet) is a row this module cannot read a count from, not
+  // a row reporting zero records — the same "absent is never zero" rule daysSince() applies to
+  // a date, applied here to a count. The label alone still says what matters.
+  it("prints no count at all for a running job row with no counts — absent is not zero", () => {
+    const s = railStatus({ ...base, lastSyncAt: null, job: { phase: "FETCHING" } });
+    expect(s.state).toBe("scanning");
+    expect(s.label).toBe("Sync in progress");
+    expect(s.detail).toBe("");
+  });
+});
+
+// ============================================================================ perturbation
+//
+// THE CLAIM UNDER TEST: a job row with no `nodes_so_far` must not print a count at all, let
+// alone a confident zero. The defective copy below is the ORIGINAL `count(v)` helper this
+// file used to carry — `Number.isFinite(v) ? v : 0` — applied to both fields the way the
+// running-state detail used to: a missing `nodes_so_far` folds to 0 and prints "0 records so
+// far" instead of leaving the detail blank.
+describe("perturbation: the old count() helper prints a confident zero for an absent count", () => {
+  function defectiveDetail(job) {
+    const count = (v) => (Number.isFinite(v) ? v : 0);
+    const done = count(job.nodes_so_far);
+    const total = count(job.total_count);
+    return total > 0
+      ? `${done.toLocaleString()} of ${total.toLocaleString()} records`
+      : `${done.toLocaleString()} records so far`;
+  }
+
+  it("the defective helper prints '0 records so far' for a row with no counts at all", () => {
+    expect(defectiveDetail({ phase: "FETCHING" })).toBe("0 records so far");
+  });
+
+  it("the real implementation leaves the detail blank instead", () => {
+    const s = railStatus({ ...base, lastSyncAt: null, job: { phase: "FETCHING" } });
+    expect(s.detail).toBe("");
+  });
 });
 
 describe("precedence: a failure outranks a stale or fresh register", () => {

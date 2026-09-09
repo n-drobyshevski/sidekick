@@ -29,13 +29,6 @@ const DAY_MS = 86_400_000;
 // module names no kind at all; every running job is a sync in progress.
 const RUNNING = ["FETCHING", "RECONCILING", "PERSISTING"];
 
-/** A number that is genuinely a count, never `null`/`undefined` read as zero. Refuses before
- *  casting — `Number.isFinite(null)` is already `false` with no coercion, which is the point:
- *  a job row missing this field must not read as "0 records". */
-function count(v) {
-  return Number.isFinite(v) ? v : 0;
-}
-
 /** Parses an ISO date defensively: refuses null/undefined/blank BEFORE the cast — the same
  *  rule `ui/figures.js`'s `relativeAge()` states for the same reason (`Number(null)` is `0`
  *  and finite, and an absent timestamp folded into `Date.parse` the same way would read as
@@ -90,15 +83,20 @@ export function railStatus({
   const now = Number.isFinite(nowMs) ? nowMs : Date.now();
 
   if (job && RUNNING.indexOf(job.phase) >= 0) {
-    const done = count(job.nodes_so_far);
-    const total = count(job.total_count);
-    return {
-      state: "scanning",
-      label: "Sync in progress",
-      detail: total > 0
+    // Refuses before casting, same rule as daysSince() below: a job row missing
+    // `nodes_so_far` is a row this module cannot read a count from, not a row reporting 0 —
+    // `Number.isFinite(undefined)` is already `false` with no coercion, so there is nothing to
+    // cast in the first place. The label alone ("Sync in progress") already says what matters;
+    // the detail is additional information that must not fabricate a number nobody sent.
+    const done = job.nodes_so_far;
+    const total = job.total_count;
+    let detail = "";
+    if (Number.isFinite(done)) {
+      detail = Number.isFinite(total) && total > 0
         ? `${done.toLocaleString()} of ${total.toLocaleString()} records`
-        : `${done.toLocaleString()} records so far`,
-    };
+        : `${done.toLocaleString()} records so far`;
+    }
+    return { state: "scanning", label: "Sync in progress", detail };
   }
 
   if (job && job.phase === "FAILED") {
