@@ -218,7 +218,12 @@ export async function renderConfigFindings(main, params, ctx) {
       clear(headHost);
       clear(bodyHost);
       headHost.append(pageHeader({
-        hero: heroStat("Failing controls", null, absentText),
+        // `absentText` is the VALUE, not the sub — it was in the wrong argument slot
+        // (heroStat(label, value, sub, help)), which left `null` render as an EMPTY hero
+        // (`valueOrAbsent` only substitutes `absent()` for the exact string `absentText`,
+        // never for `null`) with a bare "—" sitting where the sub sentence belongs. No sub
+        // here: the firstRunNotice right below already says the register measured zero.
+        hero: heroStat("Failing controls", absentText, null),
         stats: [],
       }));
       bodyHost.append(firstRunNotice({

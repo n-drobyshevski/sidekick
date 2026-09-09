@@ -34,8 +34,8 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  absent, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
-  errorState, firstRunNotice, heroStat, pageHeader,
+  absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, debounce,
+  el, errorState, firstRunNotice, heroStat, pageHeader,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
@@ -409,9 +409,14 @@ export async function renderInventory(main, params) {
     // completed — so this is not the same claim as the gate above: the tenant answered and
     // there was nothing to inventory, not that nobody has asked yet. The dash hero and the
     // empty stat list say "nothing was withheld", not "nothing has looked".
+    //
+    // `absentText`, not `null`, as the VALUE: `heroStat`'s `valueOrAbsent` only substitutes
+    // its own `absent()` node for the exact string `absentText` — a bare `null` renders as
+    // an EMPTY hero, not a dash (P2.3's browser-found defect, closed here for both this page
+    // and config.js's own copy of the same gate).
     if (fresh.total === 0) {
       host.append(pageHeader({
-        hero: heroStat("AI assets", null, "of the register's landscape"),
+        hero: heroStat("AI assets", absentText, "of the register's landscape"),
         stats: [],
       }));
       host.append(firstRunNotice({
