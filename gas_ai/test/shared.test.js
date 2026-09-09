@@ -122,12 +122,12 @@ registerEmptyStateContract({
   // leaves its siblings on screen instead of losing the whole route (or, before this
   // package, blanking sections that shared a host with the one that threw). The other five
   // routes do not: graph is a single canvas workbench with one failure path already covered
-  // above; aars catches per model-tab load inline (three panes, each already isolated by the
-  // tab it lives on) and was left alone this package (see the aars finding below); data
-  // catches its `Promise.allSettled` pair inline; settings and help have no independent
-  // sections to isolate from one another.
+  // above; aars catches per model-tab load inline (four panes, each already isolated by the
+  // tab it lives on — F4 gave it its `synced` gate without touching this per-tab try/catch
+  // shape, see test/aarsFirstRun.test.js); data catches its `Promise.allSettled` pair inline;
+  // settings and help have no independent sections to isolate from one another.
   guardedRoutes: ["combos", "compliance", "config", "inventory", "problems", "scans"],
-  // SEVEN ROUTES CALL `firstRunNotice(` DIRECTLY IN THEIR OWN SOURCE — the sweep is a
+  // EIGHT ROUTES CALL `firstRunNotice(` DIRECTLY IN THEIR OWN SOURCE — the sweep is a
   // source-text check over each route's own page file, so a page that only ever reaches the
   // notice through a shared per-page helper (as complianceOverview.js's `renderOverview`
   // does through `postureAbsence`) would not show up here even though it draws the same
@@ -138,16 +138,21 @@ registerEmptyStateContract({
   // first run is the itemised panel (`emptyState(heading, hint, {items, variant:"notice"})`
   // from `problemView.js`'s `prioritiesFirstRunView`), the same shape gas's executive page
   // uses for the same reason — a leader reading this page alone is owed the full unlock
-  // list, not one line. `aars` is not here either: see the finding below.
+  // list, not one line.
   //
-  // AARS FINDING, NOT FIXED HERE. `aars.js` (4,600+ lines) has NO `bootstrap()`/`boot.`
-  // reference anywhere in its source and four independently-loading tabs (AARS, Problem
-  // tree, Posture, Rank eval), each with its own lazy fetch-and-paint cycle; only the active
-  // tab's pane is ever mounted with content. There is no single early-return point that
-  // could honestly gate all four without either fetching all four up front (a real behavior
-  // change, and a performance one) or duplicating the gate four times, once per tab-select
-  // handler. `?dry&noseed#/aars` still prints ten bare zeros — reported, not fixed.
-  firstRunRoutes: ["combos", "compliance", "config", "data", "graph", "inventory", "scans"],
+  // `aars` JOINED HERE IN F4. `?dry&noseed#/aars` printed ten bare zeros — the gap ladder's
+  // claim-rail column read `api_previewAarsRule`'s own truthy-but-empty "0 of 0" as measured,
+  // on all four tabs (only the active one is ever mounted, so the walker's own sweep saw only
+  // the default AARS tab's nine cascade rows + fallback). `renderAarsRules` now reads
+  // `bootstrap()` once and hands the derived `synced` flag to every tab painter — `sync()`,
+  // `paintImpact()`, `paintProblemImpact()`, `paintPostureImpact()`, `buildRankEval(report,
+  // synced)` — each showing ONE undated `firstRunNotice({synced:false, hint})` at the top of
+  // its own Impact pane, never a whole-page or whole-editor gate. Full account, including the
+  // gated-vs-ungated split (the two sibling cascades' own claim columns are pure functions of
+  // the RULE and stay untouched), in test/aarsFirstRun.test.js.
+  firstRunRoutes: [
+    "aars", "combos", "compliance", "config", "data", "graph", "inventory", "scans",
+  ],
   // The routes whose `firstRunNotice(` call(s) NEVER carry `at:` in the same object literal.
   // Two shapes produce this: a route with exactly one call, gated so tightly that `synced` is
   // a literal `false` and there is never a sync to date (combos, graph, scans — all return
@@ -157,8 +162,13 @@ registerEmptyStateContract({
   // sweep counts as dated because the token `at:` is present, so it is correctly NOT in this
   // list). inventory and config each carry TWO calls — one undated for `!boot.latestSync`,
   // one dated for "synced but measured zero" — and the sweep counts a route as dated the
-  // moment ANY of its calls does, so both are correctly absent from this list too.
-  firstRunNoAt: ["combos", "data", "graph", "scans"],
+  // moment ANY of its calls does, so both are correctly absent from this list too. `aars` is
+  // undated for a THIRD shape: every one of its (several) `firstRunNotice({synced:false, …})`
+  // calls is the undated branch on purpose — the "synced but measured zero" case on each of
+  // its tabs keeps its own pre-existing, more specific empty-state title ("No inventory to
+  // compare against.", "No open issue or failing finding to compare against.", "No persisted
+  // asset to compare against.") rather than being folded into the shared dated sentence.
+  firstRunNoAt: ["aars", "combos", "data", "graph", "scans"],
 });
 
 registerNavGroupContract({
