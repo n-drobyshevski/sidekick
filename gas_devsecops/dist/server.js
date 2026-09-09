@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "16e8f1a2c744" : "dev";
+  var BUILD_ID = true ? "4864c01fc4dc" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2439,9 +2439,10 @@ var Server = (() => {
     }
     return curve;
   }
+  var CROSSING_EPSILON = 1e-9;
   function kmQuantileFromCurve(curve, q) {
     const threshold = 1 - q;
-    for (const p of curve) if (p.s <= threshold) return p.t;
+    for (const p of curve) if (p.s <= threshold + CROSSING_EPSILON) return p.t;
     return null;
   }
   function kmMedianFromCurve(curve) {

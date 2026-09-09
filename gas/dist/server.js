@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "4b5738c2b2a4" : "dev";
+  var BUILD_ID = true ? "358a17f4de92" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -2825,26 +2825,47 @@ var Server = (() => {
     compiled.forEach((dom, domainIndex) => {
       dom.rules.forEach((rule, ruleIndex) => {
         if (rule === null) {
-          rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: true, matched: false, conditions: [] });
+          rules.push({
+            domainIndex,
+            domain: dom.name,
+            ruleIndex,
+            malformed: true,
+            matched: false,
+            conditions: []
+          });
           return;
         }
-        const conditions = rule.map((spec, index) => ({ index, matched: conditionMatches(spec, record, tags) }));
+        const conditions = rule.map((spec, index) => ({
+          index,
+          matched: conditionMatches(spec, record, tags)
+        }));
         const matched = conditions.every((c) => c.matched);
-        rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: false, matched, conditions });
+        rules.push({
+          domainIndex,
+          domain: dom.name,
+          ruleIndex,
+          malformed: false,
+          matched,
+          conditions
+        });
         if (matched && assigned === UNASSIGNED) assigned = dom.name;
       });
     });
     return { assigned, rules };
   }
   function ruleHealth(records, compiled) {
-    const stats = compiled.map((dom) => dom.rules.map(() => ({ fired: 0, matched: 0 })));
+    const stats = compiled.map(
+      (dom) => dom.rules.map(() => ({ fired: 0, matched: 0 }))
+    );
     for (const record of records) {
       const trace = traceRecord(record, compiled);
       for (const rt of trace.rules) {
         if (rt.matched) stats[rt.domainIndex][rt.ruleIndex].matched += 1;
       }
       if (trace.assigned !== UNASSIGNED) {
-        const winner = trace.rules.find((rt) => rt.matched && rt.domain === trace.assigned);
+        const winner = trace.rules.find(
+          (rt) => rt.matched && rt.domain === trace.assigned
+        );
         if (winner) stats[winner.domainIndex][winner.ruleIndex].fired += 1;
       }
     }
@@ -2853,7 +2874,14 @@ var Server = (() => {
       dom.rules.forEach((rule, ruleIndex) => {
         const { fired, matched } = stats[domainIndex][ruleIndex];
         const status = rule === null ? "malformed" : matched === 0 ? "dead" : fired === 0 ? "shadowed" : "ok";
-        out.push({ domainIndex, domain: dom.name, ruleIndex, fired, matched, status });
+        out.push({
+          domainIndex,
+          domain: dom.name,
+          ruleIndex,
+          fired,
+          matched,
+          status
+        });
       });
     });
     return out;
@@ -2904,16 +2932,17 @@ var Server = (() => {
       if (present(r[SG_COL])) sgResolved += 1;
       else sgUnresolved += 1;
     }
-    const byDomain = orderedWithTailsLast(orderedDomainNames, bySource.missing > 0).map(
-      (domain) => {
-        var _a2, _b, _c;
-        return {
-          domain,
-          findings: (_a2 = findingsByDomain.get(domain)) != null ? _a2 : 0,
-          assets: (_c = (_b = assetsByDomain.get(domain)) == null ? void 0 : _b.size) != null ? _c : 0
-        };
-      }
-    );
+    const byDomain = orderedWithTailsLast(
+      orderedDomainNames,
+      bySource.missing > 0
+    ).map((domain) => {
+      var _a2, _b, _c;
+      return {
+        domain,
+        findings: (_a2 = findingsByDomain.get(domain)) != null ? _a2 : 0,
+        assets: (_c = (_b = assetsByDomain.get(domain)) == null ? void 0 : _b.size) != null ? _c : 0
+      };
+    });
     return {
       totalFindings: records.length,
       totalAssets: allAssets.size,
@@ -3051,7 +3080,9 @@ var Server = (() => {
         nearMisses: nearMisses(g.rep, compiled)
       });
     }
-    rows.sort((a, b) => b.findings - a.findings || a.asset.localeCompare(b.asset));
+    rows.sort(
+      (a, b) => b.findings - a.findings || a.asset.localeCompare(b.asset)
+    );
     return rows;
   }
   function untaggedSubscriptions(records) {
@@ -3063,7 +3094,17 @@ var Server = (() => {
       const extId = (_b = flatVal(r, EXT_COL)) != null ? _b : NONE;
       const key = `${subscription}\0${extId}`;
       let g = groups.get(key);
-      if (!g) groups.set(key, g = { subscription, extId, assets: /* @__PURE__ */ new Set(), findings: 0, sevCounts: {} });
+      if (!g)
+        groups.set(
+          key,
+          g = {
+            subscription,
+            extId,
+            assets: /* @__PURE__ */ new Set(),
+            findings: 0,
+            sevCounts: {}
+          }
+        );
       g.findings += 1;
       const asset = assetKey(r);
       if (asset) g.assets.add(asset);
@@ -3089,7 +3130,8 @@ var Server = (() => {
       if (domainOf(r) !== UNASSIGNED) continue;
       const asset = String((_a = r[LEDGER_NAME_COL]) != null ? _a : "") || NONE;
       let g = groups.get(asset);
-      if (!g) groups.set(asset, g = { rep: r, open: 0, resolved: 0, lastSeen: null });
+      if (!g)
+        groups.set(asset, g = { rep: r, open: 0, resolved: 0, lastSeen: null });
       if (String((_b = r["status"]) != null ? _b : "").toUpperCase() === "OPEN") g.open += 1;
       else g.resolved += 1;
       const seen2 = r["last_seen"];
@@ -3458,9 +3500,10 @@ var Server = (() => {
     }
     return curve;
   }
+  var CROSSING_EPSILON = 1e-9;
   function kmQuantileFromCurve(curve, q) {
     const threshold = 1 - q;
-    for (const p of curve) if (p.s <= threshold) return p.t;
+    for (const p of curve) if (p.s <= threshold + CROSSING_EPSILON) return p.t;
     return null;
   }
   function kmMedianFromCurve(curve) {
@@ -5149,7 +5192,9 @@ var Server = (() => {
     }
     for (const item of value) {
       if (item === null || typeof item !== "object" || Array.isArray(item)) {
-        throw new ImportValidationError(`Bundle field "${name}" must contain objects.`);
+        throw new ImportValidationError(
+          `Bundle field "${name}" must contain objects.`
+        );
       }
     }
     return value;
@@ -5157,7 +5202,9 @@ var Server = (() => {
   function validateBundle(data) {
     var _a;
     if (data === null || typeof data !== "object" || Array.isArray(data)) {
-      throw new ImportValidationError("The uploaded file is not a migration bundle.");
+      throw new ImportValidationError(
+        "The uploaded file is not a migration bundle."
+      );
     }
     const rec = data;
     if (rec["kind"] !== MIGRATION_KIND) {
@@ -5197,13 +5244,20 @@ var Server = (() => {
     }
     for (const s of scans) {
       if (typeof s["scan_id"] !== "string" || !s["scan_id"] || typeof s["ts"] !== "string" || !s["ts"]) {
-        throw new ImportValidationError("Every bundle scan needs string scan_id and ts.");
+        throw new ImportValidationError(
+          "Every bundle scan needs string scan_id and ts."
+        );
       }
     }
-    for (const [name, rows] of [["ledger", ledger], ["episodes", episodes]]) {
+    for (const [name, rows] of [
+      ["ledger", ledger],
+      ["episodes", episodes]
+    ]) {
       for (const r of rows) {
         if (typeof r["vuln_key"] !== "string" || !r["vuln_key"]) {
-          throw new ImportValidationError(`Every bundle ${name} row needs a string vuln_key.`);
+          throw new ImportValidationError(
+            `Every bundle ${name} row needs a string vuln_key.`
+          );
         }
       }
     }
@@ -5344,7 +5398,9 @@ var Server = (() => {
       rebuilt.ledger[row.vuln_key] = row;
     }
     const vulnsImported = Object.keys(rebuilt.ledger).length;
-    const unclassifiedSeverity = bundle.ledger.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length + bundle.episodes.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length;
+    const unclassifiedSeverity = bundle.ledger.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length + bundle.episodes.filter(
+      (r) => normalizeSeverity(r["severity"]) === "UNKNOWN"
+    ).length;
     const flats = importedAsc.filter((r) => r.shape === "flat");
     const floorRow = flats.length ? flats[flats.length - 1] : null;
     const checkpoint = {
@@ -5359,7 +5415,11 @@ var Server = (() => {
       (scanId) => `Cannot import: the archived payload for existing scan ${scanId} is missing, so it can't be replayed over the imported history.`
     );
     const observationsByScan = replayScans(rebuilt, replay);
-    const converted = settledEpisodeRows(checkpoint.ledger, rebuilt.ledger, importedIds);
+    const converted = settledEpisodeRows(
+      checkpoint.ledger,
+      rebuilt.ledger,
+      importedIds
+    );
     for (const live of converted) {
       rebuilt.episodes.push(toEpisodeRow(live, options.compactionId));
       delete rebuilt.ledger[live.vuln_key];
@@ -5534,7 +5594,9 @@ var Server = (() => {
       exploit: 0,
       highEpss: 0,
       internetExposed: 0,
-      exposureKnown: records.some((r) => WIDE_KEY in r && r[WIDE_KEY] !== void 0)
+      exposureKnown: records.some(
+        (r) => WIDE_KEY in r && r[WIDE_KEY] !== void 0
+      )
     };
     for (const r of records) {
       if (!isOpen3(r["status"])) continue;
@@ -5543,12 +5605,16 @@ var Server = (() => {
       if (r["hasExploit"] === true) out.exploit += 1;
       const epss = epssOf(r);
       if (epss !== null && epss >= EPSS_PRIORITY_THRESHOLD) out.highEpss += 1;
-      if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true) out.internetExposed += 1;
+      if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true)
+        out.internetExposed += 1;
     }
     return out;
   }
   function ageBuckets(rows) {
-    const { perKey, totalOpen } = ageBucketsBy(rows, (r) => normalizeSeverity(r.severity));
+    const { perKey, totalOpen } = ageBucketsBy(
+      rows,
+      (r) => normalizeSeverity(r.severity)
+    );
     return { perSev: perKey, totalOpen };
   }
   function ageBucketsBy(rows, keyOf) {
@@ -5625,12 +5691,24 @@ var Server = (() => {
       const raw = keyFn(row);
       const key = raw && raw.trim() !== "" ? raw : "(none)";
       let g = groups.get(key);
-      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...meta ? meta(row) : {} });
+      if (!g)
+        groups.set(
+          key,
+          g = {
+            key,
+            agedCount: 0,
+            openCount: 0,
+            oldestDays: 0,
+            ...meta ? meta(row) : {}
+          }
+        );
       g.openCount += 1;
       if (age > AGED_OPEN_EDGE) g.agedCount += 1;
       if (age > g.oldestDays) g.oldestDays = age;
     }
-    return [...groups.values()].sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)).slice(0, topN);
+    return [...groups.values()].sort(
+      (a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)
+    ).slice(0, topN);
   }
   function oldestOpen(rows, topN = 7) {
     const findings = rows.map((r) => ({ r, age: openAge2(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
@@ -5642,20 +5720,29 @@ var Server = (() => {
     }));
     return {
       findings,
-      byAsset: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r.asset_name) != null ? _a : "");
-      }, topN, (r) => {
-        var _a, _b;
-        return {
-          subscription: String((_a = r.subscription_name) != null ? _a : ""),
-          domain: String((_b = r._domain) != null ? _b : "")
-        };
-      }),
-      bySupportGroup: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r._supportGroup) != null ? _a : "");
-      }, topN),
+      byAsset: rankGroups(
+        rows,
+        (r) => {
+          var _a;
+          return String((_a = r.asset_name) != null ? _a : "");
+        },
+        topN,
+        (r) => {
+          var _a, _b;
+          return {
+            subscription: String((_a = r.subscription_name) != null ? _a : ""),
+            domain: String((_b = r._domain) != null ? _b : "")
+          };
+        }
+      ),
+      bySupportGroup: rankGroups(
+        rows,
+        (r) => {
+          var _a;
+          return String((_a = r._supportGroup) != null ? _a : "");
+        },
+        topN
+      ),
       byDomain: rankGroups(rows, (r) => {
         var _a;
         return String((_a = r._domain) != null ? _a : "");
@@ -5664,7 +5751,13 @@ var Server = (() => {
   }
   function movement(baseRows2, latestFlatScan, scanCount) {
     if (!latestFlatScan) {
-      return { newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: scanCount > 1 };
+      return {
+        newCount: 0,
+        resolvedCount: 0,
+        reopenedCount: 0,
+        persisting: 0,
+        hasPrevious: scanCount > 1
+      };
     }
     let persisting = 0;
     for (const row of baseRows2) {
@@ -5841,10 +5934,13 @@ var Server = (() => {
       };
       return { recs, node };
     });
-    rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
+    rows.sort(
+      (a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key)
+    );
     const kept = rows.slice(0, perLevelCap);
     if (rest.length) {
-      for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
+      for (const row of kept)
+        row.node.children = groupTree(row.recs, rest, perLevelCap);
     }
     return kept.map((row) => row.node);
   }
@@ -5910,7 +6006,12 @@ var Server = (() => {
         if (a) b.assets.add(a);
         if (r["hasCisaKevExploit"] === true) b.kev += 1;
       }
-      const rows = [...buckets.entries()].map(([key, b]) => ({ key, open: b.open, assets: b.assets.size, kev: b.kev })).sort((a, b) => b.open - a.open || a.key.localeCompare(b.key));
+      const rows = [...buckets.entries()].map(([key, b]) => ({
+        key,
+        open: b.open,
+        assets: b.assets.size,
+        kev: b.kev
+      })).sort((a, b) => b.open - a.open || a.key.localeCompare(b.key));
       perDim[dim] = rows.slice(0, topN);
       moreDim[dim] = Math.max(0, rows.length - topN);
     }
@@ -5930,7 +6031,18 @@ var Server = (() => {
     const hi = Math.ceil(mid);
     return lo === hi ? ages[lo] : (ages[lo] + ages[hi]) / 2;
   }
-  var SLA_DECILE_LABELS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  var SLA_DECILE_LABELS = [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9"
+  ];
   function slaConsumedDeciles(rows, slaTargets) {
     var _a, _b;
     const out = {
