@@ -22,7 +22,8 @@ import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets
 import { kindIconSvg, kindLabel, categoryOf } from "../../../../../gas_shared/icons.js";
 import {
   absent,
-  clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,
+  clear, dataTable, debounce, el, errorState, firstRunNotice, heroStat, measuredEmpty,
+  outcomeBadge, pageHeader,
   outcomeLabel, plural, sectionLabel, select, statRow, tableFooter,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
   togglePills,
@@ -133,10 +134,10 @@ export async function renderCombos(main, params) {
   }));
 
   if (!boot.latestSync) {
-    main.append(emptyState(
-      "No sync yet.",
-      "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
-    ));
+    main.append(firstRunNotice({
+      synced: false,
+      hint: "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
+    }));
     return;
   }
 
@@ -169,6 +170,21 @@ export async function renderCombos(main, params) {
 
   // --------------------------------------------------------------------------- paint
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[combos] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint(fresh) {
     payload = fresh;
     const digest = fresh.digest || null;
@@ -179,7 +195,12 @@ export async function renderCombos(main, params) {
     // A payload cached before the digest shipped still renders the page — it just can't
     // draw the parts that are made of counts. Honest state beats a blank pane.
     if (digest) {
-      host.append(kpiRow(digest.totals), summaryRow(digest, digestById));
+      const kpiHost = el("div", {});
+      const summaryHost = el("div", {});
+      host.append(kpiHost, summaryHost);
+      guard("the issue totals", kpiHost, () => kpiHost.append(kpiRow(digest.totals)));
+      guard("the pattern summary", summaryHost,
+        () => summaryHost.append(summaryRow(digest, digestById)));
     }
 
     const ranked = rankGroups(fresh.groups || []);
@@ -188,14 +209,20 @@ export async function renderCombos(main, params) {
     host.append(patternsHeader(ranked, shown, digestById));
 
     if (!shown.length) {
-      host.append(emptyState(
+      host.append(measuredEmpty(
         "No pattern matches these filters.",
-        "Clear the severity or condition filter to see all " + ranked.length + " patterns.",
+        {
+          at: boot.latestSync.finished_at,
+          hint: "Clear the severity or condition filter to see all " + ranked.length + " patterns.",
+        },
       ));
       return;
     }
     for (const group of shown) {
-      host.append(patternCard(group, digestById.get(group.id)));
+      const cardHost = el("div", {});
+      host.append(cardHost);
+      guard("the " + group.title + " card", cardHost,
+        () => cardHost.append(patternCard(group, digestById.get(group.id))));
     }
   }
 

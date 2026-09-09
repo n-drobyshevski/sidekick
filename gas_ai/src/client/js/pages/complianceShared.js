@@ -14,7 +14,9 @@
 // and glyphs belong in the view, the classification itself always comes from the server
 // (`node.state`), so the two cannot disagree about which state a row is IN.
 
-import { absent, dataTable, el, fmtDateTime, meter, plural, scopeNote, sevBadge } from "../ui.js";
+import {
+  absent, dataTable, el, firstRunNotice, fmtDateTime, meter, plural, scopeNote, sevBadge,
+} from "../ui.js";
 
 import { lookupGap } from "../codebook.js";
 import { tip, tipAnchor, tipMark } from "../ui.js";
@@ -505,4 +507,42 @@ export function postureScopeView(data) {
 export function postureScopeNote(data) {
   const v = postureScopeView(data);
   return v.show ? scopeNote(v) : null;
+}
+
+/**
+ * The two-reason hint every compliance-absence notice carries, kept in ONE place so the
+ * per-framework register (compliance.js) and the overview (complianceOverview.js) can never
+ * drift into two different sentences for the same claim. They used to: the register named
+ * the two real reasons (no framework selected, or selected but not yet synced) while the
+ * overview described its own stale-SWR-cache edge case in terms only its author could tell
+ * apart from "nothing synced yet".
+ */
+export function postureAbsenceHint(data) {
+  const selected = data && data.selected && data.selected.length;
+  return selected
+    ? "The sync is configured to collect " + plural(data.selected.length, "framework") +
+      ", but no posture has been stored yet. Run a sync, then check the Wiz Scans page for " +
+      "a skipped step if this stays empty."
+    : "No frameworks are selected for posture collection. Choose them in Settings.";
+}
+
+/**
+ * The notice itself, for a caller that does not need `firstRunNotice` in its own source —
+ * complianceOverview.js is not a route the shared empty-state contract sweeps, so it calls
+ * this rather than repeating the two lines below.
+ *
+ * `synced`/`at` come from `boot.latestSync` rather than from `data` — whether COMPLIANCE
+ * posture exists and whether ANYTHING has ever been synced are different questions, and this
+ * page can be empty for its own reason (no framework selected in Settings) after many
+ * successful syncs of everything else. `firstRunNotice` still draws the honest sentence for
+ * that case: "the last sync … saved no records", dated, never "no sync has run yet" on a
+ * register that has in fact run several.
+ */
+export function postureAbsence(boot, data) {
+  const synced = !!(boot && boot.latestSync);
+  return firstRunNotice({
+    synced,
+    at: synced ? boot.latestSync.finished_at : undefined,
+    hint: postureAbsenceHint(data),
+  });
 }

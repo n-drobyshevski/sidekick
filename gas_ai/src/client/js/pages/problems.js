@@ -32,13 +32,15 @@ import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   absent, absentText, clear, dataTable, debounce, el, emptyState, errorState, fmtCount, fmtDate,
-  glossaryTip, heroStat, num, pageHeader, pct1, plural, segmented, select, selectField, sevBadge,
+  glossaryTip, heroStat, measuredEmpty, num, pageHeader, pct1, plural, segmented, select,
+  selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statRow,
   statusPill, tableFooter, tipMark, togglePills,
 } from "../ui.js";
 import {
   PAGE_SIZE, PROBLEM_SORT_DESC, RANK_REASON_LABEL, SEVERITY_RANK,
-  applyProblemFilters, defaultProblemSort, problemFilterOptions, problemParamPatch,
+  applyProblemFilters, defaultProblemSort, prioritiesFirstRunView, problemFilterOptions,
+  problemParamPatch,
   rankCellModel, rankReasonLines, readProblemParams, sortProblems,
 } from "./problemView.js";
 import {
@@ -106,11 +108,20 @@ export async function renderProblems(main, params) {
       glossaryTip(tipMark(), "priorities-rank")],
   }));
 
-  if (!boot.latestSync) {
-    main.append(emptyState(
-      "No sync yet.",
-      "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
-    ));
+  // The front door earns the itemised panel — see problemView.js's own header for why this
+  // page gets one and the others get the generic firstRunNotice. `show` is exactly
+  // `!boot.latestSync`, so this is the same whole-page gate every other route uses, just
+  // drawn with the full unlock list rather than one sentence.
+  const first = prioritiesFirstRunView(boot);
+  if (first.show) {
+    main.append(pageHeader({
+      hero: heroStat("Open problems", null, "issues ∪ findings, the whole union"),
+      stats: [],
+    }));
+    main.append(emptyState(first.heading, first.hint, {
+      items: first.items,
+      variant: "notice",
+    }));
     return;
   }
 
@@ -202,16 +213,39 @@ export async function renderProblems(main, params) {
 
   // --------------------------------------------------------------------------- paint
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[problems] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint() {
     clear(host);
     host.append(modeSwitch());
     if (view.mode === "problems") {
       if (!problemsData) return; // unreached on a real load path; loadProblems() awaits first
-      host.append(kpiRow(problemsData));
-      if (problemsData.all) renderAll(problemsData); else renderPaged(problemsData);
+      const kpiHost = el("div", {});
+      const tableHost = el("div", {});
+      host.append(kpiHost, tableHost);
+      guard("the open-problem counts", kpiHost, () => kpiHost.append(kpiRow(problemsData)));
+      guard("the priorities table", tableHost, () => {
+        if (problemsData.all) renderAll(problemsData, tableHost);
+        else renderPaged(problemsData, tableHost);
+      });
     } else {
       if (!actionsData) return;
-      renderActions(actionsData);
+      const actionsHost = el("div", {});
+      host.append(actionsHost);
+      guard("the ranked actions", actionsHost, () => renderActions(actionsData, actionsHost));
     }
   }
 
@@ -288,10 +322,10 @@ export async function renderProblems(main, params) {
    * `combos.js`'s issue table already uses for one pattern's rows, applied here to the
    * whole union.
    */
-  function renderAll(fresh) {
+  function renderAll(fresh, target) {
     const rows = fresh.rows || [];
     const options = problemFilterOptions(rows);
-    host.append(toolbar(options, false));
+    target.append(toolbar(options, false));
 
     const filtered = applyProblemFilters(rows, view);
     const sorted = view.sort ? sortProblems(filtered, view.sort, view.dir) : filtered;
@@ -300,14 +334,17 @@ export async function renderProblems(main, params) {
     const slice = sorted.slice(view.page * PAGE_SIZE, (view.page + 1) * PAGE_SIZE);
 
     if (!sorted.length) {
-      host.append(emptyState(
+      target.append(measuredEmpty(
         "No problem matches these filters.",
-        "Clear the priority, kind or search filter to see all " + rows.length + ".",
+        {
+          at: boot.latestSync.finished_at,
+          hint: "Clear the priority, kind or search filter to see all " + rows.length + ".",
+        },
       ));
       return;
     }
 
-    host.append(
+    target.append(
       table(slice, filtered.length, rows.length),
       tableFooter({
         page: view.page,
@@ -331,19 +368,21 @@ export async function renderProblems(main, params) {
    * its client-only affordances (its own comment: "the client rebuilds it from the rows
    * it actually holds").
    */
-  function renderPaged(fresh) {
+  function renderPaged(fresh, target) {
     const rows = fresh.rows || [];
-    host.append(toolbar(problemFilterOptions(rows), true));
+    target.append(toolbar(problemFilterOptions(rows), true));
 
     const filtered = applyProblemFilters(rows, { kind: view.kind, q: view.q });
     const sorted = view.sort ? sortProblems(filtered, view.sort, view.dir) : filtered;
 
     if (!sorted.length) {
-      host.append(emptyState("No problem on this page matches the kind or search filter."));
+      target.append(measuredEmpty("No problem on this page matches the kind or search filter.", {
+        at: boot.latestSync.finished_at,
+      }));
     } else {
-      host.append(table(sorted, filtered.length, rows.length));
+      target.append(table(sorted, filtered.length, rows.length));
     }
-    host.append(tableFooter({
+    target.append(tableFooter({
       page: fresh.page,
       pageCount: fresh.pageCount,
       total: fresh.filtered,
@@ -566,42 +605,49 @@ export async function renderProblems(main, params) {
   // action mode
   // =====================================================================================
 
-  function renderActions(data) {
+  function renderActions(data, target) {
     const total = data.total || 0;
     if (!total) {
-      host.append(emptyState(
+      target.append(measuredEmpty(
         "No open problems.",
-        "The landscape has nothing to remediate right now — every issue and finding is resolved.",
+        {
+          at: boot.latestSync.finished_at,
+          hint: "The landscape has nothing to remediate right now — every issue and finding "
+            + "is resolved.",
+        },
       ));
       return;
     }
 
-    host.append(actionHeadline(data));
+    target.append(actionHeadline(data));
 
     const rows = data.rows || [];
     const options = actionFilterOptions(rows);
-    host.append(actionToolbar(options));
+    target.append(actionToolbar(options));
 
     const filtered = applyActionFilters(rows, {
       severity: view.aSeverity, kind: view.aKind, q: view.aQ,
     });
     const sorted = view.aSort ? sortActions(filtered, view.aSort, view.aDir) : filtered;
 
-    host.append(el("div", { class: "filter-meta" },
+    target.append(el("div", { class: "filter-meta" },
       el("span", { class: "count" },
         sorted.length === rows.length
           ? plural(rows.length, "action")
           : sorted.length + " of " + plural(rows.length, "action"))));
 
     if (!sorted.length) {
-      host.append(emptyState(
+      target.append(measuredEmpty(
         "No action matches these filters.",
-        "Clear the priority, kind or search filter to see all " + rows.length + ".",
+        {
+          at: boot.latestSync.finished_at,
+          hint: "Clear the priority, kind or search filter to see all " + rows.length + ".",
+        },
       ));
       return;
     }
 
-    host.append(actionTable(sorted));
+    target.append(actionTable(sorted));
   }
 
   /** "N open problems collapse to M actions — the top 10 close K%." — the self-evidencing

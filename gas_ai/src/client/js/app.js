@@ -81,6 +81,14 @@ const MANIFEST = {
   // What this register's panels list beyond their page rows. The only one of the three that
   // has any — see navPanels.js for why they are the app's knowledge and not the shell's.
   panelBlocks: panelBlocksFor,
+  // `gas_shared/ui/feedback.js`'s `firstRunNotice`/`syncCaption` read this back
+  // (`appConfig().sync.{noun,unit}`) rather than hard-coding "sync"/"findings" — a shared
+  // sentence naming a control this register does not have is worse than one this register
+  // never had to say. This app's control IS called "sync" (unlike gas's "scan"), and what it
+  // saves is RECORDS — "Records written" is already scans.js's own word for the count a
+  // completed sync leaves behind — not "findings", which is the word the default would have
+  // put in a first-run sentence on an issue-and-asset register that has no findings register.
+  sync: { noun: "sync", unit: "records" },
 };
 // The rail's information architecture, stated once.
 //
