@@ -254,3 +254,89 @@ export function rankReasonLines(row) {
 export function defaultProblemSort(rankLeadsSort) {
   return rankLeadsSort === true ? "rank" : "";
 }
+
+// ------------------------------------------------------------------------ the first run
+
+// ONE LABEL, USED FOUR TIMES, so the four cannot drift apart. It names the CONTROL rather
+// than a page, because there is no page to send the reader to — the sync battery lives in
+// the rail, on every route, and this page has no settings toggle that would change when it
+// unlocks. Ported shape: gas's `pages/executive.js` `executiveFirstRunView` names this
+// pattern first — an itemised `emptyState` in place of the generic notice on the app's own
+// front door, because a leader reading this page alone is owed the full unlock list, not
+// one line. gas's rail button says "Run scan"; this app's says "Sync now" (app.js's own
+// MANIFEST.sync.noun is "sync"), so the label is this file's own rather than a shared import.
+const SYNC_NOW = "Sync now — the button in the rail";
+
+/**
+ * The itemised first-run panel this register's front door owes a reader, as data.
+ *
+ * WHY THIS PAGE GETS A PANEL AND NOT THE GENERIC `firstRunNotice`. Every other route this
+ * wave touches replaces a whole page with one sentence — this one page nobody reaches
+ * without going through it, and it is where a reader with no history yet is owed the full
+ * list of what a sync would put on screen, not a single undifferentiated "nothing here".
+ * `firstRunNotice` has no `items` slot for exactly that reason: a one-line notice and an
+ * itemised unlock list are different claims, not two sizes of the same one.
+ *
+ * FOUR ITEMS, AND THREE OF THEM NAME FEATURES THIS FILE DOES NOT DRAW YET. "Movement" and
+ * "Issue half-life" are P2.2 and P2.5 — later packages in the same wave. Naming them here
+ * is not a bug: the panel's whole job is to tell a reader what SYNCING unlocks, and what it
+ * unlocks does not wait on which package happens to have landed first. A reader who runs
+ * the first sync today and returns after P2.5 ships sees the half-life appear where this
+ * panel already told them it would.
+ *
+ * WHY IT IS PURE. Every unlock condition is a claim about the sync battery — the first sync
+ * exists or it does not, a second one seven days later exists or it does not, an issue has
+ * disappeared between two syncs or it has not. Those are testable without a DOM, and
+ * `problems.js` turns the result into elements and does nothing else clever, the same
+ * relationship this file's own header states for every other export here.
+ *
+ * `show` is exactly `!boot.latestSync` — the SAME whole-page gate `problems.js` used to
+ * decide with a bare `if`, kept here as the one place that decision is made rather than
+ * duplicated between the page and its view model.
+ *
+ * @param {object|null|undefined} boot  `bootstrap()`'s reply
+ */
+export function prioritiesFirstRunView(boot) {
+  const show = !(boot && boot.latestSync);
+  if (!show) return { show: false, heading: "", hint: "", items: [] };
+
+  return {
+    show: true,
+    // The same two sentences `gas_shared/ui/feedback.js`'s `firstRunNotice` would print for
+    // `synced: false` — this panel cannot call it directly (it has no `items` slot), so the
+    // wording is carried here by hand rather than through the shared function. Keep the two
+    // in sync if either changes.
+    heading: "No sync has run yet, so nothing on this page has been measured.",
+    hint: "Every figure below waits on a different thing. None of them is a zero, and none of "
+      + "them is shown as one.",
+    items: [
+      {
+        figure: "Open problems",
+        unlock: "The first sync. Until one has run there is no open union to count, and a row "
+          + "of zeros would be a measurement of one nobody took.",
+        route: null,
+        routeLabel: SYNC_NOW,
+      },
+      {
+        figure: "Movement",
+        unlock: "Two syncs at least seven days apart, for the week-over-week row. A single "
+          + "sync has nothing to compare against.",
+        route: null,
+        routeLabel: SYNC_NOW,
+      },
+      {
+        figure: "Issue half-life",
+        unlock: "A sync that sees an issue disappear. Every issue open since the first sync "
+          + "is still a censored observation, not a measured clock.",
+        route: null,
+        routeLabel: SYNC_NOW,
+      },
+      {
+        figure: "The ranked queue",
+        unlock: "The first sync. Nothing can be ranked before the union it ranks over exists.",
+        route: null,
+        routeLabel: SYNC_NOW,
+      },
+    ],
+  };
+}

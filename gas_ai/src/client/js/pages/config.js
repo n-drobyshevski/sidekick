@@ -18,11 +18,12 @@
 // mirrored into the hash — the same discipline combos.js documents, so a background SWR
 // revalidation cannot collapse the table you have open.
 
-import { bootstrapCached, setParams, swrCall } from "../../../../../gas_shared/store.js";
+import { bootstrap, bootstrapCached, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
-  absent, absentText, clear, dataTable, debounce, el, emptyState, errorState, fmtCount, fmtDate,
-  heroStat, num, outcomeBadge, pageHeader, statRow,
+  absent, absentText, clear, dataTable, debounce, el, errorState, firstRunNotice, fmtCount,
+  fmtDate,
+  heroStat, measuredEmpty, num, outcomeBadge, pageHeader, statRow,
   plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, tableFooter,
   skeletonStack, statusPill, togglePills,
   scopeNote,
@@ -54,6 +55,14 @@ function optionLabel(key, value) {
   return value;
 }
 
+// This page had NO first-run gate before this package — the only route of the eleven that
+// printed bare zeros ("0 / 0 distinct controls / 0 / 0 / 0") over an unsynced store, because
+// `paint()` built the whole hero and header before ever asking whether anything had been
+// read. The hint is named once so the two gates below (unsynced, and synced-but-empty) never
+// drift apart.
+const CONFIG_SYNC_HINT =
+  "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.";
+
 export async function renderConfigFindings(main, params, ctx) {
   const view = {
     mode: params.mode === "findings" ? "findings" : "controls",
@@ -73,6 +82,15 @@ export async function renderConfigFindings(main, params, ctx) {
     lede: "Wiz configuration findings for the AI security framework — what is failing, " +
       "grouped by the control that failed.",
   }));
+
+  // Fresh, not `bootstrapCached()`: this is the FIRST read this route makes of whether
+  // anything has ever been synced, so it has to be the real thing rather than a value that
+  // may not have resolved yet — the same reason every other register page awaits it here.
+  const boot = await bootstrap();
+  if (!boot.latestSync) {
+    main.append(firstRunNotice({ synced: false, hint: CONFIG_SYNC_HINT }));
+    return;
+  }
 
   const headHost = el("div", {});
   const bodyHost = el("div", {});
@@ -165,6 +183,21 @@ export async function renderConfigFindings(main, params, ctx) {
     apply();
   }
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[config] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint() {
     if (!data) return;
     // The payload's own `all` discriminator, read at last. Everything below asks `model`
@@ -174,7 +207,34 @@ export async function renderConfigFindings(main, params, ctx) {
     model = configPageView(data, view, PAGE_SIZE);
     const totals = data.totals || {};
 
+    // A measured register, and it measured zero distinct controls — every row this sync
+    // wrote lacks a rule id, or there were no rows at all. `boot.latestSync` is truthy by
+    // the gate above, so this is not "nobody has synced"; it is "the tenant answered and had
+    // nothing to report". The dash hero and empty stats say "nothing was withheld", not
+    // "nothing has looked" — and it fires BEFORE the header below is built, so a reader never
+    // sees a "0 distinct controls" hero on the way to reading this notice.
+    if (totals.controls === 0) {
+      clear(headHost);
+      clear(bodyHost);
+      headHost.append(pageHeader({
+        hero: heroStat("Failing controls", null, absentText),
+        stats: [],
+      }));
+      bodyHost.append(firstRunNotice({
+        synced: true,
+        at: boot.latestSync.finished_at,
+        hint: CONFIG_SYNC_HINT,
+      }));
+      return;
+    }
+
     // ------------------------------------------------------------------ the header
+    //
+    // One failing section must not blank the rest of the page. The header and the body
+    // below each get their own `guard()` call, so a throw building the facet strip leaves
+    // the register table intact and vice versa — the same shape gas/pages/mttr.js uses,
+    // adapted to this page's two pre-existing hosts instead of one per figure.
+    guard("the failing-controls header", headHost, () => {
     clear(headHost);
 
     // Failing controls is the headline, not the row count: a resolved finding is stored
@@ -312,21 +372,32 @@ export async function renderConfigFindings(main, params, ctx) {
           },
         }, "Clear " + plural(applied.length, "filter"))));
     }
+    });
 
     // --------------------------------------------------------------------- the body
+    guard("the register", bodyHost, () => {
     clear(bodyHost);
     // `model.total` is the REGISTER, never the page. On the paged branch `data.rows` is empty
     // whenever the filter matches nothing on this page, and answering that with "no findings
     // in the register" would report an empty tenant to someone holding thousands.
+    //
+    // UNREACHED IN THE COMMON CASE — the `totals.controls === 0` gate above already returns
+    // before `model` exists for a genuinely empty register, since every row that could
+    // produce a distinct control also produces a row. This stays as the one case that gate
+    // cannot see: rows present but none carrying a `ruleShortId` the rollup could count. The
+    // old sentence here asserted a specific unmeasured cause ("the CONFIG_FINDINGS step was
+    // skipped by the tenant") this app has no way to know; `measuredEmpty` states only what
+    // was actually measured — a fetch that answered, dated, and matched nothing.
     if (!model.total) {
-      bodyHost.append(emptyState(
+      bodyHost.append(measuredEmpty(
         "No configuration findings in the register.",
-        "The last sync returned none, or the CONFIG_FINDINGS step was skipped by the tenant.",
+        { at: boot.latestSync.finished_at },
       ));
       return;
     }
     if (view.mode === "controls") paintControls();
     else paintFindings();
+    });
   }
 
   /**

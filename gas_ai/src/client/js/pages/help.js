@@ -80,7 +80,7 @@ import { CATEGORY_LABELS, kindIcon, svgEl } from "../../../../../gas_shared/icon
 import { ROUTE_ICONS } from "../routeIcons.js";
 import { bootstrap, bootstrapCached, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, debounce, el, fmtDateTime, heroLines, motionOk, num, onPageTeardown,
+  clear, debounce, el, errorState, fmtDateTime, heroLines, motionOk, num, onPageTeardown,
   pageHeader, plural, sectionLabel,
   statusPill, tip, uiIcon,
 } from "../ui.js";
@@ -173,6 +173,11 @@ export async function renderHelp(main, params, _ctx) {
 
   const headHost = el("div", { class: "help-head" });
   const limitsHost = el("div", { class: "help-limits" });
+  // Sits above the lexicon (below), not inside it — a failed fetch is a defect in the app,
+  // not a term of the book, and it must not read as one more row alongside "not counted
+  // here". The lexicon still fills from `shown` either way (see paint(), below): losing the
+  // KPI read costs the count column its figures, not the definitions themselves.
+  const lexErrorHost = el("div", {});
   const lex = lexiconShell(shown, hidden);
   clearLexFilter = () => lex.reveal();
   onPageTeardown(() => { clearLexFilter = null; });
@@ -182,22 +187,27 @@ export async function renderHelp(main, params, _ctx) {
     section(0, pageMap(hidden)),
     section(1, limitsHost),
     section(2, anatomy()),
-    section(3, lex.node),
+    section(3, [lexErrorHost, lex.node]),
   );
 
   index.wire(page);
 
-  // Painted once from the bootstrap alone, then repainted as each RPC lands. Both reads
-  // are optional: a failure leaves the entries in their "not counted here" state, which
-  // is the honest reading of a payload that did not arrive.
+  // Painted once from the bootstrap alone, then repainted as each RPC lands. The digest read
+  // is optional: a failure leaves the entries in their "not counted here" state, which is
+  // the honest reading of a payload that did not arrive. The KPI read is not silent any
+  // more — see `assetsHeadError` below — because "not counted here" on every count column at
+  // once, with nothing on screen saying why, used to be indistinguishable from a tenant that
+  // genuinely tracks none of these figures.
   let kpis = null;
   let digest = null;
+  let assetsHeadError = null;
 
   paint();
 
   const reads = await Promise.allSettled([
     swrCall("api_getAssetsHead", {}, (fresh) => {
       kpis = fresh.kpis || null;
+      assetsHeadError = null;
       paint();
     }),
     swrCall("api_getCombosDigest", {}, (fresh) => {
@@ -206,6 +216,7 @@ export async function renderHelp(main, params, _ctx) {
     }),
   ]);
   if (reads[0].status === "fulfilled") kpis = reads[0].value.kpis || null;
+  else assetsHeadError = reads[0].reason;
   if (reads[1].status === "fulfilled") digest = (reads[1].value && reads[1].value.digest) || null;
   paint();
 
@@ -240,6 +251,15 @@ export async function renderHelp(main, params, _ctx) {
 
     clear(headHost).append(header(boot, lexTally(resolved), shown.length));
     clear(limitsHost).append(limits(areas));
+    // A rejected fetch is a failure, not a term the book happens to define as "not counted
+    // here" — that reading is honest only when the fetch actually answered and simply had
+    // nothing to say. `errorState`, never folded into the lexicon's own empty column.
+    clear(lexErrorHost);
+    if (assetsHeadError) {
+      lexErrorHost.append(errorState("Couldn't load the landscape figures.", {
+        detail: String((assetsHeadError && assetsHeadError.message) || assetsHeadError),
+      }));
+    }
     lex.fill(resolved);
   }
 }

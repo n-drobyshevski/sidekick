@@ -35,7 +35,7 @@ import {
 } from "../assetQuery.js";
 import {
   absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
-  emptyState, errorState, pageHeader,
+  errorState, firstRunNotice, heroStat, pageHeader,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
@@ -180,11 +180,10 @@ export async function renderInventory(main, params) {
     }),
   );
 
+  const SYNC_HINT = "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.";
+
   if (!boot.latestSync) {
-    main.append(emptyState(
-      "No sync yet.",
-      "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
-    ));
+    main.append(firstRunNotice({ synced: false, hint: SYNC_HINT }));
     return;
   }
 
@@ -369,10 +368,39 @@ export async function renderInventory(main, params) {
 
   // ------------------------------------------------------------------ painting
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[inventory] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint(fresh) {
     payload = fresh;
     allMode = fresh.all !== false;
     clear(host);
+
+    // A measured register, and it measured zero. `boot.latestSync` is truthy — a sync
+    // completed — so this is not the same claim as the gate above: the tenant answered and
+    // there was nothing to inventory, not that nobody has asked yet. The dash hero and the
+    // empty stat list say "nothing was withheld", not "nothing has looked".
+    if (fresh.total === 0) {
+      host.append(heroStat("AI assets", null, "of the register's landscape"));
+      host.append(firstRunNotice({
+        synced: true,
+        at: boot.latestSync.finished_at,
+        hint: SYNC_HINT,
+      }));
+      return;
+    }
 
     const kpis = fresh.kpis || {};
 
@@ -381,7 +409,10 @@ export async function renderInventory(main, params) {
     // so a warning that some of them are behind the current rule is news about a model the
     // reader cannot see from here — it belongs beside the model, and that is where it went.
 
-    host.append(countHeader(kpis, fresh));
+    const countHost = el("div", {});
+    host.append(countHost);
+    guard("the asset counts", countHost, () => countHost.append(countHeader(kpis, fresh)));
+
     const reachCard = reachHeadline(fresh.reach);
     if (reachCard) host.append(reachCard);
     host.append(toolbar());
@@ -390,9 +421,17 @@ export async function renderInventory(main, params) {
 
     resultsHost = el("div", { class: "table-host" });
     host.append(resultsHost);
-    host.append(trendSection(fresh));
-    const posture = postureTrendSection(fresh);
-    if (posture) host.append(posture);
+
+    const trendHost = el("div", {});
+    host.append(trendHost);
+    guard("counts over time", trendHost, () => trendHost.append(trendSection(fresh)));
+
+    const postureHost = el("div", {});
+    host.append(postureHost);
+    guard("the posture trend", postureHost, () => {
+      const posture = postureTrendSection(fresh);
+      if (posture) postureHost.append(posture);
+    });
 
     renderResults(fresh);
     panel.sync();
@@ -809,7 +848,14 @@ export async function renderInventory(main, params) {
 
   // ------------------------------------------------------------------ the results
 
+  // Every call site — the initial paint, a filter/sort/page change, a saved view — reaches
+  // this one function, so guarding it here rather than at each call site covers all of them
+  // with one host and one label instead of repeating the try/render at six sites.
   function renderResults(current) {
+    guard("the asset table", resultsHost, () => renderResultsInner(current));
+  }
+
+  function renderResultsInner(current) {
     if (!current) return;
     clear(resultsHost);
     const requested = query.page;

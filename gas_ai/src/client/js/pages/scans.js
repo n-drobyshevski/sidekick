@@ -35,7 +35,8 @@ import {
 import { svgEl } from "../../../../../gas_shared/icons.js";
 import { openAreaSheet } from "./scanSheet.js";
 import {
-  absent, absentText, clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtCount,
+  absent, absentText, clear, closeActiveSheet, dataTable, el, emptyState, errorState,
+  firstRunNotice, fmtCount,
   fmtDate, fmtDateTime, appendAll, pageHeader,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
 } from "../ui.js";
@@ -75,10 +76,10 @@ export async function renderScans(main, params, ctx) {
   );
 
   if (!boot.latestSync) {
-    main.append(emptyState(
-      "No sync yet.",
-      "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
-    ));
+    main.append(firstRunNotice({
+      synced: false,
+      hint: "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
+    }));
     return;
   }
 
@@ -122,6 +123,21 @@ export async function renderScans(main, params, ctx) {
 
   paint();
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[scans] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint() {
     if (!assets) return;
     const payload = {
@@ -135,20 +151,38 @@ export async function renderScans(main, params, ctx) {
     const ranked = rankAreas(resolved);
 
     clear(host);
-    const diagram = provenanceDiagram(ranked, tally);
-    host.append(
-      postureHeader(resolved, tally),
-      sectionLabel("How a scan becomes a screen"),
-      diagram.node,
-      diagramLegend(tally),
+    const postureHost = el("div", {});
+    const diagramHost = el("div", {});
+    const registerHost = el("div", {});
+    const reachHost = el("div", {});
+    host.append(postureHost, diagramHost, registerHost, reachHost);
+
+    guard("the coverage header", postureHost,
+      () => postureHost.append(postureHeader(resolved, tally)));
+
+    // The register drives the diagram's hover state (below), so a thrown diagram must not
+    // stop the register from rendering — it just renders with no picture to light.
+    let diagram = null;
+    guard("the provenance diagram", diagramHost, () => {
+      diagram = provenanceDiagram(ranked, tally);
+      diagramHost.append(
+        sectionLabel("How a scan becomes a screen"),
+        diagram.node,
+        diagramLegend(tally),
+      );
+    });
+
+    guard("the register", registerHost, () => registerHost.append(
       sectionLabel("The register"),
       register(ranked, diagram),
       el("p", { class: "small muted", style: "margin-top:14px" },
         "Sync cadence: daily at 05:00 Europe/Paris plus on-demand “Sync now”. Every figure above " +
         "is the one the last sync produced, read through the project view currently set; " +
         "an area with no figure says so rather than carrying a number from somewhere else."),
-      reachSection(assets.reach),
-    );
+    ));
+
+    guard("landscape reach", reachHost, () => reachHost.append(reachSection(assets.reach)));
+
     // A link from AI Inventory's headline figure sends the reader here with ?anchor=reach —
     // only worth honouring once, on the render that actually has the section to jump to,
     // not on every SWR repaint that follows it.
@@ -266,18 +300,21 @@ export async function renderScans(main, params, ctx) {
     });
 
     // The register drives the diagram, not the other way round: one keyboard model, and
-    // the picture reacts to whatever already has focus.
-    const rows = table.querySelectorAll("tbody tr");
-    ranked.forEach((area, i) => {
-      const row = rows[i];
-      if (!row) return;
-      const light = () => diagram.light(area.id);
-      const dim = () => diagram.light("");
-      row.addEventListener("mouseenter", light);
-      row.addEventListener("mouseleave", dim);
-      row.addEventListener("focusin", light);
-      row.addEventListener("focusout", dim);
-    });
+    // the picture reacts to whatever already has focus. `diagram` is null when its own
+    // section threw — the register still renders, it just has nothing to light.
+    if (diagram) {
+      const rows = table.querySelectorAll("tbody tr");
+      ranked.forEach((area, i) => {
+        const row = rows[i];
+        if (!row) return;
+        const light = () => diagram.light(area.id);
+        const dim = () => diagram.light("");
+        row.addEventListener("mouseenter", light);
+        row.addEventListener("mouseleave", dim);
+        row.addEventListener("focusin", light);
+        row.addEventListener("focusout", dim);
+      });
+    }
     return table;
   }
 

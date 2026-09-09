@@ -42,11 +42,12 @@
 // uses, not a second implementation of either.
 
 import {
-  checksCell, extChip, findSubcategory, fiveRsDerived, postureCell, STATES, stateStrip,
+  checksCell, extChip, findSubcategory, fiveRsDerived, postureAbsence, postureCell, STATES,
+  stateStrip,
   subcategoryDetail,
 } from "./complianceShared.js";
 import {
-  absent, absentText, dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank,
+  absent, absentText, dataTable, el, meter, plural, sectionLabel, sevBadge, sevRank,
   statRow,
 } from "../ui.js";
 
@@ -106,18 +107,16 @@ function worstFailingSeverityAcross(rail) {
   return worst;
 }
 
-export function renderOverview(host, data, view, actions) {
+export function renderOverview(host, data, view, actions, boot) {
   // A stale SWR cache from before this band shipped degrades to `rail: undefined` rather
   // than throwing (the payload contract's defensive-coding note) — and that is genuinely
   // indistinguishable from "nothing synced yet" from this page's point of view, so it gets
-  // the same message the per-framework view shows for zero trees.
+  // the same message the per-framework view shows for zero trees: `postureAbsence`, not a
+  // second hand-written sentence describing a cache edge case only this file's author could
+  // tell apart from a first run.
   const rail = (data && data.rail) || [];
   if (!rail.length) {
-    host.append(emptyState(
-      "No compliance posture has been synced yet.",
-      "This view needs the cross-framework rollup the last sync produced. Refresh the " +
-      "page, or run a sync if this stays empty.",
-    ));
+    host.append(postureAbsence(boot, data));
     return;
   }
 
