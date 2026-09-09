@@ -944,7 +944,7 @@ export const ENTRIES = [
       "wholesale. The sync-history row is written LAST and is the commit record: no history " +
       "row means the sync never happened. It runs on demand and daily at 05:00 Europe/Paris, and " +
       "resumes itself if one execution runs long.",
-    drawnOn: ["data", "scans"],
+    drawnOn: ["data", "problems", "scans"],
     mark: () => el("span", { class: "pill neutral" }, "↻"),
     count: (ctx) => {
       const s = ctx.boot.latestSync;
@@ -1008,7 +1008,7 @@ export const ENTRIES = [
       "before the week-ago row appears; until then the page says so rather than showing a " +
       "difference of nothing. Findings are not counted here: they never enter the " +
       "lifecycle ledger, so no sync has ever recorded one arriving or leaving.",
-    drawnOn: ["data"],
+    drawnOn: ["data", "problems"],
     mark: () => statusPill("neutral", "±"),
   },
   {

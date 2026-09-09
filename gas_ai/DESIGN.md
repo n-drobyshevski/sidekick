@@ -501,46 +501,71 @@ unit: "records" }` in `app.js` for those two call sites only ("Records written" 
 app's own word, `scans.js:190`) — nothing `scanContent.js` or `scans.js` says about a scan AREA
 reads that field, and this declaration changes none of it.
 
-## 9. The front-door shape (Priorities), adopted 2026-09-09
+## 9. The front-door shape (Priorities), adopted 2026-09-09, built 2026-09-09
 
 Wave 2 (packages P2.1–P2.5) gives Priorities — already `MANIFEST.defaultRoute` — the shape the
 OS and DevSecOps front doors converged on: a static title block that waits on no RPC, one
 `pageHeader()` call carrying the hero, the movement aside and a stat strip, the ranked table,
-then a last-sync block. Recorded here as the shape adopted, ahead of those packages landing;
-the sections below name which package supplies which part.
+then a last-sync block. Written before those packages landed and corrected here against the
+built page; where the two disagreed the CODE was measured and this section was rewritten, not
+the other way round.
 
-**Hero.** Package P2.5 gives the header the issue half-life — the survival curve this
-register's own `measureSpec.ts` refused to publish until now (CLAUDE.md's gas_ai section: "a
-median-with-censoring or a survival curve would be required first, and neither is
-implemented") — read through `halfLifeView`, a port of `gas/`'s `kmHalfLifeView`: a measured
-median, "at least N days" over a censored curve, or "Not measured" with no sync. "Open
-problems" moves out of the hero slot to become the first stat row.
+**Hero.** The issue half-life — the survival curve this register's own `measureSpec.ts` refused
+to publish until now (CLAUDE.md's gas_ai section: "a median-with-censoring or a survival curve
+would be required first, and neither is implemented") — read through `halfLifeView`
+(`pages/problemView.js`), a port of `gas/`'s `kmHalfLifeView`. Three states, three different
+claims: a measured median ("12 days"); a censored curve, published as its lower bound with the
+prefix **"at least"** and never ">"; and nothing measurable at all, which returns
+**`absentText`** so `heroStat` promotes it to the muted `absent()` node — the page never
+spells the character itself, and "Not measured" is carried by the qualifier rather than by the
+figure slot. A bare `null` is NOT the way to say this: `valueOrAbsent` promotes the absentText
+string and passes everything else through unchanged, so a null renders an EMPTY hero value,
+which is what the first-run hero did until this shape was measured on an unsynced store. The qualifier states
+the estimator's own counts (events, censored) and everything the estimate KEPT OUT: rows at
+`episode > 1`, which this ledger cannot date, and rows whose dates would not parse. A second,
+muted line under it names the figure's own `asOf` — the last date any issue was observed — so
+the reader knows when the curve was last able to move. Nothing here reads a clock.
+"Open problems" moves out of the hero slot and becomes the FIRST stat row.
 
-**Aside.** Package P2.3 supplies the movement reading, scoped to issues only — findings carry
-no lifecycle ledger (`syncStore.ts:1289-1291`) — and states that scope in a standing muted
-line rather than silently letting "movement" mean "issue movement" without saying so. Up to
-two comparison rows sit above it: an "Issues" row against the previous sync (a ▲/▼/= pill
-whose direction is also spelled in words, "N open, was M", both sync dates) and a "vs 7 days
-ago" row once a sync lands that far back; either row that the register cannot yet support (one
-sync so far, a pre-ledger prior row, a rescoped register) is replaced by a muted "no comparison
-— <reason>" line rather than omitted.
+**Aside.** The movement reading, scoped to issues only — findings carry no lifecycle ledger
+(`syncStore.ts:1289-1291`) — and that scope is a standing muted line ("Findings carry no
+lifecycle ledger.") rather than an unstated assumption. Up to two comparison rows sit above it:
+an "Issues" row against the PREVIOUS sync and a "vs N days ago" row against the newest commit
+record at least seven days back. Each row carries a ▲/▼/= pill whose direction is also spelled
+in words ("down 2", "up 14", "unchanged") in both its visible text and its `aria-label`, the
+raw pair beside it ("32 open, was 34"), and — on its own line — the ONE date it reaches back to.
+Each row states its own `since` and no `until`: both rows end at the same latest sync, which
+the last-sync block already names, and printing it twice per row would say it four times.
+The previous row is NOT a week: on the dev fixture its gap is a single day, and the week row's
+label states the gap it actually found (`backlogMovement` returns the newest row at least seven
+days back, which can be nine). A comparison the register cannot make is replaced by a muted
+sentence naming the reason — "No comparison with the previous sync: one sync so far." — with
+`tooClose` publishing the span the saved syncs really do cover.
 
-**Stats.** The same header renders both of this page's modes — the pre-wave header's own
-`:267-270` comment already named the two modes disagreeing with each other as a defect. In
-"problems" mode the strip holds the severity rows; in "action" mode it holds the two action
-stats ("Collapse to", "Top 10 close"). The cumulative-cover curve moves out of the aside and
-into a `chart-card` in the action body, with package P1.2's table underneath it so the same
-curve reads as numbers.
+**Stats.** The same header renders both of this page's modes; the pre-wave header's own
+`:267-270` comment already named the two modes disagreeing with each other as a defect, and one
+`renderHeader(view, data)` replaced `kpiRow` and `actionHeadline` together. "Open problems"
+leads the strip in BOTH modes, read from `getProblems.total` in problems mode and from
+`concentration.problems ?? totalProblems` in action mode (where `total` counts ACTIONS, not
+problems, so reading `.total` in both would put two different sizes under one label). Below it,
+problems mode holds the severity rows and action mode the two action stats ("Collapse to",
+"Top 10 close"). The cumulative-cover curve moved out of the aside and into a `chart-card`
+opening the action body, with package P1.2's figures table underneath it; below three actions
+the card keeps its heading, says so in words and builds no canvas at all.
 
 **Table and footer.** Below the header sits the ranked table this page already draws
 (`getProblems`/`getActions`), every column carrying a `help` trigger (package P1.4); then
 `sectionLabel("Last sync", {term:"sync"})`, `syncCaption`, a `statusPill("neutral", "Dry run",
-…)` when the register has no credentials, and links to `#/data` and `#/scans`.
+…)` when the register has no credentials, and links to `#/data` ("sync history") and `#/scans`
+("what each scan area reported"). The control to sync again is the rail's own button and is not
+repeated here.
 
 **First run.** Package P1.3's itemised panel — not a dash hero over an empty page, a panel
 naming each figure this front door owes a reader (Open problems, Movement, Half-life, the
 ranked queue itself) and the one action that fills each ("Sync now — the button in the rail")
-— sits over a dash hero and an empty stat strip.
+— sits over the SAME `renderHeader` handed a null payload: the dash hero, an empty stat strip
+and no aside. One header function rather than a first-run copy of it, so the hero's label
+cannot drift between the two states.
 
 **Numbers at wave close** (placeholder — filled once P2.1–P2.5 land and step 0's instruments
 re-run on `#/problems` at 1280px):
