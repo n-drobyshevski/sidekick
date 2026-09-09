@@ -176,6 +176,7 @@ import {
 import { normalizeCompliancePosturePage } from "../domain/syncNormalize";
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
 import { comboDigest } from "../domain/comboDigest";
+import { backlogMovement, type BacklogMovement } from "../domain/backlogMovement";
 import { estateReach, type EstateReach } from "../domain/reach";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
 import { clampInt, nowIso, type Rec } from "../domain/util";
@@ -2606,6 +2607,30 @@ function publicProblemRow(r: ProblemRow): Rec {
  * the invariant `problems.ts`'s own header documents: `total` must equal
  * `issues.filter(isUnresolvedIssue).length + findings.filter(isOpenGap).length` exactly.
  */
+/**
+ * How the OPEN BACKLOG moved since the last sync, and since a week before it.
+ *
+ * ONE DERIVATION, TWO ENDPOINTS. `getProblems` and `getActions` publish the same block over
+ * the same population — they already share `problemsModel` for exactly that reason — and a
+ * second copy here would be a second chance for the two halves of one page to disagree.
+ *
+ * `openNow` COUNTS ISSUES ONLY, and that is not a filter, it is the population the figure is
+ * about. The lifecycle ledger holds issues alone: `persistSync` reconciles `decidedIssues`,
+ * and a finding never enters `ai_issue_ledger` at all, so the five per-sync transition counts
+ * `backlogMovement` replays have never described one. Anchoring the replay on the whole union
+ * would undo issue transitions from a count that includes findings, and every `prevOpen` it
+ * produced would be off by the finding population — a wrong number with no symptom.
+ *
+ * L1 only. The cache namespace is `backlogMovement1`, in this file's own suffix convention
+ * (`assetsModel2`, `getIssues`): the trailing digit is bumped when the SHAPE of what is stored
+ * changes, so a still-warm entry cannot answer a newer client with an older payload.
+ */
+function problemsMovement(model: ProblemsModel): BacklogMovement {
+  const openNow = model.rows.filter((r) => r.kind === "ISSUE").length;
+  return cached("backlogMovement1", { openNow }, () =>
+    backlogMovement(syncStore.syncHistory(), { openNow })) as BacklogMovement;
+}
+
 export function getProblems(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
@@ -2637,6 +2662,8 @@ export function getProblems(p?: unknown): ApiResult {
       // score and a stored rule can be compared instead of assumed to match.
       rankSignature: model.rankSignature,
       rankLeadsSort: model.rankLeadsSort,
+      // How the open ISSUE backlog moved since the last sync — see `problemsMovement`.
+      movement: problemsMovement(model),
     };
 
     if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
@@ -2705,6 +2732,9 @@ export function getActions(p?: unknown): ApiResult {
       totalProblems: model.rows.length,
       curve: coverCurve(fullyRanked, model.rows.length),
       concentration: concentrationRatio(fullyRanked, model.rows.length),
+      // The same block `getProblems` publishes, off the same model — the two modes of one
+      // page must not be able to state different movement.
+      movement: problemsMovement(model),
     };
   });
 }

@@ -47,6 +47,10 @@ export const FAMILIES = [
   { id: "score", title: "The score" },
   { id: "severity", title: "Severity" },
   { id: "coverage", title: "Coverage and freshness" },
+  // What the issue ledger records BETWEEN syncs — arrival, departure, return. Separate from
+  // "Coverage and freshness", which is about whether a sync ran at all: these terms are about
+  // what changed once two of them had.
+  { id: "lifecycle", title: "The issue lifecycle" },
   { id: "framework", title: "Framework vocabularies" },
   // Phase 8: what a published number IS — its goal, formula, source and whether it was
   // measured or judged. See src/domain/measureSpec.ts for the authoritative record; this
@@ -974,6 +978,51 @@ export const ENTRIES = [
     drawnOn: ["settings"],
     mark: () => statusPill("neutral", "Scope"),
     link: { label: "Open Settings → Register", route: "settings", params: { tab: "register" } },
+  },
+
+  // ------------------------------------------------------------------ the issue lifecycle
+  {
+    id: "movement",
+    term: "Movement",
+    aka: "how the open backlog changed between two syncs",
+    family: "lifecycle",
+    blurb:
+      "The open issue backlog now, against what it was at an earlier sync — replayed from " +
+      "the transition counts each sync recorded, never from two independently stored " +
+      "totals. It needs TWO syncs before it can say anything, and a further seven days " +
+      "before the week-ago row appears; until then the page says so rather than showing a " +
+      "difference of nothing. Findings are not counted here: they never enter the " +
+      "lifecycle ledger, so no sync has ever recorded one arriving or leaving.",
+    drawnOn: ["data"],
+    mark: () => statusPill("neutral", "±"),
+  },
+  {
+    id: "disappearance",
+    term: "Gone by",
+    aka: "a departure dated by absence",
+    family: "lifecycle",
+    blurb:
+      "Wiz never tells this register that an issue was fixed, so a departure is dated by " +
+      "the first sync that stopped seeing it. That date is an UPPER BOUND, and its error " +
+      "is the interval between syncs: an issue closed the morning after a Monday sync is " +
+      "dated Tuesday. It is also the reason a longer gap between syncs makes every " +
+      "departure look later than it was, rather than making fewer of them.",
+    drawnOn: ["data"],
+    mark: () => statusPill("neutral", "Gone"),
+  },
+  {
+    id: "episode",
+    term: "Episode",
+    aka: "an issue that left the register and came back",
+    family: "lifecycle",
+    blurb:
+      "An issue that disappeared and was seen again starts a new episode, and the count is " +
+      "what tells a genuine re-detection apart from one long open row. The register does " +
+      "NOT record when each episode began — only how many there have been — so the gap " +
+      "between one episode and the next cannot be priced, and no clock here spans two of " +
+      "them.",
+    drawnOn: ["data"],
+    mark: () => statusPill("neutral", "↩"),
   },
 
   // --------------------------------------------------------------- framework vocabularies
