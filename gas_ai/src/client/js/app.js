@@ -14,10 +14,11 @@
 
 import { configureApp } from "../../../../gas_shared/appConfig.js";
 import { call } from "../../../../gas_shared/api.js";
-import { bootstrapCached } from "../../../../gas_shared/store.js";
+import { bootstrapCached, navigate } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { renderSyncCard, openSyncDetails } from "./syncProgress.js";
 import { clear, el, statusPill, syncCaption, tipAnchor, toast } from "./ui.js";
+import { railStatus } from "./railStatus.js";
 import { projectScopeView, scopeChrome, scopeKinds } from "./ui/projectScope.js";
 import { scopeControl } from "../../../../gas_shared/ui/scopeControl.js";
 import { scopePayload } from "../../../../gas_shared/ui/scopeModel.js";
@@ -201,6 +202,14 @@ let syncButtonsRow = null;
 let stoppingJobId = null;
 let lastJob = null;
 let syncDetails = null; // open sync-details drawer handle, kept live by the poller
+// The rail-status caption + dot slot, repainted independently of the progress card so the dot
+// can move through railStatus.js's own states (scanning/bad/neutral/warn/ok) on every poll
+// tick without tearing down the Run/Sync buttons or the card beside it. `railHasCredentials` /
+// `railLatestSyncTs` are captured once per renderSyncZone(data) call — they do not change
+// while a job is running — so paintRailStatus() only needs the CURRENT job to redraw.
+let railStatusHost = null;
+let railHasCredentials = false;
+let railLatestSyncTs = null;
 
 /** The sync zone under the nav: the freshness caption, the credentials state, and the run
  *  control. Rebuilt on every rail render, so the two hosts are re-pointed each time. */
@@ -212,23 +221,16 @@ function renderSyncZone(data) {
   syncCardHost = el("div", {});
   zone.append(syncCardHost, syncButtonsRow);
   if (data) {
-    zone.append(
-      el("div", { class: "scan-caption" },
-        data.hasCredentials
-          ? statusPill("ok", "Credentials loaded")
-          : statusPill("neutral", "Dry-run (no credentials)"),
-      ),
-      // Compact stand-in for the pill above, shown only while the rail is collapsed (the
-      // captions are hidden then) so the credentials/dry-run state stays glanceable.
-      tipAnchor(el("span", {
-        class: `rail-status-dot ${data.hasCredentials ? "ok" : "neutral"}`,
-        "aria-hidden": "true",
-      }), data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)"),
-    );
+    railHasCredentials = !!data.hasCredentials;
+    railLatestSyncTs = data.latestSync && data.latestSync.finished_at;
+    railStatusHost = el("div", {});
+    zone.append(railStatusHost);
+    paintRailStatus(data.activeJob);
     // `syncCaption` (gas_shared/ui/feedback.js), unified across all three apps: "Last <noun>
     // <datetime> · <relativeAge>" once a sync is saved, "No <noun>s yet." before the first
     // one. It used to be a bare Math.floor day count gated at `age >= 2` — a sync an hour old
-    // showed no age at all.
+    // showed no age at all. A DIFFERENT fact from the dot above: this is when the register
+    // last ran ANYTHING, not the derived state (running/failed/never/stale/ok) the dot reports.
     zone.append(
       el("div", { class: "scan-caption" },
         syncCaption(data.latestSync && data.latestSync.finished_at)),
@@ -239,6 +241,49 @@ function renderSyncZone(data) {
     }
   }
   return zone;
+}
+
+/**
+ * The rail's own status pill + dot, repainted from `railStatus()` on every job transition —
+ * boot, a fresh Sync now click, every 3s poll tick, and a failure — rather than only once per
+ * full rail rebuild. `job` is the CURRENT JobRow (or null between runs); credentials and the
+ * last-sync timestamp are read from the closured values `renderSyncZone` captured, since
+ * neither changes while a job runs.
+ *
+ * THE DOT IS DERIVED, NEVER ASSERTED — it used to be `hasCredentials ? "ok" : "neutral"`, a
+ * literal reading one field, agreeing with Settings only by accident and never noticing a
+ * register that ran once and then went quiet for weeks (see railStatus.js's own header). It is
+ * a real `<button>` now, not a `<span>` wearing `aria-hidden` and nothing else: WCAG 2.2
+ * SC 2.5.8 wants 24x24px of TARGET even though the mark stays 9px (base.css), and a control
+ * with a destination — Data, where every sync in this register's history is a row — is what
+ * this app's chrome is careful to only ever offer.
+ *
+ * THE CAPTION COMES FIRST IN SOURCE ORDER, and that is not cosmetic: above 800px it is the
+ * ONLY node visually hidden by `.sidebar .scan-caption` (gas_shared/styles/base.css) — hidden
+ * from SIGHT, never from the accessibility tree — so it has to exist before the dot that
+ * repeats its sentence as colour, for a reader stepping through the DOM in order.
+ */
+function paintRailStatus(job) {
+  if (!railStatusHost) return;
+  const status = railStatus({
+    hasCredentials: railHasCredentials,
+    lastSyncAt: railLatestSyncTs,
+    job: job || null,
+  });
+  const pillKind = status.state === "warn" ? "warn"
+    : status.state === "bad" ? "bad"
+    : status.state === "ok" ? "ok"
+    : "neutral";
+  clear(railStatusHost).append(
+    el("div", { class: "scan-caption" }, statusPill(pillKind, status.label)),
+    tipAnchor(el("button", {
+      type: "button",
+      class: `rail-status-dot ${status.state}`,
+      "aria-label": status.label,
+      onclick: () => navigate("data"),
+    }), [status.label, status.detail].filter(Boolean).join(" — ")),
+    ...(status.detail ? [el("div", { class: "scan-caption" }, status.detail)] : []),
+  );
 }
 
 async function startSync(btn) {
@@ -296,39 +341,61 @@ async function requestStop(jobId) {
   }
 }
 
-function watchJob(jobId) {
-  if (jobPoller) clearInterval(jobPoller);
-  jobPoller = setInterval(async () => {
-    try {
-      const job = await call("api_getJobStatus", { jobId });
-      if (!job) {
-        stopWatch();
-        clearCard();
-        return;
-      }
-      if (job.phase === "DONE") {
-        stopWatch();
-        if (syncDetails) syncDetails.update(job); // let an open drawer settle on "Complete"
-        toast("Sync complete.");
-        refresh();
-      } else if (job.phase === "CANCELLED") {
-        stopWatch();
-        stoppingJobId = null;
-        if (syncDetails) syncDetails.update(job); // an open drawer settles on "Cancelled"
-        toast("Sync stopped.");
-        refresh();
-      } else if (job.phase === "FAILED") {
-        stopWatch();
-        paintCard(job);
-        if (syncButtonsRow) syncButtonsRow.style.display = "";
-        toast(job.error || "Sync failed.", "error");
-      } else {
-        paintCard(job);
-      }
-    } catch {
-      /* transient poll errors are fine */
+/**
+ * One poll tick: fetch the job and decide what its phase means for the card AND the rail dot.
+ * Split out of `watchJob` so the SAME tick can run once immediately (see `watchJob` below) and
+ * once every 3s after — a transient fetch failure here is fine, the next tick tries again.
+ */
+async function pollTick(jobId) {
+  try {
+    const job = await call("api_getJobStatus", { jobId });
+    if (!job) {
+      stopWatch();
+      clearCard();
+      paintRailStatus(null);
+      return;
     }
-  }, 3000);
+    if (job.phase === "DONE") {
+      stopWatch();
+      if (syncDetails) syncDetails.update(job); // let an open drawer settle on "Complete"
+      toast("Sync complete.");
+      // refresh() re-fetches the bootstrap payload and rebuilds the rail from it — the dot
+      // repaints as part of that with the fresh `latestSync`, so no separate paintRailStatus()
+      // call is needed on this path.
+      refresh();
+    } else if (job.phase === "CANCELLED") {
+      stopWatch();
+      stoppingJobId = null;
+      if (syncDetails) syncDetails.update(job); // an open drawer settles on "Cancelled"
+      toast("Sync stopped.");
+      refresh();
+    } else if (job.phase === "FAILED") {
+      stopWatch();
+      paintCard(job); // leave the failure visible; the button returns for a retry
+      paintRailStatus(job); // "Last sync failed" — this path takes no refresh(), so say so here
+      if (syncButtonsRow) syncButtonsRow.style.display = "";
+      toast(job.error || "Sync failed.", "error");
+    } else {
+      paintCard(job);
+      paintRailStatus(job); // "Sync in progress — N of M records" on every tick, not only at boot
+    }
+  } catch {
+    /* transient poll errors are fine */
+  }
+}
+
+/**
+ * Poll a job every 3s until it settles. THE FIRST TICK RUNS IMMEDIATELY, not after the first
+ * interval: pressing Sync now used to leave both the card and the rail dot showing their
+ * pre-sync state for a full 3 seconds — on the one control whose entire job is to say
+ * something is now happening. Only visible in a browser with the continuation trigger frozen
+ * (the dev harness's fake clock lets many pages complete inside a few hundred milliseconds of
+ * real time, so the card never got a frame in that setup either).
+ */
+function watchJob(jobId) {
+  stopWatch();
+  pollTick(jobId);
+  jobPoller = setInterval(() => pollTick(jobId), 3000);
 }
 
 function stopWatch() {

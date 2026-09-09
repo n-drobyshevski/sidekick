@@ -15,6 +15,7 @@ import {
   DEFAULT_TAB,
   dirtyTabs,
   draftWarnings,
+  fieldErrors,
   normalizeTab,
   rankDraftFromPreset,
   rankDraftPatch,
@@ -24,6 +25,8 @@ import {
   SETTINGS_TABS,
   settingsDraft,
   settingsPatch,
+  TAB_FIELDS,
+  tabStatus,
   validateDraft,
 } from "../src/client/js/settingsModel.js";
 // The real rule, not a hand-written copy of its shape — the same argument helpContent.test.js
@@ -432,5 +435,139 @@ describe("rankShareTotal", () => {
     expect(rankShareTotal({})).toBe(0);
     expect(rankShareTotal({ rule: "x", time: 0.3 })).toBe(0.3);
     expect(rankShareTotal(undefined)).toBe(0);
+  });
+});
+
+// P1.5 — the rail dot and the Settings tab marker. `fieldErrors`/`tabStatus` are ported from
+// gas/src/client/js/settingsModel.js (itself ported from gas_devsecops). SETTINGS VALIDATES
+// EXACTLY ONE TYPABLE FIELD: the node budget (`maxNodes`) on the Graph tab. `defaultDepth` is
+// a `<select>` fed only its three legal options, so it can never be typed invalid and
+// `fieldErrors` does not check it — see `fieldErrors`'s own header in settingsModel.js.
+describe("fieldErrors", () => {
+  const bounds = { nodesFloor: 30, nodesCeiling: 400 };
+  const ok = () => settingsDraft({ defaultDepth: 2, maxNodes: 100 });
+
+  it("is empty for a legal draft", () => {
+    expect(fieldErrors(ok(), bounds)).toEqual({});
+  });
+
+  it("names maxNodes, and only maxNodes, when the node budget is out of range", () => {
+    const d = ok();
+    d.maxNodes = 9999;
+    const errs = fieldErrors(d, bounds);
+    expect(Object.keys(errs)).toEqual(["maxNodes"]);
+    expect(errs.maxNodes).toMatch(/between 30 and 400/);
+  });
+
+  it("never names defaultDepth — it is a <select>, not a typable field", () => {
+    const d = ok();
+    d.defaultDepth = 0; // illegal under validateDraft, but not a field fieldErrors checks
+    expect(fieldErrors(d, bounds)).toEqual({});
+  });
+
+  it("refuses a value a number input can produce but a number cannot hold", () => {
+    const d = ok();
+    d.maxNodes = Number("");
+    expect(Object.keys(fieldErrors(d, bounds))).toEqual(["maxNodes"]);
+  });
+
+  it("falls back to the same built-in bounds validateDraft uses when none are supplied", () => {
+    const d = ok();
+    d.maxNodes = 9999;
+    expect(fieldErrors(d)).toEqual(fieldErrors(d, {}));
+    expect(Object.keys(fieldErrors(d))).toEqual(["maxNodes"]);
+    // The message quotes the SAME numbers validateDraft's own refusal does — both are derived
+    // from one set of bounds, never two literals that could drift apart.
+    expect(fieldErrors(d).maxNodes).toBe(validateDraft(d).message);
+  });
+
+  it("accepts both ends of the range", () => {
+    const d = ok();
+    d.maxNodes = 30;
+    expect(fieldErrors(d, bounds)).toEqual({});
+    d.maxNodes = 400;
+    expect(fieldErrors(d, bounds)).toEqual({});
+  });
+});
+
+describe("TAB_FIELDS", () => {
+  it("is derived from SETTING_FIELDS, so a knob can never disagree with the save bar about which tab owns it", () => {
+    for (const k of SETTING_KEYS) {
+      expect(TAB_FIELDS[k]).toBe(SETTING_FIELDS[k].tab);
+    }
+    expect(Object.keys(TAB_FIELDS).sort()).toEqual([...SETTING_KEYS].sort());
+  });
+});
+
+describe("tabStatus", () => {
+  const saved = settingsDraft({ defaultDepth: 2, maxNodes: 100, issueCategories: ["wct-id-1998"] });
+
+  it("marks a tab dirty when a field it owns differs from the saved snapshot", () => {
+    const draft = settingsDraft({ defaultDepth: 2, maxNodes: 250, issueCategories: ["wct-id-1998"] });
+    const status = tabStatus(draft, saved, {}, TAB_FIELDS);
+    expect(status.graph.dirty).toBe(true);
+    expect(status.register.dirty).toBe(false);
+  });
+
+  it("marks a tab invalid when errors names a field it owns, independent of dirty", () => {
+    // Dirty AND invalid at once: an out-of-range edit is both.
+    const dirtyAndInvalid = tabStatus(
+      settingsDraft({ defaultDepth: 2, maxNodes: 9999 }), saved, { maxNodes: "bad" }, TAB_FIELDS,
+    );
+    expect(dirtyAndInvalid.graph).toEqual({ dirty: true, invalid: true });
+
+    // Invalid WITHOUT dirty: an in-progress keystroke the caller has not committed to the
+    // draft (so the draft still matches `saved`) but has already flagged in `errors`.
+    const invalidOnly = tabStatus(settingsDraft(saved), saved, { maxNodes: "bad" }, TAB_FIELDS);
+    expect(invalidOnly.graph).toEqual({ dirty: false, invalid: true });
+
+    // Dirty WITHOUT invalid: the ordinary case.
+    const dirtyOnly = tabStatus(
+      settingsDraft({ defaultDepth: 3, maxNodes: 100 }), saved, {}, TAB_FIELDS,
+    );
+    expect(dirtyOnly.graph).toEqual({ dirty: true, invalid: false });
+  });
+
+  it("gives every tab named in tabFields an entry, dirty and invalid both false when untouched", () => {
+    const status = tabStatus(settingsDraft(saved), saved, {}, TAB_FIELDS);
+    for (const tab of new Set(Object.values(TAB_FIELDS))) {
+      expect(status[tab]).toEqual({ dirty: false, invalid: false });
+    }
+  });
+
+  it("survives an empty draft/saved/errors/tabFields without throwing", () => {
+    expect(tabStatus(undefined, undefined, undefined, undefined)).toEqual({});
+  });
+
+  // ========================================================================== perturbation
+  //
+  // THE CLAIM UNDER TEST: `invalid` is read by KEY PRESENCE, never truthiness — the same
+  // "absent is never zero" family CLAUDE.md names for `Number(null)`, applied to an error map
+  // instead of a numeric field. A caller clears a field by DELETING the key; a truthiness read
+  // instead lets `errors.maxNodes = ""` — a key that is PRESENT but happens to be falsy — read
+  // as "not invalid", silently un-invalidating a tab that a caller never actually cleared.
+  describe("perturbation: truthiness instead of key presence lets errors.maxNodes = \"\" un-invalidate the tab", () => {
+    function defectiveTabStatus(draft, saved, errors, tabFields) {
+      const tabs = {};
+      for (const tab of new Set(Object.values(tabFields))) tabs[tab] = { dirty: false, invalid: false };
+      for (const [field, tab] of Object.entries(tabFields)) {
+        if (!tabs[tab]) continue;
+        // THE BUG: reads `errors[field]` truthiness instead of asking whether the key exists.
+        if (errors[field]) tabs[tab].invalid = true;
+      }
+      return tabs;
+    }
+
+    it("the defective read clears the invalid mark on a key that is present but falsy", () => {
+      const status = defectiveTabStatus(
+        settingsDraft(saved), saved, { maxNodes: "" }, TAB_FIELDS,
+      );
+      expect(status.graph.invalid).toBe(false);
+    });
+
+    it("the real implementation keeps the tab invalid because the key is still there", () => {
+      const status = tabStatus(settingsDraft(saved), saved, { maxNodes: "" }, TAB_FIELDS);
+      expect(status.graph.invalid).toBe(true);
+    });
   });
 });

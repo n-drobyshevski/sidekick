@@ -168,6 +168,23 @@ export function changeCountText(changed) {
   return n + " unsaved change" + (n === 1 ? "" : "s");
 }
 
+// The built-in bounds, used whenever a caller (validateDraft or fieldErrors) is not handed the
+// server's own maxNodesFloor/maxNodesCeiling. ONE place for the four numbers, so the "node
+// budget must be between X and Y" message a reader sees inline and the one validateDraft
+// refuses a save with can never quietly name two different ranges.
+const DEPTH_MIN_DEFAULT = 1;
+const DEPTH_MAX_DEFAULT = 3;
+const NODES_FLOOR_DEFAULT = 30;
+const NODES_CEILING_DEFAULT = 400;
+
+function nodesBounds(bounds) {
+  const b = bounds || {};
+  return {
+    floor: Number.isFinite(b.nodesFloor) ? b.nodesFloor : NODES_FLOOR_DEFAULT,
+    ceiling: Number.isFinite(b.nodesCeiling) ? b.nodesCeiling : NODES_CEILING_DEFAULT,
+  };
+}
+
 /**
  * Whether the draft may be sent, and why not.
  *
@@ -181,10 +198,9 @@ export function changeCountText(changed) {
  */
 export function validateDraft(draft, bounds) {
   const b = bounds || {};
-  const depthMin = Number.isFinite(b.depthMin) ? b.depthMin : 1;
-  const depthMax = Number.isFinite(b.depthMax) ? b.depthMax : 3;
-  const floor = Number.isFinite(b.nodesFloor) ? b.nodesFloor : 30;
-  const ceiling = Number.isFinite(b.nodesCeiling) ? b.nodesCeiling : 400;
+  const depthMin = Number.isFinite(b.depthMin) ? b.depthMin : DEPTH_MIN_DEFAULT;
+  const depthMax = Number.isFinite(b.depthMax) ? b.depthMax : DEPTH_MAX_DEFAULT;
+  const { floor, ceiling } = nodesBounds(bounds);
 
   const d = Number(draft.defaultDepth);
   if (!Number.isFinite(d) || d < depthMin || d > depthMax) {
@@ -203,6 +219,33 @@ export function validateDraft(draft, bounds) {
     };
   }
   return { ok: true, message: "", tab: null };
+}
+
+/**
+ * Per-field legality of the draft, independent of any other field's state — unlike
+ * `validateDraft` above, which stops at the FIRST failure it finds (a fixed priority order) so
+ * it can hand the save button one message and one tab to jump to.
+ *
+ * SETTINGS VALIDATES EXACTLY ONE TYPABLE FIELD TODAY: the node budget (`maxNodes`) on the
+ * Graph tab. `defaultDepth` is a `<select>` fed only the three legal options
+ * (`[1, 2, 3].map(...)`, settings.js) — there is no keystroke that could put it out of range,
+ * so it earns no inline alert and this function does not check it. A future typable field
+ * gets its own entry here and its own `<span role="alert">` in settings.js; this is not a
+ * general-purpose validator, and inventing a second checked field here without a control that
+ * can actually go invalid would be asserting a rule with nothing behind it.
+ *
+ * Returns an object carrying a message ONLY for a field currently invalid — `tabStatus` below
+ * reads this by KEY PRESENCE, so a caller's contract is to DELETE the key once the field
+ * clears rather than set it to a falsy message (see `tabStatus`'s own header).
+ */
+export function fieldErrors(draft, bounds) {
+  const { floor, ceiling } = nodesBounds(bounds);
+  const errs = {};
+  const n = Number(draft.maxNodes);
+  if (!Number.isFinite(n) || n < floor || n > ceiling) {
+    errs.maxNodes = "The node budget must be between " + floor + " and " + ceiling + ".";
+  }
+  return errs;
 }
 
 /**
@@ -311,4 +354,53 @@ export function rankShareTotal(shares) {
     const v = Number(s[k]);
     return sum + (Number.isFinite(v) ? v : 0);
   }, 0);
+}
+
+// ============================================================================ per-tab status
+//
+// DERIVED FROM SETTING_FIELDS ABOVE, not a second literal — a field can never be listed under
+// one tab in `dirtyTabs`/the save bar and marked on a different tab in the tablist, because
+// there is only one map naming the ownership. Ported from gas/src/client/js/settingsModel.js's
+// own TAB_FIELDS/tabStatus, itself ported from gas_devsecops.
+export const TAB_FIELDS = Object.fromEntries(SETTING_KEYS.map((k) => [k, SETTING_FIELDS[k].tab]));
+
+/**
+ * Per-tab dirty/invalid state, so a tablist can show which HIDDEN tab holds unsaved or illegal
+ * state without a reader opening it first.
+ *
+ * `dirty` — true when some field owned by that tab differs between `draft` and `saved`.
+ * `saved` MUST be the last-SAVED snapshot, never the initial-load one that never changes across
+ * a session: a field changed and then changed back to the saved value is not dirty, the same
+ * rule `changedFields` above already applies to the save bar's own count.
+ *
+ * `invalid` — true when `errors` names a field owned by that tab. `errors` is any object keyed
+ * by field name; only KEY PRESENCE is read (`Object.prototype.hasOwnProperty`), never
+ * truthiness — a caller's contract is to DELETE a key once that field clears rather than to set
+ * it to a falsy value, the same trap CLAUDE.md names for `Number(null)`: an `errors.maxNodes =
+ * ""` a truthiness check would read as cleared is still a KEY, and a truthiness read would
+ * silently un-invalidate a tab that is still broken. See test/settingsDraft.test.js's own
+ * perturbation for what breaks when this reads truthiness instead of key presence.
+ *
+ * `tabFields` is the field->tab map to read (TAB_FIELDS in production) — a parameter rather
+ * than a closed-over constant so this stays testable against a synthetic shape.
+ *
+ * Returns one entry per tab NAMED IN `tabFields`; a tab that owns no batched field never
+ * appears and is therefore never dirty or invalid by construction — Access (the roster writes
+ * Script Properties through its own endpoints and keeps its own Save) and System (connection
+ * status and the build stamp are read-only; the experimental toggle saves itself) are that
+ * here, the same way Attribution and System are on gas's page.
+ */
+export function tabStatus(draft, saved, errors, tabFields) {
+  const fields = tabFields || {};
+  const d = draft || {};
+  const s = saved || {};
+  const errs = errors || {};
+  const tabs = {};
+  for (const tab of new Set(Object.values(fields))) tabs[tab] = { dirty: false, invalid: false };
+  for (const [field, tab] of Object.entries(fields)) {
+    if (!tabs[tab]) continue;
+    if (!sameValue(s[field], d[field])) tabs[tab].dirty = true;
+    if (Object.prototype.hasOwnProperty.call(errs, field)) tabs[tab].invalid = true;
+  }
+  return tabs;
 }
