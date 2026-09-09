@@ -11,7 +11,8 @@ import { describe, expect, it } from "vitest";
 import {
   collectProseBlocks, countNumericTokens, countVisible, countVisuals, countWords, diffReport,
   diffRoute, extractText, formatDiffTable, formatTable, isClosedDetails, isHiddenAttr,
-  isIconSvg, isSrOnly, isTipSignified, overflowSummary, parsePages, PROSE_MIN_WORDS, tagOf,
+  isIconSvg, isSrOnly, isTipSignified, overflowSummary, parsePages, parseStoragePrefix,
+  PROSE_MIN_WORDS, tagOf,
 } from "../dev/densityModel.mjs";
 
 // ============================================================================================
@@ -107,6 +108,52 @@ describe("parsePages() reads the same PAGES table shape test/pagesLit.test.js's 
       "configureApp({ ...MANIFEST, PAGES });",
     ].join("\n");
     expect(parsePages(src)).toHaveLength(2);
+  });
+});
+
+// ============================================================================================
+//  parseStoragePrefix — the literal --experimental composes into experimental.js's key()
+// ============================================================================================
+
+describe("parseStoragePrefix() reads MANIFEST.storagePrefix off app.js's own source, the same "
+  + "way parsePages() reads PAGES above", () => {
+  it("finds the trailing-dot prefix (gas_ai's real value) inside a full MANIFEST literal", () => {
+    const src = [
+      "const MANIFEST = {",
+      '  productName: "Wiz Sidekick AI",',
+      '  openingNoun: "graph",',
+      '  storagePrefix: "sidekickai.",',
+      '  defaultRoute: "problems",',
+      "};",
+    ].join("\n");
+    expect(parseStoragePrefix(src)).toBe("sidekickai.");
+  });
+
+  it("reads any of the four real prefixes, not just gas_ai's", () => {
+    expect(parseStoragePrefix('storagePrefix: "sidekickos.",')).toBe("sidekickos.");
+    expect(parseStoragePrefix('storagePrefix: "sidekickdso.",')).toBe("sidekickdso.");
+    expect(parseStoragePrefix('storagePrefix: "sidekickhub.",')).toBe("sidekickhub.");
+  });
+
+  // THE PERTURBATION --experimental MUST REFUSE ON: a MANIFEST with no storagePrefix key at
+  // all (a stripped-down fixture, or a future app that forgot one) must not read back as the
+  // string "undefined" or "" — either would have density.mjs happily write
+  // "undefinedshowExperimental" or "showExperimental" into localStorage, a key
+  // gas_shared/shell/experimental.js's own key() would never compose and would never read
+  // back either. null is the only answer that lets the caller tell "no prefix" from "an empty
+  // one" and refuse instead of walking half-blind.
+  it("returns null, not a string built from a missing key, when storagePrefix is absent", () => {
+    const src = [
+      "const MANIFEST = {",
+      '  productName: "Wiz Sidekick AI",',
+      '  defaultRoute: "problems",',
+      "};",
+    ].join("\n");
+    expect(parseStoragePrefix(src)).toBeNull();
+  });
+
+  it("returns null on a source with no MANIFEST at all", () => {
+    expect(parseStoragePrefix("const PAGES = {};")).toBeNull();
   });
 });
 
