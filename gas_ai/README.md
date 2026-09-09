@@ -365,8 +365,11 @@ there too; `npm run test:exact` is what catches you if you forget.
 rendered-page walker (`../gas_devsecops/dev/density.mjs --root . --port 8798`) over this
 app's own `PAGES` table and prints, per route, the words, prose blocks, bare numbers, table
 cells, pictures and visible definition triggers a reader actually meets, plus any horizontal
-overflow at 1280, 640 and 360px; `--diff before.json after.json` compares two runs. The
-eleven routes it walks are `graph`, `inventory`, `problems`, `combos`, `config`,
+overflow at 1280, 640 and 360px; `--diff before.json after.json` compares two runs.
+`--experimental` sets `<storagePrefix>showExperimental=1` in localStorage before every
+navigation, so a route gated behind Settings → Show experimental content renders instead of
+redirecting to the default route — needed for `#/aars`, the one gated route in this app's
+`PAGES` table. The eleven routes it walks are `graph`, `inventory`, `problems`, `combos`, `config`,
 `compliance`, `scans`, `aars`, `data`, `settings`, `help` — read off `app.js`'s own `PAGES`
 literal, never hand-typed, so a renamed or added route shows up next run with no second list
 to forget.
@@ -389,6 +392,14 @@ inventory 4 → 8, problems 1 → 9, combos 1 → 3, config 1 → 10, compliance
 data 0 → 11, settings 0 → 0, help 1 → 1 (`aars` excluded — the walker sets no experimental flag,
 so it redirects and duplicates `problems`). A `?dry&noseed` zero-audit found 0 bare zeros on
 every route except Scoring Models (`aars`, 10; reported, not fixed).
+
+**Follow-ups of 2026-09-09.** Six follow-ups (F1–F6) landed after the wave and were re-measured
+at `eeab75f`, walked with `--experimental` so `aars` is included rather than dropped. The
+`?dry&noseed` zero-audit now reads 0 bare zeros on every route, Scoring Models included (was 10;
+follow-up F4). Inventory seeded draws 3 canvases with 3 figures tables, up from 1 — the
+adjacency and category posture cards now draw from the seeded series (follow-up F2); the
+exploitation card still reads "No sync has recorded this yet" because no evidence pass runs on
+the dry run.
 
 ### Which build is deployed?
 

@@ -84,9 +84,10 @@ describe("a first sync can date nothing but the sighting", () => {
   });
 
   it("resolves nothing by absence when there is no previous committed scope", () => {
-    // prevScopeSignature null is UNKNOWN, not "the same scope". A ledger carried across a
-    // history wipe (resetData) meets an empty prior scope, and reading that as coverage
-    // would resolve the entire register on the first sync after it.
+    // prevScopeSignature null is UNKNOWN, not "the same scope". The still-reachable cause is a
+    // ledger row that predates the `register_scope` column: `syncStore.ts` (~:1296-1299) reads
+    // that absence back as null rather than as "the same scope covered it", and reading it as
+    // coverage would resolve the entire register on the first sync after it.
     const prev = firstSync();
     const { rows, deltas } = reconcileIssueLedger(prev, [], "sync-2", T2, SCOPE_AI, null);
     expect(rows[0]!.disappearedAt).toBeNull();
