@@ -2320,12 +2320,90 @@ export function getIssues(p?: unknown): ApiResult {
   });
 }
 
+/**
+ * What a SURFACE may read off one lifecycle-ledger row.
+ *
+ * A PROJECTION, not the row. `IssueLedgerRow` also carries the frozen rank inputs
+ * (`ruleId`, `aiAdjacency`, `exploitationTier`, `epssPeak`), `lastStatus`, `categories` and
+ * — the one that matters — Wiz's own `createdAt`, which on a departed row can predate this
+ * register's first sighting by a YEAR (`sampleData.ts` seeds exactly that, deliberately, so
+ * a fixture cannot pass a client that reached for the wrong date). Shipping the whole row
+ * would put that year-earlier date one property access away from a sheet whose entire
+ * subject is when THIS register saw the issue. Eight fields, all of them the ledger's own
+ * observations plus the two words that qualify them.
+ */
+interface PublicIssueLedger {
+  firstSeenAt: string;
+  firstSeenSync: string;
+  lastSeenAt: string;
+  lastSeenSync: string;
+  disappearedAt: string | null;
+  resolutionSrc: "disappeared" | "reopened" | null;
+  episode: number;
+  registerScope: string;
+}
+
+/**
+ * The lifecycle ledger as a lookup, projected and cached.
+ *
+ * BEHIND `cached` BECAUSE `loadIssueLedger()` IS DELIBERATELY NOT MEMOIZED.
+ * `syncStore.ts`'s own header says why: `persistSync` is a caller inside a WRITE and must
+ * see the tab as it stands rather than as some earlier read in the same execution left it,
+ * so a stale ledger there would be reconciled against and written back, silently dropping
+ * whatever the missed read held. That rule is right for the write path and wrong for this
+ * one — a per-RPC sheet read of every row this register has ever held, to answer about one
+ * id. So the READ side gets its own entry rather than the load being memoized underneath
+ * both.
+ *
+ * L1 only. The cache namespace is `issueLedgerIndex1`, in this file's own suffix convention
+ * (`assetsModel2`, `backlogMovement1`): the trailing digit is bumped when the SHAPE of what
+ * is stored changes, so a still-warm entry cannot answer a newer client with an older
+ * payload. Keyed on the data version like every other `cached` entry, which is what a sync
+ * bumps — and a sync is the only thing that can move a ledger row.
+ */
+function issueLedgerIndex(): Record<string, PublicIssueLedger> {
+  return cached("issueLedgerIndex1", null, () => {
+    const out: Record<string, PublicIssueLedger> = {};
+    for (const row of syncStore.loadIssueLedger()) {
+      out[row.issueId] = {
+        firstSeenAt: row.firstSeenAt,
+        firstSeenSync: row.firstSeenSync,
+        lastSeenAt: row.lastSeenAt,
+        lastSeenSync: row.lastSeenSync,
+        disappearedAt: row.disappearedAt,
+        resolutionSrc: row.resolutionSrc,
+        episode: row.episode,
+        registerScope: row.registerScope,
+      };
+    }
+    return out;
+  });
+}
+
+/**
+ * One issue, its combination, and the register's own record of its lifetime.
+ *
+ * THE JOIN GOES BESIDE `issue`, NEVER INSIDE IT. `test/seedParity.test.ts` pins
+ * `getIssueDetail(id).issue` deep-equal to that id's row in `getIssues({}).rows`, which is
+ * what lets a list hand the sheet a row it already holds and skip the round trip entirely.
+ * Folding a ledger field into `issue` would break that seed path — quietly, as a repaint on
+ * every seeded open rather than as an error.
+ *
+ * A GONE ISSUE FINALLY HAS A SURFACE. `ai_issues` is overwritten on every sync and gated to
+ * OPEN / IN_PROGRESS, so an issue the ledger has dated by disappearance is not in that tab
+ * and this endpoint used to answer `null` — indistinguishable from an id that never
+ * existed, on the one register whose ledger knows precisely when the row left. When the tab
+ * has no row but the ledger does, the payload is `{ issue: null, group: null, ledger }` and
+ * the sheet says what the register knows instead of "not found". A `null` return now means
+ * one thing only: neither the tab nor the ledger has ever heard of this id.
+ */
 export function getIssueDetail(p?: unknown): ApiResult {
   return run(() => {
     const id = String(((p ?? {}) as Rec)["id"] ?? "");
     // Raw for the same reason as getConfigFindingDetail above: lists narrow, links do not.
     const issue = syncStore.loadIssues().find((i) => i.id === id) ?? null;
-    if (!issue) return null;
+    const ledger = id ? (issueLedgerIndex()[id] ?? null) : null;
+    if (!issue) return ledger ? { issue: null, group: null, ledger } : null;
     const group = issue.comboGroup ? comboGroupById(issue.comboGroup) : null;
     return {
       issue: publicRow(issue as unknown as Rec),
@@ -2339,6 +2417,7 @@ export function getIssueDetail(p?: unknown): ApiResult {
             frameworks: group.frameworks,
           }
         : null,
+      ledger,
     };
   });
 }

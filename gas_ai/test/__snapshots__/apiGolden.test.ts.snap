@@ -12172,6 +12172,16 @@ exports[`read endpoints > getIssueDetail answers the same shape 1`] = `
       "subscriptionId": undefined,
       "updatedAt": undefined,
     },
+    "ledger": {
+      "disappearedAt": null,
+      "episode": 1,
+      "firstSeenAt": "2026-08-10T09:00:00.000Z",
+      "firstSeenSync": "sync-sample-06",
+      "lastSeenAt": "2026-08-13T09:00:00Z",
+      "lastSeenSync": "sync-2026-08-13T090000Z",
+      "registerScope": "wct-id-1998",
+      "resolutionSrc": null,
+    },
   },
   "ok": true,
 }

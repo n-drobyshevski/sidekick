@@ -982,6 +982,21 @@ export const ENTRIES = [
 
   // ------------------------------------------------------------------ the issue lifecycle
   {
+    id: "first-seen",
+    term: "First seen by this register",
+    aka: "the ledger's own birth date, not Wiz's",
+    family: "lifecycle",
+    blurb:
+      "The first sync that returned this issue. It is this register's OWN observation, and " +
+      "it is deliberately not Wiz's created date: an issue can have existed in the tenant " +
+      "for a year before the first sync here looked, and every lifecycle figure on this " +
+      "page measures from the date a sync actually recorded. Nothing backfills it — a row " +
+      "that predates the ledger has no earlier sighting to claim, and inventing one would " +
+      "be a measurement nobody took.",
+    drawnOn: ["combos", "inventory"],
+    mark: () => statusPill("neutral", "First seen"),
+  },
+  {
     id: "movement",
     term: "Movement",
     aka: "how the open backlog changed between two syncs",
@@ -1007,7 +1022,9 @@ export const ENTRIES = [
       "is the interval between syncs: an issue closed the morning after a Monday sync is " +
       "dated Tuesday. It is also the reason a longer gap between syncs makes every " +
       "departure look later than it was, rather than making fewer of them.",
-    drawnOn: ["data"],
+    // Also on the issue sheet's Lifecycle section, which is where a reader meets one
+    // bounded date rather than a column of them.
+    drawnOn: ["data", "combos", "inventory"],
     mark: () => statusPill("neutral", "Gone"),
   },
   {
@@ -1021,7 +1038,7 @@ export const ENTRIES = [
       "NOT record when each episode began — only how many there have been — so the gap " +
       "between one episode and the next cannot be priced, and no clock here spans two of " +
       "them.",
-    drawnOn: ["data"],
+    drawnOn: ["data", "combos", "inventory"],
     mark: () => statusPill("neutral", "↩"),
   },
 

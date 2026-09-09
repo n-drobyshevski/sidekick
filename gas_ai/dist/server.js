@@ -474,7 +474,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "273b64305fab" : "dev";
+  var BUILD_ID = true ? "3163594015b2" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -18104,12 +18104,31 @@ var Server = (() => {
       });
     });
   }
+  function issueLedgerIndex() {
+    return cached("issueLedgerIndex1", null, () => {
+      const out = {};
+      for (const row of loadIssueLedger()) {
+        out[row.issueId] = {
+          firstSeenAt: row.firstSeenAt,
+          firstSeenSync: row.firstSeenSync,
+          lastSeenAt: row.lastSeenAt,
+          lastSeenSync: row.lastSeenSync,
+          disappearedAt: row.disappearedAt,
+          resolutionSrc: row.resolutionSrc,
+          episode: row.episode,
+          registerScope: row.registerScope
+        };
+      }
+      return out;
+    });
+  }
   function getIssueDetail(p) {
     return run(() => {
-      var _a5, _b;
+      var _a5, _b, _c;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       const issue2 = (_b = loadIssues().find((i) => i.id === id)) != null ? _b : null;
-      if (!issue2) return null;
+      const ledger = id ? (_c = issueLedgerIndex()[id]) != null ? _c : null : null;
+      if (!issue2) return ledger ? { issue: null, group: null, ledger } : null;
       const group = issue2.comboGroup ? comboGroupById(issue2.comboGroup) : null;
       return {
         issue: publicRow(issue2),
@@ -18120,7 +18139,8 @@ var Server = (() => {
           nativeSeverity: group.nativeSeverity,
           amplifierNote: group.amplifierNote,
           frameworks: group.frameworks
-        } : null
+        } : null,
+        ledger
       };
     });
   }
