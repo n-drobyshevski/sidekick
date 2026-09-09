@@ -218,7 +218,12 @@ export async function renderConfigFindings(main, params, ctx) {
       clear(headHost);
       clear(bodyHost);
       headHost.append(pageHeader({
-        hero: heroStat("Failing controls", null, absentText),
+        // `absentText` is the VALUE, not the sub — it was in the wrong argument slot
+        // (heroStat(label, value, sub, help)), which left `null` render as an EMPTY hero
+        // (`valueOrAbsent` only substitutes `absent()` for the exact string `absentText`,
+        // never for `null`) with a bare "—" sitting where the sub sentence belongs. No sub
+        // here: the firstRunNotice right below already says the register measured zero.
+        hero: heroStat("Failing controls", absentText, null),
         stats: [],
       }));
       bodyHost.append(firstRunNotice({
@@ -415,6 +420,7 @@ export async function renderConfigFindings(main, params, ctx) {
     const groups = model.controls;
     bodyHost.append(sectionLabel(plural(groups.length, "control") + " with findings"));
     bodyHost.append(dataTable({
+      stickyHeader: true,
       columns: [
         {
           key: "severity", label: "Severity", sortable: false, help: { term: "severity" },
@@ -493,6 +499,11 @@ export async function renderConfigFindings(main, params, ctx) {
       },
       emptyText: "No controls match these filters.",
     }));
+    // The rollup is bounded by construction — distinct controls, never the raw finding
+    // count — so this is the bare "N rows" pager() prints under any table with one page,
+    // the same shape paintFindings's own footer degrades to on a small register. No
+    // `onPage`: there is no page state to change.
+    bodyHost.append(tableFooter({ total: groups.length }));
   }
 
   /**
