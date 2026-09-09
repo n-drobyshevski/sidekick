@@ -42,12 +42,13 @@
 // uses, not a second implementation of either.
 
 import {
-  checksCell, extChip, findSubcategory, fiveRsDerived, postureAbsence, postureCell, STATES,
+  checksCell, complianceHero, extChip, findSubcategory, fiveRsDerived, postureAbsence,
+  postureCell, STATES,
   stateStrip,
   subcategoryDetail,
 } from "./complianceShared.js";
 import {
-  absent, absentText, dataTable, el, meter, plural, sectionLabel, sevBadge, sevRank,
+  absent, absentText, dataTable, el, meter, pageHeader, plural, sectionLabel, sevBadge, sevRank,
   statRow,
 } from "../ui.js";
 
@@ -191,22 +192,9 @@ function renderHeadline(host, data) {
       + "different, AI-scoped derived figure for it.");
   }
   const subKids = [heroLead];
-  if (worstSeverity) subKids.push(sevBadge(worstSeverity));
-
-  const hero = el("div", {},
-    el("div", { class: "label" }, tip("Compliance posture", heroWhy)),
-    // `.comp-hero-value` sets no colour (the scored case is meant to read at hero weight), so
-    // the unscored case needs `absent()` rather than a dash that inherits the same ink.
-    scored
-      ? el("div", { class: "comp-hero-value num" }, `${kpis.averagePosture}%`)
-      : el("div", { class: "comp-hero-value" }, absent()),
-    scored
-      ? el("div", { class: "comp-hero-meter" }, heroMeter)
-      : null,
-    // The one number on this page Wiz did not hand us — it names its own denominator so it
-    // is never mistaken for a vendor figure.
-    el("div", { class: "comp-hero-sub" }, ...subKids),
-  );
+  // Wrapped in its own small margin/vertical-align hook (compliance.css) rather than the
+  // shared `.page-hero-sub .sev-badge` — see the matching note in compliance.js.
+  if (worstSeverity) subKids.push(el("span", { class: "comp-posture-badge" }, sevBadge(worstSeverity)));
 
   // The shared strip only ever reads `.stateCounts`, so the landscape-wide roll-up — which is
   // not a FrameworkTree — can drive the exact same component the register uses per
@@ -218,20 +206,32 @@ function renderHeadline(host, data) {
   const sharedRows = data.sharedControls || [];
   const sharedCount = sharedRows.filter((c) => (c.frameworkCount || 0) >= 2).length;
 
-  const stats = el("div", { class: "stat-list" },
-    statRow("Frameworks", `${coverage.collected ?? 0} of ${coverage.catalogued ?? 0}`,
-      "collected of catalogued"),
-    statRow("Failing subcategories", String(kpis.failingSubcategories ?? 0),
-      "across every collected framework"),
-    statRow("Failing controls", String(kpis.failingPolicies ?? 0),
-      "distinct policies with a failing check"),
-    statRow("Shared across frameworks", String(sharedCount),
-      `of ${plural(sharedRows.length, "failing control")}`),
-  );
-
   host.append(el("div", { class: "comp-ov-section" },
     sectionLabel("Landscape posture"),
-    el("div", { class: "comp-header" }, hero, strip, stats)));
+    pageHeader({
+      hero: complianceHero({
+        // The tip carries the whole `heroWhy` disclosure, exactly as the hand-rolled
+        // `tip("Compliance posture", heroWhy)` label did — `heroStat`'s own `help` argument
+        // routes an array straight into the same `tip()` call.
+        label: "Compliance posture",
+        help: heroWhy,
+        scored,
+        pct: kpis.averagePosture,
+        meterNode: scored ? heroMeter : null,
+        sub: subKids,
+      }),
+      aside: strip,
+      stats: [
+        statRow("Frameworks", `${coverage.collected ?? 0} of ${coverage.catalogued ?? 0}`,
+          "collected of catalogued"),
+        statRow("Failing subcategories", String(kpis.failingSubcategories ?? 0),
+          "across every collected framework"),
+        statRow("Failing controls", String(kpis.failingPolicies ?? 0),
+          "distinct policies with a failing check"),
+        statRow("Shared across frameworks", String(sharedCount),
+          `of ${plural(sharedRows.length, "failing control")}`),
+      ],
+    })));
 }
 
 // ------------------------------------------------------------------------ B. rail

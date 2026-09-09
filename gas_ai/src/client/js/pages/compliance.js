@@ -58,12 +58,12 @@
 
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, dataTable, el, emptyState, errorState, filterCombobox, firstRunNotice, meter,
+  clear, dataTable, el, emptyState, errorState, filterCombobox, firstRunNotice, meter,
   pageHeader, sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  checksCell, extChip, fiveRsDerived, postureAbsenceHint, postureCell, postureScopeNote,
-  STATES, STATE_ORDER,
+  checksCell, complianceHero, extChip, fiveRsDerived, postureAbsenceHint, postureCell,
+  postureScopeNote, STATES, STATE_ORDER,
   stateStrip, subcategoryDetail,
 } from "./complianceShared.js";
 // STATE_ORDER survives the filter's removal as the key order for summing a stateCounts map
@@ -105,9 +105,10 @@ export async function renderCompliance(main, params, ctx) {
   // `pageHeader({ route })`, not a bare `el("h1", ...)` and not a title in the hero VALUE.
   // P8 converted this page's hand-rolled title onto the shared component by putting
   // "Compliance Posture" in the 2rem hero slot — which left the page's name and its posture
-  // percentage (`.comp-hero-value`, also --fs-hero) reading at the same size, in a register
-  // whose first design principle is that the number is the product. The name is the h1 now, at
-  // the 1.5rem ceiling, and the percentage is the only thing on the page at the hero step.
+  // percentage (both --fs-hero) reading at the same size, in a register whose first design
+  // principle is that the number is the product. The name is the h1 now, at the 1.5rem
+  // ceiling, and the percentage — drawn by `complianceHero()` (complianceShared.js) since
+  // P2.4 — is the only thing on the page at the hero step.
   main.append(pageHeader({
     route: "compliance",
     // Nine words. The three grains it used to enumerate (category, subcategory, policy)
@@ -352,25 +353,22 @@ export async function renderCompliance(main, params, ctx) {
             : "")
         : `${tree.name} · Wiz's own score, carried through unchanged`)
       : `${tree.name} · ${(STATES[tree.state] || STATES.unknown).label}`];
-    if (worstSeverity) heroSubKids.push(sevBadge(worstSeverity));
+    // Wrapped in its own small margin/vertical-align hook (compliance.css) rather than the
+    // shared `.page-hero-sub .sev-badge` — that class is drawn on every converted hero in
+    // the app, and scoping the tweak to this page's own wrapper keeps it from reaching one
+    // that never asked for it.
+    if (worstSeverity) heroSubKids.push(el("span", { class: "comp-posture-badge" }, sevBadge(worstSeverity)));
 
-    const hero = el("div", {},
-      el("div", { class: "label" }, "Compliance posture"),
-      // `.comp-hero-value` sets no colour (the scored case is meant to read at hero weight),
-      // so the unscored case needs `absent()` rather than a dash that inherits the same ink.
-      scored
-        ? el("div", { class: "comp-hero-value num" }, `${heroPct}%`)
-        : el("div", { class: "comp-hero-value" }, absent()),
-      scored
-        ? el("div", { class: "comp-hero-meter" }, heroMeter)
-        : null,
-      el("div", { class: "comp-hero-sub" }, ...heroSubKids),
-    );
-
-    sectionHost.append(el("div", { class: "comp-header" },
-      hero,
-      stateStrip(tree),
-      el("div", { class: "stat-list" },
+    sectionHost.append(pageHeader({
+      hero: complianceHero({
+        label: "Compliance posture",
+        scored,
+        pct: heroPct,
+        meterNode: scored ? heroMeter : null,
+        sub: heroSubKids,
+      }),
+      aside: stateStrip(tree),
+      stats: [
         statRow("Categories", String(tree.categories.length), "in this framework"),
         statRow(
           "Subcategories scored",
@@ -394,7 +392,8 @@ export async function renderCompliance(main, params, ctx) {
             "active rules with no failing check",
           )
           : null,
-      )));
+      ],
+    }));
 
     // ---- register ----
     // Categories, each expanding to its subcategories. One table, not two: the child rows

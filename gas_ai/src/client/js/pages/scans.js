@@ -37,7 +37,7 @@ import { openAreaSheet } from "./scanSheet.js";
 import {
   absent, absentText, clear, closeActiveSheet, dataTable, el, emptyState, errorState,
   firstRunNotice, fmtCount,
-  fmtDate, fmtDateTime, appendAll, pageHeader,
+  fmtDate, fmtDateTime, appendAll, heroLines, heroStat, pageHeader,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
@@ -59,14 +59,18 @@ export async function renderScans(main, params, ctx) {
   appendAll(
     main,
     pageHeader({
-      // Counted, not typed. This sentence said "nine" while the page rendered ten areas —
-      // the exact class of drift the rest of this page exists to refuse, and it only takes
-      // one area being added anywhere for a hand-typed number to start lying.
       route: "scans",
-      lede: "Every figure traces back to one of " + SCAN_AREAS.length + " Wiz scan areas.",
+      // Two sentences, as `heroLines` blocks rather than a second hand-built `<p
+      // class="page-sub">` — the lede's own slot already carries more than one line
+      // elsewhere (see ui/controls.js). Counted, not typed: the first sentence said "nine"
+      // while the page rendered ten areas once, the exact class of drift the rest of this
+      // page exists to refuse, and it only takes one area being added anywhere for a
+      // hand-typed number to start lying.
+      lede: heroLines(
+        "Every figure traces back to one of " + SCAN_AREAS.length + " Wiz scan areas.",
+        "What each one is asked for, what it reported, and where the answer lands.",
+      ),
     }),
-    el("p", { class: "page-sub" },
-      "What each one is asked for, what it reported, and where the answer lands."),
     // "what it reported in this tenant" used to end that sentence, and a project view made it
     // false — the figures below come from scoped endpoints. The split is the point and it is
     // not obvious: the STEPS are a description of the sync battery and never move, while the
@@ -201,12 +205,6 @@ export async function renderScans(main, params, ctx) {
     const sync = boot.latestSync || {};
     const dryRun = String(sync.mode || "") === "dry-run";
 
-    const hero = el("div", { class: "cov-hero" },
-      el("div", { class: "kpi-label" }, "Reporting"),
-      el("div", { class: "hero-value num" }, tally.live + " of " + resolved.length),
-      el("div", { class: "cov-hero-sub" }, "scan areas returning a live figure"),
-    );
-
     const strip = el("div", { class: "cov-strip" },
       el("div", { class: "kpi-label" }, "Coverage"),
       coverageBar(tally, resolved.length),
@@ -216,18 +214,21 @@ export async function renderScans(main, params, ctx) {
         "a per-step record of what ran."),
     );
 
-    const stats = el("div", { class: "stat-list" },
-      statRow("Last sync", fmtDate(sync.finished_at),
-        fmtDateTime(sync.finished_at)),
-      statRow("Mode", dryRun ? "Dry-run" : "Live",
-        dryRun ? "bundled sample dataset" : "against the configured Wiz tenant"),
-      statRow("Records written", fmtCount(sync.node_count),
-        "assets · " + fmtCount(sync.edge_count) + " edges · " + fmtCount(sync.issue_count)
-        + " issues"),
-      statRow("Wiz API calls", fmtCount(sync.api_calls), "in that sync"),
-    );
-
-    return el("div", { class: "cov-header" }, hero, strip, stats);
+    return pageHeader({
+      hero: heroStat("Reporting", tally.live + " of " + resolved.length,
+        "scan areas returning a live figure", { term: "coverage-state" }),
+      aside: strip,
+      stats: [
+        statRow("Last sync", fmtDate(sync.finished_at),
+          fmtDateTime(sync.finished_at)),
+        statRow("Mode", dryRun ? "Dry-run" : "Live",
+          dryRun ? "bundled sample dataset" : "against the configured Wiz tenant"),
+        statRow("Records written", fmtCount(sync.node_count),
+          "assets · " + fmtCount(sync.edge_count) + " edges · " + fmtCount(sync.issue_count)
+          + " issues"),
+        statRow("Wiz API calls", fmtCount(sync.api_calls), "in that sync"),
+      ],
+    });
   }
 
   // The bar is decoration — the keys beneath carry the same three numbers as text — so it
@@ -875,8 +876,8 @@ function scansSkeleton() {
       skeleton("line", { width: "80%", height: "9px" })));
   }
   return el("div", { role: "status", "aria-label": "Loading scan coverage" },
-    el("div", { class: "cov-header" },
-      el("div", { class: "cov-hero" },
+    el("div", { class: "page-header" },
+      el("div", { class: "page-hero" },
         skeleton("line", { width: "70px", height: "10px" }),
         skeleton("stat", { width: "120px" }),
         skeleton("line", { width: "150px", height: "10px" })),

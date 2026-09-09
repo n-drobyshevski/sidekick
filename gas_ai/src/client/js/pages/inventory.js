@@ -146,8 +146,11 @@ function writeViews(views) {
  * makes the real content jump when it lands.
  */
 function inventorySkeleton() {
-  const header = el("div", { class: "inv-header" },
-    el("div", { class: "inv-hero" },
+  // Mirrors countHeader()'s own shape now: the shared pageHeader grid (hero + the
+  // distribution strip as its aside + the stat list), then the verdict row as its own
+  // block underneath — keep the two in step, or the real content jumps when it lands.
+  const header = el("div", { class: "page-header" },
+    el("div", { class: "page-hero" },
       skeleton("line", { width: "70%" }),
       skeleton("stat", { width: "45%" }),
       skeleton("line", { width: "85%" })),
@@ -155,12 +158,16 @@ function inventorySkeleton() {
       skeleton("line", { width: "40%" }),
       skeleton("line", { height: "10px", radius: "999px" }),
       skeleton("line", { width: "90%" })),
-    el("div", { class: "card stat-list" },
+    el("div", { class: "stat-list" },
       ...Array.from({ length: 4 }, () => skeleton("line", { height: "18px" }))),
   );
+  const verdict = el("div", { class: "inv-verdict" },
+    el("div", { class: "inv-count-row" },
+      ...Array.from({ length: 3 }, () => skeleton("line", { width: "30%", height: "18px" }))));
   const toolbar = el("div", { class: "inv-toolbar" }, skeleton("line", { height: "34px" }));
   const rows = skeletonStack(8, { height: "18px" });
-  return el("div", { role: "status", "aria-label": "Loading inventory" }, header, toolbar, rows);
+  return el("div", { role: "status", "aria-label": "Loading inventory" },
+    header, verdict, toolbar, rows);
 }
 
 // ------------------------------------------------------------------------ the page
@@ -393,7 +400,10 @@ export async function renderInventory(main, params) {
     // there was nothing to inventory, not that nobody has asked yet. The dash hero and the
     // empty stat list say "nothing was withheld", not "nothing has looked".
     if (fresh.total === 0) {
-      host.append(heroStat("AI assets", null, "of the register's landscape"));
+      host.append(pageHeader({
+        hero: heroStat("AI assets", null, "of the register's landscape"),
+        stats: [],
+      }));
       host.append(firstRunNotice({
         synced: true,
         at: boot.latestSync.finished_at,
@@ -469,18 +479,13 @@ export async function renderInventory(main, params) {
       ));
   }
 
-  // ---- header: one hero, the three counts, one distribution, one stat list
+  // ---- header: the shared pageHeader (hero + distribution aside + stat list), with the
+  // three-count verdict row as its own block directly under it — see the comment above
+  // `verdict` below for why it cannot join `stats` instead.
   function countHeader(kpis, fresh) {
     const counts = fresh.severityCounts || {};
     const deltas = fresh.countDeltas || null;
     const withIssues = STRIP_SEVERITIES.reduce((n, sev) => n + (counts[sev] || 0), 0);
-
-    const hero = el("div", { class: "inv-hero" },
-      el("div", { class: "kpi-label" }, "AI assets"),
-      el("div", { class: "hero-value num" }, fmtCount(kpis.aiAssets)),
-      el("div", { class: "inv-hero-sub" },
-        `${fmtCount(kpis.agents)} agents · ${fmtCount(kpis.agenticIdentities)} agentic identities`),
-    );
 
     // The three counts, which is what this header claims now that it claims no verdict.
     // Each is a number a reader can go and check in Wiz: open issues, failing
@@ -512,6 +517,10 @@ export async function renderInventory(main, params) {
         el("span", { class: "inv-count-n num" }, value === null ? absent() : String(value)),
         deltaChip(key)),
       term);
+    // A block of its own, directly under the shared header — not one of its `stats`.
+    // `statRow` (ui/controls.js) has no delta-chip slot, and every count here carries one
+    // against the previous sync, so folding these into the stat strip would mean dropping
+    // the deltas or inventing a second stat-row shape for exactly three cells.
     const verdict = el("div", { class: "inv-verdict" },
       el("div", { class: "inv-count-row" },
         countStat("Open issues", num(kpis.openIssues), "issues"),
@@ -565,7 +574,10 @@ export async function renderInventory(main, params) {
     );
 
     const coverage = num(kpis.guardrailCoveragePct);
-    const stats = el("div", { class: "card stat-list" },
+    // An array, not a wrapped `.card.stat-list` div: `pageHeader({ stats })` below does the
+    // wrapping itself (`.stat-list`, no `.card`), the same shape `config.js`'s header stats
+    // already take.
+    const stats = [
       statRow("Guardrail coverage", pct1(coverage),
         "agents protected by a guardrail", coverage,
         { term: "missing-guardrail" }),
@@ -577,7 +589,7 @@ export async function renderInventory(main, params) {
         fmtCount(posture && posture.scoredFrameworks),
         "of " + fmtCount(posture ? posture.frameworks : null) + " collected",
         null, { term: "coverage-state" }),
-    );
+    ];
 
     // The strip is a control, so it has to reflect state it did not itself change — a
     // chip cleared outside it, or the drawer's own severity facet. Marked in place rather
@@ -595,8 +607,17 @@ export async function renderInventory(main, params) {
       }
     };
 
-    // hero and the counts share the top row; the distribution sits under them.
-    return el("div", { class: "inv-header" }, hero, verdict, strip, stats);
+    // The shared header (hero + distribution aside + stat list), with the verdict as its
+    // own block directly under it — see the comment above `verdict`.
+    return el("div", {},
+      pageHeader({
+        hero: heroStat("AI assets", fmtCount(kpis.aiAssets),
+          `${fmtCount(kpis.agents)} agents · ${fmtCount(kpis.agenticIdentities)} agentic identities`),
+        aside: strip,
+        stats,
+      }),
+      verdict,
+    );
   }
 
   // ---- toolbar
