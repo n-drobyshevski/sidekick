@@ -448,3 +448,174 @@ poll rather than rebuilding, so a live region does not chatter and focus survive
 - Put a page TITLE in the 32px hero-value slot. That step is a measurement; the name is the h1.
 - Put a base64 data URI in the stylesheet. The build fails if a bare `//` survives minification,
   and the base64 alphabet contains `/`. Percent-encode SVG instead.
+
+## 7. The rail status dot answers for one register
+
+`railStatus.js` (package P1.5, landing alongside this one) derives the dot's state instead of
+reading a hardcoded literal or the raw presence of Wiz credentials. The precedence is
+**running → failed → never synced → unreadable → stale after 2 days → current**. "No
+credentials" is not a state in that list: a dry run is a working mode, not a fault, so its
+detail sentence decorates whichever freshness state the ledger is actually in ("No sync has
+run yet — Dry run…") rather than replacing the derivation with a credentials check. A register
+scanned an hour ago under a dry run is fresh; a register nobody has synced is not, and a
+missing credential does not change which of those two is true.
+
+`gas/DESIGN.md` §4 groups this register with `gas_devsecops` as deriving the dot from
+`lastScanByScope`/per-project state, because both are said to hold more than one scope's worth
+of freshness to reconcile. Measured against this register's own server: `jobsStore.ts` types
+`JobKind` as the single literal `"sync"`, and `bootstrap.latestSync` (`api.ts:464, 557`) is one
+row, not a per-scope map. This register's population widens by a settings key
+(`issueCategories`, on one ledger — the CLAUDE.md entry of the same name), it does not fork
+into scopes that need a worst-of comparison. So the characterization in `gas`'s own document
+does not hold once `railStatus.js` is read directly: this register collapses `never synced`
+onto `latestSync` the same way `gas`'s single-scope register does, not the way
+`gas_devsecops` reconciles three.
+
+The caption comes FIRST in the DOM — order matters for a reader reaching the dot with a screen
+reader before the dot itself — and it is visually hidden above 800px rather than removed, the
+defect `gas`'s own rail carried before its wave (CLAUDE.md: "above 800px `display:none` on the
+caption left nine pixels of `aria-hidden` colour with its explanation in a hover tip on a
+`<span>`"). The dot itself is a real `<button>`, takes focus, and navigates to `#/data` — the
+Data route holds the sync-history table (fact 16 of the parity plan) — so activating the one
+readout a reader cannot get from colour alone lands on the record it describes.
+
+## 8. The noun is sync; `scans` are Wiz scan AREAS
+
+`gas_devsecops/test/vocabulary.test.js` holds one rule hard: "a sync is the act; a scan is the
+record it wrote" — you run a sync, it saves scans, you browse scans, and "run a scan" / "scan
+zone" are refused everywhere in that client's source. That sweep cannot port to this register
+verbatim, because this register has a THIRD sense of the word DevSecOps never needed:
+`scanContent.js`'s `SCAN_AREAS` — the surfaces Wiz itself scans (AI-SPM inventory, agent
+guardrails, and the rest of the twelve areas) — the "Wiz Scans" route, and every sentence on
+that page naming one of them ("Every figure traces back to one of N Wiz scan areas"). A
+vocabulary sweep copied from `gas_devsecops` would flag every one of those as the forbidden
+"scan (noun) as a control" and be wrong to: an area is not the sync operation and not its
+record, it is the thing Wiz's own scanner reports on, and `scanContent.js`/`scans.js` exist to
+describe coverage of exactly those areas.
+
+So the rule stays stated in prose here, not enforced by a ported sweep, and it is checked only
+where the two senses could actually collide: the two shared sentences that read the manifest's
+own noun, `firstRunNotice` and `syncCaption` (`gas_shared/ui/feedback.js:201-204, 287`), which
+take `appConfig().sync.{noun,unit}`. Package P1.3 declares `MANIFEST.sync = { noun: "sync",
+unit: "records" }` in `app.js` for those two call sites only ("Records written" is already this
+app's own word, `scans.js:190`) — nothing `scanContent.js` or `scans.js` says about a scan AREA
+reads that field, and this declaration changes none of it.
+
+## 9. The front-door shape (Priorities), adopted 2026-09-09
+
+Wave 2 (packages P2.1–P2.5) gives Priorities — already `MANIFEST.defaultRoute` — the shape the
+OS and DevSecOps front doors converged on: a static title block that waits on no RPC, one
+`pageHeader()` call carrying the hero, the movement aside and a stat strip, the ranked table,
+then a last-sync block. Recorded here as the shape adopted, ahead of those packages landing;
+the sections below name which package supplies which part.
+
+**Hero.** Package P2.5 gives the header the issue half-life — the survival curve this
+register's own `measureSpec.ts` refused to publish until now (CLAUDE.md's gas_ai section: "a
+median-with-censoring or a survival curve would be required first, and neither is
+implemented") — read through `halfLifeView`, a port of `gas/`'s `kmHalfLifeView`: a measured
+median, "at least N days" over a censored curve, or "Not measured" with no sync. "Open
+problems" moves out of the hero slot to become the first stat row.
+
+**Aside.** Package P2.3 supplies the movement reading, scoped to issues only — findings carry
+no lifecycle ledger (`syncStore.ts:1289-1291`) — and states that scope in a standing muted
+line rather than silently letting "movement" mean "issue movement" without saying so. Up to
+two comparison rows sit above it: an "Issues" row against the previous sync (a ▲/▼/= pill
+whose direction is also spelled in words, "N open, was M", both sync dates) and a "vs 7 days
+ago" row once a sync lands that far back; either row that the register cannot yet support (one
+sync so far, a pre-ledger prior row, a rescoped register) is replaced by a muted "no comparison
+— <reason>" line rather than omitted.
+
+**Stats.** The same header renders both of this page's modes — the pre-wave header's own
+`:267-270` comment already named the two modes disagreeing with each other as a defect. In
+"problems" mode the strip holds the severity rows; in "action" mode it holds the two action
+stats ("Collapse to", "Top 10 close"). The cumulative-cover curve moves out of the aside and
+into a `chart-card` in the action body, with package P1.2's table underneath it so the same
+curve reads as numbers.
+
+**Table and footer.** Below the header sits the ranked table this page already draws
+(`getProblems`/`getActions`), every column carrying a `help` trigger (package P1.4); then
+`sectionLabel("Last sync", {term:"sync"})`, `syncCaption`, a `statusPill("neutral", "Dry run",
+…)` when the register has no credentials, and links to `#/data` and `#/scans`.
+
+**First run.** Package P1.3's itemised panel — not a dash hero over an empty page, a panel
+naming each figure this front door owes a reader (Open problems, Movement, Half-life, the
+ranked queue itself) and the one action that fills each ("Sync now — the button in the rail")
+— sits over a dash hero and an empty stat strip.
+
+**Numbers at wave close** (placeholder — filled once P2.1–P2.5 land and step 0's instruments
+re-run on `#/problems` at 1280px):
+
+| metric | before (`c158c78`) | after |
+|---|---|---|
+| words | TBD | TBD |
+| proseBlocks | TBD | TBD |
+| numbers | TBD | TBD |
+| tableCells | TBD | TBD |
+| visuals (total) | TBD | TBD |
+| tips | TBD | TBD |
+| tipsSignified | TBD | TBD |
+
+## 10. The formatter table
+
+Beside the shared count/duration helpers this register draws from `gas_shared/ui/figures.js` —
+`num`, `fmtCount`, `pct1`, `days1`, `boundedDays`, `fmtDays`, `absentText` — and
+`gas_shared/ui/cells.js`'s `absent()` (the muted DOM node `dataTable` promotes a returned
+`absentText` into for a table cell), this register keeps exactly one formatter of its own:
+`fmtBytes` (`pages/data.js:12`, a Drive-archive byte count with no shared analogue anywhere
+else in the design system). It stays local and is named here rather than promoted, the same
+way `gas_devsecops`'s own `fmtSpan` stays local to that register's MTTR page (`gas/DESIGN.md`
+§7).
+
+`problems.js`'s own `formatShare` (`:658-661`, `Number(share) || 0` — a cast with no refusal
+first, the exact shape CLAUDE.md's working discipline names) is retired by package P1.1 in
+favour of `pct1(share * 100)`, so a null share prints the em dash rather than a confident "0%".
+
+Every formatter above refuses null/undefined/blank/`[]`/`false` BEFORE the cast, never after —
+`num()`'s allowlist (only a `number`, or a non-empty `string`, is even a candidate for
+`Number()`) is why `Number(null)`'s `0` never reaches a rendered cell in this register. A
+figure that is a lower bound rather than a measured value prints "at least N days" in prose
+(`fmtDays` fed a censored figure, the way `halfLifeView` will) and "≥ N" in a numeric cell or
+tile (`boundedDays`) — never ">", which claims the true value is strictly beyond the bound
+rather than at least that far out.
+
+## 11. Measuring a page
+
+`npm run density -- --port 8798 --playwright <path to a playwright package>` runs
+`gas_devsecops`'s rendered-page walker (`../gas_devsecops/dev/density.mjs --root .`) over this
+app's own eleven-route `PAGES` table (`app.js`, rail order: `graph, inventory, problems,
+combos, config, compliance, scans, aars, data, settings, help`) and prints, per route: words,
+prose blocks and their word count, bare numeric tokens, table cells, pictures by kind (meter,
+sevbar, axis-bar, isotype, quad, sparkline, canvas, svg), visible definition triggers and how
+many are keyboard-reachable and carry a resting affordance before anything is hovered, and
+horizontal overflow at 1280/640/360px. `--diff before.json after.json` compares two runs
+metric by metric and names any route that moved on not one of them — a finding under
+CLAUDE.md's own rule ("a fix that does not move the number you expected"), never a silent pass.
+
+This app's dev server boots LIVE the moment `dev/.env.local` exists, so `?dry` is mandatory on
+every walked load — the walker appends it itself and refuses to report an empty route list
+(`process.exit(1)` when `parsePages()` finds nothing in `app.js`'s `PAGES` literal) rather than
+print a clean, believable, empty table. Never run the walker and a screenshot sweep
+concurrently against one harness: `dev/serve.mjs` rebuilds on every request, and two Playwright
+clients racing that rebuild can each be served the other's half-built bundle — the OS
+register's own wave measured this collision first and it applies here unchanged.
+
+**Before / after** (placeholder — filled at the wave's close from `density-before.json` /
+`density-wave3.json`, the run step 0 recorded the baseline with):
+
+| route | words | proseBlocks | numbers | tableCells | visuals | tips | tipsSignified |
+|---|---|---|---|---|---|---|---|
+| graph | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| inventory | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| problems | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| combos | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| config | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| compliance | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| scans | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| aars | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| data | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| settings | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+| help | TBD | TBD | TBD | TBD | TBD | TBD | TBD |
+
+Each cell is at 1280px, seeded (`?dry`, not `?dry&noseed`); a route that reads all-TBD after
+the wave closes is itself the finding CLAUDE.md warns against, not an oversight to fill in
+quietly.

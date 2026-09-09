@@ -359,6 +359,29 @@ The list of server modules whose memos get cleared between tests lives in `reset
 in `test/gasEnv.ts`. If you add module-level state to something under `src/server/`, add it
 there too; `npm run test:exact` is what catches you if you forget.
 
+### Measuring a page (`npm run density`)
+
+`npm run density -- --playwright <path to a playwright package>` runs `gas_devsecops`'s
+rendered-page walker (`../gas_devsecops/dev/density.mjs --root . --port 8798`) over this
+app's own `PAGES` table and prints, per route, the words, prose blocks, bare numbers, table
+cells, pictures and visible definition triggers a reader actually meets, plus any horizontal
+overflow at 1280, 640 and 360px; `--diff before.json after.json` compares two runs. The
+eleven routes it walks are `graph`, `inventory`, `problems`, `combos`, `config`,
+`compliance`, `scans`, `aars`, `data`, `settings`, `help` — read off `app.js`'s own `PAGES`
+literal, never hand-typed, so a renamed or added route shows up next run with no second list
+to forget.
+
+The `density` script points at **8798**, not this app's own default 8788 — the four
+siblings' usual ports (8787/8788/8789/8790) are routinely held by other running dev servers,
+so measurement gets a port of its own; run the harness the walker expects with
+`PORT=8798 npm run dev` from this directory before calling `npm run density`. This app's
+`dev/serve.mjs` boots LIVE the moment `dev/.env.local` exists, so `?dry` is mandatory for a
+seeded read — the walker appends it to every URL itself, so a plain `npm run density` run is
+always reading the dry-run sample, never the tenant. Run it alone: two Playwright clients
+against one `dev/serve.mjs` (which rebuilds on every load) can each be served a half-built
+bundle, the same collision the OS register's own wave measured first — never run the density
+walker and a screenshot sweep concurrently against the same harness.
+
 ### Which build is deployed?
 
 An Apps Script deployment can be stale three ways at once — the project holds an old
