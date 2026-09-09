@@ -15,7 +15,8 @@
 // (`node.state`), so the two cannot disagree about which state a row is IN.
 
 import {
-  absent, dataTable, el, firstRunNotice, fmtDateTime, meter, plural, scopeNote, sevBadge,
+  absent, dataTable, el, firstRunNotice, fmtDateTime, heroStat, meter, plural, scopeNote,
+  sevBadge,
 } from "../ui.js";
 
 import { lookupGap } from "../codebook.js";
@@ -84,6 +85,31 @@ export function fiveRsDerived(data, frameworkId) {
   // field without the value. An unscored derived posture is not a zero to draw.
   if (posture.posturePct == null) return null;
   return posture;
+}
+
+/**
+ * The framework register's hero and the overview's landscape hero, on the shared
+ * `heroStat` (`gas_shared/ui/controls.js`) instead of each hand-rolling its own
+ * `.comp-hero-value`/`.comp-hero-sub` pair — the two were byte-for-byte the same markup in
+ * `compliance.js` and `complianceOverview.js` before this.
+ *
+ * `meterNode` keeps its OWN wrapper — `.comp-posture-meter`, not the bare `heroStat` sub-line
+ * — because the posture-tier band tints (`.comp-posture-meter .meter-fill[data-band]`,
+ * compliance.css) need a hook to key off. It is the renamed `.comp-hero-meter`: the value
+ * beside it is drawn by `heroStat` now rather than by this page's own div, but the meter
+ * itself still wants its own `margin-top`/`max-width`, which the shared `.page-hero-sub` does
+ * not carry. `sub` is everything else that used to sit in the old `.comp-hero-sub` — the
+ * derivation sentence, and (wrapped by the caller in `.comp-posture-badge` for its own
+ * margin) the worst-severity mark — passed straight through as an array: `heroStat` flattens
+ * it into the sub-line's children in order, meter first, exactly as the two hand-rolled
+ * blocks drew it.
+ */
+export function complianceHero({ label, scored, pct, meterNode, sub, help }) {
+  const subLine = [
+    meterNode ? el("div", { class: "comp-posture-meter" }, meterNode) : null,
+    ...(sub || []),
+  ];
+  return heroStat(label, scored ? `${pct}%` : null, subLine, help);
 }
 
 /**

@@ -10,15 +10,18 @@
    guarantee the severity tokens carry. Control severity on this page still uses sevBadge,
    because that IS a Wiz severity. */
 
-/* .comp-header comes from .page-header (components.css). */
-.comp-header .stat-list { grid-column: 1 / -1; }
-.comp-hero-value { font-size: var(--fs-hero); line-height: 1.1; font-variant-numeric: tabular-nums; }
-.comp-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-1); }
-/* The hero's severity mark rides in this existing prose slot rather than a new one — see
-   the tint comment on `.comp-fw-bar` below for the full rule this and the rail bar both
-   follow. A small left margin only, since the badge follows running text inline. */
-.comp-hero-sub .sev-badge { margin-left: var(--space-2); vertical-align: -1px; }
-.comp-hero-meter { margin-top: var(--space-3); max-width: 260px; }
+/* The header itself — hero, aside and stat list — is `pageHeader`'s own `.page-header`
+   (components.css) now, drawn by `complianceHero()` (complianceShared.js); the two
+   page-local rules that used to sit here (`.comp-hero-value`/`.comp-hero-sub`, byte-identical
+   to the shared `.hero-value`/`.page-hero-sub` they duplicated) retired with it. The meter
+   keeps its own wrapper below, renamed rather than dropped — the posture-tier band tints
+   further down this file need a hook to key off, and the shared sub-line does not offer one. */
+/* The hero's severity mark rides in its own small wrapper rather than the shared
+   `.page-hero-sub` — see the tint comment on `.comp-fw-bar` below for the full rule this and
+   the rail bar both follow. A small left margin only, since the badge follows running text
+   inline. */
+.comp-posture-badge .sev-badge { margin-left: var(--space-2); vertical-align: -1px; }
+.comp-posture-meter { margin-top: var(--space-3); max-width: 260px; }
 
 .comp-strip { display: flex; flex-direction: column; gap: var(--space-2); }
 .comp-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
@@ -144,11 +147,10 @@
 }
 .comp-policy-counts b { color: var(--ink); font-weight: 600; }
 
-@media (max-width: 1080px) {
-  .comp-header { grid-template-columns: 1fr 1fr; }
-}
+/* The 1080px two-up step that used to live here for `.comp-header` retired with the class —
+   the header is `pageHeader`'s own `.page-header` now, and its shared 640px one-column
+   collapse (components.css) is what governs it. */
 @media (max-width: 760px) {
-  .comp-header { grid-template-columns: 1fr; gap: var(--space-4); }
   .comp-posture { min-width: 110px; }
 }
 
@@ -174,7 +176,7 @@
    is already the divider — so the header drawing its own closing rule put two hairlines about
    28px apart with nothing between them. The section separator wins; the header keeps its
    shape and drops the duplicate. */
-.comp-ov-section .comp-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.comp-ov-section .page-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 
 /* --------------------------------------------------------- band B: the framework rail */
 /* Small-multiple bullet rows sharing ONE 0-100 axis, so a reader compares frameworks by
@@ -320,16 +322,16 @@
    `.meter-fill` is a shared class, so each selector stays scoped to its own slot rather
    than restyling every meter in the app. */
 .comp-fw-bar[data-band="strong"],
-.comp-hero-meter .meter-fill[data-band="strong"],
+.comp-posture-meter .meter-fill[data-band="strong"],
 .comp-posture .meter-fill[data-band="strong"] { background: var(--rank-1-solid); }
 .comp-fw-bar[data-band="fair"],
-.comp-hero-meter .meter-fill[data-band="fair"],
+.comp-posture-meter .meter-fill[data-band="fair"],
 .comp-posture .meter-fill[data-band="fair"] { background: var(--rank-2-solid); }
 .comp-fw-bar[data-band="poor"],
-.comp-hero-meter .meter-fill[data-band="poor"],
+.comp-posture-meter .meter-fill[data-band="poor"],
 .comp-posture .meter-fill[data-band="poor"] { background: var(--rank-3-solid); }
 .comp-fw-bar[data-band="weak"],
-.comp-hero-meter .meter-fill[data-band="weak"],
+.comp-posture-meter .meter-fill[data-band="weak"],
 .comp-posture .meter-fill[data-band="weak"] { background: var(--rank-4-solid); }
 
 /* THE EDGE, so LENGTH survives tier 2. The ramp's steps were measured against each OTHER
@@ -356,7 +358,7 @@
    Hue-neutral on purpose: a per-step edge token would be a fifth thing to keep in sync with
    the ramp, and this one says nothing except "the fill ends here". */
 .comp-fw-bar[data-band],
-.comp-hero-meter .meter-fill[data-band],
+.comp-posture-meter .meter-fill[data-band],
 .comp-posture .meter-fill[data-band] { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.40); }
 
 /* The honest-state lane: an unscored framework gets NO bar, not a bar at zero — a
