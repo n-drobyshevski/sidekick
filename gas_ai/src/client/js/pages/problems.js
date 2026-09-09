@@ -33,15 +33,16 @@ import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
   absent, absentText, chartTable, clear, dataTable, debounce, el, emptyState, errorState,
   fmtCount, fmtDate,
-  heroStat, measuredEmpty, num, pageHeader, pct1, plural, segmented, select,
-  selectField, sevBadge,
+  heroLines, heroStat, measuredEmpty, num, pageHeader, pct1, plural, sectionLabel, segmented,
+  select, selectField, sevBadge,
   sevEntries, sevSegmentBar, sevSpoken, sheetRow, sheetSection, skeleton, statRow,
-  statusPill, tableFooter, togglePills,
+  statusPill, syncCaption, tableFooter, tipLabel, togglePills,
 } from "../ui.js";
 import { coverTableModel } from "./_charts.js";
 import {
   PAGE_SIZE, PROBLEM_SORT_DESC, RANK_REASON_LABEL, SEVERITY_RANK,
-  applyProblemFilters, defaultProblemSort, prioritiesFirstRunView, problemFilterOptions,
+  applyProblemFilters, defaultProblemSort, halfLifeView, movementView,
+  prioritiesFirstRunView, problemFilterOptions,
   problemParamPatch,
   rankCellModel, rankReasonLines, readProblemParams, sortProblems,
 } from "./problemView.js";
@@ -110,32 +111,14 @@ export async function renderProblems(main, params) {
     help: { term: "priorities-rank" },
   }));
 
-  // The front door earns the itemised panel — see problemView.js's own header for why this
-  // page gets one and the others get the generic firstRunNotice. `show` is exactly
-  // `!boot.latestSync`, so this is the same whole-page gate every other route uses, just
-  // drawn with the full unlock list rather than one sentence.
-  const first = prioritiesFirstRunView(boot);
-  if (first.show) {
-    main.append(pageHeader({
-      hero: heroStat("Open problems", null, "issues ∪ findings, the whole union"),
-      stats: [],
-    }));
-    main.append(emptyState(first.heading, first.hint, {
-      items: first.items,
-      variant: "notice",
-    }));
-    return;
-  }
-
-  const host = el("div", {});
-  main.append(host);
-  host.append(actionsSkeleton());
-
   // Seeded from the URL so a filtered, sorted, moded view is shareable — and held out here
   // so an SWR repaint restores it instead of throwing it away. `openActions` and the
   // action table's own filter/sort fields are page-local additions to the same object —
   // ephemeral, per this file's own header, so they ride along with `view` without ever
   // being read by `problemParamPatch`.
+  //
+  // READ BEFORE THE FIRST-RUN GATE BELOW, not after it: the one `renderHeader` both modes
+  // share reads `view.mode` to choose its stat strip, and the gate calls it too.
   const view = readProblemParams(params);
   view.openActions = new Set();
   // Which problem rows have their "Why this rank" disclosure open, by row id. Page-local and
@@ -148,6 +131,29 @@ export async function renderProblems(main, params) {
   view.aQ = "";
   view.aSort = "";
   view.aDir = 1;
+
+  // The front door earns the itemised panel — see problemView.js's own header for why this
+  // page gets one and the others get the generic firstRunNotice. `show` is exactly
+  // `!boot.latestSync`, so this is the same whole-page gate every other route uses, just
+  // drawn with the full unlock list rather than one sentence.
+  //
+  // THE HEADER IS THE SAME FUNCTION HERE AS ON A SYNCED REGISTER, handed a null payload:
+  // `renderHeader` reads `first.show` itself and renders the dash hero over an EMPTY stat
+  // strip and no movement aside. A second, first-run-only header block would be a second
+  // place for the hero's label to drift from the one beside it.
+  const first = prioritiesFirstRunView(boot);
+  if (first.show) {
+    main.append(renderHeader(view, null));
+    main.append(emptyState(first.heading, first.hint, {
+      items: first.items,
+      variant: "notice",
+    }));
+    return;
+  }
+
+  const host = el("div", {});
+  main.append(host);
+  host.append(actionsSkeleton());
 
   let problemsData = null;
   let actionsData = null;
@@ -230,25 +236,30 @@ export async function renderProblems(main, params) {
     }
   }
 
+  // ONE HEADER, ONE BODY, ONE FOOT — in both modes. The hosts are created here rather than
+  // inside each branch so the two modes cannot end up with different page furniture: the
+  // header block and the last-sync block belong to the PAGE, and only the middle is a
+  // function of which register mode a reader chose.
   function paint() {
     clear(host);
     host.append(modeSwitch());
+    const headerHost = el("div", {});
+    const bodyHost = el("div", {});
+    const footHost = el("div", {});
+    host.append(headerHost, bodyHost, footHost);
+
+    const data = view.mode === "problems" ? problemsData : actionsData;
+    if (!data) return; // unreached on a real load path; both loaders await before painting
+    guard("the header figures", headerHost, () => headerHost.append(renderHeader(view, data)));
     if (view.mode === "problems") {
-      if (!problemsData) return; // unreached on a real load path; loadProblems() awaits first
-      const kpiHost = el("div", {});
-      const tableHost = el("div", {});
-      host.append(kpiHost, tableHost);
-      guard("the open-problem counts", kpiHost, () => kpiHost.append(kpiRow(problemsData)));
-      guard("the priorities table", tableHost, () => {
-        if (problemsData.all) renderAll(problemsData, tableHost);
-        else renderPaged(problemsData, tableHost);
+      guard("the priorities table", bodyHost, () => {
+        if (data.all) renderAll(data, bodyHost);
+        else renderPaged(data, bodyHost);
       });
     } else {
-      if (!actionsData) return;
-      const actionsHost = el("div", {});
-      host.append(actionsHost);
-      guard("the ranked actions", actionsHost, () => renderActions(actionsData, actionsHost));
+      guard("the ranked actions", bodyHost, () => renderActions(data, bodyHost));
     }
+    guard("the last-sync block", footHost, () => footHost.append(lastSyncBlock()));
   }
 
   function modeSwitch() {
@@ -286,11 +297,11 @@ export async function renderProblems(main, params) {
   // is left is the register's own shape, counted, and it still answers the question the
   // queues were standing in for — how much of this is bad.
   //
-  // Unrated rows get a card only when there are any, the same rule the Undecided card
+  // Unrated rows get a row only when there are any, the same rule the Undecided card
   // followed: nothing in this union is ever dropped for lacking a rating
   // (src/domain/problems.ts's own invariant), so a row Wiz never rated still needs a place
   // on the page rather than silently vanishing from every count.
-  function kpiRow(fresh) {
+  function severityRows(fresh) {
     const counts = fresh.severityCounts || {};
     // `counts[sev] || 0` stays a bare reducer: it is a census lookup over the fetched union,
     // and a severity nobody has right now IS a measured zero, not an absence. `fresh.total`
@@ -298,22 +309,162 @@ export async function renderProblems(main, params) {
     // lookup — so it refuses before it casts, the same as every other top-level figure below.
     const total = num(fresh.total);
     const rated = SEVERITY_CARDS.reduce((n, sev) => n + (counts[sev] || 0), 0);
-    const stats = SEVERITY_CARDS.map((sev) =>
+    const rows = SEVERITY_CARDS.map((sev) =>
       statRow(sevLabel(sev), String(counts[sev] || 0), "open problems", null,
         { term: "severity" }));
     if (total !== null && total > rated) {
-      stats.push(statRow("Unrated", String(total - rated), "no severity from Wiz"));
+      rows.push(statRow("Unrated", String(total - rated), "no severity from Wiz"));
     }
-    // The union's SIZE is the page's subject; the severity split is what qualifies it. As
-    // four or five equal .kpi-card tiles this was the hero-metric template PRODUCT.md's
-    // anti-references reject, and it left the two modes of one page looking like two
-    // different pages. Each level keeps the tip it already carried.
+    return rows;
+  }
+
+  /**
+   * The two figures the collapse-to-actions mode adds, and nothing else.
+   *
+   * `??` already refuses to fall through on a real zero — the terminal fallback is what used
+   * to be a bare `0` rather than "never measured". `share` is a 0..1 fraction and `pct1` takes
+   * a percentage, so the multiply happens AFTER the refusal, never before: `num(c.top10Share)
+   * * 100` on a null share is `null * 100 === 0`, the exact "cast reads a real zero" trap.
+   */
+  function actionStats(data) {
+    const c = data.concentration || {};
+    const actions = num(c.actions ?? data.total);
+    const top10Share = num(c.top10Share);
+    const pctText = top10Share === null ? absentText : pct1(top10Share * 100);
+    return [
+      statRow("Collapse to", fmtCount(actions), "distinct remediation actions"),
+      statRow("Top 10 close", pctText, "of every open problem, ranked by cover"),
+    ];
+  }
+
+  /**
+   * How many open problems there are, read from whichever payload is in hand.
+   *
+   * THE TWO ENDPOINTS SPELL IT DIFFERENTLY AND THE DIFFERENCE MATTERS. `getProblems.total`
+   * is the union; `getActions.total` is the count of distinct ACTIONS, and the union arrives
+   * there as `concentration.problems` (with `totalProblems` as its twin). Reading `.total`
+   * in both modes would put the action count under the label "Open problems" and make one
+   * page state two different sizes for one population.
+   */
+  function openProblemCount(activeView, data) {
+    if (activeView.mode === "problems") return num(data.total);
+    const c = data.concentration || {};
+    return num(c.problems ?? data.totalProblems);
+  }
+
+  /**
+   * ONE HEADER, BOTH MODES, AND THE FIRST RUN.
+   *
+   * The two modes used to build their own header each — the pre-wave `kpiRow` and
+   * `actionHeadline` — and this file's own comment already named the result as a defect:
+   * "it left the two modes of one page looking like two different pages". They differed in
+   * the hero LABEL, in whether there was an aside at all, and in the stat strip; only the
+   * last of those is a real function of the mode, and it is the only one that varies here.
+   *
+   * THE HERO IS THE HALF-LIFE, not the count. The count is a census the table below already
+   * shows in full; the half-life is the one figure on this page that says whether the
+   * register is getting anywhere, and it is the exact survival estimate `measureSpec.ts`
+   * refused to publish until `issueSurvival.ts` existed. "Open problems" keeps its place as
+   * the first stat row, in both modes.
+   *
+   * A NULL `data` IS THE FIRST RUN. `halfLifeView(undefined)` returns `absentText`, which
+   * `heroStat` promotes to the muted dash (a bare null would render an EMPTY hero value —
+   * measured, see that function's own header), and `first.show` empties the strip and drops
+   * the aside: a row of zeros over a register nobody has synced would be four measurements
+   * nobody took, and the panel below already names what each of them waits on.
+   */
+  function renderHeader(activeView, data) {
+    const hl = halfLifeView(data && data.halfLife);
     return pageHeader({
-      // NO `route`, SO NO h1: the page's heading is in the header above this one. This used
-      // to need `{ heading: "div" }` on heroStat; heroStat renders no heading at all now.
-      hero: heroStat("Open problems", fmtCount(total), "issues ∪ findings, the whole union"),
-      stats,
+      // NO `route`, SO NO h1: the page's heading is in the header above this one.
+      hero: heroStat(
+        "Issue half-life",
+        hl.value,
+        hl.asOfNote ? heroLines(hl.qualifier, hl.asOfNote) : hl.qualifier,
+        { term: "half-life" },
+      ),
+      aside: first.show ? null : renderMovement(data && data.movement),
+      stats: first.show ? [] : [
+        // NO `help` ON THIS ROW, deliberately. `priorities-rank` is the obvious term and it
+        // is pinned as EXPERIMENTAL and drawn only on the Scoring Models page
+        // (helpContent.js, and test/helpContent.test.js holds `drawnOn` to exactly that), so
+        // hanging it here would make the key sheet hide a definition this row points at. The
+        // sub-line already says what the figure counts.
+        statRow("Open problems", fmtCount(openProblemCount(activeView, data)),
+          "issues ∪ findings, the whole union"),
+        ...(activeView.mode === "problems" ? severityRows(data) : actionStats(data)),
+      ],
     });
+  }
+
+  /**
+   * One movement row: the label, the chip, and the pair the chip is FROM.
+   *
+   * THE GLYPH NEVER CARRIES THE MEANING. The triangle is `aria-hidden` and the pill's own
+   * visible text spells the direction in words ("down 2", "up 14", "unchanged"), so neither
+   * the shape nor the tint is the only cue — the same rule every severity mark on this page
+   * follows.
+   */
+  function movementRow(r) {
+    const glyph = r.chip.direction === "up" ? "▲" : r.chip.direction === "down" ? "▼" : "=";
+    return el("div", { class: "movement-row" },
+      el("span", { class: "movement-label small" }, r.label),
+      el("span", {
+        class: "pill " + r.chip.kind,
+        "aria-label": r.label + ", " + r.chip.word,
+      }, el("span", { "aria-hidden": "true" }, glyph), " " + r.chip.word),
+      // THE ENDPOINT RIDES WITH THE PAIR, on the row's own line. It was a separate muted
+      // line under each row for one measured pass, and at 1280 that line sat in the same
+      // uniform grid gap as the next row's label, where an unindented sentence between two
+      // rows reads as a caption for the row BELOW it. It cannot become one shared caption
+      // either: the two rows reach back to different dates.
+      el("span", { class: "small muted movement-counts" },
+        r.dates ? r.text + " · " + r.dates : r.text));
+  }
+
+  /**
+   * The movement aside: what the open ISSUE backlog did, and the reasons it cannot say more.
+   *
+   * Every sentence here comes out of `movementView` (problemView.js), which is where the
+   * claims are testable without a DOM. This function decides only how they look.
+   */
+  function renderMovement(movement) {
+    const model = movementView(movement);
+    const box = el("div", { class: "page-strip" },
+      el("div", { class: "kpi-label" }, tipLabel("Movement", { term: "movement" })));
+    if (model.rows.length) {
+      box.append(el("div", { class: "movement-rows" }, ...model.rows.map(movementRow)));
+    }
+    for (const note of model.notes) box.append(el("div", { class: "small muted" }, note));
+    return box;
+  }
+
+  /**
+   * When the register last looked, and where to read what it found.
+   *
+   * THE CONTROL TO LOOK AGAIN IS THE RAIL'S SYNC NOW BUTTON — one button in one place, so a
+   * reader is never offered two that could disagree about what is already running. This
+   * block answers what the rail's own caption does not: which pages hold the detail behind
+   * the freshness line. A cross-link is a link, not a sentence about a link.
+   */
+  function lastSyncBlock() {
+    const box = el("div", {});
+    box.append(sectionLabel("Last sync", { term: "sync" }));
+    box.append(el("p", { class: "scan-caption" },
+      syncCaption(boot.latestSync && boot.latestSync.finished_at)));
+    // A STATE, DRAWN AS A STATE. "Dry run" is what these figures ARE, and a pill is the
+    // component this design system already has for a state: two words plus a tint, with the
+    // sentence behind it.
+    if (!boot.hasCredentials) {
+      box.append(el("p", { class: "small muted" }, statusPill("neutral", "Dry run", {
+        lines: ["No Wiz credentials; syncs load the sample dataset."],
+      })));
+    }
+    box.append(el("p", { class: "small muted" },
+      el("a", { class: "linklike", href: "#/data" }, "sync history"),
+      " · ",
+      el("a", { class: "linklike", href: "#/scans" }, "what each scan area reported")));
+    return box;
   }
 
   // ------------------------------------------------------ all-mode: whole union in hand
@@ -655,7 +806,7 @@ export async function renderProblems(main, params) {
       return;
     }
 
-    target.append(actionHeadline(data));
+    target.append(coverCard(data));
 
     const rows = data.rows || [];
     const options = actionFilterOptions(rows);
@@ -686,71 +837,53 @@ export async function renderProblems(main, params) {
     target.append(actionTable(sorted));
   }
 
-  /** "N open problems collapse to M actions — the top 10 close K%." — the self-evidencing
-   *  headline this whole feature exists to produce (`concentrationRatio`, actions.ts). */
-  function actionHeadline(data) {
-    const c = data.concentration || {};
-    // `??` already refuses to fall through on a real zero — the bug this package fixes is
-    // the TERMINAL fallback, which used to be a bare `0` rather than "never measured".
-    const problems = num(c.problems ?? data.totalProblems);
-    const actions = num(c.actions ?? data.total);
-    // Inlined rather than a page-local `formatShare` wrapper: `share` is a 0..1 fraction and
-    // `pct1` takes a percentage, so the multiply-by-100 has to happen AFTER the refusal, never
-    // before — `num(c.top10Share) * 100` on a null share is `null * 100 === 0`, the exact
-    // "cast reads a real zero" trap this whole package exists to close, just one call deeper.
-    const top10Share = num(c.top10Share);
-    const pctText = top10Share === null ? absentText : pct1(top10Share * 100);
-
+  /**
+   * The cumulative-cover curve, IN THE BODY rather than in the header aside.
+   *
+   * It used to be the header's aside, beside a hero reading the same union count the strip
+   * repeated — and the aside slot is now the movement reading, which qualifies the hero
+   * (the half-life) rather than restating a figure below it. A curve over the ranked list is
+   * a picture OF THE LIST, so it belongs where the list is: a `chart-card` opening the
+   * action body, the same card shape `inventory.js`'s own trends take.
+   *
+   * BELOW THREE ACTIONS THERE IS NO CURVE, and the card says so instead of drawing an empty
+   * box. No canvas is created on that path either: a `chartTable` over a dangling,
+   * unattached canvas would wire `aria-details` to a node nothing on screen points at.
+   */
+  function coverCard(data) {
     const curve = data.curve || [];
-    const enough = curve.length >= 3;
+    if (curve.length < 3) {
+      return el("div", { class: "chart-card" },
+        el("h3", {}, "Cumulative cover"),
+        el("p", { class: "chart-note" },
+          "Fewer than three actions close the whole board here."));
+    }
     const canvas = el("canvas", {
       "aria-label":
         "Cumulative share of open problems closed as actions are taken, ranked by cover",
       role: "img",
     });
-    const aside = el("div", { class: "page-strip" },
-      el("div", { class: "kpi-label" }, "Cumulative cover"),
-      enough
-        ? el("div", { class: "chart-box", style: "height:124px" }, canvas)
-        : el("p", { class: "page-hero-sub" },
-            "Fewer than three actions close the whole board here."),
+    const card = el("div", { class: "chart-card" },
+      el("h3", {}, "Cumulative cover"),
+      el("p", { class: "chart-note" },
+        "How much of the board each further action closes, ranked by cover"),
+      el("div", { class: "chart-box", style: "height:200px" }, canvas),
       // THE SAME `curve` THE CHART WRAPPER READS BELOW, named once above and handed to
-      // both — `gas_shared/ui/chartTable.js`'s one rule. Only where the chart itself draws:
-      // below three actions there is no curve, and a table over a dangling, unattached
-      // canvas would wire `aria-details` to a node nothing on screen points at.
-      enough
-        ? chartTable({ canvas, caption: "Cumulative cover", model: coverTableModel(curve) })
-        : null,
-    );
+      // both — `gas_shared/ui/chartTable.js`'s one rule.
+      chartTable({ canvas, caption: "Cumulative cover", model: coverTableModel(curve) }));
     // Laid out before Chart.js measures it, or it reads a 0x0 box — the same reason
-    // inventory.js's trend chart defers its draw one frame. The rAF now waits on the bundle
-    // as well: Chart.js is fetched on the first route that draws a chart rather than shipped
-    // with every one, and if this deployment's policy will not run it, the strip keeps its
-    // label and says so. See chartsLoader.js.
-    if (enough) {
-      loadCharts().then((charts) => {
-        if (!canvas.isConnected) return;
-        requestAnimationFrame(() => charts.coverCurve(canvas, curve, { yLabel: "" }));
-      }).catch(() => {
-        if (!canvas.isConnected) return;
-        chartUnavailable(canvas);
-      });
-    }
-
-    // The sentence that used to lead here said "N open problems collapse to M actions, the
-    // top 10 close K%", and the three tiles beneath it repeated all three of those numbers.
-    // The count is the hero, the curve is what qualifies it, the other two are the strip:
-    // three levels of emphasis instead of four blocks saying one thing.
-    return pageHeader({
-      // NO `route`, so no h1 — see the header above.
-      hero: heroStat("Open problems", fmtCount(problems),
-        "issues ∪ findings, the whole union"),
-      aside,
-      stats: [
-        statRow("Collapse to", fmtCount(actions), "distinct remediation actions"),
-        statRow("Top 10 close", pctText, "of every open problem, ranked by cover"),
-      ],
+    // inventory.js's trend chart defers its draw one frame. The rAF waits on the bundle as
+    // well: Chart.js is fetched on the first route that draws a chart rather than shipped
+    // with every one, and if this deployment's policy will not run it, the card keeps its
+    // heading, its note and its figures table and says so. See chartsLoader.js.
+    loadCharts().then((charts) => {
+      if (!canvas.isConnected) return;
+      requestAnimationFrame(() => charts.coverCurve(canvas, curve, { yLabel: "" }));
+    }).catch(() => {
+      if (!canvas.isConnected) return;
+      chartUnavailable(canvas);
     });
+    return card;
   }
 
   function actionToolbar(options) {
