@@ -104,6 +104,37 @@ const CONVERTED_WHOLE_PAGE_GATES = {
   "compliance.js": "has been synced yet",
 };
 
+// =========================================================================================
+//  F3: the three tables that used to hand their filtered-empty case to dataTable's own bare
+//  `emptyText` now check emptiness themselves and print a dated measuredEmpty() in its place
+// =========================================================================================
+//
+// SCOPED TO THESE THREE FILES, not every page. `problems.js` still carries two `emptyText:`
+// literals (`table()`'s dataTable call, and the actions table's own copy) — both are
+// PRE-EXISTING and UNREACHABLE: `table()`'s only callers (`renderAll`/`renderPaged`) already
+// return a `measuredEmpty()` before ever calling it with an empty array, so `dataTable` never
+// sees the empty case that string describes. That is dead code this package did not write
+// and is not the finding here; a page-wide sweep would flag it as if it were. `aars.js` and
+// `complianceOverview.js` carry their own `emptyText:` literals too, out of scope for this
+// package (neither is on the list of three the brief named).
+const NO_BARE_EMPTY_TEXT = ["inventory.js", "config.js", "combos.js"];
+
+describe("the three converted filtered-empty tables no longer pass a bare emptyText:", () => {
+  for (const file of NO_BARE_EMPTY_TEXT) {
+    it(file + " has no hand-typed emptyText: string left for dataTable to draw", () => {
+      const src = code(readFileSync(new URL(file, PAGES_DIR), "utf8"));
+      expect(src, file + " still passes a bare emptyText: string").not.toMatch(/emptyText:\s*"/);
+    });
+  }
+
+  // PERTURBATION: reintroduce a bare emptyText: string in a string copy of one of these
+  // files, and confirm the sweep's own regex catches it rather than passing silently.
+  it("the sweep catches a reintroduced bare emptyText: string", () => {
+    const REGRESSED = 'dataTable({ rows, columns, emptyText: "No rows match these filters." });';
+    expect(REGRESSED).toMatch(/emptyText:\s*"/);
+  });
+});
+
 describe("the six converted whole-page gates no longer hand-type their old sentence", () => {
   for (const [file, phrase] of Object.entries(CONVERTED_WHOLE_PAGE_GATES)) {
     it(file + ' dropped its hand-typed "' + phrase + '"', () => {

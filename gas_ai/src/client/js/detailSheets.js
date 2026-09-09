@@ -1008,7 +1008,15 @@ function lifecycleSection(life) {
   if (!life || !life.rows.length) return null;
   const pairs = [];
   for (const row of life.rows) {
-    pairs.push(...kvRow(row.help ? tipLabel(row.label, row.help) : row.label, row.value));
+    const label = row.help ? tipLabel(row.label, row.help) : row.label;
+    // The sync id rides beside the date, muted — the date stays the legible, primary
+    // reading and the id is the audit trail behind it. `issueLifecycleModel` stays DOM-free,
+    // so the composite node is built here, not there; a row with no `syncId` (every row but
+    // the two sightings) renders its plain string exactly as before.
+    const value = row.syncId
+      ? el("span", {}, row.value, el("span", { class: "small muted" }, " · " + row.syncId))
+      : row.value;
+    pairs.push(...kvRow(label, value));
   }
   return sheetSection("Lifecycle", el("dl", { class: "kv kv--cols2" }, ...pairs));
 }

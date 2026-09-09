@@ -29,6 +29,12 @@ import {
   PROVENANCE, PROVENANCE_HELP, PROVENANCE_KIND, PROVENANCE_LABEL,
   issueLifecycleModel, provenance,
 } from "../src/client/js/issueLifecycle.js";
+// The real mark, not a hand-typed copy of it — `test/figures.test.js` sweeps runtime source
+// for exactly this reason, and a test file asserting against a literal risks the two
+// silently disagreeing. From the shared module directly, the same DOM-free import every
+// other pure-logic test here takes, rather than through `ui.js`'s barrel (which drags in
+// DOM-touching siblings this file has no business loading).
+import { absentText } from "../../gas_shared/ui/figures.js";
 
 /** The eight fields `api.ts`'s `PublicIssueLedger` projection actually ships. */
 const PUBLIC_PROJECTION = [
@@ -76,10 +82,19 @@ const RETURNED_ROW = {
 /** An issue carrying a Wiz resolution date, to give the withheld row something to withhold. */
 const ISSUE_WITH_RESOLVED = { status: "OPEN", resolvedAt: "2026-09-05T00:00:00.000Z" };
 
-/** Every value the model would print, flattened, so a sweep can read the whole section. */
+/**
+ * Every value the model would print, flattened, so a sweep can read the whole section.
+ *
+ * `syncId` only when truthy — that is exactly the condition `detailSheets.js`'s
+ * `lifecycleSection` renders it under, so a null id (every row but the two sightings) must
+ * not show up here as the literal word "null" either.
+ */
 function printedValues(model) {
   const out = [];
-  for (const row of model.rows) out.push(String(row.label), String(row.value));
+  for (const row of model.rows) {
+    out.push(String(row.label), String(row.value));
+    if (row.syncId) out.push(String(row.syncId));
+  }
   if (model.chip) out.push(String(model.chip.text));
   if (model.wizResolved) out.push(String(model.wizResolved.label), String(model.wizResolved.value));
   return out;
@@ -103,44 +118,23 @@ describe("the model reads the projection and nothing else", () => {
     expect(extra, "keys read off the ledger row that the projection does not carry").toEqual([]);
   });
 
-  // MEASURED, and the number is not the one the package brief assumed. The brief asked for
-  // "≥ 5 keys read", which is a guard against a subset assertion that passes because the
-  // model reads almost nothing. On ANY SINGLE ROW the model reads FOUR: the two provenance
-  // discriminants short-circuit each other — a bounded row never reaches `episode`, and a
-  // returned row never reaches `disappearedAt`. The union over the three branches is five.
-  // That is the honest form of the claim, so it is the one asserted, with the shortfall
-  // recorded in the `it` below rather than rounded away.
-  it("reads five of the eight across the three branches — not one field, and not by luck", () => {
+  // MEASURED, and the number the finding below used to pin (5 of 8) is gone: the Register
+  // scope row and the per-sighting `syncId` close it. On ANY SINGLE ROW the model still
+  // reads seven, never all eight on one row — the two provenance discriminants
+  // short-circuit each other, so a bounded row never reaches `episode` and an open or
+  // returned row never reaches `disappearedAt`. The UNION over the three branches is what
+  // closes the gap, because each branch is missing a DIFFERENT one of the two.
+  it("reads all eight across the three branches — the auditability fields joined the drawn set", () => {
     const union = new Set();
     for (const row of [OPEN_ROW, GONE_ROW, RETURNED_ROW]) {
       issueLifecycleModel({}, watched(row, union));
     }
-    expect([...union].sort(), "ledger keys read across every branch").toEqual([
-      "disappearedAt", "episode", "firstSeenAt", "lastSeenAt", "resolutionSrc",
-    ]);
+    expect([...union].sort(), "ledger keys read across every branch").toEqual(
+      [...PUBLIC_PROJECTION].sort(),
+    );
     const perRow = new Set();
     issueLifecycleModel({}, watched(GONE_ROW, perRow));
-    expect([...perRow].length, "one bounded row: " + [...perRow].join(", ")).toBe(4);
-  });
-
-  /**
-   * A FINDING, pinned rather than fixed: three of the eight projected fields reach the
-   * client and are drawn nowhere.
-   *
-   * `firstSeenSync` and `lastSeenSync` name the two syncs the dates came from, and
-   * `registerScope` names the question that sync ASKED — which is what would let a reader
-   * see that a row's dates were recorded under a different category scope than the one in
-   * force today. All three are on the payload because they are what makes the dates
-   * auditable, and none of them has a call site yet. Pinned here so that adding one is a
-   * deliberate act and removing them from the projection is a visible one.
-   */
-  it("FINDING: three projected fields have no call site on the sheet yet", () => {
-    const union = new Set();
-    for (const row of [OPEN_ROW, GONE_ROW, RETURNED_ROW]) {
-      issueLifecycleModel({}, watched(row, union));
-    }
-    const undrawn = PUBLIC_PROJECTION.filter((k) => !union.has(k));
-    expect(undrawn.sort()).toEqual(["firstSeenSync", "lastSeenSync", "registerScope"]);
+    expect([...perRow].length, "one bounded row: " + [...perRow].join(", ")).toBe(7);
   });
 
   it("touches only `status` / `resolvedAt` on the issue, and never Wiz's createdAt", () => {
@@ -261,21 +255,53 @@ describe("failure of presence: what the section says when there is nothing to sa
 
   it("an empty ledger row prints no null, undefined, NaN or 0", () => {
     const model = issueLifecycleModel({}, {});
-    expect(model.rows.length, "the two sighting rows still stand").toBe(2);
+    // Three now, not two: Register scope is unconditional, so an empty row still gets one —
+    // reading absent, never blank.
+    expect(model.rows.length, "the two sightings plus Register scope").toBe(3);
+    expect(model.rows[2].label).toBe("Register scope");
     for (const v of printedValues(model)) {
       expect(v, "printed value").not.toMatch(/null|undefined|NaN/);
       expect(v, "printed value").not.toMatch(/(^|\W)0(\W|$)/);
     }
   });
 
-  it("an open row prints both sightings and nothing after them", () => {
+  it("an open row prints both sightings, their syncs, and the register scope", () => {
     const model = issueLifecycleModel({}, OPEN_ROW);
     expect(model.rows.map((r) => r.label)).toEqual([
-      "First seen by this register", "Last seen",
+      "First seen by this register", "Last seen", "Register scope",
     ]);
     expect(model.rows[0].help).toEqual({ term: "first-seen" });
     expect(model.rows[0].value).toContain("2026-08-01");
+    expect(model.rows[0].syncId).toBe("sync-sample-01");
     expect(model.rows[1].value).toContain("2026-09-08");
+    expect(model.rows[1].syncId).toBe("sync-sample-08");
+    expect(model.rows[2].value).toBe("wct-id-1998");
+    expect(model.rows[2].help).toEqual({ term: "register-scope" });
+  });
+
+  it("a bounded row's Gone by carries no syncId — the projection has none for it", () => {
+    // The other half of the auditability fix: `disappearedAt` has no matching sync id on
+    // the wire, so the row must not invent one. PERTURBATION: reading `l.lastSeenSync` onto
+    // the Gone by row would print the LAST SIGHTING's sync beside a DIFFERENT sync's date —
+    // the two are not the same event, and the help entry says "the sync that first missed
+    // it" in words instead of a fabricated id.
+    const model = issueLifecycleModel({}, GONE_ROW);
+    const gone = model.rows.filter((r) => r.label === "Gone by")[0];
+    expect(gone.syncId, "Gone by has no syncId in the projection").toBeUndefined();
+  });
+
+  it("Register scope splits the pipe-joined signature into a readable list", () => {
+    const model = issueLifecycleModel({}, { ...OPEN_ROW, registerScope: "wct-id-1998|wct-id-2001" });
+    const scope = model.rows.filter((r) => r.label === "Register scope")[0];
+    expect(scope.value).toBe("wct-id-1998, wct-id-2001");
+  });
+
+  it("Register scope reads absent, never blank, when the ledger carries none", () => {
+    const noScope = { ...OPEN_ROW };
+    delete noScope.registerScope;
+    const model = issueLifecycleModel({}, noScope);
+    const scope = model.rows.filter((r) => r.label === "Register scope")[0];
+    expect(scope.value).toBe(absentText);
   });
 });
 

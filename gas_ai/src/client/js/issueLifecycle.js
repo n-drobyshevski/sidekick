@@ -112,6 +112,15 @@ function dateCell(iso) {
 }
 
 /**
+ * The register-scope signature, read the way a person reads it rather than the pipe-joined
+ * token `registerScopeSignature` writes for comparison. Refuses before the split, same rule
+ * as every other cell here: an absent scope prints the shared mark, not an empty string.
+ */
+function scopeCell(scope) {
+  return scope ? String(scope).split("|").join(", ") : absentText;
+}
+
+/**
  * How this row's lifecycle date came to be. `null` when there is no ledger row to read.
  *
  * A row is not BOUNDED merely because it is absent from today's register — it is bounded
@@ -140,6 +149,17 @@ export function provenance(ledger) {
  * every date this section prints is the LEDGER's own observation. Wiz's `createdAt` can
  * predate the ledger's first sighting by a year (`sampleData.ts` seeds exactly that case on
  * purpose), so a model that reached for it would print a lifetime nobody measured.
+ *
+ * A DATE IS AUDITABLE ONLY WITH THE SYNC THAT RECORDED IT. `getIssueDetail` ships an
+ * eight-field ledger projection; the two sightings above drew five of them and left
+ * `firstSeenSync`, `lastSeenSync` and `registerScope` on the wire with no call site — pinned
+ * as a FINDING in `test/issueLifecycle.test.js` until now. So each sighting row carries its
+ * own `syncId` beside the date (rendered by `detailSheets.js`'s `lifecycleSection`, never
+ * built here — this file stays DOM-free), and one more row states the category scope that
+ * sync applied: widen or narrow Settings' Register tab and a date recorded under the OLD
+ * scope is not a date this reader should take at face value against the new one.
+ * `disappearedAt` gets no `syncId` — the projection carries none for it — so the "Gone by"
+ * help entry says "the sync that first missed it" in words instead.
  */
 export function issueLifecycleModel(issue, ledger) {
   const iss = issue && typeof issue === "object" ? issue : null;
@@ -156,9 +176,14 @@ export function issueLifecycleModel(issue, ledger) {
     {
       label: "First seen by this register",
       value: dateCell(l.firstSeenAt),
+      syncId: l.firstSeenSync || null,
       help: { term: "first-seen" },
     },
-    { label: "Last seen", value: dateCell(l.lastSeenAt) },
+    {
+      label: "Last seen",
+      value: dateCell(l.lastSeenAt),
+      syncId: l.lastSeenSync || null,
+    },
   ];
 
   if (p === PROVENANCE.BOUNDED) {
@@ -177,6 +202,14 @@ export function issueLifecycleModel(issue, ledger) {
       });
     }
   }
+
+  // Last, and unconditional: whichever provenance the row above named, the two dates it
+  // stands on were both read under this scope.
+  rows.push({
+    label: "Register scope",
+    value: scopeCell(l.registerScope),
+    help: { term: "register-scope" },
+  });
 
   const chipText = p === PROVENANCE.BOUNDED
     ? PROVENANCE_LABEL[p] + " " + dateCell(l.disappearedAt)

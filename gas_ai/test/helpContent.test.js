@@ -111,25 +111,40 @@ function namedKinds() {
  * passed by simply never being looked at. Reading the directory means a new caller is covered
  * by existing.
  */
-function namedTerms() {
+/**
+ * The same four patterns above, over one already-read source string — factored out so the
+ * per-route sweep below can run it file by file instead of only over a whole-tree union.
+ */
+function termsInSource(src) {
+  const terms = new Set();
+  for (const m of src.matchAll(/\bterm: "([a-z0-9-]+)"/g)) terms.add(m[1]);
+  for (const m of src.matchAll(/\bfindEntry\("([a-z0-9-]+)"\)/g)) terms.add(m[1]);
+  for (const m of src.matchAll(/\bglossaryTip\([^,]+,\s*"([a-z0-9-]+)"/g)) terms.add(m[1]);
+  for (const m of src.matchAll(/\bbookTip\([^,]+,\s*"([a-z0-9-]+)"/g)) terms.add(m[1]);
+  // `findEntry(MAP[key])` — the id lives in a lookup object beside the call, so the values
+  // of any `*: "kebab-id",` line in the file are checked too. Over-broad by design: a false
+  // positive here is a term someone has to add to the book, which is the right direction to
+  // fail in for an anti-rot spec.
+  if (src.includes("findEntry(") || src.includes("_TERM = {")) {
+    for (const m of src.matchAll(/^\s{2}[A-Z0-9_]+: "([a-z0-9-]+)",$/gm)) terms.add(m[1]);
+  }
+  return terms;
+}
+
+/**
+ * `termsInSource` walked over every `.js` file under `src/client/js`, skipping any full path
+ * in `skip` — so `namedTerms()` (no args) is the original whole-tree union, and the
+ * non-experimental sweep below reuses the same walk with the one experimental page's own
+ * file left out.
+ */
+function namedTerms(skip = []) {
   const terms = new Set();
   const walk = (dir) => {
     for (const name of readdirSync(dir)) {
       const full = join(dir, name);
       if (statSync(full).isDirectory()) { walk(full); continue; }
-      if (!name.endsWith(".js")) continue;
-      const src = readFileSync(full, "utf8");
-      for (const m of src.matchAll(/\bterm: "([a-z0-9-]+)"/g)) terms.add(m[1]);
-      for (const m of src.matchAll(/\bfindEntry\("([a-z0-9-]+)"\)/g)) terms.add(m[1]);
-      for (const m of src.matchAll(/\bglossaryTip\([^,]+,\s*"([a-z0-9-]+)"/g)) terms.add(m[1]);
-      for (const m of src.matchAll(/\bbookTip\([^,]+,\s*"([a-z0-9-]+)"/g)) terms.add(m[1]);
-      // `findEntry(MAP[key])` — the id lives in a lookup object beside the call, so the values
-      // of any `*: "kebab-id",` line in the file are checked too. Over-broad by design: a false
-      // positive here is a term someone has to add to the book, which is the right direction to
-      // fail in for an anti-rot spec.
-      if (src.includes("findEntry(") || src.includes("_TERM = {")) {
-        for (const m of src.matchAll(/^\s{2}[A-Z0-9_]+: "([a-z0-9-]+)",$/gm)) terms.add(m[1]);
-      }
+      if (!name.endsWith(".js") || skip.includes(full)) continue;
+      for (const t of termsInSource(readFileSync(full, "utf8"))) terms.add(t);
     }
   };
   walk(join(root, "src/client/js"));
@@ -326,6 +341,42 @@ describe("the vocabulary it names", () => {
     expect(findEntry("not-a-term")).toBeNull();
     expect(findEntry("")).toBeNull();
     expect(findEntry(undefined)).toBeNull();
+  });
+
+  // A route gated behind Settings → Show experimental content can point its own triggers at
+  // a term the workbench-only visibility gate hides — that is what VERDICTS above is FOR.
+  // A route nothing gates cannot: `problems.js`'s title carried `priorities-rank` (aars-only,
+  // pinned above) long after P1.4 gave every other page-title tip a resolvable term, and the
+  // whole-tree sweep two `it`s up could not see it — it only asks "does SOME entry answer
+  // this term", never "can THIS route's own reader reach it". `pages/aars.js` is the one
+  // file this repo gates behind the flag (`experimentalPageKeys()` below pins it as the
+  // only member), so excluding just that file from the same walk `namedTerms()` runs is the
+  // whole-tree sweep's own reachability answer for "every other route", without hand-listing
+  // which files each of the other ten happens to import.
+  it("every term a non-experimental route's own code names resolves with experimental off", () => {
+    const experimental = experimentalPageKeys();
+    expect(experimental, "exactly one experimental page — the exclusion below covers it")
+      .toEqual(["aars"]);
+    const aarsFile = join(root, "src/client/js/pages/aars.js");
+    const visible = new Set(visibleEntries(ENTRIES, ["aars"]).map((e) => e.id));
+    const terms = namedTerms([aarsFile]);
+    expect(terms.length, "the sweep found nothing to check").toBeGreaterThan(0);
+    const hidden = terms.filter((t) => !visible.has(t));
+    expect(hidden, "term(s) a visible route's own trigger opens that the key sheet hides")
+      .toEqual([]);
+  });
+
+  // PERTURBATION: the exact defect this closes, reproduced against the real book rather
+  // than a fixture. `priorities-rank` is aars-only (the isolation `it` above pins it), so a
+  // route OTHER than aars.js naming it is precisely the shape `termsInSource` plus the
+  // visibility check must catch.
+  it("PERTURBATION: a non-aars file naming priorities-rank fails the visible-entry check", () => {
+    const visible = new Set(visibleEntries(ENTRIES, ["aars"]).map((e) => e.id));
+    expect(visible.has("priorities-rank"), "priorities-rank is aars-only").toBe(false);
+    const REGRESSED = 'main.append(pageHeader({ help: { term: "priorities-rank" } }));';
+    const terms = [...termsInSource(REGRESSED)];
+    expect(terms).toEqual(["priorities-rank"]);
+    expect(terms.every((t) => visible.has(t)), "the regressed line should fail").toBe(false);
   });
 });
 
