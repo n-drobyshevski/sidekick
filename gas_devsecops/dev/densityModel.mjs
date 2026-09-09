@@ -354,6 +354,25 @@ export function parsePages(appSrc) {
   return out;
 }
 
+/**
+ * `MANIFEST.storagePrefix` off app.js's own source, read the same way `parsePages` reads the
+ * PAGES table right above — a regex over the raw text, never a live import, because `--root`
+ * (density.mjs) walks a SIBLING app's app.js as plain text from a Node process with no
+ * `document`; importing that file for real would run its module-scope DOM reads.
+ *
+ * This is the one literal `--experimental` needs: `gas_shared/shell/experimental.js`'s own
+ * `key()` composes the localStorage key as `appConfig().storagePrefix + "showExperimental"`,
+ * so density.mjs has to build the SAME string before any page script runs, and this is where
+ * that string comes from — never hand-typed per app, for the same reason the route list
+ * above is not. Returns `null`, not `""` or the string `"undefined"`, when the manifest
+ * carries no `storagePrefix` at all, so a caller can refuse rather than silently writing a
+ * localStorage key no app.js would ever compose (the perturbation `density.test.js` pins).
+ */
+export function parseStoragePrefix(appSrc) {
+  const m = appSrc.match(/storagePrefix:\s*"([^"]*)"/);
+  return m ? m[1] : null;
+}
+
 // ============================================================================================
 //  Table formatting — one aligned-column renderer for both the density table and the diff
 // ============================================================================================

@@ -8,9 +8,22 @@
 //
 // USAGE
 //   node dev/density.mjs --port 8789 [--root <app dir>] [--viewports 1280,640,360]
-//                         [--routes a,b] [--noseed] [--out file.json]
+//                         [--routes a,b] [--noseed] [--experimental] [--out file.json]
 //                         [--playwright <module path>]
 //   node dev/density.mjs --diff before.json after.json
+//
+// `--experimental` IS WHY A GATED ROUTE STOPPED SILENTLY DUPLICATING ANOTHER ROW. A route
+// behind `gas_shared/shell/experimental.js`'s flag (gas_ai's `#/aars`) redirects to the
+// app's default route the instant the router sees it is off, and that redirect makes the
+// gated route's numbers read as a real measurement of a page that in fact never rendered —
+// the wave's own baseline and close both carried an `aars` row byte-identical to `problems`
+// for exactly this reason. Before EVERY navigation in a walk, this flag has Playwright run
+// `context.addInitScript()` so `localStorage.setItem("<storagePrefix>showExperimental", "1")`
+// is set before the app's own JS ever runs — the same key
+// `gas_shared/shell/experimental.js`'s `key()` composes, built from `MANIFEST.storagePrefix`
+// (`densityModel.mjs`'s `parseStoragePrefix()`, read off `--root`'s own app.js the same way
+// `parsePages()` reads its route table). Refuses rather than walking half-blind if that app's
+// `app.js` carries no `storagePrefix` to compose the key from.
 //
 // ROUTES COME FROM app.js's OWN PAGES TABLE (densityModel.mjs's `parsePages`, the exact regex
 // test/pagesLit.test.js's own parser uses), never hand-typed here — a renamed or added route
@@ -52,7 +65,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   countNumericTokens, countVisible, countVisuals, countWords, collectProseBlocks, diffReport,
   extractText, formatDiffTable, formatTable, isTipSignified, overflowSummary, parsePages,
-  PROSE_MIN_WORDS,
+  parseStoragePrefix, PROSE_MIN_WORDS,
 } from "./densityModel.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url)); // …/gas_devsecops/dev
@@ -67,14 +80,21 @@ function usage() {
   return [
     "Usage:",
     "  node dev/density.mjs --port <n> [--root <app dir>] [--viewports 1280,640,360]",
-    "                        [--routes a,b] [--noseed] [--out file.json]",
+    "                        [--routes a,b] [--noseed] [--experimental] [--out file.json]",
     "                        [--playwright <module path>]",
     "  node dev/density.mjs --diff before.json after.json",
+    "",
+    "  --experimental  Set <storagePrefix>showExperimental=1 in localStorage before every",
+    "                  navigation, so a route gated behind Settings -> Show experimental",
+    "                  content (gas_ai's #/aars) actually renders instead of redirecting to",
+    "                  the app's default route and reporting that route's numbers again.",
   ].join("\n");
 }
 
 function parseArgs(argv) {
-  const out = { viewports: DEFAULT_VIEWPORTS, noseed: false, root: DEFAULT_APP_ROOT };
+  const out = {
+    viewports: DEFAULT_VIEWPORTS, noseed: false, experimental: false, root: DEFAULT_APP_ROOT,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--port") out.port = Number(argv[++i]);
@@ -82,6 +102,7 @@ function parseArgs(argv) {
     else if (a === "--viewports") out.viewports = argv[++i].split(",").map(Number);
     else if (a === "--routes") out.routes = argv[++i].split(",").map((s) => s.trim());
     else if (a === "--noseed") out.noseed = true;
+    else if (a === "--experimental") out.experimental = true;
     else if (a === "--out") out.out = argv[++i];
     else if (a === "--playwright") out.playwright = argv[++i];
     else if (a === "--diff") { out.diff = [argv[++i], argv[++i]]; }
@@ -390,6 +411,18 @@ async function runMeasure(args) {
     process.exit(2);
   }
 
+  // `--experimental`'s whole key, off the SAME app.js text `allRoutes` above was read from —
+  // see the file header. Computed and checked before Chromium even launches: a walk that
+  // opened a browser and then discovered it could not compose the key would still have spent
+  // the time the refusal exists to save.
+  const storagePrefix = args.experimental ? parseStoragePrefix(appSrc) : null;
+  if (args.experimental && storagePrefix == null) {
+    console.error(`--experimental needs MANIFEST.storagePrefix in ${appJs}, and `
+      + "parseStoragePrefix() found none — refusing to write a localStorage key no app.js "
+      + "would ever compose.");
+    process.exit(2);
+  }
+
   const pw = await loadPlaywright(args.playwright);
   const browser = await launchChromium(pw.chromium);
 
@@ -397,7 +430,7 @@ async function runMeasure(args) {
     meta: {
       app: appName, root: appRoot,
       sha: gitSha(appRoot), when: new Date().toISOString(), port: args.port,
-      viewports: args.viewports, noseed: args.noseed,
+      viewports: args.viewports, noseed: args.noseed, experimental: args.experimental,
     },
     routes: {},
   };
@@ -405,6 +438,17 @@ async function runMeasure(args) {
   try {
     for (const width of args.viewports) {
       const context = await browser.newContext({ viewport: { width, height: 900 } });
+      if (args.experimental) {
+        // Runs before EVERY document this context loads, not just the first — Playwright
+        // re-injects it on every navigation, which is what a walk across several `--routes`
+        // in one context needs. Set from the same string experimental.js's own `key()`
+        // composes (`<storagePrefix>showExperimental`), so a gated route sees exactly the
+        // flag a real reader who flipped Settings -> Show experimental content would have
+        // left behind.
+        await context.addInitScript((key) => {
+          try { localStorage.setItem(key, "1"); } catch { /* sandboxed storage */ }
+        }, `${storagePrefix}showExperimental`);
+      }
       const page = await context.newPage();
       for (const route of routes) {
         const result = await measureRoute(page, args.port, route, width, args.noseed);

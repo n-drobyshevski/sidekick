@@ -30,8 +30,17 @@
    like these four, not in the shared file.
 
    Grouped rather than renamed so no page markup has to change to get it. A new page should
-   use .page-header alone. */
-.page-header, .cov-header, .inv-header, .help-header, .comp-header {
+   use .page-header alone.
+
+   F6 (2026-09-09): .cov-header, .inv-header and .comp-header are now GONE from the selector
+   list (and from :99's below). gas_ai's own parity wave retired the classes from scans.js,
+   inventory.js and compliance.js — the markup now carries only .page-header — leaving these
+   three names alive nowhere but this file's own comments (scans.css, inventory.css and
+   compliance.css each keep a retirement note) and a fourth mention in help.js's comment.
+   Measured with `grep -rn "cov-header\|inv-header\|comp-header" gas/src gas_ai/src
+   gas_devsecops/src gas_hub/src gas_shared`: gas, gas_devsecops and gas_hub never had them at
+   all. .help-header stays — gas_ai's help page still renders it. */
+.page-header, .help-header {
   display: grid;
   grid-template-columns: minmax(160px, 0.5fr) minmax(320px, 2fr);
   gap: var(--space-5) var(--space-6);
@@ -52,8 +61,15 @@
 @media (max-width: 640px) {
   .page-header { grid-template-columns: 1fr; }
 }
-/* The hero's supporting line, previously four near-identical rules. */
-.page-hero-sub, .cov-hero-sub, .inv-hero-sub, .help-hero-sub {
+/* The hero's supporting line, previously four near-identical rules.
+
+   F6 (2026-09-09): .cov-hero-sub and .inv-hero-sub are now GONE from the selector list, for
+   the same reason .cov-header/.inv-header/.comp-header left the rule above — gas_ai's parity
+   wave retired the classes from scans.js and inventory.js, and unlike those three this pair
+   left behind no retirement comment anywhere: `grep -rn "cov-hero-sub\|inv-hero-sub" gas/src
+   gas_ai/src gas_devsecops/src gas_hub/src gas_shared` finds nothing but this rule itself,
+   before the edit. .page-hero-sub and .help-hero-sub stay live. */
+.page-hero-sub, .help-hero-sub {
   font-size: var(--fs-label); color: var(--text-3); margin: var(--space-1) 0 0;
 }
 /* A hero sub-line that carries two sentences rather than one: the alarm the figure counts,
@@ -95,8 +111,9 @@
 /* The lede is running text, so it breaks at a readable length rather than at header width. */
 .page-titles .page-hero-sub { max-width: var(--measure); }
 
-/* The stat strip always spans the full header, whichever page it is on. */
-.page-header > .stat-list, .cov-header .stat-list, .inv-header .stat-list { grid-column: 1 / -1; }
+/* The stat strip always spans the full header, whichever page it is on. .cov-header and
+   .inv-header dropped F6 (2026-09-09) — see the header rule above's comment. */
+.page-header > .stat-list { grid-column: 1 / -1; }
 
 /* PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b (2026-09-08) —
    byte-identical in both. `.page-header`'s second column is `minmax(320px, 2fr)` above and
