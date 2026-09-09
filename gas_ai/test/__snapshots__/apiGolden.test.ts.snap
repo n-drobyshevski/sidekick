@@ -1217,6 +1217,10 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
   },
   "getIssues": {
     "data": {
+      "all": true,
+      "filtered": 0,
+      "page": 0,
+      "pageCount": 1,
       "rows": [],
     },
     "ok": true,
@@ -12190,6 +12194,10 @@ exports[`read endpoints > getIssueDetail answers the same shape 1`] = `
 exports[`read endpoints > getIssues answers the same shape 1`] = `
 {
   "data": {
+    "all": true,
+    "filtered": 32,
+    "page": 0,
+    "pageCount": 1,
     "rows": [
       {
         "account": "aws-account-prod-01",
@@ -20771,7 +20779,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 300496,
+    "archiveBytes": 300488,
     "cellCount": 46700,
     "rows": {
       "assets": 87,
