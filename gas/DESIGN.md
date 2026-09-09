@@ -95,9 +95,11 @@ resolves ambiguously, and untouched by the shared module.
 
 ## 4. The rail status dot answers for one register
 
-`gas_devsecops` and `gas_ai` derive their rail dot from `lastScanByScope`/per-project state
-because they hold more than one scope's worth of freshness to reconcile. This register has
-exactly one scope, one ledger, one scan history, so `never scanned` collapses onto
+`gas_devsecops` derives its rail dot from `lastScanByScope`/per-project state because it holds
+three scopes' worth of freshness in one ledger to reconcile. `gas_ai` is not a second instance
+of that: it has one job kind (`JobKind = "sync"`) and one `bootstrap.latestSync` row, and its
+`railStatus.js` collapses onto that single row the same way this register's does. This register
+has exactly one scope, one ledger, one scan history, so `never scanned` collapses onto
 `latestScan` directly: there is no worse-of-several-scopes comparison to make, because there
 is only ever the one. The dot still takes the shared shape (a real `<button>`, 24x24px hit
 target over the 9px mark, state carried in a word as well as a colour); what is app-specific
