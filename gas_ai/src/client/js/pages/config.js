@@ -415,6 +415,7 @@ export async function renderConfigFindings(main, params, ctx) {
     const groups = model.controls;
     bodyHost.append(sectionLabel(plural(groups.length, "control") + " with findings"));
     bodyHost.append(dataTable({
+      stickyHeader: true,
       columns: [
         {
           key: "severity", label: "Severity", sortable: false, help: { term: "severity" },
@@ -493,6 +494,11 @@ export async function renderConfigFindings(main, params, ctx) {
       },
       emptyText: "No controls match these filters.",
     }));
+    // The rollup is bounded by construction — distinct controls, never the raw finding
+    // count — so this is the bare "N rows" pager() prints under any table with one page,
+    // the same shape paintFindings's own footer degrades to on a small register. No
+    // `onPage`: there is no page state to change.
+    bodyHost.append(tableFooter({ total: groups.length }));
   }
 
   /**
