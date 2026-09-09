@@ -35,7 +35,7 @@ import {
 } from "../assetQuery.js";
 import {
   absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, debounce,
-  el, errorState, firstRunNotice, heroStat, pageHeader,
+  el, errorState, firstRunNotice, heroStat, measuredEmpty, pageHeader,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
@@ -928,19 +928,25 @@ export async function renderInventory(main, params) {
 
     if (!shown) {
       const applied = filterEntries().length;
-      resultsHost.append(el("div", { class: "empty", role: "status" },
-        el("div", {}, "No assets match these filters."),
-        el("p", { class: "small muted" },
-          `${applied} filter${applied === 1 ? "" : "s"} applied.`),
-        el("div", { class: "empty-actions" },
-          el("button", {
-            onclick: () => {
-              for (const k of FACET_KEYS) query[k] = [];
-              query.q = "";
-              onFilterChange();
-            },
-          }, "Clear all filters")),
-      ));
+      // A dated notice, not the hand-rolled `.empty` div this used to be — the same fix
+      // `config.js` and `combos.js` take for the same reason: "no rows" that never says
+      // when it looked reads the same an hour after a sync as a month after one.
+      const notice = measuredEmpty(
+        "No assets match these filters.",
+        {
+          at: boot.latestSync.finished_at,
+          hint: applied ? `${applied} filter${applied === 1 ? "" : "s"} applied.` : "",
+        },
+      );
+      notice.append(el("div", { class: "empty-actions" },
+        el("button", {
+          onclick: () => {
+            for (const k of FACET_KEYS) query[k] = [];
+            query.q = "";
+            onFilterChange();
+          },
+        }, "Clear all filters")));
+      resultsHost.append(notice);
       return;
     }
 

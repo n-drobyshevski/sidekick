@@ -63,6 +63,15 @@ function optionLabel(key, value) {
 const CONFIG_SYNC_HINT =
   "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.";
 
+// The OTHER empty hint, and why it needs to exist at all: `CONFIG_SYNC_HINT` above answers
+// "nobody has asked yet", and the `totals.controls === 0` gate below used to print it even
+// once a sync HAD run and genuinely found nothing — "Run Sync now" beside a register a sync
+// just measured as empty tells a reader to repeat a step that already happened. This is the
+// synced-but-zero hint the two gates never shared to begin with.
+const CONFIG_SYNCED_EMPTY_HINT =
+  "The last sync collected no configuration findings for this framework; check the Wiz " +
+  "Scans page for a skipped step.";
+
 export async function renderConfigFindings(main, params, ctx) {
   const view = {
     mode: params.mode === "findings" ? "findings" : "controls",
@@ -229,7 +238,7 @@ export async function renderConfigFindings(main, params, ctx) {
       bodyHost.append(firstRunNotice({
         synced: true,
         at: boot.latestSync.finished_at,
-        hint: CONFIG_SYNC_HINT,
+        hint: CONFIG_SYNCED_EMPTY_HINT,
       }));
       return;
     }
@@ -407,6 +416,17 @@ export async function renderConfigFindings(main, params, ctx) {
   }
 
   /**
+   * The one thing worth telling a reader staring at an empty filtered table: how many
+   * filters are narrowing it and that clearing them goes back to the whole register. Empty
+   * when nothing is applied — `measuredEmpty` already drops a falsy hint rather than
+   * printing a blank line.
+   */
+  function emptyFilterHint() {
+    const applied = activeConfigFilters(view.query).length;
+    return applied ? "Clear " + plural(applied, "filter") + " to see the full register." : "";
+  }
+
+  /**
    * One row per control.
    *
    * The grouping runs where the rows are. Under CONFIG_CLIENT_ALL_MAX the browser holds the
@@ -418,6 +438,17 @@ export async function renderConfigFindings(main, params, ctx) {
    */
   function paintControls() {
     const groups = model.controls;
+    // A dated notice, not `dataTable`'s own bare `emptyText` row: "no rows" that never says
+    // when it looked reads the same whether the last sync ran an hour ago or a month ago.
+    // Rendered in place of the table rather than handed to it, per `gas_shared/ui/data.js`'s
+    // own internal render — `dataTable` can only draw a plain string into a `<td>`.
+    if (!groups.length) {
+      bodyHost.append(measuredEmpty(
+        "No control matches these filters.",
+        { at: boot.latestSync.finished_at, hint: emptyFilterHint() },
+      ));
+      return;
+    }
     bodyHost.append(sectionLabel(plural(groups.length, "control") + " with findings"));
     bodyHost.append(dataTable({
       stickyHeader: true,
@@ -497,7 +528,6 @@ export async function renderConfigFindings(main, params, ctx) {
         pushParams();
         apply();
       },
-      emptyText: "No controls match these filters.",
     }));
     // The rollup is bounded by construction — distinct controls, never the raw finding
     // count — so this is the bare "N rows" pager() prints under any table with one page,
@@ -528,6 +558,28 @@ export async function renderConfigFindings(main, params, ctx) {
     const ids = sorted.map((r) => r.id);
 
     bodyHost.append(sectionLabel(plural(model.filtered, "finding")));
+
+    // Same dated notice as `paintControls`, in place of the table rather than through its
+    // `emptyText` — and still under the pager below, exactly as `problems.js`'s own paged
+    // branch keeps it: on the paged half of this page a page can go empty (kind/search
+    // narrowed a page that itself has rows) while an earlier page does not, so the reader
+    // still needs a way back.
+    if (!slice.length) {
+      bodyHost.append(measuredEmpty(
+        "No finding matches these filters.",
+        { at: boot.latestSync.finished_at, hint: emptyFilterHint() },
+      ));
+      bodyHost.append(tableFooter({
+        page, pageCount, total: model.filtered,
+        onPage: (p) => {
+          view.page = p;
+          pushParams();
+          apply();
+        },
+      }));
+      return;
+    }
+
     const table = dataTable({
       stickyHeader: true,
       columns: [
@@ -603,7 +655,6 @@ export async function renderConfigFindings(main, params, ctx) {
         seed: r,
         records: { ids, index: ids.indexOf(r.id) },
       }),
-      emptyText: "No findings match these filters.",
     });
     bodyHost.append(table);
     bodyHost.append(tableFooter({

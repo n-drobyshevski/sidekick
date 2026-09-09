@@ -725,8 +725,21 @@ export async function renderCombos(main, params) {
     if (view.page >= pageCount) view.page = pageCount - 1;
     const slice = sorted.slice(view.page * PAGE_SIZE, (view.page + 1) * PAGE_SIZE);
 
+    mount.append(issueFilterBar(group, mount, rows, options, filtered.length, rows.length));
+
+    // A dated notice in place of the table, not through its own bare `emptyText` row — the
+    // same fix `config.js` and `inventory.js` take, so the register is honest about WHEN it
+    // looked and found nothing to match. No footer under the whole-pattern branch: with
+    // zero rows there is nothing to page through.
+    if (!sorted.length) {
+      mount.append(measuredEmpty(
+        "No issue in this pattern matches the current filters.",
+        { at: boot.latestSync.finished_at, hint: emptyIssueHint() },
+      ));
+      return;
+    }
+
     mount.append(
-      issueFilterBar(group, mount, rows, options, filtered.length, rows.length),
       issueTable(mount, group, slice),
       tableFooter({
         page: view.page,
@@ -739,6 +752,16 @@ export async function renderCombos(main, params) {
         },
       }),
     );
+  }
+
+  /**
+   * How many of THIS table's own filters (search, account, project) are narrowing it, said
+   * in words rather than left for the reader to notice from a blank table. Empty when none
+   * are set — `measuredEmpty` drops a falsy hint rather than printing a blank line.
+   */
+  function emptyIssueHint() {
+    const applied = [view.q, view.acct, view.proj].filter(Boolean).length;
+    return applied ? "Clear " + plural(applied, "filter") + " to see every issue in this pattern." : "";
   }
 
   // -------------------------------------------------- paged mode: a large pattern only
@@ -756,16 +779,25 @@ export async function renderCombos(main, params) {
     const filtered = applyIssueFilters(rows, view);
     const sorted = view.sort ? sortIssues(filtered, view.sort, view.dir) : filtered;
 
-    mount.append(
-      issueFilterBar(group, mount, rows, options, filtered.length, rows.length),
-      issueTable(mount, group, sorted),
-      tableFooter({
-        page: resp.page,
-        pageCount: resp.pageCount,
-        total: resp.filtered,
-        onPage: (next) => refetchIssues(group, mount, next),
-      }),
-    );
+    mount.append(issueFilterBar(group, mount, rows, options, filtered.length, rows.length));
+
+    // The footer stays even on an empty page: account/project/search only narrow the page
+    // the server already sent (this file's own header on the two-mode split), so another
+    // page of the pattern may still have rows to page back to.
+    if (!sorted.length) {
+      mount.append(measuredEmpty(
+        "No issue on this page matches the current filters.",
+        { at: boot.latestSync.finished_at, hint: emptyIssueHint() },
+      ));
+    } else {
+      mount.append(issueTable(mount, group, sorted));
+    }
+    mount.append(tableFooter({
+      page: resp.page,
+      pageCount: resp.pageCount,
+      total: resp.filtered,
+      onPage: (next) => refetchIssues(group, mount, next),
+    }));
   }
 
   async function refetchIssues(group, mount, page) {
@@ -934,7 +966,6 @@ export async function renderCombos(main, params) {
       },
       onRowOpen: (issue) => openIssueRow(issue),
       rowLabel: (issue) => "Issue on " + issue.assetName,
-      emptyText: "No issue in this pattern matches the current filters.",
     });
   }
 }

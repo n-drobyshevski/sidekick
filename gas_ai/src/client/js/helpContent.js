@@ -809,6 +809,29 @@ export const ENTRIES = [
     mark: () => el("span", { class: "pill neutral" }, "off by default"),
     link: { label: "Open Settings → Register", route: "settings", params: { tab: "register" } },
   },
+  {
+    // The Priorities title's own tip used to point at `priorities-rank`, which is the
+    // Problem tree + posture tier cascade — EXPERIMENTAL, isolated to the Scoring Models
+    // page, and not what this page has ranked by since `compareProblems` dropped both
+    // (src/domain/problems.ts's own header: "THE OUTCOME AND THE POSTURE TIER USED TO LEAD
+    // IT, and both are gone from here"). So the key sheet hid the very definition a visible
+    // page's title pointed at whenever experimental content was off. This entry states what
+    // the page actually does, is not experimental, and is drawn where it is read.
+    id: "priorities-order",
+    term: "The Priorities order",
+    aka: "worst severity, then soonest due, then oldest",
+    family: "score",
+    blurb:
+      "Worst-first, four levels. Wiz's own severity leads — the loudest fact about a " +
+      "problem this app did not invent — then the nearest due date (overdue counts as " +
+      "soonest, no deadline sorts last), then how long the row has been open, oldest " +
+      "first, then id, so two rows that agree on the first three still sort the same way " +
+      "every time. This is the order the page has always used. Settings' \"Rank leads the " +
+      "Priorities order\" can put the blended rank score in charge instead — off by " +
+      "default — and that entry says what changes and why the switch exists.",
+    drawnOn: ["problems"],
+    mark: () => el("span", { class: "pill neutral" }, "1–4"),
+  },
 
   // ---------------------------------------------------------------------- severity
   {
@@ -975,7 +998,9 @@ export const ENTRIES = [
       "RAN. Widening the scope changes what every one of those figures counts, not how " +
       "many rows it holds — and the stored register keeps counting the OLD categories " +
       "until the next sync applies the new one.",
-    drawnOn: ["settings", "scans"],
+    // Also on the issue sheet's Lifecycle section: the two sighting dates there were both
+    // read under this scope, and the row says which one.
+    drawnOn: ["settings", "scans", "problems"],
     mark: () => statusPill("neutral", "Scope"),
     link: { label: "Open Settings → Register", route: "settings", params: { tab: "register" } },
   },

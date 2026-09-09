@@ -107,8 +107,16 @@ export async function renderProblems(main, params) {
     // paragraph above the thing it describes. P1.4 moved that tip off the lede (which used to
     // carry it as a second array element) and onto the header's own `help`, the slot every
     // other route's page-title tip already uses.
+    //
+    // `priorities-order`, NOT `priorities-rank`. The latter is the Problem tree + posture
+    // tier cascade, pinned EXPERIMENTAL and isolated to the Scoring Models page
+    // (helpContent.js, test/helpContent.test.js's VERDICTS list) — this page has not ranked
+    // by it since `compareProblems` (src/domain/problems.ts) dropped both terms, so pointing
+    // the title here at that entry made the key sheet hide its own trigger's definition
+    // whenever experimental content was off. `priorities-order` names what the page actually
+    // does and carries no such gate.
     lede: "Every open issue and finding, ranked on one scale.",
-    help: { term: "priorities-rank" },
+    help: { term: "priorities-order" },
   }));
 
   // Seeded from the URL so a filtered, sorted, moded view is shareable — and held out here
@@ -389,7 +397,10 @@ export async function renderProblems(main, params) {
         // is pinned as EXPERIMENTAL and drawn only on the Scoring Models page
         // (helpContent.js, and test/helpContent.test.js holds `drawnOn` to exactly that), so
         // hanging it here would make the key sheet hide a definition this row points at. The
-        // sub-line already says what the figure counts.
+        // title above now carries `priorities-order` instead — the non-experimental entry
+        // naming the order this page actually uses — but this row is a COUNT, not the
+        // order, and attaching that term here would be the same wrong-term claim reversed.
+        // The sub-line already says what the figure counts.
         statRow("Open problems", fmtCount(openProblemCount(activeView, data)),
           "issues ∪ findings, the whole union"),
         ...(activeView.mode === "problems" ? severityRows(data) : actionStats(data)),
