@@ -5551,6 +5551,102 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
           "annotations": {
             "edgesKnown": 79,
           },
+          "at": "2026-08-05T09:00:00.000Z",
+          "counts": {
+            "ADJACENT": 8,
+            "DIRECT": 2,
+            "UNLINKED": 2,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "annotations": {
+            "edgesKnown": 79,
+          },
+          "at": "2026-08-06T09:00:00.000Z",
+          "counts": {
+            "ADJACENT": 8,
+            "DIRECT": 7,
+            "UNLINKED": 3,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "annotations": {
+            "edgesKnown": 79,
+          },
+          "at": "2026-08-07T09:00:00.000Z",
+          "counts": {
+            "ADJACENT": 8,
+            "DIRECT": 11,
+            "UNLINKED": 3,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "annotations": {
+            "edgesKnown": 79,
+          },
+          "at": "2026-08-08T09:00:00.000Z",
+          "counts": {
+            "ADJACENT": 8,
+            "DIRECT": 14,
+            "UNLINKED": 4,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "annotations": {
+            "edgesKnown": 79,
+          },
+          "at": "2026-08-09T09:00:00.000Z",
+          "counts": {
+            "ADJACENT": 8,
+            "DIRECT": 16,
+            "UNLINKED": 4,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "annotations": {
+            "edgesKnown": 79,
+          },
+          "at": "2026-08-10T09:00:00.000Z",
+          "counts": {
+            "ADJACENT": 8,
+            "DIRECT": 18,
+            "UNLINKED": 5,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "annotations": {
+            "edgesKnown": 79,
+          },
+          "at": "2026-08-11T09:00:00.000Z",
+          "counts": {
+            "ADJACENT": 7,
+            "DIRECT": 19,
+            "UNLINKED": 6,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "annotations": {
+            "edgesKnown": 79,
+          },
+          "at": "2026-08-12T09:00:00.000Z",
+          "counts": {
+            "ADJACENT": 7,
+            "DIRECT": 21,
+            "UNLINKED": 6,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "annotations": {
+            "edgesKnown": 79,
+          },
           "at": "2026-08-13T09:00:00Z",
           "counts": {
             "ADJACENT": 8,
@@ -5658,6 +5754,62 @@ exports[`read endpoints > getAssets answers the same shape 1`] = `
         },
       ],
       "categoryPoints": [
+        {
+          "at": "2026-08-05T09:00:00.000Z",
+          "counts": {
+            "wct-id-1998": 12,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "at": "2026-08-06T09:00:00.000Z",
+          "counts": {
+            "wct-id-1998": 18,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "at": "2026-08-07T09:00:00.000Z",
+          "counts": {
+            "wct-id-1998": 22,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "at": "2026-08-08T09:00:00.000Z",
+          "counts": {
+            "wct-id-1998": 26,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "at": "2026-08-09T09:00:00.000Z",
+          "counts": {
+            "wct-id-1998": 28,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "at": "2026-08-10T09:00:00.000Z",
+          "counts": {
+            "wct-id-1998": 31,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "at": "2026-08-11T09:00:00.000Z",
+          "counts": {
+            "wct-id-1998": 32,
+          },
+          "ruleVersion": 0,
+        },
+        {
+          "at": "2026-08-12T09:00:00.000Z",
+          "counts": {
+            "wct-id-1998": 34,
+          },
+          "ruleVersion": 0,
+        },
         {
           "at": "2026-08-13T09:00:00Z",
           "counts": {
@@ -20901,7 +21053,7 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
 exports[`read endpoints > getStorageStats answers the same shape 1`] = `
 {
   "data": {
-    "archiveBytes": 300488,
+    "archiveBytes": 302788,
     "cellCount": 46700,
     "rows": {
       "assets": 87,
@@ -20951,9 +21103,9 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
-        "adjacency_json": null,
+        "adjacency_json": "{"DIRECT":21,"ADJACENT":7,"UNLINKED":6,"edgesKnown":79}",
         "api_calls": 0,
-        "category_counts_json": null,
+        "category_counts_json": "{"wct-id-1998":34}",
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -20980,9 +21132,9 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":2,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
-        "adjacency_json": null,
+        "adjacency_json": "{"DIRECT":19,"ADJACENT":7,"UNLINKED":6,"edgesKnown":79}",
         "api_calls": 0,
-        "category_counts_json": null,
+        "category_counts_json": "{"wct-id-1998":32}",
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -21009,9 +21161,9 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":3,"HIGH":17,"MEDIUM":0,"LOW":3,"INFO":8}",
-        "adjacency_json": null,
+        "adjacency_json": "{"DIRECT":18,"ADJACENT":8,"UNLINKED":5,"edgesKnown":79}",
         "api_calls": 0,
-        "category_counts_json": null,
+        "category_counts_json": "{"wct-id-1998":31}",
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -21038,9 +21190,9 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":3,"HIGH":16,"MEDIUM":0,"LOW":3,"INFO":8}",
-        "adjacency_json": null,
+        "adjacency_json": "{"DIRECT":16,"ADJACENT":8,"UNLINKED":4,"edgesKnown":79}",
         "api_calls": 0,
-        "category_counts_json": null,
+        "category_counts_json": "{"wct-id-1998":28}",
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -21067,9 +21219,9 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":4,"HIGH":16,"MEDIUM":0,"LOW":3,"INFO":9}",
-        "adjacency_json": null,
+        "adjacency_json": "{"DIRECT":14,"ADJACENT":8,"UNLINKED":4,"edgesKnown":79}",
         "api_calls": 0,
-        "category_counts_json": null,
+        "category_counts_json": "{"wct-id-1998":26}",
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -21096,9 +21248,9 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":4,"HIGH":15,"MEDIUM":0,"LOW":3,"INFO":9}",
-        "adjacency_json": null,
+        "adjacency_json": "{"DIRECT":11,"ADJACENT":8,"UNLINKED":3,"edgesKnown":79}",
         "api_calls": 0,
-        "category_counts_json": null,
+        "category_counts_json": "{"wct-id-1998":22}",
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -21125,9 +21277,9 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":5,"HIGH":13,"MEDIUM":0,"LOW":2,"INFO":10}",
-        "adjacency_json": null,
+        "adjacency_json": "{"DIRECT":7,"ADJACENT":8,"UNLINKED":3,"edgesKnown":79}",
         "api_calls": 0,
-        "category_counts_json": null,
+        "category_counts_json": "{"wct-id-1998":18}",
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -21154,9 +21306,9 @@ exports[`read endpoints > getSyncHistory answers the same shape 1`] = `
       {
         "aars_rule_version": null,
         "aars_severity_json": "{"CRITICAL":5,"HIGH":12,"MEDIUM":0,"LOW":2,"INFO":11}",
-        "adjacency_json": null,
+        "adjacency_json": "{"DIRECT":2,"ADJACENT":8,"UNLINKED":2,"edgesKnown":79}",
         "api_calls": 0,
-        "category_counts_json": null,
+        "category_counts_json": "{"wct-id-1998":12}",
         "derivation_version": null,
         "edge_count": null,
         "error": null,
@@ -28096,9 +28248,9 @@ Ignored until: Feb 1, 2026",
   "sync_history": {
     "aars_rule_version": null,
     "aars_severity_json": "{"CRITICAL":5,"HIGH":12,"MEDIUM":0,"LOW":2,"INFO":11}",
-    "adjacency_json": null,
+    "adjacency_json": "{"DIRECT":2,"ADJACENT":8,"UNLINKED":2,"edgesKnown":79}",
     "api_calls": 0,
-    "category_counts_json": null,
+    "category_counts_json": "{"wct-id-1998":12}",
     "derivation_version": null,
     "edge_count": null,
     "error": null,

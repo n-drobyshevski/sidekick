@@ -474,7 +474,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "9603e20870b3" : "dev";
+  var BUILD_ID = true ? "02aced1f006c" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -6708,6 +6708,356 @@ var Server = (() => {
     }
   }
 
+  // src/domain/aarsTrend.ts
+  var PROJECT_TOTALS_COLUMN = "project_totals_json";
+  var PROJECT_TOTALS_MAX_CHARS = 45e3;
+  function countProjectTotals(nodes, decided) {
+    var _a5, _b, _c, _d;
+    const totals = {};
+    const projectsByAsset = /* @__PURE__ */ new Map();
+    function entry(projectId) {
+      let t = totals[projectId];
+      if (!t) {
+        const aars = {};
+        for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
+        const outcome = {};
+        for (const o of OUTCOME_VALUES) outcome[o] = 0;
+        t = { aars, outcome, counts: { issues: 0, findings: 0 } };
+        totals[projectId] = t;
+      }
+      return t;
+    }
+    for (const n of nodes) {
+      const projects = (_a5 = n.projects) != null ? _a5 : [];
+      if (!projects.length) continue;
+      projectsByAsset.set(n.id, projects);
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      for (const p of projects) {
+        const t = entry(p.id);
+        if (sev) t.aars[sev] += 1;
+      }
+    }
+    for (const r of decided) {
+      const isFinding = r.assetId === void 0 && r.resourceId !== void 0;
+      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
+      const projects = (_d = projectsByAsset.get(assetId)) != null ? _d : [];
+      for (const p of projects) {
+        const counts = entry(p.id).counts;
+        if (counts) counts[isFinding ? "findings" : "issues"] += 1;
+      }
+      const outcome = r.problemOutcome;
+      if (!outcome || !OUTCOME_VALUES.includes(outcome)) continue;
+      for (const p of projects) entry(p.id).outcome[outcome] += 1;
+    }
+    return totals;
+  }
+  function encodeProjectTotals(totals) {
+    const json = JSON.stringify(totals);
+    return json.length > PROJECT_TOTALS_MAX_CHARS ? null : json;
+  }
+  function countAarsSeverities(nodes) {
+    const counts = {};
+    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
+    for (const n of nodes) {
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      if (sev) counts[sev] += 1;
+    }
+    return counts;
+  }
+  function countsFromObject(parsed, keys, absentKeyIsNull = false) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const counts = {};
+    for (const k of keys) {
+      if (absentKeyIsNull && !Object.prototype.hasOwnProperty.call(raw, k)) {
+        counts[k] = null;
+        continue;
+      }
+      const n = Number(raw[k]);
+      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    }
+    return counts;
+  }
+  function parseCounts(v, keys, absentKeyIsNull = false) {
+    if (typeof v !== "string" || !v) return null;
+    try {
+      return countsFromObject(JSON.parse(v), keys, absentKeyIsNull);
+    } catch {
+      return null;
+    }
+  }
+  function parseAnnotations(v, keys) {
+    const out = {};
+    let raw = {};
+    if (typeof v === "string" && v) {
+      try {
+        const parsed = JSON.parse(v);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          raw = parsed;
+        }
+      } catch {
+        raw = {};
+      }
+    }
+    for (const k of keys) {
+      const n = Number(raw[k]);
+      out[k] = Object.prototype.hasOwnProperty.call(raw, k) && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+    }
+    return out;
+  }
+  function parseProjectCounts(v, projectId, spec) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const entry = parsed[projectId];
+    if (!entry || typeof entry !== "object") return null;
+    return countsFromObject(
+      entry[spec.projectKey],
+      spec.keys,
+      spec.absentKeyIsNull
+    );
+  }
+  function readTrend(rows, spec, limit, projectId) {
+    var _a5;
+    const points = [];
+    if (!spec.keys.length) return points;
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys, spec.absentKeyIsNull);
+      if (!counts) continue;
+      if (spec.keys.every((k) => counts[k] === null)) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const v = Number(r[spec.versionColumn]);
+      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+      const point = { at, counts, ruleVersion };
+      if (spec.annotationKeys && spec.annotationKeys.length) {
+        point.annotations = parseAnnotations(r[spec.countsColumn], spec.annotationKeys);
+      }
+      points.push(point);
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
+  function sparseTrendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
+  var COUNT_KEYS = ["issues", "findings", "postureFails"];
+  function cellCount2(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  }
+  function projectCountEntry(cell2, projectId) {
+    let parsed = cell2;
+    if (typeof cell2 === "string") {
+      if (!cell2) return null;
+      try {
+        parsed = JSON.parse(cell2);
+      } catch {
+        return null;
+      }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const entry = parsed[projectId];
+    if (!entry || typeof entry !== "object") return null;
+    const counts = entry["counts"];
+    if (!counts || typeof counts !== "object") return null;
+    const issues2 = cellCount2(counts["issues"]);
+    const findings = cellCount2(counts["findings"]);
+    return issues2 === null || findings === null ? null : { issues: issues2, findings };
+  }
+  function countTrendFromHistory(rows, limit = 90, projectId = "") {
+    var _a5;
+    const points = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      let counts;
+      if (projectId) {
+        const scoped = projectCountEntry(r[PROJECT_TOTALS_COLUMN], projectId);
+        counts = {
+          issues: scoped ? scoped.issues : null,
+          findings: scoped ? scoped.findings : null,
+          postureFails: null
+        };
+      } else {
+        counts = {
+          issues: cellCount2(r["issue_count"]),
+          findings: cellCount2(r["finding_count"]),
+          postureFails: cellCount2(r["posture_fail_count"])
+        };
+      }
+      if (COUNT_KEYS.every((k) => counts[k] === null)) continue;
+      points.push({ at, counts });
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  var ADJACENCY_KEYS = ["DIRECT", "ADJACENT", "UNLINKED"];
+  var ADJACENCY_SPEC = {
+    keys: ADJACENCY_KEYS,
+    countsColumn: "adjacency_json",
+    versionColumn: "derivation_version",
+    projectKey: "adjacency",
+    annotationKeys: ["edgesKnown"]
+  };
+  function adjacencyTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, ADJACENCY_SPEC, limit, projectId);
+  }
+  var EXPLOITATION_KEYS = ["kev", "exploit", "epss", "none", "unknown"];
+  var EXPLOITATION_SPEC = {
+    keys: EXPLOITATION_KEYS,
+    countsColumn: "exploitation_json",
+    versionColumn: "derivation_version",
+    projectKey: "exploitation",
+    annotationKeys: ["findings", "unjoined", "droppedNotInRegister"]
+  };
+  function exploitationTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, EXPLOITATION_SPEC, limit, projectId);
+  }
+  var CATEGORY_COUNTS_COLUMN = "category_counts_json";
+  var CATEGORY_SPEC = {
+    keys: [],
+    countsColumn: CATEGORY_COUNTS_COLUMN,
+    versionColumn: "derivation_version",
+    projectKey: "categories",
+    absentKeyIsNull: true
+  };
+  function categorySpecFor(categoryIds) {
+    return { ...CATEGORY_SPEC, keys: [...categoryIds] };
+  }
+  function categoryTrendFromHistory(rows, categoryIds, limit = 90) {
+    return sparseTrendFromHistory(rows, categorySpecFor(categoryIds), limit);
+  }
+  function countIssueCategories(issues2) {
+    var _a5, _b;
+    const counts = {};
+    for (const issue2 of issues2) {
+      const seen = [];
+      for (const c of (_a5 = issue2.categories) != null ? _a5 : []) {
+        if (!c || seen.indexOf(c) >= 0) continue;
+        seen.push(c);
+        counts[c] = ((_b = counts[c]) != null ? _b : 0) + 1;
+      }
+    }
+    return counts;
+  }
+  var LEDGER_KEYS = ["new", "resolved", "reopened"];
+  var LEDGER_SPEC = {
+    keys: LEDGER_KEYS,
+    countsColumn: "ledger_json",
+    versionColumn: "derivation_version",
+    projectKey: "ledger"
+  };
+  function ledgerTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, LEDGER_SPEC, limit, projectId);
+  }
+  var NET_CAPACITY_BAND_PCT = 2;
+  var MIN_COMPARABLE_SYNCS = 2;
+  function verdictOf(netPct) {
+    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
+    return netPct > 0 ? "gaining" : "falling-behind";
+  }
+  function capacityFromLedgerDeltas(rows, limit = 90) {
+    var _a5, _b, _c;
+    const raw = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = parseCounts(r["ledger_json"], [
+        "new",
+        "resolved",
+        "reopened",
+        "carried",
+        "skippedNarrowedScope"
+      ]);
+      if (!counts) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const c = counts;
+      const n = (k) => {
+        var _a6;
+        return Number((_a6 = c[k]) != null ? _a6 : 0);
+      };
+      raw.push({
+        syncId: String((_b = r["sync_id"]) != null ? _b : ""),
+        at,
+        // "" is UNKNOWN, never "the same scope as the row beside it" — see case 2 above.
+        scope: String((_c = r["register_scope"]) != null ? _c : ""),
+        opened: n("new") + n("reopened"),
+        closed: n("resolved"),
+        openAtStart: n("carried") + n("resolved"),
+        skipped: n("skippedNarrowedScope")
+      });
+    }
+    raw.sort(cmpBy((p) => p.at));
+    const points = [];
+    let comparableCount = 0;
+    const rates = [];
+    const netPcts = [];
+    for (let i = 0; i < raw.length; i++) {
+      const cur = raw[i];
+      const prev = i > 0 ? raw[i - 1] : null;
+      const comparable = Boolean(
+        prev && cur.skipped === 0 && cur.scope !== "" && prev.scope !== "" && cur.scope === prev.scope
+      );
+      const netPct = cur.openAtStart > 0 ? (cur.closed - cur.opened) / cur.openAtStart * 100 : null;
+      if (comparable) {
+        comparableCount += 1;
+        if (cur.openAtStart > 0) {
+          rates.push(cur.closed / cur.openAtStart * 100);
+          netPcts.push(netPct != null ? netPct : 0);
+        }
+      }
+      points.push({
+        syncId: cur.syncId,
+        at: cur.at,
+        opened: cur.opened,
+        closed: cur.closed,
+        net: cur.closed - cur.opened,
+        comparable,
+        verdict: comparable ? verdictOf(netPct) : null
+      });
+    }
+    const enough = rates.length >= MIN_COMPARABLE_SYNCS;
+    const mean2 = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
+    const trimmed = limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+    return {
+      points: trimmed,
+      overall: {
+        mmcr: enough ? mean2(rates) : null,
+        verdict: enough ? verdictOf(mean2(netPcts)) : null,
+        syncs: points.length,
+        comparable: comparableCount
+      }
+    };
+  }
+  function labelCategories(ids) {
+    return ids.map((id) => {
+      const known = CANDIDATE_CATEGORIES.filter((c) => c.id === id)[0];
+      return { id, name: known ? known.name : id };
+    });
+  }
+  function postureTrendFromHistory(rows, categoryIds, limit = 90) {
+    return {
+      adjacency: adjacencyTrendFromHistory(rows, limit),
+      exploitation: exploitationTrendFromHistory(rows, limit),
+      categories: labelCategories(categoryIds),
+      categoryPoints: categoryTrendFromHistory(rows, categoryIds, limit),
+      ledger: ledgerTrendFromHistory(rows, limit),
+      capacity: capacityFromLedgerDeltas(rows, limit)
+    };
+  }
+
   // src/server/sampleData.ts
   var T0 = "2026-04-02T08:00:00Z";
   var T1 = "2026-06-28T05:00:00Z";
@@ -8214,6 +8564,44 @@ var Server = (() => {
       };
       return row;
     });
+  }
+  function seedLedgerOpenAt(index) {
+    return SEED_LEDGER.rows.filter((spec) => spec.firstSeenIndex <= index && (spec.disappearedIndex === null || spec.disappearedIndex > index));
+  }
+  function seedPostureTrend(endIso) {
+    var _a5, _b;
+    const { issues: placed, census } = withAiAdjacency(seedGraphDoc(endIso), SEED_ISSUES);
+    const placementById = {};
+    for (const issue2 of placed) {
+      if (issue2.aiAdjacency) placementById[issue2.id] = issue2.aiAdjacency;
+    }
+    const categoriesById = {};
+    for (const issue2 of SEED_ISSUES) categoriesById[issue2.id] = (_a5 = issue2.categories) != null ? _a5 : [];
+    const entries = [];
+    for (let index = 0; index < SEED_SYNC_COUNT; index += 1) {
+      const open = seedLedgerOpenAt(index);
+      const adjacency2 = {
+        DIRECT: 0,
+        ADJACENT: 0,
+        UNLINKED: 0,
+        edgesKnown: census.edgesKnown
+      };
+      for (const spec of open) {
+        adjacency2[(_b = placementById[spec.issueId]) != null ? _b : "UNLINKED"] += 1;
+      }
+      entries.push({
+        adjacency: adjacency2,
+        // The same counter `persistSync` uses, over the same shape - a row's OWN stamps, and
+        // `seedLedgerRows` gives a departed row `[RISK_CATEGORY_ID]` for exactly this reason.
+        categoryCounts: countIssueCategories(open.map((spec) => {
+          var _a6;
+          return {
+            categories: (_a6 = categoriesById[spec.issueId]) != null ? _a6 : [RISK_CATEGORY_ID]
+          };
+        }))
+      });
+    }
+    return entries;
   }
   var SEED_CONFIG_RULES = [
     {
@@ -10425,356 +10813,6 @@ var Server = (() => {
       deltas.resolved += 1;
     }
     return { rows: order.map((id) => byId[id]).sort(byIssueId), deltas };
-  }
-
-  // src/domain/aarsTrend.ts
-  var PROJECT_TOTALS_COLUMN = "project_totals_json";
-  var PROJECT_TOTALS_MAX_CHARS = 45e3;
-  function countProjectTotals(nodes, decided) {
-    var _a5, _b, _c, _d;
-    const totals = {};
-    const projectsByAsset = /* @__PURE__ */ new Map();
-    function entry(projectId) {
-      let t = totals[projectId];
-      if (!t) {
-        const aars = {};
-        for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
-        const outcome = {};
-        for (const o of OUTCOME_VALUES) outcome[o] = 0;
-        t = { aars, outcome, counts: { issues: 0, findings: 0 } };
-        totals[projectId] = t;
-      }
-      return t;
-    }
-    for (const n of nodes) {
-      const projects = (_a5 = n.projects) != null ? _a5 : [];
-      if (!projects.length) continue;
-      projectsByAsset.set(n.id, projects);
-      const sev = normalizeAarsSeverity(n.aarsSeverity);
-      for (const p of projects) {
-        const t = entry(p.id);
-        if (sev) t.aars[sev] += 1;
-      }
-    }
-    for (const r of decided) {
-      const isFinding = r.assetId === void 0 && r.resourceId !== void 0;
-      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
-      const projects = (_d = projectsByAsset.get(assetId)) != null ? _d : [];
-      for (const p of projects) {
-        const counts = entry(p.id).counts;
-        if (counts) counts[isFinding ? "findings" : "issues"] += 1;
-      }
-      const outcome = r.problemOutcome;
-      if (!outcome || !OUTCOME_VALUES.includes(outcome)) continue;
-      for (const p of projects) entry(p.id).outcome[outcome] += 1;
-    }
-    return totals;
-  }
-  function encodeProjectTotals(totals) {
-    const json = JSON.stringify(totals);
-    return json.length > PROJECT_TOTALS_MAX_CHARS ? null : json;
-  }
-  function countAarsSeverities(nodes) {
-    const counts = {};
-    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
-    for (const n of nodes) {
-      const sev = normalizeAarsSeverity(n.aarsSeverity);
-      if (sev) counts[sev] += 1;
-    }
-    return counts;
-  }
-  function countsFromObject(parsed, keys, absentKeyIsNull = false) {
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const raw = parsed;
-    const counts = {};
-    for (const k of keys) {
-      if (absentKeyIsNull && !Object.prototype.hasOwnProperty.call(raw, k)) {
-        counts[k] = null;
-        continue;
-      }
-      const n = Number(raw[k]);
-      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
-    }
-    return counts;
-  }
-  function parseCounts(v, keys, absentKeyIsNull = false) {
-    if (typeof v !== "string" || !v) return null;
-    try {
-      return countsFromObject(JSON.parse(v), keys, absentKeyIsNull);
-    } catch {
-      return null;
-    }
-  }
-  function parseAnnotations(v, keys) {
-    const out = {};
-    let raw = {};
-    if (typeof v === "string" && v) {
-      try {
-        const parsed = JSON.parse(v);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          raw = parsed;
-        }
-      } catch {
-        raw = {};
-      }
-    }
-    for (const k of keys) {
-      const n = Number(raw[k]);
-      out[k] = Object.prototype.hasOwnProperty.call(raw, k) && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
-    }
-    return out;
-  }
-  function parseProjectCounts(v, projectId, spec) {
-    if (typeof v !== "string" || !v) return null;
-    let parsed;
-    try {
-      parsed = JSON.parse(v);
-    } catch {
-      return null;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const entry = parsed[projectId];
-    if (!entry || typeof entry !== "object") return null;
-    return countsFromObject(
-      entry[spec.projectKey],
-      spec.keys,
-      spec.absentKeyIsNull
-    );
-  }
-  function readTrend(rows, spec, limit, projectId) {
-    var _a5;
-    const points = [];
-    if (!spec.keys.length) return points;
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys, spec.absentKeyIsNull);
-      if (!counts) continue;
-      if (spec.keys.every((k) => counts[k] === null)) continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      const v = Number(r[spec.versionColumn]);
-      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-      const point = { at, counts, ruleVersion };
-      if (spec.annotationKeys && spec.annotationKeys.length) {
-        point.annotations = parseAnnotations(r[spec.countsColumn], spec.annotationKeys);
-      }
-      points.push(point);
-    }
-    points.sort(cmpBy((p) => p.at));
-    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
-  }
-  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
-    return readTrend(rows, spec, limit, projectId);
-  }
-  function sparseTrendFromHistory(rows, spec, limit = 90, projectId = "") {
-    return readTrend(rows, spec, limit, projectId);
-  }
-  var COUNT_KEYS = ["issues", "findings", "postureFails"];
-  function cellCount2(v) {
-    if (v === null || v === void 0 || v === "") return null;
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
-  }
-  function projectCountEntry(cell2, projectId) {
-    let parsed = cell2;
-    if (typeof cell2 === "string") {
-      if (!cell2) return null;
-      try {
-        parsed = JSON.parse(cell2);
-      } catch {
-        return null;
-      }
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const entry = parsed[projectId];
-    if (!entry || typeof entry !== "object") return null;
-    const counts = entry["counts"];
-    if (!counts || typeof counts !== "object") return null;
-    const issues2 = cellCount2(counts["issues"]);
-    const findings = cellCount2(counts["findings"]);
-    return issues2 === null || findings === null ? null : { issues: issues2, findings };
-  }
-  function countTrendFromHistory(rows, limit = 90, projectId = "") {
-    var _a5;
-    const points = [];
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      let counts;
-      if (projectId) {
-        const scoped = projectCountEntry(r[PROJECT_TOTALS_COLUMN], projectId);
-        counts = {
-          issues: scoped ? scoped.issues : null,
-          findings: scoped ? scoped.findings : null,
-          postureFails: null
-        };
-      } else {
-        counts = {
-          issues: cellCount2(r["issue_count"]),
-          findings: cellCount2(r["finding_count"]),
-          postureFails: cellCount2(r["posture_fail_count"])
-        };
-      }
-      if (COUNT_KEYS.every((k) => counts[k] === null)) continue;
-      points.push({ at, counts });
-    }
-    points.sort(cmpBy((p) => p.at));
-    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
-  }
-  var ADJACENCY_KEYS = ["DIRECT", "ADJACENT", "UNLINKED"];
-  var ADJACENCY_SPEC = {
-    keys: ADJACENCY_KEYS,
-    countsColumn: "adjacency_json",
-    versionColumn: "derivation_version",
-    projectKey: "adjacency",
-    annotationKeys: ["edgesKnown"]
-  };
-  function adjacencyTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, ADJACENCY_SPEC, limit, projectId);
-  }
-  var EXPLOITATION_KEYS = ["kev", "exploit", "epss", "none", "unknown"];
-  var EXPLOITATION_SPEC = {
-    keys: EXPLOITATION_KEYS,
-    countsColumn: "exploitation_json",
-    versionColumn: "derivation_version",
-    projectKey: "exploitation",
-    annotationKeys: ["findings", "unjoined", "droppedNotInRegister"]
-  };
-  function exploitationTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, EXPLOITATION_SPEC, limit, projectId);
-  }
-  var CATEGORY_COUNTS_COLUMN = "category_counts_json";
-  var CATEGORY_SPEC = {
-    keys: [],
-    countsColumn: CATEGORY_COUNTS_COLUMN,
-    versionColumn: "derivation_version",
-    projectKey: "categories",
-    absentKeyIsNull: true
-  };
-  function categorySpecFor(categoryIds) {
-    return { ...CATEGORY_SPEC, keys: [...categoryIds] };
-  }
-  function categoryTrendFromHistory(rows, categoryIds, limit = 90) {
-    return sparseTrendFromHistory(rows, categorySpecFor(categoryIds), limit);
-  }
-  function countIssueCategories(issues2) {
-    var _a5, _b;
-    const counts = {};
-    for (const issue2 of issues2) {
-      const seen = [];
-      for (const c of (_a5 = issue2.categories) != null ? _a5 : []) {
-        if (!c || seen.indexOf(c) >= 0) continue;
-        seen.push(c);
-        counts[c] = ((_b = counts[c]) != null ? _b : 0) + 1;
-      }
-    }
-    return counts;
-  }
-  var LEDGER_KEYS = ["new", "resolved", "reopened"];
-  var LEDGER_SPEC = {
-    keys: LEDGER_KEYS,
-    countsColumn: "ledger_json",
-    versionColumn: "derivation_version",
-    projectKey: "ledger"
-  };
-  function ledgerTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, LEDGER_SPEC, limit, projectId);
-  }
-  var NET_CAPACITY_BAND_PCT = 2;
-  var MIN_COMPARABLE_SYNCS = 2;
-  function verdictOf(netPct) {
-    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
-    return netPct > 0 ? "gaining" : "falling-behind";
-  }
-  function capacityFromLedgerDeltas(rows, limit = 90) {
-    var _a5, _b, _c;
-    const raw = [];
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = parseCounts(r["ledger_json"], [
-        "new",
-        "resolved",
-        "reopened",
-        "carried",
-        "skippedNarrowedScope"
-      ]);
-      if (!counts) continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      const c = counts;
-      const n = (k) => {
-        var _a6;
-        return Number((_a6 = c[k]) != null ? _a6 : 0);
-      };
-      raw.push({
-        syncId: String((_b = r["sync_id"]) != null ? _b : ""),
-        at,
-        // "" is UNKNOWN, never "the same scope as the row beside it" — see case 2 above.
-        scope: String((_c = r["register_scope"]) != null ? _c : ""),
-        opened: n("new") + n("reopened"),
-        closed: n("resolved"),
-        openAtStart: n("carried") + n("resolved"),
-        skipped: n("skippedNarrowedScope")
-      });
-    }
-    raw.sort(cmpBy((p) => p.at));
-    const points = [];
-    let comparableCount = 0;
-    const rates = [];
-    const netPcts = [];
-    for (let i = 0; i < raw.length; i++) {
-      const cur = raw[i];
-      const prev = i > 0 ? raw[i - 1] : null;
-      const comparable = Boolean(
-        prev && cur.skipped === 0 && cur.scope !== "" && prev.scope !== "" && cur.scope === prev.scope
-      );
-      const netPct = cur.openAtStart > 0 ? (cur.closed - cur.opened) / cur.openAtStart * 100 : null;
-      if (comparable) {
-        comparableCount += 1;
-        if (cur.openAtStart > 0) {
-          rates.push(cur.closed / cur.openAtStart * 100);
-          netPcts.push(netPct != null ? netPct : 0);
-        }
-      }
-      points.push({
-        syncId: cur.syncId,
-        at: cur.at,
-        opened: cur.opened,
-        closed: cur.closed,
-        net: cur.closed - cur.opened,
-        comparable,
-        verdict: comparable ? verdictOf(netPct) : null
-      });
-    }
-    const enough = rates.length >= MIN_COMPARABLE_SYNCS;
-    const mean2 = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
-    const trimmed = limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
-    return {
-      points: trimmed,
-      overall: {
-        mmcr: enough ? mean2(rates) : null,
-        verdict: enough ? verdictOf(mean2(netPcts)) : null,
-        syncs: points.length,
-        comparable: comparableCount
-      }
-    };
-  }
-  function labelCategories(ids) {
-    return ids.map((id) => {
-      const known = CANDIDATE_CATEGORIES.filter((c) => c.id === id)[0];
-      return { id, name: known ? known.name : id };
-    });
-  }
-  function postureTrendFromHistory(rows, categoryIds, limit = 90) {
-    return {
-      adjacency: adjacencyTrendFromHistory(rows, limit),
-      exploitation: exploitationTrendFromHistory(rows, limit),
-      categories: labelCategories(categoryIds),
-      categoryPoints: categoryTrendFromHistory(rows, categoryIds, limit),
-      ledger: ledgerTrendFromHistory(rows, limit),
-      capacity: capacityFromLedgerDeltas(rows, limit)
-    };
   }
 
   // src/domain/prunePlan.ts
@@ -19924,6 +19962,7 @@ var Server = (() => {
   }
   function seedTrendHistory(endIso, registerScope, withLedger) {
     if (dataRowCount(TABS.syncHistory) > 0) return;
+    const posture = withLedger ? seedPostureTrend(endIso) : null;
     appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
       const at = seedSyncAt(endIso, i);
       const entry = withLedger ? SEED_LEDGER.history[i] : void 0;
@@ -19951,7 +19990,22 @@ var Server = (() => {
         // current sync applies. Absent here reads as UNKNOWN, and the dry run's six departures
         // become six `skippedNarrowedScope` instead — the perturbation in test/seedLedger.test.ts
         // measures exactly that.
-        register_scope: entry ? registerScope : null
+        register_scope: entry ? registerScope : null,
+        // WHERE THE OPEN ROWS SAT relative to the AI estate, and how many adjacency edges the
+        // graph held to place them with — the three placements plus their denominator, in the
+        // same cell `persistSync` writes them into. Without it this series has one point, and
+        // "Where issues sit" renders a heading, a note and no chart on the one dataset every
+        // dev harness and every test opens.
+        adjacency_json: posture ? JSON.stringify(posture[i].adjacency) : null,
+        // Open issues per risk category at this sync, counted from the same open rows.
+        category_counts_json: posture ? JSON.stringify(posture[i].categoryCounts) : null,
+        // NULL ON EVERY SYNTHETIC ROW, DELIBERATELY, and null is the measurement. No evidence
+        // pass ran over the fabricated history — and none runs on the dry run either, which
+        // passes no `vulnFindings`, so `persistSync` writes null on its own row too. A zeroed
+        // census here would draw five flat lines saying nothing is exploitable over a register
+        // nobody asked the question of, which is the one thing `EXPLOITATION_SPEC`'s null-skip
+        // exists to prevent. The card says "No sync has recorded this yet." and means it.
+        exploitation_json: null
       };
     }));
   }

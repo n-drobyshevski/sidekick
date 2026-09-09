@@ -13,11 +13,13 @@
 // projection's per-kind caps and SUMMARY collapse nodes visibly engage at depth 3.
 
 import { gap } from "../domain/aars";
-import type { AarsHints } from "../domain/graphEnrich";
+import { countIssueCategories } from "../domain/aarsTrend";
+import { withAiAdjacency } from "../domain/graphEnrich";
+import type { AarsHints, AdjacencyCensus } from "../domain/graphEnrich";
 import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import type {
-  ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode,
-  GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
+  AiAdjacency, ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow,
+  GEdge, GNode, GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
 } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
 import type { IssueLedgerDeltas, IssueLedgerRow } from "../domain/issueLedger";
@@ -1770,6 +1772,122 @@ export function seedLedgerRows(endIso: string, registerScope: string): IssueLedg
     };
     return row;
   });
+}
+
+// ---------------------------------------- the posture series the synthetic syncs carry
+//
+// WHAT WAS MISSING AND HOW IT READ. The eight fabricated commit rows carried `issue_count`,
+// `ledger_json` and `register_scope` and NOTHING ELSE about posture, so `adjacency_json` and
+// `category_counts_json` were null on all eight and the only point either series had was the
+// dry run's own. `postureTrendCard` draws from two points, so on the dry seed both cards
+// rendered "One sync has recorded this - the series draws from the second." and no canvas:
+// three cards' worth of chrome over a register this fixture had already described in full.
+//
+// DERIVED, NEVER TYPED. Both cells are counted from `SEED_LEDGER` - the rows open after each
+// synthetic sync - through the same two functions `persistSync` writes the real cells with
+// (`withAiAdjacency`, `countIssueCategories`). Two hand-maintained tables that must agree
+// with a third is exactly the pair that drifts, and the drift here is invisible: a chart
+// still draws.
+//
+//   open(i) = rows with firstSeenIndex <= i and (disappearedIndex === null or > i)
+//
+//   sync   open   DIRECT  ADJACENT  UNLINKED     categories
+//     1     12       2        8         2       {AI Security: 12}
+//     2     18       7        8         3       {AI Security: 18}
+//     3     22      11        8         3       {AI Security: 22}
+//     4     26      14        8         4       {AI Security: 26}
+//     5     28      16        8         4       {AI Security: 28}
+//     6     31      18        8         5       {AI Security: 31}
+//     7     32      19        7         6       {AI Security: 32}
+//     8     34      21        7         6       {AI Security: 34}
+//   dry run 32      24        8         0       {AI Security: 32}
+//
+// The three placements sum to `issueCount` on every row, which is the invariant tying this
+// table to the ledger's own - and the last step is the dry run's story told twice: ADJACENT
+// 7 -> 8 is `iss-005` coming back, DIRECT 21 -> 24 is the three withheld ids arriving, and
+// UNLINKED 6 -> 0 is the six `iss-gone-NN` rows leaving. A fixture whose adjacency series did
+// not move with its own ledger would draw a landscape the movement aside beside it denies.
+//
+// THE `iss-gone-NN` ROWS COUNT AS UNLINKED, and that is the fold's own answer rather than a
+// guess. They are not in `SEED_ISSUES`, so they carry no `assetId` at all; `withAiAdjacency`
+// places a row whose asset is not an AI asset and has no adjacency edge as UNLINKED. Reading
+// the fallback as anything else would be inventing a placement for a row with no asset.
+//
+// `edgesKnown` IS THE SAME 79 ON EVERY SYNTHETIC ROW, because the fabricated history runs
+// over one graph - the seed's own. It is the denominator without which an UNLINKED count is
+// unreadable (`TrendPoint.annotations`), so it travels on every point rather than on the
+// last.
+//
+// `exploitation_json` STAYS NULL, AND THAT IS THE HONEST ANSWER rather than a gap in this
+// fixture. `dryRunSync` passes no `vulnFindings`, so `persistSync` writes null on the dry
+// run's OWN row (measured: it is null there today). No evidence pass ran over the fabricated
+// history either. Five zeroes would turn "nobody looked" into "nothing is exploitable" - the
+// exact reading `sheetsDb`'s note on the column and `EXPLOITATION_SPEC` both refuse - so the
+// Exploitation evidence card keeps its "No sync has recorded this yet." and the register
+// keeps its one true statement about that axis.
+
+/** One synthetic sync's posture cells, in the shape `persistSync` writes the real ones. */
+export interface SeedPostureTrendEntry {
+  /** `adjacency_json`: the three placements plus the denominator that makes them readable. */
+  adjacency: AdjacencyCensus;
+  /** `category_counts_json`: open issues per category, once per category a row carries. */
+  categoryCounts: Record<string, number>;
+}
+
+/**
+ * The ledger rows open AFTER synthetic sync `index` - the population every cell above counts.
+ *
+ * A row is open when it had arrived by this sync and no later sync had missed it yet. The
+ * disappearance test is `> index` rather than `>= index`: `disappearedIndex` is the sync that
+ * first MISSED the row, so the row is already gone from that sync's own population.
+ */
+export function seedLedgerOpenAt(index: number): SeedLedgerRowSpec[] {
+  return SEED_LEDGER.rows.filter((spec) => spec.firstSeenIndex <= index
+    && (spec.disappearedIndex === null || spec.disappearedIndex > index));
+}
+
+/**
+ * The posture cells for all eight synthetic syncs, counted off `SEED_LEDGER`.
+ *
+ * `endIso` reaches only `seedGraphDoc`, whose `syncedAt` the adjacency fold never reads - it
+ * is threaded through so this walks the SAME document the dry run enriches rather than a
+ * second construction of it.
+ */
+export function seedPostureTrend(endIso: string): SeedPostureTrendEntry[] {
+  // ONE fold over the seed graph, not eight: adjacency is a property of the row and the
+  // graph, and the graph does not move across the fabricated history. Measured equal to the
+  // census `persistSync` writes on the dry run's own row ({DIRECT: 24, ADJACENT: 8,
+  // UNLINKED: 0, edgesKnown: 79}), which is what makes the last synthetic point and the live
+  // one comparable at all.
+  const { issues: placed, census } = withAiAdjacency(seedGraphDoc(endIso), SEED_ISSUES);
+  const placementById: Record<string, AiAdjacency> = {};
+  for (const issue of placed) {
+    if (issue.aiAdjacency) placementById[issue.id] = issue.aiAdjacency;
+  }
+  const categoriesById: Record<string, readonly string[]> = {};
+  for (const issue of SEED_ISSUES) categoriesById[issue.id] = issue.categories ?? [];
+  const entries: SeedPostureTrendEntry[] = [];
+  for (let index = 0; index < SEED_SYNC_COUNT; index += 1) {
+    const open = seedLedgerOpenAt(index);
+    const adjacency: AdjacencyCensus = {
+      DIRECT: 0, ADJACENT: 0, UNLINKED: 0, edgesKnown: census.edgesKnown,
+    };
+    for (const spec of open) {
+      // `??`, never `||`: a placement is a non-empty string or absent, and the fallback is
+      // the fold's answer for a row with no asset (see the section header) rather than a
+      // default for a row whose placement merely read falsy.
+      adjacency[placementById[spec.issueId] ?? "UNLINKED"] += 1;
+    }
+    entries.push({
+      adjacency,
+      // The same counter `persistSync` uses, over the same shape - a row's OWN stamps, and
+      // `seedLedgerRows` gives a departed row `[RISK_CATEGORY_ID]` for exactly this reason.
+      categoryCounts: countIssueCategories(open.map((spec) => ({
+        categories: categoriesById[spec.issueId] ?? [RISK_CATEGORY_ID],
+      }))),
+    });
+  }
+  return entries;
 }
 
 // ----------------------------------------------- rule catalogue + identity hygiene (dry-run)
