@@ -15,9 +15,8 @@ import os
 import time
 from typing import Any, Dict, Iterator, List, Optional, Sequence
 
-import requests
-
 import dbx
+import requests
 from config import (
     API_SEVERITY_VALUES,
     DEFAULT_FETCH_SEVERITIES,
@@ -95,7 +94,7 @@ def _asset_selection(indent: str = " " * 6) -> str:
 
 
 # A trimmed subset of ``os_vulns.QUERY`` -- only the fields the metrics actually consume.
-# See ``os_vulns.py`` for the full-fidelity query the Streamlit app uses.
+# See ``os_vulns.py`` for the full-fidelity Python query.
 #
 # The three exploit-intelligence fields are load-bearing and easy to overlook: hasCisaKevExploit,
 # hasExploit and epssProbability are what make coverage and efficiency computable at all. Drop

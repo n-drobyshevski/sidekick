@@ -91,7 +91,19 @@ export function sastModel(payload, opts) {
   const order = (opts && opts.severityOrder) || SEVERITY_FALLBACK;
   const coverage = p.signalCoverage || {};
   const awaiting = p.awaiting || {};
-  const concentration = concentrationModel(p.concentration, ["cwe", "repo", "language", "owner_project"]);
+  // THE LIST IS STATED TWICE — here and in readModels.ts's CONCENTRATION_DIMS — and THIS copy
+  // is the one that renders: `concentrationModel` maps over the dims it is GIVEN, so a name
+  // here that the payload does not carry yields a card with zero rows rather than no card.
+  // Dropping a dimension from the server alone replaces the breakdown with an empty one; both
+  // copies have to agree. (`pages/sca.js` carries the same warning above its own copy, which
+  // is how that failure is already known here.)
+  //
+  // No `language`, matching sca. The card that went from sca went as a restatement of "By
+  // repository" one level coarser; this one is not that — a SAST language is a fact about the
+  // code the weakness is in — but it is still an attribute nobody remediates against, and it
+  // sat beside `cwe`, which is the weakness axis a reader actually acts on. Three breakdown
+  // cards where the third is never the one you open is a page paying rent on a habit.
+  const concentration = concentrationModel(p.concentration, ["cwe", "repo", "owner_project"]);
   const weakness = concentration.find((c) => c.dim === "cwe") || null;
   const tiers = tierModel(p.tiers, RISK_TIER_ORDER, RISK_TIER_LABELS);
   const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced, opts && opts.at);
@@ -149,7 +161,9 @@ export function sastModel(payload, opts) {
 
     // 0% in this tenant, and published as such. `signalFigure` renders "never evaluated"
     // rather than a zero, which is the difference between a gap and an all-clear.
-    aiVerdict: signalFigure("ai_verdict", "AI triage verdict", "sast", coverage.ai_verdict),
+    // Its OWN term, not "sast" — the register's entry, which is what this row pointed at
+    // and what the SCA register's three signals pointed at before them.
+    aiVerdict: signalFigure("ai_verdict", "AI triage verdict", "ai-verdict", coverage.ai_verdict),
 
     severityAxis: p.severityAxis || { supported: true },
     counts: p.counts || {},
@@ -457,8 +471,12 @@ function paintSast(host, vm, filters) {
   ));
 
   // ---------------------------------------------------------------------- breakdowns
+  // PAIRED, same as sca.js's breakdowns and for the same reason: four narrow columns each,
+  // identical shape, meant to be read against one another. Stacked they were a screen apart.
+  // An odd count flows the last onto its own row at half width, which is fine.
+  const breakdowns = el("div", { class: "card-pair" });
   for (const dim of vm.concentration) {
-    host.append(sectionCard(dim.label, { denominator: dim.denominator },
+    breakdowns.append(sectionCard(dim.label, { denominator: dim.denominator },
       el("div", { class: "table-host" }, dataTable({
         columns: [
           { key: "key", label: "Group", cell: (r) => r.key },
@@ -471,6 +489,7 @@ function paintSast(host, vm, filters) {
       filterEmptyNotice(vm.asOf, filters.severities.length > 0, dim.rows.length === 0),
     ));
   }
+  host.append(breakdowns);
 
   // ------------------------------------------------------------------ oldest open
   host.append(sectionCard("Oldest open weaknesses", null,

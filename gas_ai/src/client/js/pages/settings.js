@@ -27,9 +27,9 @@ import { setShowExperimental, showExperimental } from "../experimental.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { clientBuild } from "../buildInfo.js";
 import {
-  categoryDraftPatch, changeCountText, changeSummary, changedFields, dirtyTabs, draftWarnings,
-  normalizeTab, rankDraftFromPreset, rankDraftPatch, rankShareTotal, SETTINGS_TABS,
-  settingsDraft, settingsPatch, validateDraft,
+  categoryDraftPatch, changeCountText, changeSummary, changedFields, draftWarnings,
+  fieldErrors, normalizeTab, rankDraftFromPreset, rankDraftPatch, rankShareTotal, SETTINGS_TABS,
+  settingsDraft, settingsPatch, TAB_FIELDS, tabStatus, validateDraft,
 } from "../settingsModel.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -127,9 +127,18 @@ export async function renderSettings(main, params, ctx) {
     onchange: () => { draft.defaultDepth = Number(depthSel.value); onEdit(); },
   }, ...[1, 2, 3].map((d) => el("option", { value: String(d) }, "Depth " + d)));
 
+  // The one inline field alert on this page — see fieldErrors()'s own header for why the node
+  // budget is the only typable field settings.js validates: `defaultDepth` is a `<select>`
+  // fed only its three legal options, so there is no keystroke that could put it out of range.
+  const nodesErrorId = "set-nodes-error";
+  const nodesError = el(
+    "span",
+    { id: nodesErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+  );
   const nodesInput = el("input", {
     id: "set-nodes", type: "number",
     min: String(bounds.nodesFloor), max: String(bounds.nodesCeiling), step: "10",
+    "aria-describedby": nodesErrorId,
     oninput: () => { draft.maxNodes = Number(nodesInput.value); onEdit(); },
   });
 
@@ -152,7 +161,7 @@ export async function renderSettings(main, params, ctx) {
         label: "Node budget per view", htmlFor: "set-nodes",
         description: "A hard ceiling on one view, between " + bounds.nodesFloor
           + " and " + bounds.nodesCeiling + ".",
-        control: nodesInput,
+        control: [nodesInput, nodesError],
       }),
     ],
   });
@@ -877,11 +886,44 @@ export async function renderSettings(main, params, ctx) {
   host.append(tabs.node, ...tabKeys.map((k) => panels[k]), bar.node);
 
   // ------------------------------------------------------------------------ shared repainting
+  //
+  // Fields currently failing their OWN legality check (fieldErrors), keyed by SETTING_KEYS
+  // name — read by tabStatus() by KEY PRESENCE, never truthiness (a caller clears a field by
+  // DELETING the key, not by setting a falsy message; see tabStatus's own header for why that
+  // split matters). Recomputed wholesale on every edit rather than patched per-field: cheap,
+  // and there is only one checked field today (fieldErrors' own header explains why).
+  let errors = {};
+
+  function refreshFieldErrors() {
+    const fe = fieldErrors(draft, bounds);
+    for (const [field, message] of Object.entries(fe)) {
+      if (message) errors[field] = message; else delete errors[field];
+    }
+  }
+
+  /** Paint the one inline `role="alert"` span (and its `aria-invalid` pairing) from `errors` —
+   *  hidden text is not merely INVISIBLE, `[hidden]` (base.css's global reset) drops it from
+   *  the accessibility tree too, so a cleared field is silent rather than an empty alert. */
+  function paintFieldErrors() {
+    nodesError.hidden = !errors.maxNodes;
+    nodesError.textContent = errors.maxNodes || "";
+    nodesInput.setAttribute("aria-invalid", errors.maxNodes ? "true" : "false");
+  }
+
   function syncDirty() {
+    refreshFieldErrors();
+    paintFieldErrors();
     const changed = changedFields(saved, draft);
     bar.update(changeCountText(changed), changeSummary(changed));
-    const dt = new Set(dirtyTabs(changed));
-    for (const k of tabKeys) tabs.setDirty(k, dt.has(k));
+    // tabStatus() replaces the old dirtyTabs(changed) lookup with the same underlying
+    // comparison (sameValue), plus the invalid half dirtyTabs never carried — one call instead
+    // of two so the tablist's dirty and invalid marks can never read from two different
+    // snapshots of `draft`.
+    const status = tabStatus(draft, saved, errors, TAB_FIELDS);
+    for (const k of tabKeys) {
+      tabs.setDirty(k, !!(status[k] && status[k].dirty));
+      tabs.setInvalid(k, !!(status[k] && status[k].invalid));
+    }
   }
 
   function onEdit() {

@@ -30,104 +30,26 @@
 .kpi-row--2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 
 /* -------------------------------------------------------------------- hero stat */
-.hero { margin: var(--space-1) 0 var(--space-5); }
-.hero .label { margin-bottom: var(--space-half); }
-.hero-src { font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-half); }
-.hero-minis {
-  display: flex; flex-wrap: wrap; gap: 28px;
-  border-top: 1px solid var(--hairline);
-  margin-top: 14px; padding-top: var(--space-3);
-}
-.mini-label { font-size: var(--fs-label); color: var(--text-3); }
-/* components.css sizes `.stat-row .mini-value`; this is the same figure OUTSIDE a
-   .stat-row, in .hero-minis, which is this register's own shape. Without it the mini
-   figures fall back to body type and stop reading as figures. */
-.mini-value { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); }
+/* THE SIX RULES THAT USED TO LIVE HERE ARE GONE (P3.4b). Measured, `grep -c` over
+   `gas/src/client/js/**` for each class as a `class:` literal: "hero" 0, "hero .label" 0,
+   "hero-src" 0, "hero-minis" 0, "mini-label" 0, "mini-value" 0 — no page builds any of them
+   any more, every hero is the shared `pageHeader`/`heroStat` now, and `mini-value` had
+   already been shadowed everywhere it still matched by components.css's higher-specificity
+   `.stat-row .mini-value` (statRow() always nests it inside `.stat-row`). The only `hero-*`
+   literal left is `hero-line`, which `gas_shared/styles/components.css` defines under
+   `.page-hero-sub`. */
 
-/* ---------------------------------------------------------------- executive view */
-/* The default landing page: a centered single-column summary. This is the one place the
-   shell gets a max-width, centered container — every other page is full-bleed against the
-   left rail. Leadership landing page, so hierarchy is dominated by one big number. */
-.exec { max-width: 720px; margin: 0 auto; text-align: center; }
-/* The page's own <h1> + .page-sub pair is a pageHeader({ route: "executive" }) now, so the
-   centered column has to centre the header's own blocks rather than a paragraph under it.
-   `text-align` inherits, so `.page-titles` is centred by the rule on `.page-header` above it —
-   what does NOT centre is the lede, which is a max-width block and would sit hard-left inside
-   a wider cell. */
-.exec .page-header, .exec .page-hero { text-align: center; }
-.exec .page-titles .page-hero-sub { margin-left: auto; margin-right: auto; }
-/* .scope-bar is a flex row, so it ignores .exec's text-align and would sit hard-left in an
-   otherwise centered column. The chip qualifies these figures — it centers with them. */
-.exec .scope-bar { justify-content: center; }
-/* The single hero value (DESIGN.md: at most one per page). A deliberate exec-only step
-   above the --fs-hero .hero-value cap — this page *is* that number, so the larger size
-   earns its place; it is still the only hero value on the page. Tabular figures so it
-   never jitters. Left as a clamp() rather than a --fs-* step: it is the one type size in
-   the app that is viewport-relative, and no step on a seven-step fixed scale can be. */
-.exec-hero { margin: var(--space-2) 0 18px; }
-.exec-hero .label { margin-bottom: var(--space-1); }
-.exec-hero-value {
-  font-size: clamp(2.5rem, 6vw, 4rem);
-  font-weight: var(--fw-semibold); letter-spacing: -0.02em; line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-.exec-hero .hero-src { margin-top: 6px; }
-/* Hero value + week-over-week trend badge. The badge is taken OUT of flow (absolute, at the
-   metric's bottom-right) so the big number stays centred under its label — an inline-flex row
-   would group number+badge and shift the number left by the badge's width. The row shrink-wraps
-   the metric and is centred by .exec's text-align. */
-.exec-hero-row { position: relative; display: inline-block; }
-.exec-trend {
-  position: absolute; left: 100%; bottom: 10px; margin-left: var(--space-3);
-  display: inline-flex; align-items: baseline; gap: 6px; white-space: nowrap;
-}
-.exec-trend .chg { margin-left: 0; }
-.exec-trend-arrow { margin-right: var(--space-half); font-weight: var(--fw-hero); }
-.exec-trend-note { font-size: var(--fs-label); color: var(--text-3); }
-/* Narrow viewports: the out-of-flow badge would overflow the right edge, so drop it back into
-   flow and stack it centred under the number instead (still centred, no horizontal scroll). */
-@media (max-width: 600px) {
-  .exec-hero-row { display: flex; flex-direction: column; align-items: center; }
-  .exec-trend { position: static; margin: 6px 0 0; }
-}
-/* Scan bar: last-scan caption + a single primary Run scan, centered under the hero. */
-.exec-scan {
-  display: flex; flex-direction: column; align-items: center; gap: 10px; margin: 0 0 var(--space-2);
-}
-.exec-scan .primary { display: inline-flex; align-items: center; gap: 6px; }
-.exec-scan .btn-icon { display: inline-flex; width: 16px; height: 16px; }
-.exec-scan .btn-icon svg { width: 16px; height: 16px; display: block; }
-/* Open-vulns-by-severity tiles: dot + count + label. Colour rides only on the dot — the
-   count and name carry the meaning too (DESIGN two-token + non-colour-signal rules). */
-.exec-sev-row {
-  display: flex; flex-wrap: wrap; justify-content: center;
-  gap: var(--space-3); margin: 0 0 var(--space-1);
-}
-.exec-sev-tile {
-  min-width: 108px;
-  background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-xl); box-shadow: var(--shadow-card);
-  padding: var(--space-3) var(--space-4);
-  display: flex; flex-direction: column; align-items: center; gap: var(--space-1);
-}
-.exec-sev-count {
-  font-size: var(--fs-display); font-weight: var(--fw-semibold);
-  letter-spacing: -0.02em; line-height: 1.1;
-  font-variant-numeric: tabular-nums;
-}
-.exec-sev-name {
-  display: inline-flex; align-items: center;
-  font-size: var(--fs-label); font-weight: var(--fw-semibold); color: var(--text-2);
-}
-/* The by-domain table reads left-to-right even inside the centered column. */
-.exec-by-domain { text-align: left; margin-top: var(--space-1); }
-/* The KM median is this table's headline number — size it up (a step above the body rows)
-   so the per-domain MTTR reads as the figure to scan, echoing the page's single big hero.
-   Tabular nums keep the column from jittering across rows. */
-.exec-by-domain td.num--key {
-  font-size: var(--fs-display-sm); line-height: 1.15; letter-spacing: -0.01em;
-  font-variant-numeric: tabular-nums;
-}
+/* THE `.exec*` BLOCK IS GONE, AND ITS ABSENCE IS THE CHANGE. It was the centred 720px
+   column (`.exec`), the clamp()ed hero value two steps above every other figure in the app
+   (`.exec-hero-value`), the out-of-flow week-over-week badge (`.exec-trend*`), the page's own
+   Run scan bar (`.exec-scan`), the five bordered severity tiles (`.exec-sev-*`) and the
+   by-domain table's own left-align override — all of it furniture for a leadership one-pager
+   inherited from the Streamlit build. gas/DESIGN.md §6 wrote the retirement down before it
+   happened: the page draws the shared `pageHeader()` shape now (hero stat, movement aside,
+   stat strip), a `sevSegmentBar` + `sevKeyRow` picture instead of tiles, and the rail's Run
+   scan button instead of its own. `.fixnext*` / `.movement-*` (gas_shared/styles/
+   components.css, P3.4b) are what it draws with; nothing here replaces `.exec`, because a
+   full-bleed page needs no container. */
 
 /* ------------------------------------------- severity breakdown stat list (+ delta) */
 /* A bordered card of one row per severity: dot + label (left), count over an
@@ -247,16 +169,12 @@
 /* ------------------------------------------------------------------ filter bar */
 .filter-bar .field { display: flex; flex-direction: column; }
 
-/* Segmented toggle (e.g. report format): the pressed option reads as selected without
-   borrowing the graphite of the primary action sitting beside it. */
-.seg-btn[aria-pressed="true"] {
-  background: var(--page);
-  border-color: var(--ink);
-  color: var(--ink);
-  font-weight: var(--fw-semibold);
-}
-/* Compact variant for inline section-level controls: body-small type, tighter box. */
-.seg-btn--sm { min-height: 26px; padding: var(--space-half) 10px; font-size: var(--fs-label); }
+/* `.seg-btn[aria-pressed="true"]` / `.seg-btn--sm` / `.seg-row` LEFT WITH P1.3. Five
+   hand-rolled aria-pressed toggles across mttr.js/overview.js/data.js each rebuilt this exact
+   recipe — a joined or unboxed row of buttons, the pressed one styled by hand — which is what
+   gas_shared/ui/controls.js's `segmented()` already is (components.css's `.segmented` rule).
+   Every call site now takes that shared control instead; nothing under src/client/js/pages/
+   references these three selectors any more (test/segmented.test.js sweeps for a regression). */
 /* Section label + inline control on one row, title left and control right.
    The wrapper owns the section-label's vertical rhythm; the h2 margin resets to 0. */
 .section-head {
@@ -264,8 +182,6 @@
   gap: var(--space-3); flex-wrap: wrap; margin: var(--space-6) 0 var(--space-3);
 }
 .section-head .section-label { margin: 0; }
-/* Unboxed row for segmented buttons (the .pill-row shape, no .filter-bar chrome). */
-.seg-row { display: flex; gap: 6px; }
 /* Card title + inline toggle on one row — the in-card variant of .section-head with no
    outer margin (the .chart-card padding owns the rhythm). */
 .chart-head {
@@ -417,50 +333,25 @@ td.num--key { font-weight: var(--fw-semibold); color: var(--ink); }
 .chart-grid--2 {
   grid-template-columns: repeat(auto-fit, minmax(max(320px, (100% - 14px) / 2), 1fr));
 }
-/* Distribution row: the survival curve spans 2 of the 3 chart blocks, the time-to-resolve
-   histogram takes the third. align-items:start keeps each card at its natural height (the
-   survival caption doesn't stretch the histogram); the span clamps to 1 when the grid drops
-   to a single column, so the two cards stack on a narrow pane. */
-.dist-grid { align-items: start; }
-.chart-grid .dist-main { grid-column: span 2; }
+/* `.dist-grid` / `.chart-grid .dist-main` (a distribution row's 2-of-3-column span) and
+   `.chart-card.fill-height` (an aging card stretching its chart into the row's height) are
+   GONE, P3.4b. Measured, `grep -c` over `gas/src/client/js/**`: "dist-grid" 0, "dist-main" 0,
+   "fill-height" 0 — every `.chart-grid` call in mttr.js/overview.js/history.js now sets
+   `align-items:start` as an inline style instead, and overview.js's aging card is a bare
+   `.chart-card`. */
 /* Survival curve gets a little more vertical room than the 240px trend boxes so the
    staircase reads clearly, especially zoomed into a 5w window. */
 .chart-box.chart-box--tall { height: 300px; }
-/* Aging card: let the age histogram grow into the height the stretched grid gives it
-   (its toggle-table sibling is taller) instead of a fixed 240px box. The canvas is taken
-   out of flow so its rendered height never feeds back into the card's own height — the
-   sibling panel drives the row height per view, and the chart just fills what's left. */
-.chart-card.fill-height { display: flex; flex-direction: column; }
-.chart-card.fill-height .chart-box { flex: 1 1 auto; height: auto; min-height: 240px; }
-.chart-card.fill-height .chart-box > canvas { position: absolute; inset: 0; }
 .chart-caption { margin-top: 10px; font-size: var(--fs-label); }
 
 /* --------------------------------------------------------------- finding sheet */
-/* Resize handle: a slim hit-strip on the sheet's left edge (the sheet itself is `position:
-   fixed`, which is enough of a containing block for this absolutely-positioned child — no
-   extra positioning context needed). The hit area is 6px so it's easy to grab, but the visible
-   hairline is a slender 1px centered in it, brightening to the accent on hover/focus so it
-   reads as "grabbable" without competing with the sheet's own left border at rest. No width
-   transition on the handle — live drag updates would look laggy if animated. */
-.sheet-resize-handle {
-  position: absolute; top: 0; left: 0; bottom: 0; width: 6px;
-  cursor: ew-resize; touch-action: none; z-index: 1;
-  background: transparent;
-}
-.sheet-resize-handle::before {
-  content: ""; position: absolute; top: 0; bottom: 0; left: var(--space-half); width: 1px;
-  background: var(--hairline);
-}
-.sheet-resize-handle:hover::before { background: var(--accent); }
-.sheet-resize-handle:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
-.sheet-resize-handle:focus-visible::before,
-.sheet-resize-handle:active::before { background: var(--accent); width: 2px; }
-.raw-json {
-  background: var(--surface); border: 1px solid var(--hairline);
-  border-radius: var(--radius-lg); padding: 10px; font-size: var(--fs-label);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  white-space: pre-wrap; word-break: break-all; max-height: 320px; overflow: auto;
-}
+/* THE WHOLE SECTION THAT USED TO BE HERE IS GONE, P3.4b: a hand-built `.sheet-resize-handle`
+   (the sheet's own drag strip) and a hand-built `.raw-json` monospace block. Measured,
+   `grep -c` over `gas/src/client/js/**`: "sheet-resize-handle" 0, "raw-json" 0 — the sheet's
+   resize affordance is `gas_shared/ui/sheet.js`'s own `.sheet-grip` now (a real Window
+   Splitter separator, styled in `gas_shared/styles/sheet.css`), and findingSheet.js prints a
+   raw value through the shared `codeBlock()` (`gas_shared/ui/code.js`, class `.code-block`,
+   base rule in `gas_shared/styles/components.css`) rather than building its own container. */
 
 /* ---------------------------------------------------------------------- dialogs */
 /* Never grow past the viewport; a tall dialog scrolls instead of clipping its actions.
@@ -681,57 +572,12 @@ dialog.domains-dialog .dialog-preview {
   margin-top: var(--space-3);
 }
 
-/* The confusion matrix. Row headers carry the classification, column headers the outcome,
-   so each cell's meaning is readable from its position alone — no colour coding. */
-.prog-matrix th[scope="row"] {
-  font-weight: var(--fw-semibold);
-  color: var(--ink);
-  white-space: nowrap;
-}
-.prog-matrix td { padding: 0; }
-.prog-matrix td:last-child { padding: 10px var(--space-3); }
-/* The unclassified row sits below a heavier rule: outside the 2x2, not a fifth quadrant. */
-.prog-unknown-row > * { border-top: 2px solid var(--hairline); }
-.prog-unknown-row th[scope="row"] { color: var(--text-2); font-weight: var(--fw-medium); }
-
-/* Each matrix cell is a button into the findings behind it — the drill-down that makes the
-   count checkable. Full-bleed inside its td so the whole cell is the hit target. */
-.prog-cell {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-half);
-  width: 100%;
-  padding: 10px var(--space-3);
-  background: none;
-  border: 0;
-  border-radius: 0;
-  box-shadow: none;
-  text-align: left;
-  cursor: pointer;
-  min-height: 0;
-  height: auto;
-}
-/* Was `var(--surface-1, rgba(0, 0, 0, 0.03))`, and --surface-1 has never existed in any of
-   the three token files — so the fallback was doing all the work under a name that read
-   like a token. --wash-hover IS the named neutral hover ground (rgba(0,0,0,.045)); the
-   0.015 alpha step is the only visible part of the correction. */
-.prog-cell:hover:not(:disabled) { background: var(--wash-hover); }
-.prog-cell:disabled { cursor: default; opacity: 0.55; }
-.prog-cell:focus-visible { outline: 2px solid var(--accent-text); outline-offset: -2px; }
-.prog-cell-count { font-size: var(--fs-display-sm); font-weight: var(--fw-semibold); line-height: 1.1; }
-.prog-cell-word { font-size: var(--fs-label); color: var(--text-3); }
-/* TP/FP/FN/TN kept as a subordinate tag beside the plain-English label — present for the
-   reader who knows the shorthand, never the only cue for the reader who doesn't. */
-.prog-cell-abbr {
-  font-size: var(--fs-micro);
-  font-weight: var(--fw-hero);
-  letter-spacing: 0.06em;
-  color: var(--text-3);
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-xs);
-  padding: 0 var(--space-1);
-  margin-right: 6px;
-}
+/* The confusion matrix is `gas_shared/ui/quad.js`'s cross now (`.quad`/`.quad-cell`/
+   `.quad-label`/etc., `gas_shared/styles/components.css`) — the hand-built `.prog-matrix`
+   table, its `.prog-cell` buttons and the `.prog-unknown-row` beneath them are gone with it.
+   `.quad-action`, just below, is the one rule this page still owns for that grid: the
+   corner's own drill-down button, a small `linklike` under the share line. */
+.quad-action { display: block; margin-top: var(--space-half); }
 
 /* The classifier card: the rule as a sentence, then its clauses with their hit counts. */
 .prog-rule-card {
@@ -924,27 +770,21 @@ table.data.jobs-table td:last-child { text-align: right; white-space: nowrap; }
 table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px; overflow: visible; }
 
 /* ---------------------------------------------------------------- the scope combobox */
-/* ui/combobox.js is the ONE component this package could not hand back to gas_shared, so
-   these rules are not an override of the shared `.combobox-*` — they are the only rules
-   that dress this app's option rows. The shared list draws an option as a single row;
-   gas's nests a `.combobox-option-body` holding the label, with the check and the reset
-   row as siblings. The fork's own header names the exact gas_shared change (two glyphs in
-   ui/uiIcons.js) that retires both it and this block. */
+/* THIS PACKAGE'S OWN COMBOBOX FORK IS GONE (gas/src/client/js has no local combobox.js any
+   more; ui/scopeControl.js draws through `gas_shared/ui/combobox.js`), and most of what dressed
+   it went with it. That component's option row is `.combobox-option` > (an optional
+   `.combobox-option-icon`, the label as bare text, an optional `.combobox-option-hint`, an
+   optional `.combobox-check`) — `.combobox-option-body` (a wrapper this app nested the label
+   in), `.combobox-option-label`, `.combobox-option-check` and `.combobox-option--reset`
+   dressed a shape the shared component stopped building. Measured, `grep -rn` over `gas/`,
+   `gas_shared/ui/` and `gas_shared/shell/`: zero hits for any of the four. Two rules survive
+   because the classes are still built there and each one changes what renders — an active
+   trigger's accent border, and the tabular-nums alignment a count-bearing hint needs that the
+   shared rule (built for a kind, not a number) does not set. */
 .combobox-trigger.active { border-color: var(--accent-text); }
-.combobox-option-body {
-  flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: var(--space-2);
-}
-.combobox-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The hint carries a COUNT ("1,204 assets"), so it needs the figures to line up; the shared
    rule does not set this because its hint carries a kind rather than a number. */
 .combobox-option-hint { font-variant-numeric: tabular-nums; }
-.combobox-option-check {
-  display: inline-flex; flex: 0 0 auto; align-self: center;
-  margin-left: var(--space-1); color: var(--accent-text);
-}
-.combobox-option--reset {
-  border-bottom: 1px solid var(--hairline); margin-bottom: var(--space-half); padding-bottom: var(--space-2);
-}
 
 /* ------------------------------------------------------------------- the empty chart */
 /* NOT an override of gas_shared/styles/tables.css `.chart-empty` — a genuinely different

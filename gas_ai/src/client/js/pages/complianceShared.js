@@ -14,7 +14,10 @@
 // and glyphs belong in the view, the classification itself always comes from the server
 // (`node.state`), so the two cannot disagree about which state a row is IN.
 
-import { dataTable, el, fmtDateTime, meter, plural, scopeNote, sevBadge } from "../ui.js";
+import {
+  absent, dataTable, el, firstRunNotice, fmtDateTime, heroStat, meter, plural, scopeNote,
+  sevBadge,
+} from "../ui.js";
 
 import { lookupGap } from "../codebook.js";
 import { tip, tipAnchor, tipMark } from "../ui.js";
@@ -85,6 +88,31 @@ export function fiveRsDerived(data, frameworkId) {
 }
 
 /**
+ * The framework register's hero and the overview's landscape hero, on the shared
+ * `heroStat` (`gas_shared/ui/controls.js`) instead of each hand-rolling its own
+ * `.comp-hero-value`/`.comp-hero-sub` pair — the two were byte-for-byte the same markup in
+ * `compliance.js` and `complianceOverview.js` before this.
+ *
+ * `meterNode` keeps its OWN wrapper — `.comp-posture-meter`, not the bare `heroStat` sub-line
+ * — because the posture-tier band tints (`.comp-posture-meter .meter-fill[data-band]`,
+ * compliance.css) need a hook to key off. It is the renamed `.comp-hero-meter`: the value
+ * beside it is drawn by `heroStat` now rather than by this page's own div, but the meter
+ * itself still wants its own `margin-top`/`max-width`, which the shared `.page-hero-sub` does
+ * not carry. `sub` is everything else that used to sit in the old `.comp-hero-sub` — the
+ * derivation sentence, and (wrapped by the caller in `.comp-posture-badge` for its own
+ * margin) the worst-severity mark — passed straight through as an array: `heroStat` flattens
+ * it into the sub-line's children in order, meter first, exactly as the two hand-rolled
+ * blocks drew it.
+ */
+export function complianceHero({ label, scored, pct, meterNode, sub, help }) {
+  const subLine = [
+    meterNode ? el("div", { class: "comp-posture-meter" }, meterNode) : null,
+    ...(sub || []),
+  ];
+  return heroStat(label, scored ? `${pct}%` : null, subLine, help);
+}
+
+/**
  * The posture cell. The whole point of the page's honesty lives here.
  *
  * A scored node gets the meter + number. An unscored one gets an em-dash and its reason,
@@ -140,7 +168,7 @@ export function postureCell(node) {
  */
 export function checksCell(node) {
   const total = node.passCount + node.failCount;
-  if (!total) return el("span", { class: "comp-posture-dash" }, "—");
+  if (!total) return absent();
   return el("span", { class: "num" },
     `${node.passCount.toLocaleString()} / ${total.toLocaleString()}`);
 }
@@ -262,9 +290,10 @@ function policyTable(policies) {
     panel: true,
     className: "comp-policy",
     columns: [
-      { key: "severity", label: "Severity", cell: (p) => sevBadge(p.severity) },
+      { key: "severity", label: "Severity", help: { term: "severity" }, cell: (p) => sevBadge(p.severity) },
       {
         key: "control", label: "Control",
+        help: { lines: ["The specific policy behind this subcategory, and which kind of evaluation it is."] },
         cell: (p) => el("div", {},
           el("div", {}, p.name),
           el("div", { class: "small muted" },
@@ -273,6 +302,7 @@ function policyTable(policies) {
       },
       {
         key: "checks", label: "Checks", className: "num",
+        help: { lines: ["How many resources passed, failed and were assessed under this policy."] },
         // Grouped, like the summary line above it and the register's Checks column.
         // Ungrouped here they read as a different quantity from the same numbers three
         // lines up — "1718" beside "194,309" looks like two ways of counting, not two
@@ -505,4 +535,42 @@ export function postureScopeView(data) {
 export function postureScopeNote(data) {
   const v = postureScopeView(data);
   return v.show ? scopeNote(v) : null;
+}
+
+/**
+ * The two-reason hint every compliance-absence notice carries, kept in ONE place so the
+ * per-framework register (compliance.js) and the overview (complianceOverview.js) can never
+ * drift into two different sentences for the same claim. They used to: the register named
+ * the two real reasons (no framework selected, or selected but not yet synced) while the
+ * overview described its own stale-SWR-cache edge case in terms only its author could tell
+ * apart from "nothing synced yet".
+ */
+export function postureAbsenceHint(data) {
+  const selected = data && data.selected && data.selected.length;
+  return selected
+    ? "The sync is configured to collect " + plural(data.selected.length, "framework") +
+      ", but no posture has been stored yet. Run a sync, then check the Wiz Scans page for " +
+      "a skipped step if this stays empty."
+    : "No frameworks are selected for posture collection. Choose them in Settings.";
+}
+
+/**
+ * The notice itself, for a caller that does not need `firstRunNotice` in its own source —
+ * complianceOverview.js is not a route the shared empty-state contract sweeps, so it calls
+ * this rather than repeating the two lines below.
+ *
+ * `synced`/`at` come from `boot.latestSync` rather than from `data` — whether COMPLIANCE
+ * posture exists and whether ANYTHING has ever been synced are different questions, and this
+ * page can be empty for its own reason (no framework selected in Settings) after many
+ * successful syncs of everything else. `firstRunNotice` still draws the honest sentence for
+ * that case: "the last sync … saved no records", dated, never "no sync has run yet" on a
+ * register that has in fact run several.
+ */
+export function postureAbsence(boot, data) {
+  const synced = !!(boot && boot.latestSync);
+  return firstRunNotice({
+    synced,
+    at: synced ? boot.latestSync.finished_at : undefined,
+    hint: postureAbsenceHint(data),
+  });
 }

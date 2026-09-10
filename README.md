@@ -1,71 +1,48 @@
-# Wiz Security Dashboard
+# Wiz registers
 
-A Streamlit dashboard for [Wiz](https://www.wiz.io/) vulnerability findings: OS-level
-CVEs on host workloads, severity breakdowns, and MTTR / SLA remediation analytics.
+This repository's maintained product surfaces are the Google Apps Script apps
+and the shared Python domain/spec code they are tested against.
 
-## Quickstart
+## Active apps
+
+- `gas/` — OS vulnerability register
+- `gas_ai/` — AI security register
+- `gas_devsecops/` — DevSecOps register
+- `gas_hub/` — launcher for the sibling apps
+- `gas_shared/` — shared UI system used by the GAS apps
+
+## Python code that remains
+
+The root Python package is still used as domain/spec infrastructure:
+
+- `wiz_dashboard/domain/` — Python behavioral spec and analytics logic
+- `wiz_dashboard/data/` — supporting data transforms, cache, history, and ledger helpers
+- `wiz_dashboard/models/` — schema/model helpers
+- `brick/` and `brick/devsecops/` — Databricks/Delta pipelines over the same registers
+- `devlake/` — local harness for the `brick/*` pipelines
+
+Do not remove the remaining Python domain layer without also updating the GAS
+fixture export flow and related tests. As documented in `CLAUDE.md`, the GAS
+ports use the Python domain layer as a behavioral spec.
+
+## Root Python setup
+
+The root Python environment is for the shared/spec code and tests, not for a
+local web app.
 
 ```bash
 python -m venv .venv
-.venv\Scripts\activate          # Windows  (use: source .venv/bin/activate on macOS/Linux)
+.venv\Scripts\activate
 pip install -r requirements.txt
-streamlit run app.py
-```
-
-The app opens at <http://localhost:8501>. Without credentials it runs in **dry-run**
-mode with bundled sample data, so you can explore it immediately.
-
-### Live data
-
-Provide Wiz service-account credentials in `wiz_config.json` at the repo root
-(git-ignored — never commit it):
-
-```json
-{ "wiz_client_id": "…", "wiz_client_secret": "…" }
-```
-
-You also need the [Wiz Python SDK](https://docs.wiz.io/docs/python-sdk) installed
-(`wiz_sdk`). The sidebar shows whether credentials were loaded.
-
-## Project structure
-
-```
-app.py                      # entry point — st.navigation / st.Page
-os_vulns.py                 # Wiz GraphQL query + fetch_findings() + CLI
-wiz_dashboard/
-  config.py                 # severity taxonomy, SLA targets, cache settings
-  data/   client.py         # cached fetch (st.cache_data) + disk snapshot
-          cache.py          # last_results.json "last known good" snapshot
-          transform.py      # coerce / extract nodes / DataFrame
-  domain/ severity.py        metrics.py (MTTR/SLA)   formatting.py
-  models/ schema.py          # pydantic models (handles flat AND grouped responses)
-  ui/     components.py       sanitize.py   theme.py
-          pages/             # os_vulns, reports, exports
-  assets/ styles.css         # custom widget CSS (loaded once via load_css)
-.streamlit/config.toml      # native [theme] (accent/fonts; pinned to light)
-tests/                      # pytest unit tests + AppTest smoke/scan
-```
-
-## Response shapes
-
-The Wiz API can return either **flat per-finding** records (with `severity` +
-timestamps, used for MTTR/SLA) or **grouped-by-asset** nodes (per-asset analytics
-counts). The OS page detects which shape arrived and renders accordingly; the schema
-layer tolerates missing/extra fields without raising.
-
-## CLI
-
-`os_vulns.py` also works standalone:
-
-```bash
-python os_vulns.py --dry-run --format json     # sample data
-python os_vulns.py --format table              # live (needs credentials + wiz_sdk)
-```
-
-## Testing
-
-```bash
 pytest
 ```
 
-Pure-logic units run without a browser; app-level checks use Streamlit's `AppTest`.
+## Repository guidance
+
+For app-specific setup and validation, use the docs in each active app:
+
+- `gas/README.md`
+- `gas_ai/README.md`
+- `gas_devsecops/README.md`
+- `gas_hub/README.md`
+- `gas_shared/README.md`

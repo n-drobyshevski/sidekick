@@ -13,13 +13,16 @@
 // projection's per-kind caps and SUMMARY collapse nodes visibly engage at depth 3.
 
 import { gap } from "../domain/aars";
-import type { AarsHints } from "../domain/graphEnrich";
+import { countIssueCategories } from "../domain/aarsTrend";
+import { withAiAdjacency } from "../domain/graphEnrich";
+import type { AarsHints, AdjacencyCensus } from "../domain/graphEnrich";
 import type { EffectiveAccessRow } from "../domain/effectiveAccess";
 import type {
-  ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow, GEdge, GNode,
-  GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
+  AiAdjacency, ConfigRuleRow, DataFindingRow, FindingRow, FrameworkPolicyRow, FrameworkRow,
+  GEdge, GNode, GraphDoc, IdentityFindingRow, IssueRow, NodeKind, PostureRow,
 } from "../domain/graphTypes";
 import { edgeId } from "../domain/graphTypes";
+import type { IssueLedgerDeltas, IssueLedgerRow } from "../domain/issueLedger";
 import { classifyIssue, OTHER_GROUP_ID, RISK_CATEGORY_ID } from "../domain/toxicCombos";
 
 const T0 = "2026-04-02T08:00:00Z"; // firstSeen for long-lived assets
@@ -1537,6 +1540,355 @@ export const SEED_TREND: Array<Record<string, number>> = [
   { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
   { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
 ];
+
+// -------------------------------------------------- the issue lifecycle ledger (dry-run)
+//
+// WHY A SEEDED LEDGER EXISTS AT ALL. `SEED_TREND` above gives the inventory a LINE to draw;
+// it says nothing about issues — it is the AARS severity census of ASSETS, and no issue
+// delta can be derived from it. So until this block existed, a dry-run store had a ledger
+// with 32 rows all born on the sync the reader was looking at, ZERO dated departures, and a
+// sync history whose eight synthetic rows carried no `ledger_json` at all. Every figure
+// built on lifecycle — open-backlog movement between two syncs, a survival curve over
+// first-seen to disappeared — had exactly one data point and no events. A movement aside
+// over that is not a small number, it is no measurement.
+//
+// WHAT IT IS AND IS NOT. It is a FABRICATED PRIOR: eight syncs' worth of ledger rows and the
+// eight commit records that describe them, written once, into an empty store, on the first
+// dry run. It is not a backfill of a real register — `seedIssueLedger` refuses the moment
+// either the ledger tab or the sync history holds a row, so it can never invent history in
+// front of a tenant's own, and the same refusal is what makes a second dry run idempotent.
+//
+// THE ARITHMETIC IS THE CONTRACT, and the two halves have to agree or the fixture publishes
+// a history its own rows contradict:
+//
+//   open(i) = open(i-1) + new - resolved + reopened
+//
+//   sync  new  resolved  reopened  carried   open
+//     1    12      0         0        0       12
+//     2     6      0         0        0       18
+//     3     5      1         0        0       22
+//     4     4      0         0        1       26
+//     5     3      1         0        1       28
+//     6     3      0         0        2       31
+//     7     2      1         0        2       32
+//     8     2      0         0        3       34
+//
+// Sum(new) = 37 = the seeded rows. Sum(resolved) = 3 = the rows carrying a `disappearedAt`.
+// Sum(reopened) = 0 — nothing has come back YET, which is what leaves the dry run a reopen
+// to record. 37 - 3 = 34 open immediately before the dry run.
+//
+// WHAT THE DRY RUN THEN MEASURES, which is the whole point of the split:
+//
+//   new: 3        the three ids left OUT of the seed (the "other AI risk" cohort)
+//   resolved: 6   `iss-gone-01..06` — open in the ledger, absent from SEED_ISSUES
+//   reopened: 1   `iss-005` — disappeared at sync 7, and live in SEED_ISSUES
+//   carried: 2    `iss-gone-07`, `iss-gone-08` — already dated, still absent
+//   skippedNarrowedScope: 0
+//
+// leaving a census of {open: 32, disappeared: 8, reopenedEver: 1} over 40 rows. `open` is 32
+// because the register IS the 32 seed issues; the 8 are the 6 just dated plus the 2 carried.
+//
+// THE `iss-gone-NN` IDS ARE NOT IN `SEED_ISSUES`, DELIBERATELY. A row can only be dated by
+// DISAPPEARANCE here — this register never sees a Wiz `resolvedAt` (domain/issueLedger.ts's
+// header says why) — so the only way to seed an event is to seed a row the current register
+// does not contain. They carry a `createdAt` a year before their first sighting, because a
+// survival curve must measure from the LEDGER's own date and a fixture where the two agree
+// cannot tell a correct reading from one that read `createdAt` instead.
+//
+// DATES ARE RELATIVE, like SEED_TREND's. `seedSyncAt` is the ONE piece of date arithmetic,
+// shared by the ledger rows and the commit rows that describe them, so a row's
+// `first_seen_at` and its sync's `finished_at` are the same instant by construction rather
+// than by two copies of the same offset staying in step.
+
+/** How many synthetic syncs the dry-run seed fabricates. `SEED_TREND` is sized to match. */
+export const SEED_SYNC_COUNT = 8;
+
+const SEED_SYNC_DAY_MS = 86_400_000;
+
+/** The id of synthetic sync `index` (0-based), matching the rows `seedTrendHistory` writes. */
+export function seedSyncId(index: number): string {
+  return "sync-sample-" + String(index + 1).padStart(2, "0");
+}
+
+/**
+ * When synthetic sync `index` ran: dated backwards from the sync being run, one day apart,
+ * so the sample history runs continuously into the live point rather than leaving a gap.
+ * Index `SEED_SYNC_COUNT - 1` is one day before `endIso`; index 0 is eight.
+ */
+export function seedSyncAt(endIso: string, index: number): string {
+  const end = new Date(endIso).getTime();
+  return new Date(end - (SEED_SYNC_COUNT - index) * SEED_SYNC_DAY_MS).toISOString();
+}
+
+/** One synthetic sync's ledger reading: the open population it ended with, and what moved. */
+export interface SeedLedgerHistoryEntry {
+  /** Open rows AFTER this sync — what `issue_count` on its commit row says. */
+  issueCount: number;
+  deltas: IssueLedgerDeltas;
+}
+
+/**
+ * One seeded ledger row, dated by SYNC INDEX rather than by an instant.
+ *
+ * The instants cannot live here: they are derived from the sync being run, and a fixture
+ * carrying absolute dates would drift out of the trend the moment the clock moved.
+ */
+export interface SeedLedgerRowSpec {
+  issueId: string;
+  /** Index into `SEED_LEDGER.history` — the synthetic sync that FIRST saw the row. */
+  firstSeenIndex: number;
+  /** The last synthetic sync that SAW it. */
+  lastSeenIndex: number;
+  /** The synthetic sync that first MISSED it, or null while the row is present. */
+  disappearedIndex: number | null;
+}
+
+/**
+ * Which rows arrived on which synthetic sync, oldest first.
+ *
+ * The row COUNT of each entry is the `new` its commit record claims — asserted rather than
+ * assumed (`test/seedLedger.test.ts`), because two hand-maintained tables that must sum to
+ * each other are exactly the kind of pair that drifts silently.
+ */
+const SEED_LEDGER_BIRTHS: ReadonlyArray<readonly string[]> = [
+  // Sync 1 — the bulk of the register arrives, plus the first of the rows that will leave.
+  [
+    "iss-001", "iss-002", "iss-003", "iss-004", "iss-005", "iss-006", "iss-007", "iss-008",
+    "iss-009", "iss-010", "iss-gone-01", "iss-gone-07",
+  ],
+  ["iss-011", "iss-012", "iss-013", "iss-014", "iss-015", "iss-gone-02"],
+  ["iss-016", "iss-017", "iss-018", "iss-019", "iss-gone-08"],
+  ["iss-020", "iss-021", "iss-022", "iss-gone-03"],
+  ["iss-023", "iss-024", "iss-gone-04"],
+  ["iss-025", "iss-026", "iss-gone-05"],
+  ["iss-027", "iss-gone-06"],
+  ["iss-028", "iss-029"],
+];
+
+/**
+ * The synthetic sync that first MISSED each departing row.
+ *
+ * Three of them, and the third is the interesting one: `iss-005` IS in `SEED_ISSUES`, so the
+ * dry run sees it again and records the register's one reopen. The other two are ids the
+ * current register does not contain, so they stay absent and are CARRIED.
+ */
+const SEED_LEDGER_DEPARTURES: Readonly<Record<string, number>> = {
+  "iss-gone-07": 2,
+  "iss-gone-08": 4,
+  "iss-005": 6,
+};
+
+function seedLedgerSpecs(): SeedLedgerRowSpec[] {
+  const out: SeedLedgerRowSpec[] = [];
+  SEED_LEDGER_BIRTHS.forEach((born, firstSeenIndex) => {
+    for (const issueId of born) {
+      // Refuse absent BEFORE any use: this lookup is `number | undefined`, and sync index 0
+      // is a legitimate value that a truthiness test would read as "never left".
+      const departure = SEED_LEDGER_DEPARTURES[issueId];
+      const disappearedIndex = departure === undefined ? null : departure;
+      out.push({
+        issueId,
+        firstSeenIndex,
+        // A row that left was last SEEN on the sync before the one that missed it — that gap
+        // is the error bar on `disappearedAt`, and collapsing the two would erase it.
+        lastSeenIndex: disappearedIndex === null ? SEED_SYNC_COUNT - 1 : disappearedIndex - 1,
+        disappearedIndex,
+      });
+    }
+  });
+  return out;
+}
+
+/**
+ * The fabricated prior the dry run reconciles against: eight commit records and the ledger
+ * rows they describe. See this section's header for the arithmetic that ties the two.
+ */
+export const SEED_LEDGER: {
+  history: SeedLedgerHistoryEntry[];
+  rows: SeedLedgerRowSpec[];
+} = {
+  history: [
+    { issueCount: 12, deltas: { new: 12, resolved: 0, reopened: 0, carried: 0, skippedNarrowedScope: 0 } },
+    { issueCount: 18, deltas: { new: 6, resolved: 0, reopened: 0, carried: 0, skippedNarrowedScope: 0 } },
+    { issueCount: 22, deltas: { new: 5, resolved: 1, reopened: 0, carried: 0, skippedNarrowedScope: 0 } },
+    { issueCount: 26, deltas: { new: 4, resolved: 0, reopened: 0, carried: 1, skippedNarrowedScope: 0 } },
+    { issueCount: 28, deltas: { new: 3, resolved: 1, reopened: 0, carried: 1, skippedNarrowedScope: 0 } },
+    { issueCount: 31, deltas: { new: 3, resolved: 0, reopened: 0, carried: 2, skippedNarrowedScope: 0 } },
+    { issueCount: 32, deltas: { new: 2, resolved: 1, reopened: 0, carried: 2, skippedNarrowedScope: 0 } },
+    { issueCount: 34, deltas: { new: 2, resolved: 0, reopened: 0, carried: 3, skippedNarrowedScope: 0 } },
+  ],
+  rows: seedLedgerSpecs(),
+};
+
+/** The rule a departed row was raised by — one of the seed's own, so the fixture stays in family. */
+const SEED_GONE_RULE_ID = "wc-id-2742";
+
+/** How far before its first sighting a departed row was born in Wiz. See the section header. */
+const SEED_GONE_CREATED_LEAD_MS = 365 * SEED_SYNC_DAY_MS;
+
+/**
+ * The seeded ledger, dated against the sync being run and stamped with the scope that sync
+ * applies.
+ *
+ * THE SCOPE STAMP IS LOAD-BEARING and it is a parameter rather than a read: the rows and the
+ * commit records that describe them must carry the SAME string `persistSync` will compute, or
+ * `reconcileIssueLedger`'s `scopeCovers` is false and the dry run resolves nothing by absence
+ * — six dated departures silently become six `skippedNarrowedScope`. Pinned by the
+ * perturbation in `test/seedLedger.test.ts`.
+ *
+ * The frozen rank inputs are read off `SEED_ISSUES` where the id is one of its own, so a
+ * seeded row and the issue it stands for cannot claim different rules or dates. The three
+ * exploitation fields stay ABSENT on every seeded row: no evidence pass ran over this
+ * fabricated history, and writing "none" would turn "nobody looked" into a measurement.
+ */
+export function seedLedgerRows(endIso: string, registerScope: string): IssueLedgerRow[] {
+  const byId: Record<string, IssueRow> = {};
+  for (const issue of SEED_ISSUES) byId[issue.id] = issue;
+  return SEED_LEDGER.rows.map((spec) => {
+    const live = byId[spec.issueId];
+    const firstSeenAt = seedSyncAt(endIso, spec.firstSeenIndex);
+    const gone = spec.disappearedIndex;
+    const row: IssueLedgerRow = {
+      issueId: spec.issueId,
+      firstSeenSync: seedSyncId(spec.firstSeenIndex),
+      firstSeenAt,
+      lastSeenSync: seedSyncId(spec.lastSeenIndex),
+      lastSeenAt: seedSyncAt(endIso, spec.lastSeenIndex),
+      disappearedAt: gone === null ? null : seedSyncAt(endIso, gone),
+      resolutionSrc: gone === null ? null : "disappeared",
+      lastStatus: live ? live.status : "OPEN",
+      categories: live ? (live.categories ?? []).slice() : [RISK_CATEGORY_ID],
+      ruleId: live ? live.ruleId : SEED_GONE_RULE_ID,
+      createdAt: live
+        ? (live.createdAt ?? null)
+        : new Date(Date.parse(firstSeenAt) - SEED_GONE_CREATED_LEAD_MS).toISOString(),
+      // Null, not a fabricated deadline: a departed row nobody set an SLA on is a state the
+      // register really holds, and `rank.ts`'s UNMEASURED path needs one to exercise.
+      dueAt: live ? (live.dueAt ?? null) : null,
+      registerScope,
+      // 1 on every seeded row. The dry run's reopen of `iss-005` is what makes the first 2,
+      // so a fixture that shipped one pre-set would make the reopen unobservable.
+      episode: 1,
+    };
+    return row;
+  });
+}
+
+// ---------------------------------------- the posture series the synthetic syncs carry
+//
+// WHAT WAS MISSING AND HOW IT READ. The eight fabricated commit rows carried `issue_count`,
+// `ledger_json` and `register_scope` and NOTHING ELSE about posture, so `adjacency_json` and
+// `category_counts_json` were null on all eight and the only point either series had was the
+// dry run's own. `postureTrendCard` draws from two points, so on the dry seed both cards
+// rendered "One sync has recorded this - the series draws from the second." and no canvas:
+// three cards' worth of chrome over a register this fixture had already described in full.
+//
+// DERIVED, NEVER TYPED. Both cells are counted from `SEED_LEDGER` - the rows open after each
+// synthetic sync - through the same two functions `persistSync` writes the real cells with
+// (`withAiAdjacency`, `countIssueCategories`). Two hand-maintained tables that must agree
+// with a third is exactly the pair that drifts, and the drift here is invisible: a chart
+// still draws.
+//
+//   open(i) = rows with firstSeenIndex <= i and (disappearedIndex === null or > i)
+//
+//   sync   open   DIRECT  ADJACENT  UNLINKED     categories
+//     1     12       2        8         2       {AI Security: 12}
+//     2     18       7        8         3       {AI Security: 18}
+//     3     22      11        8         3       {AI Security: 22}
+//     4     26      14        8         4       {AI Security: 26}
+//     5     28      16        8         4       {AI Security: 28}
+//     6     31      18        8         5       {AI Security: 31}
+//     7     32      19        7         6       {AI Security: 32}
+//     8     34      21        7         6       {AI Security: 34}
+//   dry run 32      24        8         0       {AI Security: 32}
+//
+// The three placements sum to `issueCount` on every row, which is the invariant tying this
+// table to the ledger's own - and the last step is the dry run's story told twice: ADJACENT
+// 7 -> 8 is `iss-005` coming back, DIRECT 21 -> 24 is the three withheld ids arriving, and
+// UNLINKED 6 -> 0 is the six `iss-gone-NN` rows leaving. A fixture whose adjacency series did
+// not move with its own ledger would draw a landscape the movement aside beside it denies.
+//
+// THE `iss-gone-NN` ROWS COUNT AS UNLINKED, and that is the fold's own answer rather than a
+// guess. They are not in `SEED_ISSUES`, so they carry no `assetId` at all; `withAiAdjacency`
+// places a row whose asset is not an AI asset and has no adjacency edge as UNLINKED. Reading
+// the fallback as anything else would be inventing a placement for a row with no asset.
+//
+// `edgesKnown` IS THE SAME 79 ON EVERY SYNTHETIC ROW, because the fabricated history runs
+// over one graph - the seed's own. It is the denominator without which an UNLINKED count is
+// unreadable (`TrendPoint.annotations`), so it travels on every point rather than on the
+// last.
+//
+// `exploitation_json` STAYS NULL, AND THAT IS THE HONEST ANSWER rather than a gap in this
+// fixture. `dryRunSync` passes no `vulnFindings`, so `persistSync` writes null on the dry
+// run's OWN row (measured: it is null there today). No evidence pass ran over the fabricated
+// history either. Five zeroes would turn "nobody looked" into "nothing is exploitable" - the
+// exact reading `sheetsDb`'s note on the column and `EXPLOITATION_SPEC` both refuse - so the
+// Exploitation evidence card keeps its "No sync has recorded this yet." and the register
+// keeps its one true statement about that axis.
+
+/** One synthetic sync's posture cells, in the shape `persistSync` writes the real ones. */
+export interface SeedPostureTrendEntry {
+  /** `adjacency_json`: the three placements plus the denominator that makes them readable. */
+  adjacency: AdjacencyCensus;
+  /** `category_counts_json`: open issues per category, once per category a row carries. */
+  categoryCounts: Record<string, number>;
+}
+
+/**
+ * The ledger rows open AFTER synthetic sync `index` - the population every cell above counts.
+ *
+ * A row is open when it had arrived by this sync and no later sync had missed it yet. The
+ * disappearance test is `> index` rather than `>= index`: `disappearedIndex` is the sync that
+ * first MISSED the row, so the row is already gone from that sync's own population.
+ */
+export function seedLedgerOpenAt(index: number): SeedLedgerRowSpec[] {
+  return SEED_LEDGER.rows.filter((spec) => spec.firstSeenIndex <= index
+    && (spec.disappearedIndex === null || spec.disappearedIndex > index));
+}
+
+/**
+ * The posture cells for all eight synthetic syncs, counted off `SEED_LEDGER`.
+ *
+ * `endIso` reaches only `seedGraphDoc`, whose `syncedAt` the adjacency fold never reads - it
+ * is threaded through so this walks the SAME document the dry run enriches rather than a
+ * second construction of it.
+ */
+export function seedPostureTrend(endIso: string): SeedPostureTrendEntry[] {
+  // ONE fold over the seed graph, not eight: adjacency is a property of the row and the
+  // graph, and the graph does not move across the fabricated history. Measured equal to the
+  // census `persistSync` writes on the dry run's own row ({DIRECT: 24, ADJACENT: 8,
+  // UNLINKED: 0, edgesKnown: 79}), which is what makes the last synthetic point and the live
+  // one comparable at all.
+  const { issues: placed, census } = withAiAdjacency(seedGraphDoc(endIso), SEED_ISSUES);
+  const placementById: Record<string, AiAdjacency> = {};
+  for (const issue of placed) {
+    if (issue.aiAdjacency) placementById[issue.id] = issue.aiAdjacency;
+  }
+  const categoriesById: Record<string, readonly string[]> = {};
+  for (const issue of SEED_ISSUES) categoriesById[issue.id] = issue.categories ?? [];
+  const entries: SeedPostureTrendEntry[] = [];
+  for (let index = 0; index < SEED_SYNC_COUNT; index += 1) {
+    const open = seedLedgerOpenAt(index);
+    const adjacency: AdjacencyCensus = {
+      DIRECT: 0, ADJACENT: 0, UNLINKED: 0, edgesKnown: census.edgesKnown,
+    };
+    for (const spec of open) {
+      // `??`, never `||`: a placement is a non-empty string or absent, and the fallback is
+      // the fold's answer for a row with no asset (see the section header) rather than a
+      // default for a row whose placement merely read falsy.
+      adjacency[placementById[spec.issueId] ?? "UNLINKED"] += 1;
+    }
+    entries.push({
+      adjacency,
+      // The same counter `persistSync` uses, over the same shape - a row's OWN stamps, and
+      // `seedLedgerRows` gives a departed row `[RISK_CATEGORY_ID]` for exactly this reason.
+      categoryCounts: countIssueCategories(open.map((spec) => ({
+        categories: categoriesById[spec.issueId] ?? [RISK_CATEGORY_ID],
+      }))),
+    });
+  }
+  return entries;
+}
 
 // ----------------------------------------------- rule catalogue + identity hygiene (dry-run)
 //

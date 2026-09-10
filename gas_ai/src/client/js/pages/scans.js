@@ -35,8 +35,9 @@ import {
 import { svgEl } from "../../../../../gas_shared/icons.js";
 import { openAreaSheet } from "./scanSheet.js";
 import {
-  absent, clear, closeActiveSheet, dataTable, el, emptyState, errorState, fmtDate, fmtDateTime,
-  appendAll, pageHeader,
+  absent, absentText, clear, closeActiveSheet, dataTable, el, emptyState, errorState,
+  firstRunNotice, fmtCount,
+  fmtDate, fmtDateTime, appendAll, heroLines, heroStat, pageHeader,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
@@ -58,14 +59,19 @@ export async function renderScans(main, params, ctx) {
   appendAll(
     main,
     pageHeader({
-      // Counted, not typed. This sentence said "nine" while the page rendered ten areas —
-      // the exact class of drift the rest of this page exists to refuse, and it only takes
-      // one area being added anywhere for a hand-typed number to start lying.
       route: "scans",
-      lede: "Every figure traces back to one of " + SCAN_AREAS.length + " Wiz scan areas.",
+      // Two sentences, as `heroLines` blocks rather than a second hand-built `<p
+      // class="page-sub">` — the lede's own slot already carries more than one line
+      // elsewhere (see ui/controls.js). Counted, not typed: the first sentence said "nine"
+      // while the page rendered ten areas once, the exact class of drift the rest of this
+      // page exists to refuse, and it only takes one area being added anywhere for a
+      // hand-typed number to start lying.
+      lede: heroLines(
+        "Every figure traces back to one of " + SCAN_AREAS.length + " Wiz scan areas.",
+        "What each one is asked for, what it reported, and where the answer lands.",
+      ),
+      help: { term: "coverage-state" },
     }),
-    el("p", { class: "page-sub" },
-      "What each one is asked for, what it reported, and where the answer lands."),
     // "what it reported in this tenant" used to end that sentence, and a project view made it
     // false — the figures below come from scoped endpoints. The split is the point and it is
     // not obvious: the STEPS are a description of the sync battery and never move, while the
@@ -75,10 +81,10 @@ export async function renderScans(main, params, ctx) {
   );
 
   if (!boot.latestSync) {
-    main.append(emptyState(
-      "No sync yet.",
-      "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
-    ));
+    main.append(firstRunNotice({
+      synced: false,
+      hint: "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
+    }));
     return;
   }
 
@@ -122,6 +128,21 @@ export async function renderScans(main, params, ctx) {
 
   paint();
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[scans] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint() {
     if (!assets) return;
     const payload = {
@@ -135,20 +156,38 @@ export async function renderScans(main, params, ctx) {
     const ranked = rankAreas(resolved);
 
     clear(host);
-    const diagram = provenanceDiagram(ranked, tally);
-    host.append(
-      postureHeader(resolved, tally),
-      sectionLabel("How a scan becomes a screen"),
-      diagram.node,
-      diagramLegend(tally),
-      sectionLabel("The register"),
+    const postureHost = el("div", {});
+    const diagramHost = el("div", {});
+    const registerHost = el("div", {});
+    const reachHost = el("div", {});
+    host.append(postureHost, diagramHost, registerHost, reachHost);
+
+    guard("the coverage header", postureHost,
+      () => postureHost.append(postureHeader(resolved, tally)));
+
+    // The register drives the diagram's hover state (below), so a thrown diagram must not
+    // stop the register from rendering — it just renders with no picture to light.
+    let diagram = null;
+    guard("the provenance diagram", diagramHost, () => {
+      diagram = provenanceDiagram(ranked, tally);
+      diagramHost.append(
+        sectionLabel("How a scan becomes a screen"),
+        diagram.node,
+        diagramLegend(tally),
+      );
+    });
+
+    guard("the register", registerHost, () => registerHost.append(
+      sectionLabel("The register", { term: "register-scope" }),
       register(ranked, diagram),
       el("p", { class: "small muted", style: "margin-top:14px" },
         "Sync cadence: daily at 05:00 Europe/Paris plus on-demand “Sync now”. Every figure above " +
         "is the one the last sync produced, read through the project view currently set; " +
         "an area with no figure says so rather than carrying a number from somewhere else."),
-      reachSection(assets.reach),
-    );
+    ));
+
+    guard("landscape reach", reachHost, () => reachHost.append(reachSection(assets.reach)));
+
     // A link from AI Inventory's headline figure sends the reader here with ?anchor=reach —
     // only worth honouring once, on the render that actually has the section to jump to,
     // not on every SWR repaint that follows it.
@@ -167,12 +206,6 @@ export async function renderScans(main, params, ctx) {
     const sync = boot.latestSync || {};
     const dryRun = String(sync.mode || "") === "dry-run";
 
-    const hero = el("div", { class: "cov-hero" },
-      el("div", { class: "kpi-label" }, "Reporting"),
-      el("div", { class: "hero-value num" }, tally.live + " of " + resolved.length),
-      el("div", { class: "cov-hero-sub" }, "scan areas returning a live figure"),
-    );
-
     const strip = el("div", { class: "cov-strip" },
       el("div", { class: "kpi-label" }, "Coverage"),
       coverageBar(tally, resolved.length),
@@ -182,17 +215,21 @@ export async function renderScans(main, params, ctx) {
         "a per-step record of what ran."),
     );
 
-    const stats = el("div", { class: "stat-list" },
-      statRow("Last sync", fmtDate(sync.finished_at),
-        fmtDateTime(sync.finished_at)),
-      statRow("Mode", dryRun ? "Dry-run" : "Live",
-        dryRun ? "bundled sample dataset" : "against the configured Wiz tenant"),
-      statRow("Records written", String(sync.node_count || 0),
-        "assets · " + (sync.edge_count || 0) + " edges · " + (sync.issue_count || 0) + " issues"),
-      statRow("Wiz API calls", String(sync.api_calls || 0), "in that sync"),
-    );
-
-    return el("div", { class: "cov-header" }, hero, strip, stats);
+    return pageHeader({
+      hero: heroStat("Reporting", tally.live + " of " + resolved.length,
+        "scan areas returning a live figure", { term: "coverage-state" }),
+      aside: strip,
+      stats: [
+        statRow("Last sync", fmtDate(sync.finished_at),
+          fmtDateTime(sync.finished_at), null, { term: "sync" }),
+        statRow("Mode", dryRun ? "Dry-run" : "Live",
+          dryRun ? "bundled sample dataset" : "against the configured Wiz tenant"),
+        statRow("Records written", fmtCount(sync.node_count),
+          "assets · " + fmtCount(sync.edge_count) + " edges · " + fmtCount(sync.issue_count)
+          + " issues"),
+        statRow("Wiz API calls", fmtCount(sync.api_calls), "in that sync"),
+      ],
+    });
   }
 
   // The bar is decoration — the keys beneath carry the same three numbers as text — so it
@@ -236,16 +273,29 @@ export async function renderScans(main, params, ctx) {
     const table = dataTable({
       className: "cov-register",
       columns: [
-        { key: "area", label: "Scan area", cell: (a) => el("span", { class: "cov-area" }, a.title) },
-        { key: "query", label: "Wiz query", cell: (a) => el("span", { class: "cov-q" }, a.query) },
-        { key: "figure", label: "Reported here", cell: figureCell },
+        {
+          key: "area", label: "Scan area",
+          help: { lines: ["Which Wiz scan area this register row covers."] },
+          cell: (a) => el("span", { class: "cov-area" }, a.title),
+        },
+        {
+          key: "query", label: "Wiz query",
+          help: { lines: ["The Wiz GraphQL query this app runs to collect the area."] },
+          cell: (a) => el("span", { class: "cov-q" }, a.query),
+        },
+        {
+          key: "figure", label: "Reported here",
+          help: { lines: ["The figure this app currently publishes for the area, when its state is Reporting."] },
+          cell: figureCell,
+        },
         {
           key: "lands", label: "Lands in",
+          help: { lines: ["Which page in this app shows the area's figures."] },
           cell: (a) => {
             const dest = destinationOf(a);
             return dest && a.state !== "unscanned"
               ? el("span", { class: "cov-lands" }, dest.title)
-              : el("span", { class: "cov-none" }, "—");
+              : absent();
           },
         },
         {
@@ -265,24 +315,27 @@ export async function renderScans(main, params, ctx) {
     });
 
     // The register drives the diagram, not the other way round: one keyboard model, and
-    // the picture reacts to whatever already has focus.
-    const rows = table.querySelectorAll("tbody tr");
-    ranked.forEach((area, i) => {
-      const row = rows[i];
-      if (!row) return;
-      const light = () => diagram.light(area.id);
-      const dim = () => diagram.light("");
-      row.addEventListener("mouseenter", light);
-      row.addEventListener("mouseleave", dim);
-      row.addEventListener("focusin", light);
-      row.addEventListener("focusout", dim);
-    });
+    // the picture reacts to whatever already has focus. `diagram` is null when its own
+    // section threw — the register still renders, it just has nothing to light.
+    if (diagram) {
+      const rows = table.querySelectorAll("tbody tr");
+      ranked.forEach((area, i) => {
+        const row = rows[i];
+        if (!row) return;
+        const light = () => diagram.light(area.id);
+        const dim = () => diagram.light("");
+        row.addEventListener("mouseenter", light);
+        row.addEventListener("mouseleave", dim);
+        row.addEventListener("focusin", light);
+        row.addEventListener("focusout", dim);
+      });
+    }
     return table;
   }
 
   function figureCell(area) {
     if (!area.figure) {
-      return el("span", { class: "cov-none" }, "—");
+      return absent();
     }
     return el("span", { class: "cov-figure" },
       el("span", { class: "cov-figure-value num" }, area.figure.value),
@@ -377,7 +430,7 @@ export async function renderScans(main, params, ctx) {
     return el("div", { class: "card stat-list" },
       statRow(
         "Impact-tagged",
-        known ? tagged.covered + " of " + tagged.total : "—",
+        known ? tagged.covered + " of " + tagged.total : absentText,
         "carry a Wiz business-impact tier — read off the asset's own projects on the "
         + "inventory hop, so this measures the tenant's tagging discipline, not what this "
         + "pipeline reached",
@@ -395,7 +448,7 @@ export async function renderScans(main, params, ctx) {
       : null;
     const parts = [
       register
-        ? (share === null ? "—" : share + "%") + " of every register row is AI-kinded"
+        ? (share === null ? absentText : share + "%") + " of every register row is AI-kinded"
           + (register.total ? " (" + register.covered + " of " + register.total + ")" : "")
         : null,
       largest
@@ -411,16 +464,28 @@ export async function renderScans(main, params, ctx) {
       className: "reach-kinds",
       columns: [
         {
-          key: "kind", label: "Kind",
+          key: "kind", label: "Kind", help: { term: "node-kind" },
           cell: (k) => el("span", { class: k.ai ? "reach-kind-ai" : "" }, k.kind),
         },
-        { key: "total", label: "Rows", cell: (k) => el("span", { class: "num" }, String(k.total)) },
+        {
+          key: "total", label: "Rows",
+          help: { lines: ["How many rows of this kind sit in the persisted graph."] },
+          cell: (k) => el("span", { class: "num" }, String(k.total)),
+        },
         {
           key: "signal", label: "Carrying signal",
+          help: { lines: [
+            "How many of this kind's rows carry at least one risk signal this app reads " +
+            "— an issue, a finding, a toxic combination, a missing guardrail.",
+          ] },
           cell: (k) => el("span", { class: "num" }, k.signal + " of " + k.total),
         },
         {
           key: "ai", label: "AI landscape",
+          help: { lines: [
+            "Whether this kind counts toward the AI landscape inventory, or is substrate " +
+            "Wiz reports that this app does not track as an asset.",
+          ] },
           cell: (k) => (k.ai
             ? el("span", { class: "pill ok" }, "AI")
             : el("span", { class: "cov-none" }, "substrate")),
@@ -476,7 +541,7 @@ export async function renderScans(main, params, ctx) {
       const pct = known ? Math.round(axes[axis.key] * 100) : null;
       list.append(statRow(
         axis.label,
-        known ? pct + "%" : "—",
+        known ? pct + "%" : absentText,
         known ? "known, of " + population + " decided" : "nothing decided yet",
         known ? pct : null,
       ));
@@ -837,8 +902,8 @@ function scansSkeleton() {
       skeleton("line", { width: "80%", height: "9px" })));
   }
   return el("div", { role: "status", "aria-label": "Loading scan coverage" },
-    el("div", { class: "cov-header" },
-      el("div", { class: "cov-hero" },
+    el("div", { class: "page-header" },
+      el("div", { class: "page-hero" },
         skeleton("line", { width: "70px", height: "10px" }),
         skeleton("stat", { width: "120px" }),
         skeleton("line", { width: "150px", height: "10px" })),

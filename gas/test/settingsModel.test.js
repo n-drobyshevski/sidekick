@@ -10,12 +10,15 @@ import {
   DEFAULT_TAB,
   dirtyTabs,
   draftWarnings,
+  fieldErrors,
   normalizeTab,
   SETTING_FIELDS,
   SETTING_KEYS,
   SETTINGS_TABS,
   settingsDraft,
   settingsPatch,
+  TAB_FIELDS,
+  tabStatus,
   validateDraft,
 } from "../src/client/js/settingsModel.js";
 
@@ -241,6 +244,121 @@ describe("draftWarnings", () => {
     d.fetchSeverities = ["HIGH", "MEDIUM"];
     d.riskRule = { kev: false, exploit: false, epss: false, epssThreshold: 0.1 };
     expect(draftWarnings(draft(), d)).toHaveLength(2);
+  });
+});
+
+describe("fieldErrors", () => {
+  it("is all-null for the shipped defaults", () => {
+    const errs = fieldErrors(draft());
+    expect(Object.values(errs).every((v) => v === null)).toBe(true);
+  });
+
+  it("names every field validateDraft would have stopped at, independently and all at once", () => {
+    // Two breakages that do NOT interact — fetchSeverities/displaySeverities are left legal —
+    // so both fire independently rather than one masking the other in priority order.
+    const d = draft();
+    d.riskRule.epssThreshold = 5;
+    d.retentionDays = 7;
+    const errs = fieldErrors(d);
+    expect(errs.riskRule).toContain("between 0 and 1");
+    expect(errs.retentionDays).toContain("30 days");
+    expect(errs.fetchSeverities).toBeNull();
+    expect(errs.displaySeverities).toBeNull();
+  });
+
+  it("a broken scan scope also breaks the display filter that now sits outside it, and names both", () => {
+    // NOT independent, and rightly so: draining fetchSeverities to [] makes every surviving
+    // displaySeverities entry a "stray" (outside the new, empty scope) by the same subset
+    // rule validateDraft enforces — this is the real interdependency, not a bug.
+    const d = draft();
+    d.fetchSeverities = [];
+    const errs = fieldErrors(d);
+    expect(errs.fetchSeverities).toContain("scan scope");
+    expect(errs.displaySeverities).toContain("CRITICAL");
+  });
+
+  it("is what validateDraft's own priority order is now built from", () => {
+    // Two independent breakages; validateDraft reports only the higher-priority one, but
+    // fieldErrors — which the page uses for inline spans — knows about both.
+    const d = draft();
+    d.fetchSeverities = [];
+    d.retentionDays = 7;
+    expect(validateDraft(d).tab).toBe("register"); // fetchSeverities wins the race
+    const errs = fieldErrors(d);
+    expect(errs.fetchSeverities).toBeTruthy();
+    expect(errs.retentionDays).toBeTruthy(); // but the inline span for Lifecycle still lights
+  });
+});
+
+describe("tabStatus", () => {
+  it("is clean for an untouched, valid draft, on every tab that owns a batched field", () => {
+    const status = tabStatus(draft(), draft(), {}, TAB_FIELDS);
+    for (const tab of new Set(Object.values(TAB_FIELDS))) {
+      expect(status[tab], tab).toEqual({ dirty: false, invalid: false });
+    }
+  });
+
+  it("never mentions a tab that owns no batched field — Attribution and System save "
+    + "themselves and are absent by construction, not merely clean", () => {
+    const status = tabStatus(draft(), draft(), {}, TAB_FIELDS);
+    expect(status.attribution).toBeUndefined();
+    expect(status.system).toBeUndefined();
+  });
+
+  it("marks dirty and invalid independently — a field can be one without the other", () => {
+    const d = draft();
+    d.autoCompact = false; // lifecycle: dirty, not invalid
+    const status = tabStatus(d, draft(), { fetchSeverities: "bad" }, TAB_FIELDS); // register: invalid, not dirty
+    expect(status.lifecycle).toEqual({ dirty: true, invalid: false });
+    expect(status.register).toEqual({ dirty: false, invalid: true });
+    expect(status.risk).toEqual({ dirty: false, invalid: false });
+  });
+
+  it("a field error on tab X marks only X invalid, never a sibling tab", () => {
+    const status = tabStatus(draft(), draft(), { riskRule: "bad EPSS" }, TAB_FIELDS);
+    expect(status.risk.invalid).toBe(true);
+    expect(status.register.invalid).toBe(false);
+    expect(status.lifecycle.invalid).toBe(false);
+  });
+
+  it("reads errors by KEY PRESENCE — an empty-string message still counts as an error", () => {
+    // The documented contract (tabStatus's own header): a caller clears a field by DELETING
+    // the key, never by setting it to a falsy value. A value of "" is still present.
+    const status = tabStatus(draft(), draft(), { retentionDays: "" }, TAB_FIELDS);
+    expect(status.lifecycle.invalid).toBe(true);
+  });
+
+  // ========================================================================== perturbation
+  //
+  // THE CLAIM UNDER TEST: an error is cleared by DELETING its key, and tabStatus must read
+  // presence, never truthiness — CLAUDE.md names the general form of this trap three times
+  // over for `Number(null)`; here the analogous mistake is `if (errors[field])` instead of
+  // `field in errors`. Confirmed to fail before being corrected: with the truthy-read form
+  // below and `errors = { retentionDays: "" }` (a field "cleared" the documented way,
+  // i.e. set to a falsy placeholder rather than deleted), running
+  //   expect(defectiveTabStatus(...).lifecycle.invalid).toBe(true)
+  // failed with
+  //   AssertionError: expected false to be true
+  // because `errors.retentionDays` is `""`, which is falsy, so the truthy read missed it —
+  // exactly the case a reader who cleared a field by blanking rather than deleting hits.
+  it("a truthiness read instead of key-presence misses a falsy-but-present error", () => {
+    function defectiveTabStatus(d, saved, errors, tabFields) {
+      const tabs = {};
+      for (const tab of new Set(Object.values(tabFields))) tabs[tab] = { dirty: false, invalid: false };
+      for (const [field, tab] of Object.entries(tabFields)) {
+        if (!tabs[tab]) continue;
+        if (JSON.stringify(saved[field]) !== JSON.stringify(d[field])) tabs[tab].dirty = true;
+        if (errors[field]) tabs[tab].invalid = true; // THE BUG: truthiness, not presence
+      }
+      return tabs;
+    }
+
+    const errors = { retentionDays: "" }; // present, but a falsy value
+    const defective = defectiveTabStatus(draft(), draft(), errors, TAB_FIELDS);
+    expect(defective.lifecycle.invalid).toBe(false); // the bug: misses it
+
+    const real = tabStatus(draft(), draft(), errors, TAB_FIELDS);
+    expect(real.lifecycle.invalid).toBe(true); // the real implementation does not
   });
 });
 

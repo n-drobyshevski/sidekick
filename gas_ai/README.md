@@ -359,6 +359,48 @@ The list of server modules whose memos get cleared between tests lives in `reset
 in `test/gasEnv.ts`. If you add module-level state to something under `src/server/`, add it
 there too; `npm run test:exact` is what catches you if you forget.
 
+### Measuring a page (`npm run density`)
+
+`npm run density -- --playwright <path to a playwright package>` runs `gas_devsecops`'s
+rendered-page walker (`../gas_devsecops/dev/density.mjs --root . --port 8798`) over this
+app's own `PAGES` table and prints, per route, the words, prose blocks, bare numbers, table
+cells, pictures and visible definition triggers a reader actually meets, plus any horizontal
+overflow at 1280, 640 and 360px; `--diff before.json after.json` compares two runs.
+`--experimental` sets `<storagePrefix>showExperimental=1` in localStorage before every
+navigation, so a route gated behind Settings → Show experimental content renders instead of
+redirecting to the default route — needed for `#/aars`, the one gated route in this app's
+`PAGES` table. The eleven routes it walks are `graph`, `inventory`, `problems`, `combos`, `config`,
+`compliance`, `scans`, `aars`, `data`, `settings`, `help` — read off `app.js`'s own `PAGES`
+literal, never hand-typed, so a renamed or added route shows up next run with no second list
+to forget.
+
+The `density` script points at **8798** — not the 8787 default `dev/serve.mjs` falls back to
+(`PORT` env var, `dev/serve.mjs:20`), nor the 8788 the hub convention assigns this app
+(`CLAUDE.md`'s port table: gas 8787, gas_ai 8788, gas_devsecops 8789, gas_hub 8790) — because
+the four siblings' usual ports are routinely held by other running dev servers, so measurement
+gets a port of its own; run the harness the walker expects with
+`PORT=8798 npm run dev` from this directory before calling `npm run density`. This app's
+`dev/serve.mjs` boots LIVE the moment `dev/.env.local` exists, so `?dry` is mandatory for a
+seeded read — the walker appends it to every URL itself, so a plain `npm run density` run is
+always reading the dry-run sample, never the tenant. Run it alone: two Playwright clients
+against one `dev/serve.mjs` (which rebuilds on every load) can each be served a half-built
+bundle, the same collision the OS register's own wave measured first — never run the density
+walker and a screenshot sweep concurrently against the same harness.
+
+**Wave of 2026-09-09.** Tips per route at 1280px, seeded, before → after this wave: graph 1 → 1,
+inventory 4 → 8, problems 1 → 9, combos 1 → 3, config 1 → 10, compliance 2 → 12, scans 4 → 16,
+data 0 → 11, settings 0 → 0, help 1 → 1 (`aars` excluded — the walker sets no experimental flag,
+so it redirects and duplicates `problems`). A `?dry&noseed` zero-audit found 0 bare zeros on
+every route except Scoring Models (`aars`, 10; reported, not fixed).
+
+**Follow-ups of 2026-09-09.** Six follow-ups (F1–F6) landed after the wave and were re-measured
+at `eeab75f`, walked with `--experimental` so `aars` is included rather than dropped. The
+`?dry&noseed` zero-audit now reads 0 bare zeros on every route, Scoring Models included (was 10;
+follow-up F4). Inventory seeded draws 3 canvases with 3 figures tables, up from 1 — the
+adjacency and category posture cards now draw from the seeded series (follow-up F2); the
+exploitation card still reads "No sync has recorded this yet" because no evidence pass runs on
+the dry run.
+
 ### Which build is deployed?
 
 An Apps Script deployment can be stale three ways at once — the project holds an old

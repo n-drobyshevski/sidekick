@@ -28,6 +28,7 @@ import {
   claimOffsets,
   diagRow,
   absent,
+  absentText,
   claimRail,
   clear,
   closeActiveSheet,
@@ -40,6 +41,7 @@ import {
   emptyState,
   errorState,
   filterCombobox,
+  firstRunNotice,
   num,
   onPageTeardown,
   openPopover,
@@ -69,7 +71,8 @@ import {
   uiIcon,
 } from "../ui.js";
 import { precisionLabel, rankEvalCapacity, rankEvalHonesty, rankEvalRows } from "../rankEvalModel.js";
-import { bootstrapCached } from "../../../../../gas_shared/store.js";
+import { bootstrap } from "../../../../../gas_shared/store.js";
+import { aarsFigureView } from "./aarsView.js";
 import { POSTURE_LATTICE, PROBLEM_LATTICE, toneForKey } from "../lattice.js";
 import {
   OUTCOME_VALUES,
@@ -114,6 +117,11 @@ const IMPACT_SCOPE_NOTE = "a rule preview has to answer for every asset it would
 const IMPACT_INVALID_TITLE = "Fix the highlighted fields to preview.";
 const IMPACT_ERROR_TITLE = "Couldn't preview this rule.";
 const IMPACT_NO_SYNC_NOTE = "Run a sync first; the rule still saves and applies to the next one.";
+// The Rank eval tab has no draft to preview (WP8, above) — its own hint names what it
+// actually needs (two committed syncs), not a rule to fix.
+const RANK_NO_SYNC_HINT =
+  "Run “Sync now” — this pane replays committed syncs, so it needs at least two before " +
+  "there is anything to evaluate.";
 const cascadeCapNote = (max) => "The cascade is limited to " + max + " rules.";
 const moversTruncatedNote = (shown, total, order) =>
   `Showing the ${shown} most consequential of ${total} — ${order}`;
@@ -481,6 +489,15 @@ function markAny(sel) {
 }
 
 export async function renderAarsRules(main, _params, ctx) {
+  // F4: the one gate every tab painter below reads, read exactly once — never re-derived
+  // from a preview's own shape, which stays truthy (an honest "0 of 0") even with nobody
+  // synced. `boot.latestSync` is the same authoritative "has anything been read" signal
+  // every other register page gates on; `synced` is handed down through the closures
+  // below (sync(), paintImpact(), buildProblemPane()'s and buildPosturePane()'s own
+  // paint*Impact(), loadRankPane()/buildRankEval()) rather than re-read per tab.
+  const boot = await bootstrap();
+  const synced = !!boot.latestSync;
+
   // ------------------------------------------------------------------ shell + load
   const bar = el("div", { class: "workbench-bar" });
   // One line, under the toolbar and above every pane, saying what these three models are
@@ -1366,7 +1383,7 @@ export async function renderAarsRules(main, _params, ctx) {
   appendAll(
     impact,
     el("h2", { class: "section-label" }, "Impact on the current inventory"),
-      registerWideNote(bootstrapCached(),
+      registerWideNote(boot,
         IMPACT_SCOPE_NOTE),
     impactState,
     impactStrip,
@@ -1597,8 +1614,13 @@ export async function renderAarsRules(main, _params, ctx) {
                     ? `fallback — ${hit.points} pts`
                     : `rule ${hit.index + 1} — ${hit.points} pts`,
                 ),
+                // F4: `seen` reads 0 for every code alike when nobody has synced — the
+                // census travels with the preview (line ~2130 below) and an unsynced
+                // preview's `gapCensus` is genuinely empty, never partially populated. A
+                // SYNCED tenant that truly has zero assets on a code is a measurement, so
+                // it prints "0 assets" rather than borrowing the unsynced case's dash.
                 el("span", { class: "codebook-row__seen small muted" },
-                  seen ? `${seen} ${seen === 1 ? "asset" : "assets"}` : "—"),
+                  aarsFigureView(synced, seen ? `${seen} ${seen === 1 ? "asset" : "assets"}` : "0 assets")),
                 el("span", { class: "codebook-row__act" }, add),
               ),
             );
@@ -1841,7 +1863,11 @@ export async function renderAarsRules(main, _params, ctx) {
       HIGH: [b.high, b.critical - 1],
       CRITICAL: [b.critical, 100],
     };
-    const counts = (preview && preview.proposed) || null;
+    // F4: `preview.proposed` is a census over the landscape — a real (if empty) object even
+    // with nobody synced, since the server answers "0 of 0" rather than refusing. `synced`
+    // is the authoritative gate; unsynced always reads as not-measured, never as measured
+    // zero, regardless of what the preview came back with.
+    const counts = synced ? ((preview && preview.proposed) || null) : null;
     for (const sev of RAIL_ORDER) {
       const s = segs[sev];
       const width = Math.max(0, spans[sev]) / 101 * 100;
@@ -1849,7 +1875,7 @@ export async function renderAarsRules(main, _params, ctx) {
       setText(s.name, sev);
       const [lo, hi] = ranges[sev];
       const n = counts ? counts[sev] ?? 0 : null;
-      setText(s.meta, hi < lo ? "—" : `${lo}–${hi}${n === null ? "" : ` · ${n}`}`);
+      setText(s.meta, hi < lo ? absentText : `${lo}–${hi}${n === null ? "" : ` · ${n}`}`);
     }
     BANDS.forEach((band, i) => {
       const v = draft.bands[band.key];
@@ -1900,10 +1926,18 @@ export async function renderAarsRules(main, _params, ctx) {
     ampField.setChanged(saved.dataAmplifier !== draft.dataAmplifier, saved.dataAmplifier);
 
     // --- cascade rows: the gloss, the shadow / unreachable / unexercised note, and the count
+    //
+    // F4: `shadowed`/`unreachable` are pattern-space facts about the RULE (`shadowedGapRules`/
+    // `unreachableGapRules` take only the rule, never the landscape — see aarsRule.ts), so
+    // they stay correct with nobody synced and are left ungated. `matchCounts`/`instanceTotal`
+    // are the opposite: a census over the tenant's actual gap instances, which a preview
+    // over zero assets answers as a real, truthy "0 of 0" rather than refusing. Gated on
+    // `synced` so an unsynced store reads every row's claim as not-measured-yet
+    // (`claimRail`'s own `count: null` lane) instead of a false, confident zero.
     const shadowed = (preview && preview.shadowedGapRules) || [];
     const unreachable = (preview && preview.unreachableGapRules) || [];
-    const matchCounts = (preview && preview.gapMatchCounts) || null;
-    const instanceTotal = (preview && preview.gapInstanceTotal) || 0;
+    const matchCounts = synced ? ((preview && preview.gapMatchCounts) || null) : null;
+    const instanceTotal = synced ? ((preview && preview.gapInstanceTotal) || 0) : 0;
     // Cumulative starts, so the column reads as the live gap instances being consumed in
     // cascade order rather than as N unrelated bars.
     const gapOffsets = claimOffsets(matchCounts || []);
@@ -1978,7 +2012,7 @@ export async function renderAarsRules(main, _params, ctx) {
 
   function syncRecompute() {
     const spread = state.versionSpread || [];
-    const scope = (bootstrapCached() || {}).scope || {};
+    const scope = (boot || {}).scope || {};
     const view = scope.projectView || "";
     // The signature has to carry everything the block renders, or a change of view or of the
     // version split would leave the previous render in place.
@@ -2084,7 +2118,7 @@ export async function renderAarsRules(main, _params, ctx) {
     clear(impactState);
     setImpactAlert("aars", errs.list.length
       ? "the draft has an error"
-      : previewError ? "the preview failed" : "");
+      : previewError ? "the preview failed" : (!synced ? "no sync yet" : ""));
 
     if (errs.list.length) {
       clear(impactStrip);
@@ -2108,6 +2142,20 @@ export async function renderAarsRules(main, _params, ctx) {
         paintImpact();
       });
       impactState.append(emptyState(IMPACT_ERROR_TITLE, previewError), retry);
+      return;
+    }
+    // F4: checked before `!preview` — the preview is running unconditionally (it validates
+    // the draft even with nothing synced), so it WILL land, and a reader waiting on it would
+    // see the skeleton flash then this exact notice. Checked before `!preview.total` too:
+    // that branch is for a SYNCED register that genuinely has no assets — a different claim,
+    // in the empty-state title's own words below — and reads the truthful "0 of 0" the
+    // preview answers over an unsynced store as though it were that claim otherwise.
+    if (!synced) {
+      clear(impactStrip);
+      moverSection.hidden = true;
+      paintDiscrimination(null);
+      setText(impactHeadline, "");
+      impactState.append(firstRunNotice({ synced: false, hint: IMPACT_NO_SYNC_NOTE }));
       return;
     }
     if (!preview) {
@@ -3167,7 +3215,7 @@ export async function renderAarsRules(main, _params, ctx) {
       { class: "rule-impact" },
       pLiveNote,
       el("h2", { class: "section-label" }, "Impact on open issues and findings"),
-      registerWideNote(bootstrapCached(),
+      registerWideNote(boot,
         IMPACT_SCOPE_NOTE),
       pImpactState,
       pImpactStrip,
@@ -3236,7 +3284,7 @@ export async function renderAarsRules(main, _params, ctx) {
       // What this pane is about to say that nothing else will, if it is folded shut.
       setImpactAlert("problem", errs.length
         ? "the draft has an error"
-        : problemPreviewError ? "the preview failed" : "");
+        : problemPreviewError ? "the preview failed" : (!synced ? "no sync yet" : ""));
 
       if (errs.length) {
         clear(pImpactStrip);
@@ -3258,6 +3306,19 @@ export async function renderAarsRules(main, _params, ctx) {
         const retry = el("button", { style: "margin-top:10px" }, "Try again");
         retry.addEventListener("click", retryProblemPreview);
         pImpactState.append(emptyState(IMPACT_ERROR_TITLE, problemPreviewError), retry);
+        return;
+      }
+      // F4: see paintImpact()'s own note above — checked before `!problemPreview` (the
+      // preview still runs, and would otherwise land as a truthful "0 of 0") and before
+      // `!problemPreview.total` (that branch's own title is for a SYNCED register with no
+      // open issue or failing finding, a different claim from nobody having synced at all).
+      if (!synced) {
+        clear(pImpactStrip);
+        pMoverSection.hidden = true;
+        paintProblemUnknownRates(null);
+        setText(pImpactHeadline, "");
+        setText(pLeavesLine, "");
+        pImpactState.append(firstRunNotice({ synced: false, hint: IMPACT_NO_SYNC_NOTE }));
         return;
       }
       if (!problemPreview) {
@@ -4037,7 +4098,7 @@ export async function renderAarsRules(main, _params, ctx) {
       { class: "rule-impact" },
       uLiveNote,
       el("h2", { class: "section-label" }, "Impact on the persisted landscape"),
-      registerWideNote(bootstrapCached(),
+      registerWideNote(boot,
         IMPACT_SCOPE_NOTE),
       uImpactState,
       uImpactStrip,
@@ -4099,7 +4160,7 @@ export async function renderAarsRules(main, _params, ctx) {
       clear(uImpactState);
       setImpactAlert("posture", errs.length
         ? "the draft has an error"
-        : posturePreviewError ? "the preview failed" : "");
+        : posturePreviewError ? "the preview failed" : (!synced ? "no sync yet" : ""));
 
       if (errs.length) {
         clear(uImpactStrip);
@@ -4121,6 +4182,18 @@ export async function renderAarsRules(main, _params, ctx) {
         const retry = el("button", { style: "margin-top:10px" }, "Try again");
         retry.addEventListener("click", retryPosturePreview);
         uImpactState.append(emptyState(IMPACT_ERROR_TITLE, posturePreviewError), retry);
+        return;
+      }
+      // F4: see paintImpact()'s own note above — checked before `!posturePreview` and
+      // before `!posturePreview.total` (that branch's own title is for a SYNCED register
+      // with no persisted asset, a different claim from nobody having synced at all).
+      if (!synced) {
+        clear(uImpactStrip);
+        uMoverSection.hidden = true;
+        paintPostureUnknownRates(null);
+        setText(uImpactHeadline, "");
+        setText(uCellsLine, "");
+        uImpactState.append(firstRunNotice({ synced: false, hint: IMPACT_NO_SYNC_NOTE }));
         return;
       }
       if (!posturePreview) {
@@ -4444,7 +4517,7 @@ export async function renderAarsRules(main, _params, ctx) {
     }
     rankLoading = false;
     rankLoaded = true;
-    clear(rankPane).append(buildRankEval(report));
+    clear(rankPane).append(buildRankEval(report, synced));
   }
 
   /**
@@ -4456,7 +4529,7 @@ export async function renderAarsRules(main, _params, ctx) {
    * reach the caveat. So the block is drawn in both states — it is what a waiting report has
    * INSTEAD of numbers — and the table is appended under it only when there is one.
    */
-  function buildRankEval(report) {
+  function buildRankEval(report, synced) {
     // `.rank-eval` is the pane's own scroller (the tab-pane itself is a bare positioned box),
     // and `.rule-section` inside it keeps the heading and lede in the workbench's grammar.
     const section = el("section", { class: "rule-section" });
@@ -4471,6 +4544,14 @@ export async function renderAarsRules(main, _params, ctx) {
         + "counted as unknown and never as unremediated.",
       ),
     );
+
+    // F4: nobody synced is a MORE SPECIFIC claim than `!report.computed`'s own "no
+    // comparable pair of syncs" — every unsynced store also reads `!report.computed`, so
+    // this has to come first or the generic sentence quietly stands in for it.
+    if (!synced) {
+      section.append(firstRunNotice({ synced: false, hint: RANK_NO_SYNC_HINT }));
+      return pane;
+    }
 
     const facts = el("dl", { class: "rank-eval__honesty" });
     for (const entry of rankEvalHonesty(report)) {

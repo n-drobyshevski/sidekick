@@ -98,6 +98,10 @@ export function queryTable(payload, opts = {}) {
       className: "gq-group-head" + (alternative ? " is-alt" : ""),
     });
     fields.forEach((field, fi) => {
+      // No `help` here, and none is added: `field.label` is whatever the READER'S OWN QUERY
+      // asked for — a node kind's field, chosen at runtime, with no fixed vocabulary this
+      // file could define ahead of time. test/columnHelp.test.js allowlists this file for
+      // exactly that reason.
       columns.push({
         key: gi + "." + field.key,
         label: field.label,

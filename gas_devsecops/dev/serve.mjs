@@ -309,8 +309,9 @@ createServer(async (req, res) => {
   const c = credentials();
   if (c.mode) {
     console.log(
-      `LIVE (${c.mode}): ${c.apiUrl}, project ${c.projectId || "(all)"}. Every load runs a ` +
-      "real sync — add ?dry for the sample dataset, ?noseed for an empty store.",
+      `Credentials found (${c.mode}): ${c.apiUrl}, project ${c.projectId || "(all)"}. ` +
+      "They are NOT used unless you ask: a plain load is the sample dataset. Add ?live to " +
+      "sync the real tenant, ?noseed for an empty store.",
     );
   } else {
     console.log(

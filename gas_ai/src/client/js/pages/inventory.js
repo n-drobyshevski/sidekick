@@ -34,13 +34,14 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  absent, clear, closeActiveSheet, confirmDialog, dataTable, debounce, el,
-  emptyState, errorState, pageHeader,
-  DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtDate, kpiCard, plural,
+  absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, debounce,
+  el, errorState, firstRunNotice, heroStat, measuredEmpty, pageHeader,
+  DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
   trendScopeNote,
 } from "../ui.js";
+import { trendTableModel } from "./_charts.js";
 
 import { tipAnchor } from "../ui.js";
 
@@ -68,25 +69,33 @@ const FACET_LABELS = {
 
 /** Which columns can be sorted, and what each one is called in the header. */
 const COLUMNS = [
-  { key: "name", label: "Name", sort: "name" },
-  { key: "kind", label: "Kind", sort: "kind" },
-  { key: "cloud", label: "Cloud", sort: "cloud" },
-  { key: "region", label: "Region", sort: "region" },
+  { key: "name", label: "Name", sort: "name",
+    help: { lines: ["The asset's own name, as Wiz reports it."] } },
+  { key: "kind", label: "Kind", sort: "kind", help: { term: "node-kind" } },
+  { key: "cloud", label: "Cloud", sort: "cloud",
+    help: { lines: ["Which cloud provider hosts this asset."] } },
+  { key: "region", label: "Region", sort: "region",
+    help: { lines: ["The cloud region this asset runs in."] } },
   // The two counts, and the column that says how bad the worst of them is. Three columns
   // rather than one graded verdict: "4 open issues, worst of them HIGH, and 2 failing
   // controls" is three facts a reader can check against Wiz, where a single 0-100 score
   // was one number they had to take on trust. Sorting by "Issues" sorts by the COUNT and
   // by "Severity" by the worst — the same split, offered twice, because both are real
   // questions and neither implies the other.
-  { key: "severity", label: "Severity", sort: "severity" },
-  { key: "issues", label: "Issues", sort: "issues" },
-  { key: "findings", label: "Cloud findings", sort: "findings" },
-  { key: "combos", label: "Toxic combo", sort: "combos" },
-  { key: "guardrail", label: "Guardrail", sort: null },
+  { key: "severity", label: "Severity", sort: "severity", help: { term: "severity" } },
+  { key: "issues", label: "Issues", sort: "issues", help: { term: "open-issues" } },
+  { key: "findings", label: "Cloud findings", sort: "findings", help: { term: "cloud-findings" } },
+  { key: "combos", label: "Toxic combo", sort: "combos", help: { term: "toxic-combination" } },
+  { key: "guardrail", label: "Guardrail", sort: null, help: { term: "missing-guardrail" } },
   // The owning business domain, off the resource's own Wiz/Domain tag. Sortable because
   // it is an identity column like Cloud and Region, and read the same way: A-Z first.
-  { key: "domain", label: "Domain", sort: "domain" },
-  { key: "projects", label: "Projects", sort: null },
+  { key: "domain", label: "Domain", sort: "domain",
+    help: { lines: ["Which Wiz/Domain tag owns this asset, read live from its own tags."] } },
+  { key: "projects", label: "Projects", sort: null,
+    help: { lines: ["Which Wiz projects this asset belongs to."] } },
+  // No `help`: the heading is blank (the Graph button inside it names its own action), so
+  // there is no visible text for a dotted-underline trigger to sit beside — the same reason
+  // gas's own attribution.js columns went on an allowlist rather than carrying a `?`.
   { key: "actions", label: "", sort: null },
 ];
 
@@ -146,8 +155,11 @@ function writeViews(views) {
  * makes the real content jump when it lands.
  */
 function inventorySkeleton() {
-  const header = el("div", { class: "inv-header" },
-    el("div", { class: "inv-hero" },
+  // Mirrors countHeader()'s own shape now: the shared pageHeader grid (hero + the
+  // distribution strip as its aside + the stat list), then the verdict row as its own
+  // block underneath — keep the two in step, or the real content jumps when it lands.
+  const header = el("div", { class: "page-header" },
+    el("div", { class: "page-hero" },
       skeleton("line", { width: "70%" }),
       skeleton("stat", { width: "45%" }),
       skeleton("line", { width: "85%" })),
@@ -155,12 +167,16 @@ function inventorySkeleton() {
       skeleton("line", { width: "40%" }),
       skeleton("line", { height: "10px", radius: "999px" }),
       skeleton("line", { width: "90%" })),
-    el("div", { class: "card stat-list" },
+    el("div", { class: "stat-list" },
       ...Array.from({ length: 4 }, () => skeleton("line", { height: "18px" }))),
   );
+  const verdict = el("div", { class: "inv-verdict" },
+    el("div", { class: "inv-count-row" },
+      ...Array.from({ length: 3 }, () => skeleton("line", { width: "30%", height: "18px" }))));
   const toolbar = el("div", { class: "inv-toolbar" }, skeleton("line", { height: "34px" }));
   const rows = skeletonStack(8, { height: "18px" });
-  return el("div", { role: "status", "aria-label": "Loading inventory" }, header, toolbar, rows);
+  return el("div", { role: "status", "aria-label": "Loading inventory" },
+    header, verdict, toolbar, rows);
 }
 
 // ------------------------------------------------------------------------ the page
@@ -177,14 +193,14 @@ export async function renderInventory(main, params) {
     pageHeader({
       route: "inventory",
       lede: "Every AI asset from the last sync, ranked by what is open on it.",
+      help: { term: "open-issues" },
     }),
   );
 
+  const SYNC_HINT = "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.";
+
   if (!boot.latestSync) {
-    main.append(emptyState(
-      "No sync yet.",
-      "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
-    ));
+    main.append(firstRunNotice({ synced: false, hint: SYNC_HINT }));
     return;
   }
 
@@ -369,10 +385,47 @@ export async function renderInventory(main, params) {
 
   // ------------------------------------------------------------------ painting
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[inventory] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint(fresh) {
     payload = fresh;
     allMode = fresh.all !== false;
     clear(host);
+
+    // A measured register, and it measured zero. `boot.latestSync` is truthy — a sync
+    // completed — so this is not the same claim as the gate above: the tenant answered and
+    // there was nothing to inventory, not that nobody has asked yet. The dash hero and the
+    // empty stat list say "nothing was withheld", not "nothing has looked".
+    //
+    // `absentText`, not `null`, as the VALUE: `heroStat`'s `valueOrAbsent` only substitutes
+    // its own `absent()` node for the exact string `absentText` — a bare `null` renders as
+    // an EMPTY hero, not a dash (P2.3's browser-found defect, closed here for both this page
+    // and config.js's own copy of the same gate).
+    if (fresh.total === 0) {
+      host.append(pageHeader({
+        hero: heroStat("AI assets", absentText, "of the register's landscape"),
+        stats: [],
+      }));
+      host.append(firstRunNotice({
+        synced: true,
+        at: boot.latestSync.finished_at,
+        hint: SYNC_HINT,
+      }));
+      return;
+    }
 
     const kpis = fresh.kpis || {};
 
@@ -381,7 +434,10 @@ export async function renderInventory(main, params) {
     // so a warning that some of them are behind the current rule is news about a model the
     // reader cannot see from here — it belongs beside the model, and that is where it went.
 
-    host.append(countHeader(kpis, fresh));
+    const countHost = el("div", {});
+    host.append(countHost);
+    guard("the asset counts", countHost, () => countHost.append(countHeader(kpis, fresh)));
+
     const reachCard = reachHeadline(fresh.reach);
     if (reachCard) host.append(reachCard);
     host.append(toolbar());
@@ -390,9 +446,17 @@ export async function renderInventory(main, params) {
 
     resultsHost = el("div", { class: "table-host" });
     host.append(resultsHost);
-    host.append(trendSection(fresh));
-    const posture = postureTrendSection(fresh);
-    if (posture) host.append(posture);
+
+    const trendHost = el("div", {});
+    host.append(trendHost);
+    guard("counts over time", trendHost, () => trendHost.append(trendSection(fresh)));
+
+    const postureHost = el("div", {});
+    host.append(postureHost);
+    guard("the posture trend", postureHost, () => {
+      const posture = postureTrendSection(fresh);
+      if (posture) postureHost.append(posture);
+    });
 
     renderResults(fresh);
     panel.sync();
@@ -430,18 +494,13 @@ export async function renderInventory(main, params) {
       ));
   }
 
-  // ---- header: one hero, the three counts, one distribution, one stat list
+  // ---- header: the shared pageHeader (hero + distribution aside + stat list), with the
+  // three-count verdict row as its own block directly under it — see the comment above
+  // `verdict` below for why it cannot join `stats` instead.
   function countHeader(kpis, fresh) {
     const counts = fresh.severityCounts || {};
     const deltas = fresh.countDeltas || null;
     const withIssues = STRIP_SEVERITIES.reduce((n, sev) => n + (counts[sev] || 0), 0);
-
-    const hero = el("div", { class: "inv-hero" },
-      el("div", { class: "kpi-label" }, "AI assets"),
-      el("div", { class: "hero-value num" }, String(kpis.aiAssets ?? 0)),
-      el("div", { class: "inv-hero-sub" },
-        `${kpis.agents ?? 0} agents · ${kpis.agenticIdentities ?? 0} agentic identities`),
-    );
 
     // The three counts, which is what this header claims now that it claims no verdict.
     // Each is a number a reader can go and check in Wiz: open issues, failing
@@ -473,10 +532,14 @@ export async function renderInventory(main, params) {
         el("span", { class: "inv-count-n num" }, value === null ? absent() : String(value)),
         deltaChip(key)),
       term);
+    // A block of its own, directly under the shared header — not one of its `stats`.
+    // `statRow` (ui/controls.js) has no delta-chip slot, and every count here carries one
+    // against the previous sync, so folding these into the stat strip would mean dropping
+    // the deltas or inventing a second stat-row shape for exactly three cells.
     const verdict = el("div", { class: "inv-verdict" },
       el("div", { class: "inv-count-row" },
-        countStat("Open issues", kpis.openIssues ?? 0, "issues"),
-        countStat("Cloud findings", kpis.complianceGaps ?? 0, "findings"),
+        countStat("Open issues", num(kpis.openIssues), "issues"),
+        countStat("Cloud findings", num(kpis.complianceGaps), "findings"),
         countStat("Posture fails", postureFails, "postureFails")),
       el("p", { class: "sev-strip-note" },
         "Counts, not a score" +
@@ -525,22 +588,23 @@ export async function renderInventory(main, params) {
         " · assets, not issues — the bar in each row counts those"),
     );
 
-    const coverage = kpis.guardrailCoveragePct;
-    const stats = el("div", { class: "card stat-list" },
-      statRow("Guardrail coverage",
-        coverage === null || coverage === undefined ? "—" : `${coverage}%`,
-        "agents protected by a guardrail",
-        coverage === null || coverage === undefined ? null : coverage,
+    const coverage = num(kpis.guardrailCoveragePct);
+    // An array, not a wrapped `.card.stat-list` div: `pageHeader({ stats })` below does the
+    // wrapping itself (`.stat-list`, no `.card`), the same shape `config.js`'s header stats
+    // already take.
+    const stats = [
+      statRow("Guardrail coverage", pct1(coverage),
+        "agents protected by a guardrail", coverage,
         { term: "missing-guardrail" }),
-      statRow("Sensitive data access", String(kpis.sensitiveAccess ?? 0), "AI assets",
+      statRow("Sensitive data access", fmtCount(kpis.sensitiveAccess), "AI assets",
         null, { term: "sensitive-data" }),
-      statRow("Reaches classified data", String(kpis.dataFindings ?? 0),
+      statRow("Reaches classified data", fmtCount(kpis.dataFindings),
         "classified findings reachable from an AI asset", null, { term: "sensitive-data" }),
       statRow("Frameworks scored",
-        posture && posture.scoredFrameworks !== undefined ? String(posture.scoredFrameworks) : "—",
-        "of " + (posture ? posture.frameworks ?? 0 : 0) + " collected",
+        fmtCount(posture && posture.scoredFrameworks),
+        "of " + fmtCount(posture ? posture.frameworks : null) + " collected",
         null, { term: "coverage-state" }),
-    );
+    ];
 
     // The strip is a control, so it has to reflect state it did not itself change — a
     // chip cleared outside it, or the drawer's own severity facet. Marked in place rather
@@ -558,8 +622,17 @@ export async function renderInventory(main, params) {
       }
     };
 
-    // hero and the counts share the top row; the distribution sits under them.
-    return el("div", { class: "inv-header" }, hero, verdict, strip, stats);
+    // The shared header (hero + distribution aside + stat list), with the verdict as its
+    // own block directly under it — see the comment above `verdict`.
+    return el("div", {},
+      pageHeader({
+        hero: heroStat("AI assets", fmtCount(kpis.aiAssets),
+          `${fmtCount(kpis.agents)} agents · ${fmtCount(kpis.agenticIdentities)} agentic identities`),
+        aside: strip,
+        stats,
+      }),
+      verdict,
+    );
   }
 
   // ---- toolbar
@@ -811,7 +884,14 @@ export async function renderInventory(main, params) {
 
   // ------------------------------------------------------------------ the results
 
+  // Every call site — the initial paint, a filter/sort/page change, a saved view — reaches
+  // this one function, so guarding it here rather than at each call site covers all of them
+  // with one host and one label instead of repeating the try/render at six sites.
   function renderResults(current) {
+    guard("the asset table", resultsHost, () => renderResultsInner(current));
+  }
+
+  function renderResultsInner(current) {
     if (!current) return;
     clear(resultsHost);
     const requested = query.page;
@@ -848,19 +928,25 @@ export async function renderInventory(main, params) {
 
     if (!shown) {
       const applied = filterEntries().length;
-      resultsHost.append(el("div", { class: "empty", role: "status" },
-        el("div", {}, "No assets match these filters."),
-        el("p", { class: "small muted" },
-          `${applied} filter${applied === 1 ? "" : "s"} applied.`),
-        el("div", { class: "empty-actions" },
-          el("button", {
-            onclick: () => {
-              for (const k of FACET_KEYS) query[k] = [];
-              query.q = "";
-              onFilterChange();
-            },
-          }, "Clear all filters")),
-      ));
+      // A dated notice, not the hand-rolled `.empty` div this used to be — the same fix
+      // `config.js` and `combos.js` take for the same reason: "no rows" that never says
+      // when it looked reads the same an hour after a sync as a month after one.
+      const notice = measuredEmpty(
+        "No assets match these filters.",
+        {
+          at: boot.latestSync.finished_at,
+          hint: applied ? `${applied} filter${applied === 1 ? "" : "s"} applied.` : "",
+        },
+      );
+      notice.append(el("div", { class: "empty-actions" },
+        el("button", {
+          onclick: () => {
+            for (const k of FACET_KEYS) query[k] = [];
+            query.q = "";
+            onFilterChange();
+          },
+        }, "Clear all filters")));
+      resultsHost.append(notice);
       return;
     }
 
@@ -995,6 +1081,7 @@ export async function renderInventory(main, params) {
         label: col.label,
         sortable: !!col.sort,
         className: col.key === "name" ? "inv-name-col" : null,
+        help: col.help,
         cell: CELLS[col.key],
       })),
       rows,
@@ -1112,6 +1199,17 @@ export async function renderInventory(main, params) {
             (present.length === SERIES.length - 1 ? " is" : " are") +
             " not charted: no sync in this window recorded a figure.")
         : null,
+      // THE SAME `trend`/`present` THE CHART WRAPPER READS BELOW, named once above and
+      // handed to both — `gas_shared/ui/chartTable.js`'s one rule. Only where the chart
+      // itself draws: below two points there is no line, and a table over a dangling,
+      // unattached canvas would wire `aria-details` to a node nothing on screen points at.
+      trend.length >= 2
+        ? chartTable({
+            canvas,
+            caption: "Counts over time",
+            model: trendTableModel(trend, present),
+          })
+        : null,
     );
 
     if (trend.length >= 2) {
@@ -1145,7 +1243,7 @@ export async function renderInventory(main, params) {
       });
     }
 
-    return el("div", { class: "inv-history" }, sectionLabel("History"), card);
+    return el("div", { class: "inv-history" }, sectionLabel("History", { term: "sync" }), card);
   }
 
   // ---- posture over time: the four series a sync records beside its counts
@@ -1181,7 +1279,7 @@ export async function renderInventory(main, params) {
     }
 
     const cards = el("div", { class: "posture-trend-grid" },
-      chartCard({
+      postureTrendCard({
         title: "Where issues sit",
         points: adjacency,
         series: ADJACENCY_SERIES,
@@ -1192,7 +1290,7 @@ export async function renderInventory(main, params) {
         // hovers must not take an UNLINKED band as a measurement of relatedness.
         foot: adjacencyFoot(adjacency),
       }),
-      chartCard({
+      postureTrendCard({
         title: "Exploitation evidence",
         points: exploitation,
         series: EXPLOITATION_SERIES,
@@ -1203,7 +1301,7 @@ export async function renderInventory(main, params) {
         foot: "A sync whose exploitation pass was refused records no census and has no point "
           + "on this chart.",
       }),
-      chartCard({
+      postureTrendCard({
         title: "Open issues by category",
         points: categoryPoints,
         series: categorySeries(trend.categories),
@@ -1236,8 +1334,17 @@ export async function renderInventory(main, params) {
       + "point carries its own edge count.";
   }
 
-  /** One trend card: heading, sync count, the chart or the reason there isn't one, a note. */
-  function chartCard({ title, points, series, stacked, notes, label, foot }) {
+  /**
+   * One trend card: heading, sync count, the chart or the reason there isn't one, a note,
+   * and — where the chart actually drew — the same series as a table.
+   *
+   * NAMED `postureTrendCard`, not `chartCard`: the old name reads as one more shared
+   * component from `gas_shared/ui/` (`chartTable`, `chartTableModel` sit right beside it in
+   * every import list this file already carries), when it is in fact page-local and shaped
+   * for exactly the four posture cards below — a name a later reader could mistake for a
+   * primitive worth reaching for elsewhere.
+   */
+  function postureTrendCard({ title, points, series, stacked, notes, label, foot }) {
     const present = presentSeries(points, series);
     const gappy = gappySeries(points, present);
     const canvas = el("canvas", { "aria-label": label, role: "img" });
@@ -1260,6 +1367,12 @@ export async function renderInventory(main, params) {
             + "figure for every sync in this window. Those points are gaps, not zeros.")
         : null,
       foot ? el("p", { class: "chart-note" }, foot) : null,
+      // THE SAME `points`/`present` THE CHART WRAPPER READS BELOW, named once above and
+      // handed to both — only where the chart actually draws (see trendSection's own note
+      // on why a dangling canvas gets no disclosure).
+      points.length >= 2 && present.length
+        ? chartTable({ canvas, caption: title, model: trendTableModel(points, present) })
+        : null,
     );
 
     if (points.length >= 2 && present.length) {

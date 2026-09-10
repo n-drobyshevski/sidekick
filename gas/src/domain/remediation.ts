@@ -167,16 +167,29 @@ export function kmCurve(events: number[], times: number[]): KMPoint[] {
 }
 
 /**
+ * How far above a threshold a survival value may sit and still count as having crossed it.
+ *
+ * S(t) IS A RUNNING PRODUCT, so a curve that mathematically lands ON a threshold can land one
+ * ULP above it. CLAUDE.md's own example, pinned by `test/kmCrossing.test.ts`: ten events at
+ * times 1..10 with no censoring gives S(9) = 0.10000000000000002, while the p90 threshold
+ * `1 - 0.9` evaluates to 0.09999999999999998 — two separate representation errors leaning
+ * opposite ways — so a bare `s <= threshold` skips t=9 and reports 10. The answer would then
+ * depend on the ORDER the products accumulated in, which is not a property any published
+ * figure may have.
+ */
+export const CROSSING_EPSILON = 1e-9;
+
+/**
  * The Kaplan–Meier q-th quantile off a curve: the smallest event time whose survival has fallen
- * to `S(t) <= 1 − q`. q=0.5 is the median (S ≤ 0.5); q=0.9 is the p90 (S ≤ 0.10 — the time by
- * which nine in ten findings are remediated). Censoring-aware, so the slow tail isn't biased low
- * by the fast-patched vulns that close first. Null when survival never falls that far (too much
- * still open) or the curve is empty; the UI renders that null as "—". The inclusive crossing
- * makes an exact tie (e.g. S(t) hits 0.5 exactly) return that time.
+ * to `S(t) <= 1 − q`, within CROSSING_EPSILON. q=0.5 is the median (S ≤ 0.5); q=0.9 is the p90
+ * (S ≤ 0.10 — the time by which nine in ten findings are remediated). Censoring-aware, so the
+ * slow tail isn't biased low by the fast-patched vulns that close first. Null when survival
+ * never falls that far (too much still open) or the curve is empty; the UI renders that null as
+ * "—". The inclusive crossing makes an exact tie (e.g. S(t) hits 0.5 exactly) return that time.
  */
 export function kmQuantileFromCurve(curve: KMPoint[], q: number): number | null {
   const threshold = 1 - q;
-  for (const p of curve) if (p.s <= threshold) return p.t;
+  for (const p of curve) if (p.s <= threshold + CROSSING_EPSILON) return p.t;
   return null;
 }
 

@@ -18,11 +18,12 @@
 // mirrored into the hash — the same discipline combos.js documents, so a background SWR
 // revalidation cannot collapse the table you have open.
 
-import { bootstrapCached, setParams, swrCall } from "../../../../../gas_shared/store.js";
+import { bootstrap, bootstrapCached, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { openConfigFindingSheet } from "../detailSheets.js";
 import {
-  absent, clear, dataTable, debounce, el, emptyState, errorState, fmtDate, heroStat, outcomeBadge,
-  pageHeader, statRow,
+  absent, absentText, clear, dataTable, debounce, el, errorState, firstRunNotice, fmtCount,
+  fmtDate,
+  heroStat, measuredEmpty, num, outcomeBadge, pageHeader, statRow,
   plural, sectionLabel, segmented, sevBadge, sevEntries, sevKeyRow, sevSegmentBar, tableFooter,
   skeletonStack, statusPill, togglePills,
   scopeNote,
@@ -54,6 +55,23 @@ function optionLabel(key, value) {
   return value;
 }
 
+// This page had NO first-run gate before this package — the only route of the eleven that
+// printed bare zeros ("0 / 0 distinct controls / 0 / 0 / 0") over an unsynced store, because
+// `paint()` built the whole hero and header before ever asking whether anything had been
+// read. The hint is named once so the two gates below (unsynced, and synced-but-empty) never
+// drift apart.
+const CONFIG_SYNC_HINT =
+  "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.";
+
+// The OTHER empty hint, and why it needs to exist at all: `CONFIG_SYNC_HINT` above answers
+// "nobody has asked yet", and the `totals.controls === 0` gate below used to print it even
+// once a sync HAD run and genuinely found nothing — "Run Sync now" beside a register a sync
+// just measured as empty tells a reader to repeat a step that already happened. This is the
+// synced-but-zero hint the two gates never shared to begin with.
+const CONFIG_SYNCED_EMPTY_HINT =
+  "The last sync collected no configuration findings for this framework; check the Wiz " +
+  "Scans page for a skipped step.";
+
 export async function renderConfigFindings(main, params, ctx) {
   const view = {
     mode: params.mode === "findings" ? "findings" : "controls",
@@ -72,7 +90,17 @@ export async function renderConfigFindings(main, params, ctx) {
     route: "config",
     lede: "Wiz configuration findings for the AI security framework — what is failing, " +
       "grouped by the control that failed.",
+    help: { term: "cloud-findings" },
   }));
+
+  // Fresh, not `bootstrapCached()`: this is the FIRST read this route makes of whether
+  // anything has ever been synced, so it has to be the real thing rather than a value that
+  // may not have resolved yet — the same reason every other register page awaits it here.
+  const boot = await bootstrap();
+  if (!boot.latestSync) {
+    main.append(firstRunNotice({ synced: false, hint: CONFIG_SYNC_HINT }));
+    return;
+  }
 
   const headHost = el("div", {});
   const bodyHost = el("div", {});
@@ -165,6 +193,21 @@ export async function renderConfigFindings(main, params, ctx) {
     apply();
   }
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[config] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint() {
     if (!data) return;
     // The payload's own `all` discriminator, read at last. Everything below asks `model`
@@ -174,7 +217,39 @@ export async function renderConfigFindings(main, params, ctx) {
     model = configPageView(data, view, PAGE_SIZE);
     const totals = data.totals || {};
 
+    // A measured register, and it measured zero distinct controls — every row this sync
+    // wrote lacks a rule id, or there were no rows at all. `boot.latestSync` is truthy by
+    // the gate above, so this is not "nobody has synced"; it is "the tenant answered and had
+    // nothing to report". The dash hero and empty stats say "nothing was withheld", not
+    // "nothing has looked" — and it fires BEFORE the header below is built, so a reader never
+    // sees a "0 distinct controls" hero on the way to reading this notice.
+    if (totals.controls === 0) {
+      clear(headHost);
+      clear(bodyHost);
+      headHost.append(pageHeader({
+        // `absentText` is the VALUE, not the sub — it was in the wrong argument slot
+        // (heroStat(label, value, sub, help)), which left `null` render as an EMPTY hero
+        // (`valueOrAbsent` only substitutes `absent()` for the exact string `absentText`,
+        // never for `null`) with a bare "—" sitting where the sub sentence belongs. No sub
+        // here: the firstRunNotice right below already says the register measured zero.
+        hero: heroStat("Failing controls", absentText, null),
+        stats: [],
+      }));
+      bodyHost.append(firstRunNotice({
+        synced: true,
+        at: boot.latestSync.finished_at,
+        hint: CONFIG_SYNCED_EMPTY_HINT,
+      }));
+      return;
+    }
+
     // ------------------------------------------------------------------ the header
+    //
+    // One failing section must not blank the rest of the page. The header and the body
+    // below each get their own `guard()` call, so a throw building the facet strip leaves
+    // the register table intact and vice versa — the same shape gas/pages/mttr.js uses,
+    // adapted to this page's two pre-existing hosts instead of one per figure.
+    guard("the failing-controls header", headHost, () => {
     clear(headHost);
 
     // Failing controls is the headline, not the row count: a resolved finding is stored
@@ -213,10 +288,15 @@ export async function renderConfigFindings(main, params, ctx) {
           onToggle: (sev) => toggleFacet("severities", sev),
         }));
     }
+    // `totals.gaps`/`totals.controls` are scalar server figures, not census lookups — a
+    // genuinely missing one refuses before it casts and prints the em dash, never a "0
+    // distinct controls" that reads as a measured, empty register.
+    const gaps = num(totals.gaps);
+    const controlsCount = num(totals.controls);
     headHost.append(pageHeader({
       // NO `route`, SO NO h1: the page's heading is in the header above this one.
-      hero: heroStat("Failing controls", String(totals.gaps ?? 0),
-        plural(totals.controls ?? 0, "distinct control")),
+      hero: heroStat("Failing controls", fmtCount(gaps),
+        controlsCount === null ? absentText : plural(controlsCount, "distinct control")),
       aside: strip,
       stats: headerStats,
     }));
@@ -307,21 +387,43 @@ export async function renderConfigFindings(main, params, ctx) {
           },
         }, "Clear " + plural(applied.length, "filter"))));
     }
+    });
 
     // --------------------------------------------------------------------- the body
+    guard("the register", bodyHost, () => {
     clear(bodyHost);
     // `model.total` is the REGISTER, never the page. On the paged branch `data.rows` is empty
     // whenever the filter matches nothing on this page, and answering that with "no findings
     // in the register" would report an empty tenant to someone holding thousands.
+    //
+    // UNREACHED IN THE COMMON CASE — the `totals.controls === 0` gate above already returns
+    // before `model` exists for a genuinely empty register, since every row that could
+    // produce a distinct control also produces a row. This stays as the one case that gate
+    // cannot see: rows present but none carrying a `ruleShortId` the rollup could count. The
+    // old sentence here asserted a specific unmeasured cause ("the CONFIG_FINDINGS step was
+    // skipped by the tenant") this app has no way to know; `measuredEmpty` states only what
+    // was actually measured — a fetch that answered, dated, and matched nothing.
     if (!model.total) {
-      bodyHost.append(emptyState(
+      bodyHost.append(measuredEmpty(
         "No configuration findings in the register.",
-        "The last sync returned none, or the CONFIG_FINDINGS step was skipped by the tenant.",
+        { at: boot.latestSync.finished_at },
       ));
       return;
     }
     if (view.mode === "controls") paintControls();
     else paintFindings();
+    });
+  }
+
+  /**
+   * The one thing worth telling a reader staring at an empty filtered table: how many
+   * filters are narrowing it and that clearing them goes back to the whole register. Empty
+   * when nothing is applied — `measuredEmpty` already drops a falsy hint rather than
+   * printing a blank line.
+   */
+  function emptyFilterHint() {
+    const applied = activeConfigFilters(view.query).length;
+    return applied ? "Clear " + plural(applied, "filter") + " to see the full register." : "";
   }
 
   /**
@@ -336,21 +438,35 @@ export async function renderConfigFindings(main, params, ctx) {
    */
   function paintControls() {
     const groups = model.controls;
+    // A dated notice, not `dataTable`'s own bare `emptyText` row: "no rows" that never says
+    // when it looked reads the same whether the last sync ran an hour ago or a month ago.
+    // Rendered in place of the table rather than handed to it, per `gas_shared/ui/data.js`'s
+    // own internal render — `dataTable` can only draw a plain string into a `<td>`.
+    if (!groups.length) {
+      bodyHost.append(measuredEmpty(
+        "No control matches these filters.",
+        { at: boot.latestSync.finished_at, hint: emptyFilterHint() },
+      ));
+      return;
+    }
     bodyHost.append(sectionLabel(plural(groups.length, "control") + " with findings"));
     bodyHost.append(dataTable({
+      stickyHeader: true,
       columns: [
         {
-          key: "severity", label: "Severity", sortable: false,
+          key: "severity", label: "Severity", sortable: false, help: { term: "severity" },
           cell: (g) => sevBadge(g.severity),
         },
         {
           key: "rule", label: "Control", sortable: false,
+          help: { lines: ["Which Wiz control or policy every row in this group failed."] },
           cell: (g) => el("div", {},
             el("div", {}, g.ruleName || g.ruleShortId),
             el("div", { class: "small muted" }, g.ruleShortId)),
         },
         {
           key: "gaps", label: "Failing", sortable: false, className: "num",
+          help: { lines: ["How many resources under this control are currently failing it."] },
           cell: (g) => {
             const said = g.gaps + " of " + plural(g.resources, "resource") + " currently failing";
             return tipAnchor(
@@ -360,12 +476,17 @@ export async function renderConfigFindings(main, params, ctx) {
         },
         {
           key: "resources", label: "Resources", sortable: false, className: "num",
+          help: { lines: ["How many resources this control was evaluated against."] },
           cell: (g) => String(g.resources),
         },
         {
           key: "unlinked", label: "Off-inventory", sortable: false, className: "num",
           // Not a warning — a fact about where the control applies. It is the reason the
           // register's gap total and the inventory's per-asset counts differ.
+          help: { lines: [
+            "How many of this control's failing evaluations are against a resource the AI " +
+            "inventory does not track — a region, an access policy, no asset to open.",
+          ] },
           cell: (g) => (g.unlinked
             ? tipAnchor(
               el("span", {}, String(g.unlinked),
@@ -378,18 +499,20 @@ export async function renderConfigFindings(main, params, ctx) {
           // near-identical rows are one piece of work; this says how many owners that work
           // needs. Empty for an all-unlinked control, which is most of them here.
           key: "domains", label: "Domain", sortable: false,
+          help: { lines: ["Which Wiz/Domain tags the affected resources carry."] },
           cell: (g) => ((g.domains || []).length
             ? el("span", {}, g.domains.join(", "))
             : absent()),
         },
         {
-          key: "since", label: "Oldest", sortable: false,
+          key: "since", label: "Oldest", sortable: false, help: { term: "first-seen" },
           cell: (g) => (g.firstSeenAt
             ? el("span", { class: "small" }, fmtDate(g.firstSeenAt))
-            : el("span", { class: "small muted" }, "—")),
+            : absent()),
         },
         {
           key: "iac", label: "IaC", sortable: false,
+          help: { lines: ["Whether Wiz traced this finding back to an Infrastructure-as-Code source."] },
           cell: (g) => (g.iac ? statusPill("neutral", String(g.iac)) : absent()),
         },
       ],
@@ -405,8 +528,12 @@ export async function renderConfigFindings(main, params, ctx) {
         pushParams();
         apply();
       },
-      emptyText: "No controls match these filters.",
     }));
+    // The rollup is bounded by construction — distinct controls, never the raw finding
+    // count — so this is the bare "N rows" pager() prints under any table with one page,
+    // the same shape paintFindings's own footer degrades to on a small register. No
+    // `onPage`: there is no page state to change.
+    bodyHost.append(tableFooter({ total: groups.length }));
   }
 
   /**
@@ -431,18 +558,45 @@ export async function renderConfigFindings(main, params, ctx) {
     const ids = sorted.map((r) => r.id);
 
     bodyHost.append(sectionLabel(plural(model.filtered, "finding")));
+
+    // Same dated notice as `paintControls`, in place of the table rather than through its
+    // `emptyText` — and still under the pager below, exactly as `problems.js`'s own paged
+    // branch keeps it: on the paged half of this page a page can go empty (kind/search
+    // narrowed a page that itself has rows) while an earlier page does not, so the reader
+    // still needs a way back.
+    if (!slice.length) {
+      bodyHost.append(measuredEmpty(
+        "No finding matches these filters.",
+        { at: boot.latestSync.finished_at, hint: emptyFilterHint() },
+      ));
+      bodyHost.append(tableFooter({
+        page, pageCount, total: model.filtered,
+        onPage: (p) => {
+          view.page = p;
+          pushParams();
+          apply();
+        },
+      }));
+      return;
+    }
+
     const table = dataTable({
       stickyHeader: true,
       columns: [
-        { key: "severity", label: "Severity", sortable: true, cell: (r) => sevBadge(r.severity) },
+        {
+          key: "severity", label: "Severity", sortable: true, help: { term: "severity" },
+          cell: (r) => sevBadge(r.severity),
+        },
         {
           key: "rule", label: "Control", sortable: true,
+          help: { lines: ["Which Wiz control or policy this finding failed."] },
           cell: (r) => el("div", {},
             el("div", {}, r.ruleName || r.name),
             el("div", { class: "small muted" }, r.ruleShortId)),
         },
         {
           key: "resource", label: "Resource", sortable: true,
+          help: { lines: ["The specific cloud resource Wiz evaluated this finding against."] },
           cell: (r) => el("div", {},
             el("div", {}, r.resourceName || r.resourceId),
             el("div", { class: "small muted" }, r.resourceType)),
@@ -451,27 +605,34 @@ export async function renderConfigFindings(main, params, ctx) {
           key: "domain", label: "Domain", sortable: false,
           // Blank for an unlinked finding, and it reads as the same em dash every other
           // absent cell uses. The AI asset column beside it says WHY.
+          help: { lines: ["Which Wiz/Domain tag the affected resource carries."] },
           cell: (r) => (r.domain
             ? el("span", {}, r.domain)
-            : el("span", { class: "small muted" }, "—")),
+            : absent()),
         },
         {
           key: "linked", label: "AI asset", sortable: false,
+          help: { lines: [
+            "Whether this finding's resource matches an asset in the AI inventory — most " +
+            "findings do not, because they are evaluated against a region or a policy no " +
+            "asset models.",
+          ] },
           cell: (r) => (r.linked
             ? statusPill("neutral", "On inventory")
-            : el("span", { class: "small muted" }, "—")),
+            : absent()),
         },
         {
           key: "status", label: "Status", sortable: true,
+          help: { lines: ["Whether Wiz's own evaluation currently reads this finding as failing."] },
           cell: (r) => (r.gap
             ? statusPill("bad", "Failing")
-            : statusPill("neutral", r.status || "—")),
+            : statusPill("neutral", r.status || absentText)),
         },
         {
-          key: "firstSeen", label: "First seen", sortable: true,
+          key: "firstSeen", label: "First seen", sortable: true, help: { term: "first-seen" },
           cell: (r) => (r.firstSeenAt
             ? el("span", { class: "small" }, fmtDate(r.firstSeenAt))
-            : el("span", { class: "small muted" }, "—")),
+            : absent()),
         },
       ],
       rows: slice,
@@ -494,7 +655,6 @@ export async function renderConfigFindings(main, params, ctx) {
         seed: r,
         records: { ids, index: ids.indexOf(r.id) },
       }),
-      emptyText: "No findings match these filters.",
     });
     bodyHost.append(table);
     bodyHost.append(tableFooter({

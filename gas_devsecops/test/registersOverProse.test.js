@@ -253,9 +253,18 @@ describe("kevColumnHelp: the KEV caveat, once, on the column heading", () => {
   const partial = [signalFigure("has_kev", "CISA KEV", "sca", coverage({ measured: 78, missing: 12 }))];
   const complete = [signalFigure("has_kev", "CISA KEV", "sca", coverage({ measured: 90, missing: 0 }))];
 
+  /**
+   * THE TERM MOVED, AND THE CLAIM THIS BLOCK ENCODES DID NOT. Every assertion here is about
+   * the SHAPE of the returned help — that an empty `lines` array is not "no lines" — and the
+   * term was carried along incidentally. It was "sca": the register's own glossary entry, on a
+   * column headed "On KEV". Measured in the browser before the change: hovering that column
+   * opened "Software composition analysis: a known CVE in a third-party package at a version",
+   * which defines the page rather than the column under the pointer. So the value changes and
+   * the shape assertions below are untouched.
+   */
   it("carries the floor sentence where any row was never evaluated", () => {
     const help = kevColumnHelp(partial);
-    expect(help.term).toBe("sca");
+    expect(help.term).toBe("kev");
     expect(help.lines).toEqual([kevCaveatLine(partial)]);
     expect(help.lines[0]).toMatch(/KEV counts are a floor: 12 row\(s\)/);
     expect(help.lines[0]).toMatch(/unknown rather than absent from it/);
@@ -263,7 +272,18 @@ describe("kevColumnHelp: the KEV caveat, once, on the column heading", () => {
 
   it("carries NO lines key at all where the register was fully evaluated", () => {
     expect(kevCaveatLine(complete)).toBeNull();
-    expect(kevColumnHelp(complete)).toEqual({ term: "sca" });
+    expect(kevColumnHelp(complete)).toEqual({ term: "kev" });
+  });
+
+  // AND THE TERM HAS TO RESOLVE, which is the half no shape assertion covers: "sca" was wrong
+  // but valid, so nothing failed. A term naming no entry renders a tip with a dead "Enter for
+  // the full definition" footer, and a term naming the WRONG entry renders a confident answer
+  // to another question — this pins the association rather than the spelling.
+  it("names a glossary entry that exists, and it is the KEV one", () => {
+    const entry = findEntry(kevColumnHelp(complete).term);
+    expect(entry).not.toBeNull();
+    expect(entry.id).toBe("kev");
+    expect(entry.lines.join(" ")).toMatch(/Known Exploited Vulnerabilities/);
   });
 
   /**
@@ -277,10 +297,42 @@ describe("kevColumnHelp: the KEV caveat, once, on the column heading", () => {
    * caveat. The shape below is what `tipLabel` would branch on.
    */
   it("is not satisfied by filtering an array down to empty (perturbation, inline)", () => {
-    const perturbed = { term: "sca", lines: [kevCaveatLine(complete)].filter(Boolean) };
+    const perturbed = { term: "kev", lines: [kevCaveatLine(complete)].filter(Boolean) };
     expect(perturbed.lines).toEqual([]);
     expect(Boolean(perturbed.lines)).toBe(true); // …which is why tipLabel would draw it
     expect(Boolean(kevColumnHelp(complete).lines)).toBe(false);
+  });
+
+  /**
+   * THE SAME DEFECT LIVED IN THREE MORE PLACES, and none of them is reachable through
+   * `kevColumnHelp`. `signalFigure(id, label, glossary, cov)` takes the glossary term as its
+   * THIRD argument, and all three exploitation rows passed "sca" — so the signals card's own
+   * rows opened the register's definition too. A term that is valid but wrong fails no
+   * existence check, which is why this reads the call sites rather than the registry.
+   */
+  it("gives each exploitation signal its own glossary term, not the register's", () => {
+    expect(SCA_CODE).toMatch(/signalFigure\("has_kev", "CISA KEV", "kev"/);
+    expect(SCA_CODE).toMatch(/signalFigure\("has_exploit", "Known exploit", "known-exploit"/);
+    expect(SCA_CODE).toMatch(/signalFigure\("epss", "EPSS score", "epss"/);
+    // The rule, not the spelling: no signal row may point at the page's own entry.
+    expect(SCA_CODE).not.toMatch(/signalFigure\([^)]*, "sca",/);
+    for (const id of ["kev", "known-exploit", "epss"]) expect(findEntry(id)?.id).toBe(id);
+  });
+
+  it("does the same for the Code register's one signal", () => {
+    expect(SAST_CODE).toMatch(/signalFigure\("ai_verdict", "AI triage verdict", "ai-verdict"/);
+    expect(SAST_CODE).not.toMatch(/signalFigure\([^)]*, "sast",/);
+    expect(findEntry("ai-verdict")?.id).toBe("ai-verdict");
+    // The entry has to carry the part that makes the figure readable: this clause has never
+    // fired in this tenant, so a zero beside it is "nobody was asked", not "the AI disagreed".
+    expect(findEntry("ai-verdict").lines.join(" ")).toMatch(/never actually fired/);
+  });
+
+  // AND THE REGISTER'S OWN TERM STAYS WHERE IT BELONGS. `sast` is still the right entry for
+  // the page's rule section — this pins that the fix narrowed the term to signal rows rather
+  // than deleting a correct usage next door.
+  it("leaves the register's own entry on the section that is about the register", () => {
+    expect(SAST_CODE).toMatch(/help: \{ term: "sast" \}/);
   });
 
   it("is drawn once per table rather than once under each breakdown", () => {

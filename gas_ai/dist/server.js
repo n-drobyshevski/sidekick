@@ -474,7 +474,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "ef135e824159" : "dev";
+  var BUILD_ID = true ? "189c7dd63784" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -6235,6 +6235,33 @@ var Server = (() => {
     return { byId, ids, shortIds };
   }
 
+  // src/domain/registerScope.ts
+  var CANDIDATE_CATEGORIES = [
+    { id: RISK_CATEGORY_ID, name: "AI Security" },
+    { id: "wct-id-3", name: "Vulnerability Assessment" },
+    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats" },
+    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security" },
+    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management" },
+    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management" }
+  ];
+  var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
+  function cleanCategoryIds(v) {
+    if (!Array.isArray(v)) return DEFAULT_CATEGORY_IDS.slice();
+    const seen = {};
+    const out = [];
+    for (const raw of v) {
+      if (typeof raw !== "string") continue;
+      const id = raw.trim();
+      if (!id || seen[id]) continue;
+      seen[id] = true;
+      out.push(id);
+    }
+    return out.length ? out : DEFAULT_CATEGORY_IDS.slice();
+  }
+  function registerScopeSignature(ids) {
+    return cleanCategoryIds(ids.slice()).slice().sort().join("|");
+  }
+
   // src/domain/scanVars.ts
   var MAX_LIST_VALUES = 40;
   var MAX_VALUE_LEN = 120;
@@ -6679,6 +6706,356 @@ var Server = (() => {
         error: "Recovered: execution died mid-sync; the last committed snapshot is unchanged."
       });
     }
+  }
+
+  // src/domain/aarsTrend.ts
+  var PROJECT_TOTALS_COLUMN = "project_totals_json";
+  var PROJECT_TOTALS_MAX_CHARS = 45e3;
+  function countProjectTotals(nodes, decided) {
+    var _a5, _b, _c, _d;
+    const totals = {};
+    const projectsByAsset = /* @__PURE__ */ new Map();
+    function entry(projectId) {
+      let t = totals[projectId];
+      if (!t) {
+        const aars = {};
+        for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
+        const outcome = {};
+        for (const o of OUTCOME_VALUES) outcome[o] = 0;
+        t = { aars, outcome, counts: { issues: 0, findings: 0 } };
+        totals[projectId] = t;
+      }
+      return t;
+    }
+    for (const n of nodes) {
+      const projects = (_a5 = n.projects) != null ? _a5 : [];
+      if (!projects.length) continue;
+      projectsByAsset.set(n.id, projects);
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      for (const p of projects) {
+        const t = entry(p.id);
+        if (sev) t.aars[sev] += 1;
+      }
+    }
+    for (const r of decided) {
+      const isFinding = r.assetId === void 0 && r.resourceId !== void 0;
+      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
+      const projects = (_d = projectsByAsset.get(assetId)) != null ? _d : [];
+      for (const p of projects) {
+        const counts = entry(p.id).counts;
+        if (counts) counts[isFinding ? "findings" : "issues"] += 1;
+      }
+      const outcome = r.problemOutcome;
+      if (!outcome || !OUTCOME_VALUES.includes(outcome)) continue;
+      for (const p of projects) entry(p.id).outcome[outcome] += 1;
+    }
+    return totals;
+  }
+  function encodeProjectTotals(totals) {
+    const json = JSON.stringify(totals);
+    return json.length > PROJECT_TOTALS_MAX_CHARS ? null : json;
+  }
+  function countAarsSeverities(nodes) {
+    const counts = {};
+    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
+    for (const n of nodes) {
+      const sev = normalizeAarsSeverity(n.aarsSeverity);
+      if (sev) counts[sev] += 1;
+    }
+    return counts;
+  }
+  function countsFromObject(parsed, keys, absentKeyIsNull = false) {
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const raw = parsed;
+    const counts = {};
+    for (const k of keys) {
+      if (absentKeyIsNull && !Object.prototype.hasOwnProperty.call(raw, k)) {
+        counts[k] = null;
+        continue;
+      }
+      const n = Number(raw[k]);
+      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
+    }
+    return counts;
+  }
+  function parseCounts(v, keys, absentKeyIsNull = false) {
+    if (typeof v !== "string" || !v) return null;
+    try {
+      return countsFromObject(JSON.parse(v), keys, absentKeyIsNull);
+    } catch {
+      return null;
+    }
+  }
+  function parseAnnotations(v, keys) {
+    const out = {};
+    let raw = {};
+    if (typeof v === "string" && v) {
+      try {
+        const parsed = JSON.parse(v);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          raw = parsed;
+        }
+      } catch {
+        raw = {};
+      }
+    }
+    for (const k of keys) {
+      const n = Number(raw[k]);
+      out[k] = Object.prototype.hasOwnProperty.call(raw, k) && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
+    }
+    return out;
+  }
+  function parseProjectCounts(v, projectId, spec) {
+    if (typeof v !== "string" || !v) return null;
+    let parsed;
+    try {
+      parsed = JSON.parse(v);
+    } catch {
+      return null;
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const entry = parsed[projectId];
+    if (!entry || typeof entry !== "object") return null;
+    return countsFromObject(
+      entry[spec.projectKey],
+      spec.keys,
+      spec.absentKeyIsNull
+    );
+  }
+  function readTrend(rows, spec, limit, projectId) {
+    var _a5;
+    const points = [];
+    if (!spec.keys.length) return points;
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys, spec.absentKeyIsNull);
+      if (!counts) continue;
+      if (spec.keys.every((k) => counts[k] === null)) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const v = Number(r[spec.versionColumn]);
+      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
+      const point = { at, counts, ruleVersion };
+      if (spec.annotationKeys && spec.annotationKeys.length) {
+        point.annotations = parseAnnotations(r[spec.countsColumn], spec.annotationKeys);
+      }
+      points.push(point);
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
+  function sparseTrendFromHistory(rows, spec, limit = 90, projectId = "") {
+    return readTrend(rows, spec, limit, projectId);
+  }
+  var COUNT_KEYS = ["issues", "findings", "postureFails"];
+  function cellCount2(v) {
+    if (v === null || v === void 0 || v === "") return null;
+    const n = Number(v);
+    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
+  }
+  function projectCountEntry(cell2, projectId) {
+    let parsed = cell2;
+    if (typeof cell2 === "string") {
+      if (!cell2) return null;
+      try {
+        parsed = JSON.parse(cell2);
+      } catch {
+        return null;
+      }
+    }
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const entry = parsed[projectId];
+    if (!entry || typeof entry !== "object") return null;
+    const counts = entry["counts"];
+    if (!counts || typeof counts !== "object") return null;
+    const issues2 = cellCount2(counts["issues"]);
+    const findings = cellCount2(counts["findings"]);
+    return issues2 === null || findings === null ? null : { issues: issues2, findings };
+  }
+  function countTrendFromHistory(rows, limit = 90, projectId = "") {
+    var _a5;
+    const points = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      let counts;
+      if (projectId) {
+        const scoped = projectCountEntry(r[PROJECT_TOTALS_COLUMN], projectId);
+        counts = {
+          issues: scoped ? scoped.issues : null,
+          findings: scoped ? scoped.findings : null,
+          postureFails: null
+        };
+      } else {
+        counts = {
+          issues: cellCount2(r["issue_count"]),
+          findings: cellCount2(r["finding_count"]),
+          postureFails: cellCount2(r["posture_fail_count"])
+        };
+      }
+      if (COUNT_KEYS.every((k) => counts[k] === null)) continue;
+      points.push({ at, counts });
+    }
+    points.sort(cmpBy((p) => p.at));
+    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+  }
+  var ADJACENCY_KEYS = ["DIRECT", "ADJACENT", "UNLINKED"];
+  var ADJACENCY_SPEC = {
+    keys: ADJACENCY_KEYS,
+    countsColumn: "adjacency_json",
+    versionColumn: "derivation_version",
+    projectKey: "adjacency",
+    annotationKeys: ["edgesKnown"]
+  };
+  function adjacencyTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, ADJACENCY_SPEC, limit, projectId);
+  }
+  var EXPLOITATION_KEYS = ["kev", "exploit", "epss", "none", "unknown"];
+  var EXPLOITATION_SPEC = {
+    keys: EXPLOITATION_KEYS,
+    countsColumn: "exploitation_json",
+    versionColumn: "derivation_version",
+    projectKey: "exploitation",
+    annotationKeys: ["findings", "unjoined", "droppedNotInRegister"]
+  };
+  function exploitationTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, EXPLOITATION_SPEC, limit, projectId);
+  }
+  var CATEGORY_COUNTS_COLUMN = "category_counts_json";
+  var CATEGORY_SPEC = {
+    keys: [],
+    countsColumn: CATEGORY_COUNTS_COLUMN,
+    versionColumn: "derivation_version",
+    projectKey: "categories",
+    absentKeyIsNull: true
+  };
+  function categorySpecFor(categoryIds) {
+    return { ...CATEGORY_SPEC, keys: [...categoryIds] };
+  }
+  function categoryTrendFromHistory(rows, categoryIds, limit = 90) {
+    return sparseTrendFromHistory(rows, categorySpecFor(categoryIds), limit);
+  }
+  function countIssueCategories(issues2) {
+    var _a5, _b;
+    const counts = {};
+    for (const issue2 of issues2) {
+      const seen = [];
+      for (const c of (_a5 = issue2.categories) != null ? _a5 : []) {
+        if (!c || seen.indexOf(c) >= 0) continue;
+        seen.push(c);
+        counts[c] = ((_b = counts[c]) != null ? _b : 0) + 1;
+      }
+    }
+    return counts;
+  }
+  var LEDGER_KEYS = ["new", "resolved", "reopened"];
+  var LEDGER_SPEC = {
+    keys: LEDGER_KEYS,
+    countsColumn: "ledger_json",
+    versionColumn: "derivation_version",
+    projectKey: "ledger"
+  };
+  function ledgerTrendFromHistory(rows, limit = 90, projectId = "") {
+    return trendFromHistory(rows, LEDGER_SPEC, limit, projectId);
+  }
+  var NET_CAPACITY_BAND_PCT = 2;
+  var MIN_COMPARABLE_SYNCS = 2;
+  function verdictOf(netPct) {
+    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
+    return netPct > 0 ? "gaining" : "falling-behind";
+  }
+  function capacityFromLedgerDeltas(rows, limit = 90) {
+    var _a5, _b, _c;
+    const raw = [];
+    for (const r of rows) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const counts = parseCounts(r["ledger_json"], [
+        "new",
+        "resolved",
+        "reopened",
+        "carried",
+        "skippedNarrowedScope"
+      ]);
+      if (!counts) continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      if (!at) continue;
+      const c = counts;
+      const n = (k) => {
+        var _a6;
+        return Number((_a6 = c[k]) != null ? _a6 : 0);
+      };
+      raw.push({
+        syncId: String((_b = r["sync_id"]) != null ? _b : ""),
+        at,
+        // "" is UNKNOWN, never "the same scope as the row beside it" — see case 2 above.
+        scope: String((_c = r["register_scope"]) != null ? _c : ""),
+        opened: n("new") + n("reopened"),
+        closed: n("resolved"),
+        openAtStart: n("carried") + n("resolved"),
+        skipped: n("skippedNarrowedScope")
+      });
+    }
+    raw.sort(cmpBy((p) => p.at));
+    const points = [];
+    let comparableCount = 0;
+    const rates = [];
+    const netPcts = [];
+    for (let i = 0; i < raw.length; i++) {
+      const cur = raw[i];
+      const prev = i > 0 ? raw[i - 1] : null;
+      const comparable = Boolean(
+        prev && cur.skipped === 0 && cur.scope !== "" && prev.scope !== "" && cur.scope === prev.scope
+      );
+      const netPct = cur.openAtStart > 0 ? (cur.closed - cur.opened) / cur.openAtStart * 100 : null;
+      if (comparable) {
+        comparableCount += 1;
+        if (cur.openAtStart > 0) {
+          rates.push(cur.closed / cur.openAtStart * 100);
+          netPcts.push(netPct != null ? netPct : 0);
+        }
+      }
+      points.push({
+        syncId: cur.syncId,
+        at: cur.at,
+        opened: cur.opened,
+        closed: cur.closed,
+        net: cur.closed - cur.opened,
+        comparable,
+        verdict: comparable ? verdictOf(netPct) : null
+      });
+    }
+    const enough = rates.length >= MIN_COMPARABLE_SYNCS;
+    const mean2 = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
+    const trimmed = limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
+    return {
+      points: trimmed,
+      overall: {
+        mmcr: enough ? mean2(rates) : null,
+        verdict: enough ? verdictOf(mean2(netPcts)) : null,
+        syncs: points.length,
+        comparable: comparableCount
+      }
+    };
+  }
+  function labelCategories(ids) {
+    return ids.map((id) => {
+      const known = CANDIDATE_CATEGORIES.filter((c) => c.id === id)[0];
+      return { id, name: known ? known.name : id };
+    });
+  }
+  function postureTrendFromHistory(rows, categoryIds, limit = 90) {
+    return {
+      adjacency: adjacencyTrendFromHistory(rows, limit),
+      exploitation: exploitationTrendFromHistory(rows, limit),
+      categories: labelCategories(categoryIds),
+      categoryPoints: categoryTrendFromHistory(rows, categoryIds, limit),
+      ledger: ledgerTrendFromHistory(rows, limit),
+      capacity: capacityFromLedgerDeltas(rows, limit)
+    };
   }
 
   // src/server/sampleData.ts
@@ -8086,6 +8463,146 @@ var Server = (() => {
     { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 },
     { CRITICAL: 2, HIGH: 17, MEDIUM: 0, LOW: 3, INFO: 8 }
   ];
+  var SEED_SYNC_COUNT = 8;
+  var SEED_SYNC_DAY_MS = 864e5;
+  function seedSyncId(index) {
+    return "sync-sample-" + String(index + 1).padStart(2, "0");
+  }
+  function seedSyncAt(endIso, index) {
+    const end = new Date(endIso).getTime();
+    return new Date(end - (SEED_SYNC_COUNT - index) * SEED_SYNC_DAY_MS).toISOString();
+  }
+  var SEED_LEDGER_BIRTHS = [
+    // Sync 1 — the bulk of the register arrives, plus the first of the rows that will leave.
+    [
+      "iss-001",
+      "iss-002",
+      "iss-003",
+      "iss-004",
+      "iss-005",
+      "iss-006",
+      "iss-007",
+      "iss-008",
+      "iss-009",
+      "iss-010",
+      "iss-gone-01",
+      "iss-gone-07"
+    ],
+    ["iss-011", "iss-012", "iss-013", "iss-014", "iss-015", "iss-gone-02"],
+    ["iss-016", "iss-017", "iss-018", "iss-019", "iss-gone-08"],
+    ["iss-020", "iss-021", "iss-022", "iss-gone-03"],
+    ["iss-023", "iss-024", "iss-gone-04"],
+    ["iss-025", "iss-026", "iss-gone-05"],
+    ["iss-027", "iss-gone-06"],
+    ["iss-028", "iss-029"]
+  ];
+  var SEED_LEDGER_DEPARTURES = {
+    "iss-gone-07": 2,
+    "iss-gone-08": 4,
+    "iss-005": 6
+  };
+  function seedLedgerSpecs() {
+    const out = [];
+    SEED_LEDGER_BIRTHS.forEach((born, firstSeenIndex) => {
+      for (const issueId of born) {
+        const departure = SEED_LEDGER_DEPARTURES[issueId];
+        const disappearedIndex = departure === void 0 ? null : departure;
+        out.push({
+          issueId,
+          firstSeenIndex,
+          // A row that left was last SEEN on the sync before the one that missed it — that gap
+          // is the error bar on `disappearedAt`, and collapsing the two would erase it.
+          lastSeenIndex: disappearedIndex === null ? SEED_SYNC_COUNT - 1 : disappearedIndex - 1,
+          disappearedIndex
+        });
+      }
+    });
+    return out;
+  }
+  var SEED_LEDGER = {
+    history: [
+      { issueCount: 12, deltas: { new: 12, resolved: 0, reopened: 0, carried: 0, skippedNarrowedScope: 0 } },
+      { issueCount: 18, deltas: { new: 6, resolved: 0, reopened: 0, carried: 0, skippedNarrowedScope: 0 } },
+      { issueCount: 22, deltas: { new: 5, resolved: 1, reopened: 0, carried: 0, skippedNarrowedScope: 0 } },
+      { issueCount: 26, deltas: { new: 4, resolved: 0, reopened: 0, carried: 1, skippedNarrowedScope: 0 } },
+      { issueCount: 28, deltas: { new: 3, resolved: 1, reopened: 0, carried: 1, skippedNarrowedScope: 0 } },
+      { issueCount: 31, deltas: { new: 3, resolved: 0, reopened: 0, carried: 2, skippedNarrowedScope: 0 } },
+      { issueCount: 32, deltas: { new: 2, resolved: 1, reopened: 0, carried: 2, skippedNarrowedScope: 0 } },
+      { issueCount: 34, deltas: { new: 2, resolved: 0, reopened: 0, carried: 3, skippedNarrowedScope: 0 } }
+    ],
+    rows: seedLedgerSpecs()
+  };
+  var SEED_GONE_RULE_ID = "wc-id-2742";
+  var SEED_GONE_CREATED_LEAD_MS = 365 * SEED_SYNC_DAY_MS;
+  function seedLedgerRows(endIso, registerScope) {
+    const byId = {};
+    for (const issue2 of SEED_ISSUES) byId[issue2.id] = issue2;
+    return SEED_LEDGER.rows.map((spec) => {
+      var _a5, _b, _c;
+      const live = byId[spec.issueId];
+      const firstSeenAt = seedSyncAt(endIso, spec.firstSeenIndex);
+      const gone = spec.disappearedIndex;
+      const row = {
+        issueId: spec.issueId,
+        firstSeenSync: seedSyncId(spec.firstSeenIndex),
+        firstSeenAt,
+        lastSeenSync: seedSyncId(spec.lastSeenIndex),
+        lastSeenAt: seedSyncAt(endIso, spec.lastSeenIndex),
+        disappearedAt: gone === null ? null : seedSyncAt(endIso, gone),
+        resolutionSrc: gone === null ? null : "disappeared",
+        lastStatus: live ? live.status : "OPEN",
+        categories: live ? ((_a5 = live.categories) != null ? _a5 : []).slice() : [RISK_CATEGORY_ID],
+        ruleId: live ? live.ruleId : SEED_GONE_RULE_ID,
+        createdAt: live ? (_b = live.createdAt) != null ? _b : null : new Date(Date.parse(firstSeenAt) - SEED_GONE_CREATED_LEAD_MS).toISOString(),
+        // Null, not a fabricated deadline: a departed row nobody set an SLA on is a state the
+        // register really holds, and `rank.ts`'s UNMEASURED path needs one to exercise.
+        dueAt: live ? (_c = live.dueAt) != null ? _c : null : null,
+        registerScope,
+        // 1 on every seeded row. The dry run's reopen of `iss-005` is what makes the first 2,
+        // so a fixture that shipped one pre-set would make the reopen unobservable.
+        episode: 1
+      };
+      return row;
+    });
+  }
+  function seedLedgerOpenAt(index) {
+    return SEED_LEDGER.rows.filter((spec) => spec.firstSeenIndex <= index && (spec.disappearedIndex === null || spec.disappearedIndex > index));
+  }
+  function seedPostureTrend(endIso) {
+    var _a5, _b;
+    const { issues: placed, census } = withAiAdjacency(seedGraphDoc(endIso), SEED_ISSUES);
+    const placementById = {};
+    for (const issue2 of placed) {
+      if (issue2.aiAdjacency) placementById[issue2.id] = issue2.aiAdjacency;
+    }
+    const categoriesById = {};
+    for (const issue2 of SEED_ISSUES) categoriesById[issue2.id] = (_a5 = issue2.categories) != null ? _a5 : [];
+    const entries = [];
+    for (let index = 0; index < SEED_SYNC_COUNT; index += 1) {
+      const open = seedLedgerOpenAt(index);
+      const adjacency2 = {
+        DIRECT: 0,
+        ADJACENT: 0,
+        UNLINKED: 0,
+        edgesKnown: census.edgesKnown
+      };
+      for (const spec of open) {
+        adjacency2[(_b = placementById[spec.issueId]) != null ? _b : "UNLINKED"] += 1;
+      }
+      entries.push({
+        adjacency: adjacency2,
+        // The same counter `persistSync` uses, over the same shape - a row's OWN stamps, and
+        // `seedLedgerRows` gives a departed row `[RISK_CATEGORY_ID]` for exactly this reason.
+        categoryCounts: countIssueCategories(open.map((spec) => {
+          var _a6;
+          return {
+            categories: (_a6 = categoriesById[spec.issueId]) != null ? _a6 : [RISK_CATEGORY_ID]
+          };
+        }))
+      });
+    }
+    return entries;
+  }
   var SEED_CONFIG_RULES = [
     {
       id: "rule-iam-159",
@@ -9134,33 +9651,6 @@ var Server = (() => {
       weights.push({ ruleId, weight });
     }
     return { ...base, ruleWeights: weights };
-  }
-
-  // src/domain/registerScope.ts
-  var CANDIDATE_CATEGORIES = [
-    { id: RISK_CATEGORY_ID, name: "AI Security" },
-    { id: "wct-id-3", name: "Vulnerability Assessment" },
-    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats" },
-    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security" },
-    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management" },
-    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management" }
-  ];
-  var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
-  function cleanCategoryIds(v) {
-    if (!Array.isArray(v)) return DEFAULT_CATEGORY_IDS.slice();
-    const seen = {};
-    const out = [];
-    for (const raw of v) {
-      if (typeof raw !== "string") continue;
-      const id = raw.trim();
-      if (!id || seen[id]) continue;
-      seen[id] = true;
-      out.push(id);
-    }
-    return out.length ? out : DEFAULT_CATEGORY_IDS.slice();
-  }
-  function registerScopeSignature(ids) {
-    return cleanCategoryIds(ids.slice()).slice().sort().join("|");
   }
 
   // src/domain/settingsLogic.ts
@@ -10323,356 +10813,6 @@ var Server = (() => {
       deltas.resolved += 1;
     }
     return { rows: order.map((id) => byId[id]).sort(byIssueId), deltas };
-  }
-
-  // src/domain/aarsTrend.ts
-  var PROJECT_TOTALS_COLUMN = "project_totals_json";
-  var PROJECT_TOTALS_MAX_CHARS = 45e3;
-  function countProjectTotals(nodes, decided) {
-    var _a5, _b, _c, _d;
-    const totals = {};
-    const projectsByAsset = /* @__PURE__ */ new Map();
-    function entry(projectId) {
-      let t = totals[projectId];
-      if (!t) {
-        const aars = {};
-        for (const sev of AARS_SEVERITY_ORDER) aars[sev] = 0;
-        const outcome = {};
-        for (const o of OUTCOME_VALUES) outcome[o] = 0;
-        t = { aars, outcome, counts: { issues: 0, findings: 0 } };
-        totals[projectId] = t;
-      }
-      return t;
-    }
-    for (const n of nodes) {
-      const projects = (_a5 = n.projects) != null ? _a5 : [];
-      if (!projects.length) continue;
-      projectsByAsset.set(n.id, projects);
-      const sev = normalizeAarsSeverity(n.aarsSeverity);
-      for (const p of projects) {
-        const t = entry(p.id);
-        if (sev) t.aars[sev] += 1;
-      }
-    }
-    for (const r of decided) {
-      const isFinding = r.assetId === void 0 && r.resourceId !== void 0;
-      const assetId = (_c = (_b = r.assetId) != null ? _b : r.resourceId) != null ? _c : "";
-      const projects = (_d = projectsByAsset.get(assetId)) != null ? _d : [];
-      for (const p of projects) {
-        const counts = entry(p.id).counts;
-        if (counts) counts[isFinding ? "findings" : "issues"] += 1;
-      }
-      const outcome = r.problemOutcome;
-      if (!outcome || !OUTCOME_VALUES.includes(outcome)) continue;
-      for (const p of projects) entry(p.id).outcome[outcome] += 1;
-    }
-    return totals;
-  }
-  function encodeProjectTotals(totals) {
-    const json = JSON.stringify(totals);
-    return json.length > PROJECT_TOTALS_MAX_CHARS ? null : json;
-  }
-  function countAarsSeverities(nodes) {
-    const counts = {};
-    for (const sev of AARS_SEVERITY_ORDER) counts[sev] = 0;
-    for (const n of nodes) {
-      const sev = normalizeAarsSeverity(n.aarsSeverity);
-      if (sev) counts[sev] += 1;
-    }
-    return counts;
-  }
-  function countsFromObject(parsed, keys, absentKeyIsNull = false) {
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const raw = parsed;
-    const counts = {};
-    for (const k of keys) {
-      if (absentKeyIsNull && !Object.prototype.hasOwnProperty.call(raw, k)) {
-        counts[k] = null;
-        continue;
-      }
-      const n = Number(raw[k]);
-      counts[k] = Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
-    }
-    return counts;
-  }
-  function parseCounts(v, keys, absentKeyIsNull = false) {
-    if (typeof v !== "string" || !v) return null;
-    try {
-      return countsFromObject(JSON.parse(v), keys, absentKeyIsNull);
-    } catch {
-      return null;
-    }
-  }
-  function parseAnnotations(v, keys) {
-    const out = {};
-    let raw = {};
-    if (typeof v === "string" && v) {
-      try {
-        const parsed = JSON.parse(v);
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-          raw = parsed;
-        }
-      } catch {
-        raw = {};
-      }
-    }
-    for (const k of keys) {
-      const n = Number(raw[k]);
-      out[k] = Object.prototype.hasOwnProperty.call(raw, k) && Number.isFinite(n) && n >= 0 ? Math.floor(n) : null;
-    }
-    return out;
-  }
-  function parseProjectCounts(v, projectId, spec) {
-    if (typeof v !== "string" || !v) return null;
-    let parsed;
-    try {
-      parsed = JSON.parse(v);
-    } catch {
-      return null;
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const entry = parsed[projectId];
-    if (!entry || typeof entry !== "object") return null;
-    return countsFromObject(
-      entry[spec.projectKey],
-      spec.keys,
-      spec.absentKeyIsNull
-    );
-  }
-  function readTrend(rows, spec, limit, projectId) {
-    var _a5;
-    const points = [];
-    if (!spec.keys.length) return points;
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = projectId ? parseProjectCounts(r[PROJECT_TOTALS_COLUMN], projectId, spec) : parseCounts(r[spec.countsColumn], spec.keys, spec.absentKeyIsNull);
-      if (!counts) continue;
-      if (spec.keys.every((k) => counts[k] === null)) continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      const v = Number(r[spec.versionColumn]);
-      const ruleVersion = Number.isFinite(v) && v > 0 ? Math.round(v) : 0;
-      const point = { at, counts, ruleVersion };
-      if (spec.annotationKeys && spec.annotationKeys.length) {
-        point.annotations = parseAnnotations(r[spec.countsColumn], spec.annotationKeys);
-      }
-      points.push(point);
-    }
-    points.sort(cmpBy((p) => p.at));
-    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
-  }
-  function trendFromHistory(rows, spec, limit = 90, projectId = "") {
-    return readTrend(rows, spec, limit, projectId);
-  }
-  function sparseTrendFromHistory(rows, spec, limit = 90, projectId = "") {
-    return readTrend(rows, spec, limit, projectId);
-  }
-  var COUNT_KEYS = ["issues", "findings", "postureFails"];
-  function cellCount2(v) {
-    if (v === null || v === void 0 || v === "") return null;
-    const n = Number(v);
-    return Number.isFinite(n) && n >= 0 ? Math.round(n) : null;
-  }
-  function projectCountEntry(cell2, projectId) {
-    let parsed = cell2;
-    if (typeof cell2 === "string") {
-      if (!cell2) return null;
-      try {
-        parsed = JSON.parse(cell2);
-      } catch {
-        return null;
-      }
-    }
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    const entry = parsed[projectId];
-    if (!entry || typeof entry !== "object") return null;
-    const counts = entry["counts"];
-    if (!counts || typeof counts !== "object") return null;
-    const issues2 = cellCount2(counts["issues"]);
-    const findings = cellCount2(counts["findings"]);
-    return issues2 === null || findings === null ? null : { issues: issues2, findings };
-  }
-  function countTrendFromHistory(rows, limit = 90, projectId = "") {
-    var _a5;
-    const points = [];
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      let counts;
-      if (projectId) {
-        const scoped = projectCountEntry(r[PROJECT_TOTALS_COLUMN], projectId);
-        counts = {
-          issues: scoped ? scoped.issues : null,
-          findings: scoped ? scoped.findings : null,
-          postureFails: null
-        };
-      } else {
-        counts = {
-          issues: cellCount2(r["issue_count"]),
-          findings: cellCount2(r["finding_count"]),
-          postureFails: cellCount2(r["posture_fail_count"])
-        };
-      }
-      if (COUNT_KEYS.every((k) => counts[k] === null)) continue;
-      points.push({ at, counts });
-    }
-    points.sort(cmpBy((p) => p.at));
-    return limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
-  }
-  var ADJACENCY_KEYS = ["DIRECT", "ADJACENT", "UNLINKED"];
-  var ADJACENCY_SPEC = {
-    keys: ADJACENCY_KEYS,
-    countsColumn: "adjacency_json",
-    versionColumn: "derivation_version",
-    projectKey: "adjacency",
-    annotationKeys: ["edgesKnown"]
-  };
-  function adjacencyTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, ADJACENCY_SPEC, limit, projectId);
-  }
-  var EXPLOITATION_KEYS = ["kev", "exploit", "epss", "none", "unknown"];
-  var EXPLOITATION_SPEC = {
-    keys: EXPLOITATION_KEYS,
-    countsColumn: "exploitation_json",
-    versionColumn: "derivation_version",
-    projectKey: "exploitation",
-    annotationKeys: ["findings", "unjoined", "droppedNotInRegister"]
-  };
-  function exploitationTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, EXPLOITATION_SPEC, limit, projectId);
-  }
-  var CATEGORY_COUNTS_COLUMN = "category_counts_json";
-  var CATEGORY_SPEC = {
-    keys: [],
-    countsColumn: CATEGORY_COUNTS_COLUMN,
-    versionColumn: "derivation_version",
-    projectKey: "categories",
-    absentKeyIsNull: true
-  };
-  function categorySpecFor(categoryIds) {
-    return { ...CATEGORY_SPEC, keys: [...categoryIds] };
-  }
-  function categoryTrendFromHistory(rows, categoryIds, limit = 90) {
-    return sparseTrendFromHistory(rows, categorySpecFor(categoryIds), limit);
-  }
-  function countIssueCategories(issues2) {
-    var _a5, _b;
-    const counts = {};
-    for (const issue2 of issues2) {
-      const seen = [];
-      for (const c of (_a5 = issue2.categories) != null ? _a5 : []) {
-        if (!c || seen.indexOf(c) >= 0) continue;
-        seen.push(c);
-        counts[c] = ((_b = counts[c]) != null ? _b : 0) + 1;
-      }
-    }
-    return counts;
-  }
-  var LEDGER_KEYS = ["new", "resolved", "reopened"];
-  var LEDGER_SPEC = {
-    keys: LEDGER_KEYS,
-    countsColumn: "ledger_json",
-    versionColumn: "derivation_version",
-    projectKey: "ledger"
-  };
-  function ledgerTrendFromHistory(rows, limit = 90, projectId = "") {
-    return trendFromHistory(rows, LEDGER_SPEC, limit, projectId);
-  }
-  var NET_CAPACITY_BAND_PCT = 2;
-  var MIN_COMPARABLE_SYNCS = 2;
-  function verdictOf(netPct) {
-    if (netPct === null || Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
-    return netPct > 0 ? "gaining" : "falling-behind";
-  }
-  function capacityFromLedgerDeltas(rows, limit = 90) {
-    var _a5, _b, _c;
-    const raw = [];
-    for (const r of rows) {
-      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
-      const counts = parseCounts(r["ledger_json"], [
-        "new",
-        "resolved",
-        "reopened",
-        "carried",
-        "skippedNarrowedScope"
-      ]);
-      if (!counts) continue;
-      const at = String(r["finished_at"] || r["started_at"] || "");
-      if (!at) continue;
-      const c = counts;
-      const n = (k) => {
-        var _a6;
-        return Number((_a6 = c[k]) != null ? _a6 : 0);
-      };
-      raw.push({
-        syncId: String((_b = r["sync_id"]) != null ? _b : ""),
-        at,
-        // "" is UNKNOWN, never "the same scope as the row beside it" — see case 2 above.
-        scope: String((_c = r["register_scope"]) != null ? _c : ""),
-        opened: n("new") + n("reopened"),
-        closed: n("resolved"),
-        openAtStart: n("carried") + n("resolved"),
-        skipped: n("skippedNarrowedScope")
-      });
-    }
-    raw.sort(cmpBy((p) => p.at));
-    const points = [];
-    let comparableCount = 0;
-    const rates = [];
-    const netPcts = [];
-    for (let i = 0; i < raw.length; i++) {
-      const cur = raw[i];
-      const prev = i > 0 ? raw[i - 1] : null;
-      const comparable = Boolean(
-        prev && cur.skipped === 0 && cur.scope !== "" && prev.scope !== "" && cur.scope === prev.scope
-      );
-      const netPct = cur.openAtStart > 0 ? (cur.closed - cur.opened) / cur.openAtStart * 100 : null;
-      if (comparable) {
-        comparableCount += 1;
-        if (cur.openAtStart > 0) {
-          rates.push(cur.closed / cur.openAtStart * 100);
-          netPcts.push(netPct != null ? netPct : 0);
-        }
-      }
-      points.push({
-        syncId: cur.syncId,
-        at: cur.at,
-        opened: cur.opened,
-        closed: cur.closed,
-        net: cur.closed - cur.opened,
-        comparable,
-        verdict: comparable ? verdictOf(netPct) : null
-      });
-    }
-    const enough = rates.length >= MIN_COMPARABLE_SYNCS;
-    const mean2 = (xs) => xs.reduce((a, x) => a + x, 0) / xs.length;
-    const trimmed = limit > 0 && points.length > limit ? points.slice(points.length - limit) : points;
-    return {
-      points: trimmed,
-      overall: {
-        mmcr: enough ? mean2(rates) : null,
-        verdict: enough ? verdictOf(mean2(netPcts)) : null,
-        syncs: points.length,
-        comparable: comparableCount
-      }
-    };
-  }
-  function labelCategories(ids) {
-    return ids.map((id) => {
-      const known = CANDIDATE_CATEGORIES.filter((c) => c.id === id)[0];
-      return { id, name: known ? known.name : id };
-    });
-  }
-  function postureTrendFromHistory(rows, categoryIds, limit = 90) {
-    return {
-      adjacency: adjacencyTrendFromHistory(rows, limit),
-      exploitation: exploitationTrendFromHistory(rows, limit),
-      categories: labelCategories(categoryIds),
-      categoryPoints: categoryTrendFromHistory(rows, categoryIds, limit),
-      ledger: ledgerTrendFromHistory(rows, limit),
-      capacity: capacityFromLedgerDeltas(rows, limit)
-    };
   }
 
   // src/domain/prunePlan.ts
@@ -12073,6 +12213,7 @@ var Server = (() => {
     overwrite(TABS.findings, []);
     overwrite(TABS.dataFindings, []);
     overwrite(TABS.syncHistory, []);
+    overwrite(TABS.issueLedger, []);
     trashGraphSnapshot();
     trashReadModels();
     commit();
@@ -12183,6 +12324,7 @@ var Server = (() => {
   // src/server/api.ts
   var api_exports = {};
   __export(api_exports, {
+    ISSUES_CLIENT_ALL_MAX: () => ISSUES_CLIENT_ALL_MAX,
     bootstrap: () => bootstrap,
     cancelSync: () => cancelSync2,
     expandAsset: () => expandAsset,
@@ -16394,6 +16536,250 @@ var Server = (() => {
     };
   }
 
+  // src/domain/backlogMovement.ts
+  var MOVEMENT_MIN_GAP_DAYS = 7;
+  var MOVEMENT_DAY_MS = 864e5;
+  var DELTA_KEYS = ["new", "resolved", "reopened", "carried", "skippedNarrowedScope"];
+  function round1(n) {
+    return Math.round(n * 10) / 10;
+  }
+  function deltasOf(cell2) {
+    const counts = parseCounts(cell2, DELTA_KEYS, true);
+    if (!counts) return null;
+    const out = {};
+    for (const k of DELTA_KEYS) {
+      const n = counts[k];
+      if (n === null) return null;
+      out[k] = n;
+    }
+    return out;
+  }
+  function stepsOf(history) {
+    var _a5, _b;
+    const out = [];
+    for (const r of history) {
+      if (String((_a5 = r["status"]) != null ? _a5 : "") !== "SUCCESS") continue;
+      const at = String(r["finished_at"] || r["started_at"] || "");
+      const atMs = parseTs(at);
+      if (!at || atMs === null) continue;
+      out.push({
+        at,
+        atMs,
+        scope: String((_b = r["register_scope"]) != null ? _b : ""),
+        deltas: deltasOf(r["ledger_json"])
+      });
+    }
+    out.sort((a, b) => a.atMs - b.atMs);
+    return out;
+  }
+  function stepBack(open, d) {
+    return open - d.new - d.reopened + d.resolved;
+  }
+  function directionOf(open, prevOpen) {
+    if (open > prevOpen) return "up";
+    if (open < prevOpen) return "down";
+    return "flat";
+  }
+  function stepRefusal(newer, older) {
+    if (newer.deltas === null || older.deltas === null) return "noLedger";
+    if (newer.deltas.skippedNarrowedScope > 0) return "rescoped";
+    if (!newer.scope || !older.scope || newer.scope !== older.scope) return "rescoped";
+    return null;
+  }
+  function backlogMovement(history, opts) {
+    const minGapDays = opts.minGapDays === void 0 ? MOVEMENT_MIN_GAP_DAYS : opts.minGapDays;
+    const anchor = Number.isFinite(opts.openNow) && opts.openNow >= 0 ? Math.floor(opts.openNow) : null;
+    const steps = anchor === null ? [] : stepsOf(history);
+    const n = steps.length;
+    const spanDays2 = n >= 2 ? round1((steps[n - 1].atMs - steps[0].atMs) / MOVEMENT_DAY_MS) : null;
+    const none = (previous2, week) => ({ previous: null, week: null, reasons: { previous: previous2, week }, spanDays: spanDays2 });
+    if (n === 0) return none("noSync", "tooClose");
+    if (n === 1) return none("oneSync", "tooClose");
+    const latest = steps[n - 1];
+    const openNow = anchor;
+    let previous = null;
+    let previousReason = null;
+    const priorStep = steps[n - 2];
+    const priorRefusal = stepRefusal(latest, priorStep);
+    if (priorRefusal !== null) {
+      previousReason = priorRefusal;
+    } else {
+      const prevOpen = stepBack(openNow, latest.deltas);
+      previous = {
+        since: priorStep.at,
+        until: latest.at,
+        gapDays: round1((latest.atMs - priorStep.atMs) / MOVEMENT_DAY_MS),
+        deltas: { ...latest.deltas },
+        open: openNow,
+        prevOpen,
+        direction: directionOf(openNow, prevOpen)
+      };
+    }
+    let target = -1;
+    for (let i = n - 2; i >= 0; i -= 1) {
+      if ((latest.atMs - steps[i].atMs) / MOVEMENT_DAY_MS >= minGapDays) {
+        target = i;
+        break;
+      }
+    }
+    if (target < 0) {
+      return {
+        previous,
+        week: null,
+        reasons: { previous: previousReason, week: "tooClose" },
+        spanDays: spanDays2
+      };
+    }
+    const sum = {
+      new: 0,
+      resolved: 0,
+      reopened: 0,
+      carried: 0,
+      skippedNarrowedScope: 0
+    };
+    let open = openNow;
+    for (let k = n - 1; k > target; k -= 1) {
+      const refusal = stepRefusal(steps[k], steps[k - 1]);
+      if (refusal !== null) {
+        return {
+          previous,
+          week: null,
+          reasons: { previous: previousReason, week: refusal },
+          spanDays: spanDays2
+        };
+      }
+      const d = steps[k].deltas;
+      for (const key of DELTA_KEYS) sum[key] += d[key];
+      open = stepBack(open, d);
+    }
+    const older = steps[target];
+    return {
+      previous,
+      week: {
+        since: older.at,
+        until: latest.at,
+        gapDays: round1((latest.atMs - older.atMs) / MOVEMENT_DAY_MS),
+        deltas: sum,
+        open: openNow,
+        prevOpen: open,
+        direction: directionOf(openNow, open)
+      },
+      reasons: { previous: previousReason, week: null },
+      spanDays: spanDays2
+    };
+  }
+
+  // src/domain/issueSurvival.ts
+  var CROSSING_EPSILON = 1e-9;
+  var DAY_MS4 = 864e5;
+  function kmCurve(events, times) {
+    const curve = [];
+    let s = 1;
+    for (const t of [...new Set(events)].sort((a, b) => a - b)) {
+      const atRisk = times.filter((x) => x >= t).length;
+      if (atRisk === 0) continue;
+      const d = events.filter((x) => x === t).length;
+      s *= 1 - d / atRisk;
+      curve.push({ t, s, atRisk, events: d });
+    }
+    return curve;
+  }
+  function kmQuantileFromCurve(curve, q) {
+    const threshold = 1 - q;
+    for (const p of curve) if (p.s <= threshold + CROSSING_EPSILON) return p.t;
+    return null;
+  }
+  function kmMedianFromCurve(curve) {
+    return kmQuantileFromCurve(curve, 0.5);
+  }
+  function kaplanMeier(observations) {
+    const events = [];
+    const times = [];
+    let censored = 0;
+    for (const o of observations) {
+      if (!Number.isFinite(o.t)) continue;
+      times.push(o.t);
+      if (o.event) events.push(o.t);
+      else censored += 1;
+    }
+    let longest = null;
+    for (const t of times) if (longest === null || t > longest) longest = t;
+    if (!events.length) {
+      return {
+        curve: [],
+        median: null,
+        medianLowerBound: longest,
+        p90: null,
+        events: 0,
+        censored,
+        total: times.length
+      };
+    }
+    const curve = kmCurve(events, times);
+    const median = kmMedianFromCurve(curve);
+    return {
+      curve,
+      median,
+      medianLowerBound: median === null ? longest : null,
+      p90: kmQuantileFromCurve(curve, 0.9),
+      events: events.length,
+      censored,
+      total: times.length
+    };
+  }
+  function spanDays(fromIso, toIsoValue) {
+    const from = parseTs(fromIso);
+    const to = parseTs(toIsoValue);
+    if (from === null || to === null) return null;
+    const days = (to - from) / DAY_MS4;
+    if (!Number.isFinite(days) || days < 0) return null;
+    return days;
+  }
+  function ledgerObservations(ledger) {
+    const obs = [];
+    let returnedExcluded = 0;
+    let unmeasurable = 0;
+    for (const row of ledger) {
+      const episode = row ? row.episode : void 0;
+      if (typeof episode !== "number" || !Number.isFinite(episode)) {
+        unmeasurable += 1;
+        continue;
+      }
+      if (episode > 1) {
+        returnedExcluded += 1;
+        continue;
+      }
+      const gone = row.disappearedAt;
+      if (gone !== null && gone !== void 0) {
+        const t2 = spanDays(row.firstSeenAt, gone);
+        if (t2 === null) unmeasurable += 1;
+        else obs.push({ t: t2, event: true });
+        continue;
+      }
+      const t = spanDays(row.firstSeenAt, row.lastSeenAt);
+      if (t === null) unmeasurable += 1;
+      else obs.push({ t, event: false });
+    }
+    return { obs, returnedExcluded, unmeasurable };
+  }
+  function issueHalfLife(ledger) {
+    const { obs, returnedExcluded, unmeasurable } = ledgerObservations(ledger);
+    let latest = null;
+    for (const row of ledger) {
+      if (!row) continue;
+      for (const value of [row.lastSeenAt, row.disappearedAt]) {
+        const ts = parseTs(value);
+        if (ts !== null && (latest === null || ts > latest)) latest = ts;
+      }
+    }
+    return {
+      ...kaplanMeier(obs),
+      returnedExcluded,
+      unmeasurable,
+      asOf: toIso(latest)
+    };
+  }
+
   // src/domain/reach.ts
   var READ_TIME_EDGE_TYPES = [
     "HAS_ISSUE",
@@ -17857,24 +18243,63 @@ var Server = (() => {
       }, void 0, wizDataVersion());
     });
   }
+  var ISSUES_CLIENT_ALL_MAX = 1e3;
   function getIssues(p) {
     return run(() => {
       var _a5;
       const params = p != null ? p : {};
       const group = String((_a5 = params["group"]) != null ? _a5 : "");
-      return durablyCached("getIssues", { group }, () => {
-        let rows = viewIssues();
-        if (group) rows = rows.filter((i) => i.comboGroup === group);
-        return { rows: rows.map((r) => publicRow(r)) };
+      const page = clampInt(params["page"], 0, 0, Number.MAX_SAFE_INTEGER);
+      const pageSize = clampInt(params["pageSize"], DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE);
+      const groupRows = durablyCached("getIssues2", { group }, () => {
+        const rows = viewIssues();
+        const scoped = group ? rows.filter((i) => i.comboGroup === group) : rows;
+        return scoped.map((i) => publicRow(i));
       });
+      if (groupRows.length <= ISSUES_CLIENT_ALL_MAX) {
+        return {
+          all: true,
+          rows: groupRows,
+          filtered: groupRows.length,
+          page: 0,
+          pageCount: Math.max(1, Math.ceil(groupRows.length / pageSize))
+        };
+      }
+      const paged = pageOf(groupRows, page, pageSize);
+      return {
+        all: false,
+        rows: paged.rows,
+        filtered: groupRows.length,
+        page: paged.page,
+        pageCount: paged.pageCount
+      };
+    });
+  }
+  function issueLedgerIndex() {
+    return cached("issueLedgerIndex1", null, () => {
+      const out = {};
+      for (const row of loadIssueLedger()) {
+        out[row.issueId] = {
+          firstSeenAt: row.firstSeenAt,
+          firstSeenSync: row.firstSeenSync,
+          lastSeenAt: row.lastSeenAt,
+          lastSeenSync: row.lastSeenSync,
+          disappearedAt: row.disappearedAt,
+          resolutionSrc: row.resolutionSrc,
+          episode: row.episode,
+          registerScope: row.registerScope
+        };
+      }
+      return out;
     });
   }
   function getIssueDetail(p) {
     return run(() => {
-      var _a5, _b;
+      var _a5, _b, _c;
       const id = String((_a5 = (p != null ? p : {})["id"]) != null ? _a5 : "");
       const issue2 = (_b = loadIssues().find((i) => i.id === id)) != null ? _b : null;
-      if (!issue2) return null;
+      const ledger = id ? (_c = issueLedgerIndex()[id]) != null ? _c : null : null;
+      if (!issue2) return ledger ? { issue: null, group: null, ledger } : null;
       const group = issue2.comboGroup ? comboGroupById(issue2.comboGroup) : null;
       return {
         issue: publicRow(issue2),
@@ -17885,7 +18310,8 @@ var Server = (() => {
           nativeSeverity: group.nativeSeverity,
           amplifierNote: group.amplifierNote,
           frameworks: group.frameworks
-        } : null
+        } : null,
+        ledger
       };
     });
   }
@@ -18043,6 +18469,13 @@ var Server = (() => {
       rankAdjacency: r.rankAdjacency
     };
   }
+  function problemsMovement(model) {
+    const openNow = model.rows.filter((r) => r.kind === "ISSUE").length;
+    return cached("backlogMovement1", { openNow }, () => backlogMovement(syncHistory(), { openNow }));
+  }
+  function problemsHalfLife() {
+    return cached("issueHalfLife1", null, () => issueHalfLife(loadIssueLedger()));
+  }
   function getProblems(p) {
     return run(() => {
       var _a5, _b;
@@ -18068,7 +18501,11 @@ var Server = (() => {
         // DERIVATION knobs the scores were computed against (rank.rankSignature), so a stored
         // score and a stored rule can be compared instead of assumed to match.
         rankSignature: model.rankSignature,
-        rankLeadsSort: model.rankLeadsSort
+        rankLeadsSort: model.rankLeadsSort,
+        // How the open ISSUE backlog moved since the last sync — see `problemsMovement`.
+        movement: problemsMovement(model),
+        // How long an issue survives in this register — see `problemsHalfLife`.
+        halfLife: problemsHalfLife()
       };
       if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
         return {
@@ -18115,7 +18552,12 @@ var Server = (() => {
         total: fullyRanked.length,
         totalProblems: model.rows.length,
         curve: coverCurve(fullyRanked, model.rows.length),
-        concentration: concentrationRatio(fullyRanked, model.rows.length)
+        concentration: concentrationRatio(fullyRanked, model.rows.length),
+        // The same two blocks `getProblems` publishes, off the same model and the same ledger —
+        // the two modes of one page must not be able to state different movement, or a
+        // different half-life.
+        movement: problemsMovement(model),
+        halfLife: problemsHalfLife()
       };
     });
   }
@@ -19509,31 +19951,67 @@ var Server = (() => {
     if (!hasWizCredentials()) return dryRunSync();
     return startLiveSync();
   }
-  function seedTrendHistory(endIso) {
+  function seedDryRunHistory(endIso, registerScope) {
     if (dataRowCount(TABS.syncHistory) > 0) return;
-    const DAY_MS4 = 864e5;
-    const end = new Date(endIso).getTime();
+    seedTrendHistory(endIso, registerScope, seedIssueLedger(endIso, registerScope));
+  }
+  function seedIssueLedger(endIso, registerScope) {
+    if (dataRowCount(TABS.issueLedger) > 0) return false;
+    appendRows(TABS.issueLedger, seedLedgerRows(endIso, registerScope).map(issueLedgerToRow));
+    return true;
+  }
+  function seedTrendHistory(endIso, registerScope, withLedger) {
+    if (dataRowCount(TABS.syncHistory) > 0) return;
+    const posture = withLedger ? seedPostureTrend(endIso) : null;
     appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
-      const at = new Date(end - (SEED_TREND.length - i) * DAY_MS4).toISOString();
+      const at = seedSyncAt(endIso, i);
+      const entry = withLedger ? SEED_LEDGER.history[i] : void 0;
       return {
-        sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
+        sync_id: seedSyncId(i),
         started_at: at,
         finished_at: at,
         status: "SUCCESS",
         mode: "dry-run",
         node_count: null,
         edge_count: null,
-        issue_count: null,
+        // The OPEN population this synthetic sync ended with, not the size of its register:
+        // the two differ by every row that had already left.
+        issue_count: entry ? entry.issueCount : null,
         api_calls: 0,
         snapshot_ref: null,
         error: null,
-        aars_severity_json: JSON.stringify(counts)
+        aars_severity_json: JSON.stringify(counts),
+        // What the ledger DID on this sync — the five transition counts, in the same shape
+        // `persistSync` writes for a real one. Without them every lifecycle figure has one
+        // comparable point, which is none.
+        ledger_json: entry ? JSON.stringify(entry.deltas) : null,
+        // LOAD-BEARING. `reconcileIssueLedger` reads the last committed row's scope as
+        // `prevScopeSignature`, and resolves by absence only when it EQUALS the scope the
+        // current sync applies. Absent here reads as UNKNOWN, and the dry run's six departures
+        // become six `skippedNarrowedScope` instead — the perturbation in test/seedLedger.test.ts
+        // measures exactly that.
+        register_scope: entry ? registerScope : null,
+        // WHERE THE OPEN ROWS SAT relative to the AI estate, and how many adjacency edges the
+        // graph held to place them with — the three placements plus their denominator, in the
+        // same cell `persistSync` writes them into. Without it this series has one point, and
+        // "Where issues sit" renders a heading, a note and no chart on the one dataset every
+        // dev harness and every test opens.
+        adjacency_json: posture ? JSON.stringify(posture[i].adjacency) : null,
+        // Open issues per risk category at this sync, counted from the same open rows.
+        category_counts_json: posture ? JSON.stringify(posture[i].categoryCounts) : null,
+        // NULL ON EVERY SYNTHETIC ROW, DELIBERATELY, and null is the measurement. No evidence
+        // pass ran over the fabricated history — and none runs on the dry run either, which
+        // passes no `vulnFindings`, so `persistSync` writes null on its own row too. A zeroed
+        // census here would draw five flat lines saying nothing is exploitable over a register
+        // nobody asked the question of, which is the one thing `EXPLOITATION_SPEC`'s null-skip
+        // exists to prevent. The card says "No sync has recorded this yet." and means it.
+        exploitation_json: null
       };
     }));
   }
   function dryRunSync() {
     const startedAt = nowIso();
-    seedTrendHistory(startedAt);
+    seedDryRunHistory(startedAt, registerScopeSignature(getIssueCategories2()));
     const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
     const doc = persistSync(
       seedGraphDoc(startedAt),

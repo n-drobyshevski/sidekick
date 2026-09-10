@@ -38,13 +38,25 @@ const HAIRLINE = "#e6e6e9";
 // canvas cannot read. gas_shared/test/contracts/tokens.js pins the two to each other.
 export const ACCENT = "#2563eb";
 
+// `typeof window !== "undefined"` GUARDS A MODULE-SCOPE READ, not a runtime preference — this
+// file's own header states it is imported for its Chart.js-FREE exports (`groupPalette`,
+// `TIER_*`, `fmtDuration`) by code that never touches a canvas, and P1.1 added the first such
+// caller outside a browser: `pages/mttr.js`'s pure view models (`kmHalfLifeView` et al.),
+// reached from a plain Node vitest file with no DOM. Before this guard, importing THIS file at
+// all — even only for `groupPalette` — threw `ReferenceError: window is not defined` before a
+// single test could run; `charts.test.js`-shaped assertions on the Chart.js-free exports were
+// never actually possible. The browser gets the exact same value it always did: the `&&`
+// short-circuits identically once `window` exists.
 const reducedMotion =
-  window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  typeof window !== "undefined" &&
+  window.matchMedia &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 // Group digits and append a unit, so figures inside charts follow the same "tabular,
 // thousands-separated, the-number-is-the-product" rule as the rest of the app (canvas
 // ignores font-variant-numeric, so a formatter callback is the only way to get grouping).
-const localeNum = (v) => (typeof v === "number" ? Number(v).toLocaleString() : v);
+const localeNum = (v) =>
+  typeof v === "number" ? Number(v).toLocaleString() : v;
 
 // Human-readable duration for chart tooltips: break a fractional day/week count into a
 // compound "big unit + next unit" figure so a hover never shows a bare "0.4 days" / "1.5
@@ -69,12 +81,18 @@ export function fmtDuration(days) {
   if (d < 7) {
     let dd = Math.floor(d);
     let h = Math.round((d - dd) * 24);
-    if (h >= 24) { dd += 1; h = 0; }
+    if (h >= 24) {
+      dd += 1;
+      h = 0;
+    }
     return h ? `${dd}d ${h}h` : `${dd}d`;
   }
   let w = Math.floor(d / 7);
   let rem = Math.round((d - w * 7) * 10) / 10; // remaining days, 1 decimal
-  if (rem >= 7) { w += 1; rem = 0; }
+  if (rem >= 7) {
+    w += 1;
+    rem = 0;
+  }
   return rem ? `${w}w ${rem}d` : `${w}w`;
 }
 
@@ -87,26 +105,163 @@ const dayOf = (iso) => Math.floor(Date.parse(iso) / DAY_MS);
 // Axis/tooltip date format: "01-jul-2026" — unambiguous day-month order without locale
 // dependence (toLocaleDateString varies by viewer), month spelled so it can't be misread
 // as US-style month-first.
-const MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+const MONTHS = [
+  "jan",
+  "feb",
+  "mar",
+  "apr",
+  "may",
+  "jun",
+  "jul",
+  "aug",
+  "sep",
+  "oct",
+  "nov",
+  "dec",
+];
 function fmtDay(day) {
   const d = new Date(day * DAY_MS);
   return `${String(d.getUTCDate()).padStart(2, "0")}-${MONTHS[d.getUTCMonth()]}-${d.getUTCFullYear()}`;
 }
 
+/** The width of a `fmtDay` label, in multiples of the tick font size.
+ *
+ *  MEASURED, not estimated: `measureText` at the axis's own 12px system stack over a spread of
+ *  real labels gave 65.5px ("10-feb-2026") to 68.4px ("29-aug-2026") — 5.7 font sizes at the
+ *  widest. Every `fmtDay` string is exactly eleven characters of digits, lowercase and hyphens,
+ *  so this is a property of the FORMAT, not of one date. */
+export const DAY_LABEL_EMS = 5.7;
+
+/** Clear space demanded between two day labels on top of their own width. Chart.js's own
+ *  `autoSkipPadding` default is 3px per side; this is that, both sides. */
+export const TICK_LABEL_GUTTER_PX = 6;
+
+/** The centre-to-centre pixel distance two `fmtDay` labels need to clear each other. */
+export function dayLabelPitchPx(fontSize) {
+  return fontSize * DAY_LABEL_EMS + TICK_LABEL_GUTTER_PX;
+}
+
+/**
+ * Drop the second-to-last tick when the last one is a REMAINDER rather than a full step.
+ *
+ * WHY THIS IS UNAVOIDABLE WITH `bounds: "data"`. Chart.js's `generateTicks` anchors the tick
+ * grid on the bounds it is given: with `bounds: "data"` it sets `niceMin = rmin` and
+ * `niceMax = rmax` outright — the data's own min and max — and then steps from `rmin` by a nice
+ * `spacing` and appends `rmax` at the end. So the final gap is `span % spacing`, which is
+ * whatever the data happens to leave over: anywhere from 0 to a full step. Nothing about that
+ * is a misconfiguration; it is what pinning an axis to real data means.
+ *
+ * WHY CHART.JS DOES NOT CATCH IT ITSELF. It tries: the generator merges the last stepped tick
+ * INTO `rmax` when the two are within `relativeLabelSize(max, minSpacing, …)`. But that size is
+ * `0.75 * minSpacing * ('' + value).length` — measured on the RAW NUMBER. Our x values are epoch
+ * days, so `'' + 20704` is five characters, while `fmtDay` draws "29-aug-2026", eleven. Chart.js
+ * budgets for a label less than half the width of the one it will paint. `autoSkip` cannot
+ * rescue it either: it measures real label widths but assumes ticks are EVENLY spaced, and the
+ * remainder tick is precisely the one that is not.
+ *
+ * MEASURED on the dev harness at 2026-09-08, `#/mttr` → "Open vs resolved", 578px axis over
+ * 20494..20704 (210 days): ticks `[20494, 20544, 20594, 20644, 20694, 20704]`, gaps
+ * `[50, 50, 50, 50, 10]`. Ten days is 27px where the label is ~66px, so "29-aug-2026" and
+ * "08-sep-2026" printed directly on top of each other. The same axis on "SLA quality" left a
+ * 52-day final gap and read fine, which is the same generator on different data — the defect is
+ * the REMAINDER, not the chart.
+ *
+ * WHY THE SECOND-TO-LAST GOES, NOT THE LAST. The last tick is the data's own end — the "as of"
+ * date the reader is looking for, and the one the plotted line actually reaches. Dropping it
+ * instead would leave the axis labelled ten days short of where the series visibly ends, which
+ * reads as a chart cut off mid-series. Dropping its crowded neighbour just widens one gap.
+ *
+ * `bounds: "ticks"` was the other candidate and is worse: it rounds the axis out to the nice
+ * grid, which here would add 46 days of empty space past the last scan on a 210-day range and
+ * make a current register look a month stale. `dayAxis`'s own comment already rejects it.
+ *
+ * BOTH CONDITIONS ARE LOAD-BEARING, and a ratio alone was not enough — the first cut of this
+ * asked only whether the final gap was under half the step, and the 90d window walked straight
+ * through it: step 20 days, remainder 10, ratio exactly 0.5, and 10 days at that zoom is 64px
+ * under a 68px label. Pixels are the unit the collision actually happens in. The `< step` test
+ * stays beside it so this only ever touches the REMAINDER: an axis whose ticks are evenly
+ * spaced and merely crowded is autoSkip's job, and autoSkip does that one correctly.
+ *
+ * @param {Array<{value: number}>} ticks  as `generateTicks` built them, in ascending order
+ * @param {number} pxPerUnit  drawn pixels per axis unit (a day, here)
+ * @param {number} minPitchPx  centre-to-centre pixels two labels need — `dayLabelPitchPx()`
+ * @returns {Array<{value: number}>} the same array, or a copy one tick shorter
+ */
+export function dropRemainderTick(ticks, pxPerUnit, minPitchPx) {
+  if (!Array.isArray(ticks) || ticks.length < 3) return ticks;
+  const last = ticks[ticks.length - 1].value;
+  const prev = ticks[ticks.length - 2].value;
+  const step = prev - ticks[ticks.length - 3].value;
+  const finalGap = last - prev;
+  // Anything not measurable is left alone: a non-positive or non-finite step is not an evenly
+  // stepped axis, and with no usable pixel scale there is no collision to judge.
+  if (!Number.isFinite(step) || step <= 0) return ticks;
+  if (!Number.isFinite(finalGap) || finalGap <= 0) return ticks;
+  if (!Number.isFinite(pxPerUnit) || pxPerUnit <= 0) return ticks;
+  if (!Number.isFinite(minPitchPx) || minPitchPx <= 0) return ticks;
+  if (finalGap >= step) return ticks; // a full step: not a remainder
+  if (finalGap * pxPerUnit >= minPitchPx) return ticks; // a remainder, but a legible one
+  return [...ticks.slice(0, -2), ticks[ticks.length - 1]];
+}
+
 /** Switch a baseOptions() x scale to the proportional day axis. `xRange` ({min,max} in
  *  epoch days) pins the visible span — e.g. a "30d" window stays 30 days wide even when
- *  the data only reaches back a fortnight, showing honest empty space instead. */
+ *  the data only reaches back a fortnight, showing honest empty space instead.
+ *
+ *  `afterBuildTicks` is here because `bounds: "data"` GUARANTEES an uneven final gap, and this
+ *  axis draws labels far wider than the numbers Chart.js sizes them by. See `dropRemainderTick`
+ *  for the whole mechanism and the measurement. */
 function dayAxis(opts, xRange) {
   opts.scales.x.type = "linear";
   opts.scales.x.bounds = "data"; // don't stretch the axis past the data to a "nice" tick
   opts.scales.x.ticks.precision = 0; // whole days — a tick between two dates is nonsense
   opts.scales.x.ticks.maxTicksLimit = 8;
   opts.scales.x.ticks.callback = (v) => fmtDay(v);
+  // `setDimensions()` and the data-limits pass both run before `buildTicks()` (Chart.js's
+  // `Scale.update`), so `width`, `min` and `max` are all real by the time this fires — which is
+  // what lets the decision be made in PIXELS rather than in a ratio that has to guess at zoom.
+  opts.scales.x.afterBuildTicks = (scale) => {
+    const span = scale.max - scale.min;
+    const fontSize = scale.options?.ticks?.font?.size || FONT.size;
+    scale.ticks = dropRemainderTick(
+      scale.ticks,
+      span > 0 ? scale.width / span : 0,
+      dayLabelPitchPx(fontSize),
+    );
+  };
   if (xRange) {
     opts.scales.x.min = xRange.min;
     opts.scales.x.max = xRange.max;
   }
-  opts.plugins.tooltip.callbacks.title = (items) => (items.length ? fmtDay(items[0].parsed.x) : "");
+  opts.plugins.tooltip.callbacks.title = (items) =>
+    items.length ? fmtDay(items[0].parsed.x) : "";
+}
+
+/**
+ * Flip a `baseOptions()` chart to horizontal bars — and UNDO the numeric defaults it put on
+ * the y scale, which is the whole reason this is a function rather than one assignment.
+ *
+ * `baseOptions()` builds y as the VALUE axis: `precision: 0`, `beginAtZero`, and
+ * `callback: localeNum`. Setting `indexAxis = "y"` makes y the CATEGORY axis, and Chart.js
+ * hands a category scale's tick callback the tick's INDEX, not its label — so `localeNum`
+ * formatted 0, 1, 2, 3, 4 and every bar chart drawn this way lost its category names. MEASURED
+ * on the dev harness at 2026-09-08, `#/mttr` → By domain: five coloured bars against a y axis
+ * reading "0 1 2 3 4", with the domain names nowhere on the card. The bars were identified by
+ * HUE ALONE, which is the one thing DESIGN.md's non-colour-signal rule forbids outright, and
+ * the reader could not name a single domain the chart was about.
+ *
+ * It went unseen because the two charts it hit lived inside a drawer, and the third
+ * (`severityBar`) is exported but drawn by no page here. Deleting the three keys is the fix:
+ * `beginAtZero` and `precision` are meaningless on a category scale, and with no `callback`
+ * Chart.js falls back to `getLabelForValue`, which is the label.
+ */
+function horizontalBars(opts) {
+  opts.indexAxis = "y";
+  delete opts.scales.y.ticks.callback;
+  delete opts.scales.y.ticks.precision;
+  delete opts.scales.y.beginAtZero;
+  opts.scales.y.grid = { display: false };
+  return opts;
 }
 
 function baseOptions(unit = "") {
@@ -125,9 +280,13 @@ function baseOptions(unit = "") {
         padding: 10,
         callbacks: {
           label: (ctx) => {
-            const horiz = ctx.chart && ctx.chart.options && ctx.chart.options.indexAxis === "y";
+            const horiz =
+              ctx.chart &&
+              ctx.chart.options &&
+              ctx.chart.options.indexAxis === "y";
             const raw = horiz ? ctx.parsed.x : ctx.parsed.y;
-            const name = ctx.dataset && ctx.dataset.label ? `${ctx.dataset.label}: ` : "";
+            const name =
+              ctx.dataset && ctx.dataset.label ? `${ctx.dataset.label}: ` : "";
             // Duration units render as a compound figure (2d 7h, not "2.3 days"); every other
             // unit keeps the grouped number + unit suffix.
             if (unit === "days" || unit === "weeks") {
@@ -171,7 +330,52 @@ export function destroyChart(canvas) {
   destroyExisting(canvas);
 }
 
-/** Draws each bar's value just past its end (like the Streamlit severity chart). */
+/**
+ * Hide a canvas AND tear down whatever chart is on it — with the hide applied twice, once
+ * before the teardown and once after, because Chart.js undoes the first one.
+ *
+ * CHART.JS'S DESTROY RESTORES THE CANVAS'S PRE-CHART INLINE STYLES, AND `display` IS ONE OF
+ * THEM. `DomPlatform.initCanvas` records `{display, height, width}` off `canvas.style` at
+ * construction and forces `display: block`; `releaseContext` replays that record key by key on
+ * destroy. A canvas that was `display: ""` when its chart was built therefore comes back to
+ * `""` — visible — however many times the caller set it to `"none"` beforehand. The teardown
+ * sits behind the LAZY chart-bundle import (`chartsLoader.js`), so it always lands after the
+ * caller's synchronous hide, never before it.
+ *
+ * MEASURED on the dev harness at 2026-09-08, one click of the MTTR by-domain lens swap: the
+ * outgoing canvas came back as a bare 300x150 `display: inline` element inside a 240px
+ * `.chart-box` — Chart.js had also restored its `width`/`height` attributes — and pushed the
+ * incoming chart 150px down, over its own caption and into the table beneath it. The card
+ * looked broken; nothing had failed.
+ *
+ * `stillHidden` is re-read AFTER the await rather than captured, and it is why this is not
+ * simply `destroy(); hide()` inside the loader's `.then`. On the very first swap of a session
+ * the bundle may still be in flight, which is a window wide enough for a reader to swap back —
+ * and hiding unconditionally at the end of that window would blank the canvas that is now the
+ * live one.
+ *
+ * @param {{style: {display: string}}} canvas
+ * @param {() => Promise<{destroyChart: (c: unknown) => void}>} load  the lazy bundle loader
+ * @param {() => boolean} stillHidden  is this canvas STILL the one that should be hidden?
+ * @returns {Promise<void>} settles when the second hide has been applied (or skipped)
+ */
+export function hideChartWhenSettled(canvas, load, stillHidden) {
+  canvas.style.display = "none";
+  return (
+    load()
+      // A load that never resolves a bundle has no chart to destroy and no restore to undo, so
+      // the first hide already stands — the same fire-and-forget the callers had.
+      .then(
+        (charts) => charts.destroyChart(canvas),
+        () => {},
+      )
+      .then(() => {
+        if (stillHidden()) canvas.style.display = "none";
+      })
+  );
+}
+
+/** Draws each bar's value just past its end. */
 const barEndLabels = {
   id: "barEndLabels",
   afterDatasetsDraw(chart) {
@@ -209,7 +413,10 @@ function reconstructedBand(flags, xDays) {
       if (!xs || !area) return;
       let right = area.right;
       if (firstReal > 0) {
-        right = (xs.getPixelForValue(xDays[firstReal - 1]) + xs.getPixelForValue(xDays[firstReal])) / 2;
+        right =
+          (xs.getPixelForValue(xDays[firstReal - 1]) +
+            xs.getPixelForValue(xDays[firstReal])) /
+          2;
       }
       // Start at the first plotted point, not the axis edge: with a pinned window the
       // chart can have honest empty space on the left, and that space isn't "reconstructed
@@ -229,21 +436,25 @@ function reconstructedBand(flags, xDays) {
 export function severityBar(canvas, counts, palette, onClickSeverity) {
   destroyExisting(canvas);
   const sevs = palette.order.filter((s) => counts[s]);
-  describe(canvas, `Open findings by severity: ${
-    sevs.map((s) => `${s} ${counts[s]}`).join(", ") || "none"}`);
-  const opts = baseOptions("findings");
-  opts.indexAxis = "y";
+  describe(
+    canvas,
+    `Open findings by severity: ${
+      sevs.map((s) => `${s} ${counts[s]}`).join(", ") || "none"
+    }`,
+  );
+  const opts = horizontalBars(baseOptions("findings"));
   opts.scales.x.beginAtZero = true;
   opts.scales.x.ticks.precision = 0;
   opts.scales.x.ticks.callback = localeNum;
   // Headroom so the end-of-bar value labels aren't clipped at the axis edge.
   opts.scales.x.grace = "8%";
-  opts.scales.y.grid = { display: false };
   opts.onClick = (_evt, elements) => {
-    if (elements.length && onClickSeverity) onClickSeverity(sevs[elements[0].index]);
+    if (elements.length && onClickSeverity)
+      onClickSeverity(sevs[elements[0].index]);
   };
   opts.onHover = (evt, elements) => {
-    evt.native.target.style.cursor = elements.length && onClickSeverity ? "pointer" : "default";
+    evt.native.target.style.cursor =
+      elements.length && onClickSeverity ? "pointer" : "default";
   };
   return new ChartCtor(canvas, {
     type: "bar",
@@ -268,14 +479,24 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
  * buckets mean something else, e.g. time-to-resolve). Severity is color + legend label +
  * tooltip title — never color alone.
  */
-export function stackedAgeBar(canvas, labels, perSev, palette, desc, opts2 = {}) {
+export function stackedAgeBar(
+  canvas,
+  labels,
+  perSev,
+  palette,
+  desc,
+  opts2 = {},
+) {
   destroyExisting(canvas);
   describe(canvas, desc || "Open findings by age bucket and severity.");
   const opts = baseOptions("findings");
   opts.scales.x.stacked = true;
   opts.scales.y.stacked = true;
   opts.scales.x.grid = { display: false };
-  opts.plugins.legend = { display: true, labels: { font: FONT, color: INK2, boxWidth: 12 } };
+  opts.plugins.legend = {
+    display: true,
+    labels: { font: FONT, color: INK2, boxWidth: 12 },
+  };
   const plugins = [];
   // `slaEdgeAfter` marks the boundary between the in-SLA bucket and the breaches to its
   // right. On a single-severity register every bucket past the first IS a breach, which the
@@ -292,7 +513,9 @@ export function stackedAgeBar(canvas, labels, perSev, palette, desc, opts2 = {})
         .map((s) => ({
           label: palette.labels ? palette.labels[s] || s : s,
           data: perSev[s],
-          backgroundColor: palette.fills ? palette.fills(canvas, s) : palette.colors[s],
+          backgroundColor: palette.fills
+            ? palette.fills(canvas, s)
+            : palette.colors[s],
           borderRadius: 3,
           barThickness: 36,
         })),
@@ -388,7 +611,9 @@ export function tierPalette() {
     colors: TIER_COLORS,
     labels: TIER_LABELS,
     fills: (canvas, tier) =>
-      tier === "unknown" ? hatchPattern(canvas, TIER_COLORS.unknown) : TIER_COLORS[tier],
+      tier === "unknown"
+        ? hatchPattern(canvas, TIER_COLORS.unknown)
+        : TIER_COLORS[tier],
   };
 }
 
@@ -400,7 +625,8 @@ function slaEdgeLine(afterIndex, label) {
       const { ctx, chartArea, scales } = chart;
       const x = scales.x;
       if (!x || afterIndex < 0 || afterIndex >= x.ticks.length - 1) return;
-      const px = (x.getPixelForTick(afterIndex) + x.getPixelForTick(afterIndex + 1)) / 2;
+      const px =
+        (x.getPixelForTick(afterIndex) + x.getPixelForTick(afterIndex + 1)) / 2;
       ctx.save();
       ctx.strokeStyle = "#a16207";
       ctx.lineWidth = 1;
@@ -437,16 +663,18 @@ export function sparkline(canvas, values, { color, desc } = {}) {
     type: "line",
     data: {
       labels: values.map((_, i) => i),
-      datasets: [{
-        data: values,
-        borderColor: ink,
-        borderWidth: 2,
-        tension: 0.25,
-        fill: false,
-        pointRadius: values.map((_, i) => (i === values.length - 1 ? 3 : 0)),
-        pointBackgroundColor: ink,
-        pointBorderWidth: 0,
-      }],
+      datasets: [
+        {
+          data: values,
+          borderColor: ink,
+          borderWidth: 2,
+          tension: 0.25,
+          fill: false,
+          pointRadius: values.map((_, i) => (i === values.length - 1 ? 3 : 0)),
+          pointBackgroundColor: ink,
+          pointBorderWidth: 0,
+        },
+      ],
     },
     options: {
       responsive: true,
@@ -473,13 +701,20 @@ export function trendLine(canvas, points, { yLabel, xRange } = {}) {
   describe(
     canvas,
     `${yLabel ? yLabel + " " : ""}trend across ${points.length} point(s)` +
-      (reconCount ? `, ${reconCount} reconstructed from first-detection dates before the first saved scan` : "") +
+      (reconCount
+        ? `, ${reconCount} reconstructed from first-detection dates before the first saved scan`
+        : "") +
       ".",
   );
   const opts = baseOptions(yLabel || "");
   opts.scales.y.beginAtZero = true;
   if (yLabel) {
-    opts.scales.y.title = { display: true, text: yLabel, font: FONT, color: INK2 };
+    opts.scales.y.title = {
+      display: true,
+      text: yLabel,
+      font: FONT,
+      color: INK2,
+    };
   }
   // Points hide (pointRadius 0) above 40 samples, so a nearest/intersect tooltip has nothing
   // to hit; index mode reveals every series' value at the nearest date on hover. Matches
@@ -487,7 +722,10 @@ export function trendLine(canvas, points, { yLabel, xRange } = {}) {
   opts.interaction = { mode: "index", intersect: false };
   const days = points.map((p) => dayOf(p.x));
   dayAxis(opts, xRange);
-  const band = reconstructedBand(points.map((p) => p.reconstructed), days);
+  const band = reconstructedBand(
+    points.map((p) => p.reconstructed),
+    days,
+  );
   return new ChartCtor(canvas, {
     type: "line",
     data: {
@@ -503,7 +741,9 @@ export function trendLine(canvas, points, { yLabel, xRange } = {}) {
           // Reconstructed vertices are hollow (white fill), measured ones solid — a shape cue
           // that reads without colour, matching the shaded band and caption.
           pointBackgroundColor: (c) =>
-            points[c.dataIndex] && points[c.dataIndex].reconstructed ? "#ffffff" : "#2563eb",
+            points[c.dataIndex] && points[c.dataIndex].reconstructed
+              ? "#ffffff"
+              : "#2563eb",
           pointBorderColor: "#2563eb",
           pointBorderWidth: 1.5,
           borderWidth: 2,
@@ -587,7 +827,9 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
   describe(
     canvas,
     "Open vs resolved findings over time." +
-      (reconCount ? ` The first ${reconCount} point(s) are reconstructed from first-detection dates before the first saved scan.` : ""),
+      (reconCount
+        ? ` The first ${reconCount} point(s) are reconstructed from first-detection dates before the first saved scan.`
+        : ""),
   );
   const opts = baseOptions("findings");
   opts.plugins.legend = {
@@ -600,7 +842,10 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
   opts.interaction = { mode: "index", intersect: false };
   const days = points.map((p) => dayOf(p.date));
   dayAxis(opts, xRange);
-  const band = reconstructedBand(points.map((p) => p.reconstructed), days);
+  const band = reconstructedBand(
+    points.map((p) => p.reconstructed),
+    days,
+  );
   return new ChartCtor(canvas, {
     type: "line",
     data: {
@@ -641,11 +886,54 @@ export function openResolvedLines(canvas, points, { xRange } = {}) {
 // (closed-only) markers are Ink — meaning is carried by label + point-style too, matching
 // the rest of the app's "never color alone" rule.
 const KM_MARKERS = [
-  { key: "naiveMedian", label: "Median (closed)", color: "#171717", pointStyle: "circle" },
-  { key: "median", label: "Median (KM, all)", color: "#2563eb", pointStyle: "triangle" },
-  { key: "naiveMean", label: "Mean (closed)", color: "#171717", pointStyle: "rect" },
-  { key: "mean", label: "Mean (KM · RMST, all)", color: "#2563eb", pointStyle: "rectRot" },
+  {
+    key: "naiveMedian",
+    label: "Median (closed)",
+    color: "#171717",
+    pointStyle: "circle",
+  },
+  {
+    key: "median",
+    label: "Median (KM, all)",
+    scopeSuffix: "all)",
+    color: "#2563eb",
+    pointStyle: "triangle",
+  },
+  {
+    key: "naiveMean",
+    label: "Mean (closed)",
+    color: "#171717",
+    pointStyle: "rect",
+  },
+  {
+    key: "mean",
+    label: "Mean (KM · RMST, all)",
+    scopeSuffix: "all)",
+    color: "#2563eb",
+    pointStyle: "rectRot",
+  },
 ];
+
+/**
+ * A marker's legend text, with its POPULATION word replaced where the caller named one.
+ *
+ * The two KM markers say what they were estimated OVER — "all" meaning all findings, closed
+ * and open — and on a per-severity small multiple that word is simply false: the diamond on
+ * the CRITICAL card is CRITICAL's own restricted mean, not the register's. So `scopeSuffix`
+ * marks the two labels whose parenthetical ends in a population, and `viewOpts.scope` swaps it.
+ *
+ * THE CLOSED-ONLY MARKERS ARE LEFT ALONE ON PURPOSE. "(closed)" says how the estimate was
+ * made, not over what; rewriting it to "(CRITICAL)" would delete the one word that
+ * distinguishes the naive statistic from the Kaplan–Meier one beside it.
+ *
+ * Unscoped callers get `m.label` back unchanged, byte for byte — the register-wide curve on
+ * the MTTR page still reads "Median (KM, all)".
+ */
+function markerLabel(m, scope) {
+  if (!scope || !m.scopeSuffix || !m.label.endsWith(m.scopeSuffix))
+    return m.label;
+  return m.label.slice(0, m.label.length - m.scopeSuffix.length) + scope + ")";
+}
 
 // S(day) off a KM curve (distinct event times ascending, implicit S(0)=1). The staircase is
 // right-continuous ("after"): survival holds at its pre-drop level until an event time, then
@@ -673,42 +961,73 @@ function stepAt(curve, day) {
 export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
   destroyExisting(canvas);
   const points = curve || [];
+  // THREE OPTIONS THE PER-SEVERITY FAN ADDED, and every one of them defaults to what the
+  // register-wide curve already drew. `color` is the staircase's own ink — a severity FILL
+  // read off the bootstrap palette, so six small multiples are six colours rather than six
+  // identical blue lines; the MARKERS stay the brand blue whatever the line is, because they
+  // mean "this is the Kaplan-Meier estimate" and that meaning does not change per card.
+  // `subject` and `scope` are the accessible half: the first names the population in the
+  // canvas's own long description, the second in its legend.
+  const lineColor =
+    typeof viewOpts.color === "string" && viewOpts.color
+      ? viewOpts.color
+      : "#2563eb";
+  const subject =
+    typeof viewOpts.subject === "string" && viewOpts.subject
+      ? " " + viewOpts.subject
+      : "";
+  const scope =
+    typeof viewOpts.scope === "string" && viewOpts.scope
+      ? viewOpts.scope
+      : null;
   // A positive maxWeeks hard-crops the x-axis to that window (the 30w/15w/5w view filter);
   // absent it, keep the auto-extending 26w default. Points/markers past the max clip out —
   // the describe() aria text below still names every marker's day value, so nothing is lost.
-  const maxWeeks = Number.isFinite(viewOpts.maxWeeks) && viewOpts.maxWeeks > 0 ? viewOpts.maxWeeks : null;
-  const survivalPoints = [{ x: 0, y: 100 }, ...points.map((p) => ({ x: p.t / 7, y: p.s * 100 }))];
+  const maxWeeks =
+    Number.isFinite(viewOpts.maxWeeks) && viewOpts.maxWeeks > 0
+      ? viewOpts.maxWeeks
+      : null;
+  const survivalPoints = [
+    { x: 0, y: 100 },
+    ...points.map((p) => ({ x: p.t / 7, y: p.s * 100 })),
+  ];
 
   // Only build a dataset for markers the caller actually supplied — a null value means the
   // marker is omitted entirely (no plotted point AND no dead legend entry). This lets a
   // caller pass e.g. {median, mean} to show just the two KM markers.
-  const markerDatasets = KM_MARKERS
-    .filter((m) => {
-      const day = markers ? markers[m.key] : null;
-      return day !== null && day !== undefined;
-    })
-    .map((m) => {
-      const day = markers[m.key];
-      return {
-        label: m.label,
-        data: [{ x: day / 7, y: stepAt(points, day) * 100, day }],
-        showLine: false,
-        pointRadius: 6,
-        pointHoverRadius: 7,
-        pointStyle: m.pointStyle,
-        backgroundColor: m.color,
-        borderColor: m.color,
-      };
-    });
+  const markerDatasets = KM_MARKERS.filter((m) => {
+    const day = markers ? markers[m.key] : null;
+    return day !== null && day !== undefined;
+  }).map((m) => {
+    const day = markers[m.key];
+    return {
+      label: markerLabel(m, scope),
+      data: [{ x: day / 7, y: stepAt(points, day) * 100, day }],
+      showLine: false,
+      pointRadius: 6,
+      pointHoverRadius: 7,
+      pointStyle: m.pointStyle,
+      backgroundColor: m.color,
+      borderColor: m.color,
+    };
+  });
 
-  const named = KM_MARKERS
-    .map((m) => ({ ...m, day: markers ? markers[m.key] : null }))
-    .filter((m) => m.day !== null && m.day !== undefined);
+  const named = KM_MARKERS.map((m) => ({
+    ...m,
+    label: markerLabel(m, scope),
+    day: markers ? markers[m.key] : null,
+  })).filter((m) => m.day !== null && m.day !== undefined);
   describe(
     canvas,
-    "Kaplan-Meier survival curve of time to remediation." +
+    "Kaplan-Meier survival curve of time to remediation" +
+      subject +
+      "." +
       (named.length
-        ? " Markers: " + named.map((m) => `${m.label} at ${Math.round(m.day)} day(s)`).join(", ") + "."
+        ? " Markers: " +
+          named
+            .map((m) => `${m.label} at ${Math.round(m.day)} day(s)`)
+            .join(", ") +
+          "."
         : ""),
   );
 
@@ -720,7 +1039,10 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
       legend: {
         display: true,
         labels: {
-          font: FONT, color: INK2, usePointStyle: true, boxWidth: 8,
+          font: FONT,
+          color: INK2,
+          usePointStyle: true,
+          boxWidth: 8,
           // The staircase itself doesn't need a legend swatch — meaning attaches to the
           // four markers (label + point-style), not to the curve's color.
           filter: (item) => item.datasetIndex !== 0,
@@ -770,7 +1092,7 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
           label: "S(t)",
           data: survivalPoints,
           stepped: "after",
-          borderColor: "#2563eb",
+          borderColor: lineColor,
           pointRadius: 0,
           borderWidth: 2,
         },
@@ -797,9 +1119,7 @@ export function survivalCurve(canvas, curve, markers, viewOpts = {}) {
 // clear only the surface-contrast relief bar, covered by the on-arc %, legend point-styles, and
 // direct labels. Kept in sync with --chart-cat-* in styles/tokens.css by convention (canvas
 // can't read CSS vars).
-const CATEGORICAL = [
-  "#2563eb", "#0d9488", "#90396a", "#7fba04", "#f66bb9",
-];
+const CATEGORICAL = ["#2563eb", "#0d9488", "#90396a", "#7fba04", "#f66bb9"];
 // Neutral gray for the folded-in "Other" bucket — reads as "everything else", not a hue,
 // and never collides with a real group's color.
 const OTHER_COLOR = "#94a3b8";
@@ -807,8 +1127,14 @@ const OTHER_COLOR = "#94a3b8";
 // (mirrors SEV_POINT_STYLE). More styles than hues so the pooled "Other" series (a 6th line
 // past the 5 groups) still gets its own marker rather than reusing slot 1's.
 const GROUP_POINT_STYLES = [
-  "circle", "triangle", "rect", "rectRot",
-  "star", "crossRot", "cross", "dash",
+  "circle",
+  "triangle",
+  "rect",
+  "rectRot",
+  "star",
+  "crossRot",
+  "cross",
+  "dash",
 ];
 
 /**
@@ -830,8 +1156,12 @@ export function groupPalette(names, otherLabel = "Other") {
 // (lime, pink) where white text would wash out — those take near-black. Threshold is where
 // white text drops below 3:1 on the fill (WCAG relative luminance).
 function onFillText(hex) {
-  const lin = (v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); };
-  const L = 0.2126 * lin(parseInt(hex.slice(1, 3), 16)) +
+  const lin = (v) => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  };
+  const L =
+    0.2126 * lin(parseInt(hex.slice(1, 3), 16)) +
     0.7152 * lin(parseInt(hex.slice(3, 5), 16)) +
     0.0722 * lin(parseInt(hex.slice(5, 7), 16));
   return 1.05 / (L + 0.05) < 3 ? "#0a0a0a" : "#ffffff"; // white contrast < 3:1 → use ink
@@ -857,7 +1187,8 @@ const arcPercentLabels = {
       const share = (Number(data[i]) || 0) / total;
       if (share < 0.08) return; // too thin for a label; legend + tooltip cover it
       const p = arc.tooltipPosition();
-      ctx.fillStyle = typeof colors[i] === "string" ? onFillText(colors[i]) : "#ffffff";
+      ctx.fillStyle =
+        typeof colors[i] === "string" ? onFillText(colors[i]) : "#ffffff";
       ctx.fillText(Math.round(share * 100) + "%", p.x, p.y);
     });
     ctx.restore();
@@ -878,7 +1209,7 @@ export function groupPie(canvas, slices, opts = {}) {
   const subject = opts.subject || "Open findings by group";
   const total = slices.reduce((a, s) => a + (Number(s.value) || 0), 0);
   const parts = slices.map((s) => {
-    const pct = total ? Math.round((Number(s.value) || 0) / total * 100) : 0;
+    const pct = total ? Math.round(((Number(s.value) || 0) / total) * 100) : 0;
     const base = s.label + " " + localeNum(s.value) + " (" + pct + "%)";
     return s.detail ? base + ", " + s.detail : base;
   });
@@ -916,7 +1247,7 @@ export function groupPie(canvas, slices, opts = {}) {
             // Slice label is the tooltip title; the body adds the grouped count + share.
             label: (ctx) => {
               const v = Number(ctx.parsed) || 0;
-              const pct = total ? Math.round(v / total * 100) : 0;
+              const pct = total ? Math.round((v / total) * 100) : 0;
               return " " + localeNum(v) + " (" + pct + "%)";
             },
             // A second line carrying the slice's optional detail (e.g. that group's median
@@ -948,7 +1279,12 @@ export function groupTrendLines(canvas, points, series, cfg = {}) {
   // A magnitude unit gets a y-axis title (mirrors trendLine); "findings" stays untitled,
   // matching the Breakdown call site's original look.
   if (unit !== "findings") {
-    opts.scales.y.title = { display: true, text: unit, font: FONT, color: INK2 };
+    opts.scales.y.title = {
+      display: true,
+      text: unit,
+      font: FONT,
+      color: INK2,
+    };
   }
   opts.plugins.legend = {
     display: true,
@@ -964,7 +1300,9 @@ export function groupTrendLines(canvas, points, series, cfg = {}) {
       labels: points.map((p) => p.date.slice(0, 10)),
       datasets: series.map((s, i) => ({
         label: s.name,
-        data: points.map((p) => (nullAsGap ? (p.byGroup[s.name] ?? null) : (p.byGroup[s.name] || 0))),
+        data: points.map((p) =>
+          nullAsGap ? (p.byGroup[s.name] ?? null) : p.byGroup[s.name] || 0,
+        ),
         spanGaps: nullAsGap,
         borderColor: s.color,
         backgroundColor: s.color,
@@ -1065,7 +1403,10 @@ export function mttrContributionBars(canvas, groups, opts = {}) {
   destroyExisting(canvas);
   const subject = opts.subject || "Median MTTR by group";
   const overall = opts.overall;
-  const hasRef = overall !== null && overall !== undefined && Number.isFinite(Number(overall));
+  const hasRef =
+    overall !== null &&
+    overall !== undefined &&
+    Number.isFinite(Number(overall));
   // The up/down clause shared by the tooltip and the text alternative, relative to the reference.
   const dir = (v) => {
     if (!hasRef) return "";
@@ -1075,16 +1416,24 @@ export function mttrContributionBars(canvas, groups, opts = {}) {
       ? `, ${fmtDuration(d)} above overall — pulls MTTR up`
       : `, ${fmtDuration(-d)} below overall — pulls MTTR down`;
   };
-  describe(canvas, `${subject}: ` +
-    (groups.map((g) => `${g.label} ${fmtDuration(Number(g.value))}${dir(g.value)}`).join("; ") || "none") +
-    (hasRef ? `; overall KM median ${fmtDuration(Number(overall))}.` : "."));
+  describe(
+    canvas,
+    `${subject}: ` +
+      (groups
+        .map((g) => `${g.label} ${fmtDuration(Number(g.value))}${dir(g.value)}`)
+        .join("; ") || "none") +
+      (hasRef ? `; overall KM median ${fmtDuration(Number(overall))}.` : "."),
+  );
 
-  const opt = baseOptions("days");
-  opt.indexAxis = "y";
+  const opt = horizontalBars(baseOptions("days"));
   opt.scales.x.beginAtZero = true;
   opt.scales.x.grace = "12%"; // headroom so the end-of-bar day labels aren't clipped
-  opt.scales.x.title = { display: true, text: "KM median (days)", font: FONT, color: INK2 };
-  opt.scales.y.grid = { display: false };
+  opt.scales.x.title = {
+    display: true,
+    text: "KM median (days)",
+    font: FONT,
+    color: INK2,
+  };
   opt.plugins.tooltip.callbacks.label = (ctx) => {
     const g = groups[ctx.dataIndex];
     const n = g.resolved ?? 0;
@@ -1196,25 +1545,41 @@ export function mttrImpactBars(canvas, rows, opts = {}) {
   destroyExisting(canvas);
   const subject = opts.subject || "Contribution to MTTR by group";
   const signed = (v) => (v > 0 ? "+" : "") + localeNum(v); // localeNum keeps the − on negatives
-  const dir = (v) => (v > 0 ? "pulls MTTR up" : v < 0 ? "pulls MTTR down" : "at the overall median");
-  describe(canvas, `${subject} (excess finding·days vs the overall median): ` +
-    (rows.map((r) => `${r.label} ${signed(Number(r.value) || 0)} — ${dir(Number(r.value) || 0)}`)
-      .join("; ") || "none") + ".");
+  const dir = (v) =>
+    v > 0
+      ? "pulls MTTR up"
+      : v < 0
+        ? "pulls MTTR down"
+        : "at the overall median";
+  describe(
+    canvas,
+    `${subject} (excess finding·days vs the overall median): ` +
+      (rows
+        .map(
+          (r) =>
+            `${r.label} ${signed(Number(r.value) || 0)} — ${dir(Number(r.value) || 0)}`,
+        )
+        .join("; ") || "none") +
+      ".",
+  );
 
-  const opt = baseOptions("finding·days");
-  opt.indexAxis = "y";
+  const opt = horizontalBars(baseOptions("finding·days"));
   // No beginAtZero on the value (x) axis — bars grow from 0 in both directions, so forcing a
   // zero floor would clip the negative (held-down) bars. Chart.js includes 0 for a bar chart anyway.
   opt.scales.x.grace = "12%"; // headroom so the outer value labels aren't clipped on either side
   opt.scales.x.title = {
-    display: true, text: "excess finding·days vs overall median", font: FONT, color: INK2,
+    display: true,
+    text: "excess finding·days vs overall median",
+    font: FONT,
+    color: INK2,
   };
-  opt.scales.y.grid = { display: false };
   opt.plugins.tooltip.callbacks.label = (ctx) => {
     const r = rows[ctx.dataIndex];
     const v = Number(r.value) || 0;
-    return ` ${signed(v)} finding·days · median ${fmtDuration(Number(r.median))} · `
-      + `${localeNum(r.resolved ?? 0)} resolved — ${dir(v)}`;
+    return (
+      ` ${signed(v)} finding·days · median ${fmtDuration(Number(r.median))} · ` +
+      `${localeNum(r.resolved ?? 0)} resolved — ${dir(v)}`
+    );
   };
 
   return new ChartCtor(canvas, {
@@ -1259,7 +1624,12 @@ export function coverageEfficiencyLines(canvas, points, { xRange } = {}) {
   const opts = baseOptions("%");
   opts.scales.y.min = 0;
   opts.scales.y.max = 100;
-  opts.scales.y.title = { display: true, text: "percent", font: FONT, color: INK2 };
+  opts.scales.y.title = {
+    display: true,
+    text: "percent",
+    font: FONT,
+    color: INK2,
+  };
   opts.plugins.legend = {
     display: true,
     labels: { font: FONT, color: INK2, usePointStyle: true, boxWidth: 8 },
@@ -1267,7 +1637,10 @@ export function coverageEfficiencyLines(canvas, points, { xRange } = {}) {
   opts.interaction = { mode: "index", intersect: false };
   const days = points.map((p) => dayOf(p.date));
   dayAxis(opts, xRange);
-  const band = reconstructedBand(points.map((p) => p.reconstructed), days);
+  const band = reconstructedBand(
+    points.map((p) => p.reconstructed),
+    days,
+  );
   return new ChartCtor(canvas, {
     type: "line",
     data: {
@@ -1327,18 +1700,31 @@ export function coverageEfficiencyScatter(canvas, points) {
             `efficiency ${p.efficiency === null ? "not measurable" : Math.round(p.efficiency) + "%"}` +
             (p.active ? " (the active rule)" : ""),
         )
-        .join("; ") + ".",
+        .join("; ") +
+      ".",
   );
-  const plotted = points.filter((p) => p.coverage !== null && p.efficiency !== null);
+  const plotted = points.filter(
+    (p) => p.coverage !== null && p.efficiency !== null,
+  );
   const opts = baseOptions("%");
   opts.scales.x.type = "linear";
   opts.scales.x.min = 0;
   opts.scales.x.max = 100;
-  opts.scales.x.title = { display: true, text: "coverage %", font: FONT, color: INK2 };
+  opts.scales.x.title = {
+    display: true,
+    text: "coverage %",
+    font: FONT,
+    color: INK2,
+  };
   opts.scales.x.ticks.callback = (v) => v + "%";
   opts.scales.y.min = 0;
   opts.scales.y.max = 100;
-  opts.scales.y.title = { display: true, text: "efficiency %", font: FONT, color: INK2 };
+  opts.scales.y.title = {
+    display: true,
+    text: "efficiency %",
+    font: FONT,
+    color: INK2,
+  };
   opts.scales.y.ticks.callback = (v) => v + "%";
   opts.plugins.tooltip.callbacks.title = (items) =>
     items.length ? plotted[items[0].dataIndex].label : "";
@@ -1411,8 +1797,12 @@ export function coverageEfficiencyScatter(canvas, points) {
           pointRadius: plotted.map((p) => (p.active ? 7 : 5)),
           pointHoverRadius: 9,
           // The active rule is the single accent; the alternatives stay neutral.
-          pointBackgroundColor: plotted.map((p) => (p.active ? CATEGORICAL[0] : "#ffffff")),
-          pointBorderColor: plotted.map((p) => (p.active ? CATEGORICAL[0] : OTHER_COLOR)),
+          pointBackgroundColor: plotted.map((p) =>
+            p.active ? CATEGORICAL[0] : "#ffffff",
+          ),
+          pointBorderColor: plotted.map((p) =>
+            p.active ? CATEGORICAL[0] : OTHER_COLOR,
+          ),
           pointBorderWidth: 2,
           // A second, non-colour cue for the active rule.
           pointStyle: plotted.map((p) => (p.active ? "rectRot" : "circle")),

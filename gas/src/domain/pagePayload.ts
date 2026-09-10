@@ -24,6 +24,13 @@
 // module graph — the same split pages/executive.js uses for its view functions.
 
 import type { Rec } from "./util";
+// The per-finding register row set (bottom of this file) needs three vocabularies and one
+// parser: severities and risk tiers sort by MEANING rather than alphabetically, and the date
+// columns sort as instants.
+import { SEVERITY_ORDER } from "./config";
+import { RISK_TIER_ORDER } from "./program";
+import { normalizeSeverity } from "./severity";
+import { parseTs } from "./util";
 
 /**
  * The four numbers the hero paints, keeping `mttrData`'s nesting so the client reads them at
@@ -197,11 +204,39 @@ const OLDEST_VIEWS = ["findings", "byAsset", "bySupportGroup", "byDomain"] as co
  * Measured on the seeded estate: `oldest` was 16,434 of 18,064 bytes, 91% of the payload, for
  * four ranked views of up to 100 rows each — of which the panel renders ten rows of one.
  */
+const OVERVIEW_OMIT = new Set(["oldest", "fixNext", "movementOpen"]);
+
 export function overviewInsightsSlice(insights: unknown): Rec | null {
   if (!insights || typeof insights !== "object") return null;
   const out: Rec = {};
-  for (const [k, v] of Object.entries(insights as Rec)) if (k !== "oldest") out[k] = v;
+  for (const [k, v] of Object.entries(insights as Rec)) if (!OVERVIEW_OMIT.has(k)) out[k] = v;
   return out;
+}
+
+/**
+ * The Executive front door's slice of the SAME `insightsData` payload the Overview reads.
+ *
+ * `fixNext` and `movementOpen` are computed inside `insightsData` rather than in a read-model
+ * of their own, and that is the whole reason this slice exists. Both need `baseVisible` —
+ * loadBaseRows, attachSupportGroups, attachBizDomains, a per-row resolveDomainName and three
+ * filter passes — plus the frame-to-ledger exposure join. Computing them separately would
+ * rebuild all of it for a second cache entry; computing them here means the Executive reads
+ * the entry the Overview warmed, and the Overview reads the entry the Executive warmed. So the
+ * ONLY thing that differs between the two pages is which keys travel.
+ *
+ * Written as an enumeration rather than an omit, unlike `overviewInsightsSlice` above, for the
+ * same reason the two `exec*` slices are: on Executive the payload is overwhelmingly for
+ * somebody else, so naming the three survivors is the shorter and more honest statement —
+ * `insightsData` carries eighteen keys and this page reads two of them plus the scan stamp.
+ *
+ * `scan` travels because a ranked list and a movement comparison are both AS OF a scan, and a
+ * front door that cannot say when it last looked is the "unmeasured register renders as a
+ * register of zeroes" failure with extra steps.
+ */
+export function execInsightsSlice(insights: unknown): Rec | null {
+  if (!insights || typeof insights !== "object") return null;
+  const i = insights as Rec;
+  return { fixNext: i["fixNext"], movement: i["movementOpen"], scan: i["scan"] };
 }
 
 /**
@@ -285,4 +320,308 @@ export function jobSummarySlice(job: unknown, stale: boolean): Rec | null {
   }
   out["incremental"] = incremental;
   return out;
+}
+
+// ------------------------------------------------------- the per-finding register rows
+//
+// THE OS REGISTER HAD NO ROW. Every read model in this app is an AGGREGATE — severity
+// counts, tier ladders, KM curves, oldest-open rankings — and the one question a reader
+// arrives with ("show me the findings, and let me sort them") had no answer on the wire.
+// `getRiskCohort` is the closest thing, and it is a drill-down into one confusion-matrix
+// cell with a hand-built ten-column projection; it is not the register.
+//
+// TWO THINGS LIVE HERE AND THEY ARE ONE DECISION — the same split `gas_devsecops` states
+// in its own copy of this file, ported here because the OS register is the same shape of
+// problem with a different spine.
+//
+//   1. THE SLICE. `REGISTER_ROW_COLUMNS` is an ALLOWLIST and `registerRowsSlice` copies
+//      nothing else off the base row. A `BaseRow` carries plenty that has no reader in a
+//      table and no business on the wire: `tags_json` (the asset's whole tag dictionary,
+//      including whatever an estate happens to put in tags), `asset_id` and the internal
+//      addresses `first_scan_id` / `last_scan_id`, and the raw capture columns `fix_date` /
+//      `fix_observed_at` / `risk_observed_at` whose DERIVED forms (`fix_available_at`,
+//      `awaiting_vendor_fix`) are what a reader is actually being shown. `raw_ref` and
+//      `obs_ref` are not on a `BaseRow` at all — they are scan-tab columns — and the
+//      allowlist refuses them anyway, because the failure this guards against is somebody
+//      spreading a row instead of picking from it, and a spread does not care which tab a
+//      field came from.
+//
+//      `cvss` IS NOT DASHED — IT IS ABSENT. It is not a ledger column and never has been
+//      (`LEDGER_COLUMNS`, `reconcile.ts`), so a `cvss` column would print an em dash on
+//      every row of the register for the life of the page: a table that says "we looked and
+//      found nothing" about a field nobody ever stored. This register's spine is
+//      exploitability (KEV / public exploit / EPSS), not a severity score — `gas/README.md`
+//      — so the column that carries that weight is `risk_tier`, and it is here.
+//
+//   2. THE ORDERING RULE. Sorting and paging happen SERVER-SIDE, so the order a reader sees
+//      is decided here rather than in the browser. `gas_shared/ui/tableModel.js` states the
+//      same rule for the tables the client still sorts itself (unknowns LAST in both
+//      directions; a constant tiebreak so a column of equal values does not reshuffle
+//      itself), and this is its DOM-free twin. It is a TWIN, NOT A SECOND OPINION, and that
+//      is measured rather than asserted: the client bundle is plain JS and cannot import a
+//      TypeScript domain module, so `test/registerRowsOrdering.test.js` runs BOTH
+//      comparators over the same fixture and asserts identical arrangements, nulls
+//      included.
+
+/**
+ * The one column that ships outside the drawn list: the row's identity.
+ *
+ * The client keys rows on it and the server tie-breaks the sort on it. `vuln_key` is the
+ * ledger's own primary key (`lifecycle.vulnKey`), unique per finding by construction, which
+ * is what makes the sort a TOTAL order rather than merely a mostly-stable one.
+ */
+export const REGISTER_ROW_KEY = "vuln_key";
+
+/**
+ * The columns a register row carries.
+ *
+ * Ordered as the table reads them: what it is, how bad, whose it is, when it happened, what
+ * is known about exploitation, and how long the clocks have run.
+ *
+ * NINE OF THESE ARE DERIVED, NOT LEDGER COLUMNS — `DERIVED_ROW_COLUMNS` names them so a test
+ * can cross-check the rest against `LEDGER_COLUMNS` and still catch a column that exists in
+ * neither place. Everything else here is a real column of `reconcile.LedgerRow`.
+ */
+export const REGISTER_ROW_COLUMNS: readonly string[] = [
+  "cve", "severity", "risk_tier", "status", "resolution_src", "reopened_count",
+  "asset_name", "asset_type", "cloud", "subscription_name", "support_group", "domain",
+  "first_seen", "published_date", "fix_available_at", "awaiting_vendor_fix",
+  "last_seen", "resolved_at",
+  "has_kev", "has_exploit", "epss", "internet_exposed",
+  "mttr_days", "age_days", "actionable_age_days",
+];
+
+/**
+ * The columns above that are COMPUTED rather than read off the ledger, and by whom:
+ *
+ *   - `ledgerCore.baseRows` — `fix_available_at`, `awaiting_vendor_fix`, `mttr_days`,
+ *     `age_days`, `actionable_age_days` (the detection clock and the actionable one);
+ *   - `program.riskTier` — `risk_tier`, under the risk rule in force;
+ *   - the attribution join — `support_group` (`supportGroups.attachSupportGroups`) and
+ *     `domain` (`resolveDomainName`);
+ *   - the current-scan frame — `internet_exposed`, which is not a ledger column at all (see
+ *     the tri-state note on `registerRowsSlice`).
+ */
+export const DERIVED_ROW_COLUMNS: readonly string[] = [
+  "risk_tier", "support_group", "domain", "internet_exposed",
+  "fix_available_at", "awaiting_vendor_fix",
+  "mttr_days", "age_days", "actionable_age_days",
+];
+
+/**
+ * The two columns whose value arrives under a DIFFERENT name on the source row.
+ *
+ * `attachSupportGroups` and the domain resolution both write underscore-prefixed working
+ * fields (`_supportGroup`, `_domain`) because a base row is a ledger row and those are not
+ * ledger columns. Renaming here rather than on the row keeps that convention intact and
+ * keeps the wire names readable.
+ */
+const REGISTER_ROW_SOURCE: Record<string, string> = {
+  support_group: "_supportGroup",
+  domain: "_domain",
+};
+
+/** Which order the register opens in: oldest open first, the question this page asks. */
+export const REGISTER_ROW_DEFAULT_SORT: { sort: string; dir: "asc" | "desc" } = {
+  sort: "age_days",
+  dir: "desc",
+};
+
+/**
+ * The ceiling on `pageSize`, and it is CLAMPED rather than refused.
+ *
+ * 250 is the largest size `gas_shared/ui/tableModel.js`'s `PAGE_SIZES` control offers, so
+ * the cap is exactly the widest page a reader can ask for through the UI rather than a
+ * number invented here. A request above it is served the cap — refusing would turn a
+ * mistyped URL into an error page, while honouring it would let one call ask for the whole
+ * register.
+ */
+export const REGISTER_ROWS_PAGE_SIZE_CAP = 250;
+export const REGISTER_ROWS_DEFAULT_PAGE_SIZE = 50;
+
+/**
+ * One page of base rows, narrowed to what the table draws plus the row key.
+ *
+ * `undefined` becomes `null` and NOTHING ELSE IS COERCED. `has_kev: null` stays null: Wiz
+ * returns null for a signal it never evaluated, and a table that received `false` there
+ * would render an unassessed finding as one known to be clean — the exact defect this
+ * register was built after (CLAUDE.md, "Absent is never zero"). The same rule is what makes
+ * `internet_exposed` tri-state: `true` when the frame join says the host is reachable,
+ * `false` only when the frame CARRIES the exposure keys and this row is in it without them,
+ * and `null` when the frame predates those keys or when the row is not in the current frame
+ * at all — a finding resolved by disappearance is gone from every frame, and "we could not
+ * look" is not "not reachable". The server stamps that value; this function only refuses to
+ * flatten it.
+ */
+export function registerRowsSlice(rows: unknown): Rec[] {
+  if (!Array.isArray(rows)) return [];
+  return (rows as Rec[]).map((r) => {
+    const key = r[REGISTER_ROW_KEY];
+    const out: Rec = { [REGISTER_ROW_KEY]: key === undefined ? null : key };
+    for (const c of REGISTER_ROW_COLUMNS) {
+      const v = r[REGISTER_ROW_SOURCE[c] ?? c];
+      out[c] = v === undefined ? null : v;
+    }
+    return out;
+  });
+}
+
+/**
+ * Ordinary comparison for two PRESENT values — the twin of `tableModel.js`'s
+ * `compareValues`. Nulls are the caller's problem and `nullsLastOrder` is how it solves them.
+ */
+export function compareRegisterValues(a: unknown, b: unknown): number {
+  if (typeof a === "number" && typeof b === "number") return a - b;
+  if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
+  const sa = String(a).toLowerCase();
+  const sb = String(b).toLowerCase();
+  return sa < sb ? -1 : sa > sb ? 1 : 0;
+}
+
+/**
+ * Where an unknown goes: LAST, in both directions — the twin of `nullsLast`.
+ *
+ * Outside the ascending/descending flip on purpose. An unknown is not a small value: letting
+ * it lead the ascending page buries the rows somebody sorted the column to find, and
+ * reversing then buries the others, so neither half of the column can be brought into view.
+ *
+ * Returns `null` when BOTH are present and the caller should compare them.
+ */
+export function nullsLastOrder(a: unknown, b: unknown): number | null {
+  const na = a === null || a === undefined;
+  const nb = b === null || b === undefined;
+  if (na && nb) return 0;
+  if (na) return 1;
+  if (nb) return -1;
+  return null;
+}
+
+export interface RowSortSpec {
+  value: (row: Rec) => unknown;
+  descending?: boolean;
+  /** Never flipped by `descending` — its job is to be constant. */
+  tiebreak?: (row: Rec) => unknown;
+}
+
+/**
+ * Sort a copy of `rows`, unknowns last, ties broken the same way every time.
+ *
+ * THE TIEBREAK IS NOT A GARNISH, and on a paged server it matters more than it does in a
+ * browser: `Array.prototype.sort` is stable, but the input order here is whatever
+ * `loadBaseRows` happened to return, so a column of equal values (a severity, a status, a
+ * boolean) would cut into pages differently across two requests and a reader paging forward
+ * could see one finding twice and never see another. A constant second key fixes the
+ * arrangement to the data.
+ */
+export function sortRegisterRows<T extends Rec>(rows: readonly T[], spec: RowSortSpec): T[] {
+  const list = Array.isArray(rows) ? rows.slice() : [];
+  const value = spec && spec.value;
+  if (typeof value !== "function") return list;
+  const descending = Boolean(spec.descending);
+  const tiebreak = typeof spec.tiebreak === "function" ? spec.tiebreak : null;
+
+  return list.sort((ra, rb) => {
+    const va = value(ra);
+    const vb = value(rb);
+    const order = nullsLastOrder(va, vb);
+    if (order === null) {
+      const d = compareRegisterValues(va, vb);
+      if (d !== 0) return descending ? -d : d;
+    } else if (order !== 0) {
+      return order;
+    }
+    if (!tiebreak) return 0;
+    const ta = tiebreak(ra);
+    const tb = tiebreak(rb);
+    const tie = nullsLastOrder(ta, tb);
+    return tie === null ? compareRegisterValues(ta, tb) : tie;
+  });
+}
+
+/**
+ * One page of rows, with the page index CLAMPED into range rather than refused.
+ *
+ * Clamping is what lets a filter shrink the register under a reader who is on page 9 without
+ * the table going blank: they land on the last page that exists, and the response says which
+ * page it actually served. Page indices are ZERO-BASED, matching `tableModel.js`'s `pageOf`
+ * and the pager control that draws them as "Page n+1 of N".
+ */
+export function pageOfRegisterRows<T>(
+  rows: readonly T[],
+  page: number,
+  pageSize: number,
+): { rows: T[]; page: number; pageCount: number } {
+  const size = Math.max(1, Math.floor(pageSize));
+  const pageCount = Math.max(1, Math.ceil(rows.length / size));
+  const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
+  return {
+    rows: rows.slice(clamped * size, (clamped + 1) * size),
+    page: clamped,
+    pageCount,
+  };
+}
+
+/** Date columns — compared as instants, so a naive and a zoned spelling of one day agree. */
+const DATE_SORT_COLUMNS = new Set([
+  "first_seen", "last_seen", "resolved_at", "fix_available_at", "published_date",
+]);
+
+/** Numeric columns — compared as numbers, so 9 sorts below 10 rather than above it. */
+const NUMBER_SORT_COLUMNS = new Set([
+  "epss", "mttr_days", "age_days", "actionable_age_days", "reopened_count",
+]);
+
+/**
+ * Severity as a RANK, not as a string.
+ *
+ * Alphabetical order puts CRITICAL under HIGH and INFO above LOW, which is the one ordering
+ * a severity column must never have. `SEVERITY_ORDER` is the source; UNKNOWN is its last
+ * entry, so an unrecognised or absent severity sinks in the ascending direction — the same
+ * place `nullsLastOrder` would have put it, reached through the vocabulary instead.
+ */
+function severityRank(v: unknown): number {
+  const i = (SEVERITY_ORDER as readonly string[]).indexOf(normalizeSeverity(v));
+  return i === -1 ? SEVERITY_ORDER.length : i;
+}
+
+/**
+ * Risk tier as a RANK, for the same reason and from the same kind of source.
+ *
+ * `RISK_TIER_ORDER` is worst-evidence-first with `unknown` last, so ascending is worst-first:
+ * a register that sorted its own spine alphabetically would open on `epss` and bury `kev`.
+ * An unrecognised value sinks, like an unrecognised severity.
+ */
+function riskTierRank(v: unknown): number {
+  const i = (RISK_TIER_ORDER as readonly string[]).indexOf(String(v ?? ""));
+  return i === -1 ? RISK_TIER_ORDER.length : i;
+}
+
+/** Missing is one thing with one spelling: null, undefined and "" all mean "no value". */
+function orNull(v: unknown): unknown {
+  return v === null || v === undefined || v === "" ? null : v;
+}
+
+/**
+ * The value a column sorts on — typed per column, because a register's columns are not all
+ * strings and comparing them as strings is how a table lies about its own order.
+ *
+ * THE NUMERIC BRANCH REFUSES BEFORE IT CASTS. `Number(null)` is 0 and `Number.isFinite(0)` is
+ * true, so a cast-first form would sort every resolved row's absent `age_days` as a finding
+ * zero days old, at the TOP of the ascending page — the third time that cast has bitten in
+ * this repository (CLAUDE.md). `orNull` runs first, and `Number.isFinite` then guards only
+ * the values that were really numbers.
+ */
+export function registerSortValue(column: string): (row: Rec) => unknown {
+  if (column === "severity") return (r) => severityRank(r["severity"]);
+  if (column === "risk_tier") return (r) => riskTierRank(r["risk_tier"]);
+  if (DATE_SORT_COLUMNS.has(column)) return (r) => parseTs(r[column]);
+  if (NUMBER_SORT_COLUMNS.has(column)) {
+    return (r) => {
+      const raw = orNull(r[column]);
+      if (raw === null) return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    };
+  }
+  return (r) => orNull(r[column]);
 }

@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "73d0421bf8f3" : "dev";
+  var BUILD_ID = true ? "358a17f4de92" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -703,8 +703,8 @@ var Server = (() => {
     try {
       const bytes = blob.getBytes();
       const isGzip = bytes.length > 2 && (bytes[0] & 255) === 31 && (bytes[1] & 255) === 139;
-      const text = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
-      return JSON.parse(text);
+      const text2 = isGzip ? Utilities.ungzip(blob).getDataAsString("UTF-8") : blob.getDataAsString("UTF-8");
+      return JSON.parse(text2);
     } catch (e) {
       console.warn(`Failed to parse archive blob: ${e}`);
       return null;
@@ -1415,11 +1415,11 @@ var Server = (() => {
     const ordered = SEVERITY_ORDER.filter((s) => vals.has(s));
     return `[${ordered.map((s) => JSON.stringify(s)).join(", ")}]`;
   }
-  function parseSeverities(text) {
-    if (typeof text !== "string" || !text) return null;
+  function parseSeverities(text2) {
+    if (typeof text2 !== "string" || !text2) return null;
     let vals;
     try {
-      vals = JSON.parse(text);
+      vals = JSON.parse(text2);
     } catch {
       return null;
     }
@@ -2427,6 +2427,7 @@ var Server = (() => {
     getProgramPage: () => getProgramPage,
     getPurgeStatus: () => getPurgeStatus,
     getRecentErrors: () => getRecentErrors,
+    getRegisterRows: () => getRegisterRows,
     getReport: () => getReport,
     getRiskBackfillStatus: () => getRiskBackfillStatus,
     getRiskCohort: () => getRiskCohort,
@@ -2824,26 +2825,47 @@ var Server = (() => {
     compiled.forEach((dom, domainIndex) => {
       dom.rules.forEach((rule, ruleIndex) => {
         if (rule === null) {
-          rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: true, matched: false, conditions: [] });
+          rules.push({
+            domainIndex,
+            domain: dom.name,
+            ruleIndex,
+            malformed: true,
+            matched: false,
+            conditions: []
+          });
           return;
         }
-        const conditions = rule.map((spec, index) => ({ index, matched: conditionMatches(spec, record, tags) }));
+        const conditions = rule.map((spec, index) => ({
+          index,
+          matched: conditionMatches(spec, record, tags)
+        }));
         const matched = conditions.every((c) => c.matched);
-        rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: false, matched, conditions });
+        rules.push({
+          domainIndex,
+          domain: dom.name,
+          ruleIndex,
+          malformed: false,
+          matched,
+          conditions
+        });
         if (matched && assigned === UNASSIGNED) assigned = dom.name;
       });
     });
     return { assigned, rules };
   }
   function ruleHealth(records, compiled) {
-    const stats = compiled.map((dom) => dom.rules.map(() => ({ fired: 0, matched: 0 })));
+    const stats = compiled.map(
+      (dom) => dom.rules.map(() => ({ fired: 0, matched: 0 }))
+    );
     for (const record of records) {
       const trace = traceRecord(record, compiled);
       for (const rt of trace.rules) {
         if (rt.matched) stats[rt.domainIndex][rt.ruleIndex].matched += 1;
       }
       if (trace.assigned !== UNASSIGNED) {
-        const winner = trace.rules.find((rt) => rt.matched && rt.domain === trace.assigned);
+        const winner = trace.rules.find(
+          (rt) => rt.matched && rt.domain === trace.assigned
+        );
         if (winner) stats[winner.domainIndex][winner.ruleIndex].fired += 1;
       }
     }
@@ -2852,7 +2874,14 @@ var Server = (() => {
       dom.rules.forEach((rule, ruleIndex) => {
         const { fired, matched } = stats[domainIndex][ruleIndex];
         const status = rule === null ? "malformed" : matched === 0 ? "dead" : fired === 0 ? "shadowed" : "ok";
-        out.push({ domainIndex, domain: dom.name, ruleIndex, fired, matched, status });
+        out.push({
+          domainIndex,
+          domain: dom.name,
+          ruleIndex,
+          fired,
+          matched,
+          status
+        });
       });
     });
     return out;
@@ -2903,16 +2932,17 @@ var Server = (() => {
       if (present(r[SG_COL])) sgResolved += 1;
       else sgUnresolved += 1;
     }
-    const byDomain = orderedWithTailsLast(orderedDomainNames, bySource.missing > 0).map(
-      (domain) => {
-        var _a2, _b, _c;
-        return {
-          domain,
-          findings: (_a2 = findingsByDomain.get(domain)) != null ? _a2 : 0,
-          assets: (_c = (_b = assetsByDomain.get(domain)) == null ? void 0 : _b.size) != null ? _c : 0
-        };
-      }
-    );
+    const byDomain = orderedWithTailsLast(
+      orderedDomainNames,
+      bySource.missing > 0
+    ).map((domain) => {
+      var _a2, _b, _c;
+      return {
+        domain,
+        findings: (_a2 = findingsByDomain.get(domain)) != null ? _a2 : 0,
+        assets: (_c = (_b = assetsByDomain.get(domain)) == null ? void 0 : _b.size) != null ? _c : 0
+      };
+    });
     return {
       totalFindings: records.length,
       totalAssets: allAssets.size,
@@ -3050,7 +3080,9 @@ var Server = (() => {
         nearMisses: nearMisses(g.rep, compiled)
       });
     }
-    rows.sort((a, b) => b.findings - a.findings || a.asset.localeCompare(b.asset));
+    rows.sort(
+      (a, b) => b.findings - a.findings || a.asset.localeCompare(b.asset)
+    );
     return rows;
   }
   function untaggedSubscriptions(records) {
@@ -3062,7 +3094,17 @@ var Server = (() => {
       const extId = (_b = flatVal(r, EXT_COL)) != null ? _b : NONE;
       const key = `${subscription}\0${extId}`;
       let g = groups.get(key);
-      if (!g) groups.set(key, g = { subscription, extId, assets: /* @__PURE__ */ new Set(), findings: 0, sevCounts: {} });
+      if (!g)
+        groups.set(
+          key,
+          g = {
+            subscription,
+            extId,
+            assets: /* @__PURE__ */ new Set(),
+            findings: 0,
+            sevCounts: {}
+          }
+        );
       g.findings += 1;
       const asset = assetKey(r);
       if (asset) g.assets.add(asset);
@@ -3088,7 +3130,8 @@ var Server = (() => {
       if (domainOf(r) !== UNASSIGNED) continue;
       const asset = String((_a = r[LEDGER_NAME_COL]) != null ? _a : "") || NONE;
       let g = groups.get(asset);
-      if (!g) groups.set(asset, g = { rep: r, open: 0, resolved: 0, lastSeen: null });
+      if (!g)
+        groups.set(asset, g = { rep: r, open: 0, resolved: 0, lastSeen: null });
       if (String((_b = r["status"]) != null ? _b : "").toUpperCase() === "OPEN") g.open += 1;
       else g.resolved += 1;
       const seen2 = r["last_seen"];
@@ -3247,6 +3290,151 @@ var Server = (() => {
     return summarize(work, opts.now);
   }
 
+  // src/domain/fixNext.ts
+  var FIX_NEXT_LIMIT = 8;
+  var TIER_LABELS = {
+    1: "Known exploited, reachable",
+    2: "Exploitable and late",
+    3: "Critical and late"
+  };
+  function finite(v) {
+    return typeof v === "number" && Number.isFinite(v) ? v : null;
+  }
+  function text(v) {
+    if (v === null || v === void 0) return null;
+    const s = String(v).trim();
+    return s === "" ? null : s;
+  }
+  function pastSla(row, targets) {
+    const age = finite(row.actionable_age_days);
+    if (age === null) return null;
+    const target = finite(targets[normalizeSeverity(row.severity)]);
+    if (target === null) return null;
+    return age > target;
+  }
+  function hasFix(row) {
+    return row.fix_available_at !== null && row.fix_available_at !== void 0;
+  }
+  function classify(row, rule, targets, exposedKeys, exposureKnown) {
+    if (exposureKnown && row.has_kev === true && exposedKeys.has(row.vuln_key)) {
+      return { tier: 1 };
+    }
+    if (row.awaiting_vendor_fix === true) return { reason: "noFix" };
+    const late = pastSla(row, targets);
+    if (late === null) return { reason: "other" };
+    if (!late) return { reason: "insideSla" };
+    const fixed = hasFix(row);
+    if (fixed && (row.has_kev === true || row.has_exploit === true)) return { tier: 2 };
+    if (fixed && normalizeSeverity(row.severity) === "CRITICAL") return { tier: 3 };
+    return riskTier(row, rule) === "unknown" ? { reason: "unclassified" } : { reason: "other" };
+  }
+  function ownerOf(row) {
+    const sg = text(row._supportGroup);
+    if (sg !== null) return { owner: sg, kind: "supportGroup" };
+    const sub = text(row.subscription_name);
+    if (sub !== null) return { owner: sub, kind: "subscription" };
+    return { owner: null, kind: null };
+  }
+  function fixNext(rows, opts) {
+    var _a, _b, _c;
+    const now = opts.now === void 0 ? Date.now() : opts.now;
+    const targets = (_a = opts.slaTargets) != null ? _a : SLA_TARGETS;
+    const limit = opts.limit === void 0 ? FIX_NEXT_LIMIT : Math.max(0, Math.trunc(opts.limit));
+    const exposedKeys = (_b = opts.exposedKeys) != null ? _b : /* @__PURE__ */ new Set();
+    const exposureKnown = opts.exposureKnown === true;
+    const tiers = { 1: 0, 2: 0, 3: 0 };
+    const unranked = { noFix: 0, unclassified: 0, insideSla: 0, other: 0 };
+    const buckets = /* @__PURE__ */ new Map();
+    let openTotal = 0;
+    let ranked = 0;
+    for (const row of rows) {
+      if (!isOpenStatus(row.status)) continue;
+      openTotal += 1;
+      const verdict = classify(row, opts.rule, targets, exposedKeys, exposureKnown);
+      if ("reason" in verdict) {
+        unranked[verdict.reason] += 1;
+        continue;
+      }
+      ranked += 1;
+      tiers[String(verdict.tier)] += 1;
+      const { owner, kind } = ownerOf(row);
+      const key = verdict.tier + "\0" + (owner === null ? "" : owner);
+      let bucket = buckets.get(key);
+      if (!bucket) {
+        bucket = {
+          tier: verdict.tier,
+          owner,
+          ownerKind: kind,
+          count: 0,
+          assets: /* @__PURE__ */ new Set(),
+          cves: /* @__PURE__ */ new Map(),
+          oldestAgeDays: null,
+          domains: /* @__PURE__ */ new Set(),
+          domainMissing: false
+        };
+        buckets.set(key, bucket);
+      }
+      bucket.count += 1;
+      const asset = text(row.asset_name);
+      if (asset !== null) bucket.assets.add(asset);
+      const cve = text(row.cve);
+      if (cve !== null) bucket.cves.set(cve, ((_c = bucket.cves.get(cve)) != null ? _c : 0) + 1);
+      const age = finite(row.age_days);
+      if (age !== null && (bucket.oldestAgeDays === null || age > bucket.oldestAgeDays)) {
+        bucket.oldestAgeDays = age;
+      }
+      const dom = text(row._domain);
+      if (dom === null) bucket.domainMissing = true;
+      else bucket.domains.add(dom);
+    }
+    const all = [...buckets.values()].map((b) => {
+      let topCve = null;
+      for (const [cve, count] of b.cves) {
+        if (topCve === null || count > topCve.count || count === topCve.count && cve < topCve.cve) {
+          topCve = { cve, count };
+        }
+      }
+      return {
+        tier: b.tier,
+        label: TIER_LABELS[b.tier],
+        owner: b.owner,
+        ownerKind: b.ownerKind,
+        // One domain only when EVERY row in the group agreed on it. A row with no domain
+        // at all disagrees too — "some of these are Not attributable" is not "all SAP".
+        domain: b.domains.size === 1 && !b.domainMissing ? [...b.domains][0] : null,
+        count: b.count,
+        assets: b.assets.size,
+        topCve,
+        // One decimal. `age_days` is a float carrying sub-second precision that no reader
+        // wants and every group pays bytes for; the page rounds it to whole days anyway.
+        oldestAgeDays: b.oldestAgeDays === null ? null : Math.round(b.oldestAgeDays * 10) / 10,
+        route: "overview",
+        params: {
+          ...b.ownerKind === "supportGroup" && b.owner !== null ? { supportGroup: b.owner } : {},
+          tier: b.tier
+        }
+      };
+    }).sort((a, b) => {
+      var _a2, _b2, _c2, _d;
+      return a.tier - b.tier || b.count - a.count || ((_a2 = b.oldestAgeDays) != null ? _a2 : -1) - ((_b2 = a.oldestAgeDays) != null ? _b2 : -1) || String((_c2 = a.owner) != null ? _c2 : "").localeCompare(String((_d = b.owner) != null ? _d : ""));
+    });
+    const groups = all.slice(0, limit);
+    const cutRows = all.slice(limit);
+    return {
+      groups,
+      tiers,
+      unranked,
+      ranked,
+      openTotal,
+      groupsTotal: all.length,
+      groupsCut: cutRows.length,
+      findingsCut: cutRows.reduce((n, g) => n + g.count, 0),
+      limit,
+      exposureKnown,
+      asOf: now
+    };
+  }
+
   // src/domain/remediation.ts
   var DAY_MS3 = 864e5;
   var ROLLOUT_MS = parseTs(REMEDIATION_ROLLOUT_ISO);
@@ -3312,9 +3500,10 @@ var Server = (() => {
     }
     return curve;
   }
+  var CROSSING_EPSILON = 1e-9;
   function kmQuantileFromCurve(curve, q) {
     const threshold = 1 - q;
-    for (const p of curve) if (p.s <= threshold) return p.t;
+    for (const p of curve) if (p.s <= threshold + CROSSING_EPSILON) return p.t;
     return null;
   }
   function kmMedianFromCurve(curve) {
@@ -4525,7 +4714,7 @@ var Server = (() => {
         cls: classifyRisk(r, rule)
       })
     );
-    const round1 = (v) => v === null ? null : Math.round(v * 10) / 10;
+    const round12 = (v) => v === null ? null : Math.round(v * 10) / 10;
     return points.map((p) => {
       const d = parseTs(p.date);
       let tp = 0;
@@ -4552,11 +4741,11 @@ var Server = (() => {
       }
       return {
         ...p,
-        coverage_pct: round1(tp + fn > 0 ? tp / (tp + fn) * 100 : null),
-        efficiency_pct: round1(tp + fp > 0 ? tp / (tp + fp) * 100 : null),
+        coverage_pct: round12(tp + fn > 0 ? tp / (tp + fn) * 100 : null),
+        efficiency_pct: round12(tp + fp > 0 ? tp / (tp + fp) * 100 : null),
         high_risk_open: fn,
         high_risk_remediated: tp,
-        unknown_pct: round1(counted > 0 ? unknown / counted * 100 : null)
+        unknown_pct: round12(counted > 0 ? unknown / counted * 100 : null)
       };
     });
   }
@@ -4656,17 +4845,17 @@ var Server = (() => {
       return { state, result: zero, observationsByScan: {} };
     }
     const rows = scansAsc(state.scans);
-    const present3 = new Set(rows.filter((r) => targets.has(r.scan_id)).map((r) => r.scan_id));
-    if (!present3.size) {
+    const present2 = new Set(rows.filter((r) => targets.has(r.scan_id)).map((r) => r.scan_id));
+    if (!present2.size) {
       return { state, result: zero, observationsByScan: {} };
     }
-    const sealedTargets = rows.filter((r) => present3.has(r.scan_id) && r.sealed).map((r) => r.scan_id).sort();
+    const sealedTargets = rows.filter((r) => present2.has(r.scan_id) && r.sealed).map((r) => r.scan_id).sort();
     if (sealedTargets.length) {
       throw new SealedScanError(
         `Cannot delete sealed scan(s) ${sealedTargets.join(", ")}: they are part of the compacted baseline (their raw archives were pruned), so their effects can no longer be un-replayed.`
       );
     }
-    const survivors = rows.filter((r) => !present3.has(r.scan_id));
+    const survivors = rows.filter((r) => !present2.has(r.scan_id));
     const replay = loadReplayPayloads(
       survivors,
       readPayload,
@@ -4687,7 +4876,7 @@ var Server = (() => {
     return {
       state: rebuilt,
       result: {
-        deleted: present3.size,
+        deleted: present2.size,
         scans: rebuilt.scans.length,
         tracked: baseRows(rebuilt, now).length
       },
@@ -5003,7 +5192,9 @@ var Server = (() => {
     }
     for (const item of value) {
       if (item === null || typeof item !== "object" || Array.isArray(item)) {
-        throw new ImportValidationError(`Bundle field "${name}" must contain objects.`);
+        throw new ImportValidationError(
+          `Bundle field "${name}" must contain objects.`
+        );
       }
     }
     return value;
@@ -5011,7 +5202,9 @@ var Server = (() => {
   function validateBundle(data) {
     var _a;
     if (data === null || typeof data !== "object" || Array.isArray(data)) {
-      throw new ImportValidationError("The uploaded file is not a migration bundle.");
+      throw new ImportValidationError(
+        "The uploaded file is not a migration bundle."
+      );
     }
     const rec = data;
     if (rec["kind"] !== MIGRATION_KIND) {
@@ -5051,13 +5244,20 @@ var Server = (() => {
     }
     for (const s of scans) {
       if (typeof s["scan_id"] !== "string" || !s["scan_id"] || typeof s["ts"] !== "string" || !s["ts"]) {
-        throw new ImportValidationError("Every bundle scan needs string scan_id and ts.");
+        throw new ImportValidationError(
+          "Every bundle scan needs string scan_id and ts."
+        );
       }
     }
-    for (const [name, rows] of [["ledger", ledger], ["episodes", episodes]]) {
+    for (const [name, rows] of [
+      ["ledger", ledger],
+      ["episodes", episodes]
+    ]) {
       for (const r of rows) {
         if (typeof r["vuln_key"] !== "string" || !r["vuln_key"]) {
-          throw new ImportValidationError(`Every bundle ${name} row needs a string vuln_key.`);
+          throw new ImportValidationError(
+            `Every bundle ${name} row needs a string vuln_key.`
+          );
         }
       }
     }
@@ -5198,7 +5398,9 @@ var Server = (() => {
       rebuilt.ledger[row.vuln_key] = row;
     }
     const vulnsImported = Object.keys(rebuilt.ledger).length;
-    const unclassifiedSeverity = bundle.ledger.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length + bundle.episodes.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length;
+    const unclassifiedSeverity = bundle.ledger.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length + bundle.episodes.filter(
+      (r) => normalizeSeverity(r["severity"]) === "UNKNOWN"
+    ).length;
     const flats = importedAsc.filter((r) => r.shape === "flat");
     const floorRow = flats.length ? flats[flats.length - 1] : null;
     const checkpoint = {
@@ -5213,7 +5415,11 @@ var Server = (() => {
       (scanId) => `Cannot import: the archived payload for existing scan ${scanId} is missing, so it can't be replayed over the imported history.`
     );
     const observationsByScan = replayScans(rebuilt, replay);
-    const converted = settledEpisodeRows(checkpoint.ledger, rebuilt.ledger, importedIds);
+    const converted = settledEpisodeRows(
+      checkpoint.ledger,
+      rebuilt.ledger,
+      importedIds
+    );
     for (const live of converted) {
       rebuilt.episodes.push(toEpisodeRow(live, options.compactionId));
       delete rebuilt.ledger[live.vuln_key];
@@ -5354,6 +5560,7 @@ var Server = (() => {
 
   // src/domain/insights.ts
   var AGE_BUCKET_EDGES = [7, 30, 90];
+  var AGE_BUCKET_LABELS = ["0-7d", "8-30d", "31-90d", "90+d"];
   var WIDE_KEY = "vulnerableAsset.hasWideInternetExposure";
   var LIMITED_KEY = "vulnerableAsset.hasLimitedInternetExposure";
   function isOpen3(status) {
@@ -5387,7 +5594,9 @@ var Server = (() => {
       exploit: 0,
       highEpss: 0,
       internetExposed: 0,
-      exposureKnown: records.some((r) => WIDE_KEY in r && r[WIDE_KEY] !== void 0)
+      exposureKnown: records.some(
+        (r) => WIDE_KEY in r && r[WIDE_KEY] !== void 0
+      )
     };
     for (const r of records) {
       if (!isOpen3(r["status"])) continue;
@@ -5396,12 +5605,16 @@ var Server = (() => {
       if (r["hasExploit"] === true) out.exploit += 1;
       const epss = epssOf(r);
       if (epss !== null && epss >= EPSS_PRIORITY_THRESHOLD) out.highEpss += 1;
-      if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true) out.internetExposed += 1;
+      if (r[WIDE_KEY] === true || r[LIMITED_KEY] === true)
+        out.internetExposed += 1;
     }
     return out;
   }
   function ageBuckets(rows) {
-    const { perKey, totalOpen } = ageBucketsBy(rows, (r) => normalizeSeverity(r.severity));
+    const { perKey, totalOpen } = ageBucketsBy(
+      rows,
+      (r) => normalizeSeverity(r.severity)
+    );
     return { perSev: perKey, totalOpen };
   }
   function ageBucketsBy(rows, keyOf) {
@@ -5419,6 +5632,51 @@ var Server = (() => {
     }
     return { perKey, totalOpen };
   }
+  function slaEdgeBucket(severity) {
+    const target = SLA_TARGETS[normalizeSeverity(severity)];
+    if (typeof target !== "number" || !Number.isFinite(target)) return null;
+    return target <= AGE_BUCKET_EDGES[0] ? 0 : target <= AGE_BUCKET_EDGES[1] ? 1 : target <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+  }
+  function slaEdgeIsExact(severity) {
+    const target = SLA_TARGETS[normalizeSeverity(severity)];
+    return typeof target === "number" && AGE_BUCKET_EDGES.indexOf(target) >= 0;
+  }
+  function agingDistribution(rows) {
+    const perSev = {};
+    let unaged = 0;
+    let totalOpen = 0;
+    for (const row of rows) {
+      if (!isOpen3(row.status)) continue;
+      const s = normalizeSeverity(row.severity);
+      if (!perSev[s]) perSev[s] = [0, 0, 0, 0];
+      const age = row.age_days;
+      if (typeof age !== "number" || !Number.isFinite(age)) {
+        unaged += 1;
+        continue;
+      }
+      const bucket = age <= AGE_BUCKET_EDGES[0] ? 0 : age <= AGE_BUCKET_EDGES[1] ? 1 : age <= AGE_BUCKET_EDGES[2] ? 2 : 3;
+      perSev[s][bucket] += 1;
+      totalOpen += 1;
+    }
+    const slaEdge = {};
+    const slaTargets = {};
+    const slaEdgeExact = {};
+    for (const s of Object.keys(perSev)) {
+      slaEdge[s] = slaEdgeBucket(s);
+      const t = SLA_TARGETS[s];
+      slaTargets[s] = typeof t === "number" && Number.isFinite(t) ? t : null;
+      slaEdgeExact[s] = slaEdgeIsExact(s);
+    }
+    return {
+      labels: [...AGE_BUCKET_LABELS],
+      perSev,
+      unaged,
+      totalOpen,
+      slaEdge,
+      slaTargets,
+      slaEdgeExact
+    };
+  }
   var AGED_OPEN_EDGE = AGE_BUCKET_EDGES[2];
   function openAge2(row) {
     if (!isOpen3(row.status)) return null;
@@ -5433,12 +5691,24 @@ var Server = (() => {
       const raw = keyFn(row);
       const key = raw && raw.trim() !== "" ? raw : "(none)";
       let g = groups.get(key);
-      if (!g) groups.set(key, g = { key, agedCount: 0, openCount: 0, oldestDays: 0, ...meta ? meta(row) : {} });
+      if (!g)
+        groups.set(
+          key,
+          g = {
+            key,
+            agedCount: 0,
+            openCount: 0,
+            oldestDays: 0,
+            ...meta ? meta(row) : {}
+          }
+        );
       g.openCount += 1;
       if (age > AGED_OPEN_EDGE) g.agedCount += 1;
       if (age > g.oldestDays) g.oldestDays = age;
     }
-    return [...groups.values()].sort((a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)).slice(0, topN);
+    return [...groups.values()].sort(
+      (a, b) => b.agedCount - a.agedCount || b.oldestDays - a.oldestDays || a.key.localeCompare(b.key)
+    ).slice(0, topN);
   }
   function oldestOpen(rows, topN = 7) {
     const findings = rows.map((r) => ({ r, age: openAge2(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
@@ -5450,20 +5720,29 @@ var Server = (() => {
     }));
     return {
       findings,
-      byAsset: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r.asset_name) != null ? _a : "");
-      }, topN, (r) => {
-        var _a, _b;
-        return {
-          subscription: String((_a = r.subscription_name) != null ? _a : ""),
-          domain: String((_b = r._domain) != null ? _b : "")
-        };
-      }),
-      bySupportGroup: rankGroups(rows, (r) => {
-        var _a;
-        return String((_a = r._supportGroup) != null ? _a : "");
-      }, topN),
+      byAsset: rankGroups(
+        rows,
+        (r) => {
+          var _a;
+          return String((_a = r.asset_name) != null ? _a : "");
+        },
+        topN,
+        (r) => {
+          var _a, _b;
+          return {
+            subscription: String((_a = r.subscription_name) != null ? _a : ""),
+            domain: String((_b = r._domain) != null ? _b : "")
+          };
+        }
+      ),
+      bySupportGroup: rankGroups(
+        rows,
+        (r) => {
+          var _a;
+          return String((_a = r._supportGroup) != null ? _a : "");
+        },
+        topN
+      ),
       byDomain: rankGroups(rows, (r) => {
         var _a;
         return String((_a = r._domain) != null ? _a : "");
@@ -5472,7 +5751,13 @@ var Server = (() => {
   }
   function movement(baseRows2, latestFlatScan, scanCount) {
     if (!latestFlatScan) {
-      return { newCount: 0, resolvedCount: 0, reopenedCount: 0, persisting: 0, hasPrevious: scanCount > 1 };
+      return {
+        newCount: 0,
+        resolvedCount: 0,
+        reopenedCount: 0,
+        persisting: 0,
+        hasPrevious: scanCount > 1
+      };
     }
     let persisting = 0;
     for (const row of baseRows2) {
@@ -5487,6 +5772,105 @@ var Server = (() => {
       reopenedCount: latestFlatScan.reopened_count,
       persisting,
       hasPrevious: scanCount > 1
+    };
+  }
+  var MOVEMENT_MIN_GAP_DAYS = 7;
+  var MOVEMENT_DAY_MS = 864e5;
+  function round1(n) {
+    return Math.round(n * 10) / 10;
+  }
+  function openAsOf(row, d) {
+    const first = parseTs(row.first_seen);
+    if (first === null || first > d) return false;
+    const resolved = parseTs(row.resolved_at);
+    return resolved === null || resolved > d;
+  }
+  var NO_TOTAL = { open: 0, prevOpen: 0, delta: 0 };
+  function openMovement(rows, scans, opts = {}) {
+    var _a, _b, _c, _d, _e;
+    const minGapDays = opts.minGapDays === void 0 ? MOVEMENT_MIN_GAP_DAYS : opts.minGapDays;
+    const gate2 = (_a = opts.severities) != null ? _a : null;
+    const instants = scans.filter((s) => s["shape"] !== "grouped").map((s) => parseTs(s["ts"])).filter((t) => t !== null).sort((a, b) => a - b);
+    const iso = (ms) => new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+    if (!instants.length) {
+      return {
+        comparable: false,
+        reason: "noScan",
+        since: null,
+        until: null,
+        gapDays: null,
+        rows: [],
+        total: { ...NO_TOTAL }
+      };
+    }
+    const until = instants[instants.length - 1];
+    if (instants.length === 1) {
+      return {
+        comparable: false,
+        reason: "oneScan",
+        since: null,
+        until: iso(until),
+        gapDays: null,
+        rows: [],
+        total: { ...NO_TOTAL }
+      };
+    }
+    let since = null;
+    for (let i = instants.length - 2; i >= 0; i -= 1) {
+      if ((until - instants[i]) / MOVEMENT_DAY_MS >= minGapDays) {
+        since = instants[i];
+        break;
+      }
+    }
+    if (since === null) {
+      return {
+        comparable: false,
+        reason: "tooClose",
+        since: null,
+        until: iso(until),
+        // The WIDEST span the log can offer, not the nearest gap: "the saved scans span 3 days"
+        // is the fact a reader needs, and it is what makes "run again next week" the obvious
+        // next move rather than a mystery.
+        gapDays: round1((until - instants[0]) / MOVEMENT_DAY_MS),
+        rows: [],
+        total: { ...NO_TOTAL }
+      };
+    }
+    const nowBySev = /* @__PURE__ */ new Map();
+    const thenBySev = /* @__PURE__ */ new Map();
+    const present2 = /* @__PURE__ */ new Set();
+    let open = 0;
+    let prevOpen = 0;
+    for (const row of rows) {
+      const s = normalizeSeverity(row.severity);
+      if (isOpen3(row.status)) {
+        nowBySev.set(s, ((_b = nowBySev.get(s)) != null ? _b : 0) + 1);
+        present2.add(s);
+        open += 1;
+      }
+      if (openAsOf(row, since)) {
+        thenBySev.set(s, ((_c = thenBySev.get(s)) != null ? _c : 0) + 1);
+        present2.add(s);
+        prevOpen += 1;
+      }
+    }
+    const wanted = new Set(present2);
+    if (gate2 !== null) for (const s of gate2) wanted.add(normalizeSeverity(s));
+    const out = [];
+    for (const s of SEVERITY_ORDER) {
+      if (!wanted.has(s)) continue;
+      const n = (_d = nowBySev.get(s)) != null ? _d : 0;
+      const p = (_e = thenBySev.get(s)) != null ? _e : 0;
+      out.push({ severity: s, open: n, prevOpen: p, delta: n - p });
+    }
+    return {
+      comparable: true,
+      reason: null,
+      since: iso(since),
+      until: iso(until),
+      gapDays: round1((until - since) / MOVEMENT_DAY_MS),
+      rows: out,
+      total: { open, prevOpen, delta: open - prevOpen }
     };
   }
   var GROUP_COLUMNS = {
@@ -5550,10 +5934,13 @@ var Server = (() => {
       };
       return { recs, node };
     });
-    rows.sort((a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key));
+    rows.sort(
+      (a, b) => b.node.total - a.node.total || a.node.key.localeCompare(b.node.key)
+    );
     const kept = rows.slice(0, perLevelCap);
     if (rest.length) {
-      for (const row of kept) row.node.children = groupTree(row.recs, rest, perLevelCap);
+      for (const row of kept)
+        row.node.children = groupTree(row.recs, rest, perLevelCap);
     }
     return kept.map((row) => row.node);
   }
@@ -5619,7 +6006,12 @@ var Server = (() => {
         if (a) b.assets.add(a);
         if (r["hasCisaKevExploit"] === true) b.kev += 1;
       }
-      const rows = [...buckets.entries()].map(([key, b]) => ({ key, open: b.open, assets: b.assets.size, kev: b.kev })).sort((a, b) => b.open - a.open || a.key.localeCompare(b.key));
+      const rows = [...buckets.entries()].map(([key, b]) => ({
+        key,
+        open: b.open,
+        assets: b.assets.size,
+        kev: b.kev
+      })).sort((a, b) => b.open - a.open || a.key.localeCompare(b.key));
       perDim[dim] = rows.slice(0, topN);
       moreDim[dim] = Math.max(0, rows.length - topN);
     }
@@ -5639,7 +6031,18 @@ var Server = (() => {
     const hi = Math.ceil(mid);
     return lo === hi ? ages[lo] : (ages[lo] + ages[hi]) / 2;
   }
-  var SLA_DECILE_LABELS = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  var SLA_DECILE_LABELS = [
+    "0",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9"
+  ];
   function slaConsumedDeciles(rows, slaTargets) {
     var _a, _b;
     const out = {
@@ -5830,11 +6233,17 @@ var Server = (() => {
     return pickRows(scans, SCAN_ROW_KEYS);
   }
   var OLDEST_VIEWS = ["findings", "byAsset", "bySupportGroup", "byDomain"];
+  var OVERVIEW_OMIT = /* @__PURE__ */ new Set(["oldest", "fixNext", "movementOpen"]);
   function overviewInsightsSlice(insights) {
     if (!insights || typeof insights !== "object") return null;
     const out = {};
-    for (const [k, v] of Object.entries(insights)) if (k !== "oldest") out[k] = v;
+    for (const [k, v] of Object.entries(insights)) if (!OVERVIEW_OMIT.has(k)) out[k] = v;
     return out;
+  }
+  function execInsightsSlice(insights) {
+    if (!insights || typeof insights !== "object") return null;
+    const i = insights;
+    return { fixNext: i["fixNext"], movement: i["movementOpen"], scan: i["scan"] };
   }
   function oldestOpenSlice(insights, view) {
     const known = OLDEST_VIEWS.includes(view) ? view : "findings";
@@ -5878,6 +6287,144 @@ var Server = (() => {
     }
     out["incremental"] = incremental;
     return out;
+  }
+  var REGISTER_ROW_KEY = "vuln_key";
+  var REGISTER_ROW_COLUMNS = [
+    "cve",
+    "severity",
+    "risk_tier",
+    "status",
+    "resolution_src",
+    "reopened_count",
+    "asset_name",
+    "asset_type",
+    "cloud",
+    "subscription_name",
+    "support_group",
+    "domain",
+    "first_seen",
+    "published_date",
+    "fix_available_at",
+    "awaiting_vendor_fix",
+    "last_seen",
+    "resolved_at",
+    "has_kev",
+    "has_exploit",
+    "epss",
+    "internet_exposed",
+    "mttr_days",
+    "age_days",
+    "actionable_age_days"
+  ];
+  var REGISTER_ROW_SOURCE = {
+    support_group: "_supportGroup",
+    domain: "_domain"
+  };
+  var REGISTER_ROW_DEFAULT_SORT = {
+    sort: "age_days",
+    dir: "desc"
+  };
+  var REGISTER_ROWS_PAGE_SIZE_CAP = 250;
+  var REGISTER_ROWS_DEFAULT_PAGE_SIZE = 50;
+  function registerRowsSlice(rows) {
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => {
+      var _a;
+      const key = r[REGISTER_ROW_KEY];
+      const out = { [REGISTER_ROW_KEY]: key === void 0 ? null : key };
+      for (const c of REGISTER_ROW_COLUMNS) {
+        const v = r[(_a = REGISTER_ROW_SOURCE[c]) != null ? _a : c];
+        out[c] = v === void 0 ? null : v;
+      }
+      return out;
+    });
+  }
+  function compareRegisterValues(a, b) {
+    if (typeof a === "number" && typeof b === "number") return a - b;
+    if (typeof a === "boolean" && typeof b === "boolean") return (a ? 1 : 0) - (b ? 1 : 0);
+    const sa = String(a).toLowerCase();
+    const sb = String(b).toLowerCase();
+    return sa < sb ? -1 : sa > sb ? 1 : 0;
+  }
+  function nullsLastOrder(a, b) {
+    const na = a === null || a === void 0;
+    const nb = b === null || b === void 0;
+    if (na && nb) return 0;
+    if (na) return 1;
+    if (nb) return -1;
+    return null;
+  }
+  function sortRegisterRows(rows, spec) {
+    const list = Array.isArray(rows) ? rows.slice() : [];
+    const value = spec && spec.value;
+    if (typeof value !== "function") return list;
+    const descending = Boolean(spec.descending);
+    const tiebreak = typeof spec.tiebreak === "function" ? spec.tiebreak : null;
+    return list.sort((ra, rb) => {
+      const va = value(ra);
+      const vb = value(rb);
+      const order = nullsLastOrder(va, vb);
+      if (order === null) {
+        const d = compareRegisterValues(va, vb);
+        if (d !== 0) return descending ? -d : d;
+      } else if (order !== 0) {
+        return order;
+      }
+      if (!tiebreak) return 0;
+      const ta = tiebreak(ra);
+      const tb = tiebreak(rb);
+      const tie = nullsLastOrder(ta, tb);
+      return tie === null ? compareRegisterValues(ta, tb) : tie;
+    });
+  }
+  function pageOfRegisterRows(rows, page, pageSize) {
+    const size = Math.max(1, Math.floor(pageSize));
+    const pageCount = Math.max(1, Math.ceil(rows.length / size));
+    const clamped = Math.min(Math.max(Math.floor(page) || 0, 0), pageCount - 1);
+    return {
+      rows: rows.slice(clamped * size, (clamped + 1) * size),
+      page: clamped,
+      pageCount
+    };
+  }
+  var DATE_SORT_COLUMNS = /* @__PURE__ */ new Set([
+    "first_seen",
+    "last_seen",
+    "resolved_at",
+    "fix_available_at",
+    "published_date"
+  ]);
+  var NUMBER_SORT_COLUMNS = /* @__PURE__ */ new Set([
+    "epss",
+    "mttr_days",
+    "age_days",
+    "actionable_age_days",
+    "reopened_count"
+  ]);
+  function severityRank(v) {
+    const i = SEVERITY_ORDER.indexOf(normalizeSeverity(v));
+    return i === -1 ? SEVERITY_ORDER.length : i;
+  }
+  function riskTierRank(v) {
+    const i = RISK_TIER_ORDER.indexOf(String(v != null ? v : ""));
+    return i === -1 ? RISK_TIER_ORDER.length : i;
+  }
+  function orNull(v) {
+    return v === null || v === void 0 || v === "" ? null : v;
+  }
+  function registerSortValue(column) {
+    if (column === "severity") return (r) => severityRank(r["severity"]);
+    if (column === "risk_tier") return (r) => riskTierRank(r["risk_tier"]);
+    if (DATE_SORT_COLUMNS.has(column)) return (r) => parseTs(r[column]);
+    if (NUMBER_SORT_COLUMNS.has(column)) {
+      return (r) => {
+        const raw = orNull(r[column]);
+        if (raw === null) return null;
+        const n = Number(raw);
+        return Number.isFinite(n) ? n : null;
+      };
+    }
+    return (r) => orNull(r[column]);
   }
 
   // src/server/errorLog.ts
@@ -6899,8 +7446,8 @@ var Server = (() => {
       mttr_history: (_b = rawManifest == null ? void 0 : rawManifest["mttr_history"]) != null ? _b : [],
       totals: { ledger: 0, episodes: 0 }
     });
-    const present3 = new Set(loadScanRows().map((s) => s.scan_id));
-    const toAppend = session.sealedScans.filter((s) => !present3.has(s.scan_id));
+    const present2 = new Set(loadScanRows().map((s) => s.scan_id));
+    const toAppend = session.sealedScans.filter((s) => !present2.has(s.scan_id));
     chunkedAppend(TABS.scans, toAppend);
     invalidateLedgerMemos();
     const cpRef = writeCheckpointManifest(
@@ -8880,6 +9427,8 @@ var Server = (() => {
     const baseVisible = filterNoFixBase(base, showNoFix);
     const latestFlat = latestFlatScanRow();
     const exploitSummaryScoped = exploitSummary(recsVisible);
+    const rule = getRiskRule2().rule;
+    const exposedKeys = exposedVulnKeys(recsVisible, exploitSummaryScoped.exposureKnown);
     return {
       flatScan: true,
       domain,
@@ -8913,7 +9462,28 @@ var Server = (() => {
         base,
         severities,
         showNoFix,
-        exploitSummaryScoped
+        exploitSummaryScoped,
+        rule,
+        exposedKeys
+      ),
+      // WHAT TO DO ON MONDAY, and what the list left out. The Executive front door reads this
+      // (via `execInsightsSlice`); the Overview does not, and `overviewInsightsSlice` drops it.
+      // Computed HERE rather than in a read-model of its own so both pages share one `cached()`
+      // entry — see the note on `execInsightsSlice`.
+      fixNext: fixNext(baseVisible, {
+        exposedKeys,
+        exposureKnown: exploitSummaryScoped.exposureKnown,
+        rule,
+        slaTargets: SLA_TARGETS
+      }),
+      // Open-backlog movement across at least a week of SCANS — the different question from
+      // `movement` below, which reports the latest scan's reconcile deltas (one day of news on
+      // a daily register). Reads the same `baseVisible` and the same severity gate, so the two
+      // blocks describe one population. Also Executive-only.
+      movementOpen: openMovement(
+        baseVisible,
+        loadScanRows(),
+        { severities }
       ),
       // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
       // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
@@ -8952,19 +9522,20 @@ var Server = (() => {
       movement: movement(baseVisible, latestFlat, loadScanRows().length)
     };
   }
-  function riskLadder(recsVisible, baseVisible, base, severities, showNoFix, exposure) {
+  function exposedVulnKeys(recsVisible, exposureKnown) {
     var _a;
-    const rule = getRiskRule2().rule;
-    const tierOf = (r) => riskTier(r, rule);
-    const exposedKeys = /* @__PURE__ */ new Set();
-    if (exposure.exposureKnown) {
-      for (const r of recsVisible) {
-        if (r["vulnerableAsset.hasWideInternetExposure"] === true || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
-          const k = String((_a = r["_vuln_key"]) != null ? _a : "");
-          if (k) exposedKeys.add(k);
-        }
+    const out = /* @__PURE__ */ new Set();
+    if (!exposureKnown) return out;
+    for (const r of recsVisible) {
+      if (r["vulnerableAsset.hasWideInternetExposure"] === true || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
+        const k = String((_a = r["_vuln_key"]) != null ? _a : "");
+        if (k) out.add(k);
       }
     }
+    return out;
+  }
+  function riskLadder(recsVisible, baseVisible, base, severities, showNoFix, exposure, rule, exposedKeys) {
+    const tierOf = (r) => riskTier(r, rule);
     const agingTier = ageBucketsBy(
       baseVisible,
       tierOf
@@ -9010,7 +9581,15 @@ var Server = (() => {
       // "insights5" → "insights6": the payload gained `slaConsumed` (open findings by tenth of
       // their SLA window, plus the past-window and no-window counts that are not drawn); a
       // stale insights5 entry has none of it and the section would render as a measured zero.
-      "insights6",
+      // "insights6" → "insights7": the payload gained `fixNext` (the Executive front door's
+      // ranked list plus its unranked accounting) and `movementOpen` (open-backlog movement
+      // across at least a week of scans). A stale insights6 entry carries NEITHER, and both are
+      // read unconditionally by `execInsightsSlice`, so an Executive page served one would paint
+      // a front door with no ranked list and no movement block for up to an hour after deploy —
+      // which reads as a register with nothing to do rather than as a cache miss. The key is
+      // unchanged: both new figures are computed from `baseVisible`, the risk rule and the scan
+      // log, every one of which the existing key already covers.
+      "insights7",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -9323,6 +9902,20 @@ var Server = (() => {
     }
     return rows;
   }
+  function shipKM(km) {
+    return {
+      curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
+      median: km.median,
+      medianLowerBound: km.medianLowerBound,
+      p90: kmQuantileFromCurve(km.curve, 0.9),
+      mean: km.mean,
+      meanTruncated: km.meanTruncated,
+      restrictionTime: km.restrictionTime,
+      events: km.events,
+      censored: km.censored,
+      total: km.total
+    };
+  }
   function latencySummary(rows, origin) {
     const now = Date.now();
     const km = kaplanMeier(latencyView(rows, origin, now));
@@ -9351,16 +9944,22 @@ var Server = (() => {
     const remRows = rows;
     const kmMedianPerSev = {};
     const kmP90PerSev = {};
+    const kmLowerBoundPerSev = {};
+    const kmPerSev = {};
     {
       const bySev = {};
       for (const r of remRows) {
         const s = normalizeSeverity(r["severity"]);
         ((_c = bySev[s]) != null ? _c : bySev[s] = []).push(r);
       }
-      for (const [s, rs] of Object.entries(bySev)) {
-        const k = kaplanMeier(rs);
+      const seen2 = Object.keys(bySev);
+      const ordered = SEVERITY_ORDER.filter((s) => seen2.indexOf(s) >= 0).concat(seen2.filter((s) => SEVERITY_ORDER.indexOf(s) < 0));
+      for (const s of ordered) {
+        const k = kaplanMeier(bySev[s]);
         kmMedianPerSev[s] = k.median;
+        kmLowerBoundPerSev[s] = k.medianLowerBound;
         kmP90PerSev[s] = kmQuantileFromCurve(k.curve, 0.9);
+        kmPerSev[s] = shipKM(k);
       }
     }
     const kmFull = kaplanMeier(remRows);
@@ -9375,6 +9974,21 @@ var Server = (() => {
       kmP90: kmQuantileFromCurve(kmFull.curve, 0.9),
       kmMedianPerSev,
       kmP90PerSev,
+      kmLowerBoundPerSev,
+      kmPerSev,
+      /**
+       * The open backlog as an age DISTRIBUTION, against the per-severity SLA edge.
+       *
+       * `openPastSla` below it is the same population reduced to one ratio per severity, and a
+       * ratio cannot say whether the breaches are a week late or a year late. This ships the
+       * shape as well, over the SAME `remRows` every other block here measures — so the domain,
+       * support-group, severity and both display toggles apply to it identically.
+       *
+       * `unaged` is on the wire for the reason `ageBuckets` could not put it there: an open row
+       * with no readable `first_seen` is not young, it is undated, and the page prints that
+       * count rather than letting the bars quietly cover fewer rows than the hero does.
+       */
+      aging: agingDistribution(remRows),
       openPastSla: openPastSla(remRows),
       // Actionable-clock companion (clock starts at vendor-fix availability): the same function
       // over the actionableView projection. Awaiting-vendor-fix rows carry null actionable
@@ -9622,7 +10236,17 @@ var Server = (() => {
       // latency clocks and their segment counts. Note they are computed over a DIFFERENT
       // population from everything else in the block (the show-no-fix filter is not applied to
       // them), so a stale entry is not merely missing keys; bump so none survives.
-      "mttr9",
+      // "mttr9" -> "mttr10": remediation gained `kmPerSev` (one shipKM-narrowed Kaplan-Meier
+      // curve per severity, for the small-multiple fan), `kmLowerBoundPerSev` (the bound the
+      // per-severity table prints where the curve never falls to half) and `aging` (the open
+      // backlog by age bucket and severity, with the unaged remainder and the SLA edge). A
+      // stale mttr9 entry is not merely FATTER than an mttr10 one, which is the case a TTL
+      // could ride out: it carries none of those three keys, so for up to an hour after a
+      // deploy the fan would draw no cards, the table's bound column would fall back to a dash
+      // on every censored severity, and the whole aging section would render its "no open
+      // findings to age yet" empty state over a register with a backlog. An absent section
+      // reads as a measurement — "there is nothing here" — rather than as a cache age.
+      "mttr10",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
@@ -9910,6 +10534,164 @@ var Server = (() => {
     }
     return out;
   }
+  var REGISTER_ROW_STATUSES = ["open", "resolved", "all"];
+  var REGISTER_ROW_FIX_MODES = ["all", "fixable", "awaiting"];
+  function registerRowFilters(p) {
+    var _a, _b;
+    const params = p != null ? p : {};
+    const askedStatus = String((_a = params["status"]) != null ? _a : "").toLowerCase();
+    const status = REGISTER_ROW_STATUSES.includes(askedStatus) ? askedStatus : "open";
+    const askedFix = String((_b = params["fix"]) != null ? _b : "").toLowerCase();
+    const fix = REGISTER_ROW_FIX_MODES.includes(askedFix) ? askedFix : "all";
+    const rawTier = params["tier"];
+    const askedTiers = Array.isArray(rawTier) ? rawTier.map(String) : rawTier === null || rawTier === void 0 || rawTier === "" ? [] : String(rawTier).split(",");
+    const wanted = new Set(
+      askedTiers.map((v) => v.trim().toLowerCase()).filter((v) => RISK_TIER_ORDER.includes(v))
+    );
+    const tier = wanted.size ? RISK_TIER_ORDER.filter((t) => wanted.has(t)) : null;
+    const rawExposed = params["exposed"];
+    return { status, fix, tier, exposed: rawExposed === true || rawExposed === "true" };
+  }
+  function registerRowsData(p, filters) {
+    var _a, _b, _c, _d;
+    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
+    const supportGroup = String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : "");
+    const severities = readSeverities(p);
+    const recsVisible = filterSeverities(
+      scopedFrameRecords(domain, supportGroup, []),
+      severities
+    );
+    const exposureKnown = exploitSummary(recsVisible).exposureKnown;
+    const exposedKeys = exposedVulnKeys(recsVisible, exposureKnown);
+    const framedKeys = /* @__PURE__ */ new Set();
+    for (const r of recsVisible) {
+      const k = String((_c = r["_vuln_key"]) != null ? _c : "");
+      if (k) framedKeys.add(k);
+    }
+    const base = visibleBase(
+      filterSeverities(scopedBaseRows(domain, supportGroup), severities)
+    );
+    attachSupportGroups(base);
+    attachBizDomains(base);
+    const compiled = compileDomains(getDomains2().items);
+    const rule = getRiskRule2().rule;
+    for (const r of base) {
+      r["_domain"] = resolveDomainName(r, compiled);
+      r["risk_tier"] = riskTier(r, rule);
+      const key = String((_d = r["vuln_key"]) != null ? _d : "");
+      r["internet_exposed"] = !exposureKnown || !framedKeys.has(key) ? null : exposedKeys.has(key);
+    }
+    let rows = base;
+    if (filters.status !== "all") {
+      const wantOpen = filters.status === "open";
+      rows = rows.filter((r) => isOpenStatus(r["status"]) === wantOpen);
+    }
+    if (filters.fix === "awaiting") {
+      rows = rows.filter((r) => r["awaiting_vendor_fix"] === true);
+    } else if (filters.fix === "fixable") {
+      rows = rows.filter((r) => present(r["fix_available_at"]));
+    }
+    if (filters.tier) {
+      const keep = new Set(filters.tier);
+      rows = rows.filter((r) => keep.has(String(r["risk_tier"])));
+    }
+    const exposedApplied = filters.exposed && exposureKnown;
+    if (exposedApplied) rows = rows.filter((r) => r["internet_exposed"] === true);
+    const latestFlat = latestFlatScanRow();
+    return {
+      asOf: nowIso(),
+      // SLICED HERE, INSIDE THE CACHE ENTRY, so what is stored is exactly what travels: 26
+      // allowlisted fields per row rather than a whole `BaseRow` with `tags_json`, the scan
+      // ids and the raw fix/risk capture columns riding along. The sort reads only allowlisted
+      // columns, so nothing outside the wire shape is needed downstream.
+      rows: registerRowsSlice(rows),
+      exposureKnown,
+      exposureFilterSupported: exposureKnown,
+      exposed: exposedApplied,
+      // WHAT THIS PAGE MEASURED AND WHAT IT NEVER LOOKED AT — the same three-part line
+      // `insightsData` publishes, over the same population, so the register and the Overview
+      // account for their Outside identically. `inScope` is the scoped, gated, toggle-filtered
+      // register BEFORE the reader's own row filters; `total` below is after them.
+      population: {
+        inScope: base.length,
+        gate: latestFlat ? parseSeverities(latestFlat.severities) : null,
+        filters: BASE_FILTER_WORDS
+      }
+    };
+  }
+  var cachedRegisterRows = (p, filters) => {
+    var _a, _b;
+    return cached(
+      "registerRows1",
+      {
+        domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
+        supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2(),
+        riskRuleVersion: getRiskRule2().version,
+        status: filters.status,
+        fix: filters.fix,
+        tier: filters.tier,
+        exposed: filters.exposed
+      },
+      () => registerRowsData(p, filters),
+      3600
+    );
+  };
+  function registerRowsPageSize(v) {
+    if (!present(v)) return REGISTER_ROWS_DEFAULT_PAGE_SIZE;
+    const n = Number(v);
+    if (!Number.isFinite(n)) return REGISTER_ROWS_DEFAULT_PAGE_SIZE;
+    return Math.min(REGISTER_ROWS_PAGE_SIZE_CAP, Math.max(1, Math.floor(n)));
+  }
+  function registerRowsPage(v) {
+    if (!present(v)) return 0;
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.floor(n) : 0;
+  }
+  function getRegisterRows(p) {
+    return run(() => {
+      var _a, _b;
+      const params = p != null ? p : {};
+      const filters = registerRowFilters(p);
+      const model = cachedRegisterRows(p, filters);
+      const rows = Array.isArray(model["rows"]) ? model["rows"] : [];
+      const asked = String((_a = params["sort"]) != null ? _a : "");
+      const sort = REGISTER_ROW_COLUMNS.includes(asked) ? asked : REGISTER_ROW_DEFAULT_SORT.sort;
+      const askedDir = String((_b = params["dir"]) != null ? _b : "").toLowerCase();
+      const dir = askedDir === "asc" || askedDir === "desc" ? askedDir : sort === REGISTER_ROW_DEFAULT_SORT.sort ? REGISTER_ROW_DEFAULT_SORT.dir : "asc";
+      const pageSize = registerRowsPageSize(params["pageSize"]);
+      const sorted = sortRegisterRows(rows, {
+        value: registerSortValue(sort),
+        descending: dir === "desc",
+        tiebreak: (r) => r[REGISTER_ROW_KEY]
+      });
+      const cut = pageOfRegisterRows(sorted, registerRowsPage(params["page"]), pageSize);
+      return {
+        asOf: model["asOf"],
+        // The column list TRAVELS WITH THE ROWS, so the client draws what the server said it
+        // sent rather than a hand-kept second copy of the same list.
+        columns: REGISTER_ROW_COLUMNS.slice(),
+        key: REGISTER_ROW_KEY,
+        rows: cut.rows,
+        total: sorted.length,
+        page: cut.page,
+        pageCount: cut.pageCount,
+        pageSize,
+        sort,
+        dir,
+        status: filters.status,
+        fix: filters.fix,
+        tier: filters.tier,
+        exposed: model["exposed"],
+        exposureFilterSupported: model["exposureFilterSupported"],
+        exposureKnown: model["exposureKnown"],
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2(),
+        population: model["population"]
+      };
+    });
+  }
   var WEEK_MS = 7 * 864e5;
   function executiveWeekTrend(p) {
     var _a, _b;
@@ -9980,19 +10762,28 @@ var Server = (() => {
     );
   };
   function getExecutivePage(p) {
-    var _a;
+    var _a, _b;
     const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
-    return run(() => ({
-      mttr: execMttrSlice(cachedMttrData(p)),
-      // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
-      // domain yields a single row, so a domain scope splits by support group within it instead.
-      byDomain: execGroupSlice(
-        domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
-      ),
-      // Already minimal — four scalars and a per-severity tally — so these two ship whole.
-      weekTrend: cachedExecutiveWeekTrend(p),
-      severityCounts: cachedExecutiveSeverityCounts(p)
-    }));
+    const insightsParams = {
+      domain,
+      supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),
+      severities: readSeverities(p)
+    };
+    return run(() => {
+      var _a2;
+      return {
+        mttr: execMttrSlice(cachedMttrData(p)),
+        ...(_a2 = execInsightsSlice(cachedInsightsData(insightsParams))) != null ? _a2 : {},
+        // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
+        // domain yields a single row, so a domain scope splits by support group within it instead.
+        byDomain: execGroupSlice(
+          domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
+        ),
+        // Already minimal — four scalars and a per-severity tally — so these two ship whole.
+        weekTrend: cachedExecutiveWeekTrend(p),
+        severityCounts: cachedExecutiveSeverityCounts(p)
+      };
+    });
   }
   var MOVEMENT_WINDOW_DAYS = 28;
   function movementNoteFor(win) {
@@ -10005,13 +10796,11 @@ var Server = (() => {
     return `No scan at least ${MOVEMENT_WINDOW_DAYS} days older than the latest one` + (win.days === null ? "" : ` \u2014 the saved scans span ${win.days} days`) + ".";
   }
   function scanHistoryData() {
-    var _a;
     const scanRows = loadScanRows();
     const scans = scanRows.slice().reverse();
     const base = visibleBase(loadBaseRows());
     const open = base.filter((r) => r.status === "OPEN").length;
     const resolved = base.filter((r) => r.status === "RESOLVED").length;
-    const { overall } = mttrFromLedger(base);
     const win = movementWindowScans(scanRows, MOVEMENT_WINDOW_DAYS);
     const movement2 = win.since !== null ? movementDecomposition(
       base,
@@ -10026,8 +10815,7 @@ var Server = (() => {
       kpis: {
         tracked: base.length,
         open,
-        resolvedAllTime: resolved,
-        medianMttr: (_a = overall.mttr_median) != null ? _a : null
+        resolvedAllTime: resolved
       }
     };
   }
@@ -10036,12 +10824,42 @@ var Server = (() => {
     // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
     // "scanHistory2" → "scanHistory3": the payload carries the movement decomposition now, and a
     // stale entry would serve the section's empty state over a window that is measurable.
-    durablyCached("scanHistory3", { showNoFix: getShowNoFix2() }, scanHistoryData)
+    // "scanHistory3" → "scanHistory4": `kpis` DROPS `medianMttr` — the naive median over
+    // CLOSED rows only, which the fourth KPI card used to publish under the "Remediation
+    // half-life" label while the only series drawn under it (`km_median_days`, mttrTrendData)
+    // is the Kaplan–Meier estimate. Those are two different statistics over two different
+    // populations (the naive figure drops every still-open row), so a stale `scanHistory3`
+    // entry serving `medianMttr` under a KM-labelled card would render a real but WRONG number
+    // rather than an absence — bump so none can. The KM figure itself is deliberately NOT part
+    // of this durable blob: `kaplanMeier` right-censors every open finding at `Date.now()`
+    // (domain/remediation.ts's `openAge`), so it belongs to the class `readModelStore.ts`'s own
+    // header calls out as "drift with the clock at zero data change" and reserves for an
+    // L1-only cache with a short TTL — baking it into `durablyCached`'s Drive-backed L2 would
+    // let it go stale for up to the 7-day backstop between scans, which is exactly the mistake
+    // that header exists to prevent. `getScanHistory` below merges it in fresh, off
+    // `cachedMttrData()` (a plain `cached()`, 1h TTL) rather than a second `kaplanMeier(base)`
+    // pass: `mttrData(undefined)` scopes to `{domain:"", supportGroup:"", severities:null}`,
+    // which is `scopedBaseRows("","")` (the whole ledger, untouched) through `filterSeverities`
+    // (a no-op on `null`) through `visibleBase` — byte-for-byte this function's own `base` —
+    // so the two share both the population and the `showNoFix` gate, and reusing the MTTR
+    // page's already-cached estimate is the correct answer, not a shortcut.
+    durablyCached("scanHistory4", { showNoFix: getShowNoFix2() }, scanHistoryData)
   );
   function getScanHistory(_p) {
     return run(() => {
+      var _a, _b, _c, _d;
       const d = cachedScanHistoryData();
-      return { ...d, scans: scanRowsSlice(d["scans"]) };
+      const mttr = cachedMttrData(void 0);
+      const km = (_b = (_a = mttr["remediation"]) == null ? void 0 : _a["km"]) != null ? _b : null;
+      return {
+        ...d,
+        scans: scanRowsSlice(d["scans"]),
+        kpis: {
+          ...d["kpis"],
+          kmMedian: (_c = km == null ? void 0 : km["median"]) != null ? _c : null,
+          kmMedianLowerBound: (_d = km == null ? void 0 : km["medianLowerBound"]) != null ? _d : null
+        }
+      };
     });
   }
   function runScan(p) {

@@ -117,7 +117,7 @@ describe("the access guard covers every untrusted entry point", () => {
     throw new Error(`unbalanced braces in ${name}`);
   }
 
-  it("gates all 54 api_* endpoints at their one chokepoint, before any work happens", () => {
+  it("gates every api_* endpoint at its one chokepoint, before any work happens", () => {
     // Every api_* delegator routes through timedApi_, so one check here covers all of them —
     // including api_resetLedger, api_deleteScans and api_startSeverityPurge. The ORDER is the
     // assertion: a guard that runs after Server.api[name](p) has already executed is not a

@@ -210,7 +210,12 @@ describe("triState", () => {
 
 describe("the page sizes", () => {
   it("offers one list, with the default among it", () => {
-    expect(PAGE_SIZES).toEqual([25, 50, 100, 250]);
+    expect(PAGE_SIZES).toEqual([15, 25, 50, 100, 250]);
+    // THE ASSERTION THAT IS NOT ABOUT THE NUMBERS. `tableFooter` sets
+    // `sizeSelect.value = String(pageSize)`; a default that is not one of the options matches
+    // no <option>, so the browser falls back to the first entry and the control reports a page
+    // size the table is not using. That is why 15 had to JOIN the list rather than only
+    // become the default — the line above moved, this one is the rule.
     expect(PAGE_SIZES).toContain(DEFAULT_PAGE_SIZE);
   });
 });

@@ -24,8 +24,13 @@
  * (inventory.js and queryTable.js) and a third would have been a coincidence rather than a
  * decision.
  */
-export const PAGE_SIZES = [25, 50, 100, 250];
-export const DEFAULT_PAGE_SIZE = 50;
+// 15 leads the list AND is the default. It is there because the default has to be a member
+// of this array: `tableFooter` sets `sizeSelect.value = String(pageSize)`, and a value matching
+// no option makes the browser fall back to the first entry — so the control would silently
+// report a page size the table is not using. `pages/program.js` carries the same warning above
+// its own copy, which is how that failure is already known here.
+export const PAGE_SIZES = [15, 25, 50, 100, 250];
+export const DEFAULT_PAGE_SIZE = 15;
 
 
 /**

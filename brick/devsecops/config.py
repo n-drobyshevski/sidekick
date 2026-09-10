@@ -48,8 +48,8 @@ SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
 # Standard VM SLAs, in days.
 SLA_TARGETS = {"CRITICAL": 7, "HIGH": 14, "MEDIUM": 30, "LOW": 90, "INFO": 180}
 
-# Light-theme severity palette, mirrored from wiz_dashboard/config.py so a chart here and a
-# chart in the Streamlit app agree. Each colour clears 3:1 against white as a graphical mark.
+# Light-theme severity palette, mirrored from wiz_dashboard/config.py so the register
+# surfaces agree. Each colour clears 3:1 against white as a graphical mark.
 #
 # It is a deliberate heat ramp, not a categorical palette, and it does NOT pass a categorical
 # colourblind check: HIGH and MEDIUM sit ΔE 1.6 apart under deuteranopia and 6.7 apart even
@@ -109,6 +109,7 @@ def default_fetch_severities(scope: str) -> Tuple[str, ...]:
         raise RuntimeError(
             f"unknown scope {scope!r} -- expected one of {sorted(DEFAULT_FETCH_SEVERITIES)}"
         ) from None
+
 
 # ---- Scopes: which population of findings a run measures ----
 # The scope drives BOTH the API filter and the table names, from one parameter, so a table can
@@ -535,19 +536,19 @@ DEFAULT_SAST_RISK_RULE = SastRiskRule()
 # It is a snapshot and it ages: re-derive it against the current year's publication rather than
 # trusting this tuple indefinitely. The year is in the name of the constant for that reason.
 CWE_TOP_25_2024 = (
-    "CWE-79",   # Cross-site Scripting
+    "CWE-79",  # Cross-site Scripting
     "CWE-787",  # Out-of-bounds Write
-    "CWE-89",   # SQL Injection
+    "CWE-89",  # SQL Injection
     "CWE-352",  # Cross-Site Request Forgery
-    "CWE-22",   # Path Traversal
+    "CWE-22",  # Path Traversal
     "CWE-125",  # Out-of-bounds Read
-    "CWE-78",   # OS Command Injection
+    "CWE-78",  # OS Command Injection
     "CWE-416",  # Use After Free
     "CWE-862",  # Missing Authorization
     "CWE-434",  # Unrestricted Upload of File with Dangerous Type
-    "CWE-94",   # Code Injection
-    "CWE-20",   # Improper Input Validation
-    "CWE-77",   # Command Injection
+    "CWE-94",  # Code Injection
+    "CWE-20",  # Improper Input Validation
+    "CWE-77",  # Command Injection
     "CWE-287",  # Improper Authentication
     "CWE-269",  # Improper Privilege Management
     "CWE-502",  # Deserialization of Untrusted Data
@@ -577,16 +578,16 @@ EXPLOITED_CWES = frozenset(CWE_TOP_25_2024)
 # caught up with. `metrics.signal_breakdown` publishes `cwe_unmapped` for exactly this reason:
 # it is the size of the doubt, and it is the number to watch before quoting a SAST rate.
 CWE_ANCESTORS = {
-    "CWE-23": "CWE-22",    # Relative Path Traversal        -> Path Traversal
-    "CWE-36": "CWE-22",    # Absolute Path Traversal        -> Path Traversal
-    "CWE-80": "CWE-79",    # Basic XSS                      -> Cross-site Scripting
-    "CWE-83": "CWE-79",    # XSS in attributes              -> Cross-site Scripting
-    "CWE-91": "CWE-94",    # XML Injection                  -> Code Injection
-    "CWE-95": "CWE-94",    # Eval Injection                 -> Code Injection
-    "CWE-470": "CWE-94",   # Unsafe Reflection              -> Code Injection
+    "CWE-23": "CWE-22",  # Relative Path Traversal        -> Path Traversal
+    "CWE-36": "CWE-22",  # Absolute Path Traversal        -> Path Traversal
+    "CWE-80": "CWE-79",  # Basic XSS                      -> Cross-site Scripting
+    "CWE-83": "CWE-79",  # XSS in attributes              -> Cross-site Scripting
+    "CWE-91": "CWE-94",  # XML Injection                  -> Code Injection
+    "CWE-95": "CWE-94",  # Eval Injection                 -> Code Injection
+    "CWE-470": "CWE-94",  # Unsafe Reflection              -> Code Injection
     "CWE-1321": "CWE-94",  # Prototype Pollution            -> Code Injection
-    "CWE-88": "CWE-77",    # Argument Injection             -> Command Injection
-    "CWE-611": "CWE-20",   # XML External Entity            -> Improper Input Validation
+    "CWE-88": "CWE-77",  # Argument Injection             -> Command Injection
+    "CWE-611": "CWE-20",  # XML External Entity            -> Improper Input Validation
     "CWE-547": "CWE-798",  # Hard-coded security constants  -> Use of Hard-coded Credentials
     "CWE-259": "CWE-798",  # Hard-coded Password            -> Use of Hard-coded Credentials
     "CWE-321": "CWE-798",  # Hard-coded Cryptographic Key   -> Use of Hard-coded Credentials
@@ -614,6 +615,7 @@ def rule_for_scope(scope: str = DEFAULT_SCOPE):
     a CVE register does the same in the other direction. Both look like data.
     """
     return DEFAULT_SAST_RISK_RULE if SOURCES.get(scope) is SAST_SOURCE else DEFAULT_RISK_RULE
+
 
 # ---- Capacity ----
 # The dead band around zero net flow that still counts as "keeping up". P2P v3 Fig. 22 splits

@@ -8,7 +8,14 @@
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-card);
 }
-.card { padding: var(--space-4); }
+/* THE BOTTOM MARGIN IS THE PAGE'S VERTICAL RHYTHM, and it was missing. Every other top-level
+   block on these pages owns its own trailing space — `.page-header` and `.chart-row` both set
+   `margin-bottom: var(--space-5)` — but `.card` set none, so two consecutive cards rendered
+   FLUSH: measured `gapAbove: 0` between "The clock splits" and "Exploitation signals" on the
+   SCA page, and again between that card and the chart row below it. Two rounded, bordered
+   surfaces touching read as one broken container rather than as two sections.
+   The value matches `.chart-row`'s so a page mixing the two keeps one rhythm. */
+.card { padding: var(--space-4); margin-bottom: var(--space-5); }
 /* THE PAGE HEADER, which four routes had already invented separately.
    .cov-header (scans) and .inv-header (inventory) were byte-identical rulesets — scans.css
    even says so in a comment, "the same shape the AI Inventory header uses" — while
@@ -23,8 +30,17 @@
    like these four, not in the shared file.
 
    Grouped rather than renamed so no page markup has to change to get it. A new page should
-   use .page-header alone. */
-.page-header, .cov-header, .inv-header, .help-header, .comp-header {
+   use .page-header alone.
+
+   F6 (2026-09-09): .cov-header, .inv-header and .comp-header are now GONE from the selector
+   list (and from :99's below). gas_ai's own parity wave retired the classes from scans.js,
+   inventory.js and compliance.js — the markup now carries only .page-header — leaving these
+   three names alive nowhere but this file's own comments (scans.css, inventory.css and
+   compliance.css each keep a retirement note) and a fourth mention in help.js's comment.
+   Measured with `grep -rn "cov-header\|inv-header\|comp-header" gas/src gas_ai/src
+   gas_devsecops/src gas_hub/src gas_shared`: gas, gas_devsecops and gas_hub never had them at
+   all. .help-header stays — gas_ai's help page still renders it. */
+.page-header, .help-header {
   display: grid;
   grid-template-columns: minmax(160px, 0.5fr) minmax(320px, 2fr);
   gap: var(--space-5) var(--space-6);
@@ -33,8 +49,27 @@
   padding-bottom: var(--space-4);
   border-bottom: 1px solid var(--hairline);
 }
-/* The hero's supporting line, previously four near-identical rules. */
-.page-hero-sub, .cov-hero-sub, .inv-hero-sub, .help-hero-sub {
+/* PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b (2026-09-08) —
+   byte-identical in both. The SECOND, independent overflow gas_devsecops measured, visible
+   only once a table's own horizontal-scroll fix (tables.css's `.table-wrap { position:
+   relative }`) stops masking it: at a 360px viewport this rule's two columns above
+   (`minmax(160px, 0.5fr) minmax(320px, 2fr)`, no media query anywhere in this file until now)
+   cannot both clear their own minimums — measured, the row's min-content floor is 512px
+   regardless of which page's hero/aside content is in it. Collapsing to one column here is
+   the same answer, at the width where capping a card's own width (the `.kpi-card` rule below)
+   stops being enough. */
+@media (max-width: 640px) {
+  .page-header { grid-template-columns: 1fr; }
+}
+/* The hero's supporting line, previously four near-identical rules.
+
+   F6 (2026-09-09): .cov-hero-sub and .inv-hero-sub are now GONE from the selector list, for
+   the same reason .cov-header/.inv-header/.comp-header left the rule above — gas_ai's parity
+   wave retired the classes from scans.js and inventory.js, and unlike those three this pair
+   left behind no retirement comment anywhere: `grep -rn "cov-hero-sub\|inv-hero-sub" gas/src
+   gas_ai/src gas_devsecops/src gas_hub/src gas_shared` finds nothing but this rule itself,
+   before the edit. .page-hero-sub and .help-hero-sub stay live. */
+.page-hero-sub, .help-hero-sub {
   font-size: var(--fs-label); color: var(--text-3); margin: var(--space-1) 0 0;
 }
 /* A hero sub-line that carries two sentences rather than one: the alarm the figure counts,
@@ -76,10 +111,32 @@
 /* The lede is running text, so it breaks at a readable length rather than at header width. */
 .page-titles .page-hero-sub { max-width: var(--measure); }
 
-/* The stat strip always spans the full header, whichever page it is on. */
-.page-header > .stat-list, .cov-header .stat-list, .inv-header .stat-list { grid-column: 1 / -1; }
+/* The stat strip always spans the full header, whichever page it is on. .cov-header and
+   .inv-header dropped F6 (2026-09-09) — see the header rule above's comment. */
+.page-header > .stat-list { grid-column: 1 / -1; }
+
+/* PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b (2026-09-08) —
+   byte-identical in both. `.page-header`'s second column is `minmax(320px, 2fr)` above and
+   grid items stretch to fill their column by default, so an aside `kpiCard` — as opposed to a
+   `.page-strip` — grew to the full ~880px width of that column on a 1280px viewport: a
+   bordered, surface-tinted box nearly as wide as the borderless 2rem hero beside it,
+   out-weighing the primary figure. DESIGN.md's Hero Stat rule is that dominance comes from
+   size, position and whitespace, never from a card, so the fix caps the card's width rather
+   than removing it — a compact card at the column's start edge (the default position once its
+   width is capped) reads as the hero's companion instead of a second hero. 22rem (352px) was
+   measured against the hero's own value column: wide enough for "Bounds 71.5% to 73.8%" and a
+   denominator line on one line each, narrow enough to leave clear air between it and the hero
+   at 1280px. Scoped to `.page-header` so no other `.kpi-row` card anywhere else on any page is
+   touched. Measured at a 640px viewport the two columns still sit side by side at 888px wide
+   — the media query above is what collapses them, this cap holds independently of it. */
+.page-header > .kpi-card { max-width: 22rem; }
 
 .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--space-3); margin: 0 0 var(--space-5); }
+/* One tile per row, for a kpi-row inside a half-width card. The auto-fit track above keeps
+   packing tiles across while each clears its 160px floor, which inside a `.card-pair` column
+   means two tiles at ~400px — enough for the figure, not enough for the sentence under it,
+   which then wraps to three lines. Opt-in, so every full-width strip is unchanged. */
+.kpi-row--column { grid-template-columns: 1fr; }
 .kpi-card { padding: var(--space-3) var(--space-4); }
 /* The chip slot kpiCard has always had and nothing used: a small qualifier riding beside the
    figure rather than under it, so a card can carry a state without a second line. The
@@ -92,7 +149,11 @@
    confidence, which qualify each other and are counted on separate axes. Side by side once
    the viewport can hold both without either losing a column; below that they stack, which is
    what a single card already does. */
-.card-pair { display: grid; gap: var(--space-3); }
+.card-pair { display: grid; gap: var(--space-3); margin-bottom: var(--space-5); }
+/* The container owns the trailing space, the items inside do not: `.card`'s own bottom margin
+   would otherwise hang below the shorter column of the pair and push the container's box past
+   its own content. One rhythm, applied at the level that is actually a block on the page. */
+.card-pair > .card { margin-bottom: 0; }
 /* min-width:0, and it is not optional: a grid item's default `min-width: auto` refuses to
    shrink below its content, so a seven-column table inside one of these pushed its own track
    past 1fr and drew the card's right border off the side of the pane. With the floor released
@@ -1100,6 +1161,12 @@
 .chart-table__body table.data td, .chart-table__body table.data th {
   padding: var(--space-1) var(--space-2);
 }
+/* The pager under a paged disclosure (ui/chartTable.js). tables.css gives `.table-footer` a
+   register's spacing — space-3 above it, so a page-level table clears the wrap's border. Here
+   it sits inside a chart card whose rows are already on the tighter padding two rules up, and
+   the register's gap left the controls floating away from the figures they page. Only the
+   spacing is restated; the strip itself is the same component every register uses. */
+.chart-table__body .table-footer { margin-top: var(--space-2); }
 
 /* =========================================================================================
    SIX SHARED COMPONENTS THAT ARRIVED HERE WITHOUT THEIR CLOTHES
@@ -1487,3 +1554,123 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
 .usage-meter__note { margin: var(--space-2) 0 0; color: var(--text-2); }
 .usage-meter__note.warn { color: var(--warn); }
 .usage-meter__note.bad { color: var(--bad); }
+
+/* =========================================================================================
+   PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b (2026-09-08). Every
+   block below was byte-identical (selector + declarations) in both apps' local copies —
+   carried since P1.6 as a "promotion candidate" banner in gas's own sheet — so this is the one
+   copy now, and both apps' local `pages.css` hold only what they draw that a sibling does not.
+   `.sev-fan` / `.table-wrap { position: relative }` / the two narrow-viewport collapses / the
+   rail status dot chrome moved into tables.css / base.css instead, beside the rules they
+   extend; what follows is everything that had no such natural neighbour here. */
+
+/* Executive's ranked "fix next" list. AN ORDERED LIST, DRAWN AS ONE: the counter is the claim
+   (rank 1 is the thing to do first), so it stays visible rather than being suppressed the way
+   a decorative list's markers would be. No colour of its own — the tier reads through the
+   shared `.pill` kinds, which already pair a tint with a dot and a word. */
+.fixnext { margin: 0 0 var(--space-3); padding-left: var(--space-5); display: grid; gap: var(--space-2); }
+.fixnext-item { padding-left: var(--space-1); }
+.fixnext-item::marker { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.fixnext-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.fixnext-repo { font-weight: 600; }
+.fixnext-meta { margin-top: var(--space-half); }
+
+/* The movement strip: one row per register plus a total, inside a page header's second
+   column. The label and the raw pair sit either side of the chip so the delta is never the
+   only number visible — "280 open, was 320" is the arithmetic the chip is a summary of. `gap`
+   rather than a border: this strip lives beside a borderless hero and a rule here would
+   out-weight it. Capped so the raw pair stays beside its chip rather than being flung to the
+   far edge of a 1fr column on a wide screen. `.movement-block` is the same idea as a card and
+   a row further down a page (Scan History): a chart, up to two honesty lines and a row of
+   exception pills, with no border of its own because the `.chart-card` inside already
+   carries one. */
+.movement-rows { display: grid; gap: var(--space-1); max-width: 46ch; }
+.movement-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.movement-label { color: var(--text-2); min-width: 8ch; }
+.movement-counts { margin-left: auto; font-variant-numeric: tabular-nums; }
+.movement-block { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
+
+/* `.chart-row` (tables.css) is `repeat(auto-fit, minmax(420px, 1fr))` — right for a page's two
+   independent charts, too wide for a pair of small movement-cause tables, which have nothing
+   to plot and read fine well under 420px. `--pair` is the same idea at a floor measured
+   against a cause table's own content instead of a chart's. */
+.chart-row--pair { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+
+/* A toolbar is one flex row of controls (`.toolbar` above), and a label span sitting loose in
+   that row can wrap away from the control it labels at narrow widths. A group keeps each
+   label with what it labels and lets the GROUPS wrap instead. */
+.toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+
+/* The finding sheet's copy actions. `.sheet-actions` (sheet.css) is the FOOTER arrangement —
+   right-aligned, because a footer's job is to hold the commit — and these sit at the top of
+   the body where the reader's eye is still at the left edge. Same gap, no justification. */
+.finding-actions {
+  display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3);
+}
+/* The code block inside a `.kv` value is a whole line of its own, not an inline run: without
+   this it keeps the 0 margin `pre` gets everywhere else and collides with the row beneath. */
+.kv dd > .code-block { margin: 0; }
+
+/* An MTTR-style page header's half-life trend aside: `pageHeader({aside})` is documented for
+   "a small curve". The sparkline that fills it is a QUALIFIER on the hero, never a rival to
+   it: DESIGN.md's Hero Stat rule puts the hero's dominance in size, position and whitespace,
+   so this block stays borderless (a `.page-strip`) and is capped the way `.page-header >
+   .kpi-card` above is — 26rem measured against a 220px SVG plus its caption, wide enough for
+   "12 readings, 297 days to 41 days" on one line and narrow enough that a 2rem hero beside it
+   keeps clear air. The gap is the strip's own rhythm; nothing here sets a border, a tint or a
+   shadow, because any of the three would make this read as a second card in a header that has
+   none. */
+.trend-aside { max-width: 26rem; display: grid; gap: var(--space-1); justify-items: start; }
+/* The line takes the page's ink rather than the strip's muted default: `--text-2` (0.65 alpha)
+   on a 1.5px stroke over 40px of height reads as a hairline rule rather than as data, and a
+   mark carrying a figure has to be legible on its own. */
+.trend-aside .sparkline { color: var(--ink); }
+
+/* An SLA-table rate cell with its meter: the figure, its base and a `meter--stat` between
+   them — a third encoding, and the only one that can be compared DOWN a column at a glance
+   (percentages are read one at a time; fills are read as a shape). The meter is `decorative`
+   (aria-hidden) because both figures are already in words beside it, so this rule is layout
+   only: keep the three parts on one baseline and let the base wrap under them on a narrow
+   column rather than stretching the row. `inline-flex`, not `flex`: the cell is a `<span>`
+   inside a `<td>` that may also hold the count and the parenthesised rate, and a block-level
+   flex box would break that line. */
+.rate-with-meter {
+  display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1);
+}
+/* The meter must not be squeezed to nothing by the flex row when the denominator is long —
+   `meter--stat` already fixes its basis, this stops the shrink. */
+.rate-with-meter .meter { flex: 0 0 52px; }
+
+/* The unclassified-rows card, hatched rather than filled — a measurement gap is not a low
+   score. `.hatch` is this design system's one mark for exactly that, so the card carries a
+   swatch of it beside the word — never instead of the word, because a texture is not a fact.
+   The count stays in ink: it IS a measurement, of how much was not. */
+.unclassified-card { display: grid; gap: var(--space-half); }
+.unclassified-swatch {
+  display: inline-block; width: 14px; height: 14px; margin-right: var(--space-2);
+  border: 1px solid var(--hairline); border-radius: 2px; vertical-align: -2px;
+}
+/* Forced colours keep the hatch (it is ink at an alpha, see the --hatch token) but drop the
+   hairline into the forced border colour, so the swatch stays a bordered square rather than
+   dissolving into the card. */
+@media (forced-colors: active) {
+  .unclassified-swatch { border-color: CanvasText; }
+}
+
+/* A KPI card's own sparkline, borderless and below the sub-value it qualifies: three of a
+   card band's four cards say where a number IS, and this is the series each is the last
+   reading of. Same reasoning as `.trend-aside` above — grid, start-aligned, nothing here sets
+   a surface, a tint or a rule. The line takes the page's ink for the same reason
+   `.trend-aside .sparkline` does. NO animation and no transition, so there is deliberately no
+   prefers-reduced-motion block owed here. */
+.kpi-spark {
+  display: grid; gap: var(--space-half); justify-items: start; margin-top: var(--space-2);
+}
+.kpi-spark .sparkline { color: var(--ink); }
+.kpi-spark__cap { font-size: var(--fs-label); color: var(--text-3); }
+
+/* A state pill riding beside a section heading rather than inside its name — "Register-wide"
+   on a scan-side table, "Experimental" on a history diagram — is a STATE of what is under the
+   heading, not part of its name. The pill's tint and word are `statusPill`'s; this rule is
+   spacing only. */
+.section-label > .heading-pill { margin-left: var(--space-2); font-weight: 400; }

@@ -38,6 +38,7 @@ import {
 } from "../domain/syncNormalize";
 import { buildAarsHintsFromFindings } from "../domain/graphEnrich";
 import { resolveHygieneRules } from "../domain/identityHygiene";
+import { registerScopeSignature } from "../domain/registerScope";
 import { RISK_CATEGORY_ID } from "../domain/toxicCombos";
 import { changedPaths, effectiveStepVars, isEditableStep } from "../domain/scanVars";
 import { nowIso, type Rec } from "../domain/util";
@@ -48,13 +49,16 @@ import {
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
 import {
-  seedGraphDoc, SEED_AARS_HINTS, SEED_CONFIG_RULES, SEED_DATA_FINDINGS, SEED_EFFECTIVE_ACCESS,
-  SEED_FINDINGS, SEED_FRAMEWORK_POLICIES, SEED_FRAMEWORKS, SEED_IDENTITY_FINDINGS, SEED_ISSUES,
-  SEED_POSTURE, SEED_TREND,
+  seedGraphDoc, seedLedgerRows, seedPostureTrend, seedSyncAt, seedSyncId, SEED_AARS_HINTS,
+  SEED_CONFIG_RULES,
+  SEED_DATA_FINDINGS, SEED_EFFECTIVE_ACCESS, SEED_FINDINGS, SEED_FRAMEWORK_POLICIES,
+  SEED_FRAMEWORKS, SEED_IDENTITY_FINDINGS, SEED_ISSUES, SEED_LEDGER, SEED_POSTURE, SEED_TREND,
 } from "./sampleData";
 import * as settingsStore from "./settingsStore";
 import { appendRows, dataRowCount, TABS } from "./sheetsDb";
-import { loadConfigRules, loadFrameworks, parseJson, persistSync } from "./syncStore";
+import {
+  issueLedgerToRow, loadConfigRules, loadFrameworks, parseJson, persistSync,
+} from "./syncStore";
 // Namespace import to keep the module graph acyclic: warm.ts imports api.ts, which imports
 // the store layer this file also uses.
 import * as warm from "./warm";
@@ -852,31 +856,114 @@ export function startSync(): StartResult {
 }
 
 /**
+ * THE FABRICATED PRIOR, and the reason the two halves of it are one call.
+ *
+ * A dry run into an EMPTY store has nothing to reconcile against: every issue is new, no row
+ * has ever left, and the only sync-history row is the one this run is about to write. The
+ * seed below hands it eight syncs' worth of prior — a ledger with dated departures, and the
+ * eight commit records that describe them (`sampleData`'s SEED_LEDGER section carries the
+ * arithmetic tying the two together).
+ *
+ * ONE GUARD, TWO WRITES, AND THE COUPLING IS THE POINT. `issue_count`, `ledger_json` and
+ * `register_scope` on the synthetic rows are claims about a LEDGER, so they are written only
+ * when the ledger was seeded on the same call. The state that USED TO make the difference
+ * reachable — `syncStore.resetData` clearing the sync history and NOT `ai_issue_ledger`, so a
+ * Reset followed by a Sync arrived with an empty history beside a real ledger — is CLOSED
+ * (F1: `resetData` clears the ledger too, for exactly this reason). `seedIssueLedger` can no
+ * longer meet a non-empty ledger on the one path that calls it.
+ *
+ * The guard stays anyway. It costs nothing on the path that reaches it now (an empty store,
+ * every time), and it is the only thing that would stop a FUTURE writer of `ai_issue_ledger`
+ * outside a reset from reaching this exact hazard again: stamping `register_scope` on eight
+ * syncs that never ran would let the dry run resolve that ledger's rows BY ABSENCE against a
+ * scan nobody performed. Leaving the stamp off makes `prevScopeSignature` null, which
+ * `reconcileIssueLedger` reads as UNKNOWN and declines to resolve against. The trend still
+ * seeds unconditionally, because that half never claimed to be a measurement of issues.
+ */
+function seedDryRunHistory(endIso: string, registerScope: string): void {
+  if (dataRowCount(TABS.syncHistory) > 0) return;
+  seedTrendHistory(endIso, registerScope, seedIssueLedger(endIso, registerScope));
+}
+
+/**
+ * Write the sample lifecycle ledger, once, into a store that has never held one.
+ *
+ * Returns whether it wrote. Guarded on BOTH tabs: an empty ledger says nothing has been
+ * reconciled, an empty history says nothing has been committed, and only a store where both
+ * are true can be handed a fabricated past without overwriting somebody's real one.
+ */
+function seedIssueLedger(endIso: string, registerScope: string): boolean {
+  if (dataRowCount(TABS.issueLedger) > 0) return false;
+  appendRows(TABS.issueLedger, seedLedgerRows(endIso, registerScope).map(issueLedgerToRow));
+  return true;
+}
+
+/**
  * Backfill the dry-run's trend with the sample history, once, on the first dry-run into
  * an empty ledger. Only ever runs without credentials, and only when nothing has been
  * recorded yet, so it can never invent history in front of a real tenant's.
+ *
+ * `withLedger` false leaves `issue_count`, `ledger_json`, `register_scope` and the two
+ * posture cells null — the shape every one of these rows carried before the ledger seed
+ * existed, and the shape `capacityFromLedgerDeltas` and `trendFromHistory` both already
+ * read as "a sync recorded before the column existed: absent, not zero". See
+ * `seedDryRunHistory` above for when that happens and why.
  */
-function seedTrendHistory(endIso: string): void {
+function seedTrendHistory(endIso: string, registerScope: string, withLedger: boolean): void {
   if (dataRowCount(TABS.syncHistory) > 0) return;
-  const DAY_MS = 86_400_000;
-  const end = new Date(endIso).getTime();
+  // Counted off SEED_LEDGER, once for the whole history rather than per row — see
+  // sampleData's own section header for the table and the arithmetic that ties it to the
+  // ledger. Gated with the ledger for the reason `seedDryRunHistory` gives: both cells count
+  // the rows the LEDGER says were open, so writing them beside a real ledger they do not
+  // describe would put a fabricated posture on a register somebody actually synced.
+  const posture = withLedger ? seedPostureTrend(endIso) : null;
   appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
     // Dated backwards from the sync being run, one day apart, so the sample history
     // runs continuously into the live point rather than leaving a gap in the line.
-    const at = new Date(end - (SEED_TREND.length - i) * DAY_MS).toISOString();
+    // `seedSyncAt` is shared with the ledger rows, so a row's first_seen_at and the
+    // finished_at of the sync that first saw it are the same instant by construction.
+    const at = seedSyncAt(endIso, i);
+    const entry = withLedger ? SEED_LEDGER.history[i] : undefined;
     return {
-      sync_id: `sync-sample-${String(i + 1).padStart(2, "0")}`,
+      sync_id: seedSyncId(i),
       started_at: at,
       finished_at: at,
       status: "SUCCESS",
       mode: "dry-run",
       node_count: null,
       edge_count: null,
-      issue_count: null,
+      // The OPEN population this synthetic sync ended with, not the size of its register:
+      // the two differ by every row that had already left.
+      issue_count: entry ? entry.issueCount : null,
       api_calls: 0,
       snapshot_ref: null,
       error: null,
       aars_severity_json: JSON.stringify(counts),
+      // What the ledger DID on this sync — the five transition counts, in the same shape
+      // `persistSync` writes for a real one. Without them every lifecycle figure has one
+      // comparable point, which is none.
+      ledger_json: entry ? JSON.stringify(entry.deltas) : null,
+      // LOAD-BEARING. `reconcileIssueLedger` reads the last committed row's scope as
+      // `prevScopeSignature`, and resolves by absence only when it EQUALS the scope the
+      // current sync applies. Absent here reads as UNKNOWN, and the dry run's six departures
+      // become six `skippedNarrowedScope` instead — the perturbation in test/seedLedger.test.ts
+      // measures exactly that.
+      register_scope: entry ? registerScope : null,
+      // WHERE THE OPEN ROWS SAT relative to the AI estate, and how many adjacency edges the
+      // graph held to place them with — the three placements plus their denominator, in the
+      // same cell `persistSync` writes them into. Without it this series has one point, and
+      // "Where issues sit" renders a heading, a note and no chart on the one dataset every
+      // dev harness and every test opens.
+      adjacency_json: posture ? JSON.stringify(posture[i]!.adjacency) : null,
+      // Open issues per risk category at this sync, counted from the same open rows.
+      category_counts_json: posture ? JSON.stringify(posture[i]!.categoryCounts) : null,
+      // NULL ON EVERY SYNTHETIC ROW, DELIBERATELY, and null is the measurement. No evidence
+      // pass ran over the fabricated history — and none runs on the dry run either, which
+      // passes no `vulnFindings`, so `persistSync` writes null on its own row too. A zeroed
+      // census here would draw five flat lines saying nothing is exploitable over a register
+      // nobody asked the question of, which is the one thing `EXPLOITATION_SPEC`'s null-skip
+      // exists to prevent. The card says "No sync has recorded this yet." and means it.
+      exploitation_json: null,
     };
   }));
 }
@@ -884,7 +971,11 @@ function seedTrendHistory(endIso: string): void {
 /** Seed-data sync: same persist path as live, zero credentials, completes in-line. */
 function dryRunSync(): StartResult {
   const startedAt = nowIso();
-  seedTrendHistory(startedAt);
+  // ONE scope signature for the fabricated prior, computed from the same source `persistSync`
+  // reads below. They MUST be the same string: the ledger's disappearance pass compares the
+  // scope the last committed sync applied against the one this sync applies, and two reads
+  // that could ever differ would make the seed silently unresolvable.
+  seedDryRunHistory(startedAt, registerScopeSignature(settingsStore.getIssueCategories()));
   const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
   const doc = persistSync(
     seedGraphDoc(startedAt),

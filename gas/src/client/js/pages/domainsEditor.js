@@ -7,7 +7,15 @@ import { call } from "../../../../../gas_shared/api.js";
 import { buildPrefillRule } from "../attributionPrefill.js";
 import { EXPORT_KIND, parseDomainsImport } from "../domainsImport.js";
 import {
-  clear, confirmDialog, downloadText, el, statusPill, tip, tipAnchor, toast, truncTip,
+  clear,
+  confirmDialog,
+  downloadText,
+  el,
+  statusPill,
+  tip,
+  tipAnchor,
+  toast,
+  truncTip,
 } from "../ui.js";
 
 export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
@@ -18,26 +26,55 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   let initialJson = JSON.stringify(boot.settings.domains.items || []);
   const isDirty = () => JSON.stringify(items) !== initialJson;
   // Subscriptions / support groups seen in the current scan, offered by the pickers.
-  const knownSubs = (boot.filterOptions && boot.filterOptions.subscriptions) || [];
-  const knownGroups = (boot.filterOptions && boot.filterOptions.supportGroups) || [];
+  const knownSubs =
+    (boot.filterOptions && boot.filterOptions.subscriptions) || [];
+  const knownGroups =
+    (boot.filterOptions && boot.filterOptions.supportGroups) || [];
   // Case-fold to mirror the rule engine's matching (domainRules.ts `fold`), so the
   // "already claimed" hint agrees with how findings actually get assigned.
   const fold = (s) => String(s).trim().toLowerCase();
 
   const listHost = el("div", {});
-  const addBtn = el("button", { onclick: () => openEditor(null) }, "Add manual group");
+  const addBtn = el(
+    "button",
+    { onclick: () => openEditor(null) },
+    "Add manual group",
+  );
   const exportBtn = el("button", { onclick: exportJson }, "Export JSON");
   const fileInput = el("input", {
-    type: "file", accept: "application/json", style: "display:none",
-    "aria-hidden": "true", tabindex: "-1",
+    type: "file",
+    accept: "application/json",
+    style: "display:none",
+    "aria-hidden": "true",
+    tabindex: "-1",
   });
   fileInput.addEventListener("change", importJson);
-  const importBtn = el("button", { onclick: () => fileInput.click() }, "Import JSON");
-  const saveBtn = el("button", { class: "primary", onclick: save }, "Save manual groups");
-  const dirtyHost = el("span", { style: "display:inline-flex; align-items:center; margin-left:2px" });
-  host.append(listHost, el("div",
-    { style: "display:flex; gap:8px; margin-top:10px; align-items:center" },
-    addBtn, exportBtn, importBtn, saveBtn, dirtyHost, fileInput));
+  const importBtn = el(
+    "button",
+    { onclick: () => fileInput.click() },
+    "Import JSON",
+  );
+  const saveBtn = el(
+    "button",
+    { class: "primary", onclick: save },
+    "Save manual groups",
+  );
+  const dirtyHost = el("span", {
+    style: "display:inline-flex; align-items:center; margin-left:2px",
+  });
+  host.append(
+    listHost,
+    el(
+      "div",
+      { style: "display:flex; gap:8px; margin-top:10px; align-items:center" },
+      addBtn,
+      exportBtn,
+      importBtn,
+      saveBtn,
+      dirtyHost,
+      fileInput,
+    ),
+  );
   renderList();
 
   function refreshDirty() {
@@ -47,7 +84,7 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
 
   function exportJson() {
     // Snapshots the list as currently edited (not necessarily saved) — same
-    // {kind, items} shape the Streamlit dashboard exports and imports.
+    // {kind, items} shape accepted by the domain import parser.
     downloadText(
       "wiz_domains.json",
       JSON.stringify({ kind: EXPORT_KIND, items }, null, 2),
@@ -66,7 +103,8 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     }
     const ok = await confirmDialog({
       title: "Replace all manual groups?",
-      body: `Import ${res.items.length} domain(s), replacing the current list of ` +
+      body:
+        `Import ${res.items.length} domain(s), replacing the current list of ` +
         `${items.length}. Nothing is stored until you press Save manual groups.`,
       confirmLabel: "Replace",
       danger: true,
@@ -74,34 +112,70 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     if (!ok) return;
     items = res.items;
     renderList();
-    toast(`Imported ${res.items.length} manual group(s) — press Save manual groups to persist.`);
+    toast(
+      `Imported ${res.items.length} manual group(s) — press Save manual groups to persist.`,
+    );
   }
 
   function renderList() {
     clear(listHost);
     refreshDirty();
     if (!items.length) {
-      listHost.append(el("p", { class: "muted small" },
-        "No manual groups defined — findings the Wiz/Domain tag doesn't cover show as "
-        + "Unassigned."));
+      listHost.append(
+        el(
+          "p",
+          { class: "muted small" },
+          "No manual groups defined — findings the Wiz/Domain tag doesn't cover show as " +
+            "Unassigned.",
+        ),
+      );
       return;
     }
     items.forEach((item, i) => {
       const ruleCount = (item.rules || []).length;
       listHost.append(
-        el("div", { class: "domain-row" },
+        el(
+          "div",
+          { class: "domain-row" },
           el("span", { class: "muted small num" }, `${i + 1}.`),
-          el("div", { class: "grow" },
+          el(
+            "div",
+            { class: "grow" },
             el("strong", {}, item.name),
-            el("span", { class: "domain-chip", style: "margin-left:8px" },
-              `${ruleCount} rule(s)`)),
-          el("div", { class: "domain-row__actions" },
-            el("button", { onclick: () => move(i, -1), disabled: i === 0,
-              "aria-label": `Move ${item.name} up` }, "↑"),
-            el("button", { onclick: () => move(i, 1), disabled: i === items.length - 1,
-              "aria-label": `Move ${item.name} down` }, "↓"),
+            el(
+              "span",
+              { class: "domain-chip", style: "margin-left:8px" },
+              `${ruleCount} rule(s)`,
+            ),
+          ),
+          el(
+            "div",
+            { class: "domain-row__actions" },
+            el(
+              "button",
+              {
+                onclick: () => move(i, -1),
+                disabled: i === 0,
+                "aria-label": `Move ${item.name} up`,
+              },
+              "↑",
+            ),
+            el(
+              "button",
+              {
+                onclick: () => move(i, 1),
+                disabled: i === items.length - 1,
+                "aria-label": `Move ${item.name} down`,
+              },
+              "↓",
+            ),
             el("button", { onclick: () => openEditor(i) }, "Edit"),
-            el("button", { class: "danger", onclick: () => remove(i) }, "Delete")),
+            el(
+              "button",
+              { class: "danger", onclick: () => remove(i) },
+              "Delete",
+            ),
+          ),
         ),
       );
     });
@@ -116,7 +190,8 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   async function remove(i) {
     const ok = await confirmDialog({
       title: `Delete domain “${items[i].name}”?`,
-      body: "Findings it claimed fall through to lower-priority manual groups or Unassigned. " +
+      body:
+        "Findings it claimed fall through to lower-priority manual groups or Unassigned. " +
         "Not saved until you press Save manual groups.",
       confirmLabel: "Delete",
       danger: true,
@@ -156,41 +231,74 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
   // usual blank starter rule; for an existing domain it's appended alongside whatever
   // rules the domain already has. Nothing is saved until the normal Save/Apply flow.
   function openEditor(index, prefill) {
-    const editing = index !== null ? JSON.parse(JSON.stringify(items[index])) : { name: "", rules: [] };
+    const editing =
+      index !== null
+        ? JSON.parse(JSON.stringify(items[index]))
+        : { name: "", rules: [] };
     const prefillRule = prefill ? buildPrefillRule(prefill.resource) : null;
     if (index === null && prefillRule) {
       editing.rules = [prefillRule];
     } else {
-      if (!editing.rules.length) editing.rules.push({ conditions: [emptyCondition()] });
+      if (!editing.rules.length)
+        editing.rules.push({ conditions: [emptyCondition()] });
       if (index !== null && prefillRule) editing.rules.push(prefillRule);
     }
 
-    const nameInput = el("input", { type: "text", value: editing.name,
-      placeholder: "e.g. Payments", "aria-label": "Manual group name", style: "width:100%" });
+    const nameInput = el("input", {
+      type: "text",
+      value: editing.name,
+      placeholder: "e.g. Payments",
+      "aria-label": "Manual group name",
+      style: "width:100%",
+    });
     const rulesHost = el("div", { class: "rules-host" });
-    const previewHost = el("div", { class: "rule-preview", "aria-live": "polite" },
-      el("span", { class: "rule-preview__text small muted" }, "Matching…"));
+    const previewHost = el(
+      "div",
+      { class: "rule-preview", "aria-live": "polite" },
+      el("span", { class: "rule-preview__text small muted" }, "Matching…"),
+    );
 
     // Header + live preview + actions stay pinned while the rules region scrolls, so a domain
     // with several rules never pushes the match count or Apply/Cancel off-screen.
-    const dlg = el("dialog", { class: "domains-dialog" },
+    const dlg = el(
+      "dialog",
+      { class: "domains-dialog" },
       el("h3", {}, index !== null ? `Edit “${editing.name}”` : "Add domain"),
-      el("div", { class: "dialog-scroll" },
+      el(
+        "div",
+        { class: "dialog-scroll" },
         el("label", { class: "field-label" }, "Name"),
         nameInput,
         prefill ? prefillContextLine(prefill.resource) : null,
-        el("p", { class: "small muted", style: "margin:10px 0 12px" },
-          "A finding matches the domain when ANY rule matches; a rule matches when ALL its conditions do."),
+        el(
+          "p",
+          { class: "small muted", style: "margin:10px 0 12px" },
+          "A finding matches the domain when ANY rule matches; a rule matches when ALL its conditions do.",
+        ),
         rulesHost,
-        el("button", { class: "add-rule-btn", type: "button", onclick: () => {
-          editing.rules.push({ conditions: [emptyCondition()] });
-          renderRules();
-        } }, "+ Add rule (OR)"),
+        el(
+          "button",
+          {
+            class: "add-rule-btn",
+            type: "button",
+            onclick: () => {
+              editing.rules.push({ conditions: [emptyCondition()] });
+              renderRules();
+            },
+          },
+          "+ Add rule (OR)",
+        ),
       ),
       el("div", { class: "dialog-preview" }, previewHost),
-      el("div", { class: "dialog-actions" },
+      el(
+        "div",
+        { class: "dialog-actions" },
         el("button", { onclick: () => dlg.close() }, "Cancel"),
-        el("button", { class: "primary", onclick: commit }, index !== null ? "Apply" : "Add"),
+        el(
+          "button",
+          { class: "primary", onclick: commit },
+          index !== null ? "Apply" : "Add",
+        ),
       ),
     );
     document.body.append(dlg);
@@ -214,9 +322,12 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       const bits = [];
       if (r.subscription) bits.push(`subscription ${r.subscription}`);
       if (r.supportGroup) bits.push(`support group ${r.supportGroup}`);
-      return el("p", { class: "small muted", style: "margin:6px 0 4px" },
+      return el(
+        "p",
+        { class: "small muted", style: "margin:6px 0 4px" },
         `Attributing: ${r.asset || "(unnamed asset)"}`,
-        bits.length ? ` — ${bits.join(", ")}` : "");
+        bits.length ? ` — ${bits.join(", ")}` : "",
+      );
     }
 
     // Map folded value -> name of the domain that already claims it (for one condition
@@ -244,59 +355,124 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       clear(rulesHost);
       editing.rules.forEach((rule, ri) => {
         const ruleCard = el("div", { class: "rule-card" });
-        ruleCard.append(el("div", { class: "rule-card__head" },
-          el("span", { class: "rule-card__title" },
-            `Rule ${ri + 1}`,
-            el("span", { class: "rule-card__hint" }, "all conditions must match")),
-          // Was a native `title` beside an aria-label saying the same thing, so the glyph
-          // explained itself to a screen reader and to a mouse, and to nobody else. `tip`
-          // attaches in place because the button is already interactive.
-          editing.rules.length > 1
-            ? tip(
-                el("button", { class: "rule-card__remove", type: "button",
-                  "aria-label": `Remove rule ${ri + 1}`, onclick: () => {
-                  editing.rules.splice(ri, 1);
-                  renderRules();
-                  schedulePreview();
-                } }, "✕"),
-                ["Remove rule"],
-              )
-            : null,
-        ));
+        ruleCard.append(
+          el(
+            "div",
+            { class: "rule-card__head" },
+            el(
+              "span",
+              { class: "rule-card__title" },
+              `Rule ${ri + 1}`,
+              el(
+                "span",
+                { class: "rule-card__hint" },
+                "all conditions must match",
+              ),
+            ),
+            // Was a native `title` beside an aria-label saying the same thing, so the glyph
+            // explained itself to a screen reader and to a mouse, and to nobody else. `tip`
+            // attaches in place because the button is already interactive.
+            editing.rules.length > 1
+              ? tip(
+                  el(
+                    "button",
+                    {
+                      class: "rule-card__remove",
+                      type: "button",
+                      "aria-label": `Remove rule ${ri + 1}`,
+                      onclick: () => {
+                        editing.rules.splice(ri, 1);
+                        renderRules();
+                        schedulePreview();
+                      },
+                    },
+                    "✕",
+                  ),
+                  ["Remove rule"],
+                )
+              : null,
+          ),
+        );
         (rule.conditions || []).forEach((cond, ci) => {
           ruleCard.append(conditionRow(rule, cond, ci));
         });
-        ruleCard.append(el("button", { class: "btn-add", type: "button", onclick: () => {
-          rule.conditions.push(emptyCondition());
-          renderRules();
-        } }, "+ AND condition"));
+        ruleCard.append(
+          el(
+            "button",
+            {
+              class: "btn-add",
+              type: "button",
+              onclick: () => {
+                rule.conditions.push(emptyCondition());
+                renderRules();
+              },
+            },
+            "+ AND condition",
+          ),
+        );
         rulesHost.append(ruleCard);
         // Explicit OR divider between rule cards — the rules are OR-ed, shown, not just stated.
         if (ri < editing.rules.length - 1) {
-          rulesHost.append(el("div", { class: "rule-or", "aria-hidden": "true" },
-            el("span", { class: "rule-or__chip" }, "OR")));
+          rulesHost.append(
+            el(
+              "div",
+              { class: "rule-or", "aria-hidden": "true" },
+              el("span", { class: "rule-or__chip" }, "OR"),
+            ),
+          );
         }
       });
     }
 
     function conditionRow(rule, cond, ci) {
-      const typeSel = el("select", { "aria-label": "Condition type" },
-        el("option", { value: "tag", selected: cond.type === "tag" || null }, "Tag equals"),
-        el("option", { value: "name_regex", selected: cond.type === "name_regex" || null }, "Asset name regex"),
-        el("option", { value: "subscription", selected: cond.type === "subscription" || null }, "Subscription in"),
-        el("option", { value: "support_group", selected: cond.type === "support_group" || null }, "Support group in"),
+      const typeSel = el(
+        "select",
+        { "aria-label": "Condition type" },
+        el(
+          "option",
+          { value: "tag", selected: cond.type === "tag" || null },
+          "Tag equals",
+        ),
+        el(
+          "option",
+          { value: "name_regex", selected: cond.type === "name_regex" || null },
+          "Asset name regex",
+        ),
+        el(
+          "option",
+          {
+            value: "subscription",
+            selected: cond.type === "subscription" || null,
+          },
+          "Subscription in",
+        ),
+        el(
+          "option",
+          {
+            value: "support_group",
+            selected: cond.type === "support_group" || null,
+          },
+          "Support group in",
+        ),
       );
       const fields = el("span", { class: "cond-fields" });
       typeSel.addEventListener("change", () => {
-        if (typeSel.value === "tag") Object.assign(cond, { type: "tag", key: "", value: "" });
+        if (typeSel.value === "tag")
+          Object.assign(cond, { type: "tag", key: "", value: "" });
         else if (typeSel.value === "name_regex") {
-          delete cond.key; delete cond.value; delete cond.values;
+          delete cond.key;
+          delete cond.value;
+          delete cond.values;
           Object.assign(cond, { type: "name_regex", pattern: "" });
         } else if (typeSel.value === "support_group") {
-          delete cond.key; delete cond.value; delete cond.pattern;
+          delete cond.key;
+          delete cond.value;
+          delete cond.pattern;
           Object.assign(cond, { type: "support_group", values: [] });
         } else {
-          delete cond.key; delete cond.value; delete cond.pattern;
+          delete cond.key;
+          delete cond.value;
+          delete cond.pattern;
           Object.assign(cond, { type: "subscription", values: [] });
         }
         renderFields();
@@ -308,27 +484,50 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         clear(fields);
         if (cond.type === "tag") {
           fields.append(
-            input("key", cond.key ?? "", (v) => (cond.key = v), "tag key (exact)"),
-            input("value", cond.value ?? "", (v) => (cond.value = v === "" ? null : v),
-              "value (empty = any)"),
+            input(
+              "key",
+              cond.key ?? "",
+              (v) => (cond.key = v),
+              "tag key (exact)",
+            ),
+            input(
+              "value",
+              cond.value ?? "",
+              (v) => (cond.value = v === "" ? null : v),
+              "value (empty = any)",
+            ),
           );
         } else if (cond.type === "name_regex") {
-          fields.append(input("pattern", cond.pattern ?? "", (v) => (cond.pattern = v),
-            "regex, case-insensitive"));
+          fields.append(
+            input(
+              "pattern",
+              cond.pattern ?? "",
+              (v) => (cond.pattern = v),
+              "regex, case-insensitive",
+            ),
+          );
         } else if (cond.type === "support_group") {
-          fields.append(valuePicker(cond, knownGroups, {
-            condType: "support_group", label: "Support groups",
-            addPlaceholder: "add support group…",
-            addAria: "Add a support group not in the scan",
-            emptyText: "No support groups in the current scan — add one below.",
-          }));
+          fields.append(
+            valuePicker(cond, knownGroups, {
+              condType: "support_group",
+              label: "Support groups",
+              addPlaceholder: "add support group…",
+              addAria: "Add a support group not in the scan",
+              emptyText:
+                "No support groups in the current scan — add one below.",
+            }),
+          );
         } else {
-          fields.append(valuePicker(cond, knownSubs, {
-            condType: "subscription", label: "Subscriptions",
-            addPlaceholder: "add subscription…",
-            addAria: "Add a subscription not in the scan",
-            emptyText: "No subscriptions in the current scan — add one below.",
-          }));
+          fields.append(
+            valuePicker(cond, knownSubs, {
+              condType: "subscription",
+              label: "Subscriptions",
+              addPlaceholder: "add subscription…",
+              addAria: "Add a subscription not in the scan",
+              emptyText:
+                "No subscriptions in the current scan — add one below.",
+            }),
+          );
         }
       }
 
@@ -340,10 +539,14 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         if (!Array.isArray(cond.values)) cond.values = [];
         const claimed = claimedValues(opts.condType);
         const wrap = el("div", { style: "flex:1; min-width:220px" });
-        const listHost = el("div", { class: "sub-picker", role: "group",
-          "aria-label": opts.label });
+        const listHost = el("div", {
+          class: "sub-picker",
+          role: "group",
+          "aria-label": opts.label,
+        });
 
-        const isSelected = (name) => cond.values.some((v) => fold(v) === fold(name));
+        const isSelected = (name) =>
+          cond.values.some((v) => fold(v) === fold(name));
 
         function draw() {
           clear(listHost);
@@ -363,22 +566,34 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
           });
           // Selectable (unattributed or already selected here) first, then grayed; each
           // group alphabetical.
-          rows.sort((a, b) =>
-            (a.grayed ? 1 : 0) - (b.grayed ? 1 : 0) || a.name.localeCompare(b.name));
+          rows.sort(
+            (a, b) =>
+              (a.grayed ? 1 : 0) - (b.grayed ? 1 : 0) ||
+              a.name.localeCompare(b.name),
+          );
           if (!rows.length) {
-            listHost.append(el("p", { class: "muted small", style: "margin:2px 0" },
-              opts.emptyText));
+            listHost.append(
+              el(
+                "p",
+                { class: "muted small", style: "margin:2px 0" },
+                opts.emptyText,
+              ),
+            );
           }
           rows.forEach((row) => {
-            const cb = el("input", { type: "checkbox",
+            const cb = el("input", {
+              type: "checkbox",
               checked: row.selected ? true : null,
               disabled: row.grayed ? true : null,
-              "aria-disabled": row.grayed ? "true" : null });
+              "aria-disabled": row.grayed ? "true" : null,
+            });
             cb.addEventListener("change", () => {
               if (cb.checked) {
                 if (!isSelected(row.name)) cond.values.push(row.name);
               } else {
-                cond.values = cond.values.filter((v) => fold(v) !== fold(row.name));
+                cond.values = cond.values.filter(
+                  (v) => fold(v) !== fold(row.name),
+                );
               }
               schedulePreview();
             });
@@ -397,19 +612,30 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
             //            instead of a tooltip that fires over text already fully readable.
             const nameEl = el("span", { class: "sub-name" }, row.name);
             if (!row.owner) truncTip(nameEl, row.name);
-            const pickRow = el("label", { class: row.grayed ? "claimed" : null },
+            const pickRow = el(
+              "label",
+              { class: row.grayed ? "claimed" : null },
               cb,
               nameEl,
-              row.owner ? el("span", { class: "sub-owner" }, `in ${row.owner}`) : null);
+              row.owner
+                ? el("span", { class: "sub-owner" }, `in ${row.owner}`)
+                : null,
+            );
             if (row.owner) {
-              tipAnchor(pickRow, () => [`Already used by domain “${row.owner}”`]);
+              tipAnchor(pickRow, () => [
+                `Already used by domain “${row.owner}”`,
+              ]);
             }
             listHost.append(pickRow);
           });
         }
 
-        const addInput = el("input", { type: "text", placeholder: opts.addPlaceholder,
-          "aria-label": opts.addAria, style: "flex:1; min-height:30px" });
+        const addInput = el("input", {
+          type: "text",
+          placeholder: opts.addPlaceholder,
+          "aria-label": opts.addAria,
+          style: "flex:1; min-height:30px",
+        });
         const addValue = () => {
           const v = addInput.value.trim();
           if (!v) return;
@@ -419,18 +645,33 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
           schedulePreview();
         };
         addInput.addEventListener("keydown", (e) => {
-          if (e.key === "Enter") { e.preventDefault(); addValue(); }
+          if (e.key === "Enter") {
+            e.preventDefault();
+            addValue();
+          }
         });
-        const addBtn = el("button", { class: "link", type: "button", onclick: addValue }, "Add");
+        const addBtn = el(
+          "button",
+          { class: "link", type: "button", onclick: addValue },
+          "Add",
+        );
 
         draw();
-        wrap.append(listHost, el("div", { class: "sub-add" }, addInput, addBtn));
+        wrap.append(
+          listHost,
+          el("div", { class: "sub-add" }, addInput, addBtn),
+        );
         return wrap;
       }
 
       function input(label, value, set, placeholder) {
-        const inp = el("input", { type: "text", value, placeholder,
-          "aria-label": label, style: "margin-left:6px; min-height:30px" });
+        const inp = el("input", {
+          type: "text",
+          value,
+          placeholder,
+          "aria-label": label,
+          style: "margin-left:6px; min-height:30px",
+        });
         inp.addEventListener("input", () => {
           set(inp.value);
           schedulePreview();
@@ -438,18 +679,32 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         return inp;
       }
 
-      return el("div", { class: "cond-row" },
-        el("span", { class: "cond-conn", "aria-hidden": "true" }, ci === 0 ? "IF" : "AND"),
+      return el(
+        "div",
+        { class: "cond-row" },
+        el(
+          "span",
+          { class: "cond-conn", "aria-hidden": "true" },
+          ci === 0 ? "IF" : "AND",
+        ),
         typeSel,
         // Same conversion as the rule card's remove button above, for the same reason.
-        (rule.conditions.length > 1)
+        rule.conditions.length > 1
           ? tip(
-              el("button", { class: "cond-remove", type: "button",
-                "aria-label": `Remove condition ${ci + 1}`, onclick: () => {
-                rule.conditions.splice(ci, 1);
-                renderRules();
-                schedulePreview();
-              } }, "✕"),
+              el(
+                "button",
+                {
+                  class: "cond-remove",
+                  type: "button",
+                  "aria-label": `Remove condition ${ci + 1}`,
+                  onclick: () => {
+                    rule.conditions.splice(ci, 1);
+                    renderRules();
+                    schedulePreview();
+                  },
+                },
+                "✕",
+              ),
               ["Remove condition"],
             )
           : null,
@@ -465,11 +720,16 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
     async function runPreview() {
       const name = nameInput.value.trim() || "this domain";
       clear(previewHost);
-      previewHost.append(el("span", { class: "rule-preview__text small muted" }, "Matching…"));
+      previewHost.append(
+        el("span", { class: "rule-preview__text small muted" }, "Matching…"),
+      );
       try {
         // Preview the candidate list with this item swapped in at its priority slot.
         const candidate = JSON.parse(JSON.stringify(items));
-        const entry = { name: nameInput.value.trim() || "Preview", rules: editing.rules };
+        const entry = {
+          name: nameInput.value.trim() || "Preview",
+          rules: editing.rules,
+        };
         if (index !== null) candidate[index] = entry;
         else candidate.push(entry);
         const res = await call("api_previewDomains", { items: candidate });
@@ -478,13 +738,22 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
         // Neutral count pill (rationed ink — a preview isn't a risk state) + muted context.
         previewHost.append(
           statusPill("neutral", `${mine.count.toLocaleString()} matched`),
-          el("span", { class: "rule-preview__text small muted" },
+          el(
+            "span",
+            { class: "rule-preview__text small muted" },
             `${name} matches ${mine.count.toLocaleString()} of ${res.total.toLocaleString()} finding(s)` +
-            (mine.samples.length ? ` — e.g. ${mine.samples.join(", ")}` : "")));
+              (mine.samples.length ? ` — e.g. ${mine.samples.join(", ")}` : ""),
+          ),
+        );
       } catch (e) {
         clear(previewHost);
-        previewHost.append(el("span", { class: "rule-preview__text small muted" },
-          `Preview unavailable: ${e.message}`));
+        previewHost.append(
+          el(
+            "span",
+            { class: "rule-preview__text small muted" },
+            `Preview unavailable: ${e.message}`,
+          ),
+        );
       }
     }
 
@@ -516,25 +785,44 @@ export function renderDomainsEditor(host, boot, ctx, hooks = {}) {
       return;
     }
     const NEW_DOMAIN = "__new__";
-    const select = el("select", { "aria-label": "Manual group to add a rule to" },
+    const select = el(
+      "select",
+      { "aria-label": "Manual group to add a rule to" },
       ...items.map((item, i) => el("option", { value: String(i) }, item.name)),
       el("option", { value: NEW_DOMAIN }, "New domain…"),
     );
-    const dlg = el("dialog", { class: "domains-dialog" },
+    const dlg = el(
+      "dialog",
+      { class: "domains-dialog" },
       el("h3", {}, `Attribute ${(resource && resource.asset) || "resource"}`),
-      el("div", { class: "dialog-scroll" },
-        el("p", { class: "small muted" },
-          "Add a rule for this resource to an existing domain, or start a new one."),
+      el(
+        "div",
+        { class: "dialog-scroll" },
+        el(
+          "p",
+          { class: "small muted" },
+          "Add a rule for this resource to an existing domain, or start a new one.",
+        ),
         el("label", { class: "field-label" }, "Manual group"),
         select,
       ),
-      el("div", { class: "dialog-actions" },
+      el(
+        "div",
+        { class: "dialog-actions" },
         el("button", { onclick: () => dlg.close() }, "Cancel"),
-        el("button", { class: "primary", onclick: () => {
-          const chosen = select.value === NEW_DOMAIN ? null : Number(select.value);
-          dlg.close();
-          openEditor(chosen, { resource });
-        } }, "Continue"),
+        el(
+          "button",
+          {
+            class: "primary",
+            onclick: () => {
+              const chosen =
+                select.value === NEW_DOMAIN ? null : Number(select.value);
+              dlg.close();
+              openEditor(chosen, { resource });
+            },
+          },
+          "Continue",
+        ),
       ),
     );
     document.body.append(dlg);

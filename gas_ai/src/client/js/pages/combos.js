@@ -22,7 +22,8 @@ import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets
 import { kindIconSvg, kindLabel, categoryOf } from "../../../../../gas_shared/icons.js";
 import {
   absent,
-  clear, dataTable, debounce, el, emptyState, errorState, heroStat, outcomeBadge, pageHeader,
+  clear, dataTable, debounce, el, errorState, firstRunNotice, heroStat, measuredEmpty,
+  outcomeBadge, pageHeader,
   outcomeLabel, plural, sectionLabel, select, statRow, tableFooter,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
   togglePills,
@@ -130,13 +131,14 @@ export async function renderCombos(main, params) {
     lede: "Multi-condition risk patterns on AI assets: privileged access, sensitive data and " +
       "missing guardrails combined. Wiz severity is shown beside the adjusted severity " +
       "this register adds, never replaced by it.",
+    help: { term: "toxic-combination" },
   }));
 
   if (!boot.latestSync) {
-    main.append(emptyState(
-      "No sync yet.",
-      "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
-    ));
+    main.append(firstRunNotice({
+      synced: false,
+      hint: "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
+    }));
     return;
   }
 
@@ -147,8 +149,9 @@ export async function renderCombos(main, params) {
   // Seeded from the URL so a filtered, sorted, expanded view is shareable — and held out
   // here so an SWR repaint restores it instead of throwing it away.
   const view = readComboParams(params);
-  // group id -> the rows api_getIssues answered with. Kept so a repaint re-renders the
-  // open table from memory rather than flashing a loading line at the analyst.
+  // group id -> the response api_getIssues answered with (`{all, rows, filtered, page,
+  // pageCount}`). Kept so a repaint re-renders the open table from memory rather than
+  // flashing a loading line at the analyst.
   const issueRows = new Map();
   let payload = null;
 
@@ -169,6 +172,21 @@ export async function renderCombos(main, params) {
 
   // --------------------------------------------------------------------------- paint
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[combos] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint(fresh) {
     payload = fresh;
     const digest = fresh.digest || null;
@@ -179,7 +197,12 @@ export async function renderCombos(main, params) {
     // A payload cached before the digest shipped still renders the page — it just can't
     // draw the parts that are made of counts. Honest state beats a blank pane.
     if (digest) {
-      host.append(kpiRow(digest.totals), summaryRow(digest, digestById));
+      const kpiHost = el("div", {});
+      const summaryHost = el("div", {});
+      host.append(kpiHost, summaryHost);
+      guard("the issue totals", kpiHost, () => kpiHost.append(kpiRow(digest.totals)));
+      guard("the pattern summary", summaryHost,
+        () => summaryHost.append(summaryRow(digest, digestById)));
     }
 
     const ranked = rankGroups(fresh.groups || []);
@@ -188,14 +211,20 @@ export async function renderCombos(main, params) {
     host.append(patternsHeader(ranked, shown, digestById));
 
     if (!shown.length) {
-      host.append(emptyState(
+      host.append(measuredEmpty(
         "No pattern matches these filters.",
-        "Clear the severity or condition filter to see all " + ranked.length + " patterns.",
+        {
+          at: boot.latestSync.finished_at,
+          hint: "Clear the severity or condition filter to see all " + ranked.length + " patterns.",
+        },
       ));
       return;
     }
     for (const group of shown) {
-      host.append(patternCard(group, digestById.get(group.id)));
+      const cardHost = el("div", {});
+      host.append(cardHost);
+      guard("the " + group.title + " card", cardHost,
+        () => cardHost.append(patternCard(group, digestById.get(group.id))));
     }
   }
 
@@ -400,7 +429,8 @@ export async function renderCombos(main, params) {
     bar.append(sectionLabel(
       shown.length === ranked.length
         ? "Patterns"
-        : "Patterns — " + shown.length + " of " + ranked.length));
+        : "Patterns — " + shown.length + " of " + ranked.length,
+      { term: "toxic-combination" }));
 
     const present = SEVERITY_RANK.filter((sev) =>
       ranked.some((g) => String(g.adjustedSeverity).toUpperCase() === sev));
@@ -640,9 +670,9 @@ export async function renderCombos(main, params) {
   // --------------------------------------------------------------------- issue table
 
   async function loadIssues(group, mount) {
-    const cachedRows = issueRows.get(group.id);
-    if (cachedRows) {
-      renderIssues(group, mount, cachedRows);
+    const cachedPayload = issueRows.get(group.id);
+    if (cachedPayload) {
+      renderIssues(group, mount, cachedPayload);
       return;
     }
     clear(mount).append(el("div", { role: "status", "aria-label": "Loading issues" },
@@ -650,13 +680,17 @@ export async function renderCombos(main, params) {
       el("div", { style: "height:8px" }),
       skeleton("line", { height: "18px" })));
     try {
-      const res = await swrCall("api_getIssues", { group: group.id }, (fresh) => {
-        issueRows.set(group.id, fresh.rows || []);
-        if (view.open === group.id) renderIssues(group, mount, fresh.rows || []);
-      });
-      issueRows.set(group.id, res.rows || []);
+      const res = await swrCall(
+        "api_getIssues",
+        { group: group.id, page: view.page, pageSize: PAGE_SIZE },
+        (fresh) => {
+          issueRows.set(group.id, fresh);
+          if (view.open === group.id) renderIssues(group, mount, fresh);
+        },
+      );
+      issueRows.set(group.id, res);
       if (view.open !== group.id) return; // the analyst closed it while we were fetching
-      renderIssues(group, mount, res.rows || []);
+      renderIssues(group, mount, res);
     } catch (e) {
       clear(mount).append(errorState("Couldn't load the issues for this pattern.", {
         detail: String((e && e.message) || e),
@@ -664,8 +698,26 @@ export async function renderCombos(main, params) {
     }
   }
 
-  function renderIssues(group, mount, rows) {
+  /**
+   * `api_getIssues` answers `all: true` under ISSUES_CLIENT_ALL_MAX — the whole pattern's
+   * rows in hand, filtered/sorted/paged locally, `renderIssuesAll` below — or `all: false`
+   * past it, where the server already cut the page, `renderIssuesPaged`. The same
+   * two-mode split `problems.js` draws over the whole union with `renderAll`/`renderPaged`.
+   *
+   * The parameter is named `resp`, never `payload`: this file already uses the outer
+   * `payload` variable for `api_getToxicCombos`'s data, and shadowing it here would put
+   * two different fetches one word apart.
+   */
+  function renderIssues(group, mount, resp) {
     clear(mount);
+    if (resp.all) renderIssuesAll(group, mount, resp);
+    else renderIssuesPaged(group, mount, resp);
+  }
+
+  // ------------------------------------------------------ all-mode: the pattern in hand
+
+  function renderIssuesAll(group, mount, resp) {
+    const rows = resp.rows || [];
     const options = issueFilterOptions(rows);
     const filtered = applyIssueFilters(rows, view);
     const sorted = view.sort ? sortIssues(filtered, view.sort, view.dir) : filtered;
@@ -673,8 +725,21 @@ export async function renderCombos(main, params) {
     if (view.page >= pageCount) view.page = pageCount - 1;
     const slice = sorted.slice(view.page * PAGE_SIZE, (view.page + 1) * PAGE_SIZE);
 
+    mount.append(issueFilterBar(group, mount, rows, options, filtered.length, rows.length));
+
+    // A dated notice in place of the table, not through its own bare `emptyText` row — the
+    // same fix `config.js` and `inventory.js` take, so the register is honest about WHEN it
+    // looked and found nothing to match. No footer under the whole-pattern branch: with
+    // zero rows there is nothing to page through.
+    if (!sorted.length) {
+      mount.append(measuredEmpty(
+        "No issue in this pattern matches the current filters.",
+        { at: boot.latestSync.finished_at, hint: emptyIssueHint() },
+      ));
+      return;
+    }
+
     mount.append(
-      issueFilterBar(group, mount, rows, options, filtered.length, rows.length),
       issueTable(mount, group, slice),
       tableFooter({
         page: view.page,
@@ -683,17 +748,90 @@ export async function renderCombos(main, params) {
         onPage: (next) => {
           view.page = next;
           persist();
-          renderIssues(group, mount, rows);
+          renderIssues(group, mount, resp);
         },
       }),
     );
   }
 
+  /**
+   * How many of THIS table's own filters (search, account, project) are narrowing it, said
+   * in words rather than left for the reader to notice from a blank table. Empty when none
+   * are set — `measuredEmpty` drops a falsy hint rather than printing a blank line.
+   */
+  function emptyIssueHint() {
+    const applied = [view.q, view.acct, view.proj].filter(Boolean).length;
+    return applied ? "Clear " + plural(applied, "filter") + " to see every issue in this pattern." : "";
+  }
+
+  // -------------------------------------------------- paged mode: a large pattern only
+
+  /**
+   * Past ISSUES_CLIENT_ALL_MAX the server already applied the group filter and cut the
+   * page; account/project/search narrow only what's on screen, and a page change
+   * re-fetches — the same degrade `getProblems`'s own paged path accepts for its
+   * client-only affordances ("kind and search narrow only what's on screen, and changing
+   * the outcome or the page re-fetches").
+   */
+  function renderIssuesPaged(group, mount, resp) {
+    const rows = resp.rows || [];
+    const options = issueFilterOptions(rows);
+    const filtered = applyIssueFilters(rows, view);
+    const sorted = view.sort ? sortIssues(filtered, view.sort, view.dir) : filtered;
+
+    mount.append(issueFilterBar(group, mount, rows, options, filtered.length, rows.length));
+
+    // The footer stays even on an empty page: account/project/search only narrow the page
+    // the server already sent (this file's own header on the two-mode split), so another
+    // page of the pattern may still have rows to page back to.
+    if (!sorted.length) {
+      mount.append(measuredEmpty(
+        "No issue on this page matches the current filters.",
+        { at: boot.latestSync.finished_at, hint: emptyIssueHint() },
+      ));
+    } else {
+      mount.append(issueTable(mount, group, sorted));
+    }
+    mount.append(tableFooter({
+      page: resp.page,
+      pageCount: resp.pageCount,
+      total: resp.filtered,
+      onPage: (next) => refetchIssues(group, mount, next),
+    }));
+  }
+
+  async function refetchIssues(group, mount, page) {
+    view.page = page;
+    persist();
+    clear(mount).append(el("div", { role: "status", "aria-label": "Loading issues" },
+      skeleton("line", { height: "18px" })));
+    try {
+      const fresh = await swrCall(
+        "api_getIssues",
+        { group: group.id, page, pageSize: PAGE_SIZE },
+        (f) => {
+          issueRows.set(group.id, f);
+          if (view.open === group.id) renderIssues(group, mount, f);
+        },
+      );
+      issueRows.set(group.id, fresh);
+      if (view.open !== group.id) return; // the analyst closed it while we were fetching
+      renderIssues(group, mount, fresh);
+    } catch (e) {
+      clear(mount).append(errorState("Couldn't load the issues for this pattern.", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function issueFilterBar(group, mount, rows, options, shownCount, totalCount) {
+    // The cached RESPONSE, not the `rows` array closed over above — in paged mode `rows` is
+    // only the current page, and re-rendering from it would drop the other pages' worth of
+    // context the footer still needs (`resp.filtered`/`page`/`pageCount`).
     const rerender = () => {
       view.page = 0;
       persist();
-      renderIssues(group, mount, rows);
+      renderIssues(group, mount, issueRows.get(group.id));
     };
 
     const search = el("input", {
@@ -756,22 +894,48 @@ export async function renderCombos(main, params) {
       },
     });
     const COLS = [
-      { key: "asset", label: "Asset", cell: (i) => i.assetName },
-      { key: "severity", label: "Adjusted", cell: (i) => sevBadge(i.adjustedSeverity) },
-      { key: "native", label: "Wiz native", cell: (i) => i.nativeSeverity },
+      {
+        key: "asset", label: "Asset",
+        help: { lines: ["The AI asset this issue is attached to."] },
+        cell: (i) => i.assetName,
+      },
+      { key: "severity", label: "Adjusted", help: { term: "adjusted-severity" },
+        cell: (i) => sevBadge(i.adjustedSeverity) },
+      { key: "native", label: "Wiz native", help: { term: "severity" },
+        cell: (i) => i.nativeSeverity },
       // above, decided from exploitation/impact/exposure/mission, not from Wiz severity.
       // The status the register used to collect and never show. statusPill carries the
       // word, so the state never rides on the tint alone.
       {
         key: "status",
         label: "Status",
+        help: { lines: [
+          "Wiz's own remediation status for this issue — In progress once somebody has " +
+          "started on it, Open otherwise. Every row here is unresolved either way.",
+        ] },
         cell: (i) => (i.status === "IN_PROGRESS"
           ? statusPill("warn", "In progress")
           : statusPill("neutral", "Open")),
       },
-      { key: "due", label: "Due", cell: (i) => dueChip(i.dueAt) || absent() },
-      { key: "account", label: "Account", cell: (i) => i.account || absent() },
-      { key: null, label: "Projects", cell: (i) => (i.projects || []).join(", ") || absent() },
+      {
+        key: "due", label: "Due",
+        help: { lines: [
+          "The SLA verdict for this issue's due date — Overdue, Due soon or on track — " +
+          "against Wiz's own deadline. A blank cell means Wiz set no deadline, not that one " +
+          "was met.",
+        ] },
+        cell: (i) => dueChip(i.dueAt) || absent(),
+      },
+      {
+        key: "account", label: "Account",
+        help: { lines: ["The cloud account or subscription the affected asset lives in."] },
+        cell: (i) => i.account || absent(),
+      },
+      {
+        key: null, label: "Projects",
+        help: { lines: ["Which Wiz projects the affected asset belongs to."] },
+        cell: (i) => (i.projects || []).join(", ") || absent(),
+      },
     ];
 
     // `dir` is 1/-1 against each column's natural first-click order (ISSUE_SORT_DESC),
@@ -780,10 +944,12 @@ export async function renderCombos(main, params) {
     const descending = view.sort && (ISSUE_SORT_DESC[view.sort] ? view.dir === 1 : view.dir === -1);
 
     return dataTable({
+      stickyHeader: true,
       columns: COLS.map((col, i) => ({
         key: col.key || `col-${i}`,
         label: col.label,
         sortable: !!col.key,
+        help: col.help,
         cell: col.cell,
       })),
       rows,
@@ -793,11 +959,13 @@ export async function renderCombos(main, params) {
         view.sort = key;
         view.page = 0;
         persist();
-        renderIssues(group, mount, issueRows.get(group.id) || []);
+        // A re-sort reorders the page already in hand — the same local-only re-render
+        // `problems.js`'s own onSort does even past its own cap ("kind is always
+        // client-side, even in paged mode"); a column click never re-fetches.
+        renderIssues(group, mount, issueRows.get(group.id));
       },
       onRowOpen: (issue) => openIssueRow(issue),
       rowLabel: (issue) => "Issue on " + issue.assetName,
-      emptyText: "No issue in this pattern matches the current filters.",
     });
   }
 }

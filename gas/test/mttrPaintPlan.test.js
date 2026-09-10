@@ -40,14 +40,14 @@ describe("the invariant: nothing draws without a summary", () => {
 
   it("draws everything on the tick the summary finally lands", () => {
     expect(drawn(plan({ mttr: MTTR, page: PAGE, summaryChanged: true })))
-      .toEqual(["byDomain", "charts", "hero", "sla", "survival"]);
+      .toEqual(["aging", "byDomain", "charts", "fan", "hero", "sla", "survival"]);
   });
 });
 
 describe("summary first, page second — the common cold path", () => {
   it("draws the summary sections and holds the page ones", () => {
     expect(drawn(plan({ mttr: MTTR, summaryChanged: true })))
-      .toEqual(["hero", "sla", "survival"]);
+      .toEqual(["aging", "fan", "hero", "sla", "survival"]);
   });
 
   it("draws the page sections when it arrives, unscoped hero included", () => {
@@ -62,7 +62,7 @@ describe("independent revalidation — each section reads its own newest input",
   it("a summary revalidation alone leaves the charts alone", () => {
     expect(drawn(plan({
       mttr: MTTR, page: PAGE, pagePainted: true, summaryChanged: true,
-    }))).toEqual(["hero", "sla", "survival"]);
+    }))).toEqual(["aging", "fan", "hero", "sla", "survival"]);
   });
 
   it("a page revalidation alone leaves survival and SLA alone", () => {
@@ -76,13 +76,31 @@ describe("independent revalidation — each section reads its own newest input",
   });
 });
 
-describe("survival and SLA follow the summary only", () => {
+describe("survival, the fan, SLA and the age bars follow the summary only", () => {
   // They are pure functions of the summary, so the old paintFull's call was a Chart.js
   // destroy-and-rebuild of an identical curve on every load.
+  //
+  // THE CLAIM THESE FOUR ASSERTIONS ENCODE MOVED, so it is restated rather than extended by
+  // habit. It used to be "the two sections `api_getMttr` fills"; it is now "every section
+  // `api_getMttr` fills", and the per-severity fan and the open-backlog age bars joined
+  // because `remediation.kmPerSev` and `remediation.aging` ship on the SUMMARY payload —
+  // neither reads a reconstructed trend point. Driving them off `pageChanged` would be six
+  // Chart.js destroy-and-rebuilds of identical curves plus a bar chart, for no changed figure,
+  // on every page-payload revalidation.
   it("never repaint on a page arrival", () => {
     const p = plan({ mttr: MTTR, page: PAGE, pageChanged: true });
     expect(p.survival).toBe(false);
+    expect(p.fan).toBe(false);
     expect(p.sla).toBe(false);
+    expect(p.aging).toBe(false);
+  });
+
+  // The other half of the same claim: with no summary in hand there is nothing truthful to
+  // draw in either of the two new sections, whatever else has arrived.
+  it("draw nothing at all before a summary exists", () => {
+    const p = plan({ page: PAGE, pageChanged: true });
+    expect(p.fan).toBe(false);
+    expect(p.aging).toBe(false);
   });
 });
 
@@ -95,13 +113,37 @@ describe("the history chips decide whether a page arrival touches the hero", () 
     expect(plan({ mttr: MTTR, summaryChanged: true }).historyChips).toBe(false);
   });
 
-  // Scoped, mttr_history is register-wide while the values are scoped — the chips are
-  // suppressed, so a page arrival adds nothing to the hero and must not repaint it.
-  it("are off under a scope, and the page arrival then skips the hero", () => {
+  // THE CLAIM THIS `it` USED TO ENCODE, AND THE MEASUREMENT THAT FALSIFIED IT.
+  //
+  // It read "are off under a scope, and the page arrival then skips the hero", and asserted
+  // `p.hero === false`. The reasoning behind it was sound when written: the page payload's only
+  // contribution to the hero was `trends.history`, which feeds the change chips, and those are
+  // suppressed under a scope because the mttr_history snapshots are register-wide while the
+  // shown values are scoped.
+  //
+  // The hero now draws a SECOND thing off that payload — `trends.trend`, the reconstructed
+  // half-life series behind the header's sparkline — and that series is scoped already
+  // (api.ts's `mttrTrendData` hands `loadTrend` the pre-filtered base rows). So the premise
+  // "under a scope a page arrival adds nothing to the hero" is simply no longer true.
+  //
+  // MEASURED, dev harness, 2026-09-07: its seed ships `displaySeverities: [CRITICAL, HIGH]`
+  // against five selectable severities, so `chipsSuppressed()` is true on a PLAIN visit.
+  // `api_getMttrPage` returned 211 trend points, one carrying a `km_median_days` — and the
+  // header's aside rendered "not measured", the register's own words for "nobody looked", over
+  // a series that had been computed, scoped and shipped. The chips half of the claim is
+  // unchanged and still asserted; only the hero half moved.
+  it("stay off under a scope, while the page arrival still repaints the hero for its trend", () => {
     const p = plan({ mttr: MTTR, page: PAGE, pageChanged: true, scoped: true });
     expect(p.historyChips).toBe(false);
-    expect(p.hero).toBe(false);
-    expect(drawn(p)).toEqual(["byDomain", "charts"]);
+    expect(p.hero).toBe(true);
+    expect(drawn(p)).toEqual(["byDomain", "charts", "hero"]);
+  });
+
+  // The other side of the same line: a tick that delivered no page payload adds nothing, and a
+  // page that has not arrived at all cannot repaint anything.
+  it("do not repaint the hero on a tick that delivered no page payload", () => {
+    expect(plan({ mttr: MTTR, page: PAGE, pagePainted: true, scoped: true }).hero).toBe(false);
+    expect(plan({ mttr: MTTR, pageChanged: true, scoped: true }).hero).toBe(false);
   });
 
   it("still let a scoped summary change repaint the hero", () => {

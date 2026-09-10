@@ -926,8 +926,23 @@ export function executiveModel(p?: ModelParams): Rec {
  */
 /** Concentration dimensions per register — every name is a key of `insights.GROUP_COLUMNS`. */
 const CONCENTRATION_DIMS: Record<Scope, string[]> = {
-  sca: ["repo", "language", "owner_project"],
-  sast: ["repo", "cwe", "language", "owner_project"],
+  // NO `language` ON EITHER CODE REGISTER, and the two lost it for different reasons.
+  //
+  // On sca it restated "By repository" one level coarser: a dependency finding's language is a
+  // property of the REPOSITORY it sits in, not of the finding, so its four rows (PYTHON 105,
+  // GO 70, JAVA 70, JAVASCRIPT 35 on the sample register) are the same 280 findings the
+  // repository card already groups.
+  //
+  // On sast the language IS a fact about the code the weakness is in — this entry used to say
+  // so, and say that sast therefore keeps it — but it still names an attribute nobody
+  // remediates against, and it sat beside `cwe`, which is the weakness axis a reader acts on.
+  // Removed on the same reading, one register later.
+  //
+  // THIS COPY DOES NOT DECIDE WHAT RENDERS. `concentrationModel(payload, dims)` maps over the
+  // dims the PAGE hands it, so removing a name here alone yields a card with zero rows rather
+  // than no card; `pages/sca.js` and `pages/sast.js` carry the matching lists and say so.
+  sca: ["repo", "owner_project"],
+  sast: ["repo", "cwe", "owner_project"],
   secrets: ["repo", "secret_kind", "owner_project"],
 };
 

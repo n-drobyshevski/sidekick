@@ -1,23 +1,17 @@
 /* THIS APP'S PAGES, and nothing a sibling would want.
    Everything the three sidekicks draw the same way lives in gas_shared/styles/; the rules
-   below dress pages only this register has - Executive's ranked fix-next list, its movement
-   strip, and MTTR's per-severity survival fan. Imported after the shared sheets and before
-   gas_shared/styles/overrides.css, which must stay last.
+   below dress pages only this register draws - the open-backlog isotype, the coverage
+   headline, the signal-rows tri-state bar, the capacity verdict word and the repository
+   foothold cell, the scan-scopes list and the history spiral. Imported after the shared
+   sheets and before gas_shared/styles/overrides.css, which must stay last.
 
-   The sev-fan block arrived from tables.css and the other two from components.css; the
-   declarations are unchanged. */
-
-/* --------------------------------------------------------------- Executive: fix next
-   The front door's ranked list. AN ORDERED LIST, DRAWN AS ONE: the counter is the claim
-   (rank 1 is the thing to do first), so it stays visible rather than being suppressed the
-   way a decorative list's markers would be. No colour of its own — the tier reads through
-   the shared .pill kinds, which already pair a tint with a dot and a word. */
-.fixnext { margin: 0 0 var(--space-3); padding-left: var(--space-5); display: grid; gap: var(--space-2); }
-.fixnext-item { padding-left: var(--space-1); }
-.fixnext-item::marker { color: var(--text-3); font-variant-numeric: tabular-nums; }
-.fixnext-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.fixnext-repo { font-weight: 600; }
-.fixnext-meta { margin-top: var(--space-half); }
+   P3.4b (2026-09-08) promoted the rules that used to live here BYTE-IDENTICAL to gas's own
+   copy - fixnext*, movement-rows/-row/-label/-counts/-block, sev-fan*, .page-header >
+   .kpi-card, chart-row--pair, table-wrap, toolbar-group, finding-actions, .kv dd >
+   .code-block, trend-aside*, rate-with-meter*, unclassified-card/-swatch, kpi-spark* and
+   .section-label > .heading-pill, plus the two narrow-viewport collapses and the rail status
+   dot - into gas_shared/styles/{components,tables,base}.css. What is left below is what this
+   register alone draws. */
 
 /* -------------------------------------------- Executive: the open-backlog isotype
    Neurath's rule, in three declarations: quantity is MORE MARKS OF THE SAME SIZE. Every mark
@@ -43,66 +37,6 @@
   .isotype-mark { border: 2px solid CanvasText; background: transparent; }
 }
 
-/* ------------------------------------------------------- Executive: the movement strip
-   One row per register plus a total, inside the header's second column. The label and the
-   raw pair sit either side of the chip so the delta is never the only number visible —
-   "280 open, was 320" is the arithmetic the chip is a summary of. `gap` rather than a
-   border: this strip lives beside a borderless hero and a rule here would out-weight it. */
-/* Capped so the raw pair stays beside its chip rather than being flung to the far edge of a
-   1fr column on a wide screen — the pair is the chip's arithmetic and has to read as one row. */
-.movement-rows { display: grid; gap: var(--space-1); max-width: 46ch; }
-.movement-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-.movement-label { color: var(--text-2); min-width: 8ch; }
-.movement-counts { margin-left: auto; font-variant-numeric: tabular-nums; }
-
-/* Small multiples: one survival curve per severity, on the MTTR page.
-   `auto-fit` + a 280px floor gives three per row on a desktop content column, two around
-   800px and one below ~560px, without a media query per breakpoint — the floor is where a
-   26-week staircase stops being readable rather than a device width.
-   The canvas is HALF the standard .chart-box so six of them stay light: these cards are read
-   as shapes against each other, and the figures behind each one are a keystroke away in the
-   card's own table. */
-.sev-fan {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: var(--space-3);
-  margin-bottom: var(--space-4);
-}
-.sev-fan .chart-box { height: 160px; }
-/* The badge row. Severity is never colour alone: the dot and the word travel together here,
-   and the caption below states the half-life in words. */
-.sev-fan__head { margin-bottom: var(--space-2); }
-
-/* ------------------------------------------------------- Coverage & efficiency: the aside
-   `.page-header`'s second column is `minmax(320px, 2fr)` (components.css) and grid items
-   stretch to fill their column by default, so the efficiency `kpiCard` — the only aside on
-   any of this app's pages that IS a `.kpi-card` rather than a `.page-strip` — grew to the
-   full ~880px width of that column on a 1280px viewport: a bordered, surface-tinted box
-   nearly as wide as the borderless 2rem hero beside it, out-weighing the primary figure.
-   DESIGN.md's Hero Stat rule is that dominance comes from size, position and whitespace,
-   never from a card, so the fix caps the card's width rather than removing it — 2.8's point
-   was reusing the shared component, and a compact card at the column's start edge (the
-   default position once its width is capped) reads as the hero's companion instead of a
-   second hero. 22rem (352px) was measured against the hero's own value column: wide enough
-   for "Bounds 71.5% to 73.8%" and the denominator line on one line each, narrow enough to
-   leave clear air between it and the hero at 1280px. Scoped to `.page-header` so no other
-   `.kpi-row` card anywhere else on this page (or any other) is touched.
-
-   NO MEDIA QUERY: `.page-header` carries no responsive override anywhere in gas_shared (grep
-   confirms it), so its two columns never collapse to one — a narrow viewport instead widens
-   the whole page past the viewport, which is how it already behaved before this rule existed.
-   Measured at a 640px viewport: the rendered page is 888px wide and the two columns still sit
-   side by side, so capping the card here is exactly as correct there as at 1280px, and an
-   unconditional rule is simpler than a breakpoint nothing else in the header respects. */
-.page-header > .kpi-card { max-width: 22rem; }
-
-/* --------------------------------------------------------------------- chart-row pairs
-   `.chart-row` (tables.css) is `repeat(auto-fit, minmax(420px, 1fr))` - right for a page's
-   two independent charts, too wide for Scan history's pair of small movement-cause tables,
-   which have nothing to plot and read fine well under 420px. `--pair` is the same idea at a
-   floor measured against a cause table's own content instead of a chart's. */
-.chart-row--pair { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
-
 /* ------------------------------------------------------------------------ .section-note
    The line under a section heading that is prose, not a chart caption (`.chart-note` is the
    canvas's own version of this same idea, in tables.css) - what a table below is scoped to,
@@ -118,9 +52,9 @@
    The Executive front door's "what that sync covered" list - one register per line, muted
    against the paragraphs around it. A bare `<ul>` carries the browser's own 40px indent and
    paragraph-height gaps, which is print-era default styling this app never uses anywhere
-   else; `display: grid` gives it the same row rhythm as `.movement-rows` beside it, and
-   `::marker` (the same idiom `.fixnext-item` above already uses) lets the bullet itself go
-   muted without a `list-style: none` + hand-drawn dot detour. */
+   else; `display: grid` gives it the same row rhythm as gas_shared's `.movement-rows`, and
+   `::marker` (the same idiom gas_shared's `.fixnext-item` already uses) lets the bullet
+   itself go muted without a `list-style: none` + hand-drawn dot detour. */
 .scan-scopes {
   display: grid; gap: var(--space-1); margin: var(--space-2) 0 0; padding-left: 1.1em;
 }
@@ -142,25 +76,6 @@
   .spiral circle, .spiral rect { stroke: CanvasText; stroke-width: 1px; }
 }
 
-/* ------------------------------------------------------------------- rail status dot
-   `.rail-status-dot` (gas_shared/styles/base.css) is a 9px mark - all the colour a scan's
-   state needs, but nine pixels of hit target and, until app.js's own fix, a span wearing
-   `aria-hidden` AND `tabindex=0` (a contradiction axe calls aria-hidden-focus). It is a real
-   `<button>` now (app.js), so this is chrome, not colour: WCAG 2.2 SC 2.5.8 wants 24x24px of
-   TARGET even though the mark painted inside it stays 9px - `padding` plus
-   `background-clip: content-box` grows the hit box without growing the dot, and the negative
-   margin keeps the surrounding rail layout exactly as tight as it was when this was a span.
-   The state colours (`.ok`/`.warn`/`.bad`/`.neutral`/`.scanning`, base.css) keep painting the
-   9px content box unchanged - only the box the pointer and the focus ring measure grows. */
-.sidebar .rail-status-dot {
-  width: 24px; height: 24px; padding: 7.5px; box-sizing: border-box;
-  background-clip: content-box; margin: -7.5px auto;
-}
-/* Reset of the generic `button` chrome (base.css: border, box-shadow, min-height) a dot
-   never wanted - it is a mark with a tip and a destination, not a bordered control sitting
-   in the icon rail beside the Run sync button. */
-.sidebar button.rail-status-dot { border: none; box-shadow: none; min-height: 0; cursor: pointer; }
-
 /* --------------------------------------------------------------- .settings-panel__head
    Ported from gas (src/client/styles/pages.css:520-522) rather than left un-set: a panel
    with no description sits its body a touch tighter under the title. Under the CURRENT token
@@ -173,115 +88,6 @@
 .settings-panel__head:not(:has(.settings-panel__desc)) + .settings-panel__body {
   margin-top: var(--space-3);
 }
-
-/* ---------------------------------------------------------------------------- responsive
-   `.sev-fan` (MTTR's per-severity survival curves) and `.chart-row--pair` (Scan history's
-   movement-cause tables) both use `auto-fit` with a floor - 280px and 300px - that two
-   columns can still clear on a narrow phone before the text inside each card starts
-   crowding. Below 640px a single column reads better than two cramped ones.
-
-   `.chart-row` itself (tables.css: `repeat(auto-fit, minmax(420px, 1fr))`) joins the same
-   query for a different reason than its two relatives above: its 420px floor is not too
-   CROWDED at 360px, it is simply wider than the viewport - measured, every route that draws
-   one (Dependencies, Code, Repositories, Scan history) rendered exactly 420 + 16px of page
-   padding regardless of how many cards it holds, because `auto-fit` never lets a track
-   shrink below its `minmax` floor even down to a single column. `1fr` alone (no floor)
-   collapses it to the real available width instead, the same fix already applied to
-   `.page-header` below for the same class of overflow. */
-@media (max-width: 640px) {
-  .sev-fan, .chart-row--pair, .chart-row { grid-template-columns: 1fr; }
-}
-
-/* --------------------------------------------------------------------- horizontal overflow
-   Measured at 640px and 360px on the seeded fixture (`overflow.mjs` in the scratchpad):
-   Coverage & efficiency, Code, Dependencies and Secrets rendered 888/978/1201/1145px wide at
-   a 640px viewport, and DESIGN.md/the artifact rules are the same rule stated twice - wide
-   content scrolls inside its own container, the page body never does.
-
-   THE TABLE WAS NEVER THE PROBLEM - `.table-wrap` (tables.css) already clips its `table.data`
-   with `overflow-x: auto`, and the visible table stayed inside its box at every width tested.
-   What escaped is `.sr-only` (base.css: `position: absolute`, no `top`/`left` of its own) -
-   every `tip()` call drops one of these beside its trigger for the description a screen
-   reader needs (gas_shared/ui/tip.js:377), and a register row's severity/status cells anchor
-   several. `.table-wrap` itself is never `position`ed, so an absolutely-positioned
-   description with no positioned ancestor between it and the document root takes its STATIC
-   POSITION - computed from where the WIDE, un-scrolled table would have placed it, a column
-   or two past the visible edge - and resolves that position against the document's own
-   un-clipped flow instead of `.table-wrap`'s scrollport. The description is 1x1px and
-   invisible either way; the bug is that its LAYOUT BOX still counts toward
-   `document.documentElement.scrollWidth`, which is what actually measures 1201px on
-   Dependencies while every visible pixel on the page sits inside 640. Giving `.table-wrap`
-   `position: relative` makes it the containing block instead, which puts the very same
-   description back inside the box that already clips its table - measured: this alone takes
-   all four routes from 888/978/1201/1145 to exactly 640 (the viewport) with nothing else
-   touched. gas_shared owns both `.table-wrap` and `.sr-only`; positioning the wrap is the
-   one-line, app-local answer, so this is not a shared-file change. */
-.table-wrap { position: relative; }
-
-/* The second, independent overflow, only visible once the one above stops masking it: at a
-   360px viewport `.page-header`'s two columns (`gas_shared/styles/components.css`:
-   `minmax(160px, 0.5fr) minmax(320px, 2fr)`, no media query anywhere in that file) cannot
-   both clear their own minimums - measured, the row's min-content floor is 512px regardless
-   of which page's hero/aside content is in it. `.page-header > .kpi-card`'s cap above already
-   noted there is no shared breakpoint to lean on; collapsing to one column here is the same
-   answer at the width where capping a card's own width stops being enough. */
-@media (max-width: 640px) {
-  .page-header { grid-template-columns: 1fr; }
-}
-
-/* ------------------------------------------------------- the register toolbars (W4)
-   A toolbar is one flex row of controls (`components.css` .toolbar), and its label spans sat
-   loose in that row: at 640px "Severity", its pills, "Findings table" and its segment could
-   wrap so a label led a control that was not its own. A group keeps each label with what it
-   labels and lets the GROUPS wrap instead. */
-.toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-
-/* The finding sheet's copy actions. `.sheet-actions` (sheet.css) is the FOOTER arrangement —
-   right-aligned, because a footer's job is to hold the commit — and these sit at the top of
-   the body where the reader's eye is still at the left edge. Same gap, no justification. */
-.finding-actions {
-  display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0 0 var(--space-3);
-}
-/* The code block inside a `.kv` value is a whole line of its own, not an inline run: without
-   this it keeps the 0 margin `pre` gets everywhere else and collides with the row beneath. */
-.kv dd > .code-block { margin: 0; }
-
-/* ------------------------------------------------- MTTR & SLA: the half-life trend aside
-   `pageHeader({aside})` is documented for "a small curve" and was empty on this page while
-   the series it wants sat at the foot of the same page in a Chart.js line. The sparkline that
-   fills it is a QUALIFIER on the hero, never a rival to it: DESIGN.md's Hero Stat rule puts
-   the hero's dominance in size, position and whitespace, so this block stays borderless (a
-   `.page-strip`, the same shell Executive's movement aside uses) and is capped the way
-   `.page-header > .kpi-card` above is - 26rem measured against the 220px SVG plus its
-   caption, wide enough for "12 readings, 297 days to 41 days" on one line and narrow enough
-   that the 2rem hero beside it keeps clear air.
-
-   The gap is the strip's own rhythm; nothing here sets a border, a tint or a shadow, because
-   any of the three would make this read as a second card in a header that has none. */
-.trend-aside { max-width: 26rem; display: grid; gap: var(--space-1); justify-items: start; }
-/* The line takes the page's ink rather than the strip's muted default: the sparkline is the
-   one mark in this block that carries a measurement, and `--text-2` (0.65 alpha) on a 1.5px
-   stroke over 40px of height reads as a hairline rule rather than as data. `--ink` is the
-   same neutral the isotype marks above take, and for the same reason - a mark carrying a
-   figure has to be legible on its own. */
-.trend-aside .sparkline { color: var(--ink); }
-
-/* ------------------------------------------------- MTTR & SLA: a rate cell with its meter
-   The SLA table's two rate columns print the figure, its base and now a `meter--stat` between
-   them - a third encoding, and the only one that can be compared DOWN a column at a glance
-   (six percentages in six rows are read one at a time; six fills are read as a shape). The
-   meter is `decorative`, i.e. aria-hidden, because both figures are already in words beside
-   it, so this rule is layout only: keep the three parts on one baseline and let the base wrap
-   under them on a narrow column rather than stretching the row.
-
-   `inline-flex`, not `flex`: the cell is a `<span>` inside a `<td>` that may also hold the
-   count and the parenthesised rate, and a block-level flex box would break that line. */
-.rate-with-meter {
-  display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--space-1);
-}
-/* The meter must not be squeezed to nothing by the flex row when the denominator is long -
-   `meter--stat` already fixes its basis, this stops the shrink. */
-.rate-with-meter .meter { flex: 0 0 52px; }
 
 /* ------------------------------------- Dependencies / Code: one signal, one bar (Wave B)
    `signalRow` (pages/sca.js) draws a tri-state signal - evaluated / never evaluated / no such
@@ -320,28 +126,12 @@
 .coverage-headline { display: grid; gap: var(--space-1); margin: 0 0 var(--space-3); }
 .coverage-headline .meter { max-width: 28rem; height: 10px; }
 
-/* ------------------------------- Coverage & efficiency: the unclassified rows, hatched
-   The block the whole page's honesty rests on, and the only one whose subject is rows nobody
-   could measure. `.hatch` (components.css) is this design system's one mark for exactly that,
-   so the card carries a swatch of it beside the word - never instead of the word, because a
-   texture is not a fact. The count stays in ink: it IS a measurement, of how much was not. */
-.unclassified-card { display: grid; gap: var(--space-half); }
-.unclassified-swatch {
-  display: inline-block; width: 14px; height: 14px; margin-right: var(--space-2);
-  border: 1px solid var(--hairline); border-radius: 2px; vertical-align: -2px;
-}
-/* Forced colours keep the hatch (it is ink at an alpha, see the --hatch token) but drop the
-   hairline into the forced border colour, so the swatch stays a bordered square rather than
-   dissolving into the card. */
-@media (forced-colors: active) {
-  .unclassified-swatch { border-color: CanvasText; }
-}
-
 /* --------------------------------- Coverage & efficiency: the capacity verdict, as a word
    Ported from gas_ai's `.cap-verdict` (inventory.css), rule and reasoning intact: the WORD is
    the signal and the dot only repeats it. Three states told apart by hue alone survive
    neither greyscale nor a dichromat, and this is the one figure on the card a reader takes
-   away. Sized and spaced like `.rail-status-dot` above, so the app has one dot vocabulary.
+   away. Sized and spaced like gas_shared's `.rail-status-dot` (styles/base.css), so the app
+   has one dot vocabulary.
 
    The dot takes the ok / neutral / bad tones the per-month pills used to carry, rather than a
    second list keyed by verdict slug. */
@@ -362,45 +152,12 @@
    all, since it is a measurement rather than a verdict. `footholdCellKind` (repos.js) is the
    pure decision; this is only the two tones it may be drawn in.
 
-   NO forced-colors RULE HERE, unlike `.hatch`/`.unclassified-swatch` above: those replace a
-   background FILL, which forced-colors mode strips outright. `color` on ordinary text (and the
-   icon's `stroke="currentColor"`, which follows it) is one of the properties the browser's own
-   forced-colors substitution already rewrites to a legible system colour, so there is no fill
-   here for a media query to rescue. */
+   NO forced-colors RULE HERE, unlike `.hatch` / gas_shared's `.unclassified-swatch`
+   (styles/components.css): those replace a background FILL, which forced-colors mode strips
+   outright. `color` on ordinary text (and the icon's `stroke="currentColor"`, which follows
+   it) is one of the properties the browser's own forced-colors substitution already rewrites
+   to a legible system colour, so there is no fill here for a media query to rescue. */
 .cell-verdict { display: inline-flex; align-items: center; gap: var(--space-1); white-space: nowrap; }
 .cell-verdict svg { flex: 0 0 auto; }
 .cell-verdict--ok { color: var(--ok); }
 .cell-verdict--muted { color: var(--text-3); }
-
-/* --------------------------------------- Scan history: a KPI card and the series behind it
-   Three of the four cards in this page's band say where a number IS; the series each is the
-   last reading of sat at the foot of the same page in a Chart.js line. `ui/sparkline.js` puts
-   it on the card at the size of a word.
-
-   BORDERLESS AND BELOW THE SUB, because the card already has one figure to be looked at: this
-   is a qualifier on it, not a second figure. Same reasoning, and the same shape, as
-   `.trend-aside` above — grid, start-aligned, nothing here sets a surface, a tint or a rule.
-
-   The line takes the page's ink rather than the strip's muted default, for `.trend-aside`'s
-   reason: `--text-2` (0.65 alpha) on a 1.5px stroke reads as a hairline rather than as data,
-   and a mark carrying a figure has to be legible on its own. NO animation and no transition,
-   so there is deliberately no prefers-reduced-motion block owed here. */
-.kpi-spark {
-  display: grid; gap: var(--space-half); justify-items: start; margin-top: var(--space-2);
-}
-.kpi-spark .sparkline { color: var(--ink); }
-.kpi-spark__cap { font-size: var(--fs-label); color: var(--text-3); }
-
-/* ------------------------------------------- Scan history: a state pill on a section heading
-   "Register-wide" on the two scan-side tables and "Experimental" on the spiral are STATES of
-   what is under the heading, not part of its name, so they sit beside the words rather than
-   inside them and take the baseline the heading's own type sets. The pill's tint and word are
-   `statusPill`'s; this rule is spacing only. */
-.section-label > .heading-pill { margin-left: var(--space-2); font-weight: 400; }
-
-/* ------------------------------- Scan history: one register's movement, as a card and a row
-   Three of these stack under "What moved the number" — a chart card, up to two honesty lines
-   and a row of exception pills. The gap is the page's own rhythm; no border, because the
-   `.chart-card` inside already carries one and a second box around it would read as a fourth
-   level of nesting. */
-.movement-block { display: grid; gap: var(--space-2); margin-top: var(--space-4); }

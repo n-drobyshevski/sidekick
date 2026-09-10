@@ -20,7 +20,10 @@ import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { chartTableModel, survivalTableModel } from "../../gas_shared/ui/chartTable.js";
+import {
+  chartTableModel, chartTablePaged, survivalTableModel,
+} from "../../gas_shared/ui/chartTable.js";
+import { DEFAULT_PAGE_SIZE, pageOf } from "../../gas_shared/ui/tableModel.js";
 
 // ------------------------------------------------------------------ the comment stripper
 
@@ -264,7 +267,107 @@ describe("the model is the same population as the chart", () => {
 });
 
 // =========================================================================================
-//  4. The hero severity bar has a key, and disappears rather than drawing an empty box
+//  4. Paging is a viewport over that population, never a filter on it
+// =========================================================================================
+
+describe("a long chart table pages, and paging does not narrow the population", () => {
+  // WHY THIS BLOCK EXISTS. `#/mttr`'s Kaplan-Meier disclosure lists one row per step — 130 of
+  // them at the dev seed — and shipped every one of them at once, so opening it ran the page
+  // several screens past the chart it describes. Section 3 above is the rule it must not
+  // break while fixing that: the MODEL still holds one row per point, and the pager is a
+  // viewport over it.
+  //
+  // ALL FOUR GUARDS BELOW WERE PERTURBED (run 2026-09-07, each reverted before the next), one
+  // edit at a time in gas_shared/ui/chartTable.js, and each failed exactly one test — which is
+  // the point of having four rather than one assertion with four `expect`s:
+  //
+  //   `pageOf(built.rows, page, size).rows` -> `built.rows.slice(0, size)`
+  //     × the rows on screen are a PAGE of the model, cut by pageOf and repainted in place
+  //   `chartTablePaged(built.rows.length)` -> `chartTablePaged(built.rows.length, size)`
+  //     × the pager's presence is decided against the DEFAULT size, never the size in force
+  //   `total: built.rows.length` -> `total: view.rows.length`
+  //     × the count the footer prints is the whole model, not the page on screen
+  //   `return rows > size` -> `return rows >= size`
+  //     × a table at or under the default page size is offered no pager at all
+  //
+  //   Tests  1 failed | 21 passed (22)   — on each of the four runs.
+  const CHART_TABLE_SRC = code(readFileSync(
+    fileURLToPath(new URL("../../gas_shared/ui/chartTable.js", import.meta.url)), "utf8"));
+
+  it("a table at or under the default page size is offered no pager at all", () => {
+    // A four-bucket aging table does not need to be told it has four rows, and every
+    // disclosure that fits keeps exactly the markup it had before paging existed.
+    expect(chartTablePaged(0)).toBe(false);
+    expect(chartTablePaged(1)).toBe(false);
+    expect(chartTablePaged(DEFAULT_PAGE_SIZE)).toBe(false);
+    expect(chartTablePaged(DEFAULT_PAGE_SIZE + 1)).toBe(true);
+    expect(chartTablePaged(130)).toBe(true);
+  });
+
+  it("the pager's presence is decided against the DEFAULT size, never the size in force", () => {
+    // THE TRAP, and it is a real one rather than a hypothetical: read the decision off the
+    // CURRENT size and a reader who picks "250 / page" on a 130-row curve loses the footer
+    // that offered the choice — there is no second page left to draw one for — and with it
+    // the only route back to 15. So `chartTable` calls this with the row count ALONE, and the
+    // second parameter exists for the test rather than for the component.
+    expect(chartTablePaged(130, 250)).toBe(false); // what consulting the live size would say
+    expect(CHART_TABLE_SRC).toMatch(/const paged = chartTablePaged\(built\.rows\.length\);/);
+    // ...and it is asked once, not re-asked on every repaint. Two occurrences: the exported
+    // declaration, and the single call above.
+    expect(count(CHART_TABLE_SRC, /chartTablePaged\(/g)).toBe(2);
+  });
+
+  it("the rows on screen are a PAGE of the model, cut by pageOf and repainted in place", () => {
+    // There is no jsdom here (vitest.config.ts sets no `environment`), so the DOM half is read
+    // as source text — the same split test/popoverDismiss.test.js and test/shared.test.js use.
+    // What that buys is the one substitution the pure test below CANNOT see: `pageOf` swapped
+    // for a head-slice, which is "show the first fifteen and stop" wearing a pager as a
+    // disguise, and which passes every arithmetic assertion in this file.
+    expect(CHART_TABLE_SRC)
+      .toMatch(/rows: paged \? pageOf\(built\.rows, page, size\)\.rows : built\.rows,/);
+    expect(CHART_TABLE_SRC).toMatch(/const view = pageOf\(built\.rows, page, size\);/);
+    // Repainted through dataTable's own setRows rather than by rebuilding the wrap: a rebuild
+    // throws away the header, the scroll offset and any focus inside it.
+    expect(CHART_TABLE_SRC).toMatch(/table\.setRows\(view\.rows\);/);
+  });
+
+  it("every page concatenated is the model, in the model's own order", () => {
+    // The pure companion to the assertion above: `pageOf` is a viewport, so over any page
+    // size the pages read back as the whole model in its own order. Its arithmetic is held by
+    // test/tableModel.test.js; what is checked here is that a real `survivalTableModel` — the
+    // 130-row shape this package was opened for — survives being cut into pages at every size
+    // the footer offers.
+    const curve = Array.from({ length: 130 }, (_, i) => ({ t: i + 1, s: 1 - i / 200 }));
+    const model = survivalTableModel(curve);
+    expect(model.rows).toHaveLength(130);
+
+    for (const size of [15, 25, 50, 100, 250]) {
+      const seen = [];
+      let pageCount = null;
+      for (let p = 0; ; p++) {
+        const view = pageOf(model.rows, p, size);
+        pageCount = view.pageCount;
+        seen.push(...view.rows);
+        if (p >= view.pageCount - 1) break;
+      }
+      expect(seen, `at ${size} / page`).toEqual(model.rows);
+      expect(pageCount).toBe(Math.ceil(130 / size));
+    }
+  });
+
+  it("the count the footer prints is the whole model, not the page on screen", () => {
+    // A page that named its own length would be the truncation section 3 forbids, wearing a
+    // pager as a disguise: "15 rows" under a 130-row curve is a false population.
+    const model = survivalTableModel(
+      Array.from({ length: 130 }, (_, i) => ({ t: i + 1, s: 0.5 })));
+    expect(CHART_TABLE_SRC).toMatch(/total: built\.rows\.length,/);
+    expect(pageOf(model.rows, 0, DEFAULT_PAGE_SIZE).rows.length).toBe(DEFAULT_PAGE_SIZE);
+    expect(model.rows.length).toBe(130);
+  });
+});
+
+// =========================================================================================
+//  5. The hero severity bar has a key, and disappears rather than drawing an empty box
 // =========================================================================================
 
 describe("the SCA and SAST hero bars carry a key, and nothing at all at zero", () => {

@@ -56,13 +56,14 @@
 // to its own defaults. The in-memory `view` fields are untouched by the mode switch, so
 // flipping back to "By framework" restores exactly where the reader left it.
 
-import { setParams, swrCall } from "../../../../../gas_shared/store.js";
+import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, clear, dataTable, el, emptyState, errorState, filterCombobox, meter,
-  pageHeader, plural, sectionLabel, segmented, sevBadge, skeletonStack, statRow,
+  clear, dataTable, el, emptyState, errorState, filterCombobox, firstRunNotice, meter,
+  pageHeader, sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  checksCell, extChip, fiveRsDerived, postureCell, postureScopeNote, STATES, STATE_ORDER,
+  checksCell, complianceHero, extChip, fiveRsDerived, postureAbsenceHint, postureCell,
+  postureScopeNote, STATES, STATE_ORDER,
   stateStrip, subcategoryDetail,
 } from "./complianceShared.js";
 // STATE_ORDER survives the filter's removal as the key order for summing a stateCounts map
@@ -85,10 +86,29 @@ const SEGMENTED_MAX = 4;
  * element per row, either way.
  */
 const COLUMNS = [
-  { key: "name", label: "Category", cell: (r) => r.name },
-  { key: "posture", label: "Compliance posture", cell: (r) => r.posture },
-  { key: "checks", label: "Checks passing", cell: (r) => r.checks, className: "num" },
-  { key: "policies", label: "Policies", cell: (r) => r.policies, className: "num" },
+  {
+    key: "name", label: "Category",
+    help: { lines: ["The framework category or subcategory this row groups by."] },
+    cell: (r) => r.name,
+  },
+  {
+    key: "posture", label: "Compliance posture",
+    help: { lines: [
+      "The percentage of evaluated policies passing in this row, or a state pill — NO_" +
+      "RESOURCES, NO_POLICIES — where Wiz never scored it. A state pill is never a 0%.",
+    ] },
+    cell: (r) => r.posture,
+  },
+  {
+    key: "checks", label: "Checks passing", className: "num",
+    help: { lines: ["How many individual checks passed, of how many ran, in this row."] },
+    cell: (r) => r.checks,
+  },
+  {
+    key: "policies", label: "Policies", className: "num",
+    help: { lines: ["How many distinct framework policies apply to this row."] },
+    cell: (r) => r.policies,
+  },
 ];
 
 export async function renderCompliance(main, params, ctx) {
@@ -104,15 +124,24 @@ export async function renderCompliance(main, params, ctx) {
   // `pageHeader({ route })`, not a bare `el("h1", ...)` and not a title in the hero VALUE.
   // P8 converted this page's hand-rolled title onto the shared component by putting
   // "Compliance Posture" in the 2rem hero slot — which left the page's name and its posture
-  // percentage (`.comp-hero-value`, also --fs-hero) reading at the same size, in a register
-  // whose first design principle is that the number is the product. The name is the h1 now, at
-  // the 1.5rem ceiling, and the percentage is the only thing on the page at the hero step.
+  // percentage (both --fs-hero) reading at the same size, in a register whose first design
+  // principle is that the number is the product. The name is the h1 now, at the 1.5rem
+  // ceiling, and the percentage — drawn by `complianceHero()` (complianceShared.js) since
+  // P2.4 — is the only thing on the page at the hero step.
   main.append(pageHeader({
     route: "compliance",
     // Nine words. The three grains it used to enumerate (category, subcategory, policy)
     // are the page's own structure, and the reader meets all three by scrolling.
     lede: "How this landscape scores against the frameworks Wiz tracks.",
+    help: { term: "coverage-state" },
   }));
+
+  // Compliance can be empty for its OWN reason (no framework selected in Settings) after
+  // many successful syncs of everything else, so this page cannot tell "nobody has synced"
+  // from "nothing to show here" the way the whole-page gates on other routes do — it needs
+  // `boot.latestSync` alongside `data` either way, which is what `postureAbsence` (below)
+  // reads.
+  const boot = await bootstrap();
 
   const host = el("div", {});
   main.append(host);
@@ -176,6 +205,21 @@ export async function renderCompliance(main, params, ctx) {
 
   paint();
 
+  // One failing section must not blank the rest of the page. Copied from the same shape
+  // gas/pages/mttr.js uses: try/render, and on a throw the section's own host gets
+  // `errorState` — an alert with a "Technical details" disclosure — rather than the page
+  // silently dropping content or the whole route dying on one section's exception.
+  function guard(label, sectionHost, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[compliance] " + label + " render failed:", e);
+      clear(sectionHost).append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
+  }
+
   function paint() {
     clear(host);
     const trees = (data && data.trees) || [];
@@ -189,16 +233,17 @@ export async function renderCompliance(main, params, ctx) {
     if (scopeNote) host.append(scopeNote);
 
     if (!trees.length) {
-      host.append(emptyState(
-        "No compliance posture has been synced yet.",
-        // Says which of the two reasons it is, because "we never asked" and "we asked and
-        // the tenant said nothing" send an operator to completely different places.
-        (data && data.selected && data.selected.length)
-          ? "The sync is configured to collect " + plural(data.selected.length, "framework") +
-            ", but no posture has been stored yet. Run a sync, then check the Wiz Scans " +
-            "page for a skipped step if this stays empty."
-          : "No frameworks are selected for posture collection. Choose them in Settings.",
-      ));
+      // The two-reason sentence this used to hand-write here now lives once, in
+      // complianceShared.js's `postureAbsenceHint`, so this register and the overview
+      // (below, via `postureAbsence`) draw the SAME explanation instead of two that happen
+      // to agree today. Called directly here — rather than through `postureAbsence` — so
+      // this route's own source carries `firstRunNotice(`, the same as every other
+      // whole-page gate in this app.
+      host.append(firstRunNotice({
+        synced: !!boot.latestSync,
+        at: boot.latestSync ? boot.latestSync.finished_at : undefined,
+        hint: postureAbsenceHint(data),
+      }));
       return;
     }
 
@@ -219,8 +264,12 @@ export async function renderCompliance(main, params, ctx) {
       }));
     host.append(toolbar);
 
+    const sectionHost = el("div", {});
+    host.append(sectionHost);
+
     if (view.mode === "overview") {
-      renderOverview(host, data, view, actions);
+      guard("the frameworks overview", sectionHost,
+        () => renderOverview(sectionHost, data, view, actions, boot));
       return;
     }
 
@@ -263,6 +312,7 @@ export async function renderCompliance(main, params, ctx) {
         }));
     }
 
+    guard("the framework register", sectionHost, () => {
     // ---- header ----
     const scored = tree.state === "scored" && tree.posturePct !== null;
     // The 5Rs is the one framework this app scopes down to its AI-relevant rules (Settings
@@ -323,25 +373,22 @@ export async function renderCompliance(main, params, ctx) {
             : "")
         : `${tree.name} · Wiz's own score, carried through unchanged`)
       : `${tree.name} · ${(STATES[tree.state] || STATES.unknown).label}`];
-    if (worstSeverity) heroSubKids.push(sevBadge(worstSeverity));
+    // Wrapped in its own small margin/vertical-align hook (compliance.css) rather than the
+    // shared `.page-hero-sub .sev-badge` — that class is drawn on every converted hero in
+    // the app, and scoping the tweak to this page's own wrapper keeps it from reaching one
+    // that never asked for it.
+    if (worstSeverity) heroSubKids.push(el("span", { class: "comp-posture-badge" }, sevBadge(worstSeverity)));
 
-    const hero = el("div", {},
-      el("div", { class: "label" }, "Compliance posture"),
-      // `.comp-hero-value` sets no colour (the scored case is meant to read at hero weight),
-      // so the unscored case needs `absent()` rather than a dash that inherits the same ink.
-      scored
-        ? el("div", { class: "comp-hero-value num" }, `${heroPct}%`)
-        : el("div", { class: "comp-hero-value" }, absent()),
-      scored
-        ? el("div", { class: "comp-hero-meter" }, heroMeter)
-        : null,
-      el("div", { class: "comp-hero-sub" }, ...heroSubKids),
-    );
-
-    host.append(el("div", { class: "comp-header" },
-      hero,
-      stateStrip(tree),
-      el("div", { class: "stat-list" },
+    sectionHost.append(pageHeader({
+      hero: complianceHero({
+        label: "Compliance posture",
+        scored,
+        pct: heroPct,
+        meterNode: scored ? heroMeter : null,
+        sub: heroSubKids,
+      }),
+      aside: stateStrip(tree),
+      stats: [
         statRow("Categories", String(tree.categories.length), "in this framework"),
         statRow(
           "Subcategories scored",
@@ -365,7 +412,8 @@ export async function renderCompliance(main, params, ctx) {
             "active rules with no failing check",
           )
           : null,
-      )));
+      ],
+    }));
 
     // ---- register ----
     // Categories, each expanding to its subcategories. One table, not two: the child rows
@@ -472,12 +520,12 @@ export async function renderCompliance(main, params, ctx) {
       }
     }
 
-    host.append(sectionLabel("Categories"));
+    sectionHost.append(sectionLabel("Categories"));
     if (!rows.length) {
       // Not "no data": the framework was collected, and the strip above has just counted
       // its subcategories one state at a time. What it has none of is a SCORED one, so the
       // empty state names that rather than implying a failed sync.
-      host.append(emptyState(
+      sectionHost.append(emptyState(
         "Nothing in this framework was scored.",
         "Every subcategory Wiz reported has no resources to assess or no policy written " +
         "for it — see the breakdown above. There is nothing evaluated here to list.",
@@ -485,7 +533,7 @@ export async function renderCompliance(main, params, ctx) {
       return;
     }
 
-    host.append(dataTable({
+    sectionHost.append(dataTable({
       stickyHeader: true,
       columns: COLUMNS,
       rows,
@@ -493,5 +541,6 @@ export async function renderCompliance(main, params, ctx) {
       rowClass: (row) => row._class,
       rowDetail: (row) => row._detail || null,
     }));
+    });
   }
 }

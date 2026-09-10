@@ -2178,6 +2178,15 @@ export function resetData(): void {
   overwrite(TABS.findings, []);
   overwrite(TABS.dataFindings, []);
   overwrite(TABS.syncHistory, []);
+  // THE LEDGER TOO. `issueLedger.ts`'s own header calls this tab the one a SYNC never
+  // overwrites, and that rule is right for a sync — reconciling a history is not the same
+  // operation as discarding one. A reset is the second thing: the user is throwing away the
+  // register's whole history, and the ledger's dated departures and episodes are part of
+  // that history, not a record standing apart from it. Leaving it behind was the defect this
+  // line closes — a Reset followed by a Sync used to arrive with an empty sync history beside
+  // a real ledger, a combination `seedIssueLedger` refuses to seed into and that left the
+  // seeded trend rows carrying no `register_scope` (`syncJobs.ts`'s `seedDryRunHistory`).
+  overwrite(TABS.issueLedger, []);
   trashGraphSnapshot();
   // The durable read-model cache too. `commit()` below bumps the version, so every file in
   // there is already unreachable — but reset should mean reset rather than "unreachable and
