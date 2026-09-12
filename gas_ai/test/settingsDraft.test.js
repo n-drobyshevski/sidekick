@@ -46,6 +46,7 @@ const PAYLOAD = {
   hasCredentials: true,
   fiveRsPins: { in: ["p1"], out: ["p2", "p3"] },
   issueCategories: ["wct-id-1998"],
+  syncScope: "project",
   rankRule: DEFAULT_RANK_RULE,
   rankLeadsSort: false,
 };
@@ -311,6 +312,17 @@ describe("settingsDraft: register scope and rank", () => {
     expect(settingsDraft(undefined).issueCategories).toEqual([]);
   });
 
+  it("reads the fetch scope as `project` for anything but a literal `tenant`", () => {
+    // Mirrors cleanSyncScope() in domain/registerScope.ts, which folds an unrecognised value
+    // back to the narrow answer. Reading it any other way here would draw a control that
+    // disagrees with what the sync will actually do.
+    expect(settingsDraft(PAYLOAD).syncScope).toBe("project");
+    expect(settingsDraft({ syncScope: "tenant" }).syncScope).toBe("tenant");
+    for (const junk of [undefined, null, "", "Tenant", "all", 1, true]) {
+      expect(settingsDraft({ syncScope: junk }).syncScope).toBe("project");
+    }
+  });
+
   it("deep-clones rankRule so editing the draft cannot mutate the shipped default", () => {
     const draft = settingsDraft(PAYLOAD);
     draft.rankRule.shares.time = 0.9;
@@ -333,6 +345,9 @@ describe("settingsDraft: register scope and rank", () => {
 
   it("lists the register tab's fields under it, in the tablist", () => {
     expect(SETTING_FIELDS.issueCategories.tab).toBe("register");
+    // Both halves of the register's scope are edited on one tab, so the save bar names one
+    // place to look however many of them moved.
+    expect(SETTING_FIELDS.syncScope.tab).toBe("register");
     expect(SETTING_FIELDS.rankRule.tab).toBe("register");
     expect(SETTING_FIELDS.rankLeadsSort.tab).toBe("register");
     expect(ALL_TABS).toContain("register");

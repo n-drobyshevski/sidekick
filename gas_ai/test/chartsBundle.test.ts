@@ -70,8 +70,15 @@ describe("the split holds", () => {
     // the bundle and 18.9% of the ~906 KB doGet inlines once styles.html is counted. The
     // bound is loose on purpose: it exists to catch Chart.js coming back, not to police
     // ordinary growth.
+    //
+    // RAISED FROM 650,000, because it had stopped doing the job its own comment describes.
+    // Ordinary growth since the split had reached 649,082 — 918 bytes of headroom — so the
+    // next paragraph of page copy anybody wrote would fail this, which is exactly the
+    // policing the bound disclaims. Chart.js weighs 171,779 bytes here, so a ceiling
+    // anywhere below "today plus 100 KB" still catches it returning by a wide margin;
+    // 700,000 restores a release or two of room without weakening the tracer.
     const bytes = statSync(join(ROOT, "dist/js_app.html")).size;
-    expect(bytes).toBeLessThan(650_000);
+    expect(bytes).toBeLessThan(700_000);
   });
 });
 

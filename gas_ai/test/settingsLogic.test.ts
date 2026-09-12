@@ -14,16 +14,20 @@ import {
   getDecidedRuleVersion,
   getDefaultDepth,
   getFiveRsPins,
+  getIssueCategories,
+  getIssueCategoriesVersion,
   getMaxNodes,
   getProblemRule,
   getScoredRuleVersion,
   getSelectedFrameworks,
+  getSyncScope,
   resolveDefaultFrameworks,
   withAarsRule,
   withDecidedRuleVersion,
   withFiveRsPins,
   withProblemRule,
   withSelectedFrameworks,
+  withSyncScope,
   withAutoExpand,
   withDefaultDepth,
   withMaxNodes,
@@ -333,6 +337,49 @@ describe("framework selection", () => {
   it("keeps the id defaults when a catalogue holds nothing it recognises", () => {
     const catalogue = [{ id: "wf-1", name: "PCI DSS v4.0" }];
     expect(resolveDefaultFrameworks(catalogue)).toEqual(DEFAULT_FRAMEWORK_IDS);
+  });
+});
+
+describe("sync_scope — which perimeters the sync collects from", () => {
+  it("is `project` by default: the configured project, which is what shipped before it", () => {
+    expect(getSyncScope({})).toBe("project");
+    expect(getSyncScope({ sync_scope: null })).toBe("project");
+  });
+
+  it("reads anything unrecognised as `project` rather than throwing or inventing a state", () => {
+    // A settings cell is editable by hand and readable by an older client. Degrading to the
+    // NARROW answer is the safe direction for a knob whose other setting spends the
+    // execution budget of every step in the battery.
+    for (const junk of ["Tenant", "all", "", 1, true, {}, ["tenant"]]) {
+      expect(getSyncScope({ sync_scope: junk })).toBe("project");
+    }
+    expect(getSyncScope({ sync_scope: "tenant" })).toBe("tenant");
+  });
+
+  it("round-trips and leaves every other key alone", () => {
+    // A PATCH, like every other writer here: two tabs of one Settings form saving a minute
+    // apart must not revert each other.
+    const before: Rec = {
+      default_depth: 2,
+      issue_categories: { version: 4, ids: ["wct-id-3"] },
+      rank_leads_sort: true,
+    };
+    const wide = withSyncScope(before, "tenant");
+    expect(getSyncScope(wide)).toBe("tenant");
+    expect(Object.keys(wide).sort()).toEqual(
+      ["default_depth", "issue_categories", "rank_leads_sort", "sync_scope"],
+    );
+    expect(wide["default_depth"]).toBe(2);
+    expect(wide["rank_leads_sort"]).toBe(true);
+    expect(getIssueCategories(wide)).toEqual(["wct-id-3"]);
+    // No generation counter, unlike issue_categories: writing the perimeter must not bump
+    // the category list's version, or a scope notice would fire on an unrelated save.
+    expect(getIssueCategoriesVersion(wide)).toBe(4);
+    expect(getSyncScope(withSyncScope(wide, "project"))).toBe("project");
+  });
+
+  it("stores the cleaned value, never the raw one", () => {
+    expect(withSyncScope({}, "nonsense")["sync_scope"]).toBe("project");
   });
 });
 

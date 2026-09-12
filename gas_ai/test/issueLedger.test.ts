@@ -21,6 +21,10 @@ const AI = "wct-id-1998";
 const VULN = "wct-id-3";
 const SCOPE_AI = AI;
 const SCOPE_WIDE = [AI, VULN].join("|");
+// The SAME categories collected from every perimeter instead of one project. A second axis
+// of the same scope, and the guard must not care which axis moved — see
+// registerScopeSignature, which appends this suffix when no project filter reached the wire.
+const SCOPE_AI_TENANT = `${AI}#tenant`;
 
 const T1 = "2026-09-01T00:00:00.000Z";
 const T2 = "2026-09-02T00:00:00.000Z";
@@ -138,6 +142,29 @@ describe("disappearance under a CHANGED scope is not a remediation", () => {
     // needs only the skip counted. One interval of latency against a wrong date.
     const prev = firstSync();
     const { rows, deltas } = reconcileIssueLedger(prev, [], "sync-2", T2, SCOPE_WIDE, SCOPE_AI);
+    expect(rows[0]!.disappearedAt).toBeNull();
+    expect(deltas.skippedNarrowedScope).toBe(1);
+  });
+
+  it("skips a PERIMETER narrowing — the other axis of the same scope", () => {
+    // Tenant-wide yesterday, one project today: every row outside that project is absent BY
+    // CONSTRUCTION, exactly as a dropped category's rows are. The guard compares signatures
+    // and never parses them, so this case works for free — which is precisely why it is
+    // pinned. A signature scheme that folded the perimeter into the category list, or left
+    // it out, would publish the rest of the tenant as remediated on one afternoon.
+    const prev = firstSync([issue()], SCOPE_AI_TENANT);
+    const { rows, deltas } =
+      reconcileIssueLedger(prev, [], "sync-2", T2, SCOPE_AI, SCOPE_AI_TENANT);
+    expect([rows[0]!.disappearedAt, rows[0]!.resolutionSrc]).toEqual([null, null]);
+    expect(deltas).toEqual({
+      new: 0, resolved: 0, reopened: 0, carried: 0, skippedNarrowedScope: 1,
+    });
+  });
+
+  it("skips a PERIMETER widening too, for the same reason the category widening is skipped", () => {
+    const prev = firstSync([issue()], SCOPE_AI);
+    const { rows, deltas } =
+      reconcileIssueLedger(prev, [], "sync-2", T2, SCOPE_AI_TENANT, SCOPE_AI);
     expect(rows[0]!.disappearedAt).toBeNull();
     expect(deltas.skippedNarrowedScope).toBe(1);
   });
