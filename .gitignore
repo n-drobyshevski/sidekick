@@ -76,3 +76,9 @@ ds-bundle/
 # every run and had to be kept out of every unrelated commit by hand. The 150 files it
 # tracked were untracked in the same commit that added this line; they remain on disk.
 .design-sync/
+
+# Installed dependencies at the repo ROOT. Each GAS package already ignores its own
+# node_modules/; the root never did, which is how one vitest cache file
+# (node_modules/.vite/vitest/*/results.json) got committed and then showed up dirty after
+# every single test run. Untracked in the same commit that added this line.
+node_modules/
