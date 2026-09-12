@@ -10,7 +10,8 @@
 // gas_shared/ui/figures.js rather than here.
 
 import { describe, expect, it } from "vitest";
-import { retentionTicks } from "../src/client/js/settingsReadouts.js";
+import { retentionTicks, shareOf } from "../src/client/js/settingsReadouts.js";
+import { absentText } from "../../gas_shared/ui/figures.js";
 
 function scan(overrides) {
   return { sealed: false, pinned: false, ageDays: 10, ...overrides };
@@ -72,5 +73,30 @@ describe("retentionTicks", () => {
   it("a scan exactly AT the retention floor has not yet crossed it — strictly greater-than", () => {
     const { ticks } = retentionTicks([scan({ ageDays: 90 })], 90);
     expect(ticks[0].state).toBe("plain");
+  });
+});
+
+// ONE PAGE, ONE ANSWER TO "WHAT IS 0 OF 0". P2 moved the two display-toggle headlines onto
+// gas_shared's `impactSplitModel`, which calls a zero-denominator share unmeasured rather than
+// a confident 0.0%. The risk classifier's summary sentence was a third caller of the old
+// `pct()` and kept the old shape, which meant an empty scan scope rendered both readouts at
+// once and the page answered the same question two ways within a few centimetres. `shareOf` is
+// that rule restated for the one caller that cannot reach the shared model — the sentence is
+// assembled from gas's own RiskRule vocabulary, not from an impactSplitModel spec.
+describe("shareOf", () => {
+  it("is a one-decimal percent when there is a population to take a share OF", () => {
+    expect(shareOf(43, 200)).toBe("21.5%");
+  });
+
+  it("an empty scan scope is UNMEASURED, not zero percent", () => {
+    // The trap this pins: `total ? pct : "0.0%"` reads as a harmless fallback and is not one.
+    // Nought findings out of nought is not "0.0% are high risk" — nothing was measured, and a
+    // confident figure here would be the exact thing gas_shared/ui/figures.js refuses.
+    expect(shareOf(0, 0)).toBe(absentText);
+  });
+
+  it("agrees with impactSplitModel, which is the point of restating the rule", () => {
+    expect(shareOf(0, 0)).toBe(absentText);
+    expect(shareOf(1, 4)).toBe("25.0%");
   });
 });

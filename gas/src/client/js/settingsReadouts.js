@@ -26,7 +26,8 @@
 // element is built once and never recreated.
 
 import {
-  clear, createCutHistogram, el, openAndTotal, severitySplitModel, splitBar, tickTimeline,
+  absentText, clear, createCutHistogram, el, openAndTotal, severitySplitModel, splitBar,
+  tickTimeline,
 } from "./ui.js";
 import {
   breakdownFromCube, epssHistogram, openSlice, ruleIsEmpty, ruleSentence,
@@ -37,14 +38,16 @@ function fmt(n) {
 }
 
 // THIS `pct` IS DELIBERATELY NOT THE ONE THE BRIEF'S FIX TOUCHED. `impactSplitModel`
-// (gas_shared) now returns `absentText` for a zero-denominator share and drops the
-// parenthetical — P2's one deliberate pixel — but that fix is scoped to the two display-toggle
-// headlines it replaced (`toggleHeadline`, deleted from this file). The risk classifier's own
-// summary sentence below was a THIRD call site the old shared `pct()` covered, which the brief
-// never named as part of the fix, so it keeps the old zero-denominator shape rather than
-// picking up an unreviewed second pixel change.
-function pct(n, total) {
-  return total ? `${((n / total) * 100).toFixed(1)}%` : "0.0%";
+// (gas_shared) returns `absentText` for a zero-denominator share and drops the parenthetical —
+// P2's one deliberate pixel. The risk classifier's summary sentence below was a THIRD call site
+// of the old shared `pct()`, and P2 left it on the old shape rather than take an unreviewed
+// second pixel. That was the right call to FLAG and the wrong place to STOP: an empty scan scope
+// renders both readouts at once, so the page would answer "what is 0 of 0" two ways within a few
+// centimetres — unmeasured in the toggle headlines, a confident 0.0% here. One page, one answer.
+// `shareOf` is the same rule as impactSplitModel's, stated once for the one caller left that
+// cannot reach it (the sentence is built from gas's own RiskRule vocabulary, not from a spec).
+export function shareOf(n, total) {
+  return total ? `${((n / total) * 100).toFixed(1)}%` : absentText;
 }
 
 /**
@@ -185,11 +188,12 @@ export function createRiskReadout() {
     caveatEl.hidden = empty;
     if (!empty) {
       clear(sentenceEl);
+      const share = shareOf(open.anyOf, openTotal);
       sentenceEl.append(
         `${ruleSentence(rule)} → `,
         el("strong", { class: "num" }, fmt(open.anyOf)),
-        ` of ${fmt(openTotal)} open findings in scan scope are high risk `
-        + `(${pct(open.anyOf, openTotal)}).`,
+        ` of ${fmt(openTotal)} open findings in scan scope are high risk`
+        + `${share === absentText ? "." : ` (${share}).`}`,
       );
       // Only when it adds something. If nothing in scope is resolved the two sentences are the
       // same sentence, and printing it twice invites the reader to hunt for a difference.
