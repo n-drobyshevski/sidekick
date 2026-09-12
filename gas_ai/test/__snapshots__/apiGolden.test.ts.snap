@@ -1904,6 +1904,81 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
     },
     "ok": true,
   },
+  "getSettingsImpact": {
+    "data": {
+      "agentCount": 0,
+      "candidateCategories": [
+        {
+          "count": 99,
+          "id": "wct-id-1998",
+          "measuredAt": "2026-08-23",
+          "measuredScope": "VALUE-CHAIN project",
+          "name": "AI Security",
+        },
+        {
+          "count": 677,
+          "id": "wct-id-3",
+          "measuredAt": "2026-08-23",
+          "measuredScope": "VALUE-CHAIN project",
+          "name": "Vulnerability Assessment",
+        },
+        {
+          "count": 536,
+          "id": "41a3ed79-9a2c-4466-9109-f845fd057bd4",
+          "measuredAt": "2026-08-23",
+          "measuredScope": "VALUE-CHAIN project",
+          "name": "High Profile Threats",
+        },
+        {
+          "count": 439,
+          "id": "5c3c85b5-bb94-4ee7-8f3e-c186d0229280",
+          "measuredAt": "2026-08-23",
+          "measuredScope": "VALUE-CHAIN project",
+          "name": "Data Security",
+        },
+        {
+          "count": 1390,
+          "id": "1f28667a-9d12-48dd-898d-d326bb422f8d",
+          "measuredAt": "2026-08-23",
+          "measuredScope": "VALUE-CHAIN project",
+          "name": "Key & Secret Management",
+        },
+        {
+          "count": 3477,
+          "id": "861eb856-54f6-4d1b-8ca1-1d6130841d20",
+          "measuredAt": "2026-08-23",
+          "measuredScope": "VALUE-CHAIN project",
+          "name": "Identity Management",
+        },
+      ],
+      "categoryCube": {
+        "candidateIds": [
+          "wct-id-1998",
+          "wct-id-3",
+          "41a3ed79-9a2c-4466-9109-f845fd057bd4",
+          "5c3c85b5-bb94-4ee7-8f3e-c186d0229280",
+          "1f28667a-9d12-48dd-898d-d326bb422f8d",
+          "861eb856-54f6-4d1b-8ca1-1d6130841d20",
+        ],
+        "cells": {},
+        "measuredCandidateIds": [
+          "wct-id-1998",
+        ],
+        "total": 0,
+      },
+      "termCoverage": {
+        "adjacency": 0,
+        "exploitation": 0,
+        "rule": 0,
+        "time": {
+          "createdAt": 0,
+          "dueAt": 0,
+        },
+        "total": 0,
+      },
+    },
+    "ok": true,
+  },
   "getStorageStats": {
     "data": {
       "archiveBytes": 0,
@@ -21047,6 +21122,86 @@ exports[`read endpoints > getSettings answers the same shape 1`] = `
       "timeSource": "dueAtOnly",
     },
     "syncScope": "project",
+  },
+  "ok": true,
+}
+`;
+
+exports[`read endpoints > getSettingsImpact answers the same shape 1`] = `
+{
+  "data": {
+    "agentCount": 14,
+    "candidateCategories": [
+      {
+        "count": 99,
+        "id": "wct-id-1998",
+        "measuredAt": "2026-08-23",
+        "measuredScope": "VALUE-CHAIN project",
+        "name": "AI Security",
+      },
+      {
+        "count": 677,
+        "id": "wct-id-3",
+        "measuredAt": "2026-08-23",
+        "measuredScope": "VALUE-CHAIN project",
+        "name": "Vulnerability Assessment",
+      },
+      {
+        "count": 536,
+        "id": "41a3ed79-9a2c-4466-9109-f845fd057bd4",
+        "measuredAt": "2026-08-23",
+        "measuredScope": "VALUE-CHAIN project",
+        "name": "High Profile Threats",
+      },
+      {
+        "count": 439,
+        "id": "5c3c85b5-bb94-4ee7-8f3e-c186d0229280",
+        "measuredAt": "2026-08-23",
+        "measuredScope": "VALUE-CHAIN project",
+        "name": "Data Security",
+      },
+      {
+        "count": 1390,
+        "id": "1f28667a-9d12-48dd-898d-d326bb422f8d",
+        "measuredAt": "2026-08-23",
+        "measuredScope": "VALUE-CHAIN project",
+        "name": "Key & Secret Management",
+      },
+      {
+        "count": 3477,
+        "id": "861eb856-54f6-4d1b-8ca1-1d6130841d20",
+        "measuredAt": "2026-08-23",
+        "measuredScope": "VALUE-CHAIN project",
+        "name": "Identity Management",
+      },
+    ],
+    "categoryCube": {
+      "candidateIds": [
+        "wct-id-1998",
+        "wct-id-3",
+        "41a3ed79-9a2c-4466-9109-f845fd057bd4",
+        "5c3c85b5-bb94-4ee7-8f3e-c186d0229280",
+        "1f28667a-9d12-48dd-898d-d326bb422f8d",
+        "861eb856-54f6-4d1b-8ca1-1d6130841d20",
+      ],
+      "cells": {
+        "1": 32,
+      },
+      "measuredCandidateIds": [
+        "wct-id-1998",
+      ],
+      "total": 32,
+    },
+    "termCoverage": {
+      "adjacency": 32,
+      "exploitation": 0,
+      "rule": 38,
+      "time": {
+        "createdAt": 0,
+        "dueAt": 29,
+      },
+      "total": 38,
+    },
   },
   "ok": true,
 }

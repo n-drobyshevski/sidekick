@@ -231,6 +231,12 @@ export const READ_APIS: Array<[name: string, params: unknown, label?: string]> =
   ["getScanQueries", {}],
   ["getScanStepDetail", { area: "posture" }],
   ["getSettings", {}],
+  // P9: the Settings page's live-readout payload — a category cube, rank term coverage and
+  // the agent count. Belongs in this sweep for the same reason every narrow projection above
+  // does: outside READ_APIS it escapes both this golden and verdictIsolation's check, and it
+  // is exactly the kind of small, easy-to-forget endpoint most likely to carry a verdict key
+  // through by accident.
+  ["getSettingsImpact", {}],
   ["getAarsRule", {}],
   // Phase 5: the problem tree's rule state, mirroring getAarsRule above. Mutating
   // endpoints (setProblemRule, previewProblemRule, recomputeProblems) stay out of this

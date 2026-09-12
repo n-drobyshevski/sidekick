@@ -136,6 +136,7 @@ import {
 import { dropUnselected, scopeFiveRs, withCountsFrom } from "../domain/complianceScope";
 import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
 import { CANDIDATE_CATEGORIES, registerScopeSignature } from "../domain/registerScope";
+import * as settingsImpact from "../domain/settingsImpact";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
@@ -3235,6 +3236,83 @@ export function setSettings(p?: unknown): ApiResult {
       rankLeadsSort: settingsStore.getRankLeadsSort(),
     };
   });
+}
+
+/**
+ * Everything the Settings page needs to say, beside each control, what that control is
+ * currently doing to the register — in ONE payload, mirroring `gas/`'s `getSettingsImpact`.
+ * See `domain/settingsImpact.ts`'s header for the three figures and the honesty requirement
+ * the category cube keeps.
+ *
+ * WHAT THIS WALKS. `syncStore.loadIssues()` once (memoized per execution, and likely already
+ * warm — every issue-reading endpoint calls it) to build the category cube; then two ALREADY
+ * -CACHED models, `problemsModel` (the Priorities queue, for term coverage) and `assetsModel`
+ * (for the agent count) via `durablyCached`, which is the same read-through cache the
+ * Priorities and Inventory pages themselves hit. On a warm cache this is one sheet read plus
+ * two cache lookups; on a cold cache (first load after a sync) it pays exactly what those two
+ * pages already pay on their own first load — never a second, independent full computation.
+ */
+function settingsImpactData(): Rec {
+  const openIssues = syncStore.loadIssues().filter(isUnresolvedIssue);
+  const candidateIds = CANDIDATE_CATEGORIES.map((c) => c.id);
+  const configuredIds = settingsStore.getIssueCategories();
+  const categoryCube = settingsImpact.buildCategoryCube(openIssues, candidateIds, configuredIds);
+
+  const problems = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
+  const termCoverage = settingsImpact.termCoverageOf(problems.rows);
+
+  const assets = durablyCached("assetsModel2", null, assetsModel) as AssetsModel;
+  const agentCount = Number(assets.kpis["agents"] ?? 0);
+
+  return {
+    categoryCube,
+    // The six candidates' dated calibration figures, travelling WITH their provenance rather
+    // than the client hand-copying them off a comment — registerScope.ts's own header on why.
+    candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({
+      id: c.id,
+      name: c.name,
+      count: c.count,
+      measuredAt: c.measuredAt,
+      measuredScope: c.measuredScope,
+    })),
+    termCoverage,
+    agentCount,
+  };
+}
+
+// Keyed on the two settings that define the register's scope — the collected category set
+// and the sync perimeter — reusing gas's own argument for `cachedSettingsImpactData`: key on
+// what changes the MEASURED POPULATION, never on a field the client re-cuts itself (there,
+// the risk-classifier thresholds; here, there is no such field at all — this payload carries
+// no threshold for the client to preview against).
+//
+// `issueCategories` is read LIVE by `settingsImpactData` (it feeds `measuredCandidateIds`
+// directly, no resync required), so keying on it is load-bearing: without it, flipping the
+// category picker would keep serving a stale honesty flag for up to an hour. `syncScope` is
+// NOT read anywhere in `settingsImpactData` today — the cube and the two reused models all
+// come from the LEDGER, which only a sync can move, and `dataVersion()` (folded into every
+// `cached()` key already) covers that. It is kept in the key anyway because
+// `registerScope.ts` treats the pair as ONE scope decision (`registerScopeSignature` stamps
+// both), and a payload titled "what does the register scope cost" silently missing half of
+// that scope's own key would be the kind of drift this app spends a great deal of effort
+// refusing elsewhere. The cost is a harmless extra cache miss on a syncScope-only save, never
+// a wrong answer.
+//
+// 1h TTL, same as gas — the agent count and term coverage are wall-clock-stale-tolerant, and
+// a save immediately bumps the data version anyway.
+const cachedSettingsImpactData = () =>
+  cached(
+    "settingsImpact1",
+    {
+      issueCategories: settingsStore.getIssueCategories(),
+      syncScope: settingsStore.getSyncScope(),
+    },
+    () => settingsImpactData(),
+    3600,
+  );
+
+export function getSettingsImpact(_p?: unknown): ApiResult {
+  return run(() => cachedSettingsImpactData());
 }
 
 // ------------------------------------------------------------------------- access

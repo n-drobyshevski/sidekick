@@ -690,12 +690,12 @@ var Server = (() => {
 
   // src/domain/registerScope.ts
   var CANDIDATE_CATEGORIES = [
-    { id: RISK_CATEGORY_ID, name: "AI Security" },
-    { id: "wct-id-3", name: "Vulnerability Assessment" },
-    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats" },
-    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security" },
-    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management" },
-    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management" }
+    { id: RISK_CATEGORY_ID, name: "AI Security", count: 99, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "wct-id-3", name: "Vulnerability Assessment", count: 677, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats", count: 536, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security", count: 439, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management", count: 1390, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management", count: 3477, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" }
   ];
   var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
   function cleanCategoryIds(v) {
@@ -4061,7 +4061,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "468bba15bcdf" : "dev";
+  var BUILD_ID = true ? "7776948a2acf" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12381,6 +12381,7 @@ var Server = (() => {
     getScanQueries: () => getScanQueries,
     getScanStepDetail: () => getScanStepDetail,
     getSettings: () => getSettings,
+    getSettingsImpact: () => getSettingsImpact,
     getStorageStats: () => getStorageStats,
     getSyncHistory: () => getSyncHistory,
     getToxicCombos: () => getToxicCombos,
@@ -13889,6 +13890,57 @@ var Server = (() => {
       passCount,
       failCount,
       wizPosturePct
+    };
+  }
+
+  // src/domain/settingsImpact.ts
+  function categoryMaskOf(categories, candidateIds) {
+    let mask = 0;
+    for (const cat of categories != null ? categories : []) {
+      const idx = candidateIds.indexOf(cat);
+      if (idx >= 0) mask |= 1 << idx;
+    }
+    return mask;
+  }
+  function buildCategoryCube(rows, candidateIds, configuredIds) {
+    var _a5;
+    const cells = {};
+    let seenBits = 0;
+    for (const r of rows) {
+      const mask = categoryMaskOf(r.categories, candidateIds);
+      seenBits |= mask;
+      const key = String(mask);
+      cells[key] = ((_a5 = cells[key]) != null ? _a5 : 0) + 1;
+    }
+    const configured = new Set(configuredIds);
+    const measuredCandidateIds = candidateIds.filter(
+      (id, i) => configured.has(id) || (seenBits & 1 << i) !== 0
+    );
+    return { total: rows.length, cells, candidateIds: [...candidateIds], measuredCandidateIds };
+  }
+  var DEFAULT_CANDIDATE_IDS = CANDIDATE_CATEGORIES.map((c) => c.id);
+  function parsesAsDate(v) {
+    return typeof v === "string" && v !== "" && Number.isFinite(Date.parse(v));
+  }
+  function termCoverageOf(rows) {
+    var _a5;
+    let dueAtN = 0;
+    let createdAtN = 0;
+    let exploitationN = 0;
+    let adjacencyN = 0;
+    for (const r of rows) {
+      if (parsesAsDate(r.dueAt)) dueAtN += 1;
+      if (parsesAsDate(r.createdAt)) createdAtN += 1;
+      const tier = String((_a5 = r.exploitationTier) != null ? _a5 : "").trim().toLowerCase();
+      if (tier && tier !== "unknown") exploitationN += 1;
+      if (r.aiAdjacency) adjacencyN += 1;
+    }
+    return {
+      total: rows.length,
+      rule: rows.length,
+      time: { dueAt: dueAtN, createdAt: createdAtN },
+      exploitation: exploitationN,
+      adjacency: adjacencyN
     };
   }
 
@@ -18788,6 +18840,43 @@ var Server = (() => {
         rankLeadsSort: getRankLeadsSort2()
       };
     });
+  }
+  function settingsImpactData() {
+    var _a5;
+    const openIssues2 = loadIssues().filter(isUnresolvedIssue);
+    const candidateIds = CANDIDATE_CATEGORIES.map((c) => c.id);
+    const configuredIds = getIssueCategories2();
+    const categoryCube = buildCategoryCube(openIssues2, candidateIds, configuredIds);
+    const problems = durablyCached("problemsModel", null, problemsModel);
+    const termCoverage = termCoverageOf(problems.rows);
+    const assets = durablyCached("assetsModel2", null, assetsModel);
+    const agentCount = Number((_a5 = assets.kpis["agents"]) != null ? _a5 : 0);
+    return {
+      categoryCube,
+      // The six candidates' dated calibration figures, travelling WITH their provenance rather
+      // than the client hand-copying them off a comment — registerScope.ts's own header on why.
+      candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({
+        id: c.id,
+        name: c.name,
+        count: c.count,
+        measuredAt: c.measuredAt,
+        measuredScope: c.measuredScope
+      })),
+      termCoverage,
+      agentCount
+    };
+  }
+  var cachedSettingsImpactData = () => cached(
+    "settingsImpact1",
+    {
+      issueCategories: getIssueCategories2(),
+      syncScope: getSyncScope2()
+    },
+    () => settingsImpactData(),
+    3600
+  );
+  function getSettingsImpact(_p) {
+    return run(() => cachedSettingsImpactData());
   }
   var ACCESS_MAX_BYTES = 8e3;
   var ACCESS_MAX_ENTRIES = 500;
