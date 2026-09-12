@@ -89,6 +89,27 @@ describe("the three consequences worth a confirm", () => {
     expect(w[0].tab).toBe("register");
     expect(w[0].title).toContain("Secrets");
     expect(w[0].body).toMatch(/FREEZES/);
+    // Singular pronoun and singular register/verb for the one-dropped case — the P0 wave's own
+    // fix made these depend on `dropped.length`, so this pins the branch that was already
+    // correct against a regression that made both branches read the same.
+    expect(w[0].body).toMatch(/in it FREEZES/);
+    expect(w[0].body).toMatch(/register is collected again/);
+  });
+
+  it("agrees in number when TWO registers are dropped in the same save — 'them'/'registers "
+    + "are', not 'it'/'register is'", () => {
+    // Found while wiring draftWarnings into the live save path (P0): the body used to read "in
+    // it FREEZES ... until the register is collected again" even with two registers dropped at
+    // once, disagreeing with its own plural "Stop collecting two registers?" title. Three
+    // registers dropped at once cannot reach here — validateDraft refuses an empty scopes list
+    // before draftWarnings ever runs — so two is the only reachable plural case.
+    const w = draftWarnings(saved, draftOf({ scopes: ["sca"] }), ctx);
+    expect(w).toHaveLength(1);
+    expect(w[0].title).toBe("Stop collecting two registers?");
+    expect(w[0].body).toMatch(/in them FREEZES/);
+    expect(w[0].body).not.toMatch(/in it FREEZES/);
+    expect(w[0].body).toMatch(/registers are collected again/);
+    expect(w[0].body).not.toMatch(/register is collected again/);
   });
 
   it("warns that narrowing a gate strands what is already in the ledger", () => {
@@ -101,6 +122,23 @@ describe("the three consequences worth a confirm", () => {
     expect(w).toHaveLength(1);
     expect(w[0].title).toContain("HIGH");
     expect(w[0].title).toContain("Dependencies");
+  });
+
+  it("names the narrowing warning's two antecedents distinctly — the severities no longer "
+    + "requested, and the findings that cannot resolve without them", () => {
+    // Found in the same P0 wording review: the body used "them" twice in one sentence for two
+    // different things (the severities being un-requested, then the findings that cannot
+    // resolve) — grammatically legal, but a reader has to guess which "them" is which. Fixed to
+    // name the findings explicitly, and to say "from mass-resolving" / "from ever closing"
+    // rather than the bare gerunds this codebase's own prose is otherwise careful not to use.
+    const draft = draftOf({
+      fetchSeverities: { ...saved.fetchSeverities, sca: ["CRITICAL"] },
+    });
+    const w = draftWarnings(saved, draft, ctx);
+    expect(w).toHaveLength(1);
+    expect(w[0].body).toMatch(/resolve those findings by absence/);
+    expect(w[0].body).toMatch(/stops an unrequested severity from mass-resolving/);
+    expect(w[0].body).toMatch(/stops it from ever closing/);
   });
 
   it("treats an empty gate as WIDENING, never as narrowing to nothing", () => {

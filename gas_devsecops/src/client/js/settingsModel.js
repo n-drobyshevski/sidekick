@@ -163,13 +163,21 @@ export function draftWarnings(saved, draft, ctx) {
   const dropped = saved.scopes.filter((s) => draft.scopes.indexOf(s) < 0);
   if (dropped.length) {
     const names = dropped.map(labelOf).join(", ");
+    // Pronoun and register count both have to agree with `dropped.length`: this warning is
+    // reachable with either one register dropped or two (three would empty `draft.scopes`
+    // outright, which validateDraft refuses before draftWarnings ever runs) — the wording used
+    // to say "in it FREEZES ... until the register is collected again" even when two registers
+    // were dropped at once, disagreeing with its own plural "two registers" title.
+    const pronoun = dropped.length === 1 ? "it" : "them";
+    const registerWord = dropped.length === 1 ? "register" : "registers";
+    const registerVerb = dropped.length === 1 ? "is" : "are";
     out.push({
       tab: "register",
       title: dropped.length === 1 ? `Stop collecting ${names}?` : "Stop collecting two registers?",
-      body: `Nothing will scan ${names} again, so every open finding in it FREEZES: it can `
+      body: `Nothing will scan ${names} again, so every open finding in ${pronoun} FREEZES: it can `
         + "never be resolved by disappearance, because resolution by absence needs a scan that "
         + "looked. The rows stay in the ledger and in every open count, ageing, until the "
-        + "register is collected again.",
+        + `${registerWord} ${registerVerb} collected again.`,
       confirmLabel: "Stop collecting",
     });
   }
@@ -195,10 +203,10 @@ export function draftWarnings(saved, draft, ctx) {
     out.push({
       tab: "register",
       title: `Stop requesting ${lost.join(", ")} from ${labelOf(scope)}?`,
-      body: "Findings at those severities are already in the ledger, and a scan that does not "
-        + "request them cannot resolve them by absence — the guard that stops an unrequested "
-        + "severity mass-resolving also stops it ever closing. They will sit open and ageing "
-        + "until the gate is widened again.",
+      body: "Findings at those severities are already in the ledger, and a scan that no longer "
+        + "requests them cannot resolve those findings by absence — the same guard that stops "
+        + "an unrequested severity from mass-resolving also stops it from ever closing. They "
+        + "will sit open and ageing until the gate is widened again.",
       confirmLabel: "Narrow the scope",
     });
   }

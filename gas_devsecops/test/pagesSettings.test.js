@@ -30,6 +30,52 @@ import { RETENTION_MIN_DAYS } from "../src/domain/maintenance";
 
 const SRC = readFileSync(new URL("../src/client/js/pages/settings.js", import.meta.url), "utf8");
 
+// Comment-stripped, string-aware — the same helper test/settingsDom.test.js (gas) and this
+// app's own test/pagesRegisters.test.js already use to read DOM-shaped source as text safely:
+// without it, a `//` explanation ABOVE doSave that happens to mention "setBusy(true)" or
+// "syncDirty()" in prose (this file's own header comment on doSave does exactly that, arguing
+// the shape before the code) would satisfy an ordering assertion whether or not the CODE below
+// it actually does those things in that order.
+//
+// ONE ADDITION OVER THE gas/pagesRegisters.test.js COPY: this version also tracks backtick
+// template literals as quoted, not only `"`/`'`. Without it, doSave's own error toast —
+// `` `Couldn't save settings: ${...}` `` — has an apostrophe inside a backtick string that the
+// original two-quote-character version mistakes for opening a SINGLE-quoted string, which then
+// never closes (no other `'` follows before EOF) and swallows every `//` comment for the rest
+// of the file into "inside a string", including the very `finally` comment this file's setBusy
+// test needs stripped out. Still no `/* */` handling — doSave carries no block comments, so
+// that limitation never reaches the slices this file actually greps.
+function code(src) {
+  let out = "";
+  let i = 0;
+  let quote = null;
+  while (i < src.length) {
+    const c = src[i];
+    const n = src[i + 1];
+    if (quote) {
+      out += c;
+      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
+      if (c === quote) quote = null;
+      i++;
+      continue;
+    }
+    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
+    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
+    out += c;
+    i++;
+  }
+  return out;
+}
+const CODE = code(SRC);
+
+// The exact body of doSave, isolated from the rest of the page: `function doDiscard()` is the
+// next declaration in source (see pages/settings.js), so this is everything between doSave's
+// own opening brace and doDiscard's, and nothing else in the file can leak into the ordering
+// assertions below by coincidentally containing the same identifiers.
+const DOSAVE_START = CODE.indexOf("async function doSave() {");
+const DOSAVE_END = CODE.indexOf("function doDiscard() {", DOSAVE_START);
+const DOSAVE_CODE = CODE.slice(DOSAVE_START, DOSAVE_END);
+
 // =========================================================================================
 //  0. Not the stub anymore
 // =========================================================================================
@@ -444,5 +490,191 @@ describe("cross-checks against the domain layer's own validation", () => {
   // to exist only while a test holds them byte-equal, which is what this pins.
   it("SCOPE_LABELS is byte-equal to domain/config.ts's own SCOPE_LABELS", () => {
     expect(SCOPE_LABELS).toEqual(DOMAIN_SCOPE_LABELS);
+  });
+});
+
+// =========================================================================================
+//  11. doSave, read as source text — four defects, four regressions this pins
+// =========================================================================================
+//
+// NO JSDOM (this file's own header), so doSave itself is never executed here — the same
+// bargain test/settingsDom.test.js (gas) makes for its own page. Every check below runs
+// against DOSAVE_CODE, doSave's own body sliced out of the comment-stripped source (see the
+// helpers above `SRC`), so a `//` explanation of the shape — this file carries one, right above
+// `async function doSave()` — can never stand in for the code actually doing it.
+
+describe("doSave found its own body in source (a canary for the two slice markers above)", () => {
+  it("DOSAVE_CODE is non-empty and contains the send", () => {
+    // If either marker (`async function doSave() {` / `function doDiscard() {`) ever drifts —
+    // renamed, reordered — DOSAVE_START/DOSAVE_END silently produce -1 or an empty slice, and
+    // every assertion below would vacuously pass on nothing. This is what stops that.
+    expect(DOSAVE_START).toBeGreaterThan(-1);
+    expect(DOSAVE_END).toBeGreaterThan(DOSAVE_START);
+    expect(DOSAVE_CODE.length).toBeGreaterThan(200);
+    expect(DOSAVE_CODE).toMatch(/call\(\s*"api_putSettings"/);
+  });
+});
+
+describe("doSave validates and confirms BEFORE it ever sends", () => {
+  // Order is the whole point (this file's brief, verbatim): a confirm shown before validation
+  // asks the reader to approve something that will then be refused.
+  const idxErrors = DOSAVE_CODE.indexOf("Object.keys(errors)");
+  const idxValidate = DOSAVE_CODE.indexOf("validateDraft(draft)");
+  const idxWarnings = DOSAVE_CODE.indexOf("draftWarnings(saved, draft");
+  const idxConfirm = DOSAVE_CODE.indexOf("confirmDialog(");
+  const idxSend = DOSAVE_CODE.indexOf('call("api_putSettings"');
+
+  it("finds all five landmarks in doSave's own body", () => {
+    for (const [name, idx] of [
+      ["Object.keys(errors)", idxErrors], ["validateDraft(draft)", idxValidate],
+      ["draftWarnings(saved, draft", idxWarnings], ["confirmDialog(", idxConfirm],
+      ['call("api_putSettings"', idxSend],
+    ]) expect(idx, `${name} not found in doSave`).toBeGreaterThan(-1);
+  });
+
+  it("checks the per-field errors gate before the committed draft", () => {
+    expect(idxErrors).toBeLessThan(idxValidate);
+  });
+
+  it("validates the committed draft before asking draftWarnings anything", () => {
+    expect(idxValidate).toBeLessThan(idxWarnings);
+  });
+
+  it("computes the warnings before showing any confirmDialog", () => {
+    expect(idxWarnings).toBeLessThan(idxConfirm);
+  });
+
+  it("shows every confirmDialog before the network send", () => {
+    expect(idxConfirm).toBeLessThan(idxSend);
+  });
+
+  it("bails out of the warnings loop on a decline, before the send", () => {
+    // `for (const w of warnings) { ... if (!ok) return; }` — a declined confirm must return out
+    // of doSave entirely, not merely skip one warning and fall through to bar.setBusy(true).
+    const loop = DOSAVE_CODE.slice(idxWarnings, idxSend);
+    expect(loop).toMatch(/for \(const w of warnings\)/);
+    expect(loop).toMatch(/if \(!ok\) return;/);
+  });
+});
+
+describe("doSave actually reaches draftWarnings and feeds its result to confirmDialog", () => {
+  // The brief's own warning: "a test that only asserts the import would pass against the old
+  // broken page." This checks the CALL, with the warning object's own fields threaded through —
+  // not merely that the two identifiers appear somewhere in the file.
+  it("calls draftWarnings with (saved, draft, ctx), not a bare re-export", () => {
+    expect(DOSAVE_CODE).toMatch(/const warnings = draftWarnings\(saved, draft, \{/);
+  });
+
+  it("the ctx it builds carries the four fields draftWarnings needs (settingsModel.js's own "
+    + "signature)", () => {
+    const ctxSlice = DOSAVE_CODE.slice(
+      DOSAVE_CODE.indexOf("draftWarnings(saved, draft, {"),
+      DOSAVE_CODE.indexOf("confirmDialog("),
+    );
+    expect(ctxSlice).toMatch(/scopes:\s*scopeList/);
+    expect(ctxSlice).toMatch(/severityOrder/);
+    expect(ctxSlice).toMatch(/scopeLabels:\s*SCOPE_LABELS/);
+    expect(ctxSlice).toMatch(/sharedSlaTargets:\s*boot\.slaTargets/);
+  });
+
+  it("awaits confirmDialog with the warning's own title/body/confirmLabel, danger:true", () => {
+    expect(DOSAVE_CODE).toMatch(
+      /await confirmDialog\(\{\s*title:\s*w\.title,\s*body:\s*w\.body,\s*confirmLabel:\s*w\.confirmLabel,\s*danger:\s*true,?\s*\}\)/,
+    );
+  });
+});
+
+describe("bar.setBusy(false) is reachable on the SUCCESS path, not only on failure", () => {
+  // The specific defect: the old doSave called setBusy(true), then only ever called
+  // setBusy(false) from the catch block — a successful save left the button disabled forever.
+  // This asserts the finally itself, not merely that the string "setBusy(false)" appears
+  // somewhere in the file (which the old, broken doSave already satisfied, from its catch).
+  it("setBusy(false) sits in a finally block, not only in the catch", () => {
+    expect(DOSAVE_CODE).toMatch(/\}\s*finally\s*\{\s*bar\.setBusy\(false\);\s*\}/);
+  });
+
+  it("the catch block does not ALSO call setBusy(false) — finally is the only place, so a "
+    + "reader can't mistake this for the old two-copies shape", () => {
+    const catchSlice = DOSAVE_CODE.slice(
+      DOSAVE_CODE.indexOf("} catch (e) {"),
+      DOSAVE_CODE.indexOf("} finally {"),
+    );
+    expect(catchSlice).not.toMatch(/setBusy\(false\)/);
+  });
+
+  it("the try block itself never calls setBusy(false) before the finally — only setBusy(true), "
+    + "once, at the top", () => {
+    const trySlice = DOSAVE_CODE.slice(
+      DOSAVE_CODE.indexOf("bar.setBusy(true);"),
+      DOSAVE_CODE.indexOf("} catch (e) {"),
+    );
+    expect(trySlice.match(/setBusy\(/g)).toEqual(["setBusy("]); // exactly the setBusy(true) at the top
+  });
+});
+
+describe("a successful save re-baselines saved from the response and clears the save bar", () => {
+  // The other half of the same defect: `saved` used to never move, so `syncDirty()` (never
+  // called either) would have kept reporting every batched field as still dirty forever.
+  const idxSend = DOSAVE_CODE.indexOf('call("api_putSettings"');
+  const idxRebaseline = DOSAVE_CODE.indexOf("saved = draftFromSettings(result)");
+  const idxSyncDirty = DOSAVE_CODE.indexOf("syncDirty()", idxSend);
+  const idxCatch = DOSAVE_CODE.indexOf("} catch (e) {");
+
+  it("re-baselines saved from the server's OWN response, not from the sent draft", () => {
+    // Specifically `result` (what the server actually stored), never `sent` (what was asked
+    // for) — cleanSettings can rewrite retentionDays/syncSchedule, and `saved` has to track
+    // the rewrite, not the request. Searching for the `sent` shape confirms it is genuinely
+    // absent, rather than merely that the `result` shape happens to appear somewhere too.
+    expect(idxRebaseline).toBeGreaterThan(-1);
+    expect(DOSAVE_CODE).not.toMatch(/saved = draftFromSettings\(sent\)/);
+  });
+
+  it("re-baselines and calls syncDirty() after the send, and before the catch — i.e. on the "
+    + "success path, inside the try", () => {
+    expect(idxSend).toBeLessThan(idxRebaseline);
+    expect(idxRebaseline).toBeLessThan(idxSyncDirty);
+    expect(idxSyncDirty).toBeLessThan(idxCatch);
+  });
+});
+
+// =========================================================================================
+//  12. The active tab round-trips into the hash
+// =========================================================================================
+//
+// `normalizeTab(params.tab)` was already honoured on ENTRY (section 8 above pins normalizeTab
+// itself); what was missing is the other direction — using the page never produced
+// `#/settings?tab=deadlines` for anyone to bookmark, refresh, or share, because onSelect never
+// told the URL a tab had changed.
+
+describe("tabList's onSelect writes the active tab back into the hash", () => {
+  // Bounded like settingsDom.test.js's own aria-describedby sweep (`[\s\S]{0,N}`) rather than
+  // an unbounded `[\s\S]*`, so this can only match the ONE onSelect this page defines, not
+  // wander into an unrelated setParams call anywhere else in the module.
+  const onSelectMatch = CODE.match(/onSelect:\s*\(key\)\s*=>\s*\{[\s\S]{0,300}?\}\s*,\s*\}\s*\);/);
+
+  it("finds the tabList(...) call's onSelect handler in source", () => {
+    expect(onSelectMatch).not.toBeNull();
+  });
+
+  it("calls setParams({ tab: key }) from inside onSelect — history.replaceState, no re-render", () => {
+    expect(onSelectMatch[0]).toMatch(/setParams\(\s*\{\s*tab:\s*key\s*\}\s*\)/);
+  });
+
+  it("imports setParams from the shared store, not a local reimplementation", () => {
+    expect(CODE).toMatch(/import\s*\{[^}]*\bsetParams\b[^}]*\}\s*from\s*"[^"]*\/gas_shared\/store\.js"/);
+  });
+});
+
+describe("confirmDialog and the settingsModel gates are real imports, not just referenced", () => {
+  // Necessary but not sufficient on its own — section 11 above is what proves the import is
+  // actually EXERCISED on the save path; this just guards against the import line itself
+  // silently disappearing in a future edit.
+  it("imports confirmDialog from the app's ui.js barrel (which re-exports gas_shared's)", () => {
+    expect(CODE).toMatch(/import\s*\{[^}]*\bconfirmDialog\b[^}]*\}\s*from\s*"\.\.\/ui\.js"/);
+  });
+
+  it("imports draftWarnings and validateDraft from settingsModel.js", () => {
+    expect(CODE).toMatch(/import\s*\{[^}]*\bdraftWarnings\b[^}]*\}\s*from\s*"\.\.\/settingsModel\.js"/);
+    expect(CODE).toMatch(/import\s*\{[^}]*\bvalidateDraft\b[^}]*\}\s*from\s*"\.\.\/settingsModel\.js"/);
   });
 });

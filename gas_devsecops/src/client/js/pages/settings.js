@@ -50,17 +50,18 @@
 // actually lives), never a button or field this build cannot back.
 
 import { call } from "../../../../../gas_shared/api.js";
-import { bootstrapCached, invalidateBootstrap } from "../../../../../gas_shared/store.js";
+import { bootstrapCached, invalidateBootstrap, setParams } from "../../../../../gas_shared/store.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import {
-  clear, diagnosticCard, diagnosticsPanel, el, errorState, fmtCount, fmtDateTime, glossaryTip,
-  heroLines, pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
+  clear, confirmDialog, diagnosticCard, diagnosticsPanel, el, errorState, fmtCount, fmtDateTime,
+  glossaryTip, heroLines, pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
 import {
   DEFAULT_TAB, SETTINGS_TABS, TAB_FIELDS,
-  changeCountText, changeSummary, changedFields, normalizeTab, tabStatus,
+  changeCountText, changeSummary, changedFields, draftWarnings, normalizeTab, tabStatus,
+  validateDraft,
 } from "../settingsModel.js";
 
 // ============================================================================ vocabulary
@@ -293,7 +294,13 @@ export async function renderSettings(host, params, ctx) {
   }));
 
   const tabHost = el("div", {});
-  const panelHost = el("div", { class: "settings-panels" });
+  // A PLAIN GROUPING DIV, ON PURPOSE — not a layout class. Its four children each own their
+  // own `hidden` attribute (only the active tab's panel is ever shown), and default block flow
+  // already stacks them exactly the way gas/gas_ai append their tab panels straight to `host`
+  // with no wrapper at all — nothing here needs a rule to arrange. `settings-panels` used to be
+  // the class on this node, with no CSS rule anywhere in the repo behind it; deleted rather than
+  // given a no-op rule, since nothing about the four-tabpanel layout above actually needs one.
+  const panelHost = el("div", {});
   const bar = saveBar({
     onSave: () => doSave(),
     onDiscard: () => doDiscard(),
@@ -322,6 +329,11 @@ export async function renderSettings(host, params, ctx) {
     idPrefix: "tab",
     onSelect: (key) => {
       for (const k of Object.keys(panels)) panels[k].hidden = k !== key;
+      // history.replaceState — does not fire hashchange, does not re-render. Without this,
+      // `#/settings?tab=deadlines` could be READ on entry (normalizeTab(params.tab) above) but
+      // never PRODUCED by using the page: every click left the address bar on whatever tab the
+      // reader arrived at. gas_ai's settings page does the same thing at the same call site.
+      setParams({ tab: key });
     },
   });
 
@@ -385,16 +397,73 @@ export async function renderSettings(host, params, ctx) {
     bar.update(changeCountText(changed), changeSummary(changed));
   }
 
+  // THE CANONICAL SHAPE IS gas's (pages/settings.js, ~line 1000): validate -> toast + jump on
+  // refusal -> the warnings loop -> setBusy(true) -> send -> re-baseline -> syncDirty() -> toast
+  // the reconciliation. Only the send itself differs — this app PUTs the whole draft to
+  // api_putSettings, gas sends a patch built from settingsPatch(saved, draft) — everything
+  // around it is the same sequence for the same reasons.
   async function doSave() {
+    // FIRST GATE: a field currently failing its OWN input's validity check (see `errors` above)
+    // never reaches `draft` at all — an in-progress "12" being typed over as "-3" leaves
+    // `draft.slaTargets` holding the last LEGAL value, so validateDraft below would see nothing
+    // wrong. `errors` is the only place that in-progress failure is recorded, so it is consulted
+    // first, before the committed draft is judged at all.
+    const invalidKeys = Object.keys(errors);
+    if (invalidKeys.length) {
+      toast("Fix the highlighted field(s) before saving.", "warn");
+      const invalidTab = invalidKeys.map((k) => FIELD_TABS[k]).find(Boolean);
+      if (invalidTab) tabs.select(invalidTab);
+      return;
+    }
+    // SECOND GATE: the committed draft itself, against settingsModel.js's own rules — an empty
+    // register list, or a non-positive SLA target that arrived already-invalid from the server
+    // (draftFromSettings never rejects what api_getSettings hands it) and was never retyped.
+    const v = validateDraft(draft);
+    if (!v.ok) {
+      toast(v.message, "warn");
+      tabs.select(v.tab);
+      return;
+    }
+    // Legal, and almost always a mistake — dropping a register FREEZES its open findings,
+    // narrowing a severity gate strands ledger rows that can never resolve by absence, and a
+    // changed SLA window diverges from the other three sidekicks (see settingsModel.js's own
+    // header). `ctx` is what draftWarnings needs and this closure already has: `scopeList`/
+    // `severityOrder` are this page's own bootstrap-or-fallback reads (above), `SCOPE_LABELS` is
+    // this page's own literal (byte-equal to the domain layer, pinned by
+    // test/pagesSettings.test.js), and `boot.slaTargets` is api_bootstrap's own SLA_TARGETS —
+    // the shared, byte-identical value every sidekick ships, not this draft's own slaTargets.
+    const warnings = draftWarnings(saved, draft, {
+      scopes: scopeList,
+      severityOrder,
+      scopeLabels: SCOPE_LABELS,
+      sharedSlaTargets: boot.slaTargets,
+    });
+    for (const w of warnings) {
+      const ok = await confirmDialog({
+        title: w.title, body: w.body, confirmLabel: w.confirmLabel, danger: true,
+      });
+      if (!ok) return;
+    }
     bar.setBusy(true);
     try {
       const sent = draft;
       const result = await call("api_putSettings", { settings: sent });
+      // RE-BASELINE FROM THE SERVER'S OWN RESPONSE, not from `sent` — `cleanSettings` may have
+      // clamped retentionDays or fallen back syncSchedule, and `saved` has to reflect what is
+      // actually stored, not what was asked for. `draft` is left as-is on purpose: if the server
+      // rewrote a value, `saved` and `draft` now disagree on THAT field and syncDirty() below
+      // reports it as still unsaved, which is the honest state — the toast right after names the
+      // rewrite, this is what makes it visible in the tablist and the save bar too.
+      saved = draftFromSettings(result);
+      syncDirty();
       const notes = saveReconciliation(sent, result);
       toast(notes.length ? notes.join(" ") : "Settings saved.");
       ctx && ctx.refresh && ctx.refresh();
     } catch (e) {
       toast(`Couldn't save settings: ${(e && e.message) || e}`, "error");
+    } finally {
+      // ALWAYS, success or failure — the bug this replaces left a successful save with a
+      // permanently disabled "Saving…" button sitting above a stale "N unsaved changes" bar.
       bar.setBusy(false);
     }
   }
