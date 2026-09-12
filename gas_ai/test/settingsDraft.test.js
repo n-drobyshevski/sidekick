@@ -13,7 +13,6 @@ import {
   changeSummary,
   changedFields,
   DEFAULT_TAB,
-  dirtyTabs,
   draftWarnings,
   fieldErrors,
   normalizeTab,
@@ -168,15 +167,6 @@ describe("field to tab ownership", () => {
     for (const k of SETTING_KEYS) {
       expect(ALL_TABS).toContain(SETTING_FIELDS[k].tab);
     }
-  });
-
-  it("returns dirty tabs in tablist order, deduplicated", () => {
-    // fiveRsPins (compliance) edited first, defaultDepth (graph) second.
-    expect(dirtyTabs(["fiveRsPins", "defaultDepth", "maxNodes"])).toEqual(["graph", "compliance"]);
-  });
-
-  it("has no dirty tab for an empty change list", () => {
-    expect(dirtyTabs([])).toEqual([]);
   });
 });
 

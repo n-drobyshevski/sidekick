@@ -68,6 +68,8 @@ import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syn
 import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
+import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
+import { SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 
@@ -377,3 +379,10 @@ registerScanStepContract({
   progressSrc: readFileSync(new URL("../src/client/js/syncProgress.js", import.meta.url), "utf8"),
   baseCss: readFileSync(new URL("../../gas_shared/styles/base.css", import.meta.url), "utf8"),
 });
+
+// =========================================================================================
+//  The settings kernel: this register's own SETTINGS_TABS/SETTING_FIELDS, plus the kernel's
+//  own fixed behaviour against a synthetic registry (settingsForm.js's own concern, not this
+//  app's — see that contract's header)
+// =========================================================================================
+registerSettingsFormContract({ ...base, tabs: SETTINGS_TABS, fields: SETTING_FIELDS });

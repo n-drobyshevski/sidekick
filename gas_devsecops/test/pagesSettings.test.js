@@ -394,9 +394,11 @@ describe("tab plumbing", () => {
   });
 
   it("changeCountText pluralizes correctly", () => {
-    expect(changeCountText(0)).toBe("0 unsaved changes");
-    expect(changeCountText(1)).toBe("1 unsaved change");
-    expect(changeCountText(2)).toBe("2 unsaved changes");
+    // Array form now, matching the kernel (gas_shared/ui/settingsForm.js) and gas/gas_ai's own
+    // signature — this page used to be the one holdout taking a plain count.
+    expect(changeCountText([])).toBe("0 unsaved changes");
+    expect(changeCountText(["autoCompact"])).toBe("1 unsaved change");
+    expect(changeCountText(["autoCompact", "scopes"])).toBe("2 unsaved changes");
   });
 });
 

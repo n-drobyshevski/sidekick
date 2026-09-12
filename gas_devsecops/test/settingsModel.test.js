@@ -1,18 +1,31 @@
-// The settings draft: what the save bar says, which tab wears the dirty dot, and the three
-// consequences worth stopping a reader for.
+// settingsDraft / validateDraft / draftWarnings — prepared, not yet wired.
 //
-// The warnings are the part that matters. Each one is grounded in something this register
-// measured or decided, and each describes an edit that is LEGAL — the server will take it —
-// and almost always a mistake.
+// This used to be 21 test cases over a settings model that was TWO models at once: a real one
+// (`settingsDraft`/`validateDraft`/`draftWarnings`, over this register's real `scopes`/
+// `fetchSeverities`/`slaTargets` fields) with no caller, plus the diff/dirty mechanics
+// (`normalizeTab`/`changedFields`/`settingsPatch`/`changeSummary`/`changeCountText`/`dirtyTabs`)
+// that `pages/settings.js` had already forked its OWN copies of. The diff mechanics are gone
+// from here: they are `gas_shared/ui/settingsForm.js`'s kernel now, bound to the real six-field
+// registry in `../src/client/js/settingsModel.js`, and already exercised against that live
+// registry by `test/pagesSettings.test.js` (`changedFields`/`changeSummary`/`changeCountText`/
+// `normalizeTab`, through the page's own re-exports) and `test/settingsLogic.test.js`
+// (`tabStatus`/`TAB_FIELDS`, with two recorded perturbations) — testing them a third time here,
+// against a registry this file does not itself register, would be false coverage in the other
+// direction. `test/contracts/settingsForm.js` (registered from `test/shared.test.js`) covers the
+// kernel's own behaviour generically, for every app that registers it.
+//
+// WHAT STAYS: `settingsDraft`/`validateDraft`/`draftWarnings` really are correct, real logic —
+// see `../src/client/js/settingsModel.js`'s own header for why nothing has called them yet.
+// `draftWarnings` in particular is scheduled to be wired into the live page in a later package,
+// the same three-warnings shape gas_ai's Settings page already shows; deleting its coverage now
+// would be deleting real behaviour for having no caller yet, not deleting dead code.
 
 import { describe, expect, it } from "vitest";
-import {
-  DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS, changeCountText, changeSummary, changedFields,
-  draftWarnings, dirtyTabs, normalizeTab, settingsDraft, settingsPatch, validateDraft,
-} from "../src/client/js/settingsModel.js";
+import { draftWarnings, settingsDraft, validateDraft } from "../src/client/js/settingsModel.js";
 import { SCOPES, SCOPE_LABELS, SEVERITY_ORDER, SLA_TARGETS } from "../src/domain/config";
 
-/** What api_bootstrap ships, which is where the page gets these rather than duplicating them. */
+/** What api_bootstrap ships, which is where a future caller would get these rather than
+ *  duplicating them. */
 const ctx = {
   scopes: [...SCOPES],
   scopeLabels: SCOPE_LABELS,
@@ -43,65 +56,6 @@ describe("the draft is a copy, not a view", () => {
     // The settled answer for secrets after two wrong ones. A draft that turned [] into the
     // full list would make the first save look like a narrowing of nothing.
     expect(settingsDraft(settings, ctx).fetchSeverities.secrets).toEqual([]);
-  });
-});
-
-describe("what the save bar says", () => {
-  it("counts nothing when nothing moved", () => {
-    const changed = changedFields(settingsDraft(settings, ctx), settingsDraft(settings, ctx));
-    expect(changed).toEqual([]);
-    expect(changeCountText(changed)).toBe("0 unsaved changes");
-  });
-
-  it("does not call a reordering an edit", () => {
-    // Re-picking the same severities in another order is not a change, and treating it as one
-    // would arm the save bar over a no-op.
-    const a = settingsDraft(settings, ctx);
-    const b = settingsDraft(settings, ctx);
-    b.fetchSeverities.sca = ["HIGH", "CRITICAL"];
-    expect(changedFields(a, b)).toEqual([]);
-  });
-
-  it("names the tab that owns each change, so a hidden control is findable", () => {
-    const saved = settingsDraft(settings, ctx);
-    const draft = draftOf({ slaTargets: { ...saved.slaTargets, HIGH: 21 }, scopes: ["sca"] });
-    const changed = changedFields(saved, draft);
-    expect(changed.sort()).toEqual(["scopes", "slaTargets"]);
-    expect(changeCountText(changed)).toBe("2 unsaved changes");
-    expect(changeSummary(changed).map((c) => c.tab).sort()).toEqual(["deadlines", "register"]);
-    expect(dirtyTabs(changed)).toEqual(["register", "deadlines"]); // tablist order
-  });
-
-  it("sends only the fields that moved", () => {
-    const saved = settingsDraft(settings, ctx);
-    const draft = draftOf({ scopes: ["sca", "sast"] });
-    expect(Object.keys(settingsPatch(saved, draft))).toEqual(["scopes"]);
-  });
-
-  it("puts every batched field on a real tab", () => {
-    // The bar names the owning tab and the tablist wears the dot; both read SETTING_FIELDS, so
-    // a field pointing at a tab that does not exist would be listed nowhere.
-    const keys = SETTINGS_TABS.map((t) => t.key);
-    for (const f of Object.values(SETTING_FIELDS)) expect(keys).toContain(f.tab);
-  });
-
-  it("owns nothing on System, which is why that tab never goes dirty", () => {
-    expect(Object.values(SETTING_FIELDS).some((f) => f.tab === "system")).toBe(false);
-    expect(Object.values(SETTING_FIELDS).some((f) => f.tab === "access")).toBe(false);
-  });
-});
-
-describe("the tab in the hash", () => {
-  it("falls back when Access is not drawn for this reader", () => {
-    // renderAccessPanel answers null for a non-editor, so a stale ?tab=access bookmark must
-    // land somewhere real rather than selecting a tab that was never built.
-    expect(normalizeTab("access", ["register", "deadlines", "system"])).toBe(DEFAULT_TAB);
-    expect(normalizeTab("access", ["register", "deadlines", "access", "system"])).toBe("access");
-  });
-
-  it("falls back on junk", () => {
-    expect(normalizeTab("../etc/passwd", null)).toBe(DEFAULT_TAB);
-    expect(normalizeTab(undefined, null)).toBe(DEFAULT_TAB);
   });
 });
 

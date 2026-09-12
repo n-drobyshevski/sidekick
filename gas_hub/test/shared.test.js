@@ -45,6 +45,8 @@ import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.j
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
 import { relativeAge } from "../../gas_shared/ui/figures.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
+import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
+import { URL_TABS, URL_TAB_FIELDS } from "../src/client/js/pages/settings.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 const base = { describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, app: "hub" };
@@ -147,6 +149,17 @@ registerRelativeAgeContract({ ...base, relativeAge });
 // Math.floor day-count back into app.js — still runs, because that one is about what an
 // app.js may not contain rather than about what it must call.
 registerSyncCaptionContract({ ...base, railHasSyncZone: false });
+
+// =========================================================================================
+//  The settings kernel: this app's registry lives inline in pages/settings.js (one tab, three
+//  URL fields — see that file's own header for why there is no settingsModel.js here to hold
+//  it), so `settingsModelPath` points the direct-import-path check at the file that actually
+//  imports settingsForm.
+// =========================================================================================
+registerSettingsFormContract({
+  ...base, tabs: URL_TABS, fields: URL_TAB_FIELDS,
+  settingsModelPath: "src/client/js/pages/settings.js",
+});
 
 // =========================================================================================
 //  This app's brand, pinned by value

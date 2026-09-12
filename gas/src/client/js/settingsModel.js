@@ -8,6 +8,23 @@
 // ONE source of truth for field → tab ownership. The save bar names the owning tab and the tab
 // itself wears a dirty marker; both read SETTING_FIELDS, so a knob can never be listed under one
 // tab in the bar and another on the tablist.
+//
+// THE DIRTY/SAVE-BAR MECHANICS BELOW ARE NOT THIS FILE'S OWN ANY MORE. `normalizeTab`,
+// `changedFields`, `settingsPatch`, `changeSummary`, `changeCountText` and `tabStatus` were
+// byte-identical or near enough across gas/, gas_ai/ and gas_devsecops/ — three copies of one
+// rule agreeing by having been typed the same way. `gas_shared/ui/settingsForm.js` is that one
+// rule now, a factory closed over THIS file's own `SETTINGS_TABS`/`SETTING_FIELDS` below, so
+// this file still owns the registry and every other app import of these six names keeps
+// working unchanged. What stays genuinely local: the registry itself, `settingsDraft` (this
+// register's own payload shape), `fieldErrors`/`validateDraft`/`draftWarnings` (this register's
+// own rules) and `clampDisplayToFetch` (nothing else has a display/fetch subset relationship to
+// enforce). See settingsForm.js's own header for why its `sameValue` leaf is
+// `a === b || Object.is(a, b)` rather than this file's old `JSON.stringify` comparison, and for
+// why `dirtyTabs` — one of the functions this file used to export — did not come back: nothing
+// in `pages/settings.js` has called it since `tabStatus` replaced it (see the comment at that
+// call site), and its only remaining caller was this app's own test file.
+
+import { settingsForm } from "../../../../gas_shared/ui/settingsForm.js";
 
 /** The five tabs, in order. `key` is what rides in the hash (`#/settings?tab=risk`). */
 export const SETTINGS_TABS = [
@@ -38,10 +55,18 @@ export const SETTING_FIELDS = {
 
 export const SETTING_KEYS = Object.keys(SETTING_FIELDS);
 
-/** A tab key the hash is allowed to name; anything else falls back to the first tab. */
-export function normalizeTab(key) {
-  return SETTINGS_TABS.some((t) => t.key === key) ? key : DEFAULT_TAB;
-}
+const kernel = settingsForm({ tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB });
+
+/**
+ * The bound kernel — see gas_shared/ui/settingsForm.js's header for `normalizeTab`'s two-
+ * argument form (this app only ever calls it with one; every SETTINGS_TABS key is always
+ * built), `changeCountText`'s array signature, `tabStatus`'s key-presence reading of `errors`,
+ * and `sameValue`'s `a === b || Object.is(a, b)` leaf.
+ */
+export const {
+  normalizeTab, changedFields, settingsPatch, changeSummary, changeCountText, tabStatus,
+  TAB_FIELDS,
+} = kernel;
 
 /**
  * Lift `boot.settings` into a flat draft over exactly SETTING_KEYS. Arrays and the rule object
@@ -67,53 +92,6 @@ export function settingsDraft(settings) {
       : Number(s.retentionDays),
     autoCompact: !!s.autoCompact,
   };
-}
-
-/** Order-insensitive for the severity arrays: reordering pills is not an edit. */
-function sameValue(a, b) {
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
-  }
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-/** The field keys whose draft value differs from the saved one, in SETTING_KEYS order. */
-export function changedFields(saved, draft) {
-  return SETTING_KEYS.filter((k) => !sameValue(saved[k], draft[k]));
-}
-
-/** Only the changed fields, ready to send as one atomic patch. */
-export function settingsPatch(saved, draft) {
-  const out = {};
-  for (const k of changedFields(saved, draft)) out[k] = draft[k];
-  return out;
-}
-
-/** Tab keys carrying at least one changed field, in tablist order. */
-export function dirtyTabs(changed) {
-  const owned = new Set(changed.map((k) => SETTING_FIELDS[k].tab));
-  return SETTINGS_TABS.filter((t) => owned.has(t.key)).map((t) => t.key);
-}
-
-const TAB_LABEL = Object.fromEntries(SETTINGS_TABS.map((t) => [t.key, t.label]));
-
-/**
- * What the save bar says. Each change carries the tab that owns it, because a tabbed page can
- * hide a dirty control behind an inactive tab — naming the tab is what makes it findable, and
- * the bar renders each entry as a link to that tab.
- */
-export function changeSummary(changed) {
-  return changed.map((k) => ({
-    field: k,
-    label: SETTING_FIELDS[k].label,
-    tab: SETTING_FIELDS[k].tab,
-    tabLabel: TAB_LABEL[SETTING_FIELDS[k].tab],
-  }));
-}
-
-export function changeCountText(changed) {
-  const n = changed.length;
-  return `${n} unsaved change${n === 1 ? "" : "s"}`;
 }
 
 /**
@@ -219,53 +197,4 @@ export function clampDisplayToFetch(draft) {
     draft.displaySeverities = draft.displaySeverities.filter((s) => fetchSet.has(s));
   }
   return dropped;
-}
-
-// ============================================================================ per-tab status
-//
-// DERIVED FROM SETTING_FIELDS ABOVE, not a second literal — a field can never be listed under
-// one tab in `dirtyTabs`/the save bar and marked on a different tab in the tablist, because
-// there is only one map naming the ownership. Ported from gas_devsecops/src/client/js/
-// settingsModel.js's own TAB_FIELDS/tabStatus.
-export const TAB_FIELDS = Object.fromEntries(SETTING_KEYS.map((k) => [k, SETTING_FIELDS[k].tab]));
-
-/**
- * Per-tab dirty/invalid state, so a tablist can show which HIDDEN tab holds unsaved or
- * illegal state without a reader opening it first.
- *
- * `dirty` — true when some field owned by that tab differs between `draft` and `saved`.
- * `saved` MUST be the last-SAVED snapshot, never the initial-load one that never changes
- * across a session: a field changed and then changed back to the saved value is not dirty,
- * the same rule `changedFields` above already applies to the save bar's own count.
- *
- * `invalid` — true when `errors` names a field owned by that tab. `errors` is any object
- * keyed by field name; only KEY PRESENCE is read (`Object.prototype.hasOwnProperty`), never
- * truthiness — a caller's contract is to DELETE a key once that field clears rather than to
- * set it to a falsy value, the same trap CLAUDE.md names for `Number(null)`: an `errors.foo =
- * ""` a truthiness check would read as cleared is still a KEY, and a truthiness read would
- * silently un-invalidate a tab that is still broken. See test/settingsModel.test.js's own
- * perturbation for what breaks when this reads truthiness instead.
- *
- * `tabFields` is the field→tab map to read (TAB_FIELDS in production) — a parameter rather
- * than a closed-over constant so this stays testable against a synthetic shape.
- *
- * Returns one entry per tab NAMED IN `tabFields`; a tab that owns no batched field never
- * appears and is therefore never dirty or invalid by construction — Attribution (the manual
- * groups editor has its own Save) and System (the roster, the hub field and the maintenance
- * jobs each save themselves; the diagnostics panel is read-only) are that here, the same way
- * Access is on gas_devsecops's page.
- */
-export function tabStatus(draft, saved, errors, tabFields) {
-  const fields = tabFields || {};
-  const d = draft || {};
-  const s = saved || {};
-  const errs = errors || {};
-  const tabs = {};
-  for (const tab of new Set(Object.values(fields))) tabs[tab] = { dirty: false, invalid: false };
-  for (const [field, tab] of Object.entries(fields)) {
-    if (!tabs[tab]) continue;
-    if (!sameValue(s[field], d[field])) tabs[tab].dirty = true;
-    if (Object.prototype.hasOwnProperty.call(errs, field)) tabs[tab].invalid = true;
-  }
-  return tabs;
 }

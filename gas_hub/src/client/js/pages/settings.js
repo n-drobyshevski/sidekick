@@ -26,12 +26,26 @@ import {
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { urlPlaceholder, urlProblem } from "./urlsModel.js";
+import { settingsForm } from "../../../../../gas_shared/ui/settingsForm.js";
 
 const URL_FIELDS = [
   { key: "os", label: "OS Patching" },
   { key: "ai", label: "AI security" },
   { key: "devsecops", label: "DevSecOps" },
 ];
+
+// ONE TAB, THREE FIELDS — the smallest registry the shared kernel takes. This app has a
+// single panel with nothing to jump BETWEEN (see buildUrlsPanel's own header), so the tablist
+// is one entry and `changeSummary`'s `tabLabel` always reads "Sidekick URLs" — the same literal
+// the hand-fabricated summary below used to repeat for every changed field. Exported so
+// test/shared.test.js can register the shared settingsForm contract against this app's own
+// registry, the same way gas/gas_ai/gas_devsecops register it against their SETTINGS_TABS/
+// SETTING_FIELDS.
+export const URL_TABS = [{ key: "urls", label: "Sidekick URLs" }];
+export const URL_TAB_FIELDS = Object.fromEntries(
+  URL_FIELDS.map((f) => [f.key, { tab: "urls", label: f.label }]),
+);
+const urlSettingsForm = settingsForm({ tabs: URL_TABS, fields: URL_TAB_FIELDS, defaultTab: "urls" });
 
 // The ONLY pageHeader({ route: "settings" }) call in this file — the h1 text ("Settings")
 // comes from PAGES via appConfig(), never a second copy of the string here.
@@ -84,12 +98,8 @@ async function buildUrlsPanel(host, ctx) {
   const panelHost = el("div", {});
 
   function syncDirty() {
-    const changed = URL_FIELDS.filter((f) => draft[f.key] !== saved[f.key]);
-    const countText = changed.length + " unsaved change" + (changed.length === 1 ? "" : "s");
-    const summary = changed.map((f) => (
-      { label: f.label, tab: "urls", tabLabel: "Sidekick URLs" }
-    ));
-    bar.update(countText, summary);
+    const changed = urlSettingsForm.changedFields(saved, draft);
+    bar.update(urlSettingsForm.changeCountText(changed), urlSettingsForm.changeSummary(changed));
   }
 
   function fieldRow(field) {

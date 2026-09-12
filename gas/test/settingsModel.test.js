@@ -8,7 +8,6 @@ import {
   changedFields,
   clampDisplayToFetch,
   DEFAULT_TAB,
-  dirtyTabs,
   draftWarnings,
   fieldErrors,
   normalizeTab,
@@ -112,13 +111,6 @@ describe("tab ownership", () => {
     for (const [field, meta] of Object.entries(SETTING_FIELDS)) {
       expect(keys, `${field} names a tab that exists`).toContain(meta.tab);
     }
-  });
-
-  it("reports dirty tabs in tablist order, not edit order", () => {
-    const d = draft();
-    d.retentionDays = 90;      // lifecycle
-    d.riskRule.epss = false;   // risk
-    expect(dirtyTabs(changedFields(draft(), d))).toEqual(["risk", "lifecycle"]);
   });
 
   it("names the owning tab for each change so a hidden edit stays findable", () => {

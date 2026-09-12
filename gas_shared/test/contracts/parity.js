@@ -91,15 +91,40 @@ export function registerParityContract(ctx) {
       expect(UI).toMatch(/export \* from "[./]*gas_shared\/ui\/index\.js";/);
     });
 
-    it("defines relativeAge / syncCaption / absentText nowhere but gas_shared", () => {
+    it("defines relativeAge / syncCaption / absentText / the settings kernel nowhere but "
+      + "gas_shared", () => {
       // THE FAILURE THE ALLOW-LIST ABOVE CANNOT SEE. A re-forked ui/figures.js would already
       // fail "keeps only the allow-listed local modules", but the pre-P8 defect was never a
       // second FILE — it was a private helper inline in pages/history.js (gas) and a second,
       // coarser inline calculation in each app's own rail caption (all three). Neither shows
       // up in a directory listing. So this sweeps every .js file this app ships for a
-      // DECLARATION of one of these three names — not a usage, not an import, a declaration —
+      // DECLARATION of one of these names — not a usage, not an import, a declaration —
       // anywhere under src/client/js/, ui/ included.
-      const FORKABLE = ["relativeAge", "syncCaption", "absentText"];
+      //
+      // P1's SEVEN join the original three: `normalizeTab`/`changedFields`/`settingsPatch`/
+      // `changeSummary`/`changeCountText`/`tabStatus`/`sameValue` were the eight-function
+      // duplication `gas_shared/ui/settingsForm.js`'s `settingsForm()` factory closed —
+      // `dirtyTabs`, the eighth, is deliberately not in this list: it was dead in production in
+      // every app that had it (see settingsForm.js's own header) and was deleted rather than
+      // promoted, so there is nothing shared left for a re-declaration of IT to fork.
+      //
+      // A RE-EXPORT MUST NOT TRIP THIS, and it is the reason the regex stayed a plain
+      // declaration match rather than growing an allowance list: every app's own
+      // `settingsModel.js` re-exports these seven names from the kernel it built
+      // (`export const { normalizeTab, changedFields, ... } = kernel;`), and
+      // `pages/settings.js` in turn re-exports several of them again
+      // (`export { changeCountText, changeSummary, ... };`). Neither shape matches
+      // `const NAME =` or `function NAME(`: a destructured const's very next token after
+      // `const` is `{`, never the field name, and a named `export { … }` carries no
+      // `const`/`let`/`var`/`function` keyword at all. Checked against this repo's actual
+      // settingsModel.js/pages/settings.js files in all three registers before relying on it,
+      // rather than assumed — an allowance list would have been the wrong fix for a false
+      // positive that, on inspection, this mechanism never produces.
+      const FORKABLE = [
+        "relativeAge", "syncCaption", "absentText",
+        "normalizeTab", "changedFields", "settingsPatch", "changeSummary", "changeCountText",
+        "tabStatus", "sameValue",
+      ];
       /** @type {string[]} */
       const files = [];
       const walk = (dir) => {

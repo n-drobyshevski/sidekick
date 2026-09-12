@@ -58,7 +58,10 @@ import {
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
-import { TAB_FIELDS, tabStatus } from "../settingsModel.js";
+import {
+  DEFAULT_TAB, SETTINGS_TABS, TAB_FIELDS,
+  changeCountText, changeSummary, changedFields, normalizeTab, tabStatus,
+} from "../settingsModel.js";
 
 // ============================================================================ vocabulary
 
@@ -101,34 +104,19 @@ export const SETTINGS_KEYS = [
 // is deliberately absent, see the module header. projectView is absent for the separate
 // reason given above SETTINGS_KEYS: it has no tab on this page at all.
 //
-// `= TAB_FIELDS` rather than a second literal: settingsModel.js's tabStatus() computes each
-// tab's dirty/invalid state for the tablist off this SAME map, so a field can never be
-// listed under one tab in the save bar and marked on a different tab in the tablist.
+// `= TAB_FIELDS` rather than a second literal, and `TAB_FIELDS` ITSELF now comes straight from
+// settingsModel.js's own `SETTING_FIELDS` — the tab-and-label registry both files used to keep
+// half of. tabStatus() below computes each tab's dirty/invalid state for the tablist off this
+// SAME map, so a field can never be listed under one tab in the save bar and marked on a
+// different tab in the tablist.
 export const FIELD_TABS = TAB_FIELDS;
 export const BATCHED_KEYS = Object.keys(FIELD_TABS);
 
-const FIELD_LABELS = {
-  scopes: "registers collected",
-  fetchSeverities: "severities requested",
-  slaTargets: "remediation windows",
-  syncSchedule: "sync hour",
-  autoCompact: "automatic compaction",
-  retentionDays: "retention window",
-};
-
-export const TABS = [
-  { key: "register", label: "Register" },
-  { key: "deadlines", label: "Deadlines" },
-  { key: "access", label: "Access" },
-  { key: "system", label: "System" },
-];
-export const DEFAULT_TAB = "register";
-const TAB_LABEL = Object.fromEntries(TABS.map((t) => [t.key, t.label]));
-
-/** A tab key the hash is allowed to name; anything else falls back — mirrors navModel.js. */
-export function normalizeTab(key) {
-  return TABS.some((t) => t.key === key) ? key : DEFAULT_TAB;
-}
+// TABS/DEFAULT_TAB/normalizeTab/changedFields/changeSummary/changeCountText are re-exported
+// from settingsModel.js below rather than declared here — see this page's import line and that
+// file's own header.
+export const TABS = SETTINGS_TABS;
+export { DEFAULT_TAB, changeCountText, changeSummary, changedFields, normalizeTab };
 
 // ============================================================================ pure view model
 
@@ -156,40 +144,14 @@ export function draftFromSettings(settings) {
   };
 }
 
-function sameValue(a, b) {
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
-  }
-  if (a && b && typeof a === "object" && typeof b === "object") {
-    const ka = Object.keys(a).sort();
-    const kb = Object.keys(b).sort();
-    if (JSON.stringify(ka) !== JSON.stringify(kb)) return false;
-    return ka.every((k) => sameValue(a[k], b[k]));
-  }
-  return a === b;
-}
-
-/** Which of the seven fields differ between saved and draft — for the save bar, not the wire. */
-export function changedFields(saved, draft) {
-  return SETTINGS_KEYS.filter((k) => !sameValue((saved || {})[k], (draft || {})[k]));
-}
-
-/**
- * What the save bar says, each change naming the tab that owns it. `showExperimental` never
- * appears here even if it differs — it has no batched tab and no Save/Discard affordance of
- * its own; it saves itself the moment its switch is flipped.
- */
-export function changeSummary(changed) {
-  return (changed || [])
-    .filter((k) => FIELD_TABS[k])
-    .map((k) => ({
-      field: k, label: FIELD_LABELS[k] || k, tab: FIELD_TABS[k], tabLabel: TAB_LABEL[FIELD_TABS[k]],
-    }));
-}
-
-export function changeCountText(n) {
-  return n + " unsaved change" + (n === 1 ? "" : "s");
-}
+// `changedFields`/`changeSummary`/`changeCountText` are the kernel's (see the import line and
+// settingsModel.js's own header). `changedFields` used to scan this page's own SETTINGS_KEYS —
+// seven fields, `showExperimental` included — while `changeSummary` filtered its result down to
+// the six FIELD_TABS carries; nothing ever set `draft.showExperimental` to a value other than
+// what it loaded with, so the gap between the two never actually printed a mismatched count
+// beside an empty summary, but it was a live structural inconsistency rather than a proven-safe
+// one. Reading `changedFields` off the same six-key registry `changeSummary` and `tabStatus`
+// already read closes the gap outright rather than leaving it merely unreachable.
 
 // ---------------------------------------------------------------------------- register tab
 
@@ -420,7 +382,7 @@ export async function renderSettings(host, params, ctx) {
       tabs.setDirty(t.key, !!(status[t.key] && status[t.key].dirty));
       tabs.setInvalid(t.key, !!(status[t.key] && status[t.key].invalid));
     }
-    bar.update(changeCountText(changed.length), changeSummary(changed));
+    bar.update(changeCountText(changed), changeSummary(changed));
   }
 
   async function doSave() {
