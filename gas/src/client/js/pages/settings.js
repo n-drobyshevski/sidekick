@@ -13,14 +13,14 @@ import {
   normalizeTab, SETTINGS_TABS, settingsDraft, settingsPatch, TAB_FIELDS, tabStatus, validateDraft,
 } from "../settingsModel.js";
 import {
-  createRiskReadout, renderRetentionReadout, severityScopeReadout, toggleHeadline,
-  toggleReadoutBar, toggleReadoutNote,
+  createRiskReadout, renderRetentionReadout, severityScopeReadout,
 } from "../settingsReadouts.js";
 import {
   absent, clear, confirmDialog, diagnosticsPanel, disclosure, el, errorCountBadge, errorLogBody,
   heroLines,
-  fmtDateTime, normalizeErrorLog, openSheet, pageHeader, saveBar, settingRow,
-  settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor, tipLabel, toast,
+  fmtDateTime, impactSplit, impactSplitModel, normalizeErrorLog, openSheet, pageHeader, saveBar,
+  settingRow, settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor,
+  tipLabel, toast,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -938,19 +938,33 @@ export async function renderSettings(main, params, ctx) {
     clear(scopeReadoutHost);
     scopeReadoutHost.append(severityScopeReadout(impact.census, draft, boot.palette.selectable));
 
-    vfHeadline.textContent = toggleHeadline(impact.toggles.noFix, impact.toggles.openTotal,
-      "have no vendor fix available");
+    const vfModel = impactSplitModel({
+      count: impact.toggles.noFix, total: impact.toggles.openTotal, unit: "findings",
+      phrase: "have no vendor fix available",
+      includedLabel: "Has a vendor fix", excludedLabel: "No vendor fix",
+      on: draft.showNoFix,
+      onNote: `All ${impact.toggles.openTotal.toLocaleString()} open findings counted.`,
+      offNote: `${impact.toggles.noFix.toLocaleString()} findings hidden from every chart, `
+        + "table, KPI and export.",
+    });
+    vfHeadline.textContent = vfModel.headline;
     clear(vfBarHost);
-    vfBarHost.append(toggleReadoutBar(impact.toggles.noFix, impact.toggles.openTotal,
-      "Has a vendor fix", "No vendor fix"));
-    vfNote.textContent = toggleReadoutNote(impact.toggles.noFix, impact.toggles.openTotal, draft.showNoFix);
+    vfBarHost.append(impactSplit(vfModel));
+    vfNote.textContent = vfModel.note;
 
-    eolHeadline.textContent = toggleHeadline(impact.toggles.eolOpen, impact.toggles.openTotal,
-      "are on an end-of-life operating system");
+    const eolModel = impactSplitModel({
+      count: impact.toggles.eolOpen, total: impact.toggles.openTotal, unit: "findings",
+      phrase: "are on an end-of-life operating system",
+      includedLabel: "Supported OS", excludedLabel: "End-of-life OS",
+      on: draft.includeEol,
+      onNote: `All ${impact.toggles.openTotal.toLocaleString()} open findings counted.`,
+      offNote: `${impact.toggles.eolOpen.toLocaleString()} findings hidden from every chart, `
+        + "table, KPI and export.",
+    });
+    eolHeadline.textContent = eolModel.headline;
     clear(eolBarHost);
-    eolBarHost.append(toggleReadoutBar(impact.toggles.eolOpen, impact.toggles.openTotal,
-      "Supported OS", "End-of-life OS"));
-    eolNote.textContent = toggleReadoutNote(impact.toggles.eolOpen, impact.toggles.openTotal, draft.includeEol);
+    eolBarHost.append(impactSplit(eolModel));
+    eolNote.textContent = eolModel.note;
 
     riskReadout.update(impact.risk.cube, draft.riskRule, { onThresholdChange: setEpssThreshold });
 

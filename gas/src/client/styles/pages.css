@@ -639,33 +639,6 @@ dialog.domains-dialog .dialog-preview {
 /* No hover affordance and no remove control — nothing here is actionable. */
 .access-row--locked:hover { background: var(--surface); }
 
-/* -------------------------------------------------------------- settings: split bar */
-/* ui.js splitBar: one track split into labelled segments, the caption beneath repeating every
-   figure in words — the bar illustrates, the caption is the record a screen reader gets too. */
-.splitbar-wrap { margin-top: var(--space-3); }
-.splitbar {
-  display: flex; height: 20px; border-radius: var(--radius-sm); overflow: hidden;
-  border: 1px solid var(--hairline); background: rgba(0, 0, 0, 0.04);
-}
-.splitbar__seg { height: 100%; }
-/* Severity segments ride the same --sev-* fill tokens as every other severity mark in the app —
-   never a bespoke hue, so a segment here means what it means everywhere else. */
-.splitbar__seg--CRITICAL { background: var(--sev-critical); }
-.splitbar__seg--HIGH { background: var(--sev-high); }
-.splitbar__seg--MEDIUM { background: var(--sev-medium); }
-.splitbar__seg--LOW { background: var(--sev-low); }
-.splitbar__seg--INFO { background: var(--sev-info); }
-.splitbar__seg--UNKNOWN { background: var(--sev-unknown); }
-.splitbar__seg--in { background: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-edge); }
-/* Excluded/"not scanned": a hatched neutral rather than a second solid hue, so "not counted"
-   reads as an absence rather than a category competing with the severities beside it. */
-.splitbar__seg--out {
-  background-image: repeating-linear-gradient(
-    135deg, var(--text-3) 0, var(--text-3) 2px, transparent 2px, transparent 6px);
-  background-color: transparent; opacity: 0.6;
-}
-.splitbar__caption { margin: 6px 0 0; }
-
 /* -------------------------------------------------------------- settings: filter grid */
 /* The vendor-fix and end-of-life filters side by side, so neither is a full-bleed card for one
    switch and a sentence. Same auto-fit idiom as .chart-grid / .kpi-row — collapses to a single
@@ -687,74 +660,17 @@ dialog.domains-dialog .dialog-preview {
 .risk-row__missing { color: var(--text-2); font-size: var(--fs-label); margin-left: var(--space-2); }
 .risk-sentence { margin: 10px 0 0; font-size: var(--fs-label); }
 .risk-sentence strong { font-variant-numeric: tabular-nums; }
-.risk-caveat, .risk-empty, .risk-unmeasured { margin: var(--space-1) 0 0; }
+.risk-caveat, .risk-empty { margin: var(--space-1) 0 0; }
 /* The classifier's clause list gains a header, because its rows are the first place a reader
    meets the "43 (57 all time)" pair — the sentence that frames it sits below them. */
 .risk-row--head { border-bottom: 1px solid var(--hairline); padding-bottom: var(--space-1); }
 .risk-row__headnote { color: var(--text-3); }
 
-/* -------------------------------------------------------------- settings: EPSS histogram */
-/* Square-root scaled — EPSS is right-skewed enough that a linear scale flattens everything past
-   ~0.25 to nothing, which is the one thing this chart exists to show is untrue (see the note
-   text rendered beside it, settingsReadouts.js). The range input persists across every redraw
-   (see createRiskReadout's own comment) — only its value and the bars around it are rewritten. */
-.epss-hist-wrap { margin-top: 14px; position: relative; }
-.epss-hist-scroll { overflow-x: auto; }
-.epss-hist {
-  display: flex; align-items: flex-end; gap: var(--space-half); height: 68px; min-width: 320px;
-  position: relative;
-}
-.epss-bar {
-  flex: 1 1 0; min-width: var(--space-2); background: rgba(0, 0, 0, 0.14);
-  border-radius: 2px 2px 0 0;
-}
-.epss-bar.above { background: var(--accent); }
-.epss-cutline {
-  position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink);
-  pointer-events: none;
-}
-input[type="range"].epss-range {
-  display: block; width: 100%; margin: var(--space-2) 0 var(--space-half);
-  accent-color: var(--accent);
-}
-.epss-axis { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
-.epss-scale-note { margin: 6px 0 0; max-width: 78ch; }
-
-/* -------------------------------------------------------------- settings: retention timeline */
-.retention-timeline-scroll { overflow-x: auto; margin-top: 14px; }
-/* Left-aligned and capped, NOT stretched to fill. A register with seven scans drew seven
-   185px slabs across the card, which reads as a striped placeholder rather than a sequence in
-   time; the timeline's width should say how many scans there are. It still grows to the
-   available room for a long history, and scrolls past it. */
-.retention-timeline {
-  display: flex; gap: 6px; min-width: 340px; align-items: flex-end; height: 48px;
-  justify-content: flex-start;
-}
-.retention-tick {
-  flex: 1 1 0; min-width: 16px; max-width: 44px;
-  display: flex; flex-direction: column; align-items: center; gap: 3px;
-}
-.retention-tick__glyph { font-size: var(--fs-micro); color: var(--text-3); line-height: 1; }
-.retention-tick__bar {
-  width: 100%; height: 26px; border-radius: 2px;
-  background: rgba(0, 0, 0, 0.1); border: 1px solid transparent;
-}
-/* Sealed: solid neutral. Would-seal: the same hatch as splitbar's "out" segment (excluded once
-   the next pass runs). Pinned: a faint accent wash — the one state that never depends on the
-   window, so it borrows the data/state accent rather than a severity or plain neutral tone.
-   Every state also carries a glyph (see renderRetentionReadout) — never fill alone. */
-.retention-tick.is-sealed .retention-tick__bar { background: var(--text-3); opacity: 0.35; }
-.retention-tick.is-would .retention-tick__bar {
-  background-image: repeating-linear-gradient(
-    135deg, var(--text-3) 0, var(--text-3) 2px, transparent 2px, transparent 6px);
-  opacity: 0.7;
-}
-/* The wash alone is 8% alpha and all but disappears on the card's own tint, which left "pinned"
-   readable only from the legend. The border carries it; the glyph still does the real work. */
-.retention-tick.is-pinned .retention-tick__bar {
-  background: var(--accent-wash);
-  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
-}
+/* The EPSS histogram (P2: createCutHistogram, gas_shared/ui/settingsReadouts.js — class
+   names .cut-hist*) and the retention timeline (P2: tickTimeline, class names .tick-timeline*)
+   both moved into gas_shared/styles/components.css: neither drew anything specific to an
+   OS-vulnerability register, and both are exported from gas_shared/ui/ with a domain-free
+   API, which is the placement rule README.md states for this directory. */
 
 /* -------------------------------------------------------------- settings: jobs console */
 /* Today History backfill / Domain-tag backfill / Support group refresh consolidate into one

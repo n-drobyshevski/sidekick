@@ -108,6 +108,10 @@ export function registerParityContract(ctx) {
       // every app that had it (see settingsForm.js's own header) and was deleted rather than
       // promoted, so there is nothing shared left for a re-declaration of IT to fork.
       //
+      // P2 ADDS `openAndTotal`: gas's Settings readouts had it as a private helper
+      // (`gas/src/client/js/settingsReadouts.js`), promoted to `gas_shared/ui/figures.js`
+      // alongside `fmtCount`/`pct1`/`days1`, the formatters it keeps company with.
+      //
       // A RE-EXPORT MUST NOT TRIP THIS, and it is the reason the regex stayed a plain
       // declaration match rather than growing an allowance list: every app's own
       // `settingsModel.js` re-exports these seven names from the kernel it built
@@ -124,6 +128,7 @@ export function registerParityContract(ctx) {
         "relativeAge", "syncCaption", "absentText",
         "normalizeTab", "changedFields", "settingsPatch", "changeSummary", "changeCountText",
         "tabStatus", "sameValue",
+        "openAndTotal",
       ];
       /** @type {string[]} */
       const files = [];

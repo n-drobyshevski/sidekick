@@ -42,7 +42,7 @@ import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
 import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
-import { figureCardModel, relativeAge } from "../../gas_shared/ui/figures.js";
+import { figureCardModel, openAndTotal, relativeAge } from "../../gas_shared/ui/figures.js";
 import { registerFigureCardContract } from "../../gas_shared/test/contracts/figureCard.js";
 import { registerQuadContract } from "../../gas_shared/test/contracts/quad.js";
 import { quadModel } from "../../gas_shared/ui/quad.js";
@@ -54,6 +54,10 @@ import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.j
 import { normalizeHubUrl } from "../src/server/hubUrl";
 import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
 import { SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
+import { registerSettingsReadoutsContract } from "../../gas_shared/test/contracts/settingsReadouts.js";
+import {
+  createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
+} from "../../gas_shared/ui/settingsReadouts.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 const base = { describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, app: "devsecops" };
@@ -285,3 +289,13 @@ registerScanStepContract({
 //  app's — see that contract's header)
 // =========================================================================================
 registerSettingsFormContract({ ...base, tabs: SETTINGS_TABS, fields: SETTING_FIELDS });
+
+// =========================================================================================
+//  The settings read-out vocabulary. gas_devsecops's own Settings page does not draw with
+//  this yet (that is P3 onward's job) — this registers the shared primitives' own fixed
+//  behaviour, the same way registerQuadContract/registerSparklineContract above hold their
+//  modules' behaviour independent of which page in this app happens to call them.
+// =========================================================================================
+registerSettingsReadoutsContract({
+  ...base, impactSplitModel, severitySplitModel, tickTimeline, createCutHistogram, openAndTotal,
+});

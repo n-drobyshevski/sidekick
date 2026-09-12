@@ -28,7 +28,11 @@
 //   nvd.js         a CVE's page at NIST. No sibling register has a CVE.
 //   scopeBar.js    WHICH two scopes this register has (a Wiz/Domain tag, a support group).
 //                  The chips themselves are the shared `filterChipRow` now.
-//   splitBar.js    an in/out proportion with arbitrary tones. `sevSegmentBar` draws
+//
+// `splitBar.js` HAS LEFT THIS LIST TOO (P2), and for the same shape of reason `usageMeter.js`
+// did: what was gas-only was never the in/out-proportion IDEA, only the fact that gas was the
+// only app drawing one yet. It is `gas_shared/ui/splitBar.js` now, reached through the star
+// below; the two call sites that used it (both in settingsReadouts.js) are unchanged.   splitBar.js    an in/out proportion with arbitrary tones. `sevSegmentBar` draws
 //                  severities and only severities.
 //
 // `usageMeter.js` HAS LEFT THIS LIST TOO, and the reason it was on it was measurably wrong.
@@ -57,4 +61,3 @@ export { changeChip } from "./ui/changeChip.js";
 export { nvdUrl } from "./ui/nvd.js";
 export { scopeBar } from "./ui/scopeBar.js";
 export { fmtSpan } from "./ui/span.js";
-export { splitBar } from "./ui/splitBar.js";

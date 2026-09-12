@@ -1674,3 +1674,119 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
    heading, not part of its name. The pill's tint and word are `statusPill`'s; this rule is
    spacing only. */
 .section-label > .heading-pill { margin-left: var(--space-2); font-weight: 400; }
+
+/* ---------------------------------------------------------------------------- split bar */
+/* gas_shared/ui/splitBar.js: one track split into labelled segments, the caption beneath
+   repeating every figure in words — the bar illustrates, the caption is the record a screen
+   reader gets too. PROMOTED FROM gas/src/client/styles/pages.css (P2). gas was the only app
+   drawing one when this moved — the module's own header explains why that is not the same
+   claim as "this belongs to gas": it follows the placement rule below rather than cross-app
+   reuse. See gas_shared/ui/settingsReadouts.js for the two shared model builders
+   (impactSplitModel, severitySplitModel) that hand this component its segments. */
+.splitbar-wrap { margin-top: var(--space-3); }
+.splitbar {
+  display: flex; height: 20px; border-radius: var(--radius-sm); overflow: hidden;
+  border: 1px solid var(--hairline); background: rgba(0, 0, 0, 0.04);
+}
+.splitbar__seg { height: 100%; }
+/* Severity segments ride the same --sev-* fill tokens as every other severity mark in the app —
+   never a bespoke hue, so a segment here means what it means everywhere else. */
+.splitbar__seg--CRITICAL { background: var(--sev-critical); }
+.splitbar__seg--HIGH { background: var(--sev-high); }
+.splitbar__seg--MEDIUM { background: var(--sev-medium); }
+.splitbar__seg--LOW { background: var(--sev-low); }
+.splitbar__seg--INFO { background: var(--sev-info); }
+.splitbar__seg--UNKNOWN { background: var(--sev-unknown); }
+.splitbar__seg--in { background: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-edge); }
+/* Excluded/"not counted": a hatched neutral rather than a second solid hue, so "not counted"
+   reads as an absence rather than a category competing with the severities beside it.
+   THE LITERAL GRADIENT, CARRIED ACROSS UNCHANGED. This predates the --hatch token in
+   tokens.base.css, and that token's own comment is explicit: it is for NEW work, and
+   axisBar's hatch and .sevbar-seg--empty's keep their own rules because repointing them is a
+   visual change to a shipped picture and belongs in its own measured round, not in the commit
+   that moves the file that draws them. This segment's hatch is the identical case — promoting
+   the module is not the commit that gets to repoint it. */
+.splitbar__seg--out {
+  background-image: repeating-linear-gradient(
+    135deg, var(--text-3) 0, var(--text-3) 2px, transparent 2px, transparent 6px);
+  background-color: transparent; opacity: 0.6;
+}
+.splitbar__caption { margin: 6px 0 0; }
+
+/* ------------------------------------------------------------------------ tick timeline */
+/* gas_shared/ui/settingsReadouts.js's tickTimeline(): a labelled tick sequence — one mark per
+   item, a glyph AND a fill (tickTimeline refuses a state that carries one without the other —
+   fill is never the only cue), a legend and a summary line beneath it. It never computes a
+   tick's own state; the caller does that (gas's app-local retentionTicks()) and hands over
+   `{state, hint}` pairs. RENAMED FROM gas's own .retention-* ON PROMOTION (P2) — the module
+   draws whatever state sequence a caller hands it, not only a scan's retention state, so the
+   class names say what the picture is rather than what gas's first caller used it for. */
+.tick-timeline-scroll { overflow-x: auto; margin-top: 14px; }
+/* Left-aligned and capped, NOT stretched to fill. A register with seven scans drew seven
+   185px slabs across the card, which reads as a striped placeholder rather than a sequence in
+   time; the timeline's width should say how many ticks there are. It still grows to the
+   available room for a long sequence, and scrolls past it. */
+.tick-timeline {
+  display: flex; gap: 6px; min-width: 340px; align-items: flex-end; height: 48px;
+  justify-content: flex-start;
+}
+.tick-timeline__tick {
+  flex: 1 1 0; min-width: 16px; max-width: 44px;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+}
+.tick-timeline__glyph { font-size: var(--fs-micro); color: var(--text-3); line-height: 1; }
+.tick-timeline__bar {
+  width: 100%; height: 26px; border-radius: 2px;
+  background: rgba(0, 0, 0, 0.1); border: 1px solid transparent;
+}
+/* gas ships four states; one of them ("plain", within the retention window) is exactly this
+   base rule and owns no modifier below. Sealed: solid neutral. Would (gas's would-seal): the
+   same hatch splitbar's "out" segment uses above (excluded once the next pass runs) — same
+   literal gradient, same reason it is not var(--hatch). Pinned: a faint accent wash — the one
+   state that never depends on the window in gas's own use, so it borrows the data/state
+   accent rather than a severity or plain neutral tone. */
+.tick-timeline__tick--sealed .tick-timeline__bar { background: var(--text-3); opacity: 0.35; }
+.tick-timeline__tick--would .tick-timeline__bar {
+  background-image: repeating-linear-gradient(
+    135deg, var(--text-3) 0, var(--text-3) 2px, transparent 2px, transparent 6px);
+  opacity: 0.7;
+}
+/* The wash alone is 8% alpha and all but disappears on the card's own tint, which left gas's
+   "pinned" state readable only from the legend. The border carries it; the glyph still does
+   the real work. */
+.tick-timeline__tick--pinned .tick-timeline__bar {
+  background: var(--accent-wash);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* ------------------------------------------------------------------------- cut histogram */
+/* gas_shared/ui/settingsReadouts.js's createCutHistogram(): a histogram with a draggable cut
+   line, built ONCE — the <input type="range"> is never recreated after construction, because
+   the range fires `input` continuously while dragged and removing the node from the document
+   silently aborts the drag (createCutHistogram's own header). RENAMED FROM gas's own .epss-*
+   ON PROMOTION (P2): the module draws a cut over any value domain a caller states (an EPSS
+   score 0..1, a day count), not only EPSS, so the cutline offset is `(cut-min)/(max-min)` and
+   a bar's "above" state compares its own start to the cut in that domain rather than assuming
+   0..1. */
+.cut-hist-scroll { overflow-x: auto; }
+.cut-hist-wrap { margin-top: 14px; position: relative; }
+.cut-hist {
+  display: flex; align-items: flex-end; gap: var(--space-half); height: 68px; min-width: 320px;
+  position: relative;
+}
+.cut-hist__bar {
+  flex: 1 1 0; min-width: var(--space-2); background: rgba(0, 0, 0, 0.14);
+  border-radius: 2px 2px 0 0;
+}
+.cut-hist__bar--above { background: var(--accent); }
+.cut-hist__cutline {
+  position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink);
+  pointer-events: none;
+}
+input[type="range"].cut-hist__range {
+  display: block; width: 100%; margin: var(--space-2) 0 var(--space-half);
+  accent-color: var(--accent);
+}
+.cut-hist__axis { display: flex; justify-content: space-between; font-variant-numeric: tabular-nums; }
+.cut-hist__note { margin: 6px 0 0; max-width: 78ch; }
+.cut-hist__unmeasured { margin: var(--space-1) 0 0; }
