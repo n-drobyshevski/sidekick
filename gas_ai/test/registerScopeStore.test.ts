@@ -15,6 +15,13 @@ import { RISK_CATEGORY_ID } from "../src/domain/toxicCombos";
 import type { IssueRow } from "../src/domain/graphTypes";
 import { bootServer, teardownServer } from "./gasEnv";
 
+/** The fake Script Properties the booted server reads, for the perimeter case below. */
+function scriptProps(): GoogleAppsScript.Properties.Properties {
+  return (globalThis as unknown as {
+    PropertiesService: GoogleAppsScript.Properties.PropertiesService;
+  }).PropertiesService.getScriptProperties();
+}
+
 /** What sheetsDb.fromCell does to a written row: '' becomes null on the way back. */
 function throughSheet(row: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -135,7 +142,12 @@ describe("sync_history.register_scope — a scan records the gate it APPLIED", (
     const store = await import("../src/server/syncStore");
     const history = store.syncHistory();
     const latest = history[history.length - 1];
-    expect(latest["register_scope"]).toBe(registerScopeSignature([RISK_CATEGORY_ID]));
+    // `null` as the applied project scope, spelled out rather than read back from the
+    // server: this env sets no WIZ_PROJECT_ID_V2, so the battery sends no project filter and
+    // the stamp has to say so. That is the whole point of the second argument — it records
+    // what RAN, so a register collected tenant-wide is never mistaken for a scoped one.
+    expect(latest["register_scope"])
+      .toBe(registerScopeSignature([RISK_CATEGORY_ID], null));
 
     // And every issue row the sync wrote carries the stamp too — the ledger and its commit
     // record have to agree about which population was collected.
@@ -158,10 +170,13 @@ describe("sync_history.register_scope — a scan records the gate it APPLIED", (
     const boot = server.api.bootstrap({}) as {
       data: { registerScope: { kind: string; persisted: string; current: string } | null };
     };
+    // `#tenant` on both sides: this workbook sets no WIZ_PROJECT_ID_V2, so both the scan
+    // that ran and the scan that would run next collect from every perimeter. The suffix is
+    // what the notice needs to NOT say — the categories moved and the perimeter did not.
     expect(boot.data.registerScope).toEqual({
       kind: "registerScope",
-      persisted: RISK_CATEGORY_ID,
-      current: `${RISK_CATEGORY_ID}|wct-id-3`,
+      persisted: `${RISK_CATEGORY_ID}#tenant`,
+      current: `${RISK_CATEGORY_ID}|wct-id-3#tenant`,
       remedy: "sync",
     });
 
@@ -177,6 +192,41 @@ describe("sync_history.register_scope — a scan records the gate it APPLIED", (
     server.api.setSettings({ issueCategories: [RISK_CATEGORY_ID] });
     const settled = server.api.bootstrap({}) as { data: { registerScope: unknown } };
     expect(settled.data.registerScope).toBeNull();
+    teardownServer();
+  });
+
+  it("raises the same notice when the PERIMETER moves and no category did", async () => {
+    // The second axis, and the thing it proves is that the notice reads the scope the
+    // battery would APPLY rather than the setting. Nothing here touches Fetch scope: the
+    // stored scan collected every perimeter because no project was configured, and setting
+    // one narrows the next scan without any settings save at all.
+    const server = await bootServer();
+    server.setup();
+    expect((server.api.runSync({}) as { ok: boolean }).ok).toBe(true);
+
+    scriptProps().setProperty("WIZ_PROJECT_ID_V2", "proj-value-chain");
+    // A Script Property changes BETWEEN executions in GAS, and `configStamp`'s memo — which
+    // is what folds this property into the cache key — dies with the execution that read it.
+    // Under vitest the module registry outlives the "execution", so dropping the memo here is
+    // what models the next request rather than a workaround for one.
+    (await import("../src/server/serverCache")).__resetMemosForTest();
+    const boot = server.api.bootstrap({}) as {
+      data: { registerScope: { persisted: string; current: string } | null };
+    };
+    expect(boot.data.registerScope).toEqual({
+      kind: "registerScope",
+      persisted: `${RISK_CATEGORY_ID}#tenant`,
+      current: RISK_CATEGORY_ID,
+      remedy: "sync",
+    });
+
+    // And selecting `tenant` puts it back, which is the point of the setting: the property
+    // still names the project, so nothing has to be deleted to widen again.
+    server.api.setSettings({ syncScope: "tenant" });
+    const widened = server.api.bootstrap({}) as { data: { registerScope: unknown } };
+    expect(widened.data.registerScope).toBeNull();
+
+    scriptProps().deleteProperty("WIZ_PROJECT_ID_V2");
     teardownServer();
   });
 });

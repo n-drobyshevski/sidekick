@@ -23,6 +23,11 @@
 // The signature is a SORTED JOIN, not a hash, for the same reason `problemRule.vectorSignature`
 // is: it appears in a sheet cell and in a staleness notice, where a human has to be able to
 // read what changed. A hash would say only that something did.
+//
+// It also carries the OTHER scope decision — which perimeters the battery collected from —
+// because that changes what every figure counts for exactly the same reason a category list
+// does. See `SyncScope` and `registerScopeSignature` below, and read the note there on why
+// only the widening is stamped before changing either.
 
 import { RISK_CATEGORY_ID } from "./toxicCombos";
 
@@ -94,6 +99,63 @@ export function cleanCategoryIds(v: unknown): string[] {
   return out.length ? out : DEFAULT_CATEGORY_IDS.slice();
 }
 
+// ------------------------------------------------------------- the OTHER half of the scope
+//
+// WHICH PERIMETERS THE SYNC COLLECTS FROM, as opposed to which risk categories it collects.
+// The two are orthogonal and both change what every published figure counts, which is why
+// the vocabulary for both lives here.
+//
+// `project` is what this app has always done: every step carries the WIZ_PROJECT_ID_V2
+// project filter, and the register answers for that one perimeter. `tenant` sends no project
+// filter at all — the same thing an unset property has always done — so the battery collects
+// every perimeter the credentials can see.
+
+/** What the sync collects from: the configured project alone, or every perimeter. */
+export type SyncScope = "project" | "tenant";
+
+/**
+ * What the sync collects from when nobody has chosen — TODAY'S BEHAVIOUR, exactly.
+ *
+ * Same iron rule as DEFAULT_CATEGORY_IDS above: a knob ships defaulting to what shipped
+ * before it, so no tenant's figures move on upgrade.
+ */
+export const DEFAULT_SYNC_SCOPE: SyncScope = "project";
+
+/**
+ * Coerce a stored or posted value into a scope the battery can run.
+ *
+ * A two-state enum, so anything unrecognised folds back to the default rather than being
+ * refused: the alternative is a hand-edited settings cell that throws on every read, and
+ * `project` is the narrow answer — degrading towards collecting LESS than asked is the safe
+ * direction for a knob whose other setting spends execution budget.
+ */
+export function cleanSyncScope(v: unknown): SyncScope {
+  return v === "tenant" ? "tenant" : DEFAULT_SYNC_SCOPE;
+}
+
+/**
+ * The project filter the battery should apply, from the setting and the property together.
+ *
+ * PURE, and that is the point: `projectScope()` in server/props.ts is this function plus two
+ * reads, so the decision itself is testable without GAS globals — the same split
+ * `resolveWizAuthMode` already makes one file over.
+ *
+ * `tenant` yields null, which every variable builder already reads as "send no project
+ * filter". So does `project` with nothing configured: a blank property has never meant
+ * anything else, and inventing an error here would break the dry run and every tenant who
+ * has simply never set it.
+ */
+export function resolveProjectScope(
+  scope: SyncScope,
+  propId: string | null,
+): string[] | null {
+  if (scope === "tenant") return null;
+  return typeof propId === "string" && propId.trim() ? [propId.trim()] : null;
+}
+
+/** The suffix a tenant-wide sync stamps on its signature. Not a category id — see below. */
+const TENANT_SUFFIX = "#tenant";
+
 /**
  * The scope a sync applied, as one comparable, READABLE token.
  *
@@ -101,7 +163,63 @@ export function cleanCategoryIds(v: unknown): string[] {
  * first and nothing else, and a notice that fired on a drag-and-drop would train an
  * operator to ignore it. Joined with `|` rather than hashed so the notice can print both
  * sides and the sheet cell can be read by eye.
+ *
+ * ONLY THE WIDENING IS STAMPED, and that asymmetry is deliberate. When a project filter was
+ * applied the token is BYTE-IDENTICAL to what this function returned before perimeters were
+ * a setting, so every ledger already on disk keeps matching and the next sync resolves the
+ * rows it should instead of counting the whole register as `skippedNarrowedScope` once. The
+ * price, stated because somebody will hit it: moving WIZ_PROJECT_ID_V2 from one project to
+ * another still stamps nothing, so the ledger will read the rows that left with the old
+ * project as departures — exactly as it does today, unchanged by this knob.
+ *
+ * `applied` is THE SCOPE THAT RAN — whatever `projectScope()` returned — never the setting.
+ * An operator who selects `project` with the property blank gets `#tenant`, because that is
+ * what the battery did. Typed as the applied filter rather than as the enum so that handing
+ * it the setting by mistake is a compile error, not a silently wrong stamp.
  */
-export function registerScopeSignature(ids: readonly string[]): string {
-  return cleanCategoryIds(ids.slice()).slice().sort().join("|");
+export function registerScopeSignature(
+  ids: readonly string[],
+  applied: readonly string[] | null,
+): string {
+  const categories = cleanCategoryIds(ids.slice()).slice().sort().join("|");
+  // Keyed on "no project filter reached the wire", not on `=== null`: an empty list would
+  // also send no filter, and the stamp has to describe what Wiz was asked.
+  return applied && applied.length ? categories : categories + TENANT_SUFFIX;
+}
+
+/** A signature read back apart: the categories it names, and whether it ran tenant-wide. */
+export interface RegisterScopeParts {
+  categories: string[];
+  tenantWide: boolean;
+}
+
+/**
+ * Split a stored signature back into its two halves.
+ *
+ * The ONE parser, because the suffix is glued to the last category id and any reader that
+ * splits on `|` alone prints `wct-id-3#tenant` as though a category were called that. Both
+ * surfaces that show a signature to a person go through this (the issue sheet's Register
+ * scope row, and the scope-drift notice), which is why it is here rather than in either.
+ */
+export function describeRegisterScope(signature: unknown): RegisterScopeParts {
+  const raw = typeof signature === "string" ? signature : "";
+  const tenantWide = raw.slice(-TENANT_SUFFIX.length) === TENANT_SUFFIX;
+  const body = tenantWide ? raw.slice(0, -TENANT_SUFFIX.length) : raw;
+  return { categories: body ? body.split("|") : [], tenantWide };
+}
+
+/**
+ * A signature as a person reads it: the categories, and the perimeter note when there is one.
+ *
+ * SILENT about the perimeter in the project case, and that silence is accurate rather than
+ * lazy. An unsuffixed token records that SOME project filter applied and never which one —
+ * see registerScopeSignature's own note on the cost that buys — so naming the project here
+ * would be a claim the stamp cannot support, and every row written before this knob existed
+ * carries exactly that token.
+ */
+export function formatRegisterScope(signature: unknown): string {
+  const { categories, tenantWide } = describeRegisterScope(signature);
+  const list = categories.join(", ");
+  if (!tenantWide) return list;
+  return list ? `${list} (all perimeters)` : "all perimeters";
 }

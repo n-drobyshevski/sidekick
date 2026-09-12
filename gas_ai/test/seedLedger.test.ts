@@ -38,12 +38,14 @@ type Store = typeof import("../src/server/syncStore");
 type Sample = typeof import("../src/server/sampleData");
 type Sheets = typeof import("../src/server/sheetsDb");
 type Settings = typeof import("../src/server/settingsStore");
+type Props = typeof import("../src/server/props");
 
 let server: Server;
 let store: Store;
 let sample: Sample;
 let sheets: Sheets;
 let settings: Settings;
+let props: Props;
 
 beforeEach(async () => {
   server = await bootServer();
@@ -54,6 +56,7 @@ beforeEach(async () => {
   sample = await import("../src/server/sampleData");
   sheets = await import("../src/server/sheetsDb");
   settings = await import("../src/server/settingsStore");
+  props = await import("../src/server/props");
 });
 
 afterAll(() => teardownServer());
@@ -83,7 +86,7 @@ function runSync(): void {
 }
 
 function scopeNow(): string {
-  return registerScopeSignature(settings.getIssueCategories());
+  return registerScopeSignature(settings.getIssueCategories(), props.projectScope());
 }
 
 /**

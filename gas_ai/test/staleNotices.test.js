@@ -58,8 +58,28 @@ describe("staleNotices", () => {
     });
     expect(notice.id).toBe("registerScope");
     expect(notice.href).toBe("#/scans");
-    expect(notice.text).toContain("wct-id-1998|wct-id-3");
+    // Both sides FORMATTED, never raw: the signature is a comparison token, and the pipe is
+    // not something to show a reader.
+    expect(notice.text).toContain("wct-id-1998, wct-id-3");
+    expect(notice.text).not.toContain("|");
     expect(notice.text).toMatch(/until the next sync/);
+  });
+
+  it("names the PERIMETER when that is the half that moved", () => {
+    // One notice covers both axes of the register scope, so the #tenant suffix has to reach
+    // the reader as words. Printed raw it read "Settings now select wct-id-1998" against a
+    // persisted "wct-id-1998#tenant" — two strings that look like the same scope.
+    const [notice] = staleNotices({
+      ...FRESH,
+      registerScope: {
+        kind: "registerScope",
+        persisted: "wct-id-1998#tenant",
+        current: "wct-id-1998",
+        remedy: "sync",
+      },
+    });
+    expect(notice.text).toContain("wct-id-1998 (all perimeters)");
+    expect(notice.text).not.toContain("#tenant");
   });
 
   it("says nothing when the persisted scope matches the selected one", () => {

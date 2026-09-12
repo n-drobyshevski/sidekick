@@ -296,6 +296,16 @@ describe("failure of presence: what the section says when there is nothing to sa
     expect(scope.value).toBe("wct-id-1998, wct-id-2001");
   });
 
+  it("Register scope names the PERIMETER instead of gluing #tenant to a category", () => {
+    // The stamp carries two facts, and the suffix hangs off the last category id — so the
+    // old `split("|").join(", ")` printed a category called "wct-id-2001#tenant". Formatting
+    // goes through registerScopeText.js, whose own test pins it against the domain.
+    const model = issueLifecycleModel(
+      {}, { ...OPEN_ROW, registerScope: "wct-id-1998|wct-id-2001#tenant" });
+    const scope = model.rows.filter((r) => r.label === "Register scope")[0];
+    expect(scope.value).toBe("wct-id-1998, wct-id-2001 (all perimeters)");
+  });
+
   it("Register scope reads absent, never blank, when the ledger carries none", () => {
     const noScope = { ...OPEN_ROW };
     delete noScope.registerScope;

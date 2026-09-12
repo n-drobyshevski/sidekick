@@ -26,7 +26,7 @@ import {
   type AarsHints,
 } from "../domain/graphEnrich";
 import { withDataFindingCounts } from "../domain/syncNormalize";
-import { domainTagKey } from "./props";
+import { domainTagKey, projectScope } from "./props";
 import type {
   ConfigRuleRow, DataFindingRow, ExploitationTier, FindingRow, FrameworkPolicyRow, FrameworkRow,
   GEdge, GNode, GraphDoc, IdentityFindingRow, IssueRow, NodeKind, NormalizedVulnFinding,
@@ -1265,7 +1265,13 @@ export function persistSync(
   // ledger dating a departure a millisecond off the sync that noticed it is a discrepancy
   // nobody would ever find a cause for.
   const finishedAt = nowIso(now);
-  const registerScope = registerScopeSignature(settingsStore.getIssueCategories());
+  const registerScope = registerScopeSignature(
+    settingsStore.getIssueCategories(),
+    // The perimeter the battery APPLIED, resolved the same way every step resolved it — the
+    // setting alone would stamp `project` on a run that collected tenant-wide because the
+    // property was blank.
+    projectScope(),
+  );
 
   // THE LIFECYCLE LEDGER — after every evidence tab, before the commit record.
   //

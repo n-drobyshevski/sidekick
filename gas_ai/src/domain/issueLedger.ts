@@ -27,11 +27,14 @@
 // `gas/src/domain/reconcile.ts` (the OS-vulnerability register's severity-scope check) —
 // two registers, two schemas, and a shared module would make one's population change break
 // the other's build. There the gate is the severity set a scan applied; here it is the
-// CATEGORY SCOPE (`registerScopeSignature`), because that is what decides which issues a
-// sync could see at all. Widening `issue_categories` from one category to six does not make
-// yesterday's rows disappear — but NARROWING it makes 6,000 rows absent by construction, and
-// resolving them by absence would publish a remediation programme that never happened.
-// `gas/src/domain/purge.ts` records the same trap from the other side.
+// REGISTER SCOPE (`registerScopeSignature`), because that is what decides which issues a
+// sync could see at all: the categories it collected, and the perimeters it collected them
+// from. Widening `issue_categories` from one category to six does not make yesterday's rows
+// disappear — but NARROWING it makes 6,000 rows absent by construction, and resolving them
+// by absence would publish a remediation programme that never happened. A perimeter narrowed
+// from every project back to one does exactly the same thing at a different axis, which is
+// why the signature carries both. `gas/src/domain/purge.ts` records the same trap from the
+// other side.
 //
 // The guard refuses on ANY scope difference rather than trying to decide the direction.
 // A widened scope provably cannot un-see a row, so in principle a widening could still

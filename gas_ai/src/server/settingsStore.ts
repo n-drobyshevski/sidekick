@@ -6,6 +6,7 @@ import { DERIVATION_VERSION } from "../domain/config";
 import type { ScopePins } from "../domain/complianceScope";
 import { decisionEqual } from "../domain/problemRule";
 import { tierEqual } from "../domain/postureRule";
+import type { SyncScope } from "../domain/registerScope";
 import * as logic from "../domain/settingsLogic";
 import type { Rec } from "../domain/util";
 import { bumpDataVersion } from "./serverCache";
@@ -316,6 +317,22 @@ export const getIssueCategoriesVersion = (): number =>
 export function setIssueCategories(ids: unknown): string[] {
   saveSettings(logic.withIssueCategories(loadSettings(), ids));
   return getIssueCategories();
+}
+
+/**
+ * Which perimeters the sync collects from — the configured project, or all of them.
+ *
+ * Read by `props.projectScope()` on every step of the battery, which is affordable for one
+ * reason: `loadSettings` is memoized per execution, so the twenty-odd calls in one sync are
+ * one tab read. See domain/settingsLogic.ts for why this is a setting rather than a second
+ * Script Property.
+ */
+export const getSyncScope = (): SyncScope => logic.getSyncScope(loadSettings());
+
+/** Choose the perimeters. A PATCH, like the category list above, for the same reason. */
+export function setSyncScope(v: unknown): SyncScope {
+  saveSettings(logic.withSyncScope(loadSettings(), v));
+  return getSyncScope();
 }
 
 /**

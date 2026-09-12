@@ -31,6 +31,7 @@
 // payload and the Data page's Returned column counts the transitions — but the sheet does
 // not print two lifecycle verdicts about one row and leave the reader to rank them.
 
+import { formatRegisterScope } from "./registerScopeText.js";
 import { absentText, fmtDate } from "./ui.js";
 
 /**
@@ -113,11 +114,16 @@ function dateCell(iso) {
 
 /**
  * The register-scope signature, read the way a person reads it rather than the pipe-joined
- * token `registerScopeSignature` writes for comparison. Refuses before the split, same rule
+ * token `registerScopeSignature` writes for comparison. Refuses before the format, same rule
  * as every other cell here: an absent scope prints the shared mark, not an empty string.
+ *
+ * The formatting itself is `registerScopeText.js`, because the token carries TWO facts — the
+ * categories and, as a `#tenant` suffix on the last of them, whether the sync applied any
+ * project filter at all. Splitting on `|` here (which this cell used to do) printed a
+ * category called `wct-id-3#tenant`.
  */
 function scopeCell(scope) {
-  return scope ? String(scope).split("|").join(", ") : absentText;
+  return scope ? formatRegisterScope(scope) : absentText;
 }
 
 /**

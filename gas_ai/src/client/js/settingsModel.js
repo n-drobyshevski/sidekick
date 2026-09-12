@@ -44,10 +44,12 @@ export const SETTING_FIELDS = {
   defaultDepth: { tab: "graph", label: "default depth" },
   maxNodes: { tab: "graph", label: "node budget" },
   autoExpand: { tab: "graph", label: "agent auto-expand" },
-  // Both scope the same register: which categories it collects, and how the rows it collects
-  // are ordered. Sent and diffed as whole objects, the same discipline `fiveRsPins` already
-  // takes below — a delta of a category list or a rank rule is not a smaller edit, it is a
-  // different shape the server would have to reconstruct.
+  // THREE scope the same register: which perimeters the sync collects FROM, which categories
+  // it collects, and how the rows it collects are ordered. Sent and diffed as whole objects,
+  // the same discipline `fiveRsPins` already takes below — a delta of a category list or a
+  // rank rule is not a smaller edit, it is a different shape the server would have to
+  // reconstruct.
+  syncScope: { tab: "register", label: "fetch scope" },
   issueCategories: { tab: "register", label: "register categories" },
   rankRule: { tab: "register", label: "priorities ranking" },
   rankLeadsSort: { tab: "register", label: "rank leads sort" },
@@ -107,6 +109,10 @@ export function settingsDraft(settings) {
     // draft array in place (via categoryDraftPatch's caller) and must never reach back into
     // the payload the rest of the page is still reading.
     issueCategories: Array.isArray(s.issueCategories) ? [...s.issueCategories] : [],
+    // "project" for anything else, mirroring cleanSyncScope() in domain/registerScope.ts:
+    // the server folds an unrecognised value back to the narrow answer, so a draft that read
+    // it any other way would show a control disagreeing with what the sync will do.
+    syncScope: s.syncScope === "tenant" ? "tenant" : "project",
     rankRule: cloneOf(s.rankRule),
     // Off by default — matches the server's own default (settingsStore.getRankLeadsSort) —
     // rather than duplicating that default as a literal here: an absent flag reads as "not

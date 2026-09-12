@@ -975,7 +975,10 @@ function dryRunSync(): StartResult {
   // reads below. They MUST be the same string: the ledger's disappearance pass compares the
   // scope the last committed sync applied against the one this sync applies, and two reads
   // that could ever differ would make the seed silently unresolvable.
-  seedDryRunHistory(startedAt, registerScopeSignature(settingsStore.getIssueCategories()));
+  seedDryRunHistory(
+    startedAt,
+    registerScopeSignature(settingsStore.getIssueCategories(), projectScope()),
+  );
   const syncId = `sync-${startedAt.replace(/[:]/g, "")}`;
   const doc = persistSync(
     seedGraphDoc(startedAt),

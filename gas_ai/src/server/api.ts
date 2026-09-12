@@ -437,7 +437,12 @@ function openIssues(): IssueRow[] {
 function registerScopeNotice(latest: Rec | null): Rec | null {
   const persisted = latest ? String(latest["register_scope"] ?? "") : "";
   if (!persisted) return null;
-  const current = registerScopeSignature(settingsStore.getIssueCategories());
+  // The scope a sync STARTED NOW would apply — categories from settings, perimeter from
+  // `projectScope()`, which is the same resolution the battery itself would run. Reading the
+  // setting instead would claim a scope the battery might not take: `project` with the
+  // property blank collects tenant-wide, and a notice comparing against the wrong side would
+  // fire (or stay silent) on a register that had not moved.
+  const current = registerScopeSignature(settingsStore.getIssueCategories(), projectScope());
   if (persisted === current) return null;
   return { kind: "registerScope", persisted, current, remedy: "sync" };
 }
@@ -3138,6 +3143,11 @@ export function getSettings(_p?: unknown): ApiResult {
     // be a second place for them to drift.
     issueCategories: settingsStore.getIssueCategories(),
     candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({ id: c.id, name: c.name })),
+    // WHICH PERIMETERS THE SYNC COLLECTS FROM — the other half of the same scope decision,
+    // and the reason it is on this payload rather than read from a Script Property by the
+    // client: the property is the server's to know, and `saveSettings` bumps the data
+    // version the client's SWR cache is keyed on.
+    syncScope: settingsStore.getSyncScope(),
     // The minimal model's knobs and whether it leads the Priorities order. The two presets
     // travel WITH them for the same reason the candidate list above travels with its
     // selection: a client that hand-copied `DEFAULT_RANK_RULE` or `RANK_PRESET_V2` would be
@@ -3186,6 +3196,12 @@ export function setSettings(p?: unknown): ApiResult {
     if (params["issueCategories"] !== undefined) {
       settingsStore.setIssueCategories(params["issueCategories"]);
     }
+    // WHICH PERIMETERS THE SYNC COLLECTS FROM. `!== undefined` rather than truthiness for the
+    // reason `autoExpand` above states: "project" is the DEFAULT, so a truthy guard would
+    // still pass it, but the shape has to match its sibling or the next value added here
+    // inherits the wrong guard. `cleanSyncScope` folds anything unrecognised back to
+    // "project", so a hand-edited or older client cannot store a third state.
+    if (params["syncScope"] !== undefined) settingsStore.setSyncScope(params["syncScope"]);
     // Cleaned rather than validated: `cleanRankRule` clamps every knob into range and reads a
     // pre-v2 rule as the two-term case, so a hand-edited or older blob degrades to a rule
     // that scores rather than to a refused save. Same latitude the two above take.
@@ -3207,6 +3223,10 @@ export function setSettings(p?: unknown): ApiResult {
       // Echoed like the rest, so the Settings page repaints the STORED list rather than
       // the one it asked for.
       issueCategories: settingsStore.getIssueCategories(),
+      // Echoed like the rest, so the Settings page repaints the STORED perimeter rather than
+      // the one it asked for — which matters here because an unrecognised value is folded
+      // back to "project" rather than refused.
+      syncScope: settingsStore.getSyncScope(),
       // Echoed for the same reason, and it matters more here: `cleanRankRule` can return a
       // rule that is not the one the caller sent (a share out of range, a v1 blob read as
       // the two-term case), so a page that repainted its own request would show knobs the

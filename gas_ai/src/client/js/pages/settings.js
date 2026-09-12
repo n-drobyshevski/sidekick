@@ -502,11 +502,12 @@ export async function renderSettings(main, params, ctx) {
 
   // ============================================================================== REGISTER TAB
   //
-  // Two questions about the same register, neither of which Graph (traversal defaults) or
-  // Compliance (the 5Rs framework) already answers: which Wiz risk categories the issue
-  // register collects (issueCategories), and how the rows it collects are ordered
-  // (rankRule / rankLeadsSort, src/domain/rank.ts's minimal model). Both feed the same
-  // downstream pages — Priorities, AARS, Toxic Combinations — so both live on one tab.
+  // Three questions about the same register, none of which Graph (traversal defaults) or
+  // Compliance (the 5Rs framework) already answers: which perimeters the sync collects from
+  // (syncScope), which Wiz risk categories the issue register collects (issueCategories), and
+  // how the rows it collects are ordered (rankRule / rankLeadsSort, src/domain/rank.ts's
+  // minimal model). All three feed the same downstream pages — Priorities, AARS, Toxic
+  // Combinations — so all three live on one tab.
 
   const candidateCategories = settings.candidateCategories || [];
   // The category the register cannot run without. First in the list BY CONSTRUCTION
@@ -570,6 +571,69 @@ export async function renderSettings(main, params, ctx) {
       ...scopeNotices.map((n) => el("div", { class: "notice warn", role: "status" },
         n.text + " ", el("a", { href: n.href }, n.link))),
       ...categoryRows.map((c) => c.row),
+    ],
+  });
+
+  // --------------------------------------------------------------------------- fetch scope
+  //
+  // The OTHER half of the register's scope, and the panel beside the one above rather than a
+  // row inside it: the category list and the perimeter list are different questions with
+  // different consequences, and the one warning that fits both is already the standing notice
+  // each repeats. A `select` of exactly two options, not a switch — "collect from all
+  // perimeters" as a toggle would leave the OFF state unnamed, and the off state here is a
+  // real, specific answer ("the one project the Script Property names").
+
+  const syncScopeSelect = select({
+    options: [
+      { value: "project", label: "The configured Wiz project" },
+      { value: "tenant", label: "All available perimeters" },
+    ],
+    value: draft.syncScope,
+    ariaLabel: "What the sync collects from",
+    onChange: (v) => { draft.syncScope = v; onEdit(); },
+  });
+  syncScopeSelect.id = "set-sync-scope";
+
+  const fetchPanel = settingsPanel({
+    title: "Fetch scope",
+    description: "Which perimeters the sync collects from.",
+    body: [
+      disclosure("Why this matters",
+        el("p", {},
+          "Every step filters on the project WIZ_PROJECT_ID_V2 names — the inventory, the "
+          + "issue register, the configuration findings, every graph traversal, the posture "
+          + "calls. All perimeters sends no project filter at all, which is what an unset "
+          + "property has always done. The property still names the project either way, so "
+          + "widening and narrowing again is this control rather than a trip to Project "
+          + "Settings. Each sync records the scope it APPLIED, and the issue ledger refuses "
+          + "to read an absence as a remediation across a scope change in either direction; "
+          + "it cannot see the property moving from one project to another, which stays "
+          + "unstamped."),
+        el("p", {},
+          "What widening costs is not measured, and that is worth saying. VALUE-CHAIN holds "
+          + "99 open AI-Security issues on the reference tenant (measured 2026-08-23); what "
+          + "the same category holds tenant-wide has never been measured here. Every step "
+          + "spends Wiz calls under an Apps Script wall-clock budget, and a long sync resumes "
+          + "through a one-shot trigger rather than failing, so a widened battery can take "
+          + "several hops. Send one page first: each step on Wiz Scans offers a test run "
+          + "reporting what the tenant returned and what the normalizer kept.")),
+      // THE STANDING NOTICE, in the same words the panel above uses, because it is the same
+      // fact about a different axis of the same scope.
+      el("p", { class: "small", style: "margin:0 0 4px" },
+        el("strong", {}, "Changing this changes what every published figure counts. "),
+        "The stored register keeps counting the OLD perimeters until the next sync applies "
+        + "the new scope — nothing here takes effect on its own."),
+      // The SAME derivation the panel above reads, built into fresh nodes rather than the
+      // same ones: one notice covers both halves of the register scope, and a second
+      // mechanism for the perimeter half would be a second wording of one disagreement.
+      ...scopeNotices.map((n) => el("div", { class: "notice warn", role: "status" },
+        n.text + " ", el("a", { href: n.href }, n.link))),
+      settingRow({
+        label: "Collect from", htmlFor: "set-sync-scope",
+        description: "The project WIZ_PROJECT_ID_V2 names — which is every perimeter anyway "
+          + "if that property is unset — or every perimeter regardless.",
+        control: syncScopeSelect,
+      }),
     ],
   });
 
@@ -832,7 +896,7 @@ export async function renderSettings(main, params, ctx) {
 
   const panels = {
     graph: tabPanel("graph", graphPanel, expandPanel),
-    register: tabPanel("register", registerPanel, rankPanel),
+    register: tabPanel("register", registerPanel, fetchPanel, rankPanel),
     compliance: tabPanel("compliance", fiveRsHost),
     system: tabPanel(
       "system",
@@ -946,6 +1010,7 @@ export async function renderSettings(main, params, ctx) {
     setSwitch(autoExpandSwitch, draft.autoExpand);
     if (fiveRs) fiveRs.sync();
     for (const c of categoryRows) setSwitch(c.sw, draft.issueCategories.indexOf(c.id) >= 0);
+    syncScopeSelect.value = draft.syncScope;
     repaintRankControls();
     onEdit();
   }

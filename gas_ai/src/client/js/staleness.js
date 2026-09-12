@@ -6,6 +6,8 @@
 // data in and data out, and it earns a unit test without one — the same split assetQuery.js
 // makes against the page that uses it.
 
+import { formatRegisterScope } from "./registerScopeText.js";
+
 /**
  * Where each kind of staleness sends an operator. Keyed by the `remedy` the SERVER names, so
  * the sentence and the button cannot drift from the condition that raised them — api.ts says
@@ -54,9 +56,16 @@ export function staleNotices(boot) {
     const n = boot.registerScope;
     out.push({
       id: "registerScope",
-      text: "These figures count the risk categories the last sync collected ("
-        + n.persisted + "). Settings now select " + n.current
-        + " — the register will not count them until the next sync.",
+      // Both signatures through the shared formatter, never printed raw. The scope the
+      // server compares is a token carrying the categories AND the perimeter (`#tenant`
+      // when the sync applied no project filter), and pasting it in unread would show a
+      // category whose name ends in "#tenant" — the same defect the issue sheet's Register
+      // scope cell had. "Register scope" rather than "risk categories" for the same reason:
+      // the thing that moved may have been the perimeter.
+      text: "These figures count the register scope the last sync collected ("
+        + formatRegisterScope(n.persisted) + "). Settings now select "
+        + formatRegisterScope(n.current)
+        + " — the register will not count that until the next sync.",
       ...(STALE_REMEDIES[n.remedy] || STALE_REMEDIES.sync),
     });
   }
