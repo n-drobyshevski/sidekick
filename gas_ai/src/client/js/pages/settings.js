@@ -50,7 +50,7 @@ export async function renderSettings(main, params, ctx) {
     pageHeader({
       route: "settings",
       lede: heroLines(
-        "Graph, register scope and ranking, compliance, access, system",
+        "Register scope and ranking, graph, compliance, access, system",
         "Grouped by task; one save bar covers the tabs that share a draft.",
       ),
     }),

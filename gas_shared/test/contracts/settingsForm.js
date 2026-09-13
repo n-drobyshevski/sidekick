@@ -70,6 +70,17 @@ const KERNEL = settingsForm({ tabs: TABS, fields: FIELDS, defaultTab: "alpha" })
  *   imports `settingsForm` — default `"src/client/js/settingsModel.js"`. gas_hub has no such
  *   file (its registry lives inline in `pages/settings.js`, see that file's own header) and
  *   passes `"src/client/js/pages/settings.js"` instead.
+ * @param {boolean}  [ctx.spine]  Opt-in, the same shape `ctx.localSheets` in parity.js uses:
+ *   pass `true` to also check `ctx.tabs` against the canonical spine (Register first, Access
+ *   then System last, `ctx.defaultTab === "register"`) — the settings-unification wave's own
+ *   shape for gas/gas_ai/gas_devsecops, meant to stop a future drive-by quietly moving one
+ *   register's tablist back to something else (gas_ai opened on Graph before that wave).
+ *   Omitted or `false`, the check is a NAMED `it.skip` rather than a silent absence — pass
+ *   `false` explicitly (the way `syncCaption.js`'s `railHasSyncZone: false` does) for an app
+ *   whose `ctx.tabs` is not this spine at all, the way `gas_hub`'s single-tab URL registry
+ *   isn't.
+ * @param {string}   [ctx.defaultTab]  this app's own `DEFAULT_TAB` (e.g. its settingsModel.js's
+ *   export of the same name) — required when `ctx.spine` is `true`.
  */
 export function registerSettingsFormContract(ctx) {
   const { describe, it, expect, app, tabs, fields } = ctx;
@@ -252,4 +263,33 @@ export function registerSettingsFormContract(ctx) {
       expect(real.alpha.invalid).toBe(true); // the shipped implementation does not miss it
     });
   });
+
+  // ---------------------------------------------------------------- the canonical tab spine
+  // Register · <app lanes> · Access · System, DEFAULT_TAB === "register" — see ctx.spine's own
+  // JSDoc above for what this guards and why gas_hub is the one app that names its way out.
+  if (ctx.spine) {
+    describe(app + ": the canonical settings tab spine (Register · … · Access · System)", () => {
+      it("opens on Register", () => {
+        expect(tabs[0] && tabs[0].key, app + "'s first tab is not \"register\"").toBe("register");
+      });
+
+      it("closes on Access, then System", () => {
+        const keys = tabs.map((t) => t.key);
+        expect(keys.slice(-2), app + "'s last two tabs are not [\"access\", \"system\"]")
+          .toEqual(["access", "system"]);
+      });
+
+      it("defaults to the Register tab", () => {
+        expect(ctx.defaultTab, app + "'s DEFAULT_TAB is not \"register\"").toBe("register");
+      });
+    });
+  } else {
+    it.skip(
+      app + ": the canonical settings tab spine (Register · … · Access · System) — SKIPPED: "
+      + (ctx.spine === false
+        ? "this app's own registration call names why its tabs are not this spine."
+        : "no ctx.spine given"),
+      () => {},
+    );
+  }
 }

@@ -26,12 +26,19 @@
 
 import { settingsForm } from "../../../../gas_shared/ui/settingsForm.js";
 
-/** The five tabs, in order. `key` is what rides in the hash (`#/settings?tab=risk`). */
+/**
+ * The six tabs, in order. `key` is what rides in the hash (`#/settings?tab=risk`). Access owns
+ * no batched field below (the roster saves itself — see accessEditor.js's own header) and is
+ * not always BUILT: `pages/settings.js` draws it only when `renderAccessPanel()` answers a
+ * node, exactly as gas_ai's and gas_devsecops's own Access tabs do, so `normalizeTab` here is
+ * always called with the built tab keys as its second argument, never with none.
+ */
 export const SETTINGS_TABS = [
   { key: "register", label: "Register" },
   { key: "risk", label: "Risk" },
   { key: "attribution", label: "Attribution" },
   { key: "lifecycle", label: "Lifecycle" },
+  { key: "access", label: "Access" },
   { key: "system", label: "System" },
 ];
 
@@ -59,9 +66,12 @@ const kernel = settingsForm({ tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defau
 
 /**
  * The bound kernel — see gas_shared/ui/settingsForm.js's header for `normalizeTab`'s two-
- * argument form (this app only ever calls it with one; every SETTINGS_TABS key is always
- * built), `changeCountText`'s array signature, `tabStatus`'s key-presence reading of `errors`,
- * and `sameValue`'s `a === b || Object.is(a, b)` leaf.
+ * argument form. `pages/settings.js` now calls it WITH the second argument: Access is not
+ * always built (see SETTINGS_TABS' own comment above), so a stale `#/settings?tab=access`
+ * bookmark from a reader who has since lost roster access must land somewhere real rather than
+ * selecting a tab that was never drawn this render. See also `changeCountText`'s array
+ * signature, `tabStatus`'s key-presence reading of `errors`, and `sameValue`'s
+ * `a === b || Object.is(a, b)` leaf.
  */
 export const {
   normalizeTab, changedFields, settingsPatch, changeSummary, changeCountText, tabStatus,

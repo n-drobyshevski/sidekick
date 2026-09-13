@@ -29,22 +29,28 @@
 
 import { settingsForm } from "../../../../gas_shared/ui/settingsForm.js";
 
-/** The tabs, in order. `key` is what rides in the hash (`#/settings?tab=compliance`). */
+/**
+ * The tabs, in order. `key` is what rides in the hash (`#/settings?tab=compliance`).
+ *
+ * REGISTER LEADS, matching the spine `gas` and `gas_devsecops` already draw (Register ·
+ * <app lanes> · Access · System). Neither Graph (traversal defaults) nor Compliance (the 5Rs
+ * framework) is "which Wiz risk categories the issue register collects" — that scope decision
+ * feeds every issue-shaped figure the app publishes (Priorities, AARS, Toxic Combinations),
+ * Graph's own traversals included, and the ranking that orders those same rows belongs beside
+ * it rather than on a page that edits neither. That is also why Register goes first rather
+ * than staying a fifth tab tacked on the end: everything downstream of it — what Graph walks,
+ * what Compliance measures — reads off the scope this tab decides, so the scope decision comes
+ * before the tabs that depend on it, not after.
+ */
 export const SETTINGS_TABS = [
-  { key: "graph", label: "Graph" },
-  // Neither Graph (traversal defaults) nor Compliance (the 5Rs framework) is "which risk
-  // categories the issue register collects" — that scope decision feeds every issue-shaped
-  // figure the app publishes (Priorities, AARS, Toxic Combinations), and the ranking that
-  // orders those same rows belongs beside it rather than on a page that edits neither. A
-  // fifth tab earns its keep here for the reason the others do not: nothing else already
-  // owns this question.
   { key: "register", label: "Register" },
+  { key: "graph", label: "Graph" },
   { key: "compliance", label: "Compliance" },
   { key: "access", label: "Access" },
   { key: "system", label: "System" },
 ];
 
-export const DEFAULT_TAB = "graph";
+export const DEFAULT_TAB = "register";
 
 /**
  * Every knob the page-level save bar owns, and where it lives.

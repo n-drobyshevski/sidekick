@@ -154,11 +154,15 @@ registerSyncCaptionContract({ ...base, railHasSyncZone: false });
 //  The settings kernel: this app's registry lives inline in pages/settings.js (one tab, three
 //  URL fields — see that file's own header for why there is no settingsModel.js here to hold
 //  it), so `settingsModelPath` points the direct-import-path check at the file that actually
-//  imports settingsForm.
+//  imports settingsForm. `spine: false`: URL_TABS is one tab ("urls"), not the Register ·
+//  <lanes> · Access · System spine gas/gas_ai/gas_devsecops converged on — gas_hub is a
+//  launcher with three PANELS and no tabs at all (CLAUDE.md's own app table), so there is no
+//  spine here for a drive-by to move back.
 // =========================================================================================
 registerSettingsFormContract({
   ...base, tabs: URL_TABS, fields: URL_TAB_FIELDS,
   settingsModelPath: "src/client/js/pages/settings.js",
+  spine: false,
 });
 
 // =========================================================================================

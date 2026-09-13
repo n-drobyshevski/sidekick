@@ -53,7 +53,7 @@ import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSt
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
 import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
-import { SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
+import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
 import { registerSettingsReadoutsContract } from "../../gas_shared/test/contracts/settingsReadouts.js";
 import {
   createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
@@ -286,9 +286,12 @@ registerScanStepContract({
 // =========================================================================================
 //  The settings kernel: this register's own SETTINGS_TABS/SETTING_FIELDS, plus the kernel's
 //  own fixed behaviour against a synthetic registry (settingsForm.js's own concern, not this
-//  app's — see that contract's header)
+//  app's — see that contract's header). `spine: true` pins the canonical tab order — this app
+//  was already Register · Deadlines · Access · System before this wave.
 // =========================================================================================
-registerSettingsFormContract({ ...base, tabs: SETTINGS_TABS, fields: SETTING_FIELDS });
+registerSettingsFormContract({
+  ...base, tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB, spine: true,
+});
 
 // =========================================================================================
 //  The settings read-out vocabulary. gas_devsecops's own Settings page does not draw with
