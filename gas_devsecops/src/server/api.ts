@@ -43,10 +43,13 @@
 // `getRegisterPage({scope:"secrets"})` back would render a register page missing the only
 // blocks that say whether a credential is live.
 
-import { SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "../domain/config";
+import {
+  RESOLVED_STATUSES, SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope,
+} from "../domain/config";
 import { normalizeSeverity } from "../domain/severity";
 import { effectiveSlaTargets, withSettings } from "../domain/settingsLogic";
 import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
+import * as settingsImpact from "../domain/settingsImpact";
 import type { Rec } from "../domain/util";
 import {
   execGroupSlice,
@@ -63,6 +66,7 @@ import {
 import { BUILD_ID } from "./buildInfo";
 import { getProp, hasWizCredentials, projectScope, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
+import { cached } from "./serverCache";
 import { loadSettings, saveSettings } from "./settingsStore";
 import { readAll, TAB_HEADERS, TABS } from "./sheetsDb";
 import * as access from "./access";
@@ -825,6 +829,93 @@ export function getScanHistory(p?: unknown): ApiResult {
 /** What the register costs and what is consuming the cell ceiling. */
 export function getStorageStats(_p?: unknown): ApiResult {
   return run(() => readModels.storageModel());
+}
+
+/** Same open/resolved test the rest of the domain uses (config.RESOLVED_STATUSES). A private
+ *  copy at each call site is how the Executive tiles once counted resolved rows under a label
+ *  that said "open" — see readModels.ts's own `isOpen` and its docstring. */
+function isOpenRow(status: unknown): boolean {
+  return !RESOLVED_STATUSES.has(String(status ?? "").toUpperCase());
+}
+
+/**
+ * Everything the Settings page needs to say, beside each control, what that control is
+ * currently doing to the register — this register's twin of gas/'s `settingsImpactData`. See
+ * `domain/settingsImpact.ts`'s header for the thesis and for what is and is not ported from
+ * gas/'s file of the same name (no risk cube, no display-toggle impact — this register has
+ * neither control today).
+ *
+ * WHAT THIS WALKS, FOR THE EXECUTION BUDGET. ONE `ledgerStore.loadBaseRows({ now })` — the same
+ * full BaseRow derivation every page's read-model reuses (`readModels.ts`'s `baseSnapshot()`
+ * calls the identical function) — grouped by `scope` in a single pass for the census, plus
+ * `ledgerStore.loadScanRows()`, which is scans-tab-only and already memoized per execution
+ * (`ledgerStore.ts`'s own comment: "cheap; enough for history/meta reads"). No second loader,
+ * no per-scope re-derivation, and the whole thing sits behind `cached()` at a 1 h TTL besides.
+ *
+ * THE VIEW-PROJECT SCOPE APPLIES to the census, exactly as it does to every other model
+ * (`readModels.ts`'s `NormParams.project`): `loadBaseRows()` is register-wide by construction,
+ * so a reader working inside one project scope previews a severity-gate or scope change against
+ * the population they can actually see, not the whole tenant. Scans are NOT project-scoped — a
+ * sync run is a whole-register event with no project dimension of its own.
+ */
+function settingsImpactData(): Rec {
+  const now = Date.now();
+  const settings = loadSettings();
+  const projectView = settings.projectView || null;
+
+  let rows = ledgerStore.loadBaseRows({ now }) as unknown as Rec[];
+  if (projectView) {
+    rows = rows.filter((r) =>
+      inProject(parseProjects(r["projects_json"] as string | null | undefined), projectView));
+  }
+
+  const byScope = {} as Record<Scope, Rec>;
+  for (const scope of SCOPES) {
+    const scoped = rows.filter((r) => r["scope"] === scope);
+    byScope[scope] = {
+      total: scoped.length,
+      openTotal: scoped.filter((r) => isOpenRow(r["status"])).length,
+      bySeverity: settingsImpact.severityCensus(
+        scoped, (r) => normalizeSeverity(r["severity"]), (r) => isOpenRow(r["status"])),
+    };
+  }
+
+  return {
+    census: { byScope },
+    // ONE LANE, every scope's scan rows in one time-ordered list — see settingsImpact.ts's
+    // scanAges docstring for why three per-scope lanes would misstate a floor this register
+    // computes once, across all three registers together.
+    scans: settingsImpact.scanAges(
+      ledgerStore.loadScanRows().map((s) => ({ scope: s.scope, ts: s.ts, sealed: s.sealed })),
+      now,
+    ),
+  };
+}
+
+/**
+ * Keyed on `projectView` ALONE, not on `scopes` or `fetchSeverities` despite both being real
+ * Settings fields — this is the audit gas/'s own comment gets wrong in code (it claims to
+ * exclude its two display toggles and includes them anyway). The REASONING gas/ states, applied
+ * here rather than its inconsistent code: key on what actually changes the returned value.
+ *
+ *   - `census` is built over the UNFILTERED base per scope, on purpose (settingsImpact.ts's
+ *     header) — the whole point is to preview a change to the severity gate or the scope set,
+ *     which needs the population from BEFORE that gate or that set was applied. Changing either
+ *     one therefore changes nothing this endpoint returns.
+ *   - `scans` reads every scan row regardless of the current scope set or severity gate — a
+ *     scan already run stays in the log whether or not its scope is still enabled.
+ *   - `projectView` DOES change the census: it is a real filter over `loadBaseRows()`'s rows,
+ *     and a reader can switch project view without saving any other setting, so its own cache
+ *     entry is what keeps two project views from serving each other's counts.
+ *
+ * 1 h TTL, same as gas/'s `settingsImpact2` entry — the scan ages are wall-clock relative, so a
+ * durable (cross-request-forever) cache would drift by design.
+ */
+const cachedSettingsImpactData = () =>
+  cached("settingsImpact", { projectView: loadSettings().projectView || null }, () => settingsImpactData(), 3600);
+
+export function getSettingsImpact(_p?: unknown): ApiResult {
+  return run(() => cachedSettingsImpactData());
 }
 
 // --------------------------------------------------------------------------------------- //

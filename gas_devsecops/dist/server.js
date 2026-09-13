@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "1a271318dd26" : "dev";
+  var BUILD_ID = true ? "17643c4cb3a6" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -4585,6 +4585,7 @@ var Server = (() => {
     getScanHistory: () => getScanHistory,
     getSecretsPage: () => getSecretsPage,
     getSettings: () => getSettings,
+    getSettingsImpact: () => getSettingsImpact,
     getStorageStats: () => getStorageStats,
     putSettings: () => putSettings,
     resetLedger: () => resetLedger2,
@@ -4646,6 +4647,30 @@ var Server = (() => {
       if (parseProjects(row.projects_json).length === 0) count += 1;
     }
     return count;
+  }
+
+  // src/domain/settingsImpact.ts
+  function severityCensus(rows, severityOf, isOpen8) {
+    var _a, _b;
+    const out = { all: {}, open: {} };
+    for (const r of rows) {
+      const s2 = severityOf(r);
+      out.all[s2] = ((_a = out.all[s2]) != null ? _a : 0) + 1;
+      if (isOpen8(r)) out.open[s2] = ((_b = out.open[s2]) != null ? _b : 0) + 1;
+    }
+    return out;
+  }
+  function scanAges(scans, now, keepRecent = MIN_UNSEALED_FLAT_SCANS) {
+    const desc = [...scans].reverse();
+    return desc.map((s2, i) => {
+      const t = Date.parse(s2.ts);
+      return {
+        scope: s2.scope,
+        ageDays: Number.isFinite(t) ? Math.max(0, Math.floor((now - t) / 864e5)) : 0,
+        sealed: !!s2.sealed,
+        pinned: i < keepRecent
+      };
+    });
   }
 
   // src/domain/pagePayload.ts
@@ -8353,6 +8378,45 @@ var Server = (() => {
   }
   function getStorageStats(_p) {
     return run(() => storageModel());
+  }
+  function isOpenRow(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function settingsImpactData() {
+    const now = Date.now();
+    const settings = loadSettings();
+    const projectView = settings.projectView || null;
+    let rows = loadBaseRows({ now });
+    if (projectView) {
+      rows = rows.filter((r) => inProject(parseProjects(r["projects_json"]), projectView));
+    }
+    const byScope3 = {};
+    for (const scope of SCOPES) {
+      const scoped = rows.filter((r) => r["scope"] === scope);
+      byScope3[scope] = {
+        total: scoped.length,
+        openTotal: scoped.filter((r) => isOpenRow(r["status"])).length,
+        bySeverity: severityCensus(
+          scoped,
+          (r) => normalizeSeverity(r["severity"]),
+          (r) => isOpenRow(r["status"])
+        )
+      };
+    }
+    return {
+      census: { byScope: byScope3 },
+      // ONE LANE, every scope's scan rows in one time-ordered list — see settingsImpact.ts's
+      // scanAges docstring for why three per-scope lanes would misstate a floor this register
+      // computes once, across all three registers together.
+      scans: scanAges(
+        loadScanRows().map((s2) => ({ scope: s2.scope, ts: s2.ts, sealed: s2.sealed })),
+        now
+      )
+    };
+  }
+  var cachedSettingsImpactData = () => cached("settingsImpact", { projectView: loadSettings().projectView || null }, () => settingsImpactData(), 3600);
+  function getSettingsImpact(_p) {
+    return run(() => cachedSettingsImpactData());
   }
   function runSync(p) {
     return run(() => {
