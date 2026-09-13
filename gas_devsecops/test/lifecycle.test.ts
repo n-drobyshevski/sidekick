@@ -145,4 +145,25 @@ describe("mttrFromLedger (fixture parity)", () => {
   it("returns empty for no rows", () => {
     expect(mttrFromLedger([])).toEqual({ perSev: {}, overall: {} });
   });
+
+  // P5: `sla_target`/`sla_compliant`/`sla_pct` used to read `config.SLA_TARGETS` inside
+  // `metrics.summarize` directly, so a register's own saved window never reached the MTTR
+  // page's headline "In SLA %" or its per-severity table. `opts.slaTargets` (forwarded to
+  // `summarize`) is what fixes it — omitted, it still defaults to `SLA_TARGETS`, which is why
+  // the fixture-parity case above is untouched.
+  it("opts.slaTargets moves sla_target/sla_compliant/sla_pct; omitted still defaults to SLA_TARGETS", () => {
+    const rows = [
+      // CRITICAL, resolved in 10 days — past the default 7-day target, inside a 30-day one.
+      { severity: "CRITICAL", first_seen: "2026-01-01T00:00:00Z", resolved_at: "2026-01-11T00:00:00Z" },
+    ];
+    const byDefault = mttrFromLedger(rows);
+    expect(byDefault.perSev.CRITICAL!.sla_target).toBe(7);
+    expect(byDefault.perSev.CRITICAL!.sla_compliant).toBe(0);
+    expect(byDefault.perSev.CRITICAL!.sla_pct).toBe(0);
+
+    const widened = mttrFromLedger(rows, { slaTargets: { CRITICAL: 30 } });
+    expect(widened.perSev.CRITICAL!.sla_target).toBe(30);
+    expect(widened.perSev.CRITICAL!.sla_compliant).toBe(1);
+    expect(widened.perSev.CRITICAL!.sla_pct).toBe(100);
+  });
 });

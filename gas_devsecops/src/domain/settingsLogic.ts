@@ -205,6 +205,31 @@ function cleanProjectView(v: unknown): string {
 }
 
 /**
+ * Validate a raw `slaTargets` value down to the overrides worth keeping: a finite, positive
+ * number, floored, for a recognized severity. Anything else (missing, non-numeric, zero or
+ * negative, an unrecognized key) is left OUT rather than defaulted here — this returns a
+ * PARTIAL record of overrides only, never a full one seeded from `SLA_TARGETS`, so both
+ * `cleanSettings` below (which spreads the constant first) and `effectiveSlaTargets` (which
+ * does the same layering one step later, over whatever `Settings.slaTargets` a caller hands
+ * it) can overlay this on the shared baseline without this function taking a position on what
+ * the default is.
+ */
+function cleanSlaTargets(raw: unknown): Record<string, number> {
+  // Typed as a full `Record`, not `Partial<Record<...>>`, even though a key is only ever
+  // ASSIGNED when valid: an index signature admits an absent key without admitting
+  // `undefined` as a VALUE, and spreading a genuinely-partial (optional-value) type into
+  // `{...SLA_TARGETS, ...cleanSlaTargets(...)}` would widen every value below to
+  // `number | undefined` for no runtime reason — this object never holds `undefined`.
+  const out: Record<string, number> = {};
+  const rec = (raw || {}) as Record<string, unknown>;
+  for (const sev of SEVERITY_ORDER) {
+    const v = Number(rec[sev]);
+    if (Number.isFinite(v) && v > 0) out[sev] = Math.floor(v);
+  }
+  return out;
+}
+
+/**
  * Stage one: coerce whatever is stored into shape. NEVER throws and never reports — a
  * settings tab edited by hand must not be able to take the app down. Stage two
  * (`validateSettings`) is what tells a human they typed something wrong.
@@ -215,19 +240,12 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     .map((x) => String(x).trim().toLowerCase())
     .filter((x): x is Scope => (SCOPES as readonly string[]).includes(x));
 
-  const sla: Record<string, number> = { ...SLA_TARGETS };
-  const rawSla = (r.slaTargets || {}) as Rec;
-  for (const sev of SEVERITY_ORDER) {
-    const v = Number((rawSla as Record<string, unknown>)[sev]);
-    if (Number.isFinite(v) && v > 0) sla[sev] = Math.floor(v);
-  }
-
   return {
     // An empty list would collect nothing while looking configured, so it falls back
     // rather than persisting a register that can never fill.
     scopes: scopes.length ? scopes : [...SCOPES],
     fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
-    slaTargets: sla,
+    slaTargets: { ...SLA_TARGETS, ...cleanSlaTargets(r.slaTargets) },
     showExperimental: r.showExperimental === true,
     syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
     // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
@@ -266,4 +284,41 @@ export function validateSettings(s: Settings): string[] {
 /** Merge a patch over current settings, then re-clean. */
 export function withSettings(current: Settings, patch: Partial<Settings>): Settings {
   return cleanSettings({ ...current, ...patch } as unknown as Rec);
+}
+
+/**
+ * The SLA windows actually in force for THIS register: the shared cross-surface constant,
+ * with whatever the operator saved on the Deadlines tab layered on top.
+ *
+ * WHY THE CONSTANT STAYS THE BASELINE. `config.ts`'s `SLA_TARGETS` is deliberately
+ * byte-identical to gas/'s and brick/devsecops/'s own tables — its own docstring says so — so
+ * a CRITICAL finding carries the same seven-day window whichever of the four surfaces is
+ * asked: "the four surfaces cannot report different SLA attainment for the same estate". That
+ * invariant is real, and it is what this function returns for every severity nobody has
+ * touched. Nothing here changes `SLA_TARGETS` itself, and nothing here changes the inclusive
+ * `d <= target` comparison it is measured against — nothing downstream reads a target
+ * differently depending on where it came from.
+ *
+ * WHY AN OVERRIDE IS LEGITIMATE ANYWAY. An operator can have a documented, LOCAL reason to
+ * remediate faster or slower than the shared baseline — a contractual SLA, a regulatory
+ * deadline, one register under unusual load — and the Deadlines tab is exactly the control
+ * that lets them say so. That is a DELIBERATE, WARNED-ABOUT divergence, not a defect this
+ * function exists to paper over: `draftWarnings` (src/client/js/settingsModel.js) already
+ * tells the operator, at save time, that a changed window "would no longer match the window
+ * the OS, AI and pipeline registers use". Consistency is the DEFAULT this function falls back
+ * to, not a constraint the settings page is forbidden from lifting.
+ *
+ * AN OVERLAY, NEVER A REPLACEMENT. The constant is spread first and the cleaned override
+ * second, so a severity the operator never touched — or touched with something
+ * `cleanSlaTargets` refuses (zero, negative, non-numeric) — keeps the shared window rather
+ * than silently losing its deadline. Reuses `cleanSlaTargets`, the exact validation
+ * `cleanSettings` applies to a freshly-saved draft, rather than a second copy of "finite,
+ * positive, floor it" — so a `Settings`-shaped value that never went through `cleanSettings`
+ * (a hand-built test fixture, a partial mock, a bootstrap payload trimmed to one field) still
+ * degrades to the shared baseline instead of throwing or handing back garbage.
+ */
+export function effectiveSlaTargets(
+  settings: Pick<Settings, "slaTargets"> | null | undefined,
+): Record<string, number> {
+  return { ...SLA_TARGETS, ...cleanSlaTargets(settings?.slaTargets) };
 }

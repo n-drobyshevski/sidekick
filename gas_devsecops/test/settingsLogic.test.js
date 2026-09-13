@@ -9,9 +9,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_SETTINGS, DEFAULT_SYNC_HOUR, cleanSettings, validateSettings, withSettings,
+  DEFAULT_SETTINGS, DEFAULT_SYNC_HOUR, cleanSettings, effectiveSlaTargets, validateSettings,
+  withSettings,
 } from "../src/domain/settingsLogic";
-import { DEFAULT_FETCH_SEVERITIES, DEFAULT_RETENTION_DAYS, SCOPES } from "../src/domain/config";
+import {
+  DEFAULT_FETCH_SEVERITIES, DEFAULT_RETENTION_DAYS, SCOPES, SLA_TARGETS,
+} from "../src/domain/config";
 import { RETENTION_MIN_DAYS } from "../src/domain/maintenance";
 import { TAB_FIELDS, tabStatus } from "../src/client/js/settingsModel";
 import { BATCHED_KEYS, TABS, draftFromSettings } from "../src/client/js/pages/settings.js";
@@ -121,6 +124,70 @@ describe("the rest of the settings contract", () => {
 
   it("re-cleans a patch rather than trusting it", () => {
     expect(withSettings(DEFAULT_SETTINGS, { scopes: [] }).scopes).toEqual([...SCOPES]);
+  });
+});
+
+// P5: the Deadlines tab used to be ornamental — every published SLA figure read `SLA_TARGETS`
+// directly and `settings.slaTargets` reached nowhere. `effectiveSlaTargets` is the one function
+// every server-side reader now calls instead, and this is its own suite (its callers' own
+// tests — readModels.test.ts, insights.test.ts, remediation.test.ts, fixNext.test.ts,
+// api.test.ts — pin that they WIRE it through, not what it computes).
+describe("effectiveSlaTargets: the constant, overlaid with a saved override", () => {
+  it("returns the shared constant untouched when nobody overrode anything", () => {
+    expect(effectiveSlaTargets(DEFAULT_SETTINGS)).toEqual(SLA_TARGETS);
+  });
+
+  it("degrades to the constant for a settings-shaped value with no slaTargets at all", () => {
+    // The exact shape `readModels.test.ts`'s `loadSettings()` mock hands every caller — this
+    // is what keeps that mock (and any other partial settings fixture) from having to grow a
+    // `slaTargets` field it has no reason to care about.
+    expect(effectiveSlaTargets({ projectView: "" })).toEqual(SLA_TARGETS);
+    expect(effectiveSlaTargets(null)).toEqual(SLA_TARGETS);
+    expect(effectiveSlaTargets(undefined)).toEqual(SLA_TARGETS);
+  });
+
+  it("overlays a real override on top of the constant, leaving every other severity alone", () => {
+    const s = { slaTargets: { ...SLA_TARGETS, CRITICAL: 3 } };
+    const out = effectiveSlaTargets(s);
+    expect(out.CRITICAL).toBe(3);
+    expect(out.HIGH).toBe(SLA_TARGETS.HIGH);
+    expect(out.MEDIUM).toBe(SLA_TARGETS.MEDIUM);
+    expect(out.LOW).toBe(SLA_TARGETS.LOW);
+    expect(out.INFO).toBe(SLA_TARGETS.INFO);
+  });
+
+  it("never mutates the shared constant — it is the baseline, not a scratch pad", () => {
+    effectiveSlaTargets({ slaTargets: { CRITICAL: 1 } });
+    expect(SLA_TARGETS.CRITICAL).toBe(7);
+  });
+
+  it("refuses the same junk cleanSettings refuses: zero, negative, non-numeric, falls back", () => {
+    const out = effectiveSlaTargets({
+      slaTargets: { CRITICAL: 0, HIGH: -5, MEDIUM: "not a number", LOW: 45 },
+    });
+    expect(out.CRITICAL).toBe(SLA_TARGETS.CRITICAL);
+    expect(out.HIGH).toBe(SLA_TARGETS.HIGH);
+    expect(out.MEDIUM).toBe(SLA_TARGETS.MEDIUM);
+    expect(out.LOW).toBe(45);
+  });
+
+  it("floors a fractional override, same rule cleanSettings applies", () => {
+    expect(effectiveSlaTargets({ slaTargets: { CRITICAL: 3.9 } }).CRITICAL).toBe(3);
+  });
+
+  it("agrees with cleanSettings's own slaTargets field on an already-cleaned Settings", () => {
+    // `Settings.slaTargets` is ALREADY the effective map by the time `cleanSettings` is done
+    // with it (its own header explains why) — this is the identity that makes that claim
+    // measured rather than asserted, over a genuinely mixed set of overrides.
+    const cleaned = cleanSettings({ slaTargets: { CRITICAL: 3, LOW: 120 } });
+    expect(effectiveSlaTargets(cleaned)).toEqual(cleaned.slaTargets);
+  });
+
+  it("reuses cleanSettings's own overlay decision rather than a second copy of it", () => {
+    // Whatever `cleanSettings` decides a raw `slaTargets` field means, `effectiveSlaTargets`
+    // decides the same thing given the SAME raw value — because both call the one cleaner.
+    const raw = { CRITICAL: "14", HIGH: 0, MEDIUM: 45.6, UNKNOWN: 9 };
+    expect(effectiveSlaTargets({ slaTargets: raw })).toEqual(cleanSettings({ slaTargets: raw }).slaTargets);
   });
 });
 

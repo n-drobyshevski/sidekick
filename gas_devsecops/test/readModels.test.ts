@@ -46,6 +46,11 @@ const H = vi.hoisted(() => ({
    *  never from a model's own params. `""` (the default) is "no scope", same as an unset
    *  Settings field. */
   projectView: "",
+  /** `settingsStore.loadSettings().slaTargets` — `norm()` reads this through
+   *  `settingsLogic.effectiveSlaTargets`. `undefined` (the default) is "nothing saved", which
+   *  `effectiveSlaTargets` degrades to the shared `SLA_TARGETS` constant — the same figure
+   *  every test above this harness addition already measured against. */
+  slaTargets: undefined as Record<string, number> | undefined,
   /** `historyStore`'s per-UTC-day blobs, ascending — one file per day, latest write wins.
    *  `secretsModel` reads its twin fold off the NEWEST one; `historyModel` ships the array. */
   history: [] as { date: string; stats: unknown }[],
@@ -133,7 +138,7 @@ vi.mock("../src/server/jobsStore", () => ({
 // -> `SpreadsheetApp` — a GAS global nothing in this file's harness defines. See
 // `test/projectView.test.ts` for the same knob exercised over a real booted server.
 vi.mock("../src/server/settingsStore", () => ({
-  loadSettings: () => ({ projectView: H.projectView }),
+  loadSettings: () => ({ projectView: H.projectView, slaTargets: H.slaTargets }),
 }));
 
 vi.mock("../src/server/sheetsDb", async (orig) => {
@@ -329,6 +334,7 @@ beforeEach(() => {
   H.cellCountThrows = false;
   H.computeDepths.length = 0;
   H.projectView = "";
+  H.slaTargets = undefined;
   H.history = [{ date: "2026-03-01", stats: { open: 5 } }];
   H.historyReads.length = 0;
   seed();
@@ -560,6 +566,91 @@ describe("mttrModel", () => {
   it("narrows to a severity selection", () => {
     const m = mttrModel({ ...ALL, severities: ["CRITICAL"] }) as any;
     expect(m.rowCount).toBe(2);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  P5: the Deadlines tab actually takes effect
+// --------------------------------------------------------------------------------------- //
+//
+// Before this package, every one of these figures read `config.SLA_TARGETS` directly, and a
+// saved `slaTargets` override reached none of them — the defect this section pins shut.
+// `sca:CVE-2` (seeded above) is CRITICAL, open, 69 days old: 69 days past the default 7-day
+// CRITICAL target, and 69 days STILL WITHIN a widened one. One row, one flip, over every
+// reader this package wired.
+
+describe("effective SLA windows reach the models that publish them", () => {
+  it("mttrModel: openPastSla no longer breaches once the window is widened past 69 days", () => {
+    expect((mttrModel(ALL) as any).remediation.openPastSla.perSev.CRITICAL.breached).toBe(1);
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    expect((mttrModel(ALL) as any).remediation.openPastSla.perSev.CRITICAL.breached).toBe(0);
+  });
+
+  it("mttrModel: the actionable-clock openPastSla widens the same way", () => {
+    expect((mttrModel(ALL) as any).remediation.actionable.openPastSla.overall.breached).toBe(1);
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    expect((mttrModel(ALL) as any).remediation.actionable.openPastSla.overall.breached).toBe(0);
+  });
+
+  it("mttrModel: agingDistribution's own slaTargets/slaEdge move with the saved window", () => {
+    const before = (mttrModel(ALL) as any).remediation.aging;
+    expect(before.slaTargets.CRITICAL).toBe(7);
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    const after = (mttrModel(ALL) as any).remediation.aging;
+    expect(after.slaTargets.CRITICAL).toBe(90);
+    // The bucket edges (0-7/8-30/31-90/90+) are fixed, so the 69-day row itself stays in the
+    // 31-90d bar either way — it is the DEADLINE overlay that moved, not the histogram.
+    expect(after.slaEdge.CRITICAL).not.toBe(before.slaEdge.CRITICAL);
+  });
+
+  it("mttrModel: overallSlaOldest's headline In-SLA % moves with mttrFromLedger's window", () => {
+    // sca:CVE-1 resolved in 7 days — exactly the default CRITICAL target, so it counts as
+    // in-SLA already; narrowing the window below 7 pushes it out instead.
+    const before = (mttrModel(ALL) as any).slaPct as number;
+    H.slaTargets = { CRITICAL: 1 };
+    __resetModelMemosForTest();
+    const after = (mttrModel(ALL) as any).slaPct as number;
+    expect(after).toBeLessThan(before);
+  });
+
+  it("registerModel: threads the effective window into triageFunnel without changing its shape", () => {
+    // `buildRegister` always calls `triageFunnel` with `exposureKnown: false` (this register's
+    // asset is a repository, never a host — see that call's own comment), so the funnel stops
+    // at `exploitable` and `overdue` is 0 by construction, whatever the SLA window is. The
+    // arithmetic itself — that the `targets` parameter actually moves `overdue` once a caller
+    // DOES know exposure — is `insights.test.ts`'s "triageFunnel" suite. What this proves is
+    // narrower and just as necessary: the new parameter reaches this call site and the payload
+    // keeps its contract.
+    const r = registerModel("sca", ALL) as any;
+    expect(r.funnel.overdue).toBe(0);
+    expect(r.funnel.exposureKnown).toBe(false);
+  });
+
+  it("executiveModel: fixNext's tier-2 gate moves with the saved window", () => {
+    // sca:CVE-2 (CRITICAL, fix available, 69 d old) is a tier-2 candidate once past SLA.
+    const before = executiveModel(ALL).fixNext as any;
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    const after = executiveModel(ALL).fixNext as any;
+    expect(after.unranked.insideSla).toBeGreaterThan(before.unranked.insideSla);
+  });
+
+  it("bootstrap-adjacent: the constant stays the default when nothing was saved", () => {
+    // The regression the whole package exists to avoid re-introducing: an operator who never
+    // opened the Deadlines tab keeps seeing exactly today's figures.
+    expect((mttrModel(ALL) as any).remediation.openPastSla.perSev.CRITICAL.target).toBe(7);
+  });
+
+  it("puts slaTargets in the key, so a changed window invalidates the cache instead of serving a stale one", () => {
+    mttrModel(ALL);
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    mttrModel(ALL);
+    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr2").map((c) => JSON.stringify(c.params));
+    expect(new Set(keys).size).toBe(2);
   });
 });
 

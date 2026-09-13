@@ -423,6 +423,18 @@ describe("triageFunnel", () => {
     expect(scaOnly.exploitable).toBe(1);
   });
 
+  // P5: `overdue` used to read `config.SLA_TARGETS` directly, so a register's own saved
+  // window never reached this funnel — this is the trailing `targets` parameter that fixes it.
+  it("measures overdue against a caller-supplied window instead of the SLA_TARGETS default", () => {
+    const rows = [tierRow({ finding_key: "a", has_kev: true, actionable_age_days: 40 })];
+    // Default (omitted 6th argument): CRITICAL's 7-day target, 40 d is well past it.
+    expect(triageFunnel(rows, RULE, new Set(["a"]), true).overdue).toBe(1);
+    // A widened CRITICAL window pulls the same row back inside SLA.
+    expect(triageFunnel(rows, RULE, new Set(["a"]), true, undefined, { CRITICAL: 90 }).overdue).toBe(0);
+    // A narrowed one keeps it (or pushes another) outside.
+    expect(triageFunnel(rows, RULE, new Set(["a"]), true, undefined, { CRITICAL: 1 }).overdue).toBe(1);
+  });
+
   // No `rule` argument: each row resolves its OWN scope's default (config.ruleForScope) —
   // the sca row under DEFAULT_RISK_RULE, the sast row under DEFAULT_SAST_RISK_RULE — so one
   // call over a mixed sca+sast population classifies both kinds of row correctly instead of

@@ -45,7 +45,7 @@
 
 import { SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "../domain/config";
 import { normalizeSeverity } from "../domain/severity";
-import { withSettings } from "../domain/settingsLogic";
+import { effectiveSlaTargets, withSettings } from "../domain/settingsLogic";
 import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
 import type { Rec } from "../domain/util";
 import {
@@ -132,7 +132,30 @@ export interface Bootstrap {
    *  a second copy of the mapping — `railStatus.js`'s `withLabels`. */
   scopeLabels: Record<string, string>;
   severityOrder: readonly string[];
+  /**
+   * THE SHARED, BYTE-IDENTICAL CONSTANT — `domain/config.ts`'s `SLA_TARGETS`, NEVER the
+   * per-register override. This is the CANONICAL value `src/client/js/pages/settings.js`'s
+   * `doSave` reads as `draftWarnings`'s `sharedSlaTargets`: the baseline a saved draft is
+   * compared AGAINST to decide whether to warn the operator that a changed window "would no
+   * longer match the window the OS, AI and pipeline registers use" (settingsModel.js).
+   *
+   * MUST NOT become the effective map. If this field started shipping this register's own
+   * saved override, `sharedSlaTargets` would equal the very draft it is meant to be compared
+   * against — the warning could never fire again, for every operator who has ever saved a
+   * custom window. `effectiveSlaTargets` below is the second field that exists so this one
+   * does not have to carry both meanings.
+   */
   slaTargets: Record<string, number>;
+  /**
+   * THE EFFECTIVE MAP — `settingsLogic.effectiveSlaTargets(settings)`: `slaTargets` above,
+   * overlaid with whatever this register's operator saved on the Deadlines tab. This is what
+   * every SLA figure the register actually PUBLISHES is measured against server-side
+   * (`readModels.ts`'s `buildMttr` / `buildExecutive` / `buildRegister`, `fixNext.ts`) — ships
+   * here too so a client reader wanting "the window this register measures against" never has
+   * to re-derive the overlay from `settings.slaTargets` itself (though that field carries the
+   * same value, `cleanSettings` having already applied it — see that file's header).
+   */
+  effectiveSlaTargets: Record<string, number>;
   /**
    * When each scope was last scanned — THREE CLOCKS, not one, unlike `latestSync` below.
    *
@@ -311,6 +334,7 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     scopeLabels: SCOPE_LABELS,
     severityOrder: SEVERITY_ORDER,
     slaTargets: SLA_TARGETS,
+    effectiveSlaTargets: effectiveSlaTargets(settings),
     latestSync,
     lastScanByScope,
     activeJob: (() => {

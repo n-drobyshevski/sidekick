@@ -392,9 +392,18 @@ export interface OpenPastSla {
  * `age_days > SLA_TARGETS[sev]` (strict `>`, the dual of the in-SLA `d <= target`). A severity
  * with no target (e.g. UNKNOWN) gets `target: null` and never breaches. `pct` is null only when
  * `open === 0` (no open sample to score). `opts.scope` narrows to one register before computing.
+ *
+ * `opts.slaTargets` (severity -> days) defaults to `SLA_TARGETS`; a caller measuring one
+ * register's own saved windows passes `settingsLogic.effectiveSlaTargets(settings)` instead,
+ * the way `readModels.ts`'s `buildMttr` does for both the detection-clock and
+ * actionable-clock calls.
  */
-export function openPastSla(rows: ScopedRemediationRow[], opts?: { scope?: Scope }): OpenPastSla {
+export function openPastSla(
+  rows: ScopedRemediationRow[],
+  opts?: { scope?: Scope; slaTargets?: Record<string, number> },
+): OpenPastSla {
   const filtered = filterScope(rows, opts?.scope);
+  const targets = opts?.slaTargets ?? SLA_TARGETS;
   const perSev: Record<string, OpenSlaSev> = {};
   let totalOpen = 0;
   let totalBreached = 0;
@@ -402,7 +411,7 @@ export function openPastSla(rows: ScopedRemediationRow[], opts?: { scope?: Scope
     const age = openAge(row);
     if (age === null) continue;
     const s = normalizeSeverity(row.severity);
-    const target = SLA_TARGETS[s] ?? null;
+    const target = targets[s] ?? null;
     const stat = perSev[s] ?? (perSev[s] = { open: 0, breached: 0, pct: null, target });
     stat.open += 1;
     totalOpen += 1;

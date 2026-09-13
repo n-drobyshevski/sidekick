@@ -89,7 +89,14 @@ export function recordColumns(records: Rec[]): string[] {
  * The durable equivalent is lifecycle.mttrFromLedger; both share summarize() so the
  * output contract is identical.
  */
-export function calculateMttr(records: Rec[], now?: number, scope?: Scope): MttrSummary {
+export function calculateMttr(
+  records: Rec[],
+  now?: number,
+  scope?: Scope,
+  /** Severity -> SLA window, in days. Defaults to `SLA_TARGETS`; see `summarize`'s matching
+   *  parameter — this is a thin wrapper and forwards it unchanged. */
+  slaTargets?: Record<string, number>,
+): MttrSummary {
   if (!records.length) return { perSev: {}, overall: {} };
 
   const columns = recordColumns(records);
@@ -108,7 +115,7 @@ export function calculateMttr(records: Rec[], now?: number, scope?: Scope): Mttr
     scope: "scope" in rec ? (rec["scope"] as Scope) : undefined,
   }));
 
-  return summarize(work, now, scope);
+  return summarize(work, now, scope, slaTargets);
 }
 
 /**
@@ -117,7 +124,18 @@ export function calculateMttr(records: Rec[], now?: number, scope?: Scope): Mttr
  * excluded; absent-scope survives) — see the module header on why calculateMttr's raw-record
  * rows usually carry no scope at all.
  */
-export function summarize(workIn: SummaryRow[], now?: number, scope?: Scope): MttrSummary {
+export function summarize(
+  workIn: SummaryRow[],
+  now?: number,
+  scope?: Scope,
+  /**
+   * Severity -> SLA window, in days, for `sla_target` / `sla_compliant` / `sla_pct` below.
+   * Defaults to the shared `SLA_TARGETS` constant; a caller measuring one register's OWN
+   * saved windows passes `settingsLogic.effectiveSlaTargets(settings)` instead — through
+   * `lifecycle.mttrFromLedger`'s matching option, which `readModels.ts`'s `buildMttr` does.
+   */
+  slaTargets: Record<string, number> = SLA_TARGETS,
+): MttrSummary {
   const work = scope ? workIn.filter((r) => r.scope === undefined || r.scope === scope) : workIn;
   if (!work.length) return { perSev: {}, overall: {} };
   const nowMs = now ?? Date.now();
@@ -138,7 +156,7 @@ export function summarize(workIn: SummaryRow[], now?: number, scope?: Scope): Mt
       .filter((r) => r.resolved === null && r.firstSeen !== null)
       .map(ageDays)
       .filter((d): d is number => d !== null);
-    const target = SLA_TARGETS[sev] ?? null;
+    const target = slaTargets[sev] ?? null;
     const withinSla =
       target !== null && resolvedDays.length
         ? resolvedDays.filter((d) => d <= target).length

@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "b2de277acc4b" : "dev";
+  var BUILD_ID = true ? "1a271318dd26" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -876,7 +876,7 @@ var Server = (() => {
 
   // src/domain/metrics.ts
   var DAY_MS = 864e5;
-  function summarize(workIn, now, scope) {
+  function summarize(workIn, now, scope, slaTargets = SLA_TARGETS) {
     var _a;
     const work = scope ? workIn.filter((r) => r.scope === void 0 || r.scope === scope) : workIn;
     if (!work.length) return { perSev: {}, overall: {} };
@@ -889,7 +889,7 @@ var Server = (() => {
       if (!sub.length) continue;
       const resolvedDays = sub.map(mttrDays).filter((d) => d !== null);
       const openAges = sub.filter((r) => r.resolved === null && r.firstSeen !== null).map(ageDays).filter((d) => d !== null);
-      const target = (_a = SLA_TARGETS[sev2]) != null ? _a : null;
+      const target = (_a = slaTargets[sev2]) != null ? _a : null;
       const withinSla = target !== null && resolvedDays.length ? resolvedDays.filter((d) => d <= target).length : 0;
       perSev[sev2] = {
         mttr_mean: resolvedDays.length ? mean(resolvedDays) : null,
@@ -957,7 +957,7 @@ var Server = (() => {
       resolved: parseTs(r["resolved_at"]),
       scope: "scope" in r ? r["scope"] : void 0
     }));
-    return summarize(work, opts.now, opts.scope);
+    return summarize(work, opts.now, opts.scope, opts.slaTargets);
   }
 
   // src/domain/reconcile.ts
@@ -2182,16 +2182,16 @@ var Server = (() => {
     }
     return { perKey, totalOpen };
   }
-  function slaEdgeBucket(severity) {
-    const target = SLA_TARGETS[normalizeSeverity(severity)];
+  function slaEdgeBucket(severity, targets = SLA_TARGETS) {
+    const target = targets[normalizeSeverity(severity)];
     if (typeof target !== "number" || !Number.isFinite(target)) return null;
     return target <= AGE_BUCKET_EDGES[0] ? 0 : target <= AGE_BUCKET_EDGES[1] ? 1 : target <= AGE_BUCKET_EDGES[2] ? 2 : 3;
   }
-  function slaEdgeIsExact(severity) {
-    const target = SLA_TARGETS[normalizeSeverity(severity)];
+  function slaEdgeIsExact(severity, targets = SLA_TARGETS) {
+    const target = targets[normalizeSeverity(severity)];
     return typeof target === "number" && AGE_BUCKET_EDGES.indexOf(target) >= 0;
   }
-  function agingDistribution(rows, scope) {
+  function agingDistribution(rows, scope, targets = SLA_TARGETS) {
     const perSev = {};
     let unaged = 0;
     let totalOpen = 0;
@@ -2212,10 +2212,10 @@ var Server = (() => {
     const slaTargets = {};
     const slaEdgeExact = {};
     for (const s2 of Object.keys(perSev)) {
-      slaEdge[s2] = slaEdgeBucket(s2);
-      const t = SLA_TARGETS[s2];
+      slaEdge[s2] = slaEdgeBucket(s2, targets);
+      const t = targets[s2];
       slaTargets[s2] = typeof t === "number" && Number.isFinite(t) ? t : null;
-      slaEdgeExact[s2] = slaEdgeIsExact(s2);
+      slaEdgeExact[s2] = slaEdgeIsExact(s2, targets);
     }
     return {
       labels: AGE_BUCKET_LABELS.slice(),
@@ -2315,7 +2315,7 @@ var Server = (() => {
     }
     return { perTier, open, unclassified: (_a = perTier["unknown"]) != null ? _a : 0, excludedSecrets };
   }
-  function triageFunnel(rowsIn, rule, exposedKeys, exposureKnown, scope) {
+  function triageFunnel(rowsIn, rule, exposedKeys, exposureKnown, scope, targets = SLA_TARGETS) {
     const rows = byScope(rowsIn, scope);
     const out = {
       open: 0,
@@ -2344,7 +2344,7 @@ var Server = (() => {
       out.exploitable += 1;
       if (!exposureKnown || !exposedKeys.has(row.finding_key)) continue;
       out.exposed += 1;
-      const target = SLA_TARGETS[normalizeSeverity(row.severity)];
+      const target = targets[normalizeSeverity(row.severity)];
       const age = row.actionable_age_days;
       if (typeof target === "number" && typeof age === "number" && Number.isFinite(age) && age > target) {
         out.overdue += 1;
@@ -2551,8 +2551,9 @@ var Server = (() => {
     return { perSev, labels: RESOLUTION_BUCKET_LABELS, total };
   }
   function openPastSla(rows, opts) {
-    var _a, _b;
+    var _a, _b, _c;
     const filtered = filterScope(rows, opts == null ? void 0 : opts.scope);
+    const targets = (_a = opts == null ? void 0 : opts.slaTargets) != null ? _a : SLA_TARGETS;
     const perSev = {};
     let totalOpen = 0;
     let totalBreached = 0;
@@ -2560,8 +2561,8 @@ var Server = (() => {
       const age = openAge2(row);
       if (age === null) continue;
       const s2 = normalizeSeverity(row.severity);
-      const target = (_a = SLA_TARGETS[s2]) != null ? _a : null;
-      const stat = (_b = perSev[s2]) != null ? _b : perSev[s2] = { open: 0, breached: 0, pct: null, target };
+      const target = (_b = targets[s2]) != null ? _b : null;
+      const stat = (_c = perSev[s2]) != null ? _c : perSev[s2] = { open: 0, breached: 0, pct: null, target };
       stat.open += 1;
       totalOpen += 1;
       if (target !== null && age > target) {
@@ -3398,21 +3399,24 @@ var Server = (() => {
   function cleanProjectView(v) {
     return typeof v === "string" ? v.trim() : "";
   }
+  function cleanSlaTargets(raw) {
+    const out = {};
+    const rec = raw || {};
+    for (const sev2 of SEVERITY_ORDER) {
+      const v = Number(rec[sev2]);
+      if (Number.isFinite(v) && v > 0) out[sev2] = Math.floor(v);
+    }
+    return out;
+  }
   function cleanSettings(raw) {
     const r = raw || {};
     const scopes = (Array.isArray(r.scopes) ? r.scopes : []).map((x) => String(x).trim().toLowerCase()).filter((x) => SCOPES.includes(x));
-    const sla = { ...SLA_TARGETS };
-    const rawSla = r.slaTargets || {};
-    for (const sev2 of SEVERITY_ORDER) {
-      const v = Number(rawSla[sev2]);
-      if (Number.isFinite(v) && v > 0) sla[sev2] = Math.floor(v);
-    }
     return {
       // An empty list would collect nothing while looking configured, so it falls back
       // rather than persisting a register that can never fill.
       scopes: scopes.length ? scopes : [...SCOPES],
       fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
-      slaTargets: sla,
+      slaTargets: { ...SLA_TARGETS, ...cleanSlaTargets(r.slaTargets) },
       showExperimental: r.showExperimental === true,
       syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
       // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
@@ -3424,6 +3428,9 @@ var Server = (() => {
   }
   function withSettings(current, patch) {
     return cleanSettings({ ...current, ...patch });
+  }
+  function effectiveSlaTargets(settings) {
+    return { ...SLA_TARGETS, ...cleanSlaTargets(settings == null ? void 0 : settings.slaTargets) };
   }
 
   // src/server/sheetsDb.ts
@@ -6452,9 +6459,16 @@ var Server = (() => {
     const scope = scopeRaw && SCOPES.includes(scopeRaw) ? scopeRaw : null;
     const sevRaw = (_b = p == null ? void 0 : p.severities) != null ? _b : null;
     const severities = Array.isArray(sevRaw) && sevRaw.length ? sevRaw.map((s2) => normalizeSeverity(s2)).filter((s2, i, a) => a.indexOf(s2) === i).sort() : null;
-    const projectRaw = loadSettings().projectView;
+    const settings = loadSettings();
+    const projectRaw = settings.projectView;
     const project2 = projectRaw ? projectRaw : null;
-    return { scope, severities, showNoFix: (p == null ? void 0 : p.showNoFix) !== false, project: project2 };
+    return {
+      scope,
+      severities,
+      showNoFix: (p == null ? void 0 : p.showNoFix) !== false,
+      project: project2,
+      slaTargets: effectiveSlaTargets(settings)
+    };
   }
   function keyOf(n2) {
     return { scope: n2.scope, severities: n2.severities, showNoFix: n2.showNoFix, project: n2.project };
@@ -6605,7 +6619,10 @@ var Server = (() => {
     const snap = baseSnapshot();
     const scoped = scopedRows(snap.rows, n2);
     const rows = visibleRows(snap.rows, n2);
-    const { perSev, overall } = mttrFromLedger(rows, { now: snap.now });
+    const { perSev, overall } = mttrFromLedger(
+      rows,
+      { now: snap.now, slaTargets: n2.slaTargets }
+    );
     const { slaPct, oldestDays } = overallSlaOldest(perSev);
     const kmMedianPerSev = {};
     const kmP90PerSev = {};
@@ -6647,7 +6664,7 @@ var Server = (() => {
         kmP90PerSev,
         kmLowerBoundPerSev,
         kmPerSev,
-        openPastSla: openPastSla(rows),
+        openPastSla: openPastSla(rows, { slaTargets: n2.slaTargets }),
         /**
          * The open backlog as an age DISTRIBUTION, against the per-severity SLA edge.
          *
@@ -6661,7 +6678,7 @@ var Server = (() => {
          * row with no readable `first_seen` is not young, it is undated, and the page prints
          * that count rather than letting the bars quietly cover fewer rows than the hero does.
          */
-        aging: agingDistribution(rows),
+        aging: agingDistribution(rows, void 0, n2.slaTargets),
         /**
          * The SAME open rows, against their OWN deadline instead of the shared 7/30/90 edges:
          * how much of each finding's SLA window it has consumed, in tenths.
@@ -6673,10 +6690,12 @@ var Server = (() => {
          * two populations that have no tenth to plot — past the window, and no window at all —
          * are counted separately rather than folded into a bar.
          *
-         * `SLA_TARGETS` is passed in from HERE rather than read inside `insights.ts`, which
-         * keeps that function pure over its arguments; the client never receives the table.
+         * `n.slaTargets` — the EFFECTIVE windows (the shared constant, overridden by whatever
+         * this register's operator saved on the Deadlines tab) — is passed in from HERE rather
+         * than read inside `insights.ts`, which keeps that function pure over its arguments;
+         * the client never receives the table.
          */
-        slaConsumed: slaConsumedDeciles(rows, SLA_TARGETS),
+        slaConsumed: slaConsumedDeciles(rows, n2.slaTargets),
         awaiting: awaitingVendorFix(rows),
         /**
          * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
@@ -6688,7 +6707,7 @@ var Server = (() => {
           scope: "sca",
           rowCount: scaVisible.length,
           notMeasured: rows.length - scaVisible.length,
-          openPastSla: openPastSla(actionableView(scaVisible)),
+          openPastSla: openPastSla(actionableView(scaVisible), { slaTargets: n2.slaTargets }),
           km: shipKM(kaplanMeier(actionableView(scaVisible))),
           /** How long we waited for a fix to EXIST, over the pre-toggle sca population. Pairs
            *  additively with the clock above: exposure = latency + actionable. */
@@ -6700,7 +6719,7 @@ var Server = (() => {
   }
   function mttrModel(p) {
     const n2 = norm(p);
-    return cached("dsMttr2", keyOf(n2), () => buildMttr(n2), CLOCK_TTL_SEC);
+    return cached("dsMttr2", { ...keyOf(n2), slaTargets: n2.slaTargets }, () => buildMttr(n2), CLOCK_TTL_SEC);
   }
   function buildExecutive(n2) {
     var _a;
@@ -6739,7 +6758,9 @@ var Server = (() => {
       weekTrend: weekTrend(scoped, n2, snap.now),
       // What to do next, and what the list left out. One call, one pass over the rows the
       // severity tiles already counted, so the ranked figure and the tiles cannot disagree.
-      fixNext: fixNext(rows, { now: snap.now }),
+      // `slaTargets` is the EFFECTIVE map so tier 2/3's "past SLA" gate — and therefore
+      // `unranked.insideSla` — agree with the same windows `mttrModel` measures against.
+      fixNext: fixNext(rows, { now: snap.now, slaTargets: n2.slaTargets }),
       movement: openMovement(rows, n2),
       tiers: riskTierStats(scopedTierRows(rows), void 0),
       signalCoverage: signalCoverage(rows)
@@ -6846,7 +6867,12 @@ var Server = (() => {
   }
   function executiveModel(p) {
     const n2 = norm(p);
-    return cached("dsExecutive1", keyOf(n2), () => buildExecutive(n2), CLOCK_TTL_SEC);
+    return cached(
+      "dsExecutive1",
+      { ...keyOf(n2), slaTargets: n2.slaTargets },
+      () => buildExecutive(n2),
+      CLOCK_TTL_SEC
+    );
   }
   var CONCENTRATION_DIMS = {
     // NO `language` ON EITHER CODE REGISTER, and the two lost it for different reasons.
@@ -6902,7 +6928,7 @@ var Server = (() => {
       // from the table rather than from what a page might like to see.
       concentration: concentration(rows, CONCENTRATION_DIMS[scope], 5, scope),
       tiers: riskTierStats(scopedTierRows(rows), void 0, scope),
-      funnel: triageFunnel(rows, void 0, /* @__PURE__ */ new Set(), false, scope),
+      funnel: triageFunnel(rows, void 0, /* @__PURE__ */ new Set(), false, scope, n2.slaTargets),
       awaiting: awaitingVendorFix(rows, { scope }),
       latestScan: latest,
       signalCoverage: signalCoverage(rows),
@@ -6945,8 +6971,10 @@ var Server = (() => {
       // gate the last scan applied, the base filter words). A warm dsRegister1 entry carries
       // none of it, and the page would draw no provenance line at all over figures that have
       // one — worse than a stale number, because it is a silently missing caveat.
+      // `slaTargets` joins the key because `triageFunnel`'s `overdue` step (inside
+      // `buildRegister`) reads it — see `mttrModel`'s matching comment.
       "dsRegister2",
-      { ...keyOf(n2), scope },
+      { ...keyOf(n2), scope, slaTargets: n2.slaTargets },
       () => buildRegister(scope, n2),
       CLOCK_TTL_SEC
     );
@@ -7847,7 +7875,10 @@ var Server = (() => {
           partial_pages: (_f = (_e = params.perScope[s2.scope]) == null ? void 0 : _e.partialPages) != null ? _f : 0
         };
       }),
-      mttr: mttrFromLedger(Object.values(ledger))
+      mttr: mttrFromLedger(
+        Object.values(ledger),
+        { slaTargets: effectiveSlaTargets(loadSettings()) }
+      )
     };
   }
   function autoCompactIfDue() {
@@ -8080,6 +8111,7 @@ var Server = (() => {
         scopeLabels: SCOPE_LABELS,
         severityOrder: SEVERITY_ORDER,
         slaTargets: SLA_TARGETS,
+        effectiveSlaTargets: effectiveSlaTargets(settings),
         latestSync,
         lastScanByScope,
         activeJob: (() => {

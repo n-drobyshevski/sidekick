@@ -554,6 +554,19 @@ describe("openPastSla", () => {
     const all = openPastSla(rows);
     expect(all.overall.open).toBe(2);
   });
+
+  // P5: this used to read `config.SLA_TARGETS` directly, so a register's own saved window
+  // never reached the open-past-SLA backlog. `opts.slaTargets` is what fixes it; omitted, it
+  // still defaults to `SLA_TARGETS`, which is why every test above this one is untouched.
+  it("opts.slaTargets overrides SLA_TARGETS for this call only", () => {
+    const rows = [open(10, "CRITICAL")]; // 10 > default 7 -> breached
+    expect(openPastSla(rows).perSev.CRITICAL).toEqual({ open: 1, breached: 1, pct: 100, target: 7 });
+    const widened = openPastSla(rows, { slaTargets: { CRITICAL: 30 } });
+    expect(widened.perSev.CRITICAL).toEqual({ open: 1, breached: 0, pct: 0, target: 30 });
+    // The next call with no opts at all still reads the shared constant — the override does
+    // not leak into a default.
+    expect(openPastSla(rows).perSev.CRITICAL.target).toBe(7);
+  });
 });
 
 describe("openPastSlaFromRecords", () => {

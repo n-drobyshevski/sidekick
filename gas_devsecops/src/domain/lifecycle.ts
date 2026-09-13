@@ -85,7 +85,9 @@ export function findingKey(scope: Scope, node: Rec): string {
  */
 export function mttrFromLedger(
   ledgerRows: Iterable<Rec>,
-  opts: { now?: number; scope?: Scope } = {},
+  /** `slaTargets`: severity -> SLA window, in days. Defaults to `SLA_TARGETS`; forwarded to
+   *  `summarize` unchanged — see that function's matching parameter. */
+  opts: { now?: number; scope?: Scope; slaTargets?: Record<string, number> } = {},
 ): MttrSummary {
   const rows = [...ledgerRows];
   if (!rows.length) return { perSev: {}, overall: {} };
@@ -95,5 +97,5 @@ export function mttrFromLedger(
     resolved: parseTs(r["resolved_at"]),
     scope: "scope" in r ? (r["scope"] as Scope) : undefined,
   }));
-  return summarize(work, opts.now, opts.scope);
+  return summarize(work, opts.now, opts.scope, opts.slaTargets);
 }

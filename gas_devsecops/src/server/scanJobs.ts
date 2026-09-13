@@ -68,6 +68,7 @@
 
 import { SCOPES, type Scope } from "../domain/config";
 import { mttrFromLedger } from "../domain/lifecycle";
+import { effectiveSlaTargets } from "../domain/settingsLogic";
 import { nowIso, pushAll, type Rec } from "../domain/util";
 import * as archive from "./archiveStore";
 import * as history from "./historyStore";
@@ -728,6 +729,15 @@ function warmAfterSync(): void {
  * it). The level costs one snapshot read — `persistSync` invalidated the memos on commit —
  * and it is what makes a day's entry answer "how are we doing" rather than only "what
  * happened at 02:00".
+ *
+ * `mttr` IS MEASURED AGAINST THIS SYNC'S OWN EFFECTIVE SLA WINDOWS, not the bare `SLA_TARGETS`
+ * constant — the same `settingsLogic.effectiveSlaTargets` every live read model measures
+ * against. This entry is a durable, once-written fact (`historyStore.recordDaily` never
+ * rewrites a past day), so it is dated by the settings in force when the sync committed, the
+ * same way `outcome`/`params` already are. It matters beyond symmetry with the live figure:
+ * `readModels.ts`'s `mttrPageTrendSlice` ships this array's `history` WHOLE as the MTTR page's
+ * fallback chart on a young ledger, so a day recorded here with a stale constant-based SLA
+ * would visibly disagree with the live page the moment an operator saved a custom window.
  */
 function dailyStats(params: SyncParams, outcome: ledgerStore.PersistOutcome): Rec {
   const ledger = ledgerStore.loadState().ledger;
@@ -747,7 +757,10 @@ function dailyStats(params: SyncParams, outcome: ledgerStore.PersistOutcome): Re
       // rows and a suspect count, and a history entry that hid that would be the lie.
       partial_pages: params.perScope[s.scope]?.partialPages ?? 0,
     })),
-    mttr: mttrFromLedger(Object.values(ledger) as unknown as Rec[]),
+    mttr: mttrFromLedger(
+      Object.values(ledger) as unknown as Rec[],
+      { slaTargets: effectiveSlaTargets(loadSettings()) },
+    ),
   };
 }
 
