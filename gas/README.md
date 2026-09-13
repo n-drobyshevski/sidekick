@@ -933,3 +933,22 @@ Things node tests cannot cover — verify after the first deployment:
 - Consumer accounts cap total trigger runtime at 90 min/day — deploy on a Workspace
   account for daily large scans (6 h/day).
 - Spreadsheet ceiling: 10M cells; the ledger uses ~18 cells/vulnerability.
+
+## Known follow-up
+
+**`cachedSettingsImpactData`'s comment contradicts its own key, and the key is the one that is
+right.** `src/server/api.ts`'s `cachedSettingsImpactData()` (behind `api_getSettingsImpact`)
+says it is "keyed on the scan scope … but deliberately NOT on the two display toggles: the
+census and toggle counts are the same whichever way those are set, and keying on them would
+cache two identical copies." The key it actually passes to `cached()` is `{ fetchSeverities,
+showNoFix, includeEol }` — `showNoFix` and `includeEol` are exactly the two display toggles the
+comment says are deliberately excluded, and they are in the key. The comment is right that the
+CENSUS and TOGGLE halves of the payload do not vary with them — both are built from
+`ledgerStore.loadBaseRows()`, the unfiltered base, matching `settingsImpactData()`'s own header
+("measured over the UNFILTERED base on purpose … both questions need the population from before
+those filters ran"). But the RISK-CUBE half does: `scored = visibleBase(filterSeverities(all,
+…))`, and `visibleBase` applies `getShowNoFix()` and `getIncludeEol()` before the cube is scored
+— so a cache keyed the way the comment describes would serve a stale risk cube the moment a
+reader flips a display toggle after a scan. The shipped key is correct; the comment describes
+only the census/toggle-count half of the payload and draws the wrong conclusion for the whole
+of it. It needs rewriting to say so, not the key changing to match it.

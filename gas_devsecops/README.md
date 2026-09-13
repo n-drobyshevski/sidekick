@@ -36,6 +36,17 @@ reporting new/resolved/reopened of 0/0/0. See [PROBE_FINDINGS.md](PROBE_FINDINGS
   idempotency result above only covers an unchanged upstream.
 - **The commit hash is fetched and discarded.** `Q_SAST` selects `commitHash` and `Q_SECRETS`
   `initialCommitHash`; `LEDGER_COLUMNS` has no column for either. That needs a schema bump.
+- **`trend.ts`'s SLA-burn / open-past-SLA series still reads the bare `SLA_TARGETS` constant,
+  never `effectiveSlaTargets`.** The settings-unification wave's P5 wired every other reader
+  through an operator's saved window — `metrics.summarize`'s `buildMttr` (the headline `slaPct`
+  and the per-severity `sla_target` table) and `scanJobs.dailyStats`'s durable snapshot — and
+  named this one a deliberate gap rather than a missed call site: `loadTrend`'s
+  `withOpenPastSla`/`withSlaBurn`/`cohortSlaAttainment` chain (`src/server/ledgerStore.ts`, read
+  by the History page and by `mttrPageTrendSlice`) carries historical/backfill semantics — a
+  saved window would reshape how already-past scans are judged, retroactively — that deserve
+  their own package rather than reusing P5's pattern in the same hour it landed. Until that
+  lands, this series will disagree with every other SLA figure in the app the moment an
+  operator overrides a window.
 - Several page sections are **honestly empty** because the read models do not publish the
   data: repos ownership (nothing aggregates `owner_project`), the history open-past-SLA trend,
   and per-severity KM curves. Each page says which figure it cannot draw instead of drawing a
