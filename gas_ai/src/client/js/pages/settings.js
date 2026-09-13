@@ -33,7 +33,7 @@ import {
 } from "../settingsModel.js";
 import {
   agentCallsText, categoryDroppedOnlyText, categoryScopeReadout, derivedFiveRsSelected,
-  fetchScopeReadoutModel, fiveRsSplit, termCoverageReadout,
+  fetchScopeReadoutModel, fiveRsSplit, rankImpactReadout, termCoverageReadout,
 } from "../settingsReadouts.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -786,6 +786,13 @@ export async function renderSettings(main, params, ctx) {
   // rebuilt inside repaintImpactReadouts() on every edit, same as droppedOnlyHost above.
   const termCoverageHost = el("div", {});
 
+  // Rank impact (P11): would this rule change actually reorder the queue, and by how much —
+  // the score histogram, the moved-count, the tau agreement and the top-N carry-over, all
+  // computed from `impact.rankCube` against `draft.rankRule` vs `saved.rankRule`. Rebuilt on
+  // every edit inside repaintImpactReadouts(), same as termCoverageHost: every field this
+  // panel edits (shares, timeSource, both weight tables, epssThreshold) can move the figures.
+  const rankImpactHost = el("div", {});
+
   const rankPanel = settingsPanel({
     title: "Priorities ranking",
     description: "The minimal model that scores every row in the Priorities queue.",
@@ -830,6 +837,7 @@ export async function renderSettings(main, params, ctx) {
         rankNumber("adj-direct", "On an AI asset", rankLeaf("adjacencyWeights", "DIRECT")),
         rankNumber("adj-adjacent", "Adjacent to one", rankLeaf("adjacencyWeights", "ADJACENT")),
         rankNumber("adj-unlinked", "No known link", rankLeaf("adjacencyWeights", "UNLINKED"))),
+      rankImpactHost,
       settingRow({
         label: "Rank leads the Priorities order", htmlFor: "set-rank-leads",
         description: "Off: the Priorities page keeps Wiz severity → due date → age. "
@@ -1080,6 +1088,11 @@ export async function renderSettings(main, params, ctx) {
       clear(termCoverageHost);
       const node = termCoverageReadout(impact.termCoverage, draft.rankRule.timeSource);
       if (node) termCoverageHost.append(node);
+    }
+    if (impact.rankCube) {
+      clear(rankImpactHost);
+      const node = rankImpactReadout(impact.rankCube, draft.rankRule, saved.rankRule);
+      if (node) rankImpactHost.append(node);
     }
   }
 

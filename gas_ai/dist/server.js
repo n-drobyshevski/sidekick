@@ -4061,7 +4061,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "cc567c4d87d4" : "dev";
+  var BUILD_ID = true ? "21e09a55ec0f" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -13943,6 +13943,95 @@ var Server = (() => {
       adjacency: adjacencyN
     };
   }
+  var RANK_EPSS_BINS = 100;
+  var RANK_DAY_MS = 864e5;
+  function rankLadderIdx(value, buckets) {
+    let idx = 0;
+    for (let i = 0; i < buckets.length; i++) if (value > buckets[i]) idx = i + 1;
+    return idx;
+  }
+  function rankClamp01(v) {
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n)) return 0;
+    return n < 0 ? 0 : n > 1 ? 1 : n;
+  }
+  function rankWeightFor(row, rule) {
+    var _a5, _b;
+    for (const rw of (_a5 = rule.ruleWeights) != null ? _a5 : []) {
+      if (rw && String((_b = rw.ruleId) != null ? _b : "").trim() === rankKeyOf(row)) return rankClamp01(rw.weight);
+    }
+    return rankClamp01(rule.defaultRuleWeight);
+  }
+  function rankEpssBinOf(v, bins = RANK_EPSS_BINS) {
+    if (v >= 1) return bins;
+    return Math.max(0, Math.min(bins - 1, Math.floor(v * bins + 1e-9)));
+  }
+  function rankTupleOf(row, rule, nowIso2) {
+    var _a5, _b, _c, _d;
+    const overdueBuckets = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
+    const ageBuckets = (_b = rule.ageDayBuckets) != null ? _b : DEFAULT_RANK_RULE.ageDayBuckets;
+    const now = Date.parse(nowIso2);
+    const due = row.dueAt ? Date.parse(row.dueAt) : NaN;
+    const dueStep = Number.isFinite(due) && Number.isFinite(now) ? rankLadderIdx((now - due) / RANK_DAY_MS, overdueBuckets) : null;
+    const created = row.createdAt ? Date.parse(row.createdAt) : NaN;
+    const ageStep = Number.isFinite(created) && Number.isFinite(now) ? rankLadderIdx((now - created) / RANK_DAY_MS, ageBuckets) : null;
+    const tier = String((_c = row.exploitationTier) != null ? _c : "").trim().toLowerCase();
+    const peak = typeof row.epssPeak === "number" && Number.isFinite(row.epssPeak) ? row.epssPeak : null;
+    let exploitationTier = "unmeasured";
+    let epssBin = null;
+    if (tier === "kev") exploitationTier = "kev";
+    else if (tier === "exploit") exploitationTier = "exploit";
+    else if (tier === "none") exploitationTier = "none";
+    else if (tier === "epss") {
+      if (peak !== null) {
+        exploitationTier = "epss";
+        epssBin = rankEpssBinOf(peak);
+      } else exploitationTier = "none";
+    }
+    const adjRaw = String((_d = row.aiAdjacency) != null ? _d : "").trim().toUpperCase();
+    const adjacency2 = adjRaw === "DIRECT" || adjRaw === "ADJACENT" || adjRaw === "UNLINKED" ? adjRaw : "unmeasured";
+    return { ruleWeightKey: rankWeightFor(row, rule), dueStep, ageStep, exploitationTier, epssBin, adjacency: adjacency2 };
+  }
+  var RANK_EXPL_CODE = {
+    kev: "k",
+    exploit: "e",
+    epss: "p",
+    none: "n",
+    unmeasured: "u"
+  };
+  var RANK_ADJ_CODE = {
+    DIRECT: "D",
+    ADJACENT: "A",
+    UNLINKED: "U",
+    unmeasured: "u"
+  };
+  function rankTupleKey(t) {
+    return [
+      t.ruleWeightKey.toFixed(4),
+      t.dueStep === null ? "x" : t.dueStep,
+      t.ageStep === null ? "x" : t.ageStep,
+      RANK_EXPL_CODE[t.exploitationTier],
+      t.epssBin === null ? "x" : t.epssBin,
+      RANK_ADJ_CODE[t.adjacency]
+    ].join("|");
+  }
+  function buildRankCube(rows, rule, nowIso2) {
+    var _a5, _b, _c;
+    const overdueBuckets = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
+    const ageBuckets = (_b = rule.ageDayBuckets) != null ? _b : DEFAULT_RANK_RULE.ageDayBuckets;
+    const cells = {};
+    for (const row of rows) {
+      const key = rankTupleKey(rankTupleOf(row, rule, nowIso2));
+      cells[key] = ((_c = cells[key]) != null ? _c : 0) + 1;
+    }
+    return {
+      total: rows.length,
+      cells,
+      overdueSteps: overdueBuckets.length,
+      ageSteps: ageBuckets.length,
+      epssBins: RANK_EPSS_BINS
+    };
+  }
 
   // src/domain/graphProject.ts
   var DEFAULT_PER_KIND_CAP = {
@@ -18849,6 +18938,23 @@ var Server = (() => {
     const categoryCube = buildCategoryCube(openIssues2, candidateIds, configuredIds);
     const problems = durablyCached("problemsModel", null, problemsModel);
     const termCoverage = termCoverageOf(problems.rows);
+    const rankRule = effectiveRankRule();
+    const rankCube = buildRankCube(
+      problems.rows.map((r) => {
+        var _a6;
+        return {
+          ruleId: r.ruleId,
+          ruleShortId: r.ruleShortId,
+          dueAt: (_a6 = r.dueAt) != null ? _a6 : void 0,
+          createdAt: r.firstSeenAt,
+          exploitationTier: r.exploitationTier,
+          epssPeak: r.epssPeak,
+          aiAdjacency: r.aiAdjacency
+        };
+      }),
+      rankRule,
+      nowIso()
+    );
     const assets = durablyCached("assetsModel2", null, assetsModel);
     const agentCount = Number((_a5 = assets.kpis["agents"]) != null ? _a5 : 0);
     return {
@@ -18863,6 +18969,7 @@ var Server = (() => {
         measuredScope: c.measuredScope
       })),
       termCoverage,
+      rankCube,
       agentCount
     };
   }

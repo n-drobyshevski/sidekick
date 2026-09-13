@@ -3241,16 +3241,24 @@ export function setSettings(p?: unknown): ApiResult {
 /**
  * Everything the Settings page needs to say, beside each control, what that control is
  * currently doing to the register — in ONE payload, mirroring `gas/`'s `getSettingsImpact`.
- * See `domain/settingsImpact.ts`'s header for the three figures and the honesty requirement
- * the category cube keeps.
+ * See `domain/settingsImpact.ts`'s header for the four figures and the honesty requirement
+ * the category cube (and, as of P11, the rank cube) keep.
  *
  * WHAT THIS WALKS. `syncStore.loadIssues()` once (memoized per execution, and likely already
- * warm — every issue-reading endpoint calls it) to build the category cube; then two ALREADY
- * -CACHED models, `problemsModel` (the Priorities queue, for term coverage) and `assetsModel`
- * (for the agent count) via `durablyCached`, which is the same read-through cache the
- * Priorities and Inventory pages themselves hit. On a warm cache this is one sheet read plus
- * two cache lookups; on a cold cache (first load after a sync) it pays exactly what those two
- * pages already pay on their own first load — never a second, independent full computation.
+ * warm — every issue-reading endpoint calls it) to build the category cube; then one ALREADY
+ * -CACHED model, `problemsModel` (the Priorities queue), via `durablyCached` — the same
+ * read-through cache the Priorities page itself hits — reused for BOTH `termCoverage` and the
+ * P11 rank cube, and `assetsModel` (for the agent count) the same way. On a warm cache this is
+ * one sheet read plus two cache lookups, PLUS one more O(rows) pass over `problems.rows` to
+ * bucket every row into the rank cube (`buildRankCube`) — the walk this endpoint is most
+ * likely to strain the 6-minute cap on, so it is measured rather than assumed: on the
+ * reference tenant's ~200-row queue this is low-single-digit milliseconds, and
+ * `test/settingsImpact.test.ts` builds a cube from several thousand synthetic rows to pin the
+ * cell count (and therefore the serialized size against `CacheService`'s 100 KB ceiling) at a
+ * scale well past any tenant this app has been measured against. On a cold cache (first load
+ * after a sync) the whole function pays exactly what `getProblems` and `getAssets` already pay
+ * on their own first load, plus that one extra bucketing pass — never a second, independent
+ * full computation of the queue itself.
  */
 function settingsImpactData(): Rec {
   const openIssues = syncStore.loadIssues().filter(isUnresolvedIssue);
@@ -3260,6 +3268,27 @@ function settingsImpactData(): Rec {
 
   const problems = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
   const termCoverage = settingsImpact.termCoverageOf(problems.rows);
+
+  // P11: the sparse joint over the rank tuple, built from the SAME `effectiveRankRule()` that
+  // scored `problems.rows` in the first place — see `domain/settingsImpact.ts`'s "P11: rank
+  // cube" section for the tuple, and why `ruleWeightKey`/the two ladders can be fixed at this
+  // rule without a caller-supplied one going stale: none of them are draft fields on this
+  // panel. `createdAt` reads `firstSeenAt`, the same field name `withRankScores` maps it
+  // through onto a `ProblemRow` — one birth-date field, one meaning, on both sides.
+  const rankRule = effectiveRankRule();
+  const rankCube = settingsImpact.buildRankCube(
+    problems.rows.map((r) => ({
+      ruleId: r.ruleId,
+      ruleShortId: r.ruleShortId,
+      dueAt: r.dueAt ?? undefined,
+      createdAt: r.firstSeenAt,
+      exploitationTier: r.exploitationTier,
+      epssPeak: r.epssPeak,
+      aiAdjacency: r.aiAdjacency,
+    })),
+    rankRule,
+    nowIso(),
+  );
 
   const assets = durablyCached("assetsModel2", null, assetsModel) as AssetsModel;
   const agentCount = Number(assets.kpis["agents"] ?? 0);
@@ -3276,6 +3305,7 @@ function settingsImpactData(): Rec {
       measuredScope: c.measuredScope,
     })),
     termCoverage,
+    rankCube,
     agentCount,
   };
 }

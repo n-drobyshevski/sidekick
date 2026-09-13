@@ -186,3 +186,53 @@ describe("termCoverageReadout — why a poorly-measured term matters", () => {
     expect(READOUTS_CODE).toMatch(/impactSplit\(t\.splitModel\)/);
   });
 });
+
+// ================================================================================ P11: the rank
+// cube — "would this change the order of my queue"
+
+describe("the rank-impact readout", () => {
+  it("reads the draft rule against the SAVED rule, never two draft snapshots", () => {
+    expect(SETTINGS_CODE).toMatch(
+      /rankImpactReadout\(\s*impact\.rankCube,\s*draft\.rankRule,\s*saved\.rankRule,?\s*\)/,
+    );
+  });
+
+  it("is rebuilt (not merely updated) inside repaintImpactReadouts(), so any of the five draft fields it reads repaints it", () => {
+    expect(SETTINGS_CODE).toMatch(
+      /function repaintImpactReadouts\(\)[\s\S]{0,900}clear\(rankImpactHost\)[\s\S]{0,200}rankImpactReadout\(/,
+    );
+  });
+
+  it("has its own host, appended inside the ranking panel's body", () => {
+    expect(SETTINGS_CODE).toMatch(/const rankImpactHost = el\("div", \{\}\)/);
+    expect(SETTINGS_CODE).toMatch(/rankImpactHost,\s*\n\s*settingRow\(\{\s*\n\s*label: "Rank leads/);
+  });
+});
+
+describe("rankCubeModel.js — every reader degrades on an absent cube", () => {
+  const MODEL_SRC = readFileSync(
+    new URL("../src/client/js/rankCubeModel.js", import.meta.url), "utf8",
+  );
+  const MODEL_CODE = code(MODEL_SRC);
+
+  it("rankScoreHistogram returns an empty array, never a guessed distribution", () => {
+    expect(MODEL_CODE).toMatch(/if \(!cells\.length[\s\S]{0,40}return \[\];/);
+  });
+
+  it("rankRowsMovedBeyond, rankCubeTauB and rankCubeTopN return null, never a guessed 0", () => {
+    expect(MODEL_CODE).toMatch(/export function rankRowsMovedBeyond\(cube, ruleA, ruleB, threshold\) \{\s*\n\s*if \(!cube \|\| !cube\.cells\) return null;/);
+    expect(MODEL_CODE).toMatch(/export function rankCubeTauB\(cube, ruleA, ruleB\) \{\s*\n\s*if \(!cube \|\| !cube\.cells\) return null;/);
+    expect(MODEL_CODE).toMatch(/export function rankCubeTopN\(cube, ruleA, ruleB, n\) \{\s*\n\s*if \(!cube \|\| !cube\.cells\) return null;/);
+  });
+});
+
+describe("rankTopNText — the range, not a guessed point estimate", () => {
+  it("prints a range, with the tiebreak clause, whenever lo !== hi", () => {
+    expect(READOUTS_CODE).toMatch(/Between \$\{fmt\(lo\)\} and \$\{fmt\(hi\)\}/);
+    expect(READOUTS_CODE).toMatch(/this figure cannot see/);
+  });
+
+  it("prints the bare number only when lo === hi", () => {
+    expect(READOUTS_CODE).toMatch(/if \(lo === hi\) \{/);
+  });
+});

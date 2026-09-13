@@ -1966,6 +1966,13 @@ exports[`empty-state contracts > each endpoint's answer before any sync is recor
         ],
         "total": 0,
       },
+      "rankCube": {
+        "ageSteps": 5,
+        "cells": {},
+        "epssBins": 100,
+        "overdueSteps": 5,
+        "total": 0,
+      },
       "termCoverage": {
         "adjacency": 0,
         "exploitation": 0,
@@ -21191,6 +21198,23 @@ exports[`read endpoints > getSettingsImpact answers the same shape 1`] = `
         "wct-id-1998",
       ],
       "total": 32,
+    },
+    "rankCube": {
+      "ageSteps": 5,
+      "cells": {
+        "0.5000|0|1|u|x|D": 2,
+        "0.5000|1|1|u|x|D": 13,
+        "0.5000|2|1|u|x|D": 6,
+        "0.5000|2|2|u|x|A": 8,
+        "0.5000|x|0|u|x|u": 1,
+        "0.5000|x|1|u|x|D": 3,
+        "0.5000|x|1|u|x|u": 3,
+        "0.5000|x|2|u|x|u": 1,
+        "0.5000|x|3|u|x|u": 1,
+      },
+      "epssBins": 100,
+      "overdueSteps": 5,
+      "total": 38,
     },
     "termCoverage": {
       "adjacency": 32,

@@ -12,10 +12,14 @@
 // P10 adds the Register tab's category-scope readout (`categoryScopeRowsModel`/
 // `categoryScopeReadout`), the dropped-category figure that makes its standing notice concrete
 // (`categoryDroppedOnlyText`), and the Priorities ranking panel's term-coverage bars
-// (`termCoverageModel`/`termCoverageReadout`). STILL NOT HERE, and P11's job: the rank cube's
-// own score histogram and any Kendall-tau agreement figure — `termCoverage` answers "how many
-// rows can this term even read", never "how would the rank ORDER move if I touched this knob",
-// which is a different question over a different payload.
+// (`termCoverageModel`/`termCoverageReadout`). `termCoverage` answers "how many rows can this
+// term even read", never "how would the rank ORDER move if I touched this knob" — P11, below
+// them, is that second question, over the `rankCube` payload `api_getSettingsImpact` now also
+// ships: `rankHistogramReadout` (the score distribution under the draft and the saved rule,
+// side by side), `rankMovedText` (rows whose score moves by more than a threshold),
+// `rankAgreementText` (`kendallTauB` between the two orderings) and `rankTopNText` (top-N
+// carry-over — see that function's own header for why it is sometimes a RANGE, never a guessed
+// point estimate).
 //
 //   fiveRsSplitModel() / fiveRsSplit()   the 5Rs Compliance panel's LIVE draft composition —
 //     derived-in / pinned-in / pinned-out / derived-out, every rule in exactly one bucket.
@@ -46,6 +50,9 @@ import {
   absentText, el, impactSplit, impactSplitModel, meter, num, splitBar,
 } from "./ui.js";
 import { categoryMarginalCount, categoryScopeImpact } from "./categoryCubeModel.js";
+import {
+  rankCubeTauB, rankCubeTopN, rankRowsMovedBeyond, rankScoreHistogram,
+} from "./rankCubeModel.js";
 
 function fmt(n) {
   return (n || 0).toLocaleString();
@@ -396,4 +403,156 @@ export function termCoverageReadout(termCoverage, timeSource) {
     + "be read on.",
   );
   return el("div", { class: "term-coverage-readout" }, ...rows, note);
+}
+
+// ================================================================================ P11: rank
+// cube — "would this change the order of my queue, and by how much".
+//
+// Every function below takes `rankCube` (`impact.rankCube`) plus TWO rules — a `draftRule` and
+// a `savedRule`, both shaped like `draft.rankRule` / `saved.rankRule` (only `shares`,
+// `timeSource`, `exploitationWeights`, `adjacencyWeights` and `epssThreshold` are ever read;
+// the extra fields a full `RankRule` carries are simply ignored) — and answer, PER KEYSTROKE,
+// with no round trip: `rankCubeModel.js` re-prices every tuple in the cube under each rule.
+//
+// THE THRESHOLD AND THE N ARE FIXED HERE, NOT DRAFT FIELDS. Nothing in this panel lets an
+// operator dial either one, so `RANK_MOVED_THRESHOLD` (10 score points, the same 0..1 scale
+// `rankScore` itself uses) and `RANK_TOP_N` (50 — `assetTable.DEFAULT_PAGE_SIZE`, a "page" of
+// the Priorities queue) are reasonable defaults rather than settings.
+
+const RANK_MOVED_THRESHOLD = 0.1;
+const RANK_TOP_N = 50;
+const RANK_HIST_BUCKETS = 16;
+
+/**
+ * The score histogram under the draft rule and under the saved rule, over the SAME cube — how
+ * a rule edit reshapes the queue's whole score distribution, not just its ends. `null` when
+ * the cube never arrived.
+ */
+export function rankHistogramModel(rankCube, draftRule, savedRule, buckets = RANK_HIST_BUCKETS) {
+  if (!rankCube) return null;
+  const draft = rankScoreHistogram(rankCube, draftRule, buckets);
+  const saved = rankScoreHistogram(rankCube, savedRule, buckets);
+  if (!draft.length || !saved.length) return null;
+  return { draft, saved, total: rankCube.total || 0, buckets };
+}
+
+/** One row of `.cut-hist__bar`s (gas_shared's histogram bar, reused bare — no cutline, no
+ *  slider, the two things `createCutHistogram` adds that this readout has no use for). */
+function histBars(counts) {
+  const max = Math.max(...counts, 1);
+  return counts.map((n) => {
+    const bar = el("div", { class: "cut-hist__bar" });
+    bar.style.height = n === 0 ? "0%" : `${Math.max(2, (n / max) * 100)}%`;
+    return bar;
+  });
+}
+
+/** The histogram readout's DOM half — two labelled bar rows, draft above saved, sharing one
+ *  axis caption. `null` when `rankHistogramModel` is. */
+export function rankHistogramReadout(model) {
+  if (!model) return null;
+  const row = (label, counts) => el(
+    "div", { class: "rank-hist-row", style: "margin:0 0 8px" },
+    el("p", { class: "small", style: "margin:0 0 2px" }, label),
+    el(
+      "div",
+      { class: "cut-hist", role: "img", "aria-label": `${label} score histogram, ${fmt(model.total)} rows` },
+      ...histBars(counts),
+    ),
+  );
+  return el(
+    "div", { class: "rank-hist-readout" },
+    row("Draft", model.draft),
+    row("Saved", model.saved),
+    el(
+      "p", { class: "small muted" },
+      `Low score (left) to high score (right) — ${fmt(model.total)} rows across `
+      + `${model.buckets} buckets.`,
+    ),
+  );
+}
+
+/**
+ * How many rows move by more than `threshold` in score between the two rules — the exact
+ * per-row count, read off the cube. `null` when the cube never arrived.
+ */
+export function rankMovedText(rankCube, draftRule, savedRule, threshold = RANK_MOVED_THRESHOLD) {
+  if (!rankCube) return null;
+  const moved = rankRowsMovedBeyond(rankCube, draftRule, savedRule, threshold);
+  if (moved === null) return null;
+  const total = rankCube.total || 0;
+  if (!total) return "No rows in the Priorities queue to compare yet.";
+  const t = threshold.toFixed(2);
+  if (!moved) {
+    return `No rows move by more than ${t} in score if you save this — the draft and the `
+      + "saved rule score the queue almost identically.";
+  }
+  return `${fmt(moved)} of ${fmt(total)} row${total === 1 ? "" : "s"} move by more than ${t} `
+    + "in score if you save this.";
+}
+
+/**
+ * `kendallTauB` between the draft order and the saved order, computed over the cube's tuples
+ * WITH MULTIPLICITY — see `domain/settingsImpact.ts`'s `rankCubeTauB` for why that is exact
+ * rather than an approximation. `null` when the cube never arrived.
+ */
+export function rankAgreementText(rankCube, draftRule, savedRule) {
+  if (!rankCube) return null;
+  const tau = rankCubeTauB(rankCube, draftRule, savedRule);
+  if (tau === null) return null;
+  if (!rankCube.total) return "No rows in the Priorities queue to compare yet.";
+  return "Kendall's tau-b between the draft order and the saved order: "
+    + `${tau.toFixed(2)} (1.00 is identical, 0.00 is unrelated, −1.00 is fully reversed).`;
+}
+
+/**
+ * The top-N carry-over: of the top `n` rows under the saved rule, how many are still in the
+ * top `n` under the draft. `null` when the cube never arrived.
+ *
+ * THE RANGE IS THE POINT. Rows sharing a tuple (or, whenever a share is 0, several tuples
+ * that happen to tie on score) are interchangeable to this cube, and their real order comes
+ * from the Priorities page's own severity → due date → age → id tiebreak, which the cube does
+ * not carry. Whenever that leaves the Nth slot's true position ambiguous under BOTH orderings
+ * at once, `rankCubeTopN` returns the exact ACHIEVABLE range rather than a point guess, and
+ * this function reports it as a range with one clause on why — never "N of the top 50 carry
+ * over" dressed up as a fact this payload cannot support. `lo === hi` — the ordinary case — is
+ * printed as the single number it actually is.
+ */
+export function rankTopNText(rankCube, draftRule, savedRule, n = RANK_TOP_N) {
+  if (!rankCube) return null;
+  const result = rankCubeTopN(rankCube, draftRule, savedRule, n);
+  if (!result) return null;
+  const top = result.topA; // === result.topB: "top n" is always min(n, total) rows, whoever ranked it
+  if (!top) return `The queue is empty — there is no top ${fmt(n)} to compare.`;
+  const { lo, hi } = result.carryOver;
+  if (lo === hi) {
+    return `${fmt(lo)} of the top ${fmt(top)} carry over from the saved order to the draft's.`;
+  }
+  return `Between ${fmt(lo)} and ${fmt(hi)} of the top ${fmt(top)} carry over from the saved `
+    + "order to the draft's — several rows tie on score, and which of them lands above the "
+    + "cut is decided by the page's own tiebreak (severity, then due date, then age), which "
+    + "this figure cannot see, so the true count sits somewhere in that range rather than at "
+    + "one point in it.";
+}
+
+/**
+ * The whole P11 block: the histogram, the moved-count, the tau, and the top-N carry-over —
+ * bundled the way `termCoverageReadout` bundles its own four rows, so a caller cannot reach
+ * for one figure and forget the other three exist. `null` when the cube never arrived, so
+ * `pages/settings.js` can append the result unconditionally.
+ */
+export function rankImpactReadout(rankCube, draftRule, savedRule) {
+  if (!rankCube) return null;
+  const histNode = rankHistogramReadout(rankHistogramModel(rankCube, draftRule, savedRule));
+  const movedText = rankMovedText(rankCube, draftRule, savedRule);
+  const tauText = rankAgreementText(rankCube, draftRule, savedRule);
+  const topNText = rankTopNText(rankCube, draftRule, savedRule);
+  if (!histNode && !movedText && !tauText && !topNText) return null;
+  return el(
+    "div", { class: "rank-impact-readout" },
+    histNode,
+    movedText ? el("p", { class: "small" }, movedText) : null,
+    tauText ? el("p", { class: "small" }, tauText) : null,
+    topNText ? el("p", { class: "small" }, topNText) : null,
+  );
 }
