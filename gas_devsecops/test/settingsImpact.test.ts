@@ -1,18 +1,26 @@
 // Port of gas/test/settingsImpact.test.ts's severityCensus/scanAges/wouldSeal cases, plus new
 // coverage for strandedOpenCount — the one figure gas/ never had to compute (see
-// src/domain/settingsImpact.ts's header for why this register needs it and gas/ does not).
+// src/domain/settingsImpact.ts's header for why this register needs it and gas/ does not) — and,
+// added in P6b, ageHistogram/atOrBelow: the day-axis twin of gas/'s EPSS cube.
 //
 // No fixture: every case here is small enough to construct inline, the same way gas/'s own
 // severityCensus/scanAges/wouldSeal tests do (only its risk-cube tests use a generated
 // population).
 
 import { describe, expect, it } from "vitest";
-import { MIN_UNSEALED_FLAT_SCANS, SCOPES, SEVERITY_ORDER, type Scope } from "../src/domain/config";
 import {
+  AGE_HISTOGRAM_CAP_DAYS, MIN_UNSEALED_FLAT_SCANS, SCOPES, SEVERITY_ORDER, SLA_TARGETS,
+  type Scope,
+} from "../src/domain/config";
+import { openPastSla, type RemediationRow } from "../src/domain/remediation";
+import {
+  ageHistogram,
+  atOrBelow,
   scanAges,
   severityCensus,
   strandedOpenCount,
   wouldSeal,
+  type AgeBin,
   type ScopeCensus,
 } from "../src/domain/settingsImpact";
 
@@ -190,5 +198,129 @@ describe("strandedOpenCount", () => {
     };
     const got = strandedOpenCount(withUnknown, [...SCOPES], { sca: ["CRITICAL"], sast: [], secrets: [] });
     expect(got.byScope.sca).toBe(1);
+  });
+});
+
+describe("ageHistogram / atOrBelow", () => {
+  type Row = { severity: string; status: string; age_days: number | null };
+  const isOpen = (r: Row) => r.status === "OPEN";
+
+  // A deliberately small cap (40, not the real 730) so "exact at every integer window" is a
+  // fast, readable loop. Ages are chosen to straddle every edge that matters: exact-day values,
+  // fractional values either side of an integer target, day 0, the cap itself, and one row past
+  // it (overCap) per severity. HIGH also carries a resolved row (must never be counted at all)
+  // and an unaged one (must never be counted as day 0).
+  const CAP = 40;
+  const rows: Row[] = [
+    { severity: "HIGH", status: "OPEN", age_days: 0 },
+    { severity: "HIGH", status: "OPEN", age_days: 0.4 },
+    { severity: "HIGH", status: "OPEN", age_days: 13.5 }, // ceil -> day 14: NOT a breach at target 14
+    { severity: "HIGH", status: "OPEN", age_days: 14.0 }, // ceil -> day 14: exactly at target 14
+    { severity: "HIGH", status: "OPEN", age_days: 14.0000001 }, // ceil -> day 15: a breach at target 14
+    { severity: "HIGH", status: "OPEN", age_days: 39.9 }, // ceil -> day 40: exactly at the cap
+    { severity: "HIGH", status: "OPEN", age_days: 45 }, // past the cap -> overCap
+    { severity: "HIGH", status: "OPEN", age_days: null }, // unaged
+    { severity: "HIGH", status: "RESOLVED", age_days: 5 }, // not open -> excluded entirely
+    { severity: "LOW", status: "OPEN", age_days: 2 },
+    { severity: "LOW", status: "OPEN", age_days: 2 },
+    { severity: "LOW", status: "OPEN", age_days: 100 }, // past the cap -> overCap
+    { severity: "INFO", status: "OPEN", age_days: null }, // unaged only: no finite-aged rows at all
+  ];
+
+  const hist = ageHistogram(rows, (r) => r.severity, isOpen, (r) => r.age_days, CAP);
+
+  it("is exact at every integer window from 0 to capDays, not merely close", () => {
+    for (const sev of ["HIGH", "LOW"]) {
+      const bin = hist[sev]!;
+      const finiteOpenTotal = atOrBelow(bin, CAP) + bin.overCap;
+      for (let t = 0; t <= CAP; t++) {
+        const direct = rows.filter((r) =>
+          r.severity === sev && isOpen(r) &&
+          typeof r.age_days === "number" && Number.isFinite(r.age_days) && r.age_days > t,
+        ).length;
+        expect(finiteOpenTotal - atOrBelow(bin, t)).toBe(direct);
+      }
+    }
+  });
+
+  it("agrees with openPastSla at the canonical SLA_TARGETS, so the two paths cannot drift", () => {
+    // The real cap (730) comfortably covers every SLA_TARGETS value (max 180, INFO) — the
+    // agreement has to hold at the cap this endpoint actually ships, not the test's small one.
+    const remediationRows: RemediationRow[] = rows.map((r) => ({
+      severity: r.severity, status: r.status, mttr_days: null, age_days: r.age_days,
+    }));
+    const expected = openPastSla(remediationRows);
+    const hist730 = ageHistogram(rows, (r) => r.severity, isOpen, (r) => r.age_days);
+
+    for (const [sev, target] of Object.entries(SLA_TARGETS)) {
+      const wantBreached = expected.perSev[sev]?.breached ?? 0;
+      const bin = hist730[sev];
+      if (!bin) {
+        expect(wantBreached).toBe(0);
+        continue;
+      }
+      const finiteOpenTotal = atOrBelow(bin, AGE_HISTOGRAM_CAP_DAYS) + bin.overCap;
+      expect(finiteOpenTotal - atOrBelow(bin, target)).toBe(wantBreached);
+    }
+  });
+
+  it("never counts an unaged row inside any window -- the Number(null)=0 trap", () => {
+    const bin = hist["HIGH"]!;
+    expect(bin.unaged).toBe(1);
+    // Day 0 holds exactly the one row genuinely aged 0 -- not that row plus the unaged one,
+    // which is what Number(null) coercing to 0 would have produced.
+    expect(atOrBelow(bin, 0)).toBe(1);
+    expect(atOrBelow(bin, CAP)).toBe(6); // every finite-aged HIGH row at or under the cap
+  });
+
+  it("names a row past capDays as overCap rather than folding or extrapolating it into counts", () => {
+    const high = hist["HIGH"]!;
+    const low = hist["LOW"]!;
+    expect(high.overCap).toBe(1); // the age=45 row
+    expect(low.overCap).toBe(1); // the age=100 row
+    // The array never grows to accommodate an overCap row.
+    expect(high.from + high.counts.length - 1).toBeLessThanOrEqual(CAP);
+    expect(atOrBelow(high, CAP)).toBe(6); // unchanged by the overCap row
+  });
+
+  it("truncates leading/trailing zero days; from + counts round-trips the same answers", () => {
+    const low = hist["LOW"]!;
+    // Both LOW rows share day 2; nothing before or after it is stored.
+    expect(low.from).toBe(2);
+    expect(low.counts).toEqual([2]);
+    for (let t = 0; t <= CAP; t++) {
+      const direct = rows.filter((r) =>
+        r.severity === "LOW" && isOpen(r) &&
+        typeof r.age_days === "number" && Number.isFinite(r.age_days) && r.age_days <= t,
+      ).length;
+      expect(atOrBelow(low, t)).toBe(direct);
+    }
+  });
+
+  it("emits empty counts for a (scope, severity) pair with no open rows in cap, not a dense zero array", () => {
+    const info = hist["INFO"]!;
+    expect(info).toEqual({ counts: [], from: 0, overCap: 0, unaged: 1 });
+    expect(atOrBelow(info, 0)).toBe(0);
+    expect(atOrBelow(info, CAP)).toBe(0);
+  });
+
+  it("omits a severity with no open rows at all rather than inventing an empty entry", () => {
+    // MEDIUM never appears in `rows` at all (open or resolved), so no bucket is created for it.
+    expect(hist["MEDIUM"]).toBeUndefined();
+  });
+
+  it("excludes resolved rows entirely, even from unaged/overCap, not just from counts", () => {
+    // The resolved HIGH row (age_days: 5) would land at day 5 (ceil(5) = 5) if it were counted;
+    // the only OPEN rows at or under day 5 are day 0 (age 0) and day 1 (age 0.4, ceil -> 1). If
+    // the resolved row leaked in, this would read 3.
+    const high = hist["HIGH"]!;
+    expect(atOrBelow(high, 5)).toBe(2);
+  });
+
+  it("defaults capDays to config.AGE_HISTOGRAM_CAP_DAYS (730) when none is passed", () => {
+    expect(AGE_HISTOGRAM_CAP_DAYS).toBe(730);
+    const defaulted = ageHistogram(rows, (r) => r.severity, isOpen, (r) => r.age_days);
+    const explicit = ageHistogram(rows, (r) => r.severity, isOpen, (r) => r.age_days, AGE_HISTOGRAM_CAP_DAYS);
+    expect(defaulted).toEqual(explicit);
   });
 });

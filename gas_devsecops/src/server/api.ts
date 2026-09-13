@@ -44,7 +44,8 @@
 // blocks that say whether a credential is live.
 
 import {
-  RESOLVED_STATUSES, SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope,
+  AGE_HISTOGRAM_CAP_DAYS, RESOLVED_STATUSES, SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS,
+  type Scope,
 } from "../domain/config";
 import { normalizeSeverity } from "../domain/severity";
 import { effectiveSlaTargets, withSettings } from "../domain/settingsLogic";
@@ -847,16 +848,19 @@ function isOpenRow(status: unknown): boolean {
  *
  * WHAT THIS WALKS, FOR THE EXECUTION BUDGET. ONE `ledgerStore.loadBaseRows({ now })` — the same
  * full BaseRow derivation every page's read-model reuses (`readModels.ts`'s `baseSnapshot()`
- * calls the identical function) — grouped by `scope` in a single pass for the census, plus
+ * calls the identical function) — grouped by `scope` in a single pass for the census AND the
+ * age histogram (P6b folds `settingsImpact.ageHistogram` into the same per-scope loop that
+ * already builds `severityCensus`, rather than walking `rows` a second time), plus
  * `ledgerStore.loadScanRows()`, which is scans-tab-only and already memoized per execution
  * (`ledgerStore.ts`'s own comment: "cheap; enough for history/meta reads"). No second loader,
  * no per-scope re-derivation, and the whole thing sits behind `cached()` at a 1 h TTL besides.
  *
- * THE VIEW-PROJECT SCOPE APPLIES to the census, exactly as it does to every other model
- * (`readModels.ts`'s `NormParams.project`): `loadBaseRows()` is register-wide by construction,
- * so a reader working inside one project scope previews a severity-gate or scope change against
- * the population they can actually see, not the whole tenant. Scans are NOT project-scoped — a
- * sync run is a whole-register event with no project dimension of its own.
+ * THE VIEW-PROJECT SCOPE APPLIES to the census and the histogram alike, exactly as it does to
+ * every other model (`readModels.ts`'s `NormParams.project`): `loadBaseRows()` is register-wide
+ * by construction, so a reader working inside one project scope previews a severity-gate,
+ * scope, or SLA-window change against the population they can actually see, not the whole
+ * tenant. Scans are NOT project-scoped — a sync run is a whole-register event with no project
+ * dimension of its own.
  */
 function settingsImpactData(): Rec {
   const now = Date.now();
@@ -870,18 +874,28 @@ function settingsImpactData(): Rec {
   }
 
   const byScope = {} as Record<Scope, Rec>;
+  const ageHistogramByScope = {} as Record<Scope, Record<string, settingsImpact.AgeBin>>;
   for (const scope of SCOPES) {
     const scoped = rows.filter((r) => r["scope"] === scope);
+    const isOpen = (r: Rec) => isOpenRow(r["status"]);
     byScope[scope] = {
       total: scoped.length,
-      openTotal: scoped.filter((r) => isOpenRow(r["status"])).length,
+      openTotal: scoped.filter(isOpen).length,
       bySeverity: settingsImpact.severityCensus(
-        scoped, (r) => normalizeSeverity(r["severity"]), (r) => isOpenRow(r["status"])),
+        scoped, (r) => normalizeSeverity(r["severity"]), isOpen),
     };
+    ageHistogramByScope[scope] = settingsImpact.ageHistogram(
+      scoped, (r) => normalizeSeverity(r["severity"]), isOpen, (r) => r["age_days"]);
   }
 
   return {
     census: { byScope },
+    // Target-independent by construction (see settingsImpact.ts's ageHistogram docstring: it is
+    // a distribution of AGES, not a count against any particular SLA_TARGETS/effectiveSlaTargets
+    // value), which is exactly why it can sit beside `census` under the same projectView-only
+    // cache key below rather than forcing slaTargets into it.
+    ageHistogram: ageHistogramByScope,
+    capDays: AGE_HISTOGRAM_CAP_DAYS,
     // ONE LANE, every scope's scan rows in one time-ordered list — see settingsImpact.ts's
     // scanAges docstring for why three per-scope lanes would misstate a floor this register
     // computes once, across all three registers together.
@@ -904,9 +918,17 @@ function settingsImpactData(): Rec {
  *     one therefore changes nothing this endpoint returns.
  *   - `scans` reads every scan row regardless of the current scope set or severity gate — a
  *     scan already run stays in the log whether or not its scope is still enabled.
- *   - `projectView` DOES change the census: it is a real filter over `loadBaseRows()`'s rows,
- *     and a reader can switch project view without saving any other setting, so its own cache
- *     entry is what keeps two project views from serving each other's counts.
+ *   - `ageHistogram` MUST NOT gain `slaTargets` in the key either, for the same shape of reason,
+ *     one step further: it is a distribution of ages, built with no reference to any SLA window
+ *     at all (settingsImpact.ts's `ageHistogram` never reads `SLA_TARGETS` or
+ *     `effectiveSlaTargets`) — it is what lets a client re-derive `breached(t)` for a target the
+ *     operator hasn't saved yet, the way the EPSS cube lets one re-derive a classifier readout
+ *     for a threshold that hasn't been saved. Keying on `slaTargets` would cache a value that
+ *     cannot change with `slaTargets` behind a key that pretends it can.
+ *   - `projectView` DOES change the census AND the histogram: it is a real filter over
+ *     `loadBaseRows()`'s rows, applied before either is built, and a reader can switch project
+ *     view without saving any other setting, so its own cache entry is what keeps two project
+ *     views from serving each other's counts.
  *
  * 1 h TTL, same as gas/'s `settingsImpact2` entry — the scan ages are wall-clock relative, so a
  * durable (cross-request-forever) cache would drift by design.

@@ -22,8 +22,16 @@
 // here that reads a requested-severity list treats an empty list as "unfiltered", exactly like
 // `compaction.ts`'s `serializeSeverities` / `parseSeverities` already do for the same list on
 // its way to and from a scan row.
+//
+// P6B ADDS `ageHistogram` / `atOrBelow` — see that pair's own docstring for the full argument.
+// One line of it belongs up here because it governs every function below that will ever touch
+// a day count: `remediation.ts`'s `openPastSla` breaches at the STRICT integer comparison
+// `age_days > target`, and `age_days` itself is fractional (`ledgerCore.ts`), so a day-indexed
+// structure that means to agree with that comparison has to bin a row by `Math.ceil(age_days)`,
+// never `Math.floor` — the difference is exactly one row at every fractional boundary, and it is
+// the kind of off-by-one that only shows up as a support ticket, not a type error.
 
-import { MIN_UNSEALED_FLAT_SCANS, SCOPES, SEVERITY_ORDER, type Scope } from "./config";
+import { AGE_HISTOGRAM_CAP_DAYS, MIN_UNSEALED_FLAT_SCANS, SCOPES, SEVERITY_ORDER, type Scope } from "./config";
 
 /**
  * Per-severity counts over the UNFILTERED base, for one scope's scan-scope preview — ported
@@ -135,6 +143,138 @@ export function strandedOpenCount(
     total += strandedInScope;
   }
   return { total, byScope };
+}
+
+// --------------------------------------------------------------------- open-age histogram
+
+/**
+ * A per-severity CUMULATIVE open-age distribution, indexed by whole days — the day-axis twin of
+ * gas/'s EPSS risk cube (`gas/src/domain/settingsImpact.ts`'s header): ship a small population
+ * ONCE, let the client answer "how many findings would breach at N days instead of the saved
+ * window" on every keystroke with no round trip. `openPastSla`'s `breached` figure is exactly
+ * that question asked at one fixed target; this ships what is needed to ask it at every target
+ * at once.
+ *
+ * CUMULATIVE, NOT BUCKETED, AND THAT DIFFERENCE IS THE WHOLE POINT. gas/'s EPSS cube can afford
+ * 100 bins of 0.01 because no threshold the control produces ever lands off a bin edge — the UI
+ * only offers 0.01 steps, so sub-bin rounding is a STATED CONSERVATISM (that module's own
+ * docstring says so). A remediation window has no such luxury: an operator TYPES a whole number
+ * of days into a text field (`settingsLogic.ts`'s `cleanSlaTargets` floors it to an integer and
+ * nothing rounds it further), and `openPastSla`'s breach test is the strict `age_days > target`
+ * at that exact integer. Bucketing days the way EPSS buckets probability would turn "21 instead
+ * of 14" into a lookup against whichever bucket 21 landed in — an approximation of a number the
+ * reader can already work out by hand. A cumulative array with one cell per day has no such
+ * rounding: for every integer `t`, `breached(t) = open − atOrBelow(t)` is EXACT, which is why
+ * `atOrBelow` below and this pair's tests hold it to equality rather than a tolerance.
+ *
+ * `age_days` (`ledgerCore.ts`: `(nowMs - first) / DAY_MS`) IS FRACTIONAL, not pre-floored — the
+ * one place exactness could still slip. A row belongs in `atOrBelow(t)` for every integer
+ * `t >= age`, i.e. from `t = ceil(age)` onward, so each row is binned at `Math.ceil(age_days)`,
+ * NEVER `Math.floor`: flooring a row aged 14.3 into day 14 would fold it into `atOrBelow(14)`
+ * even though `14.3 > 14` makes it a breach at that exact target, and the cumulative array would
+ * silently disagree with `openPastSla` by one row at every fractional boundary.
+ * `test/settingsImpact.test.ts` pins fractional ages either side of an integer target for
+ * exactly this reason.
+ *
+ * ONLY OPEN ROWS — the same gate `remediation.ts`'s `openAge` applies before it ever reads
+ * `age_days`. A resolved row's `age_days`, if the column even carries one, describes a snapshot
+ * age rather than a backlog age, and has no place in a preview of what a window change would
+ * leave open.
+ *
+ * `overCap`: open rows whose age exceeds `capDays` (`config.AGE_HISTOGRAM_CAP_DAYS`, see its own
+ * docstring for why 730). Reported as its own count, never folded into `counts` and never
+ * extrapolated past it — a window past the measured horizon has to be named as such, not
+ * guessed at. That naming is the CALLER's job (never call `atOrBelow` for a `t` past `capDays`);
+ * `atOrBelow` itself has no way to refuse the call, since it is not handed `capDays` at all.
+ *
+ * `unaged`: open rows with no finite `age_days`. `Number(null) === 0` is this codebase's
+ * standing trap (`settingsLogic.ts`'s `numericOrNull` guards the identical one on the settings
+ * side), so the value is checked with `typeof` / `Number.isFinite` BEFORE anything is cast,
+ * never coerced — an unaged row is not a zero-day-old one and must never land in `counts[0]`.
+ *
+ * TRUNCATED AT BOTH ENDS, for size — real backlogs end well short of any cap. `from` carries the
+ * first day with ANY open row at that exact age (every day before it cumulates to 0, which
+ * `atOrBelow` already returns for a `t` below `from` with no array entry needed); `counts` stops
+ * the day its cumulative value reaches the bin's final total (`overCap` rows live outside
+ * `counts` by construction, so nothing past that day would ever add another one) — every day
+ * beyond it out to `capDays` would just repeat that same value, which `atOrBelow` reconstructs by
+ * holding the last entry flat rather than requiring it to be stored. A (scope, severity) pair
+ * with no open rows at all gets `counts: []` rather than a dense run of `capDays` zeros.
+ */
+export interface AgeBin {
+  /** `counts[i]` = open rows with `age_days <= (from + i)`, for `i` in `[0, counts.length)`. */
+  counts: number[];
+  /** The day `counts[0]` represents. Meaningless (and unused by `atOrBelow`) when `counts` is empty. */
+  from: number;
+  /** Open rows older than `capDays` — beyond the measured horizon, never binned or extrapolated. */
+  overCap: number;
+  /** Open rows with no finite `age_days` — never counted as within any window. */
+  unaged: number;
+}
+
+export function ageHistogram<T>(
+  rows: readonly T[],
+  severityOf: (r: T) => string,
+  isOpen: (r: T) => boolean,
+  ageDaysOf: (r: T) => unknown,
+  capDays: number = AGE_HISTOGRAM_CAP_DAYS,
+): Record<string, AgeBin> {
+  const perSev: Record<string, { deltas: Map<number, number>; overCap: number; unaged: number }> = {};
+
+  for (const r of rows) {
+    if (!isOpen(r)) continue;
+    const sev = severityOf(r);
+    const bucket = perSev[sev] ?? (perSev[sev] = { deltas: new Map(), overCap: 0, unaged: 0 });
+
+    // Refuse before casting: Number(null) and Number(undefined -> NaN) would otherwise read as
+    // "day 0" or drop out silently. Only a genuine finite number is a measured age.
+    const raw = ageDaysOf(r);
+    if (typeof raw !== "number" || !Number.isFinite(raw)) {
+      bucket.unaged += 1;
+      continue;
+    }
+    // Math.ceil, not Math.floor — see the module docstring above: a row is "at or below t" only
+    // once t reaches ceil(age), which is what keeps atOrBelow(t) exact against `age > t`.
+    const day = Math.max(0, Math.ceil(raw));
+    if (day > capDays) {
+      bucket.overCap += 1;
+      continue;
+    }
+    bucket.deltas.set(day, (bucket.deltas.get(day) ?? 0) + 1);
+  }
+
+  const out: Record<string, AgeBin> = {};
+  for (const [sev, bucket] of Object.entries(perSev)) {
+    if (!bucket.deltas.size) {
+      out[sev] = { counts: [], from: 0, overCap: bucket.overCap, unaged: bucket.unaged };
+      continue;
+    }
+    const days = [...bucket.deltas.keys()].sort((a, b) => a - b);
+    const from = days[0]!;
+    const to = days[days.length - 1]!;
+    const counts: number[] = [];
+    let cum = 0;
+    for (let d = from; d <= to; d++) {
+      cum += bucket.deltas.get(d) ?? 0;
+      counts.push(cum);
+    }
+    out[sev] = { counts, from, overCap: bucket.overCap, unaged: bucket.unaged };
+  }
+  return out;
+}
+
+/**
+ * `atOrBelow(t)` reconstructed from a truncated bin — the read side of the truncation
+ * `ageHistogram` performs, so no caller (this file's own tests, and eventually the client's JS
+ * port) re-derives the "hold the last value flat" rule by hand. `t < from` reads 0 (nothing that
+ * young was ever seen); `t` at or past the last stored day reads the last entry, held flat (see
+ * `ageHistogram`'s docstring on why nothing past that day can ever add another row within
+ * `capDays`). Never call this with a `t` beyond the bin's `capDays` — see `overCap` above.
+ */
+export function atOrBelow(bin: Pick<AgeBin, "counts" | "from">, t: number): number {
+  if (!bin.counts.length || t < bin.from) return 0;
+  const idx = t - bin.from;
+  return idx >= bin.counts.length ? bin.counts[bin.counts.length - 1]! : bin.counts[idx]!;
 }
 
 // --------------------------------------------------------------------- scan ages and retention

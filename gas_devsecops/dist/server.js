@@ -458,7 +458,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "17643c4cb3a6" : "dev";
+  var BUILD_ID = true ? "3dafd3fa3ed8" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -725,6 +725,7 @@ var Server = (() => {
   var DISAPPEARANCE_RESOLUTION = "scan_ts";
   var MIN_UNSEALED_FLAT_SCANS = 2;
   var DEFAULT_RETENTION_DAYS = 180;
+  var AGE_HISTOGRAM_CAP_DAYS = 730;
 
   // src/domain/severity.ts
   function normalizeSeverity(sev2) {
@@ -4660,6 +4661,44 @@ var Server = (() => {
     }
     return out;
   }
+  function ageHistogram(rows, severityOf, isOpen8, ageDaysOf, capDays = AGE_HISTOGRAM_CAP_DAYS) {
+    var _a, _b, _c;
+    const perSev = {};
+    for (const r of rows) {
+      if (!isOpen8(r)) continue;
+      const sev2 = severityOf(r);
+      const bucket = (_a = perSev[sev2]) != null ? _a : perSev[sev2] = { deltas: /* @__PURE__ */ new Map(), overCap: 0, unaged: 0 };
+      const raw = ageDaysOf(r);
+      if (typeof raw !== "number" || !Number.isFinite(raw)) {
+        bucket.unaged += 1;
+        continue;
+      }
+      const day = Math.max(0, Math.ceil(raw));
+      if (day > capDays) {
+        bucket.overCap += 1;
+        continue;
+      }
+      bucket.deltas.set(day, ((_b = bucket.deltas.get(day)) != null ? _b : 0) + 1);
+    }
+    const out = {};
+    for (const [sev2, bucket] of Object.entries(perSev)) {
+      if (!bucket.deltas.size) {
+        out[sev2] = { counts: [], from: 0, overCap: bucket.overCap, unaged: bucket.unaged };
+        continue;
+      }
+      const days = [...bucket.deltas.keys()].sort((a, b) => a - b);
+      const from = days[0];
+      const to = days[days.length - 1];
+      const counts = [];
+      let cum = 0;
+      for (let d = from; d <= to; d++) {
+        cum += (_c = bucket.deltas.get(d)) != null ? _c : 0;
+        counts.push(cum);
+      }
+      out[sev2] = { counts, from, overCap: bucket.overCap, unaged: bucket.unaged };
+    }
+    return out;
+  }
   function scanAges(scans, now, keepRecent = MIN_UNSEALED_FLAT_SCANS) {
     const desc = [...scans].reverse();
     return desc.map((s2, i) => {
@@ -8391,20 +8430,34 @@ var Server = (() => {
       rows = rows.filter((r) => inProject(parseProjects(r["projects_json"]), projectView));
     }
     const byScope3 = {};
+    const ageHistogramByScope = {};
     for (const scope of SCOPES) {
       const scoped = rows.filter((r) => r["scope"] === scope);
+      const isOpen8 = (r) => isOpenRow(r["status"]);
       byScope3[scope] = {
         total: scoped.length,
-        openTotal: scoped.filter((r) => isOpenRow(r["status"])).length,
+        openTotal: scoped.filter(isOpen8).length,
         bySeverity: severityCensus(
           scoped,
           (r) => normalizeSeverity(r["severity"]),
-          (r) => isOpenRow(r["status"])
+          isOpen8
         )
       };
+      ageHistogramByScope[scope] = ageHistogram(
+        scoped,
+        (r) => normalizeSeverity(r["severity"]),
+        isOpen8,
+        (r) => r["age_days"]
+      );
     }
     return {
       census: { byScope: byScope3 },
+      // Target-independent by construction (see settingsImpact.ts's ageHistogram docstring: it is
+      // a distribution of AGES, not a count against any particular SLA_TARGETS/effectiveSlaTargets
+      // value), which is exactly why it can sit beside `census` under the same projectView-only
+      // cache key below rather than forcing slaTargets into it.
+      ageHistogram: ageHistogramByScope,
+      capDays: AGE_HISTOGRAM_CAP_DAYS,
       // ONE LANE, every scope's scan rows in one time-ordered list — see settingsImpact.ts's
       // scanAges docstring for why three per-scope lanes would misstate a floor this register
       // computes once, across all three registers together.
