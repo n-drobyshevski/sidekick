@@ -4,10 +4,18 @@
 // repaintReadouts() opens with `if (!impact) return;`, and every readout it draws is
 // decorative — every control works without the payload. This file keeps that contract.
 //
-// THREE READOUTS, AND ONLY THREE — P8's own scope. The register-scope category bars (the
-// joint category cube) and the Priorities ranking histogram are P10 and P11's job; nothing
-// here reads `categoryCube` or `termCoverage`, even though `api_getSettingsImpact` already
-// ships both.
+// THREE READOUTS SHIPPED IN P8; THREE MORE IN P10, BELOW THEM. P8's own scope was
+// `fiveRsSplitModel`/`fetchScopeReadoutModel`/`agentCallsText`, and nothing in that half reads
+// `categoryCube` or `termCoverage` even though `api_getSettingsImpact` already shipped both —
+// see each function's own header below for the ones that do now.
+//
+// P10 adds the Register tab's category-scope readout (`categoryScopeRowsModel`/
+// `categoryScopeReadout`), the dropped-category figure that makes its standing notice concrete
+// (`categoryDroppedOnlyText`), and the Priorities ranking panel's term-coverage bars
+// (`termCoverageModel`/`termCoverageReadout`). STILL NOT HERE, and P11's job: the rank cube's
+// own score histogram and any Kendall-tau agreement figure — `termCoverage` answers "how many
+// rows can this term even read", never "how would the rank ORDER move if I touched this knob",
+// which is a different question over a different payload.
 //
 //   fiveRsSplitModel() / fiveRsSplit()   the 5Rs Compliance panel's LIVE draft composition —
 //     derived-in / pinned-in / pinned-out / derived-out, every rule in exactly one bucket.
@@ -34,7 +42,10 @@
 // row toggles it sits beside can never read two different answers to "what would this rule be
 // with no pin at all". settings.js's own `derivedSelected` is now an alias onto this export.
 
-import { absentText, num, splitBar } from "./ui.js";
+import {
+  absentText, el, impactSplit, impactSplitModel, meter, num, splitBar,
+} from "./ui.js";
+import { categoryMarginalCount, categoryScopeImpact } from "./categoryCubeModel.js";
 
 function fmt(n) {
   return (n || 0).toLocaleString();
@@ -157,4 +168,232 @@ export function agentCallsText(agentCount) {
   const agents = n.toLocaleString();
   return `${agents} agent${n === 1 ? "" : "s"} in the graph — ${agents} Wiz API call`
     + `${n === 1 ? "" : "s"} per scan.`;
+}
+
+// ============================================================================ category scope
+
+const CATEGORY_OVERLAP_CAVEAT = "The categories above can overlap on the same issue, so they "
+  + "do not sum to the total.";
+
+/**
+ * The register-scope category picker's own readout (P10): one row per candidate category, read
+ * against `impact.categoryCube` (`domain/settingsImpact.ts`'s `CategoryCube` — see that file's
+ * header for why it is a joint distribution and not six independent counts). PAYLOAD-DERIVED,
+ * not draft-derived: pages/settings.js reads the resolved `impact` synchronously at build time
+ * and never repaints this from a draft edit — the figure that DOES move with the draft is
+ * `categoryDroppedOnlyText` below, not this one.
+ *
+ * `candidateCategories` HERE IS `impact.candidateCategories` — the DATED one
+ * (`{id, name, count, measuredAt, measuredScope}`, P9's addition to `CANDIDATE_CATEGORIES`) —
+ * and NOT `settings.candidateCategories` (`api_getSettings`'s plain `{id, name}`, which is what
+ * builds the category TOGGLES this readout sits beside). Passing the wrong one silently drops
+ * the dated calibration figures this readout exists to show; nothing here can tell the two
+ * shapes apart, so the caller has to pass the right one.
+ *
+ * THE HONESTY LINE. A candidate outside `cube.measuredCandidateIds` gets `count: null` here,
+ * never `0` — see `CategoryCube.measuredCandidateIds`'s own header: an unmeasured category's
+ * count is not zero, it is UNMEASURED, and reading a missing bit as "zero open issues" would
+ * read a widened-but-unsynced category as a clean register.
+ */
+export function categoryScopeRowsModel(cube, candidateCategories) {
+  const list = candidateCategories || [];
+  if (!cube || !Array.isArray(cube.candidateIds) || !cube.cells) {
+    return { scale: 0, rows: [] };
+  }
+  const measuredIds = new Set(cube.measuredCandidateIds || []);
+  const rows = list.map((c) => {
+    const idx = cube.candidateIds.indexOf(c.id);
+    const isMeasured = idx >= 0 && measuredIds.has(c.id);
+    const dated = typeof c.count === "number" && c.measuredAt && c.measuredScope
+      ? { count: c.count, measuredAt: c.measuredAt, measuredScope: c.measuredScope }
+      : null;
+    return {
+      id: c.id,
+      name: c.name,
+      measured: isMeasured,
+      // UNMEASURED IS null, NEVER 0 — see this function's own header.
+      count: isMeasured ? categoryMarginalCount(cube, idx) : null,
+      // THE DATED FOREIGN FIGURE — carried through untouched, never added to or compared
+      // against `count` above. See categoryScopeRow()'s own rendering of it.
+      dated,
+    };
+  });
+  return { scale: cube.total || 0, rows };
+}
+
+/**
+ * One category row: name, a bar against `scale` (the register's own open total — the common
+ * axis every row in this readout shares, never a stacked/split bar over the categories
+ * themselves), the live count, and the dated calibration figure when P9's payload carries one
+ * for this candidate.
+ *
+ * NEVER A ZERO-HEIGHT BAR FOR AN UNMEASURED CATEGORY. The bar's value is `max` itself (a FULL
+ * bar) whenever `row.measured` is false — never `0`: an empty track reads as "measured, and it
+ * was zero", which is exactly the substitution `CategoryCube.measuredCandidateIds` exists to
+ * forbid, and it would still be wrong even in the degenerate case where `scale` itself is 0 (an
+ * empty register), which is why `max` floors at 1 rather than inheriting `scale` directly.
+ * `bar.fill` (`meter()`'s own escape hatch for a caller that needs to touch the fill after
+ * building it) carries the `.hatch` class instead of the ordinary solid fill — this design
+ * system's one texture for "not measured" (gas_shared/styles/components.css) — and the word
+ * "Not measured" sits beside it, because a texture alone is not a fact.
+ */
+function categoryScopeRow(row, scale) {
+  const max = scale > 0 ? scale : 1;
+  // No `label`: meter()'s aria-label only applies to its non-decorative branch, and this bar is
+  // decorative — the name and the count are both already in `nameLine` as real text.
+  const bar = meter(row.measured ? row.count : max, { max, decorative: true });
+  if (!row.measured) bar.fill.classList.add("hatch");
+  const countEl = row.measured
+    ? el("span", { class: "small num" }, fmt(row.count))
+    : el("span", { class: "small" }, "Not measured");
+  const nameLine = el(
+    "p",
+    { class: "small", style: "margin:0 0 4px; display:flex; justify-content:space-between; gap:8px" },
+    el("strong", {}, row.name),
+    countEl,
+  );
+  const datedLine = row.dated
+    ? el(
+      "p",
+      { class: "small muted", style: "margin:4px 0 0" },
+      `Measured ${row.dated.measuredAt}, ${row.dated.measuredScope}: `
+      + `${fmt(row.dated.count)} open issue${row.dated.count === 1 ? "" : "s"} — a one-off `
+      + "figure, never live.",
+    )
+    : null;
+  return el(
+    "div", { class: "category-scope-row", style: "margin:0 0 12px" }, nameLine, bar, datedLine,
+  );
+}
+
+/**
+ * The category scope readout's DOM half — thin, over `categoryScopeRowsModel()`. `null` when
+ * the cube never arrived or carries no candidates, so pages/settings.js can append the result
+ * unconditionally (`el()` and array spreads both skip a `null`/`undefined` child) rather than
+ * branch on the payload itself.
+ */
+export function categoryScopeReadout(cube, candidateCategories) {
+  const model = categoryScopeRowsModel(cube, candidateCategories);
+  if (!model.rows.length) return null;
+  return el(
+    "div",
+    { class: "category-scope-readout" },
+    ...model.rows.map((r) => categoryScopeRow(r, model.scale)),
+    el("p", { class: "small muted" }, CATEGORY_OVERLAP_CAVEAT),
+  );
+}
+
+/**
+ * The Register tab's standing notice — "changing this changes what every published figure
+ * counts" — made concrete: open issues stamped ONLY with categories the CURRENT DRAFT is about
+ * to drop relative to the last SAVED selection. `categoryCubeModel.categoryScopeImpact` does
+ * the set-containment arithmetic (a marginal cannot answer this — a row stamped with a dropped
+ * category AND a still-kept one must not count, because re-fetching under the narrowed scope
+ * would still return it); this shapes the result into the sentence the panel prints beside the
+ * standing notice.
+ *
+ * DRAFT-DERIVED, UNLIKE `categoryScopeRowsModel` ABOVE. pages/settings.js recomputes this on
+ * every edit (`repaintImpactReadouts()`, called from `onEdit()`), because `selectedIds` is the
+ * in-memory draft and it moves on every checkbox click; `previousIds` is the SAVED selection,
+ * not merely "the draft a moment ago".
+ *
+ * Returns `null` when the cube never arrived, so the caller can hide its host rather than print
+ * a guess.
+ */
+export function categoryDroppedOnlyText(cube, selectedIds, previousIds) {
+  if (!cube || !Array.isArray(cube.candidateIds) || !cube.cells) return null;
+  const impact = categoryScopeImpact(cube, selectedIds || [], previousIds || selectedIds || []);
+  const n = impact.droppedOnlyOpen;
+  if (!n) {
+    return "Nothing in the current draft is stamped only with a category being dropped — "
+      + "narrowing it right now would cost nothing already collected.";
+  }
+  return `${fmt(n)} open issue${n === 1 ? "" : "s"} ${n === 1 ? "is" : "are"} stamped only with `
+    + "a category this draft drops. They would stop being refreshed on the next sync and could "
+    + "not resolve by absence.";
+}
+
+// ============================================================================= term coverage
+
+const TERM_LABELS = {
+  rule: "Rule judgement",
+  time: "Clock",
+  exploitation: "Exploitation",
+  adjacency: "AI adjacency",
+};
+
+/**
+ * `termCoverage` (P9's `settingsImpact.termCoverageOf`) shaped into the four `impactSplitModel`s
+ * the Priorities ranking panel draws — how many rows in the queue actually MEASURE each of the
+ * four blend terms the shares divide across. The decision this readout exists to support:
+ * `rank.ts`'s `rankOne` drops an unmeasured term from BOTH sides of the blend rather than
+ * scoring it 0, precisely so an unmeasured signal never reads as "we looked and found nothing"
+ * — which means a share spent on a term most rows cannot measure is a share spent on rows it
+ * will never actually be read on.
+ *
+ * `timeSource` PICKS WHICH OF `termCoverage.time`'s TWO INDEPENDENT COUNTS the Clock row reads —
+ * `dueAt` for `dueAtOnly`, `createdAt` for `dueAtElseAge` — mirroring `rank.ts`'s own `timeOf`.
+ * The two counts are never merged: a row with both a parseable `dueAt` and a parseable
+ * `createdAt` counts in both underlying numbers, because which one the CLOCK actually reads
+ * depends on this one argument, not on the row. THIS IS WHY THIS WHOLE MODEL IS DRAFT-DERIVED,
+ * unlike `categoryScopeRowsModel` above — it must be recomputed whenever the Clock-source select
+ * changes, even though every OTHER input here is payload, not draft.
+ *
+ * Returns `null` when the payload never arrived — degrade silently, same as every other readout
+ * in this file.
+ */
+export function termCoverageModel(termCoverage, timeSource) {
+  if (!termCoverage) return null;
+  const total = Math.max(0, num(termCoverage.total) || 0);
+  const clampToTotal = (v) => Math.max(0, Math.min(total, num(v) || 0));
+  const timeMeasured = timeSource === "dueAtElseAge"
+    ? clampToTotal(termCoverage.time && termCoverage.time.createdAt)
+    : clampToTotal(termCoverage.time && termCoverage.time.dueAt);
+  const measuredOf = {
+    rule: clampToTotal(termCoverage.rule),
+    time: timeMeasured,
+    exploitation: clampToTotal(termCoverage.exploitation),
+    adjacency: clampToTotal(termCoverage.adjacency),
+  };
+  const terms = ["rule", "time", "exploitation", "adjacency"].map((key) => ({
+    key,
+    label: TERM_LABELS[key],
+    splitModel: impactSplitModel({
+      count: total - measuredOf[key],
+      total,
+      unit: "rows",
+      phrase: `cannot measure the ${TERM_LABELS[key].toLowerCase()} term`,
+      includedLabel: "Measures",
+      excludedLabel: "Cannot measure",
+      on: true,
+      onNote: "",
+      offNote: "",
+    }),
+  }));
+  return { total, terms };
+}
+
+/**
+ * The term-coverage readout's DOM half: one label plus one `impactSplit()` bar per term, and
+ * the one sentence that says why a large share on a poorly-measured term is a mistake —
+ * `rank.ts`'s own reason, stated briefly rather than assumed. `null` when the model is, so
+ * pages/settings.js can append the result unconditionally.
+ */
+export function termCoverageReadout(termCoverage, timeSource) {
+  const model = termCoverageModel(termCoverage, timeSource);
+  if (!model) return null;
+  const rows = model.terms.map((t) => el(
+    "div",
+    { class: "term-coverage-row", style: "margin:0 0 10px" },
+    el("p", { class: "small", style: "margin:0 0 2px" }, el("strong", {}, t.label)),
+    impactSplit(t.splitModel),
+  ));
+  const note = el(
+    "p",
+    { class: "small muted" },
+    "A term most rows cannot measure is dropped from both sides of the blend rather than "
+    + "scored as zero — putting a large share on one spends it on rows it will never actually "
+    + "be read on.",
+  );
+  return el("div", { class: "term-coverage-readout" }, ...rows, note);
 }

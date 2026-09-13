@@ -16,6 +16,14 @@ const SETTINGS_SRC = readFileSync(
 );
 const SETTINGS_CODE = code(SETTINGS_SRC);
 
+// P10's DOM half — categoryScopeRow()/categoryScopeReadout()/termCoverageReadout() — lives
+// inside settingsReadouts.js itself rather than pages/settings.js, so the hatch/wording rules
+// are swept from THIS file's own source, the same bargain the header above describes.
+const READOUTS_SRC = readFileSync(
+  new URL("../src/client/js/settingsReadouts.js", import.meta.url), "utf8",
+);
+const READOUTS_CODE = code(READOUTS_SRC);
+
 describe("settings.js fetches the settings-impact payload alongside its neighbours", () => {
   it("adds api_getSettingsImpact to the same Promise.allSettled batch", () => {
     expect(SETTINGS_CODE).toMatch(/Promise\.allSettled\(\[[\s\S]{0,400}api_getSettingsImpact/);
@@ -72,5 +80,109 @@ describe("the agent-count readout", () => {
     expect(SETTINGS_CODE).toMatch(
       /agentCallsLine\s*\?\s*el\([\s\S]{0,80}\)\s*:\s*null/,
     );
+  });
+});
+
+// ================================================================================ P10: category
+// scope readout, wired into pages/settings.js
+
+describe("the category-scope readout", () => {
+  it("is payload-derived — built once from the resolved impact, never re-fetched or re-derived", () => {
+    expect(SETTINGS_CODE).toMatch(
+      /impact \? categoryScopeReadout\(impact\.categoryCube,\s*impact\.candidateCategories\)\s*: null/,
+    );
+  });
+
+  // THE DATED CANDIDATE LIST, NOT THE PLAIN ONE. `settings.candidateCategories` (api_getSettings)
+  // carries no count/measuredAt/measuredScope at all — passing it here would silently drop the
+  // dated calibration figures this readout exists to show.
+  it("passes impact.candidateCategories (the dated list), never settings.candidateCategories", () => {
+    expect(SETTINGS_CODE).not.toMatch(/categoryScopeReadout\([^)]*settings\.candidateCategories/);
+  });
+});
+
+describe("the dropped-category figure", () => {
+  it("has its own host, hidden until the first repaint gives it something to say", () => {
+    expect(SETTINGS_CODE).toMatch(/droppedOnlyHost = el\("p",\s*\{[^}]*hidden:\s*true/);
+  });
+
+  // DRAFT-DERIVED: computed against the CURRENT draft and the SAVED selection, not two draft
+  // snapshots — categoryDroppedOnlyText's own contract.
+  it("reads the current draft against the saved selection, not two draft snapshots", () => {
+    expect(SETTINGS_CODE).toMatch(
+      /categoryDroppedOnlyText\(\s*impact\.categoryCube,\s*draft\.issueCategories,\s*saved\.issueCategories,?\s*\)/,
+    );
+  });
+
+  it("is recomputed on every edit, through the same funnel every other draft-derived figure uses", () => {
+    expect(SETTINGS_CODE).toMatch(/function repaintImpactReadouts\(\)\s*\{\s*if \(!impact\) return;/);
+    expect(SETTINGS_CODE).toMatch(
+      /function onEdit\(\)\s*\{[\s\S]{0,60}repaintImpactReadouts\(\)/,
+    );
+  });
+});
+
+describe("the term-coverage readout", () => {
+  it("reads the clock term off the draft's own timeSource, not a saved or fixed one", () => {
+    expect(SETTINGS_CODE).toMatch(
+      /termCoverageReadout\(\s*impact\.termCoverage,\s*draft\.rankRule\.timeSource,?\s*\)/,
+    );
+  });
+
+  it("is rebuilt (not merely updated) inside repaintImpactReadouts(), so a timeSource change repaints it", () => {
+    expect(SETTINGS_CODE).toMatch(
+      /function repaintImpactReadouts\(\)[\s\S]{0,600}clear\(termCoverageHost\)[\s\S]{0,200}termCoverageReadout\(/,
+    );
+  });
+});
+
+// ================================================================================ P10: the DOM
+// half that lives inside settingsReadouts.js itself
+
+describe("categoryScopeRow — the honesty mark", () => {
+  // NEVER A ZERO-HEIGHT BAR. The unmeasured branch's bar value is `max` (a FULL bar), never a
+  // literal 0 — a blank track would read as "measured, and it was zero".
+  it("draws an unmeasured category as a full bar, never a zero-width one", () => {
+    expect(READOUTS_CODE).toMatch(
+      /meter\(row\.measured \? row\.count : max,/,
+    );
+    expect(READOUTS_CODE).not.toMatch(/row\.measured \? row\.count : 0/);
+  });
+
+  it("hatches only the unmeasured branch", () => {
+    expect(READOUTS_CODE).toMatch(/if \(!row\.measured\) bar\.fill\.classList\.add\("hatch"\)/);
+  });
+
+  // A TEXTURE IS NOT A FACT — the hatch always carries a word beside it.
+  it("carries the word \"Not measured\" beside the hatch", () => {
+    expect(READOUTS_CODE).toMatch(/"Not measured"/);
+  });
+
+  it("states the overlap caveat, the same shape gas's risk-clause table uses", () => {
+    expect(READOUTS_CODE).toMatch(/can overlap on the same issue, so they/);
+  });
+
+  it("labels the dated figure with both its date and its scope, never bare", () => {
+    expect(READOUTS_CODE).toMatch(/row\.dated\.measuredAt/);
+    expect(READOUTS_CODE).toMatch(/row\.dated\.measuredScope/);
+  });
+
+  // THE DATED FIGURE AND THE LIVE COUNT ARE NEVER SUMMED OR COMPARED. Structural check: no
+  // arithmetic expression mixes `row.count` and `row.dated` in either order, anywhere in the
+  // category-scope rendering code.
+  it("never combines the dated figure and the live count in one expression", () => {
+    expect(READOUTS_CODE).not.toMatch(/row\.count\s*[-+*/]\s*row\.dated/);
+    expect(READOUTS_CODE).not.toMatch(/row\.dated\.count\s*[-+*/]\s*row\.count/);
+    expect(READOUTS_CODE).not.toMatch(/row\.count\s*[<>=]=?\s*row\.dated/);
+  });
+});
+
+describe("termCoverageReadout — why a poorly-measured term matters", () => {
+  it("says, briefly, that an unmeasured term is dropped from both sides of the blend", () => {
+    expect(READOUTS_CODE).toMatch(/dropped from both sides of the blend/);
+  });
+
+  it("draws one impactSplit bar per term, over the shared impactSplitModel shape", () => {
+    expect(READOUTS_CODE).toMatch(/impactSplit\(t\.splitModel\)/);
   });
 });

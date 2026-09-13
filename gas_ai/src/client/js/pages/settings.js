@@ -32,7 +32,8 @@ import {
   settingsDraft, settingsPatch, TAB_FIELDS, tabStatus, validateDraft,
 } from "../settingsModel.js";
 import {
-  agentCallsText, derivedFiveRsSelected, fetchScopeReadoutModel, fiveRsSplit,
+  agentCallsText, categoryDroppedOnlyText, categoryScopeReadout, derivedFiveRsSelected,
+  fetchScopeReadoutModel, fiveRsSplit, termCoverageReadout,
 } from "../settingsReadouts.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -580,6 +581,12 @@ export async function renderSettings(main, params, ctx) {
   // rest of the app would say about the same fact.
   const scopeNotices = boot ? staleNotices(boot).filter((n) => n.id === "registerScope") : [];
 
+  // The dropped-category figure (P10): the standing notice below is true and unquantified on
+  // its own, and this is what makes it concrete — how many open issues are stamped ONLY with
+  // categories THIS DRAFT removes, relative to what was last saved. Draft-derived, so it is
+  // recomputed on every edit inside repaintImpactReadouts() rather than built once here.
+  const droppedOnlyHost = el("p", { class: "small", role: "status", hidden: true });
+
   const registerPanel = settingsPanel({
     title: "Register scope",
     description: "Which Wiz risk categories the issue register collects.",
@@ -599,9 +606,18 @@ export async function renderSettings(main, params, ctx) {
         el("strong", {}, "Changing this changes what every published figure counts. "),
         "The stored register keeps counting the OLD categories until the next sync applies "
         + "the new scope — nothing here takes effect on its own."),
+      // THE SAME CLAIM, AS A NUMBER — see the comment on droppedOnlyHost above.
+      droppedOnlyHost,
       ...scopeNotices.map((n) => el("div", { class: "notice warn", role: "status" },
         n.text + " ", el("a", { href: n.href }, n.link))),
       ...categoryRows.map((c) => c.row),
+      // THE CATEGORY SCOPE READOUT (P10): one bar per candidate category against the common
+      // scale of the whole open register, never stacked — the categories overlap heavily
+      // (registerScope.ts: "each issue sits in roughly five categories" on the reference
+      // tenant), and a split bar would assert parts of a whole that this data does not have.
+      // Payload-derived, built once from the resolved `impact` rather than repainted —
+      // unlike droppedOnlyHost above, nothing here reads the draft.
+      impact ? categoryScopeReadout(impact.categoryCube, impact.candidateCategories) : null,
     ],
   });
 
@@ -762,6 +778,14 @@ export async function renderSettings(main, params, ctx) {
     onChange: (v) => { draft.rankLeadsSort = v; onEdit(); },
   });
 
+  // Term coverage (P10): how many rows in the Priorities queue actually measure each of the
+  // four blend terms — the ranking panel's cheapest real figure, and the thing that makes
+  // "putting a large share on a term most rows cannot measure" a visible mistake instead of a
+  // silent one. Draft-derived only through the clock: `timeSource` picks which of
+  // termCoverage.time's two independent counts the Clock row reads, so this whole block is
+  // rebuilt inside repaintImpactReadouts() on every edit, same as droppedOnlyHost above.
+  const termCoverageHost = el("div", {});
+
   const rankPanel = settingsPanel({
     title: "Priorities ranking",
     description: "The minimal model that scores every row in the Priorities queue.",
@@ -792,6 +816,7 @@ export async function renderSettings(main, params, ctx) {
           + "deadline set.",
         control: timeSourceSelect,
       }),
+      termCoverageHost,
       el("div", { class: "rank-inputs" },
         el("span", { class: "rank-inputs__title" }, "Exploitation ladder"),
         rankNumber("expl-kev", "On CISA KEV", rankLeaf("exploitationWeights", "kev")),
@@ -1038,7 +1063,28 @@ export async function renderSettings(main, params, ctx) {
     }
   }
 
+  // The two P10 readouts that must move as the reader edits the draft — see droppedOnlyHost's
+  // and termCoverageHost's own comments for why each is draft-derived rather than built once.
+  // Guarded exactly like gas's own `repaintReadouts()`: every control above already applied
+  // its own edit, so a missing payload costs these two lines and nothing else.
+  function repaintImpactReadouts() {
+    if (!impact) return;
+    if (impact.categoryCube) {
+      const text = categoryDroppedOnlyText(
+        impact.categoryCube, draft.issueCategories, saved.issueCategories,
+      );
+      droppedOnlyHost.hidden = !text;
+      droppedOnlyHost.textContent = text || "";
+    }
+    if (impact.termCoverage) {
+      clear(termCoverageHost);
+      const node = termCoverageReadout(impact.termCoverage, draft.rankRule.timeSource);
+      if (node) termCoverageHost.append(node);
+    }
+  }
+
   function onEdit() {
+    repaintImpactReadouts();
     syncDirty();
   }
 
