@@ -63,6 +63,10 @@ import {
   changeCountText, changeSummary, changedFields, draftWarnings, normalizeTab, tabStatus,
   validateDraft,
 } from "../settingsModel.js";
+import {
+  createSlaCutlineReadout, renderRetentionReadout, severityScopeReadout, slaDivergenceNote,
+  strandedOpenCount, strandedRowsReadout,
+} from "../settingsReadouts.js";
 
 // ============================================================================ vocabulary
 
@@ -358,6 +362,26 @@ export async function renderSettings(host, params, ctx) {
     if (message) errors[field] = message; else delete errors[field];
   }
 
+  // The api_getSettingsImpact payload — decorative, exactly like gas's and gas_ai's own copy of
+  // this variable: every control on this page already applied its own edit before this ever
+  // resolves, and `repaintReadouts()` below opens with `if (!impact) return;` so a slow or
+  // failed fetch costs this page some captions, never a working control.
+  let impact = null;
+  // Live-readout DOM hosts, reassigned each time buildRegisterPanel()/buildSystemPanel() run
+  // (initial load, and again on Discard) so repaintReadouts() always writes into whichever
+  // hosts are actually attached to the page right now.
+  let severitySplitHosts = {};
+  let strandedHost = null;
+  let retentionHost = null;
+  // Per-severity SLA input elements, so a cutline drag (below) can push its value back into the
+  // same plain number field the reader might otherwise type into — see slaCutlines' own comment.
+  let slaInputs = {};
+  // The standing divergence note's own hosts — PAYLOAD-FREE (slaDivergenceNote reads only
+  // boot.slaTargets, already on bootstrap, and the draft), so these are repainted from
+  // syncDirty() directly rather than from repaintReadouts()'s `if (!impact) return`-gated body:
+  // they must be correct even when the impact payload never arrives.
+  let slaDivergenceHosts = {};
+
   // ONE FAILURE, NOT FOUR. This used to loop over every tab panel and put its own
   // `errorState` in each — four identical red boxes for one fetch that failed once.
   try {
@@ -383,6 +407,17 @@ export async function renderSettings(host, params, ctx) {
     return;
   }
 
+  // THE SLA CUTLINE'S RANGE INPUTS ARE BUILT EXACTLY ONCE HERE, before the first buildPanels()
+  // call — never inside buildDeadlinesPanel() or repaintReadouts(), which both run repeatedly
+  // (on every edit, and again on Discard). See createSlaCutlineReadout()'s own header: replacing
+  // its `<input type="range">` mid-drag silently aborts the drag, so buildDeadlinesPanel() below
+  // only ever re-embeds these same instances, and repaintReadouts() only ever calls `.update()`
+  // on them.
+  const slaCutlines = {};
+  for (const row of slaFieldRows(draft.slaTargets, severityOrder)) {
+    slaCutlines[row.sev] = createSlaCutlineReadout({ sev: row.sev });
+  }
+
   buildPanels();
 
   // ------------------------------------------------------------------------- dirty tracking
@@ -395,6 +430,91 @@ export async function renderSettings(host, params, ctx) {
       tabs.setInvalid(t.key, !!(status[t.key] && status[t.key].invalid));
     }
     bar.update(changeCountText(changed), changeSummary(changed));
+    // Recomputed on every edit, not only on load — the stranded-rows figure and the cutlines'
+    // live breach counts are both draft-derived (this file's own settingsReadouts.js header).
+    repaintReadouts();
+    // UNGATED, unlike repaintReadouts() above — see slaDivergenceHosts' own comment: this note
+    // needs nothing from api_getSettingsImpact and must stay correct even when that call never
+    // resolves.
+    repaintDivergenceNotes();
+  }
+
+  /** The standing "this window differs from the canonical one" note, per severity — see
+   *  slaDivergenceNote()'s own header for why it reads boot.slaTargets rather than the saved or
+   *  effective override. */
+  function repaintDivergenceNotes() {
+    for (const row of slaFieldRows(draft.slaTargets, severityOrder)) {
+      const host = slaDivergenceHosts[row.sev];
+      if (!host) continue;
+      const note = slaDivergenceNote(row.days, boot.slaTargets && boot.slaTargets[row.sev]);
+      host.textContent = note;
+      host.hidden = !note;
+    }
+  }
+
+  /**
+   * Everything this page draws from api_getSettingsImpact — decorative, per this file's own
+   * `impact` comment above. Every draft-derived readout here (the severity split, the stranded
+   * figure, the SLA cutlines) is recomputed from `draft` on every call; the retention timeline
+   * is the one that is closer to payload-derived but still reads `draft.retentionDays`, so it is
+   * rebuilt here too rather than once at load.
+   */
+  function repaintReadouts() {
+    if (!impact) return; // decorative — every control above already applied its own edit
+
+    const census = (impact.census && impact.census.byScope) || {};
+    const selectable = severityOrder.filter((s) => s !== "UNKNOWN");
+    for (const scope of scopeList) {
+      const host = severitySplitHosts[scope];
+      if (!host) continue;
+      clear(host).append(
+        severityScopeReadout(scope, census[scope], draft.fetchSeverities[scope], selectable),
+      );
+    }
+
+    if (strandedHost) {
+      const stranded = strandedOpenCount(
+        census, scopeList, draft.scopes, draft.fetchSeverities, severityOrder,
+      );
+      clear(strandedHost).append(strandedRowsReadout(stranded));
+    }
+
+    if (retentionHost) {
+      clear(retentionHost).append(
+        renderRetentionReadout(impact.scans, draft.retentionDays, SCOPE_LABELS),
+      );
+    }
+
+    const ageHistogramByScope = impact.ageHistogram || {};
+    const capDays = Number.isFinite(Number(impact.capDays)) ? Number(impact.capDays) : undefined;
+    for (const row of slaFieldRows(draft.slaTargets, severityOrder)) {
+      const cutline = slaCutlines[row.sev];
+      if (!cutline) continue;
+      const bins = scopeList.map((sc) => (ageHistogramByScope[sc] || {})[row.sev]);
+      const savedDays = Number(saved.slaTargets[row.sev]);
+      cutline.update({
+        bins,
+        windowDays: row.days,
+        savedDays: Number.isFinite(savedDays) ? savedDays : row.days,
+        capDays,
+        onCut: (v) => {
+          draft.slaTargets[row.sev] = v;
+          const input = slaInputs[row.sev];
+          if (input) input.value = String(v);
+          syncDirty();
+        },
+      });
+    }
+  }
+
+  async function loadImpact() {
+    try {
+      impact = await call("api_getSettingsImpact", {});
+    } catch (e) {
+      console.warn("[settings] impact unavailable:", e);
+      impact = null;
+    }
+    repaintReadouts();
   }
 
   // THE CANONICAL SHAPE IS gas's (pages/settings.js, ~line 1000): validate -> toast + jump on
@@ -485,10 +605,16 @@ export async function renderSettings(host, params, ctx) {
   }
 
   function buildRegisterPanel() {
+    // THE MOST VALUABLE READOUT ON THIS PAGE — see settingsReadouts.js's own header: two
+    // paragraphs of confirm-dialog prose (settingsModel.js's draftWarnings), turned into a
+    // figure that moves live as the scopes/severities below are edited. Sits above the
+    // per-scope blocks because it reads across all of them at once.
+    strandedHost = el("div", {});
+    severitySplitHosts = {};
     const scopesPanel = settingsPanel({
       title: "Registers & severities",
       description: "Which registers a sync collects, and which severities it requests, per register.",
-      body: scopeList.map((scope) => registerScopeBlock(scope)),
+      body: [strandedHost, ...scopeList.map((scope) => registerScopeBlock(scope))],
     });
     const projectPanel = settingsPanel({
       title: "Wiz project scope (what a sync collects)",
@@ -560,7 +686,17 @@ export async function renderSettings(host, params, ctx) {
       ? disclosure("Why severity is not a gate for secrets", el("p", {}, SECRETS_SEVERITY_DETAIL))
       : null;
 
-    return el("div", { class: "settings-scope-block" }, collectRow, severitiesRow, severityDisclosure);
+    // The live severity-scope split — a segment per requested severity plus "Not requested",
+    // over the OPEN population. registerFieldView() above already renders `[]` as "All
+    // severities"; severityScopeReadout() (settingsReadouts.js) must read the identical `[]`
+    // the same way, or this bar would contradict the words right above it.
+    const splitHost = el("div", {});
+    severitySplitHosts[scope] = splitHost;
+
+    return el(
+      "div", { class: "settings-scope-block" },
+      collectRow, severitiesRow, severityDisclosure, splitHost,
+    );
   }
 
   function buildDeadlinesPanel() {
@@ -568,6 +704,8 @@ export async function renderSettings(host, params, ctx) {
     // One "slaTargets" error for the whole field (it is one SETTINGS_KEYS entry, an object
     // keyed by severity), tracked across however many per-severity rows are invalid right now.
     const invalidSevs = new Set();
+    slaInputs = {};
+    slaDivergenceHosts = {};
     const body = rows.map((r) => {
       const id = `settings-sla-${r.sev}`;
       const errorId = `${id}-error`;
@@ -592,11 +730,25 @@ export async function renderSettings(host, params, ctx) {
           syncDirty();
         },
       });
-      return settingRow({
+      slaInputs[r.sev] = input;
+      const row = settingRow({
         label: `${r.sev} target`, htmlFor: id,
         description: "Days to remediate. In SLA means resolved on or before this many days.",
         control: el("div", {}, input, errorEl),
       });
+      // THE STANDING DIVERGENCE NOTE — payload-free, so it is correct even before/without
+      // api_getSettingsImpact; see slaDivergenceHosts' own comment on why it is repainted from
+      // syncDirty() directly rather than from the impact-gated repaintReadouts(). Warn-toned,
+      // not error-toned, no `role="alert"` — a diverged window is legal (draftWarnings only
+      // confirms on save, it never refuses), the same "worth flagging, not wrong" register the
+      // retention floor's own warn span already uses just below.
+      const divergenceEl = el("p", { class: "small settings-retention-warn", hidden: true });
+      slaDivergenceHosts[r.sev] = divergenceEl;
+      // THE HEADLINE READOUT — see settingsReadouts.js's own header. Built once, before the
+      // first buildPanels() call, and only ever re-embedded here; buildDeadlinesPanel() never
+      // constructs a new cutline instance itself.
+      const cutline = slaCutlines[r.sev];
+      return el("div", {}, row, divergenceEl, cutline ? cutline.node : null);
     });
     const panel = settingsPanel({
       title: glossaryTip("Remediation windows", "sla-target"),
@@ -808,9 +960,13 @@ export async function renderSettings(host, params, ctx) {
       control: el("div", {}, retentionInput, retentionWarn, retentionError),
     });
 
+    // ONE LANE, across every register's scan rows — see settingsReadouts.js's own header on
+    // why this register draws one retention timeline rather than three.
+    retentionHost = el("div", {});
+
     const maintenancePanel = settingsPanel({
       title: "Maintenance",
-      body: [scheduleRow, scheduleCaveat, autoCompactRow, retentionRow],
+      body: [scheduleRow, scheduleCaveat, autoCompactRow, retentionRow, retentionHost],
     });
 
     // Self-saving, NOT part of the batch above — see the module header.
@@ -899,4 +1055,8 @@ export async function renderSettings(host, params, ctx) {
     );
   }
 
+  // ------------------------------------------------------------------------------ first paint
+  // Fetched after the panels already exist, exactly like gas's own loadImpact(): every control
+  // above already works off `draft` alone, so this only ever ADDS captions, on its own schedule.
+  await loadImpact();
 }
