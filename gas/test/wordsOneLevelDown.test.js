@@ -11,43 +11,13 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
+
 const PAGES = new URL("../src/client/js/pages/", import.meta.url);
 const raw = (name) => readFileSync(new URL(`${name}.js`, PAGES), "utf8");
 
-/**
- * The file with its comments removed — string-aware, so a `//` inside a quoted string
- * survives. Ported byte for byte from `gas_devsecops/test/wordsOneLevelDown.test.js`'s own
- * `code()` (also `test/pagesLit.test.js`'s own `code()` in this app): both files' comments
- * QUOTE the sentences a fate moved or deleted, so a raw-text sweep would find those phrases
- * whether or not a reader can actually see them.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    if (c === "/" && n === "*") {
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// Both pages' comments QUOTE the sentences a fate moved or deleted, so a raw-text sweep would
+// find those phrases whether or not a reader can actually see them — hence sweeping CODE.
 
 const EXECUTIVE = raw("executive");
 const EXECUTIVE_CODE = code(EXECUTIVE);

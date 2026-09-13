@@ -24,40 +24,11 @@ import {
   chartTableModel, chartTablePaged, survivalTableModel,
 } from "../../gas_shared/ui/chartTable.js";
 import { DEFAULT_PAGE_SIZE, pageOf } from "../../gas_shared/ui/tableModel.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
-// ------------------------------------------------------------------ the comment stripper
-
-/**
- * The file with its `//` comments removed — string-aware, so a comment marker inside a
- * quoted string survives. Copied from `test/pagesLit.test.js`'s `code()`, which copied it
- * from `test/pagesRegisters.test.js`; both of those are protected files this package may not
- * edit, so this is a third copy rather than a shared import.
- *
- * IT MATTERS HERE FOR THE SAME REASON IT MATTERS THERE: `ui/chartTable.js`'s own prose and
- * several page comments NAME `el("canvas"` and `chartTable(` while explaining the rule, and
- * a raw-text count would be thrown off by the sentence that states it.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// `ui/chartTable.js`'s own prose and several page comments NAME `el("canvas"` and
+// `chartTable(` while explaining the rule, and a raw-text count would be thrown off by the
+// sentence that states it — hence sweeping comment-stripped CODE.
 
 const PAGES_DIR = fileURLToPath(new URL("../src/client/js/pages/", import.meta.url));
 const PAGE_FILES = readdirSync(PAGES_DIR).filter((f) => f.endsWith(".js"));

@@ -28,33 +28,12 @@ import {
   kevColumnHelp, signalFigure, signalReading,
 } from "../src/client/js/pages/sca.js";
 import { SAST_RULE_SENTENCE, sastModel } from "../src/client/js/pages/sast.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const SCA_SRC = readFileSync(new URL("../src/client/js/pages/sca.js", import.meta.url), "utf8");
 const SAST_SRC = readFileSync(new URL("../src/client/js/pages/sast.js", import.meta.url), "utf8");
 
-/** Comments stripped — string-aware. Copied from `test/pagesLit.test.js`'s `code()`, for the
- *  reason that file gives: the prose below NAMES the paragraphs it says are gone. */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// Comment-stripped — the prose below NAMES the paragraphs it says are gone.
 const SCA_CODE = code(SCA_SRC);
 const SAST_CODE = code(SAST_SRC);
 

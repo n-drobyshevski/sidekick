@@ -23,46 +23,14 @@ import {
   coverageMeterPct, segmentValidatedPct, twinFoldView,
 } from "../src/client/js/pages/secrets.js";
 import { signalMeterPct } from "../src/client/js/pages/program.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const PAGES = new URL("../src/client/js/pages/", import.meta.url);
 
-/**
- * The file with its comments removed — string-aware, so a `//` inside a quote survives. The
- * fifth copy of `pagesLit.test.js`'s `code()`; those files are protected and there is no
- * shared test helper.
- *
- * LOAD-BEARING HERE. Both pages' comments QUOTE the sentences they no longer print — that is
- * how a fate is recorded in the source — so a raw-text sweep would find every phrase below
- * whether or not a reader can see it, and every case in this file would pass on a page that
- * had deleted all of them.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    if (c === "/" && n === "*") {
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// LOAD-BEARING HERE. Both pages' comments QUOTE the sentences they no longer print — that is
+// how a fate is recorded in the source — so a raw-text sweep would find every phrase below
+// whether or not a reader can see it, and every case in this file would pass on a page that
+// had deleted all of them.
 
 const raw = (name) => readFileSync(new URL(`${name}.js`, PAGES), "utf8");
 const SECRETS = raw("secrets");

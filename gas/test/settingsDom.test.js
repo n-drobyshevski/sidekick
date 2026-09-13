@@ -7,31 +7,11 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
+
 const SETTINGS_SRC = readFileSync(
   new URL("../src/client/js/pages/settings.js", import.meta.url), "utf8",
 );
-
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    out += c;
-    i++;
-  }
-  return out;
-}
 
 const SETTINGS_CODE = code(SETTINGS_SRC);
 

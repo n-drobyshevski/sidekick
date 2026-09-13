@@ -34,6 +34,7 @@ import {
   DISAPPEARANCE_CAVEAT, SAST_RULE_CLAUSES, SAST_RULE_SENTENCE, sastModel,
 } from "../src/client/js/pages/sast.js";
 import { REMOVAL_CELLS, TWIN_NOTE, bucketTotals, secretsModel } from "../src/client/js/pages/secrets.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const SRC = (name) =>
   readFileSync(new URL(`../src/client/js/pages/${name}.js`, import.meta.url), "utf8");
@@ -41,40 +42,12 @@ const SCA_SRC = SRC("sca");
 const SAST_SRC = SRC("sast");
 const SECRETS_SRC = SRC("secrets");
 
-/**
- * The file with its comments removed — string-aware, so a `//` inside a quoted string stays.
- *
- * THIS DISTINCTION IS THE WHOLE POINT OF SEVERAL ASSERTIONS BELOW. Each of these pages
- * EXPLAINS its own prohibitions in prose: secrets.js names `sevBadge`, `validationDetails`
- * and `api_getRegisterPage` in its header precisely to say it does not use them. A
- * must-not-appear check over the raw text would fail on the sentence that states the rule,
- * which is the opposite of what it is for. So the prohibitions are checked over the CODE and
- * the explanations are checked over the prose, separately.
- *
- * Mirrors `stripCommentsLikeMiddlebox` in esbuild.config.mjs; the build guard already proves
- * no bare `//` survives inside a string in these files, so the two agree by construction.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// THIS DISTINCTION IS THE WHOLE POINT OF SEVERAL ASSERTIONS BELOW. Each of these pages
+// EXPLAINS its own prohibitions in prose: secrets.js names `sevBadge`, `validationDetails`
+// and `api_getRegisterPage` in its header precisely to say it does not use them. A
+// must-not-appear check over the raw text would fail on the sentence that states the rule,
+// which is the opposite of what it is for. So the prohibitions are checked over the CODE and
+// the explanations are checked over the prose, separately.
 const SCA_CODE = code(SCA_SRC);
 const SAST_CODE = code(SAST_SRC);
 const SECRETS_CODE = code(SECRETS_SRC);

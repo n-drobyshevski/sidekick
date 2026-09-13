@@ -27,45 +27,14 @@ import {
   SLA_TARGETS,
 } from "../src/domain/config";
 import { RETENTION_MIN_DAYS } from "../src/domain/maintenance";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const SRC = readFileSync(new URL("../src/client/js/pages/settings.js", import.meta.url), "utf8");
 
-// Comment-stripped, string-aware — the same helper test/settingsDom.test.js (gas) and this
-// app's own test/pagesRegisters.test.js already use to read DOM-shaped source as text safely:
-// without it, a `//` explanation ABOVE doSave that happens to mention "setBusy(true)" or
-// "syncDirty()" in prose (this file's own header comment on doSave does exactly that, arguing
-// the shape before the code) would satisfy an ordering assertion whether or not the CODE below
-// it actually does those things in that order.
-//
-// ONE ADDITION OVER THE gas/pagesRegisters.test.js COPY: this version also tracks backtick
-// template literals as quoted, not only `"`/`'`. Without it, doSave's own error toast —
-// `` `Couldn't save settings: ${...}` `` — has an apostrophe inside a backtick string that the
-// original two-quote-character version mistakes for opening a SINGLE-quoted string, which then
-// never closes (no other `'` follows before EOF) and swallows every `//` comment for the rest
-// of the file into "inside a string", including the very `finally` comment this file's setBusy
-// test needs stripped out. Still no `/* */` handling — doSave carries no block comments, so
-// that limitation never reaches the slices this file actually greps.
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// Comment-stripped, string-aware — without it, a `//` explanation ABOVE doSave that happens to
+// mention "setBusy(true)" or "syncDirty()" in prose (this file's own header comment on doSave
+// does exactly that, arguing the shape before the code) would satisfy an ordering assertion
+// whether or not the CODE below it actually does those things in that order.
 const CODE = code(SRC);
 
 // The exact body of doSave, isolated from the rest of the page: `function doDiscard()` is the

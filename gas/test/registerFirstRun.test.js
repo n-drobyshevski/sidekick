@@ -17,40 +17,10 @@ import { describe, expect, it } from "vitest";
 import { absentText } from "../../gas_shared/ui/figures.js";
 import { registerFirstRunView } from "../src/client/js/pages/registerModel.js";
 import { HERO_PENDING, overviewHeroView } from "../src/client/js/pages/overviewModel.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
-// ------------------------------------------------------------------ the comment stripper
-
-/** The file with its comments removed — string-aware, so a comment marker inside a quoted
- *  string survives. The same stripper `test/emptyStates.test.js` and
- *  `test/chartTable.test.js` use, and needed for the same reason: the page's own comments
- *  NAME `el("canvas"` and `registerRowsTable(` while explaining the rule below. */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    if (c === "/" && n === "*") {
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// The page's own comments NAME `el("canvas"` and `registerRowsTable(` while explaining the
+// rule below, which is why this sweeps comment-stripped CODE rather than the raw source.
 
 const OVERVIEW = code(readFileSync(
   new URL("../src/client/js/pages/overview.js", import.meta.url), "utf8",
