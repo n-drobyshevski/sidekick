@@ -26,6 +26,8 @@ pytest.importorskip(
     "delta", reason="devlake tests need delta-spark: pip install -r brick/requirements.txt"
 )
 
+from pyspark.sql import functions as F  # noqa: E402
+
 from devlake import fakewiz, run  # noqa: E402
 from devlake import session as devlake_session  # noqa: E402
 
@@ -79,8 +81,12 @@ def test_brick_os_two_scans_land_and_disappearance_fires(spark, lake_dir):
         spark=spark,
     )
     tables = result2.tables
+    import run_pipeline as run_pipeline_module  # noqa: PLC0415
 
-    scans = spark.table(tables.scans).orderBy("scan_ts").collect()
+    def family(name):
+        return spark.table(tables.metrics).where(F.col("family") == name)
+
+    scans = family(run_pipeline_module.FAMILY_SCAN).orderBy("scan_ts").collect()
     assert [r["scan_id"] for r in scans] == ["os-scan-1", "os-scan-2"]
     assert scans[1]["resolved_count"] > 0
 
@@ -89,7 +95,10 @@ def test_brick_os_two_scans_land_and_disappearance_fires(spark, lake_dir):
     assert disappeared[0]["status"] == "RESOLVED"
     assert disappeared[0]["severity"] == "CRITICAL"  # the finding default_fixture drops
 
-    scan_ids = {r["scan_id"] for r in spark.table(tables.mttr).select("scan_id").distinct().collect()}
+    scan_ids = {
+        r["scan_id"]
+        for r in family(run_pipeline_module.FAMILY_MTTR).select("scan_id").distinct().collect()
+    }
     assert scan_ids == {"os-scan-1", "os-scan-2"}
 
     # Idempotency: a retry that arrives with the same --scan_id must not advance anything a
@@ -99,7 +108,7 @@ def test_brick_os_two_scans_land_and_disappearance_fires(spark, lake_dir):
         lake=lake_dir, schema=SCHEMA, scan_id="os-scan-2", scan_ts="2026-06-02T00:00:00Z",
         spark=spark,
     )
-    assert spark.table(tables.scans).count() == 2
+    assert family(run_pipeline_module.FAMILY_SCAN).count() == 2
 
 
 # ------------------------------------------------------------------------------ devsecops / sca
@@ -124,15 +133,22 @@ def test_devsecops_sca_two_scans_land_and_disappearance_fires(spark, lake_dir):
         spark=spark,
     )
     tables = result2.tables
+    import run_pipeline as run_pipeline_module  # noqa: PLC0415
 
-    assert spark.table(tables.scans).count() == 2
-    scan2_row = spark.table(tables.scans).filter("scan_id = 'sca-scan-2'").collect()[0]
+    def family(name):
+        return spark.table(tables.metrics).where(F.col("family") == name)
+
+    assert family(run_pipeline_module.FAMILY_SCAN).count() == 2
+    scan2_row = family(run_pipeline_module.FAMILY_SCAN).filter("scan_id = 'sca-scan-2'").collect()[0]
     assert scan2_row["resolved_count"] > 0
 
     disappeared_count = spark.table(tables.ledger).filter("resolution_src = 'disappeared'").count()
     assert disappeared_count > 0
 
-    scan_ids = {r["scan_id"] for r in spark.table(tables.mttr).select("scan_id").distinct().collect()}
+    scan_ids = {
+        r["scan_id"]
+        for r in family(run_pipeline_module.FAMILY_MTTR).select("scan_id").distinct().collect()
+    }
     assert scan_ids == {"sca-scan-1", "sca-scan-2"}
 
 
@@ -167,8 +183,13 @@ def test_devsecops_sast_lands_null_then_a_real_birth_date(spark, lake_dir):
         spark=spark,
     )
     tables = result1.tables
+    import metrics as metrics_module  # noqa: PLC0415
 
-    scan1_silver = spark.table(tables.silver).filter("scan_id = 'sast-scan-1'")
+    # Silver is not a table -- it is derived from bronze in memory, the same way
+    # `panels._silver_frame` does it for a notebook page, and the same function
+    # `run_pipeline.build_metrics` used to build the scan's own silver frame in the first place.
+    bronze_scan1 = spark.table(tables.bronze).filter("scan_id = 'sast-scan-1'")
+    scan1_silver = metrics_module.silver_findings(bronze_scan1, "sast")
     assert scan1_silver.count() == 40
     assert scan1_silver.filter("first_detected_at IS NOT NULL").count() == 0
 

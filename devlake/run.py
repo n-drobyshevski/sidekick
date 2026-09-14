@@ -3,11 +3,11 @@
 ``scan()`` is the whole harness in one call: it puts a fork on ``sys.path`` (switching away
 from whichever fork was there before, if any -- see :func:`_ensure_fork_on_path`), precreates
 the tables ``create_clustered``'s builder cannot parse a three-level name for
-(``devlake.lake.precreate_clustered`` / ``precreate_silver``), installs a
-``devlake.fakewiz.FakeWiz`` serving the node list handed to it, and calls ``main()`` -- the real
-entry point, not ``build_metrics`` -- so ``ingest_to_bronze``, ``ensure_schema``,
-``recorded_scan`` and ``clear_scan`` are all exercised exactly as a Databricks Job would exercise
-them.
+(``devlake.lake.precreate_clustered`` -- every clustered table, ledger and bronze; silver is
+not a table at all, see ``lake.py``), installs a ``devlake.fakewiz.FakeWiz`` serving the node
+list handed to it, and calls ``main()`` -- the real entry point, not ``build_metrics`` -- so
+``ingest_to_bronze``, ``ensure_schema``, ``recorded_scan`` and ``clear_scan`` are all exercised
+exactly as a Databricks Job would exercise them.
 
 CLI:
 
@@ -15,8 +15,8 @@ CLI:
     python -m devlake.run --fork=devsecops --scope=sca --scans=2 --lake=/tmp/lakecheck
 
 Runs ``--scans`` scans a day apart, starting ``2026-06-01T00:00:00Z``, through the fork's
-committed fixture (:func:`default_fixture`), and prints the ``scans`` log and the
-``resolution_src`` split at the end.
+committed fixture (:func:`default_fixture`), and prints the scan log (the ``family='scan'``
+rows of the ``metrics`` table) and the ``resolution_src`` split at the end.
 """
 
 from __future__ import annotations
@@ -225,13 +225,12 @@ def scan(
     if spark is None:
         spark = session.build(lake_path)
 
-    # Creates the schema too (CREATE SCHEMA IF NOT EXISTS) -- both precreation calls below need
-    # it to already exist, and main()'s own ensure_schema only runs after they do.
+    # Creates the schema too (CREATE SCHEMA IF NOT EXISTS) -- precreate_clustered below needs
+    # it to already exist, and main()'s own ensure_schema only runs after it does.
     lake_module.reregister(spark, lake_path, schema)
     namespace = lake_module.namespace(schema)
     tables = run_pipeline_module.resolve_tables(namespace, scope, argv=[])
     lake_module.precreate_clustered(spark, run_pipeline_module, tables)
-    lake_module.precreate_silver(spark, run_pipeline_module, tables.silver, scope)
 
     fake = fakewiz.FakeWiz(scope, ingest_module, nodes=nodes)
 
@@ -304,9 +303,13 @@ def _cli(argv: Optional[Sequence[str]] = None) -> int:
         print("no scans ran (--scans <= 0)")
         return 0
 
+    from pyspark.sql import functions as F  # noqa: PLC0415 -- pyspark, not a fork module
+
     tables = result.tables
     print("\n-- scans --")
-    spark.table(tables.scans).orderBy("scan_ts").show(truncate=False)
+    spark.table(tables.metrics).where(
+        F.col("family") == run_pipeline_module.FAMILY_SCAN
+    ).select(*run_pipeline_module.SCANS_COLUMNS).orderBy("scan_ts").show(truncate=False)
     print("-- resolution_src split (ledger) --")
     spark.table(tables.ledger).groupBy("resolution_src").count().orderBy("resolution_src").show(
         truncate=False

@@ -72,7 +72,9 @@ def test_a_table_survives_a_session_restart(tmp_path_factory):
         created = lake.precreate_clustered(spark_a, run_pipeline, tables)
         # `create_clustered`'s builder cannot parse a three-level name at all (see lake.py's
         # docstring) -- this is the DDL stand-in, and both `ledger` and `bronze` have a
-        # declared schema to precreate with. `silver` does not, and is absent from `created`.
+        # declared schema to precreate with. There is no `silver` to skip any more: silver is
+        # not a Delta table in either fork, it is a projection derived from bronze in memory
+        # (`metrics.silver_findings`), so it has no on-disk shape to precreate at all.
         assert set(created) == {tables.ledger, tables.bronze}
 
         rows = [

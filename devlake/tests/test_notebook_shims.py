@@ -161,7 +161,7 @@ class NotebookLake:
     tables: Any
     ledger_count: int
     open_count: int
-    scans_count: int
+    metrics_count: int
 
 
 @pytest.fixture(scope="module")
@@ -202,11 +202,15 @@ def notebook_lake(tmp_path_factory) -> NotebookLake:
         tables = result2.tables
         ledger_count = spark.table(tables.ledger).count()
         open_count = spark.table(tables.ledger).filter("status = 'OPEN'").count()
-        scans_count = spark.table(tables.scans).count()
+        # The whole `metrics` table now, not just the `family='scan'` rows -- it is the
+        # deletion-vector-free control table the DuckDB test below reads (see CLUSTERING in
+        # run_pipeline.py: only `ledger` and `bronze` are clustered), and `delta_scan` there
+        # reads every row in it, gold families included.
+        metrics_count = spark.table(tables.metrics).count()
     finally:
         spark.stop()
         devlake_run.purge_fork_state()
-    return NotebookLake(lake_dir, tables, ledger_count, open_count, scans_count)
+    return NotebookLake(lake_dir, tables, ledger_count, open_count, metrics_count)
 
 
 @pytest.fixture()
@@ -323,28 +327,29 @@ def test_the_mttr_sla_notebook_runs_and_its_sql_cell_reads_the_actionable_clock(
 
 def test_duckdb_reads_the_clustered_ledger_with_deletion_vectors(notebook_lake):
     """DuckDB's ``delta`` extension against the ledger (``CLUSTER BY``,
-    ``delta.enableDeletionVectors=true`` -- reader v3) and, as a control, the scans log (no
-    deletion vectors) -- so a failure on the ledger alone isolates to deletion vectors
-    specifically rather than to ``delta_scan`` itself."""
+    ``delta.enableDeletionVectors=true`` -- reader v3) and, as a control, ``metrics`` (no
+    deletion vectors -- it is not in ``run_pipeline.CLUSTERING`` at all, gold family rows
+    included) -- so a failure on the ledger alone isolates to deletion vectors specifically
+    rather than to ``delta_scan`` itself."""
     duckdb = pytest.importorskip("duckdb")
 
     ledger_table_name = notebook_lake.tables.ledger.split(".")[-1]
-    scans_table_name = notebook_lake.tables.scans.split(".")[-1]
+    metrics_table_name = notebook_lake.tables.metrics.split(".")[-1]
     ledger_path = (notebook_lake.lake_dir / "wiz.db" / ledger_table_name).resolve()
-    scans_path = (notebook_lake.lake_dir / "wiz.db" / scans_table_name).resolve()
+    metrics_path = (notebook_lake.lake_dir / "wiz.db" / metrics_table_name).resolve()
 
     con = duckdb.connect()
     con.execute("INSTALL delta")
     con.execute("LOAD delta")
 
-    # Control: the scans log carries no deletion vectors at all.
-    scans_count = con.execute(
-        f"SELECT count(*) FROM delta_scan('file://{scans_path}')"
+    # Control: `metrics` carries no deletion vectors at all.
+    metrics_count = con.execute(
+        f"SELECT count(*) FROM delta_scan('file://{metrics_path}')"
     ).fetchone()[0]
-    assert scans_count == notebook_lake.scans_count, (
-        f"duckdb {duckdb.__version__}: scans table row count differs from Spark's "
-        f"({scans_count} vs {notebook_lake.scans_count}) -- delta_scan itself is suspect, not "
-        "deletion vectors"
+    assert metrics_count == notebook_lake.metrics_count, (
+        f"duckdb {duckdb.__version__}: metrics table row count differs from Spark's "
+        f"({metrics_count} vs {notebook_lake.metrics_count}) -- delta_scan itself is suspect, "
+        "not deletion vectors"
     )
 
     # The measurement this test exists for: the ledger, which DOES carry deletion vectors.
@@ -355,9 +360,9 @@ def test_duckdb_reads_the_clustered_ledger_with_deletion_vectors(notebook_lake):
     except Exception as exc:  # noqa: BLE001 -- the failure IS the measurement; report it plainly
         pytest.fail(
             f"duckdb {duckdb.__version__} could not read the deletion-vector-enabled ledger "
-            f"table at {ledger_path}: {exc!r}. The scans table (no deletion vectors) read fine "
-            f"above ({scans_count} rows), so this isolates the failure to deletion vectors, not "
-            "delta_scan or the lake in general."
+            f"table at {ledger_path}: {exc!r}. The metrics table (no deletion vectors) read "
+            f"fine above ({metrics_count} rows), so this isolates the failure to deletion "
+            "vectors, not delta_scan or the lake in general."
         )
     assert ledger_count == notebook_lake.ledger_count, (
         f"duckdb {duckdb.__version__}: ledger row count differs from Spark's "

@@ -48,10 +48,14 @@ three-level name locally without complaint.
 `CLUSTER BY`, same `delta.enableDeletionVectors` — through SQL DDL instead, which parses a
 three-level name fine. Because `create_clustered` short-circuits on `table_exists`,
 pre-creating a table this way before `main()` runs makes production code run against it
-*unchanged*: it finds the table already there and never calls the builder. `silver` is the one
-table this cannot precreate — its schema is not a declared constant anywhere, only whatever
-`metrics.silver_findings` projects for a given scan's rows — so it is left for a caller with
-real scan data in hand (a later step) to precreate the same way.
+*unchanged*: it finds the table already there and never calls the builder. `precreate_clustered`
+now covers every clustered table (`ledger`, `bronze`) — there is no `silver` case to carve out
+any more, because silver is not a Delta table at all: it is a projection derived from `bronze`
+in memory (`metrics.silver_findings`), computed fresh from whatever bronze rows a given scan
+needs, and it has no on-disk shape to precreate. The register's third table, `metrics` (gold +
+the scan log, `family`-tagged), is unclustered and needs no DDL pre-creation either: it is
+created as an empty declared frame and gains its gold columns through `mergeSchema` on first
+write, the same way the old `scans` table used to be created.
 
 ## Managed on first boot, external after
 
@@ -74,8 +78,8 @@ by hand against a restarted lake.
 
 `devlake/fakewiz.py` and `devlake/run.py` let a fork's real `run_pipeline.main()` run end to
 end against a fake Wiz GraphQL server, with no network call and no credentials -- ingest,
-`ensure_schema`, `recorded_scan`, `clear_scan`, MERGE and the four gold tables all run exactly as
-a Databricks Job would run them.
+`ensure_schema`, `recorded_scan`, `clear_scan`, MERGE and the gold families (all appended into
+`metrics`, one write, `family`-tagged) all run exactly as a Databricks Job would run them.
 
 ```bash
 SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=os --scans=2 --lake=/tmp/lakecheck
@@ -84,8 +88,8 @@ SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=devsecops --scope=sast --
 ```
 
 Each runs `--scans` scans a day apart, starting `2026-06-01T00:00:00Z`, through the fork's
-committed fixture (`devlake.run.default_fixture`), then prints the `scans` log and the
-`resolution_src` split. Measured on the committed fixtures:
+committed fixture (`devlake.run.default_fixture`), then prints the scan log (the `metrics`
+table's `family='scan'` rows) and the `resolution_src` split. Measured on the committed fixtures:
 
 ```
 -- scans --                                          -- resolution_src split (ledger) --
@@ -115,10 +119,10 @@ through the fork's own `describe_errors` -- so a wrong shape is loud, the way it
 against the real tenant, rather than a silent empty page. `devlake.run.scan(fork, scope, nodes,
 ...)` is the one-call harness around it: it puts the requested fork on `sys.path` (switching
 away from whichever fork was there before, if any), precreates the tables
-`create_clustered`'s builder cannot parse a three-level name for (`lake.precreate_clustered`
-for `ledger`/`bronze`, the new `lake.precreate_silver` for `silver` -- see its docstring for why
-`silver` needs its own precreation step), installs the fake, and calls `run_pipeline.main()`
-with `sys.argv` patched to the parameters a Job would pass.
+`create_clustered`'s builder cannot parse a three-level name for -- `lake.precreate_clustered`,
+which now covers every clustered table (`ledger`, `bronze`; there is no `silver` table to
+precreate separately, since silver is not stored) -- installs the fake, and calls
+`run_pipeline.main()` with `sys.argv` patched to the parameters a Job would pass.
 
 **The OS fixture's scan-2 slice is not a first-half truncation, and that is measured, not
 stylistic.** `os_vulns_response_exemple.json`'s four findings are, in file order, CRITICAL/OPEN,
@@ -242,7 +246,10 @@ print(con.execute(\"SELECT count(*) FROM delta_scan('file:///tmp/lakecheck/wiz.d
 
 **Measured** (`duckdb 1.5.5`, this container): both queries above return the exact same row
 counts DuckDB reads directly off disk as Spark reports from its own `.count()` over the same
-table, and the same is true of the append-only `scans` log (no deletion vectors at all) — see
+table, and the same is true of the append-only `wiz_os_metrics` table (no deletion vectors at
+all) — that is the deletion-vector-free control now (the old `scans` table played this role
+before the three-table collapse; `metrics` carries the same append-only, unclustered shape) —
+see
 `devlake/tests/test_notebook_shims.py::test_duckdb_reads_the_clustered_ledger_with_deletion_vectors`,
 which asserts both and fails with the DuckDB version and the exact exception if either stops
 matching, naming which half (deletion vectors, or `delta_scan` itself) is responsible. No
