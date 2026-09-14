@@ -47,19 +47,31 @@ const PATHS = {
     "M4.6 10.9 L7.4 6.1",
     "M8.7 6.1 L11.3 9.9",
   ],
-  // Six teeth, not eight. This draws at 13px in a table heading (the column chooser's own
-  // button, ui/columnPicker.js) and eight teeth at 1.5 stroke close up into a ring — the
-  // glyph has to still read as a cog at the size it is actually used, which is the smallest
-  // one in this set.
+  // The column chooser's own button (ui/columnPicker.js), and the one glyph in this set that
+  // is not drawn here.
+  //
+  // IT WAS, AND IT WAS NOT GOOD ENOUGH. The hand-drawn version — a ring, a hub and six radial
+  // ticks — read as a ship's wheel rather than a cog at the size it is actually used, which is
+  // the smallest in this set. Rendered side by side against the icon sets that solved this
+  // years ago (13px, 14px and 16px, at this file's own 1.5 stroke), a tick-and-ring gear loses
+  // to a toothed CONTOUR every time: at 13px the ticks read as rays and the ring as a circle,
+  // and the eye assembles a sun.
+  //
+  // So this is Lucide's `settings`, scaled 24 -> 16 (x 2/3) onto this file's grid, with its
+  // <circle r="3"> written as the same two-arc path idiom every other glyph here uses. Lucide
+  // is ISC-licensed — Copyright (c) Lucide Icons and Contributors, and this glyph descends
+  // from Feather (MIT, Copyright (c) Cole Bemis). Two paths instead of eight, and it holds its
+  // shape down to 13px.
+  //
+  // Drawn at 14px rather than 16 by its one caller: it sits in a table heading beside 10px
+  // uppercase labels, and a 16px glyph there reads as a second heading rather than a control.
   cog: [
-    "M8 3.4 a4.6 4.6 0 1 0 0 9.2 a4.6 4.6 0 0 0 0 -9.2",
-    "M8 6.2 a1.8 1.8 0 1 0 0 3.6 a1.8 1.8 0 0 0 0 -3.6",
-    "M12.6 8 H14.4",
-    "M3.4 8 H1.6",
-    "M10.3 11.98 L11.2 13.54",
-    "M5.7 4.02 L4.8 2.46",
-    "M5.7 11.98 L4.8 13.54",
-    "M10.3 4.02 L11.2 2.46",
+    "M6.447 2.757 a1.56 1.56 0 0 1 3.106 0 1.56 1.56 0 0 0 2.213 1.277 1.56 1.56 0 0 1 "
+      + "1.553 2.689 1.56 1.56 0 0 0 0 2.554 1.56 1.56 0 0 1 -1.553 2.689 1.56 1.56 0 0 0 "
+      + "-2.213 1.277 1.56 1.56 0 0 1 -3.106 0 1.56 1.56 0 0 0 -2.213 -1.277 1.56 1.56 0 0 1 "
+      + "-1.553 -2.689 1.56 1.56 0 0 0 0 -2.554 A1.56 1.56 0 0 1 4.233 4.034 a1.56 1.56 0 0 0 "
+      + "2.213 -1.277",
+    "M8 6 a2 2 0 1 0 0 4 a2 2 0 0 0 0 -4",
   ],
   // The Security Graph's query builder. `plus` adds a relationship or a filter; the two eyes
   // are the show/hide toggle on a node's column group; `table` and `columns` dress the VIEW

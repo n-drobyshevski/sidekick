@@ -66,7 +66,7 @@ export function columnsButton(spec) {
     class: "col-pick-btn",
     "aria-haspopup": "dialog",
     onclick: () => open(),
-  }, uiIcon("cog", 13));
+  }, uiIcon("cog", 14));
 
   /**
    * THE MARK IS THE HONEST HALF OF THIS CONTROL. A reader who hid two columns last week comes
@@ -74,7 +74,7 @@ export function columnsButton(spec) {
    * way leaves them to conclude the register lost a field. The dot says the table is narrowed
    * and the name says by how much, in the one place they would look to put it back.
    *
-   * The count rides in the accessible NAME rather than in a visible badge: at 13px in a
+   * The count rides in the accessible NAME rather than in a visible badge: at 14px in a
    * heading cell there is no room for a numeral that would still be legible, and a mark that
    * only some readers get is worse than one nobody has to decode.
    */

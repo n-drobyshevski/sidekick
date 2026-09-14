@@ -273,8 +273,11 @@ table.data th.th-cols {
    half a dot cannot spell. */
 .col-pick-btn.is-narrowed { color: var(--accent-text); }
 .col-pick-btn.is-narrowed::after {
-  content: ""; position: absolute; top: 1px; right: 1px;
+  content: ""; position: absolute; top: 0; right: 0;
   width: 5px; height: 5px; border-radius: 50%; background: var(--accent-text);
+  /* A ring in the heading's own ground, so the dot reads as a mark ON the cog rather than as
+     one more tooth growing out of it — the gear's top-right lobe reaches within a pixel. */
+  box-shadow: 0 0 0 1.5px var(--surface);
 }
 
 /* The popover: a compact list on the cog, not a sheet — the same argument gas_ai's graph
