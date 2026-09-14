@@ -19,6 +19,10 @@
 // canvases gained exactly one `chartTable(` call beside it — 2 call sites in inventory.js (one
 // per canvas LITERAL; the posture card's single call site is exercised three times at
 // runtime) and 1 in problems.js.
+//
+// A FOURTH ARRIVED with the compliance trend: `complianceShared.js` draws one canvas literal
+// (`complianceTrendCard`, compliance posture over time) which both compliance pages call, and
+// it carries its own `chartTable(` beside it under the same rule.
 
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -115,28 +119,36 @@ describe("every chart canvas ships a data-table alternative", () => {
     }
   });
 
-  it("the two chart pages still draw the 3 canvases they compose, counted so a deletion shows", () => {
+  it("the three chart pages still draw the 4 canvases they compose, counted so a deletion shows", () => {
     // A count, so a canvas deleted to make the test above pass is visible as a change here
     // rather than as a silent green. THIS IS A REGISTRY, so a number that moves says what
     // joined or left.
     //
-    //   inventory.js  2  — the counts-over-time trend (issues / findings / posture fails), and
-    //                      the posture-trend card helper (`postureTrendCard`, one canvas
-    //                      LITERAL called three times at runtime for adjacency, exploitation
-    //                      and category — the SOURCE count is 1 for that literal, 2 total with
-    //                      the counts trend)
-    //   problems.js   1  — action mode's cumulative-cover curve
+    //   inventory.js         2  — the counts-over-time trend (issues / findings / posture
+    //                             fails), and the posture-trend card helper
+    //                             (`postureTrendCard`, one canvas LITERAL called three times
+    //                             at runtime for adjacency, exploitation and category — the
+    //                             SOURCE count is 1 for that literal, 2 total with the counts
+    //                             trend)
+    //   problems.js          1  — action mode's cumulative-cover curve
+    //   complianceShared.js  1  — `complianceTrendCard`, compliance posture over time. One
+    //                             canvas LITERAL, drawn twice at runtime: the framework
+    //                             register hands it one framework's series
+    //                             (`pages/compliance.js`), the Overview the cross-framework
+    //                             mean (`pages/complianceOverview.js`). It replaced the
+    //                             four-segment state bar that used to sit in the same header
+    //                             column, which drew no canvas at all.
     //
-    // No other page file draws a canvas — measured with a plain grep before this file was
-    // written: zero hits across every other file in `pages/`.
-    const perFile = { "inventory.js": 2, "problems.js": 1 };
+    // No other page file draws a canvas — measured with a plain grep: zero hits across every
+    // other file in `pages/`.
+    const perFile = { "inventory.js": 2, "problems.js": 1, "complianceShared.js": 1 };
     let total = 0;
     for (const [file, expected] of Object.entries(perFile)) {
       const n = count(PAGE_CODE[file], /el\("canvas"/g);
       expect(n, file).toBe(expected);
       total += n;
     }
-    expect(total).toBe(3);
+    expect(total).toBe(4);
     for (const file of PAGE_FILES) {
       if (file in perFile) continue;
       expect(count(PAGE_CODE[file], /el\("canvas"/g), file).toBe(0);

@@ -393,6 +393,25 @@ export const TAB_HEADERS: Record<string, string[]> = {
     // different claim from "we never asked". Derived from the same fold that writes that
     // census, so the two can never disagree about one sync.
     "kev_linked_count",
+    // EVERY FRAMEWORK'S COMPLIANCE POSTURE AT THIS SYNC — `{avg, scoredFrameworks,
+    // frameworks: {id: {pct, scored, subcategories}}}` (domain/complianceTrend.ts). The one
+    // record of a framework percentage over time: the `framework_posture` tab is overwritten
+    // wholesale on every commit, so it holds today's reading and nothing else, and
+    // `posture_fail_count` beside it counts failing POLICIES, which is a different quantity
+    // on a different scale.
+    //
+    // ONE CELL, NOT A COLUMN PER FRAMEWORK. Which frameworks are collected is a tenant
+    // setting that moves, and a column per framework would want a migration every time an
+    // operator selected one. Appended under the same no-migration contract as everything
+    // above it; absent on a row written before the column, which the trend reads as "no
+    // point" and never as a landscape scoring zero.
+    //
+    // THE COVERAGE TRAVELS INSIDE, for the reason `edgesKnown` rides inside `adjacency_json`
+    // above: a framework percentage is a share of the subcategories Wiz SCORED, so a line
+    // that rises because scoring narrowed is indistinguishable from one that rises because
+    // the landscape improved — unless `scored`/`subcategories` arrive on the same point.
+    // Split into their own columns, a later reader plots the percentage alone.
+    "compliance_posture_json",
   ],
   [TABS.settings]: ["key", "value_json"],
   [TABS.jobs]: [

@@ -51,8 +51,16 @@ import { valueAt } from "../postureTrendModel.js";
  *            that filter, it only reads whichever list the caller hands it.
  *   xLabel   the first column's heading; every call site here draws one point per sync.
  *   xValue   reads a row's x-column text; defaults to the sync date (`fmtDate(row.at)`).
+ *   format   how a series value prints — `chartTableModel`'s own vocabulary. "count" for
+ *            every counting series (the default, and what every original call site wants);
+ *            "pct" for the compliance trend, whose values are percentages. A SHARE PRINTED
+ *            AS A COUNT reads as a quantity of something: "96" under a column headed with a
+ *            framework's name is ninety-six findings to anybody who has not read the chart
+ *            above it, and the table is precisely the reading for somebody who cannot.
  */
-export function trendTableModel(points, series, { xLabel = "Sync", xValue } = {}) {
+export function trendTableModel(
+  points, series, { xLabel = "Sync", xValue, format = "count" } = {},
+) {
   const rows = Array.isArray(points) ? points : [];
   const readX = typeof xValue === "function" ? xValue : (row) => fmtDate(row && row.at);
   return chartTableModel({
@@ -61,7 +69,7 @@ export function trendTableModel(points, series, { xLabel = "Sync", xValue } = {}
       ...(series || []).map((s) => ({
         key: s.key,
         label: s.label,
-        format: "count",
+        format,
         // `valueAt` refuses undefined AND null to the same `null` the chart itself reads as
         // a gap — a series absent at this point stays absent here, never a plotted zero.
         value: (row) => valueAt(row, s.key),

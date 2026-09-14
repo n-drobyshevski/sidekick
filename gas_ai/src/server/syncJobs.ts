@@ -49,6 +49,7 @@ import {
 import { withScriptLock } from "./locks";
 import { getProp, hasWizCredentials, projectScope, setProp, deleteProp } from "./props";
 import {
+  seedCompliancePostureCell,
   seedGraphDoc, seedLedgerRows, seedPostureTrend, seedSyncAt, seedSyncId, SEED_AARS_HINTS,
   SEED_CONFIG_RULES,
   SEED_DATA_FINDINGS, SEED_EFFECTIVE_ACCESS, SEED_FINDINGS, SEED_FRAMEWORK_POLICIES,
@@ -908,6 +909,12 @@ function seedIssueLedger(endIso: string, registerScope: string): boolean {
  * existed, and the shape `capacityFromLedgerDeltas` and `trendFromHistory` both already
  * read as "a sync recorded before the column existed: absent, not zero". See
  * `seedDryRunHistory` above for when that happens and why.
+ *
+ * `compliance_posture_json` is the one cell that does NOT follow that gate, because it does
+ * not count what the ledger says was open: it records the percentage Wiz scored each
+ * framework, which is a fact about `SEED_POSTURE` alone. A store holding a real ledger this
+ * fixture does not describe is exactly the case `withLedger` guards, and the compliance
+ * census describes no ledger at all.
  */
 function seedTrendHistory(endIso: string, registerScope: string, withLedger: boolean): void {
   if (dataRowCount(TABS.syncHistory) > 0) return;
@@ -917,6 +924,9 @@ function seedTrendHistory(endIso: string, registerScope: string, withLedger: boo
   // the rows the LEDGER says were open, so writing them beside a real ledger they do not
   // describe would put a fabricated posture on a register somebody actually synced.
   const posture = withLedger ? seedPostureTrend(endIso) : null;
+  // Derived once for the whole fabricated history, through the same two functions the commit
+  // path writes the live cell with.
+  const compliancePosture = seedCompliancePostureCell();
   appendRows(TABS.syncHistory, SEED_TREND.map((counts, i) => {
     // Dated backwards from the sync being run, one day apart, so the sample history
     // runs continuously into the live point rather than leaving a gap in the line.
@@ -964,6 +974,13 @@ function seedTrendHistory(endIso: string, registerScope: string, withLedger: boo
       // nobody asked the question of, which is the one thing `EXPLOITATION_SPEC`'s null-skip
       // exists to prevent. The card says "No sync has recorded this yet." and means it.
       exploitation_json: null,
+      // EVERY FRAMEWORK'S PERCENTAGE, the same on all eight rows — see
+      // `seedCompliancePostureCell`. The fabricated history runs over one posture fixture, so
+      // the line is flat because the fixture is; `edgesKnown` is the same 79 on every row for
+      // the identical reason. NOT gated on `withLedger`, unlike the two cells above it: those
+      // count rows the LEDGER says were open, and this counts subcategories Wiz scored, which
+      // the ledger has no say in.
+      compliance_posture_json: compliancePosture,
     };
   }));
 }

@@ -15,12 +15,16 @@
 // (`node.state`), so the two cannot disagree about which state a row is IN.
 
 import {
-  absent, dataTable, el, firstRunNotice, fmtDateTime, heroStat, meter, plural, scopeNote,
-  sevBadge,
+  absent, chartTable, dataTable, el, firstRunNotice, fmtDateTime, heroStat, meter, plural,
+  scopeNote, sevBadge,
 } from "../ui.js";
 
+import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import { lookupGap } from "../codebook.js";
+import { complianceTrendView } from "../complianceTrendModel.js";
+import { seriesData } from "../postureTrendModel.js";
 import { tip, tipAnchor, tipMark } from "../ui.js";
+import { trendTableModel } from "./_charts.js";
 /**
  * The four posture states, mirroring domain/compliancePosture.POSTURE_STATES.
  *
@@ -174,75 +178,58 @@ export function checksCell(node) {
 }
 
 /**
- * The subcategory-state strip: what Wiz reported, by state.
+ * The subcategory-state KEYS: what Wiz reported, by state, as counts.
  *
- * IT USED TO BE THE REGISTER'S FILTER, and the buttons are gone with that job. The tables
- * below now list scored subcategories only (compliancePosture.ts drops the rest before the
- * tree ever reaches a page), so "show me only the unscored ones" is a filter onto nothing —
- * a control that looks operable and resolves to an empty table is worse than no control.
+ * THE BAR IS GONE AND THE COUNTS ARE NOT. This used to be `stateStrip` — the same four
+ * counts plus a stacked segment bar drawn from them — and the bar sat in the header's second
+ * column, which is the one slot on this page a reader looks at after the percentage. It
+ * answered "what did Wiz score", which is learnt once and does not change between visits;
+ * `complianceTrendCard` below answers "is this getting better", which is the question a
+ * compliance register is actually opened with, and it has the slot now.
  *
- * The strip itself stays, and stays complete, because THAT is now its whole job: it is the
- * only place the dropped subcategories are still counted, and a register that quietly
- * listed twelve of twenty rows with nothing saying so is the implied confidence PRODUCT.md
- * forbids. Glyph and label per state, never colour alone, exactly as before.
+ * The counts stay, underneath it, because they are the only place the dropped subcategories
+ * are counted at all: the tables below list scored subcategories only (compliancePosture.ts
+ * drops the rest before the tree ever reaches a page), and a register that quietly lists
+ * twelve of twenty rows with nothing saying so is the implied confidence PRODUCT.md forbids.
+ * Glyph and label per state, never colour alone, exactly as before — losing the bar loses a
+ * duplicate encoding of numbers that are printed right beside it, and nothing else.
  *
  * `tree` only needs a `.stateCounts` map, so the overview's landscape-wide roll-up (which is
  * not a FrameworkTree) can drive this too by handing it `{ stateCounts }`.
  */
-export function stateStrip(tree) {
-  const total = STATE_ORDER.reduce((sum, k) => sum + (tree.stateCounts[k] || 0), 0);
-  const bar = el("div", {
-    class: "comp-bar",
-    role: "img",
-    "aria-label": total
-      ? STATE_ORDER
-        .filter((k) => tree.stateCounts[k])
-        .map((k) => `${tree.stateCounts[k]} ${STATES[k].label}`)
-        .join(", ")
-      : "No subcategories",
-  });
-  if (!total) {
-    bar.append(el("span", { class: "comp-bar-seg", "data-state": "empty" }));
-  } else {
-    for (const key of STATE_ORDER) {
-      const n = tree.stateCounts[key] || 0;
-      if (!n) continue;
-      const seg = el("span", { class: "comp-bar-seg", "data-state": key });
-      seg.style.width = `${(n / total) * 100}%`;
-      bar.append(seg);
-    }
-  }
+export function stateKeys(tree) {
+  const counts = (tree && tree.stateCounts) || {};
+  const total = STATE_ORDER.reduce((sum, k) => sum + (counts[k] || 0), 0);
 
   const keys = el("div", { class: "comp-keys" });
   for (const key of STATE_ORDER) {
-    const n = tree.stateCounts[key] || 0;
-    // Spans, not buttons — nothing here is pressable any more. Zero-count states still
-    // draw rather than disappearing: "no subcategory went unscored" is information, and a
-    // vanishing key hides it. The bar above is already `role="img"` with the same counts in
-    // its label, so these carry no ARIA of their own.
+    const n = counts[key] || 0;
+    // Spans, not buttons — nothing here is pressable. Zero-count states still draw rather
+    // than disappearing: "no subcategory went unscored" is information, and a vanishing key
+    // hides it. The group carries the whole reading as one accessible name, because four
+    // separate "Scored 12" fragments read as four unrelated facts to a screen reader.
     keys.append(el("span", { class: "comp-key", "data-state": key },
       el("span", { class: "comp-key-glyph", "aria-hidden": "true" }, STATES[key].glyph),
       STATES[key].label,
       el("span", { class: "comp-key-num" }, String(n))));
   }
 
-  const unscored = total - (tree.stateCounts.scored || 0);
+  const unscored = total - (counts.scored || 0);
 
-  return el("div", { class: "comp-strip" },
-    bar,
+  return el("div", { class: "comp-keys-block" },
     keys,
     el("p", { class: "comp-strip-note" },
-      "Subcategories by state.",
+      total === 1 ? "1 subcategory reported." : `${total} subcategories reported.`,
       // 44 words of caveat in a caption slot. Every sentence of it is load-bearing — an
       // unscored subcategory is neither a pass nor a zero, and saying so is what stops the
-      // percentage being misread — so it moves onto the mark rather than going away.
+      // percentage being misread — so it rides on the mark rather than going away.
       tip(tipMark(), [
         "A subcategory with no resources or no policies is not a failure and not a pass. "
           + "It is not scored, and it is left out of the framework percentage rather than "
           + "counted as zero.",
-        // The sentence that keeps the filter's removal honest: the rows are not merely
-        // unranked now, they are absent, and the reader is told so in the one place that
-        // still counts them.
+        // The sentence that keeps the register's filtering honest: the rows are not merely
+        // unranked, they are absent, and the reader is told so in the one place that still
+        // counts them.
         unscored === 0
           ? null
           : unscored === 1
@@ -252,6 +239,126 @@ export function stateStrip(tree) {
               + "nothing evaluated under them to act on.",
       ].filter(Boolean)),
     ));
+}
+
+/**
+ * COMPLIANCE POSTURE OVER TIME — the header's second column, for both pages.
+ *
+ * WHAT IT REPLACED. A four-segment bar of the LATEST sync's subcategory states. That bar
+ * drew a distribution a reader learns once; this draws the one thing a compliance register
+ * is opened to find out, which is whether the number above it is moving and in which
+ * direction. The counts the bar carried are still here — `stateKeys` above, underneath the
+ * chart — so nothing the strip said has stopped being said.
+ *
+ * ONE SERIES, ALWAYS. The framework register draws the framework in view; the Overview draws
+ * the cross-framework mean. Not every framework at once: eight lines between 85% and 100% is
+ * a thicket, the reader is already standing in front of the framework they picked, and the
+ * Overview's rail lists every framework's current figure one band down.
+ *
+ * THE DECISIONS ARE NOT HERE. `complianceTrendView` (client/js/complianceTrendModel.js) says
+ * whether there is enough to draw, why not when there isn't, what each point's hover card
+ * adds beside the percentage, and what the card may claim about the population — all of it
+ * DOM-free and tested. This function is the markup around that answer, which is the same
+ * split `postureScopeView`/`postureScopeNote` already keep on this page.
+ *
+ * THE CHART IS OPTIONAL AND THE CARD IS NOT. Chart.js arrives on demand over
+ * `google.script.run` and a deployment's policy may refuse to run it at all (chartsLoader.js
+ * states the unknown plainly); `chartUnavailable` then replaces the box and everything else
+ * here — the heading and its tip, the state counts, the scope note — still stands. The data
+ * table beside it is drawn EAGERLY for the same reason it is on every other chart in this
+ * app: it is the non-visual reading of the same array, not a fallback for a failed one.
+ *
+ * THE COLUMN CARRIES ONE PARAGRAPH AT MOST. The axis baseline and the coverage sentence live
+ * on the heading's tip rather than under the canvas — see the note at that call. What is
+ * left underneath only ever draws when something is actually wrong with the reading: a
+ * broken line, a hero stating a different figure, or a project view the series cannot
+ * follow.
+ */
+export function complianceTrendCard({
+  tree, points, series, postureScope, label, title, note,
+}) {
+  const view = complianceTrendView({ points, series, postureScope });
+  const canvas = el("canvas", { "aria-label": label, role: "img" });
+
+  const card = el("div", { class: "comp-strip" },
+    el("p", { class: "comp-trend-head" },
+      title,
+      // THE CAPTION SLOT IS THE TIP. The axis baseline and the coverage the percentage is a
+      // share of used to be two paragraphs under the canvas — four wrapped lines of caveat
+      // in a page HEADER, which pushed the stat row below the fold and made the column read
+      // as a footnote with a chart in it. Neither fact is dropped: both are computed
+      // (`complianceTrendModel.js`) and both arrive here, on the mark, which is the move
+      // `stateKeys`' own 44 words of caveat already made and what DESIGN.md means by the Tip
+      // being the app's answer to "what is this". The coverage ALSO rides on every point's
+      // hover card (`view.notes`), so the denominator is a hover away from the figure it
+      // qualifies rather than only at the bottom of the column.
+      tip(tipMark(), [
+        "One point per successful sync, at the percentage Wiz scored then. Recorded going "
+          + "forward only: the stored posture is overwritten on every sync, so this series "
+          + "cannot be reconstructed for syncs that ran before it was being kept.",
+        "A framework with no score at a sync breaks the line rather than dropping to zero — "
+          + "NO_RESOURCES and NO_POLICIES are the opposite of everything failing.",
+        // The concrete baseline, not a general statement about axes: a truncated axis is
+        // legitimate to exactly the extent that the reader can find out where it starts.
+        view.baseline,
+        // What the latest percentage is a share of, and whether that denominator moved —
+        // the one way a rising line here can mean the opposite of what it looks like.
+        view.foot,
+      ].filter(Boolean))),
+    view.draw
+      ? el("div", { class: "comp-trend-box" }, canvas)
+      : el("div", { class: "chart-empty", role: "status" }, view.reason),
+    // A GAP IS NOT A ZERO, said in words wherever the line breaks or begins in mid-air.
+    view.gappy
+      ? el("p", { class: "comp-strip-note" },
+          "Some syncs in this window recorded no percentage here. Those points are gaps, "
+          + "not zeros.")
+      : null,
+    // WHICH FIGURE THE LINE IS, where the hero above it is a different one — the 5Rs case,
+    // and the only place on this page two percentages legitimately describe one framework.
+    // Caller-supplied rather than derived here: `fiveRsDerived` is the one guard that decides
+    // when that swap applies, and a second opinion about it here is how the hero and this
+    // sentence would come to disagree.
+    note ? el("p", { class: "comp-strip-note" }, note) : null,
+    // What population the SERIES describes, where that differs from the page around it.
+    view.scopeNote ? el("p", { class: "comp-strip-note" }, view.scopeNote) : null,
+    // THE SAME `view.points`/`view.series` THE CHART WRAPPER READS BELOW, named once above
+    // and handed to both — `gas_shared/ui/chartTable.js`'s one rule. Only where the chart
+    // actually draws: a dangling table beside an empty box discloses nothing.
+    view.draw
+      ? chartTable({
+        canvas,
+        caption: title,
+        model: trendTableModel(view.points, view.series, { format: "pct" }),
+      })
+      : null,
+    tree ? stateKeys(tree) : null,
+  );
+
+  if (view.draw) {
+    loadCharts().then((charts) => {
+      if (!canvas.isConnected) return;
+      requestAnimationFrame(() => charts.trendLine(
+        canvas,
+        view.points.map((pt) => ({ x: pt.at })),
+        {
+          // No axis title: the card's own heading names the figure, and a rotated title in
+          // a 160px-tall chart clips — the same call `coverCurve`'s own note describes.
+          yLabel: "",
+          percent: true,
+          // The window the MODEL computed, so the axis the reader sees and the sentence
+          // under it disclosing that axis come from one number rather than two.
+          yRange: view.range,
+          series: seriesData(view.points, view.series),
+          pointNotes: view.notes,
+        },
+      ));
+    }).catch(() => {
+      if (!canvas.isConnected) return;
+      chartUnavailable(canvas);
+    });
+  }
+  return card;
 }
 
 /** A Control is a graph query over the landscape, a cloud rule is a Rego evaluation against one

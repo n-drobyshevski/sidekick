@@ -18,17 +18,27 @@
 // null percentage with a reason (NO_RESOURCES, NO_POLICIES), and both are the opposite of
 // "we checked and everything failed". Every cell here goes through postureCell(), which
 // renders a state pill rather than a 0% meter — the Honest-State principle, and the reason
-// the strip has four segments instead of two. postureCell(), checksCell(), stateStrip() and
-// subcategoryDetail() now live in complianceShared.js, so this file and
-// complianceOverview.js call the same code rather than drifting into two.
+// the state keys name four states instead of two. postureCell(), checksCell(),
+// complianceTrendCard() and subcategoryDetail() now live in complianceShared.js, so this
+// file and complianceOverview.js call the same code rather than drifting into two.
 //
 // THE REGISTER LISTS ONLY WHAT WAS EVALUATED — scored subcategories, and under them the
 // policies that ran. buildFrameworkTree does that filtering (see its header), which is why
 // nothing in this file re-checks a `state`. Two things went with it: the `?state=` filter,
 // because the states it filtered to no longer have rows, and the strip's buttons with it.
-// The strip stays as the header's summary and is now the one place the dropped
-// subcategories are counted — a register showing twelve of twenty rows has to say twenty
-// somewhere, or it is quietly claiming the landscape is smaller than it is.
+// The state COUNTS stay and are still the one place the dropped subcategories are counted —
+// a register showing twelve of twenty rows has to say twenty somewhere, or it is quietly
+// claiming the landscape is smaller than it is. They sit under the header's chart now
+// (`stateKeys`, complianceShared.js); the four-segment bar they used to be drawn as is gone,
+// because the header's second column is worth more as the posture trend than as a picture of
+// four numbers printed beside it.
+//
+// WHAT THE HEADER'S SECOND COLUMN HOLDS NOW: this framework's own percentage at every sync
+// that recorded one (`complianceTrendCard`, drawing `data.complianceTrend`). It is a
+// recorded series and not a derived one — the posture tab is overwritten wholesale on every
+// sync, so nothing stored can be re-read as history — which is why it starts empty on a
+// register that has not synced since the column shipped, and says so rather than drawing a
+// landscape at zero.
 //
 // THE PROJECT SWITCHER REACHES THIS PAGE, and it did not used to. Everything here is a
 // percentage Wiz computed, not a row this app can filter: a posture row is keyed by
@@ -62,10 +72,11 @@ import {
   pageHeader, sectionLabel, segmented, sevBadge, skeletonStack, statRow,
 } from "../ui.js";
 import {
-  checksCell, complianceHero, extChip, fiveRsDerived, postureAbsenceHint, postureCell,
-  postureScopeNote, STATES, STATE_ORDER,
-  stateStrip, subcategoryDetail,
+  checksCell, complianceHero, complianceTrendCard, extChip, fiveRsDerived,
+  postureAbsenceHint, postureCell, postureScopeNote, STATES, STATE_ORDER,
+  subcategoryDetail,
 } from "./complianceShared.js";
+import { frameworkSeries } from "../complianceTrendModel.js";
 // STATE_ORDER survives the filter's removal as the key order for summing a stateCounts map
 // — the header's "scored of N" denominator. STATES still names the framework-level state in
 // the hero, which can be unscored even when its subcategories are not.
@@ -387,7 +398,34 @@ export async function renderCompliance(main, params, ctx) {
         meterNode: scored ? heroMeter : null,
         sub: heroSubKids,
       }),
-      aside: stateStrip(tree),
+      // THE HEADER'S SECOND COLUMN IS THE TREND NOW, not the four-segment state bar that used
+      // to sit here. The bar drew this sync's subcategory states; the chart draws this
+      // framework's own percentage at every sync recorded, which is the question a reader
+      // opens a compliance register with. The state counts the bar carried are still under
+      // it — `complianceTrendCard` renders `stateKeys` from the same tree.
+      //
+      // ONE SERIES: the framework in view, named for itself. The reader picked it from the
+      // control above, and every other framework's current figure is one click away on the
+      // Overview's rail.
+      aside: complianceTrendCard({
+        tree,
+        title: "Posture over time",
+        label: `${tree.name} compliance posture at each sync, as a percentage`,
+        points: data.complianceTrend || [],
+        series: frameworkSeries(tree.frameworkId, tree.name),
+        postureScope: data.postureScope,
+        // WIZ'S OWN SCORE IS WHAT HAS A HISTORY, and on the 5Rs that is not the number in
+        // the hero. `fiveRsPosture.ts` derives the hero's percentage from the rules currently
+        // in AI scope and not disabled in Wiz — a reading that moves when an operator pins a
+        // rule, so it describes today's scope and cannot be attributed to a sync that ran
+        // under a different one. The series records the figure that can be: Wiz's own, for
+        // the full framework. Unstated, a hero at 99% over a line at 85% reads as a bug.
+        note: derived
+          ? `The line is Wiz's own score for the full framework. The ${heroPct}% above is `
+            + "derived here from the rules in AI scope now, which is a different question "
+            + "and not one a past sync can be asked."
+          : null,
+      }),
       stats: [
         statRow("Categories", String(tree.categories.length), "in this framework"),
         statRow(

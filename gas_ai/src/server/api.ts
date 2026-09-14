@@ -139,6 +139,7 @@ import { CANDIDATE_CATEGORIES, registerScopeSignature } from "../domain/register
 import * as settingsImpact from "../domain/settingsImpact";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
+import { compliancePostureTrendFromHistory } from "../domain/complianceTrend";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { conditionHolds, conditionState } from "../domain/riskConditions";
 import {
@@ -2175,6 +2176,25 @@ function cachedComplianceModel(): Rec {
         // mirror to reconcile against — computing it here instead buys nothing but risk.
         fiveRsPosture,
         coverage: coverageSummary(trees, merged),
+        // POSTURE OVER TIME — one point per sync, every framework plus the cross-framework
+        // mean, read off `sync_history`'s own column (domain/complianceTrend.ts). It replaces
+        // the state strip that used to sit beside the hero: that strip drew the LATEST sync's
+        // subcategory states as a four-segment bar, which answers "what did Wiz score" and
+        // never "is this getting better", the question a compliance register is actually
+        // opened with.
+        //
+        // Shipped whole, with every framework's series in the same array, because the page
+        // switches framework client-side off one fetch (the `?framework=` control rebuilds
+        // from `data`, it does not re-call). One array of at most 90 points holding a handful
+        // of frameworks is smaller than the trees beside it.
+        //
+        // REGISTER-WIDE EVEN UNDER A PROJECT VIEW, and the card says so rather than quietly
+        // drawing the landscape's history under a project filter. `scopedPosture` re-asks Wiz
+        // for the project in view, which is how every OTHER figure on this page narrows — but
+        // the past cannot be re-asked, and a history row carries no asset id to re-slice by.
+        // `postureScope` beside it already carries the project and domain in force, so the
+        // card reads its disclaimer off the field the rest of the page already trusts.
+        complianceTrend: compliancePostureTrendFromHistory(syncStore.syncHistory()),
         // WHICH POPULATION every figure above describes, and — when a project view is set
         // but the numbers are still the register's — why. The page prints this beside the
         // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
