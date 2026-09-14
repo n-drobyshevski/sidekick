@@ -27,6 +27,14 @@ So each table is written as two files -- ``<table>.csv`` and ``<table>.schema.js
 schema verbatim -- and read back through that schema rather than through inference.
 ``tests/test_csvstore.py`` is that paragraph as a test: the confusion matrix over a reloaded
 register must be identical to the one over the Delta tables it came from.
+
+The register is three tables now: ``findings_raw`` (bronze), ``vuln_ledger`` and ``metrics``.
+``metrics`` is one CSV holding every published family -- the ``scan`` commit record and every
+gold family, told apart by its ``family`` column -- so a row's columns outside its own family
+are legitimately NULL on every row that is not that family, not just on ``sast``. That is a
+much larger source of sparse NULLs than any single gold table used to carry alone, which is
+exactly why the sidecar schema (rather than inference) is what keeps them typed instead of
+collapsing into ``false``/``0``.
 -------------------------------------------------------------------------------------------
 
 Three entry points, and they compose:
@@ -67,7 +75,7 @@ from pyspark.sql.types import (
 import run_pipeline
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "1.0-devsecops"
+MODULE_VERSION = "3.0-devsecops"
 
 #: Every table, in the order a reader wants them. Taken from ``run_pipeline`` rather than
 #: restated, so this and the ``Tables`` dataclass cannot drift -- a table added to one and not
@@ -85,8 +93,9 @@ SCHEMA_SUFFIX = ".schema.json"
 #: Written **last** by every export, and checked by every load.
 #:
 #: A Delta commit is atomic; a directory of CSVs and sidecars is not. A run that dies half way
-#: through an export leaves the ledger from this scan beside gold tables from the last one, and
-#: the next run would restore that mixture and reconcile from a state that never existed.
+#: through an export leaves the ledger from this scan beside a ``metrics`` table (gold and the
+#: scan commit record together) from the last one, and the next run would restore that mixture
+#: and reconcile from a state that never existed.
 #:
 #: The manifest cannot make the write atomic, but it can make a torn one **detectable**: it
 #: records the module version and a row count per table, and it is written only after every
@@ -100,9 +109,9 @@ MANIFEST = "_manifest.json"
 def table_basename(reference: str) -> str:
     """The bare table name behind either reference form.
 
-    ``cat.schema.wiz_sca_metrics_mttr`` and ``delta.`/vol/reg/wiz_sca_metrics_mttr``` both
-    yield ``wiz_sca_metrics_mttr``, so the CSV is named after the table in both storage modes
-    and an export can be moved between them.
+    ``cat.schema.wiz_sca_metrics`` and ``delta.`/vol/reg/wiz_sca_metrics``` both yield
+    ``wiz_sca_metrics``, so the CSV is named after the table in both storage modes and an
+    export can be moved between them.
     """
     path = run_pipeline.as_path(reference)
     if path is not None:
@@ -268,12 +277,12 @@ def load(
     prefix: str = "",
     *,
     attrs: Optional[Sequence[str]] = None,
-    required: Iterable[str] = ("scans", "ledger"),
+    required: Iterable[str] = ("metrics", "ledger"),
 ) -> run_pipeline.Tables:
     """Register every exported table as a session temp view and return a ``Tables`` for them.
 
-    The view is named exactly as the table was -- ``wiz_sca_metrics_mttr``, not ``v_mttr`` --
-    so the returned ``Tables`` is interchangeable with a catalog-backed or path-backed one and
+    The view is named exactly as the table was -- ``wiz_sca_metrics``, not ``v_mttr`` -- so
+    the returned ``Tables`` is interchangeable with a catalog-backed or path-backed one and
     nothing downstream can tell the difference. ``panels.context`` relies on precisely that.
 
     A missing CSV becomes an **empty view with the right schema** when the sidecar is there, and
@@ -326,17 +335,16 @@ def load(
 
 
 def _table_name(attr: str) -> str:
-    """``Tables`` attribute -> unprefixed table name, from run_pipeline's own constants."""
+    """``Tables`` attribute -> unprefixed table name, from run_pipeline's own constants.
+
+    Three entries now, one per ``Tables`` field: bronze, ledger and ``metrics`` -- the single
+    table that carries the commit record and every gold family together, told apart by
+    ``family``. There is no separate name per gold family any more.
+    """
     return {
         "bronze": run_pipeline.BRONZE_TABLE,
-        "silver": run_pipeline.SILVER_TABLE,
         "ledger": run_pipeline.LEDGER_TABLE,
-        "scans": run_pipeline.SCANS_TABLE,
-        "mttr": run_pipeline.GOLD_MTTR,
-        "program": run_pipeline.GOLD_PROGRAM,
-        "capacity": run_pipeline.GOLD_CAPACITY,
-        "sensitivity": run_pipeline.GOLD_SENSITIVITY,
-        "assets": run_pipeline.GOLD_ASSETS,
+        "metrics": run_pipeline.METRICS_TABLE,
     }[attr]
 
 

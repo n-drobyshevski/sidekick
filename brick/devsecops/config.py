@@ -39,7 +39,7 @@ from typing import Dict, Tuple
 # whichever came first and you get half of one pipeline and half of the other. A version
 # string that cannot collide turns that into a refusal instead of a wrong number, and
 # `check_deployment` additionally requires every module to come from THIS directory.
-PIPELINE_VERSION = "1.0-devsecops"
+PIPELINE_VERSION = "3.0-devsecops"
 MODULE_VERSION = PIPELINE_VERSION
 
 # ---- Severity taxonomy ----

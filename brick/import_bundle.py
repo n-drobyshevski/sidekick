@@ -17,9 +17,11 @@ optionally gzipped:
     {"kind": "wiz-sidekick-migration", "version": 1, "exported_at": ...,
      "scans": [...], "ledger": [...], "episodes": [...], "mttr_history": [...]}
 
-**What it writes.** ``<prefix>vuln_ledger`` and ``<prefix>scans``. Nothing else: bronze and
-silver stay empty, because the bundle carries reconciled lifecycles rather than raw findings,
-and the gold tables are produced by the next ordinary run from the ledger this seeds.
+**What it writes.** ``<prefix>vuln_ledger``, and the ``family='scan'`` rows of
+``<prefix>metrics`` -- the same commit-record shape ``run_pipeline.record_scan`` writes on an
+ordinary run. Nothing else: bronze stays empty and no gold family is written, because the
+bundle carries reconciled lifecycles rather than raw findings, and gold is produced by the
+next ordinary run from the ledger this seeds.
 
 **Why the mapping is nearly free.** ``config.LEDGER_COLUMNS`` was written to mirror
 ``gas/src/domain/reconcile.ts``'s list, so 23 of GAS's 24 columns land 1:1. The three
@@ -71,7 +73,7 @@ import run_pipeline
 from config import STATUS_OPEN, STATUS_RESOLVED
 
 # See config.PIPELINE_VERSION: every module in the folder must report the same version.
-MODULE_VERSION = "2.3"
+MODULE_VERSION = "3.0"
 
 # The interchange contract, shared with gas/src/domain/importMerge.ts and
 # wiz_dashboard/data/migrate.py. Bumping either of these is a coordinated change across
@@ -393,16 +395,24 @@ _RAW_SCANS_SCHEMA = StructType(
         StructField("new_count", LongType()),
         StructField("resolved_count", LongType()),
         StructField("reopened_count", LongType()),
+        StructField("family", StringType()),
     ]
 )
 
 
 def scans_frame(spark: SparkSession, bundle: dict, *, scope: str) -> DataFrame:
-    """The bundle's run log as a frame matching ``run_pipeline.SCANS_SCHEMA``.
+    """The bundle's run log as a frame matching ``run_pipeline.METRICS_BASE_SCHEMA``.
 
     ``mode``, ``shape``, ``raw_ref``, ``obs_ref`` and ``sealed`` are dropped: the first two are
     GAS scan-job bookkeeping, the refs are Drive ids meaningless off that deployment, and
     brick has no compaction for ``sealed`` to describe.
+
+    Every row is stamped ``family=run_pipeline.FAMILY_SCAN``: this frame is written into
+    ``tables.metrics`` now, the one table that also carries the gold families, and ``family``
+    is what makes a bundle-seeded commit record readable by ``recorded_scan`` /
+    ``scan_log_desc`` the same way ``record_scan``'s own rows are. The final ``select`` pins
+    the column set (and order) to exactly ``SCANS_COLUMNS + ["family"]``, which is
+    ``METRICS_BASE_SCHEMA``'s own column list.
     """
     rows = [
         (
@@ -414,18 +424,24 @@ def scans_frame(spark: SparkSession, bundle: dict, *, scope: str) -> DataFrame:
             _int(r.get("new_count")),
             _int(r.get("resolved_count")),
             _int(r.get("reopened_count")),
+            run_pipeline.FAMILY_SCAN,
         )
         for r in _rows(bundle, "scans")
     ]
     raw = spark.createDataFrame(rows, _RAW_SCANS_SCHEMA)
-    return raw.withColumn("scan_ts", F.col("scan_ts").cast("timestamp"))
+    return raw.withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).select(
+        *run_pipeline.SCANS_COLUMNS, "family"
+    )
 
 
 # --------------------------------------------------------------------------------- the write
 
-#: Every table the pipeline writes, as attributes of ``run_pipeline.Tables``. The lifecycle
-#: pair first, because they are the ones this module replaces outright.
-REGISTER_ATTRS = ("ledger", "scans") + tuple(run_pipeline.APPEND_TABLE_ATTRS.values())
+#: Every table the pipeline writes, as attributes of ``run_pipeline.Tables``. ``ledger`` and
+#: ``metrics`` first, because they are the two this module replaces outright -- the ledger with
+#: the bundle's lifecycles, ``metrics`` with the bundle's scan log (which empties whatever gold
+#: was sitting beside it, same as ``force`` already promised). ``bronze`` last: this module
+#: never writes it, only clears it on a forced import.
+REGISTER_ATTRS = ("ledger", "metrics", "bronze")
 
 
 def require_write_access(spark: SparkSession, table: str) -> None:
@@ -450,7 +466,8 @@ def require_write_access(spark: SparkSession, table: str) -> None:
             f"ownership or MANAGE, a strictly higher bar. Overwriting instead will not get "
             f"past this.\n\n"
             f"Ask an owner or metastore admin for the schema-level grant, which is also what "
-            f"the first scan after this import needs (it creates six more tables):\n"
+            f"the first scan after this import needs (it creates the one remaining table, "
+            f"bronze):\n"
             f"    GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE\n"
             f"      ON SCHEMA <catalog>.<schema> TO `<principal>`;\n\n"
             f"Or point --catalog / --schema / --table_prefix somewhere you own and seed there; "
@@ -495,7 +512,8 @@ def import_bundle(
     scope: str,
     force: bool = False,
 ) -> dict:
-    """Seed ``tables.ledger`` and ``tables.scans`` from the bundle. Returns a summary.
+    """Seed ``tables.ledger`` and the ``family='scan'`` rows of ``tables.metrics`` from the
+    bundle. Returns a summary.
 
     Refuses a register that already holds anything, because the two ways it could go wrong are
     both silent. Merging a seed into a ledger brick has already advanced would re-open
@@ -503,21 +521,30 @@ def import_bundle(
     put an older scan after a newer one and hand the disappearance guard the wrong previous
     scan.
 
-    ``force`` means **replace the register**, not merely the two tables. The gold tables are
-    the reason: they are appended per scan and computed from the ledger *as it stood at that
-    scan*, so rows written before the seed were derived from a ledger that started empty. Left
-    in place they would sit in `04_scan_history` as a run whose MTTR reads near zero, beside
-    seeded runs where it does not -- a contradiction with no visible cause. So a forced import
-    empties bronze, silver and all four gold tables too, and the register genuinely restarts
-    from the imported history.
+    ``force`` means **replace the register**, not merely the ledger. Gold is the reason: it is
+    appended per scan and computed from the ledger *as it stood at that scan*, so gold rows
+    written before the seed were derived from a ledger that started empty. Left in place they
+    would sit in `04_scan_history` as a run whose MTTR reads near zero, beside seeded runs where
+    it does not -- a contradiction with no visible cause. So a forced import empties bronze and
+    the whole ``metrics`` table -- the scan log and every gold family together, since they now
+    share one table -- and the register genuinely restarts from the imported history.
+    ``_replace`` on ``metrics`` is what does that emptying: it DELETEs the table before
+    appending the bundle's scan rows, so the gold rows a prior run wrote never survive it.
 
     They are emptied rather than dropped: DELETE needs only MODIFY and keeps the tables' grants,
     where DROP needs ownership and would silently take the grants with it.
+
+    **Order matters.** The ledger is replaced first. Then bronze -- never written by this
+    module, only ever cleared -- is cleared on its own, before ``metrics`` is touched: clearing
+    it as part of one loop over ``metrics`` and ``bronze`` together would run at the same time
+    as (or after) ``_replace`` writing ``metrics``, and the two are not safe to interleave.
+    ``metrics`` itself is replaced last, by ``_replace``, which is what empties whatever gold
+    was there.
     """
     run_pipeline.ensure_tables(spark, tables)
     # Before the expensive part, and before anything is written.
     require_write_access(spark, tables.ledger)
-    require_write_access(spark, tables.scans)
+    require_write_access(spark, tables.metrics)
 
     occupied = occupied_tables(spark, tables)
     if occupied and not force:
@@ -528,7 +555,8 @@ def import_bundle(
             f"would re-open resolved lifecycles and mis-order the scan log, and any gold rows "
             f"already written were computed from a ledger that started empty.\n"
             f"Pass --force_import=true to REPLACE the register -- it overwrites the ledger and "
-            f"the scan log and empties bronze, silver and the four gold tables."
+            f"empties bronze and the metrics table (the scan log together with every gold "
+            f"family)."
         )
 
     episodes, collapsed = selectable_episodes(bundle)
@@ -536,14 +564,16 @@ def import_bundle(
     scans = scans_frame(spark, bundle, scope=scope)
 
     _replace(spark, rows, tables.ledger)
-    _replace(spark, scans, tables.scans)
 
+    # bronze only, and before metrics: see "Order matters" above.
     cleared = {}
-    for attr in run_pipeline.APPEND_TABLE_ATTRS.values():
-        table = getattr(tables, attr)
-        if table in occupied:
-            spark.sql(f"DELETE FROM {table}")
-            cleared[table] = occupied[table]
+    if tables.bronze in occupied:
+        spark.sql(f"DELETE FROM {tables.bronze}")
+        cleared[tables.bronze] = occupied[tables.bronze]
+
+    _replace(spark, scans, tables.metrics)
+    if tables.metrics in occupied:
+        cleared[tables.metrics] = occupied[tables.metrics]
 
     hashed = rows.filter(F.col("vuln_key").startswith("h:")).count()
     span = rows.agg(
@@ -597,7 +627,7 @@ def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
             else ""
         )
     )
-    print(f"[import] {summary['scans']} scan(s) -> {tables.scans}")
+    print(f"[import] {summary['scans']} scan(s) -> {tables.metrics}")
     if summary["replaced"]:
         print(
             f"[import] REPLACED a non-empty register: "

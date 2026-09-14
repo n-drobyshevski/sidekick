@@ -833,10 +833,15 @@ def test_scope_travels_from_bronze_into_silver_and_gold(spark):
     df = metrics.classify_risk(silver(spark, [node()], scope="sca"), DEFAULT_RISK_RULE)
     assert df.collect()[0]["scope"] == "sca"
 
-    gold = metrics.with_scan_columns(metrics.confusion_matrix(df), SCAN_ID, SCAN_TS, "sca")
+    # "program" -- run_pipeline.FAMILY_PROGRAM -- because confusion_matrix is that family's
+    # frame; family is a required argument now that every family shares one table.
+    gold = metrics.with_scan_columns(
+        metrics.confusion_matrix(df), SCAN_ID, SCAN_TS, "sca", "program"
+    )
     row = rows_by_severity(gold)["OVERALL"]
     assert row["scope"] == "sca"
     assert row["scan_id"] == SCAN_ID
+    assert row["family"] == "program"
 
 
 def test_severity_ordering_puts_overall_last(spark):

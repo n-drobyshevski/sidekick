@@ -84,7 +84,7 @@ from config import (
 )
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "2.3"
+MODULE_VERSION = "3.0"
 
 SECONDS_PER_DAY = 86400
 
@@ -991,12 +991,21 @@ def observation_window_days(df: DataFrame, now_ts: str) -> DataFrame:
     )
 
 
-def with_scan_columns(df: DataFrame, scan_id: str, scan_ts: str, scope: str) -> DataFrame:
+def with_scan_columns(
+    df: DataFrame, scan_id: str, scan_ts: str, scope: str, family: str
+) -> DataFrame:
     """Stamp a gold frame with the scan it came from, so re-runs accumulate into a trend
-    instead of overwriting each other, and with the scope so the row says which population it
-    describes even when read outside its own table."""
+    instead of overwriting each other; with the scope, so the row says which population it
+    describes; and with the family, so it says which grain it is measured at.
+
+    ``family`` is required rather than defaulted because every family now shares one table and
+    the grains have no key in common: a row that did not say which family it belonged to would
+    be counted by every reader of every other one. No family is more likely than the rest here,
+    so there is no honest default -- see ``run_pipeline.GOLD_FAMILIES``.
+    """
     return (
         df.withColumn("scan_id", F.lit(scan_id))
         .withColumn("scan_ts", F.lit(scan_ts).cast("timestamp"))
         .withColumn("scope", F.lit(scope))
+        .withColumn("family", F.lit(family))
     )

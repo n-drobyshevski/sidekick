@@ -230,23 +230,40 @@ def _round(value):
 
 
 def dump_tables(spark, tables, target: Path) -> None:
-    """Every published table as sorted JSON, one file each.
+    """The ledger, then one file per metrics family, all as sorted JSON.
 
     Sorted by every column, so two runs of the same code produce byte-identical files and
     ``diff -r`` is a real answer to "did any number move?". ``scan_id`` and ``scan_ts`` are
     dropped: they are the run's identity, not its output, and they differ by construction.
     Floats are rounded -- see ``DUMP_SIGNIFICANT_DIGITS``.
+
+    ``metrics`` is one table now, holding the ``scan`` commit record and every gold family
+    together, told apart by ``family``. Dumping it as a single file would fold families with
+    disjoint keys and disjoint columns into one undifferentiated blob, where ``diff -r`` could
+    no longer say WHICH family moved -- so it is read once per
+    ``run_pipeline.METRICS_FAMILIES`` member, filtered on ``family``, and written as
+    ``metrics_<family>.json``. ``family`` itself is dropped from each file: it is constant
+    within a file by construction and would only be noise in the diff. This is what keeps the
+    per-family granularity ``diff -r`` had when mttr/program/capacity/sensitivity were
+    separate tables.
     """
+    import run_pipeline
+
     target.mkdir(parents=True, exist_ok=True)
     volatile = {"scan_id", "scan_ts", "first_scan_id", "last_scan_id", "risk_observed_at"}
-    for name in ("silver", "ledger", "scans", "mttr", "program", "capacity", "sensitivity"):
-        frame = spark.table(getattr(tables, name))
-        keep = [c for c in frame.columns if c not in volatile]
-        rows = [{k: _round(v) for k, v in r.asDict().items()} for r in frame.select(*keep).collect()]
+
+    def _dump(frame, path: Path, drop: frozenset = frozenset()) -> None:
+        keep = [c for c in frame.columns if c not in volatile and c not in drop]
+        rows = [
+            {k: _round(v) for k, v in r.asDict().items()} for r in frame.select(*keep).collect()
+        ]
         rows.sort(key=lambda r: json.dumps(r, sort_keys=True, default=str))
-        (target / f"{name}.json").write_text(
-            json.dumps(rows, indent=1, sort_keys=True, default=str)
-        )
+        path.write_text(json.dumps(rows, indent=1, sort_keys=True, default=str))
+
+    _dump(spark.table(tables.ledger), target / "ledger.json")
+    for family in run_pipeline.METRICS_FAMILIES:
+        frame = spark.table(tables.metrics).filter(f"family = '{family}'")
+        _dump(frame, target / f"metrics_{family}.json", drop=frozenset({"family"}))
 
 
 def run(args) -> dict:

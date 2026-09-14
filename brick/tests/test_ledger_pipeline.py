@@ -142,6 +142,13 @@ def sorted_rows(spark, table) -> list:
     )
 
 
+def family_rows(spark, tables, family):
+    """``metrics`` filtered to one family, with ``family`` dropped -- what
+    ``panels.register_views`` publishes as one view per family, and what every family-scoped
+    assertion below wants instead of reading the wide table directly."""
+    return spark.table(tables.metrics).where(F.col("family") == family).drop("family")
+
+
 # --------------------------------------------------------------------- persistence
 
 
@@ -168,7 +175,7 @@ def test_the_ledger_persists_across_scans(spark, tables):
     assert rows["id:f-3"]["status"] == STATUS_RESOLVED
     assert rows["id:f-3"]["resolution_src"] == "disappeared"
 
-    log = spark.table(tables.scans).orderBy("scan_ts").collect()
+    log = family_rows(spark, tables, run_pipeline.FAMILY_SCAN).orderBy("scan_ts").collect()
     assert [r["scan_id"] for r in log] == ["s1", "s2"]
     assert log[0]["new_count"] == 3
     assert log[1]["resolved_count"] == 2
@@ -186,7 +193,7 @@ def test_the_gold_tables_see_more_resolutions_than_the_snapshot(spark, tables):
     run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
 
     overall = (
-        spark.table(tables.mttr)
+        family_rows(spark, tables, run_pipeline.FAMILY_MTTR)
         .filter((F.col("scan_id") == "s2") & (F.col("severity") == "OVERALL"))
         .collect()[0]
     )
@@ -203,7 +210,7 @@ def test_capacity_flags_months_nobody_watched(spark, tables):
 
     months = {
         r["month"].strftime("%Y-%m"): r.asDict()
-        for r in spark.table(tables.capacity)
+        for r in family_rows(spark, tables, run_pipeline.FAMILY_CAPACITY)
         .filter((F.col("scan_id") == "s1") & (F.col("population") == POPULATION_ALL))
         .collect()
     }
@@ -218,7 +225,7 @@ def test_capacity_publishes_the_observed_close_count(spark, tables):
     run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
 
     may = (
-        spark.table(tables.capacity)
+        family_rows(spark, tables, run_pipeline.FAMILY_CAPACITY)
         .filter(
             (F.col("scan_id") == "s2")
             & (F.col("month") == "2026-05-01")
@@ -238,7 +245,7 @@ def test_capacity_carries_both_populations(spark, tables):
     low = node("f-2", hasCisaKevExploit=False, hasExploit=False, epssProbability=0.01)
     run_scan(spark, tables, [high, low], "s1", TS["s1"])
 
-    rows = spark.table(tables.capacity).filter(F.col("scan_id") == "s1")
+    rows = family_rows(spark, tables, run_pipeline.FAMILY_CAPACITY).filter(F.col("scan_id") == "s1")
     assert {r["population"] for r in rows.collect()} == {POPULATION_ALL, POPULATION_HIGH_RISK}
 
     def opened(population):
@@ -257,39 +264,14 @@ def test_capacity_carries_both_populations(spark, tables):
     )
 
 
-def test_rule_sensitivity_is_written_for_every_signal_subset(spark, tables):
-    """Coverage/efficiency are defined by the rule, so the rule's own leverage is published.
-
-    The two findings are chosen so the subsets cannot agree with each other: one fires on KEV
-    alone and on nothing else, the other has no EPSS at all and so is undecidable to any rule
-    that asks for one.
-    """
-    kev_only = node("f-1", hasCisaKevExploit=True, hasExploit=False, epssProbability=0.01)
-    no_epss = node("f-2", hasCisaKevExploit=False, hasExploit=False, epssProbability=None)
-    run_scan(spark, tables, [kev_only, no_epss], "s1", TS["s1"])
-
-    rows = {
-        r["rule_label"]: r.asDict()
-        for r in spark.table(tables.sensitivity).filter(F.col("scan_id") == "s1").collect()
-    }
-    assert set(rows) == {label for label, *_ in metrics.RULE_SUBSETS}
-    # Exactly one row is the configured rule, and by default that is all three signals.
-    assert [label for label, row in rows.items() if row["active"]] == ["All three"]
-
-    # KEV alone finds f-1 and decides f-2 is low -- nothing is unclassified.
-    assert (rows["KEV only"]["high_risk"], rows["KEV only"]["unknown"]) == (1, 0)
-    # Exploit alone fires on neither, and both flags were observed, so both are low.
-    assert (rows["Exploit only"]["high_risk"], rows["Exploit only"]["unknown"]) == (0, 0)
-    # EPSS alone: f-1 scores below the threshold, f-2 was never scored at all.
-    assert (rows["EPSS only"]["high_risk"], rows["EPSS only"]["unknown"]) == (0, 1)
-    # The active rule inherits both: f-1 is high on KEV, f-2 stays undecidable on the missing
-    # EPSS -- which is the whole point of the third value.
-    assert (rows["All three"]["high_risk"], rows["All three"]["unknown"]) == (1, 1)
-
-    # Nothing has been remediated, so every rate is either 0 or an empty denominator -- and an
-    # empty denominator is NULL, never 0.
-    assert rows["All three"]["coverage_pct"] == 0.0  # 0 TP of 1 high-risk
-    assert rows["All three"]["efficiency_pct"] is None  # nothing remediated at all
+# test_rule_sensitivity_is_written_for_every_signal_subset was deleted here (not edited to
+# pass). It encoded the claim that a scan publishes a `metrics_sensitivity` gold table/family
+# row per RULE_SUBSETS entry. That claim is gone by design (S1-T1): `metrics_sensitivity` is no
+# longer published at all -- `build_metrics`/`publish_gold` write only `mttr`, `program` and
+# `capacity` beside the `scan` commit row, and `panels.rule_sweep` recomputes the same
+# rule-sensitivity numbers on demand from `v_lifecycles` instead of reading a stored table. The
+# underlying arithmetic (`metrics.rule_sensitivity`) still exists and is still pinned, in
+# `test_metrics.py` -- what is gone is the *publish*, not the function.
 
 
 # ------------------------------------------------------------------------- guards
@@ -309,7 +291,7 @@ def test_a_rerun_of_the_same_scan_is_a_no_op(spark, tables, monkeypatch):
     monkeypatch.setattr(run_pipeline, "get_spark", lambda: spark)
     monkeypatch.setattr(sys, "argv", [
         "run_pipeline", "--catalog=x", "--scan_id=s1",
-        f"--schema={tables.scans.split('.')[0]}", "--wiz_api_url=https://example/graphql",
+        f"--schema={tables.metrics.split('.')[0]}", "--wiz_api_url=https://example/graphql",
     ])
     # resolve_namespace would build a different namespace, so drive the guard directly.
     assert run_pipeline.recorded_scan(spark, tables, "s1")["new_count"] == 1
@@ -326,8 +308,13 @@ def test_a_torn_write_is_detected(spark, tables):
     run_scan(spark, tables, [node("f-1")], "s1", TS["s1"])
     assert run_pipeline.ledger_already_merged(spark, tables, "s1") is True
 
-    # Simulate the crash: drop the scan log row, keep the merged ledger.
-    spark.sql(f"DELETE FROM {tables.scans} WHERE scan_id = 's1'")
+    # Simulate the crash: drop the scan log row, keep the merged ledger. Scoped to
+    # family='scan' -- deleting the whole scan_id would take the gold rows beside it too, which
+    # is not what a torn write between the MERGE and the commit record leaves behind.
+    spark.sql(
+        f"DELETE FROM {tables.metrics} WHERE scan_id = 's1' AND family = "
+        f"'{run_pipeline.FAMILY_SCAN}'"
+    )
     assert run_pipeline.recorded_scan(spark, tables, "s1") is None
     assert run_pipeline.ledger_already_merged(spark, tables, "s1") is True
 
@@ -350,7 +337,10 @@ def test_the_scope_guard_survives_a_round_trip_through_the_scan_log(spark, table
     rows = ledger_rows(spark, tables)
     assert rows["id:f-1"]["status"] == STATUS_OPEN, "MEDIUM was not scanned, so not resolved"
 
-    stored = {r["scan_id"]: r["severities"] for r in spark.table(tables.scans).collect()}
+    stored = {
+        r["scan_id"]: r["severities"]
+        for r in family_rows(spark, tables, run_pipeline.FAMILY_SCAN).collect()
+    }
     assert stored["s1"] == "CRITICAL,HIGH,MEDIUM"
     assert stored["s2"] == "CRITICAL,HIGH"
     assert run_pipeline.parse_severities(stored["s2"]) == ["CRITICAL", "HIGH"]
@@ -447,16 +437,15 @@ def test_metrics_run_unchanged_against_the_ledger(spark, tables):
 
 
 def test_the_clustered_tables_declare_their_clustering(spark, tables):
-    """The ledger clusters on the MERGE key; bronze and silver on what every read filters by.
+    """The ledger clusters on the MERGE key; bronze on what every read filters by.
 
     `run_scan` goes through the real creation path, so this is also the test that the tables
-    are created at all -- silver and bronze have no entry in `ensure_tables`.
+    are created at all -- bronze has no entry in `ensure_tables` (see `ingest_to_bronze`).
     """
     run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
 
     assert detail(spark, tables.ledger)["clusteringColumns"] == ["vuln_key"]
     assert detail(spark, tables.bronze)["clusteringColumns"] == ["scan_id"]
-    assert detail(spark, tables.silver)["clusteringColumns"] == ["scan_id"]
 
 
 def test_appending_a_scan_does_not_drop_the_clustering(spark, tables):
@@ -474,7 +463,6 @@ def test_appending_a_scan_does_not_drop_the_clustering(spark, tables):
     for table, key in (
         (tables.ledger, "vuln_key"),
         (tables.bronze, "scan_id"),
-        (tables.silver, "scan_id"),
     ):
         assert detail(spark, table)["clusteringColumns"] == [key], table
 
@@ -482,17 +470,15 @@ def test_appending_a_scan_does_not_drop_the_clustering(spark, tables):
 def test_only_the_ledger_carries_deletion_vectors(spark, tables):
     """Deletion vectors are what stop the MERGE rewriting whole files, so the ledger has them.
 
-    Bronze and silver are append-only and deliberately do not: it buys them nothing, and it
-    keeps them at reader version 1 where any Delta client can still read them. The property is
-    set explicitly on all three because Databricks and open-source Delta default it differently
-    for clustered tables, and a cluster configured unlike the tests is how a number stops
-    being reproducible.
+    Bronze is append-only and deliberately does not: it buys nothing, and it keeps bronze at
+    reader version 1 where any Delta client can still read it. The property is set explicitly
+    on both because Databricks and open-source Delta default it differently for clustered
+    tables, and a cluster configured unlike the tests is how a number stops being reproducible.
     """
     run_scan(spark, tables, [node("f-1")], "s1", TS["s1"])
 
     assert detail(spark, tables.ledger)["properties"]["delta.enableDeletionVectors"] == "true"
-    for table in (tables.bronze, tables.silver):
-        assert detail(spark, table)["properties"]["delta.enableDeletionVectors"] == "false", table
+    assert detail(spark, tables.bronze)["properties"]["delta.enableDeletionVectors"] == "false"
 
     # The consequence worth pinning: only the ledger raises the reader requirement.
     assert detail(spark, tables.ledger)["minReaderVersion"] == 3
@@ -508,13 +494,12 @@ def test_maintain_optimizes_every_clustered_table_and_changes_no_number(spark, t
     run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
     run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
 
-    watched = [tables.ledger, tables.silver, tables.bronze, tables.mttr, tables.program,
-               tables.capacity, tables.sensitivity, tables.scans]
+    watched = [tables.ledger, tables.bronze, tables.metrics]
     before = {t: sorted_rows(spark, t) for t in watched}
 
     optimized = run_pipeline.maintain(spark, tables)
 
-    assert set(optimized) == {tables.ledger, tables.bronze, tables.silver}
+    assert set(optimized) == {tables.ledger, tables.bronze}
     assert {t: sorted_rows(spark, t) for t in watched} == before
     # And the layout survives being optimized, which is the point of running it.
     assert detail(spark, tables.ledger)["clusteringColumns"] == ["vuln_key"]
@@ -534,7 +519,7 @@ def test_maintain_skips_tables_that_do_not_exist_yet(spark, tables):
 
 @pytest.fixture
 def path_tables(spark, tmp_path):
-    """The same eight tables, in a directory instead of a schema."""
+    """The same three tables, in a directory instead of a schema."""
     tbl = run_pipeline.resolve_tables("", "os", argv=[], data_path=str(tmp_path / "register"))
     run_pipeline.ensure_tables(spark, tbl)
     return tbl
@@ -553,22 +538,31 @@ def test_a_path_backed_register_holds_the_same_ledger(spark, tables, path_tables
         run_scan(spark, tbl, [node("f-1")], "s2", TS["s2"])
 
     assert ledger_rows(spark, path_tables) == ledger_rows(spark, tables)
-    assert sorted_rows(spark, path_tables.mttr) == sorted_rows(spark, tables.mttr)
-    assert sorted_rows(spark, path_tables.program) == sorted_rows(spark, tables.program)
-    assert sorted_rows(spark, path_tables.scans) == sorted_rows(spark, tables.scans)
+    # One comparison over the whole wide `metrics` table (every family, `family` included)
+    # rather than one per gold table: there is only one table now, and comparing it whole is
+    # what actually pins that nothing about the union -- family tag included -- diverges
+    # between the two storage modes.
+    assert sorted_rows(spark, path_tables.metrics) == sorted_rows(spark, tables.metrics)
 
 
-def test_a_path_backed_register_does_not_store_silver(spark, path_tables):
-    """Silver is a pure projection of bronze, so a path-backed register does not keep a copy.
+def test_no_register_stores_silver(spark, tables, path_tables):
+    """Silver is a pure projection of bronze, computed in memory per scan and never persisted --
+    in either storage mode. `panels._silver_frame` rebuilds the findings views from bronze with
+    the same function the pipeline uses to build silver for a scan in the first place.
 
-    Bronze is what has to survive; `panels._silver_frame` rebuilds the findings views from it
-    with the same function the pipeline would have written silver with.
+    Checked against both a schema-backed and a path-backed register: only the three declared
+    tables exist, and the pre-three-table silver table name -- the bronze name with its `_raw`
+    suffix dropped -- is absent from both.
     """
+    run_scan(spark, tables, [node("f-1")], "s1", TS["s1"])
     run_scan(spark, path_tables, [node("f-1")], "s1", TS["s1"])
 
-    assert run_pipeline.table_exists(spark, path_tables.bronze)
-    assert run_pipeline.table_exists(spark, path_tables.ledger)
-    assert not run_pipeline.table_exists(spark, path_tables.silver)
+    for tbl in (tables, path_tables):
+        assert run_pipeline.table_exists(spark, tbl.bronze)
+        assert run_pipeline.table_exists(spark, tbl.ledger)
+        assert run_pipeline.table_exists(spark, tbl.metrics)
+        legacy_silver = tbl.bronze.replace("findings_raw", "findings")
+        assert not run_pipeline.table_exists(spark, legacy_silver)
 
 
 def test_a_path_backed_register_is_clustered_the_same_way(spark, path_tables):

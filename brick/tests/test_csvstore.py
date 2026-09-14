@@ -95,6 +95,16 @@ def rows_of(frame, order):
     return [r.asDict() for r in frame.orderBy(*order).collect()]
 
 
+def sorted_rows(frame) -> list:
+    """Every row of a frame, ordered deterministically by its own string form.
+
+    Used where the columns differ from row to row -- ``metrics`` is one table holding every
+    family, so there is no single ``order`` tuple every row can be sorted by -- rather than
+    naming a per-family column list here too.
+    """
+    return sorted(str(r.asDict()) for r in frame.collect())
+
+
 # ------------------------------------------------------------------ the property that matters
 
 
@@ -227,26 +237,23 @@ def test_an_empty_field_is_the_only_null_a_boolean_accepts(spark):
 
 
 def test_every_gold_frame_survives_the_round_trip(spark, register):
-    """Not just the ledger: MTTR, program, capacity and sensitivity, row for row.
+    """Not just the ledger: the scan commit record and every gold family, row for row.
 
-    The gold tables carry the timestamps, the doubles and the NULL rates, so this is where a
-    ``mmcr`` of NULL coming back as 0.0 -- "we closed nothing" rather than "there was nothing
-    open" -- would surface.
+    ``metrics`` is one wide table now -- the commit record and every gold family together, told
+    apart by ``family`` -- so there is no longer one table per family to compare. Comparing the
+    whole thing, sorted (which sorts on every column, ``family`` included, since rows from
+    different families share no other column to order by), is what actually pins that nothing
+    about the union is lost or reshuffled on the round trip; per-family reads would only prove
+    each family survives in isolation. This is also where a ``mmcr`` of NULL coming back as 0.0
+    -- "we closed nothing" rather than "there was nothing open" -- would surface.
     """
     tables, target = register
     csvstore.export(spark, tables, target)
     loaded = csvstore.load(spark, target, "wiz_os_")
 
-    for attr, order in (
-        ("mttr", ["scan_id", "severity"]),
-        ("program", ["scan_id", "severity"]),
-        ("capacity", ["scan_id", "population", "month"]),
-        ("sensitivity", ["scan_id", "rule_label"]),
-        ("scans", ["scan_id"]),
-    ):
-        expected = rows_of(spark.table(getattr(tables, attr)), order)
-        actual = rows_of(spark.table(getattr(loaded, attr)), order)
-        assert actual == expected, f"{attr} did not round-trip"
+    expected = sorted_rows(spark.table(tables.metrics))
+    actual = sorted_rows(spark.table(loaded.metrics))
+    assert actual == expected, "metrics did not round-trip"
 
 
 def test_bronze_is_excluded_unless_asked_for(spark, register):
@@ -267,10 +274,10 @@ def test_load_names_its_views_after_the_tables(spark, register):
     csvstore.export(spark, tables, target)
     loaded = csvstore.load(spark, target, "wiz_os_")
 
-    assert loaded.mttr == "wiz_os_metrics_mttr"
+    assert loaded.metrics == "wiz_os_metrics"
     assert loaded.ledger == "wiz_os_vuln_ledger"
     # And it is readable by that name through plain SQL, which is what a notebook cell does.
-    assert spark.sql("SELECT count(*) AS n FROM wiz_os_metrics_mttr").first()["n"] > 0
+    assert spark.sql("SELECT count(*) AS n FROM wiz_os_metrics").first()["n"] > 0
 
 
 def test_load_refuses_a_directory_that_is_not_a_register(spark, tmp_path):
@@ -285,7 +292,7 @@ def test_a_csv_edited_apart_from_its_sidecar_is_refused(spark, register):
     guessing which column is which is how a rate ends up computed over the wrong column."""
     tables, target = register
     csvstore.export(spark, tables, target)
-    path = Path(target) / "wiz_os_metrics_mttr.csv"
+    path = Path(target) / "wiz_os_metrics.csv"
     lines = path.read_text().splitlines()
     path.write_text("\n".join(["not,the,right,header"] + lines[1:]))
 
@@ -354,10 +361,10 @@ def test_a_timestamp_comes_back_as_a_timestamp(spark, register):
 
 def test_table_basename_reads_both_reference_forms():
     """One export directory has to be readable whichever storage mode wrote it."""
-    assert csvstore.table_basename("cat.sch.wiz_sca_metrics_mttr") == "wiz_sca_metrics_mttr"
+    assert csvstore.table_basename("cat.sch.wiz_sca_metrics") == "wiz_sca_metrics"
     assert (
-        csvstore.table_basename("delta.`/Volumes/c/s/v/reg/wiz_sca_metrics_mttr`")
-        == "wiz_sca_metrics_mttr"
+        csvstore.table_basename("delta.`/Volumes/c/s/v/reg/wiz_sca_metrics`")
+        == "wiz_sca_metrics"
     )
 
 
@@ -448,10 +455,12 @@ def test_two_scans_reconcile_through_csv_alone(spark, tmp_path, monkeypatch):
         "its last_scan_id did not survive the round-trip"
     )
 
-    # Two scans on the log, and the gold tables accumulated rather than being replaced.
-    assert spark.table(after.scans).count() == 2
+    # Two scans on the log, and the gold rows accumulated rather than being replaced.
+    scan_rows = spark.table(after.metrics).where(F.col("family") == run_pipeline.FAMILY_SCAN)
+    assert scan_rows.count() == 2
+    mttr_rows = spark.table(after.metrics).where(F.col("family") == run_pipeline.FAMILY_MTTR)
     assert (
-        spark.table(after.mttr).select("scan_id").distinct().count() == 2
+        mttr_rows.select("scan_id").distinct().count() == 2
     ), "the gold trend did not survive the round-trip"
 
 

@@ -94,7 +94,7 @@ def test_identifiers_are_validated(monkeypatch):
 
 
 def test_tables_are_prefixed_with_the_scope_by_default(monkeypatch):
-    """A shared schema makes bare `findings` / `metrics_capacity` a collision risk, and the
+    """A shared schema makes a bare `findings_raw` / `metrics` a collision risk, and the
     scope in the name keeps an OS run and an all-types run in separate tables."""
     monkeypatch.delenv("TABLE_PREFIX", raising=False)
     monkeypatch.setattr(dbx, "widget", lambda name: "")
@@ -103,20 +103,20 @@ def test_tables_are_prefixed_with_the_scope_by_default(monkeypatch):
     ns = "some_catalog.some_schema"
     tables = run_pipeline.resolve_tables(ns, "os", argv=[])
     assert tables.bronze == f"{ns}.wiz_os_findings_raw"
-    assert tables.silver == f"{ns}.wiz_os_findings"
-    assert tables.capacity == f"{ns}.wiz_os_metrics_capacity"
+    assert tables.ledger == f"{ns}.wiz_os_vuln_ledger"
+    assert tables.metrics == f"{ns}.wiz_os_metrics"
 
-    assert run_pipeline.resolve_tables(ns, "all", argv=[]).silver == f"{ns}.wiz_all_findings"
+    assert run_pipeline.resolve_tables(ns, "all", argv=[]).metrics == f"{ns}.wiz_all_metrics"
 
 
 def test_table_prefix_is_overridable_and_can_be_empty(monkeypatch):
     monkeypatch.setattr(dbx, "widget", lambda name: "")
     assert (
-        run_pipeline.resolve_tables("c.s", "os", argv=["--table_prefix=sec_"]).mttr
-        == "c.s.sec_metrics_mttr"
+        run_pipeline.resolve_tables("c.s", "os", argv=["--table_prefix=sec_"]).metrics
+        == "c.s.sec_metrics"
     )
     bare = run_pipeline.resolve_tables("c.s", "os", argv=["--table_prefix="])
-    assert bare.mttr == "c.s.metrics_mttr"
+    assert bare.metrics == "c.s.metrics"
 
 
 def test_scope_defaults_to_os_and_rejects_unknown_values(monkeypatch):
@@ -502,7 +502,7 @@ def test_data_path_produces_delta_path_references(monkeypatch):
     assert tables.ledger == "delta.`/Volumes/c/s/v/brick/wiz_os_vuln_ledger`"
     # The directory names match what a catalog run would call the tables, so the README's
     # CREATE TABLE ... LOCATION recipe is one statement per directory with nothing renamed.
-    assert tables.capacity.endswith("/wiz_os_metrics_capacity`")
+    assert tables.metrics.endswith("/wiz_os_metrics`")
 
 
 def test_as_path_recovers_the_path_and_leaves_catalog_names_alone():

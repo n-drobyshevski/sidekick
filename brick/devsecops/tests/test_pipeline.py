@@ -94,7 +94,7 @@ def test_identifiers_are_validated(monkeypatch):
 
 
 def test_tables_are_prefixed_with_the_scope_by_default(monkeypatch):
-    """A shared schema makes bare `findings` / `metrics_capacity` a collision risk, and the
+    """A shared schema makes a bare `findings_raw` / `metrics` a collision risk, and the
     scope in the name keeps an OS run and an all-types run in separate tables."""
     monkeypatch.delenv("TABLE_PREFIX", raising=False)
     monkeypatch.setattr(dbx, "widget", lambda name: "")
@@ -103,23 +103,22 @@ def test_tables_are_prefixed_with_the_scope_by_default(monkeypatch):
     ns = "some_catalog.some_schema"
     tables = run_pipeline.resolve_tables(ns, "sca", argv=[])
     assert tables.bronze == f"{ns}.wiz_sca_findings_raw"
-    assert tables.silver == f"{ns}.wiz_sca_findings"
-    assert tables.capacity == f"{ns}.wiz_sca_metrics_capacity"
-    assert tables.assets == f"{ns}.wiz_sca_metrics_assets"
+    assert tables.ledger == f"{ns}.wiz_sca_vuln_ledger"
+    assert tables.metrics == f"{ns}.wiz_sca_metrics"
 
     # The two registers never share a table. They measure populations with different positive
     # classes -- see the README -- so blending them would be meaningless as well as wrong.
-    assert run_pipeline.resolve_tables(ns, "sast", argv=[]).silver == f"{ns}.wiz_sast_findings"
+    assert run_pipeline.resolve_tables(ns, "sast", argv=[]).metrics == f"{ns}.wiz_sast_metrics"
 
 
 def test_table_prefix_is_overridable_and_can_be_empty(monkeypatch):
     monkeypatch.setattr(dbx, "widget", lambda name: "")
     assert (
-        run_pipeline.resolve_tables("c.s", "sca", argv=["--table_prefix=sec_"]).mttr
-        == "c.s.sec_metrics_mttr"
+        run_pipeline.resolve_tables("c.s", "sca", argv=["--table_prefix=sec_"]).metrics
+        == "c.s.sec_metrics"
     )
     bare = run_pipeline.resolve_tables("c.s", "sca", argv=["--table_prefix="])
-    assert bare.mttr == "c.s.metrics_mttr"
+    assert bare.metrics == "c.s.metrics"
 
 
 def test_scope_defaults_to_sca_and_rejects_unknown_values(monkeypatch):
@@ -611,7 +610,7 @@ def test_data_path_produces_delta_path_references(monkeypatch):
     assert tables.ledger == "delta.`/Volumes/c/s/v/code/wiz_sca_vuln_ledger`"
     # The directory names match what a catalog run would call the tables, so the README's
     # CREATE TABLE ... LOCATION recipe is one statement per directory with nothing renamed.
-    assert tables.capacity.endswith("/wiz_sca_metrics_capacity`")
+    assert tables.metrics.endswith("/wiz_sca_metrics`")
 
 
 def test_as_path_recovers_the_path_and_leaves_catalog_names_alone():

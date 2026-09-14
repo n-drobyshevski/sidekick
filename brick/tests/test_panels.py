@@ -29,7 +29,15 @@ sys.path.insert(0, str(BRICK_DIR))
 
 import metrics  # noqa: E402
 import panels  # noqa: E402
-from config import OVERALL, SEVERITY_ORDER, SLA_TARGETS, RiskRule  # noqa: E402
+import run_pipeline  # noqa: E402
+from config import (  # noqa: E402
+    OVERALL,
+    POPULATION_ALL,
+    POPULATION_HIGH_RISK,
+    SEVERITY_ORDER,
+    SLA_TARGETS,
+    RiskRule,
+)
 
 
 @pytest.fixture(scope="module")
@@ -530,7 +538,8 @@ def test_high_risk_capacity_is_a_subset_of_the_published_months(spark_, ctx):
 
 def test_the_context_pins_the_newest_scan(spark_, ctx):
     latest = spark_.sql(
-        f"SELECT max_by(scan_id, scan_ts) AS s FROM {ctx.tables.mttr}"
+        f"SELECT max_by(scan_id, scan_ts) AS s FROM {ctx.tables.metrics} "
+        f"WHERE family = '{run_pipeline.FAMILY_MTTR}'"
     ).collect()[0]["s"]
     assert ctx.scan_id == latest == "scan-2"
 
@@ -607,9 +616,10 @@ def test_the_actionable_clock_reaches_gold_without_disturbing_the_first(spark_, 
     against the frame the pipeline joined into, over the real register rather than a
     synthetic one.
 
-    ``write_append`` passes ``mergeSchema``, which is what lets these columns land in a
-    ``metrics_mttr`` an earlier version created. That is a property of the writer; what is
-    checked here is the only thing a test can see, which is that they arrived.
+    ``write_append`` passes ``mergeSchema``, which is what lets these columns land in the
+    ``mttr`` family of ``metrics`` alongside every other family's, all NULL there. That is a
+    property of the writer; what is checked here is the only thing a test can see, which is
+    that they arrived.
     """
     import ledger as ledger_mod
     from pyspark.sql import functions as F
@@ -620,8 +630,10 @@ def test_the_actionable_clock_reaches_gold_without_disturbing_the_first(spark_, 
         "actionable_sla_compliant", "actionable_sla_pct",
     ]
 
-    gold = spark_.table(ctx.tables.mttr).where(
-        (F.col("scan_id") == ctx.scan_id) & (F.col("scope") == ctx.scope)
+    gold = spark_.table(ctx.tables.metrics).where(
+        (F.col("family") == run_pipeline.FAMILY_MTTR)
+        & (F.col("scan_id") == ctx.scan_id)
+        & (F.col("scope") == ctx.scope)
     )
     published = {r["severity"]: r.asDict() for r in gold.collect()}
     assert len(published) == gold.count(), "a severity is published twice"
@@ -659,58 +671,36 @@ def test_the_actionable_clock_reaches_gold_without_disturbing_the_first(spark_, 
 
 def test_scan_pin_check_agrees_across_the_gold_tables(spark_, ctx):
     rows = {r["source"]: r["scan_id"] for r in panels.scan_pin_check(spark_, ctx).collect()}
-    gold = {rows[k] for k in ("context", "metrics_mttr", "metrics_program", "metrics_capacity")}
+    gold = {rows[k] for k in ("context", "mttr", "program", "capacity")}
     assert gold == {ctx.scan_id}
 
 
-# ------------------------------------------------------- the 2.0 -> 2.1 capacity upgrade
+# --------------------------------------------------------------- the capacity population
 
 
-def test_a_capacity_table_from_2_0_still_opens(spark_, ctx):
-    """A register last scanned under 2.0 has no ``population`` column at all.
+def test_every_capacity_row_carries_a_real_population(spark_, ctx):
+    """Replaces ``test_a_capacity_table_from_2_0_still_opens`` and
+    ``test_a_null_population_counts_as_all_findings`` (deleted).
 
-    Not NULL -- absent, because the column arrives by schema evolution on the first 2.1+ write.
-    Every page's cell 1 builds ``v_capacity`` by filtering on it, so before this was handled the
-    whole notebook set died on ``UNRESOLVED_COLUMN.WITH_SUGGESTION`` naming neither the version
-    that wrote the table nor the scan that would fix it. Those rows are all-findings rows, which
-    is what the README's upgrade note says to assume.
+    Both encoded the claim that a table a 2.0 pipeline wrote -- with no ``population`` column
+    at all, or with the column present but NULL on every row -- still opens under 2.1's
+    ``register_views``, via a compatibility shim (``"population" not in columns`` / a
+    ``coalesce``) that read either shape as all-findings. That claim is gone because its
+    premise is: there is no table a 2.0 register wrote any more. ``metrics`` is a table this
+    wave introduced -- one table, one schema, written only by this pipeline version -- so no
+    register can be "last scanned under 2.0" with rows in it. The shim was deleted from
+    ``register_views`` along with the tests that exercised it.
+
+    What is left to check is the invariant the shim used to paper over: every ``capacity`` row
+    this pipeline itself publishes carries a real, recognised ``population`` -- never NULL,
+    never anything else -- because ``v_capacity`` / ``v_capacity_high_risk`` split on it with no
+    fallback branch of their own.
     """
-    from dataclasses import replace
+    from pyspark.sql import functions as F
 
-    # No mode("overwrite") anywhere in this file: Delta's DataSource V2 catalog answers
-    # "does not support truncate in batch mode", so a fresh table plus an explicit DROP is
-    # the only shape that runs both here and on a cluster.
-    legacy = f"{ctx.tables.capacity}_v20"
-    spark_.sql(f"DROP TABLE IF EXISTS {legacy}")
-    spark_.table(ctx.tables.capacity).drop("population").write.format("delta").saveAsTable(
-        legacy
+    rows = spark_.table(ctx.tables.metrics).where(
+        F.col("family") == run_pipeline.FAMILY_CAPACITY
     )
-    assert "population" not in spark_.table(legacy).columns
-
-    panels.context(spark_, tables=replace(ctx.tables, capacity=legacy))
-    rows = spark_.sql("SELECT * FROM v_capacity").count()
-    assert rows > 0, "a pre-2.1 capacity table must read as all-findings, not as nothing"
-    assert spark_.sql("SELECT * FROM v_capacity_high_risk").count() == 0
-
-    spark_.sql(f"DROP TABLE {legacy}")
-    panels.context(spark_, tables=ctx.tables)  # restore the views for later tests
-
-
-def test_a_null_population_counts_as_all_findings(spark_, ctx):
-    """The other half of the same upgrade: the column exists, but 2.0-written rows are NULL.
-    Left uncoalesced they drop out of both filtered views and the old scans vanish silently."""
-    from dataclasses import replace
-
-    import pyspark.sql.functions as F
-
-    mixed = f"{ctx.tables.capacity}_mixed"
-    spark_.sql(f"DROP TABLE IF EXISTS {mixed}")
-    spark_.table(ctx.tables.capacity).withColumn(
-        "population", F.lit(None).cast("string")
-    ).write.format("delta").saveAsTable(mixed)
-
-    panels.context(spark_, tables=replace(ctx.tables, capacity=mixed))
-    assert spark_.sql("SELECT * FROM v_capacity").count() > 0
-
-    spark_.sql(f"DROP TABLE {mixed}")
-    panels.context(spark_, tables=ctx.tables)
+    populations = {r["population"] for r in rows.select("population").distinct().collect()}
+    assert None not in populations, "a capacity row published with no population"
+    assert populations <= {POPULATION_ALL, POPULATION_HIGH_RISK}

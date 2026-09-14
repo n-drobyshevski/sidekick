@@ -61,8 +61,12 @@ def page_only(name: str) -> None:
 
 
 #: Append-only tables. A read that names one of these without pinning a scan blends every run.
-APPEND_ONLY = ("findings_raw", "wiz_os_findings", "metrics_mttr", "metrics_program",
-               "metrics_capacity")
+#: Three tables now, not five: ``metrics_mttr``/``metrics_program``/``metrics_capacity`` were
+#: three separate gold tables under 2.x and are one ``metrics`` table (family-columned) now, and
+#: ``wiz_os_findings`` never matched a table this pipeline writes (bronze is ``findings_raw``,
+#: unprefixed at the module level -- the prefix is a ``resolve_tables`` concern) -- both stale
+#: entries that happened not to fire because no cell ever named them.
+APPEND_ONLY = ("findings_raw", "metrics")
 
 #: ``Chart ▸`` keys whose value must be a real column. The rest are chart-editor settings.
 COLUMN_KEYS = {"X", "Y", "Group by", "Order", "Rows", "Columns", "Value"}
@@ -296,13 +300,25 @@ def test_no_cell_reads_an_append_only_table_directly(notebook):
 
     An unpinned read of a gold table returns every run that has ever happened, and renders as a
     chart that looks entirely reasonable.
+
+    Scoped to ``%sql`` cells, not every code cell: this used to sweep ``cells(doc, "code")``
+    whole, which was safe only because every APPEND_ONLY name was compound
+    (``metrics_mttr`` / ``metrics_program`` / ``metrics_capacity``) and matched nothing else in
+    these notebooks. The three-table collapse (this wave) makes the gold table's bare name
+    ``metrics`` -- which is also the ``metrics.py`` module, imported by that name in 06's
+    "module versions" diagnostic cell (``import config, dbx, ingest, ledger, metrics,
+    run_pipeline``) -- so the whole-cell sweep now flags a Python import list as an unpinned
+    table read. That claim was never true: ``test_no_notebook_does_its_own_thinking`` already
+    forbids a bare ``spark.sql(`` outside a ``%sql`` cell in every page, so a Python cell has no
+    way to read any table directly in the first place, and ``%sql`` is where the real risk --
+    and the one this test's own docstring describes, a chart drawn from an unpinned read -- has
+    always lived. ``sql_cells`` narrows to exactly that surface without weakening it.
     """
     name, doc = notebook
-    for cell in cells(doc, "code"):
-        text = source(cell)
+    for cell, query in sql_cells(doc):
         for table in APPEND_ONLY:
-            if table in text:
-                assert "scan_id =" in text or "v_" in text, (
+            if table in query:
+                assert "scan_id =" in query or "v_" in query, (
                     f"{name}: {title(cell)!r} names {table} without a pin or a view"
                 )
 

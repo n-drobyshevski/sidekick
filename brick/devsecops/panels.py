@@ -6,13 +6,19 @@ owns -- a panel joins, filters and shapes; it does not re-derive.
 --------------------------------------------------------------------------------------------
 THE RULE THIS MODULE EXISTS FOR: **the scan pin is a property of the session, not of a query.**
 
-The gold tables are appended, never overwritten, so every read has to name a scan or it silently
-blends every run that has ever happened into one plausible-looking chart. Rather than repeat
-``scan_id = (SELECT max_by(scan_id, scan_ts) ...)`` in every cell and hope, ``context()``
-registers session temp views that are *already* pinned, scoped and severity-filtered:
+Every published row of every scan lands in ONE appended table, ``metrics``, with the grains
+told apart by ``family`` (``mttr``, ``program``, ``capacity``, ``assets``, ``scan``). Nothing is
+overwritten, so every read has to name a scan or it silently blends every run that has ever
+happened into one plausible-looking chart -- and it has to name a family, or it blends grains
+that share no key. Rather than repeat ``scan_id = (SELECT max_by(scan_id, scan_ts) ...)`` in
+every cell and hope, ``context()`` registers session temp views that are *already* pinned,
+scoped, family-filtered and severity-filtered:
 
-    v_mttr  v_program  v_capacity  v_findings  v_scans  v_lifecycles     <- one scan
-    v_mttr_all  v_program_all  v_findings_all                            <- deliberately not
+    v_mttr  v_program  v_capacity  v_assets  v_findings  v_scans  v_lifecycles   <- one scan
+    v_mttr_all  v_program_all  v_findings_all                          <- deliberately not
+
+One view per grain, and nothing downstream reads ``metrics`` directly: forgetting the ``family``
+filter is then impossible rather than merely unlikely.
 
 ``max_by(scan_id, scan_ts)`` appears exactly once in this file and nowhere else in the repo. The
 three ``_all`` views are the only unpinned surface and are named so a reader can see it.
@@ -56,7 +62,7 @@ from config import (
 )
 
 # See config.PIPELINE_VERSION: every module in a deployment must come from the same upload.
-MODULE_VERSION = "1.0-devsecops"
+MODULE_VERSION = "3.0-devsecops"
 
 SEVERITIES: Tuple[str, ...] = tuple(SEVERITY_ORDER)
 
@@ -338,11 +344,22 @@ def context(
 
 
 def _resolve_scan(spark, tables, scope) -> Tuple[str, str]:
-    """The scan every pinned view is pinned to. **The only ``max_by`` in the repo.**"""
+    """The scan every pinned view is pinned to. **The only ``max_by`` in the repo.**
+
+    Asked of the ``mttr`` family rather than of the commit record: a scan is there to be *read*
+    once its metrics were published, and the commit record is a separate Delta commit that lands
+    before them (see ``run_pipeline.gold_missing``). Pinning to a commit record whose gold append
+    never happened would open every page on a scan that has nothing in it.
+
+    ``ensure_tables`` creates ``metrics`` empty, so **the table always exists now**: a register
+    that has never been scanned reaches the "no rows for scope" message below -- which names the
+    notebook that fixes it -- instead of TABLE_OR_VIEW_NOT_FOUND naming a table that was never
+    going to be there.
+    """
     override = _param("scan_id")
+    published = spark.table(tables.metrics).where(F.col("family") == run_pipeline.FAMILY_MTTR)
     row = (
-        spark.table(tables.mttr)
-        .where(F.col("scope") == scope)
+        published.where(F.col("scope") == scope)
         .selectExpr("max_by(scan_id, scan_ts) AS s", "max(scan_ts) AS ts")
         .collect()
     )
@@ -350,24 +367,25 @@ def _resolve_scan(spark, tables, scope) -> Tuple[str, str]:
     latest_ts = row[0]["ts"] if row else None
     if override:
         ts = (
-            spark.table(tables.mttr)
-            .where(F.col("scan_id") == override)
+            published.where(F.col("scan_id") == override)
             .selectExpr("max(scan_ts) AS ts")
             .collect()
         )
         if not ts or ts[0]["ts"] is None:
-            raise RuntimeError(f"scan_id={override!r} is not in {tables.mttr}")
+            raise RuntimeError(
+                f"scan_id={override!r} is not in {tables.metrics} with family='mttr'"
+            )
         return override, ts[0]["ts"].isoformat()
     if latest_id is None:
         raise RuntimeError(
-            f"{tables.mttr} has no rows for scope={scope!r} -- run the pipeline "
-            "(notebook 06) before opening a read notebook."
+            f"{tables.metrics} has no family='mttr' rows for scope={scope!r} -- run the "
+            "pipeline (notebook 06) before opening a read notebook."
         )
     return latest_id, latest_ts.isoformat()
 
 
 def register_views(spark: SparkSession, ctx: Ctx) -> None:
-    """The nine session views. Everything downstream reads these and nothing else.
+    """One session view per grain. Everything downstream reads these and nothing else.
 
     Built through the DataFrame API rather than ``CREATE VIEW ... SELECT``: ``SELECT * EXCEPT``
     is a Databricks SQL extension open-source Spark cannot parse, and the tests run on
@@ -398,34 +416,34 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
             "sla_compliant", F.when(~fabricated, F.col("sla_compliant"))
         ).withColumn("sla_pct", F.when(~fabricated, F.col("sla_pct")))
 
-    mttr = spark.table(ctx.tables.mttr)
+    # ONE read of `metrics`, split by family. Every published row of every grain lives in this
+    # table, so a family frame is WIDE: it carries the other families' columns too, NULL on
+    # every row, which is what `mergeSchema` on the single union append leaves behind. That
+    # costs nothing downstream because no `%sql` cell uses `SELECT *` and every panel selects
+    # its columns explicitly -- the only thing the extra columns could break is a reader who
+    # blends grains, and the family filter is what makes that impossible.
+    #
+    # `family` itself is dropped: it is how the view was chosen, not something a page displays,
+    # and leaving it on would be the one column tempting a cell to re-filter a view that is
+    # already one grain.
+    published = spark.table(ctx.tables.metrics)
+
+    def family(name: str) -> DataFrame:
+        return published.where(F.col("family") == name).drop("family")
+
+    mttr = family(run_pipeline.FAMILY_MTTR)
     ranked(sla_fixed(mttr.where(pinned & keeps_overall))).createOrReplaceTempView("v_mttr")
     ranked(sla_fixed(mttr.where(scoped & keeps_overall))).createOrReplaceTempView("v_mttr_all")
 
-    program = spark.table(ctx.tables.program)
+    program = family(run_pipeline.FAMILY_PROGRAM)
     ranked(program.where(pinned & keeps_overall)).createOrReplaceTempView("v_program")
     ranked(program.where(scoped & keeps_overall)).createOrReplaceTempView("v_program_all")
 
-    # The capacity table carries every month twice, once per `population`, so a view over it
+    # The capacity family carries every month twice, once per `population`, so a view over it
     # MUST pick one -- an unfiltered `v_capacity` would double every count and turn the
     # `SELECT DISTINCT` in program_headline into two rows. Split rather than filtered at each
     # call site, so forgetting the predicate is impossible rather than merely unlikely.
-    #
-    # A table written by 2.0 has no `population` column *at all* -- not NULL, absent -- because
-    # it arrives by schema evolution on the first 2.1+ write, and a register that has not been
-    # re-scanned since has never had one. Every row in such a table is an all-findings row,
-    # which is exactly what the README's upgrade note says to assume; applying it here rather
-    # than leaving it to each reader means the page opens on real numbers instead of dying in
-    # cell 1 with `UNRESOLVED_COLUMN population`, an error naming neither the version that wrote
-    # the table nor the scan that would fix it. The coalesce covers the other half of the same
-    # upgrade: rows that DO have the column but land NULL, mixed in beside 2.1 rows.
-    capacity_raw = spark.table(ctx.tables.capacity)
-    capacity_table = capacity_raw.withColumn(
-        "population",
-        F.lit(POPULATION_ALL)
-        if "population" not in capacity_raw.columns
-        else F.coalesce(F.col("population"), F.lit(POPULATION_ALL)),
-    ).where(pinned)
+    capacity_table = family(run_pipeline.FAMILY_CAPACITY).where(pinned)
     capacity_table.where(F.col("population") == POPULATION_ALL).createOrReplaceTempView(
         "v_capacity"
     )
@@ -433,27 +451,26 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
         F.col("population") == POPULATION_HIGH_RISK
     ).createOrReplaceTempView("v_capacity_high_risk")
 
-    # P2P v5's asset family, split by population for exactly the same reason capacity is: the
-    # table carries every asset group twice and an unfiltered view would double every count.
+    # P2P v5's asset family, split by population for exactly the same reason capacity is: it
+    # carries every asset group twice and an unfiltered view would double every count.
     #
-    # Absent on a register last scanned before 2.3, and absent rather than empty -- so the view
-    # is skipped instead of failing cell 1. A page that reads it then dies naming `v_assets`,
-    # which is a better error than one naming a table nobody has heard of.
-    if run_pipeline.table_exists(spark, ctx.tables.assets):
-        assets_table = spark.table(ctx.tables.assets).where(pinned)
-        assets_table.where(F.col("population") == POPULATION_ALL).createOrReplaceTempView(
-            "v_assets"
-        )
-        assets_table.where(
-            F.col("population") == POPULATION_HIGH_RISK
-        ).createOrReplaceTempView("v_assets_high_risk")
+    # Registered unconditionally, unlike the old `metrics_assets` table it replaces: gold is one
+    # append of every family's union, so a scan that published `mttr` published `assets` too,
+    # and `_resolve_scan` has already refused the only state in which neither exists. There is
+    # no "the assets table was never created" case left to skip the views for.
+    assets_table = family(run_pipeline.FAMILY_ASSETS).where(pinned)
+    assets_table.where(F.col("population") == POPULATION_ALL).createOrReplaceTempView("v_assets")
+    assets_table.where(
+        F.col("population") == POPULATION_HIGH_RISK
+    ).createOrReplaceTempView("v_assets_high_risk")
 
     silver = _silver_frame(spark, ctx)
     silver.where(pinned & sev_only).createOrReplaceTempView("v_findings")
     silver.where(scoped & sev_only).createOrReplaceTempView("v_findings_all")
 
-    # The run log. One row per run, never appended to twice, so there is nothing to pin.
-    spark.table(ctx.tables.scans).where(scoped).createOrReplaceTempView("v_scans")
+    # The run log: the commit record for each reconcile, one row per run, never appended to
+    # twice, so there is nothing to pin.
+    family(run_pipeline.FAMILY_SCAN).where(scoped).createOrReplaceTempView("v_scans")
 
     # The ledger is MERGEd current state and carries no scan_id -- pinned by construction of the
     # table, not by a predicate. `now_ts` is the *scan's* timestamp, not wall-clock: every age,
@@ -470,18 +487,16 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
 def _silver_frame(spark: SparkSession, ctx: Ctx) -> DataFrame:
     """The per-scan findings snapshot behind ``v_findings`` / ``v_findings_all``.
 
-    Read from the silver table when there is one, and **derived from bronze when there is not**.
-    A path-backed register does not persist silver -- it is a pure projection of bronze, so
-    storing it would be a second copy of data the register already holds -- and this is the one
-    place that has to know. ``metrics.silver_findings`` is the same function the pipeline
-    writes silver with, so the two routes cannot disagree about what a finding is.
+    **Derived from bronze, always.** Silver is not a table in any storage mode: it is a pure
+    projection of bronze, so storing it would be a second copy of data the register already
+    holds, and bronze is what must survive. ``metrics.silver_findings`` is the same function the
+    pipeline builds the in-memory silver frame with, so a page and a scan cannot disagree about
+    what a finding is.
 
     The classification is applied with ``ctx.rule`` rather than the rule the scan ran under,
     which matches how ``v_lifecycles`` is built two blocks below: changing the rule in a
     notebook should move both or neither.
     """
-    if run_pipeline.table_exists(spark, ctx.tables.silver):
-        return spark.table(ctx.tables.silver)
     bronze = spark.table(ctx.tables.bronze).where(F.col("scope") == ctx.scope)
     return metrics.classify_risk(metrics.silver_findings(bronze, ctx.scope), ctx.rule)
 
@@ -713,7 +728,7 @@ def severity_cards(spark: SparkSession, ctx: Ctx) -> DataFrame:
 
     Reads **two** scans by design -- a delta needs a baseline -- so it comes off ``v_mttr_all``
     and is on the deliberately-unpinned list. ``tracked`` is derived (``resolved + open``); the
-    gold table publishes no ``total`` column.
+    ``mttr`` family publishes no ``total`` column.
     """
     return spark.sql(
         f"""
@@ -753,7 +768,7 @@ def severity_table(spark: SparkSession, ctx: Ctx) -> DataFrame:
 def sla_extras(spark: SparkSession, ctx: Ctx, dim: str = "severity") -> DataFrame:
     """``open_past_sla`` and the naive p90, per severity or per any other dimension.
 
-    Computed here rather than read off the gold table because the gold table has neither. It is
+    Computed here rather than read off the ``mttr`` family, which publishes neither. It is
     also the one place the "rename the dimension into the severity slot" trick must **not** be
     used: ``mttr_by_severity`` looks the SLA target up from whatever sits in ``severity``, so a
     subscription name there yields a NULL target, a zeroed ``sla_compliant`` and a fabricated
@@ -887,10 +902,11 @@ def group_palette(spark: SparkSession, ctx: Ctx, dim: str, top_n: int = 5) -> Li
 def group_trend(spark: SparkSession, ctx: Ctx, dim: str, top_n: int = 5) -> DataFrame:
     """Open **findings** per group, per scan.
 
-    Findings, not lifecycles: the ledger holds no history by scan, so this comes off silver,
-    which is each scan's API snapshot. The difference is real and the caption says so -- a
-    group's series drops when its findings stop being *returned*, which is usually but not
-    always the same day they were remediated.
+    Findings, not lifecycles: the ledger holds no history by scan, so this comes off the
+    per-scan findings snapshot -- each scan's API rows, re-derived from bronze by
+    ``_silver_frame``. The difference is real and the caption says so -- a group's series drops
+    when its findings stop being *returned*, which is usually but not always the same day they
+    were remediated.
     """
     _check_dimension(dim)
     top = [r["group_value"] for r in group_mix(spark, ctx, dim, top_n).collect() if not r["is_other"]]
@@ -1046,11 +1062,11 @@ def severity_trend(spark: SparkSession, ctx: Ctx, column: str = "open") -> DataF
 def open_past_sla_trend(spark: SparkSession, ctx: Ctx) -> DataFrame:
     """Open findings past their SLA target, per scan.
 
-    Off silver, because that is the only thing brick keeps per scan -- so this counts the
-    findings the API *returned* that day, while the tile above it counts ledger lifecycles,
-    which include everything that has since disappeared. The two will not agree, and the gap is
-    exactly what the README calls "the size of what v1 was missing". The caption says so; do
-    not quietly reconcile them.
+    Off the per-scan findings snapshot, because the API rows of a scan are the only per-scan
+    population the register keeps -- so this counts the findings the API *returned* that day,
+    while the tile above it counts ledger lifecycles, which include everything that has since
+    disappeared. The two will not agree, and the gap is exactly what the README calls "the size
+    of what v1 was missing". The caption says so; do not quietly reconcile them.
 
     Rows with no SLA target leave both sides.
     """
@@ -1193,10 +1209,12 @@ def quadrant(spark: SparkSession, ctx: Ctx, which: str = "fn") -> DataFrame:
     ).orderBy(F.col("age_days").desc_nulls_last())
 
 
-# The seven non-empty subsets live in `metrics.subsets_for`, which both this page and the gold
-# table `metrics.rule_sensitivity` writes walk. One definition, because two would drift and the
-# failure would be a page whose sweep disagrees with the published table about what
-# "KEV or EPSS" means -- and it now has to answer for two different rules besides.
+# The seven non-empty subsets live in `metrics.subsets_for`, which both this page and
+# `metrics.rule_sensitivity` walk. The sweep is not published as a family -- it is recomputed
+# here from the lifecycles, which is why `metrics` carries no `sensitivity` grain -- and the two
+# still walk one definition, because two would drift and the failure would be a page that
+# disagrees with the transform about what "KEV or EPSS" means -- and it now has to answer for
+# two different rules besides.
 
 
 def rule_sweep(spark: SparkSession, ctx: Ctx) -> DataFrame:
@@ -1235,10 +1253,10 @@ def capacity(spark: SparkSession, ctx: Ctx, months: int = 12, high_risk_only: bo
 
     Both come straight off the published table now. This function used to recompute the
     high-risk variant here, because ``metrics.capacity_by_month`` had taken the flag since v2
-    and ``run_pipeline`` never passed it -- so the gold table only ever held the all-findings
-    figure. The pipeline now writes both, tagged by ``population``, which is where the
-    distinction belongs: a number recomputed in the presentation layer is one the SQL surface
-    cannot see and the next reader has to rediscover.
+    and ``run_pipeline`` never passed it -- so the published capacity rows only ever held the
+    all-findings figure. The pipeline now writes both, tagged by ``population``, which is where
+    the distinction belongs: a number recomputed in the presentation layer is one the SQL
+    surface cannot see and the next reader has to rediscover.
 
     ``closed_observed`` is only on the all-findings rows. Reconciliation's resolution count
     carries no risk label, so against the high-risk population it would cross-check a different
@@ -1263,8 +1281,8 @@ def capacity(spark: SparkSession, ctx: Ctx, months: int = 12, high_risk_only: bo
 def asset_profile(spark: SparkSession, ctx: Ctx, high_risk_only: bool = True) -> DataFrame:
     """P2P v5's asset table: density, footholds, half-life and capacity, per ecosystem.
 
-    Straight off the published gold table, like ``capacity`` and for the same reason -- a number
-    recomputed in the presentation layer is one the SQL surface cannot see.
+    Straight off the published ``assets`` family, like ``capacity`` and for the same reason -- a
+    number recomputed in the presentation layer is one the SQL surface cannot see.
 
     ``high_risk_only`` defaults to **True**, which is the opposite of ``capacity``'s default and
     is deliberate: v5's density chart (Fig. 10) counts everything, but every question the page
@@ -1291,8 +1309,8 @@ def asset_density(spark: SparkSession, ctx: Ctx) -> DataFrame:
 
     Two populations on one frame because that comparison is the finding: an ecosystem whose
     total density is high but whose high-risk density is not is a triage problem, and one where
-    the two are close is a supply-chain problem. Reading them off two separate tables is how
-    nobody notices.
+    the two are close is a supply-chain problem. Reading them off two separate views one at a
+    time is how nobody notices.
     """
     return spark.sql(
         f"""
@@ -1379,27 +1397,24 @@ def weakness_mix(spark: SparkSession, ctx: Ctx, limit: int = 15) -> DataFrame:
 
 
 def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
-    """Every table this deployment owns, with what is actually in it.
+    """Every table this deployment owns, with what is actually in it. There are three.
 
     ``scan_id`` is special-cased rather than looped over uniformly: the ledger is MERGEd
-    current state and has ``first_scan_id`` / ``last_scan_id`` instead, and the run log has a
-    ``scan_id`` but none of the gold columns.
+    current state and has ``first_scan_id`` / ``last_scan_id`` instead, while bronze and
+    ``metrics`` are scan-stamped. ``metrics`` is counted whole, every family together -- the
+    per-family breakdown is ``run_health``'s question, and an inventory answers "what is in the
+    table", not "what is in each grain of it".
 
     A table that does not exist is reported as a row with a NULL count rather than skipped or
-    raised on. A path-backed register has no silver by design, and "silver: absent" is the
-    honest thing for an inventory to say -- a page that dies with TABLE_OR_VIEW_NOT_FOUND, or
-    that quietly lists seven tables where there were eight, is worse in both directions.
+    raised on. Bronze is not created until the first ingest, so "absent" is the honest thing for
+    an inventory to say about a register nobody has scanned -- a page that dies with
+    TABLE_OR_VIEW_NOT_FOUND, or that quietly lists two tables where there were three, is worse
+    in both directions.
     """
     latest = {
         ctx.tables.bronze: "max_by(scan_id, scan_ts)",
-        ctx.tables.silver: "max_by(scan_id, scan_ts)",
-        ctx.tables.mttr: "max_by(scan_id, scan_ts)",
-        ctx.tables.program: "max_by(scan_id, scan_ts)",
-        ctx.tables.capacity: "max_by(scan_id, scan_ts)",
-        ctx.tables.sensitivity: "max_by(scan_id, scan_ts)",
-        ctx.tables.assets: "max_by(scan_id, scan_ts)",
-        ctx.tables.scans: "max_by(scan_id, scan_ts)",
         ctx.tables.ledger: "max(last_scan_id)",
+        ctx.tables.metrics: "max_by(scan_id, scan_ts)",
     }
     ts = {ctx.tables.ledger: "max(last_seen)"}
     out = None
@@ -1420,38 +1435,60 @@ def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
 
 
 def scan_pin_check(spark: SparkSession, ctx: Ctx) -> DataFrame:
-    """Do the four gold tables and the ledger agree on which scan is the latest?
+    """Do the gold families, the commit record and the ledger agree on which scan is latest?
 
-    They disagree when a run died between two writes. The pipeline refuses to start in that
-    state; this surfaces it *before* the next run hits it, and before somebody reads a page
-    whose halves come from different scans.
+    One row per **family** now, not per table: the tables are gone, so the question is asked of
+    ``metrics`` once per grain. The families cannot disagree with each other -- gold is a single
+    append of their union, so they commit together or not at all -- but ``scan`` is its own Delta
+    commit landing one statement after the MERGE and *before* that append, so "scan says s2,
+    mttr says s1" is exactly the torn write ``run_pipeline.gold_missing`` exists to resume from.
+    This surfaces it *before* the next run hits it, and before somebody reads a page whose
+    halves come from different scans.
     """
+    metrics_table = ctx.tables.metrics
     return spark.sql(
         f"""
         SELECT 'context' AS source, '{ctx.scan_id}' AS scan_id
-        UNION ALL SELECT 'metrics_mttr', (SELECT max_by(scan_id, scan_ts) FROM {ctx.tables.mttr})
-        UNION ALL SELECT 'metrics_program',
-                         (SELECT max_by(scan_id, scan_ts) FROM {ctx.tables.program})
-        UNION ALL SELECT 'metrics_capacity',
-                         (SELECT max_by(scan_id, scan_ts) FROM {ctx.tables.capacity})
-        UNION ALL SELECT 'metrics_sensitivity',
-                         (SELECT max_by(scan_id, scan_ts) FROM {ctx.tables.sensitivity})
-        UNION ALL SELECT 'scans', (SELECT max_by(scan_id, scan_ts) FROM {ctx.tables.scans})
-        UNION ALL SELECT 'vuln_ledger', (SELECT max(last_scan_id) FROM {ctx.tables.ledger})
+        UNION ALL SELECT '{run_pipeline.FAMILY_MTTR}',
+                         (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
+                           WHERE family = '{run_pipeline.FAMILY_MTTR}')
+        UNION ALL SELECT '{run_pipeline.FAMILY_PROGRAM}',
+                         (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
+                           WHERE family = '{run_pipeline.FAMILY_PROGRAM}')
+        UNION ALL SELECT '{run_pipeline.FAMILY_CAPACITY}',
+                         (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
+                           WHERE family = '{run_pipeline.FAMILY_CAPACITY}')
+        UNION ALL SELECT '{run_pipeline.FAMILY_ASSETS}',
+                         (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
+                           WHERE family = '{run_pipeline.FAMILY_ASSETS}')
+        UNION ALL SELECT '{run_pipeline.FAMILY_SCAN}',
+                         (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
+                           WHERE family = '{run_pipeline.FAMILY_SCAN}')
+        UNION ALL SELECT 'ledger', (SELECT max(last_scan_id) FROM {ctx.tables.ledger})
         """
     )
 
 
 def run_health(spark: SparkSession, ctx: Ctx) -> DataFrame:
-    """One row per scan: what each gold table holds for it, and whether the ledger saw it."""
+    """One row per scan: what each gold family holds for it, and whether the ledger saw it.
+
+    The counts are per family rather than per table, which is the same question asked of one
+    table: a scan whose commit record stands with zero ``mttr`` rows beside it is the torn write
+    the retry path resumes. The driving row still comes from ``v_scans``, i.e. from the commit
+    records themselves, so a scan that never committed is absent here rather than reported empty.
+    """
+    metrics_table = ctx.tables.metrics
     return spark.sql(
         f"""
         SELECT s.scan_id, s.scan_ts, s.total,
-               (SELECT count(*) FROM {ctx.tables.mttr} m WHERE m.scan_id = s.scan_id) AS mttr_rows,
-               (SELECT count(*) FROM {ctx.tables.program} p
-                 WHERE p.scan_id = s.scan_id) AS program_rows,
-               (SELECT count(*) FROM {ctx.tables.capacity} c
-                 WHERE c.scan_id = s.scan_id) AS capacity_rows,
+               (SELECT count(*) FROM {metrics_table} m WHERE m.scan_id = s.scan_id
+                 AND m.family = '{run_pipeline.FAMILY_MTTR}') AS mttr_rows,
+               (SELECT count(*) FROM {metrics_table} p WHERE p.scan_id = s.scan_id
+                 AND p.family = '{run_pipeline.FAMILY_PROGRAM}') AS program_rows,
+               (SELECT count(*) FROM {metrics_table} c WHERE c.scan_id = s.scan_id
+                 AND c.family = '{run_pipeline.FAMILY_CAPACITY}') AS capacity_rows,
+               (SELECT count(*) FROM {metrics_table} a WHERE a.scan_id = s.scan_id
+                 AND a.family = '{run_pipeline.FAMILY_ASSETS}') AS assets_rows,
                (SELECT count(*) FROM {ctx.tables.ledger} l
                  WHERE l.last_scan_id = s.scan_id) AS ledger_rows
         FROM v_scans s ORDER BY s.scan_ts DESC
@@ -1534,7 +1571,7 @@ OUTPUT_COLUMNS: Dict[str, Tuple[str, ...]] = {
     "scan_pin_check": ("source", "scan_id"),
     "run_health": (
         "scan_id", "scan_ts", "total", "mttr_rows", "program_rows", "capacity_rows",
-        "ledger_rows",
+        "assets_rows", "ledger_rows",
     ),
     # P2P v5. `window_months` and `assets_flowing` are on the contract deliberately: they are
     # what stops a confident-looking capacity split over three assets and one month passing

@@ -50,12 +50,12 @@ import pytest
 
 pytest.importorskip("delta", reason="catalog mode needs delta-spark for the ledger tables")
 
+from pyspark.sql import functions as F  # noqa: E402
+
 BRICK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BRICK_DIR))
 
-import metrics  # noqa: E402
 import run_pipeline  # noqa: E402
-from config import rule_for_scope  # noqa: E402
 from ingest import extract_nodes  # noqa: E402
 from ledger import LEDGER_SCHEMA  # noqa: E402
 
@@ -160,8 +160,7 @@ def test_the_session_catalog_is_the_one_the_conftest_installed(spark):
 
 def test_resolve_tables_qualifies_every_table_with_the_catalog():
     tables = run_pipeline.resolve_tables(NAMESPACE, SCOPE, argv=[])
-    for attr in ("bronze", "silver", "ledger", "scans", "mttr", "program", "capacity",
-                 "sensitivity"):
+    for attr in ("bronze", "ledger", "metrics"):
         name = getattr(tables, attr)
         assert name.startswith(f"{NAMESPACE}."), name
         assert name.count(".") == 2, name
@@ -272,12 +271,11 @@ def three_level_register(spark, uc_schema):
 
     create_clustered_by_ddl(spark, tables.ledger, LEDGER_SCHEMA, "ledger")
     # The ledger now exists, so `ensure_tables`' own `create_clustered` is a no-op and its
-    # second half -- the `scans` table, created by an empty-frame `saveAsTable` -- runs for real
-    # against the three-level name.
+    # second half -- the `metrics` table, created by an empty-frame `saveAsTable` -- runs for
+    # real against the three-level name. `metrics` needs no DDL substitute: it is created by a
+    # plain `saveAsTable`, not the `DeltaTable` builder that cannot parse three parts.
     run_pipeline.ensure_tables(spark, tables)
     create_clustered_by_ddl(spark, tables.bronze, run_pipeline.BRONZE_TABLE_SCHEMA, "bronze")
-
-    from pyspark.sql import functions as F
 
     def scan(scan_id, scan_ts, payload):
         rows = [(scan_id, scan_ts, SCOPE, i, json.dumps(n)) for i, n in enumerate(payload)]
@@ -286,21 +284,8 @@ def three_level_register(spark, uc_schema):
         ).withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).write.format("delta").mode(
             "append"
         ).option("mergeSchema", "true").saveAsTable(tables.bronze)
-        # Silver has no declared schema anywhere -- it is whatever `metrics.silver_findings`
-        # projects -- so it is created here from that same projection, under the same
-        # scope-appropriate rule `build_metrics` resolves, exactly as it does one line before it
-        # writes it.
-        create_clustered_by_ddl(
-            spark,
-            tables.silver,
-            metrics.classify_risk(
-                metrics.silver_findings(
-                    spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'"), SCOPE
-                ),
-                rule_for_scope(SCOPE),
-            ).schema,
-            "silver",
-        )
+        # Silver is not a table any more -- `build_metrics` computes it in memory from bronze,
+        # so there is nothing to precreate here.
         run_pipeline.build_metrics(
             spark, tables, scan_id, scan_ts, SCOPE, severities=SEVERITIES, summary=False
         )
@@ -318,8 +303,7 @@ def test_a_whole_register_lands_under_three_level_names(spark, three_level_regis
     writable, it is the same register.
     """
     tables = three_level_register
-    for attr in ("bronze", "silver", "ledger", "scans", "mttr", "program", "capacity",
-                 "sensitivity"):
+    for attr in ("bronze", "ledger", "metrics"):
         name = getattr(tables, attr)
         assert name.count(".") == 2, name
         assert run_pipeline.table_exists(spark, name), name
@@ -328,7 +312,8 @@ def test_a_whole_register_lands_under_three_level_names(spark, three_level_regis
     ledger = spark.table(tables.ledger)
     assert ledger.count() == FIXTURE_FINDINGS
 
-    scans = {r["scan_id"]: r for r in spark.table(tables.scans).collect()}
+    scan_rows = spark.table(tables.metrics).where(F.col("family") == run_pipeline.FAMILY_SCAN)
+    scans = {r["scan_id"]: r for r in scan_rows.collect()}
     assert set(scans) == {"uc-scan-1", "uc-scan-2"}
     assert scans["uc-scan-1"]["total"] == FIXTURE_FINDINGS
     assert scans["uc-scan-1"]["new_count"] == FIXTURE_FINDINGS
@@ -404,8 +389,8 @@ def test_an_unregistered_catalog_is_not_reached_at_all(spark, catalog):
     assert "spark_catalog requires a single-part namespace" in str(exists_exc.value)
 
     with pytest.raises(AnalysisException) as write_exc:
-        spark.createDataFrame([], run_pipeline.SCANS_SCHEMA).write.format("delta").mode(
+        spark.createDataFrame([], run_pipeline.METRICS_BASE_SCHEMA).write.format("delta").mode(
             "append"
-        ).saveAsTable(tables.scans)
+        ).saveAsTable(tables.metrics)
     assert "Couldn't find a catalog to handle the identifier" in str(write_exc.value)
-    assert tables.scans in str(write_exc.value)
+    assert tables.metrics in str(write_exc.value)

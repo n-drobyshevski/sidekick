@@ -262,8 +262,12 @@ class TestColumnMapping:
         assert rows[G1]["scan_ts"].isoformat() == "2026-07-01T05:00:00"
         assert rows[G1]["severities"] == "CRITICAL,HIGH"
         assert rows[G1]["scope"] == SCOPE
-        # mode / shape / raw_ref / obs_ref / sealed have no brick home.
-        assert set(frame.columns) == set(run_pipeline.SCANS_SCHEMA.replace(",", " ").split()[::2])
+        # mode / shape / raw_ref / obs_ref / sealed have no brick home. `scans_frame` now
+        # writes into `tables.metrics`, the same table the gold families share, so its columns
+        # are `METRICS_BASE_SCHEMA`'s (SCANS_SCHEMA plus `family`) rather than SCANS_SCHEMA's.
+        assert set(frame.columns) == set(
+            run_pipeline.METRICS_BASE_SCHEMA.replace(",", " ").split()[::2]
+        )
 
 
 # --------------------------------------------------------------------------- the episodes
@@ -370,7 +374,8 @@ class TestImport:
         # The h: count is the blast radius of the unrecoverable `component` column.
         assert summary["hashed_keys"] == 1
         assert spark.table(tables.ledger).count() == 3
-        assert spark.table(tables.scans).count() == 3
+        scan_rows = spark.table(tables.metrics).where(F.col("family") == run_pipeline.FAMILY_SCAN)
+        assert scan_rows.count() == 3
 
     def test_refuses_a_register_that_already_has_history(self, spark, tables):
         import_bundle.import_bundle(spark, tables, bundle(), scope=SCOPE)
@@ -383,7 +388,8 @@ class TestImport:
         summary = import_bundle.import_bundle(spark, tables, payload, scope=SCOPE, force=True)
         assert summary["ledger_rows"] == 1
         assert {r["vuln_key"] for r in spark.table(tables.ledger).collect()} == {"id:f-b"}
-        assert spark.table(tables.scans).count() == 1
+        scan_rows = spark.table(tables.metrics).where(F.col("family") == run_pipeline.FAMILY_SCAN)
+        assert scan_rows.count() == 1
 
     def test_a_scanned_register_is_refused_even_with_an_empty_ledger(self, spark, tables):
         """The ledger is not the whole register. Gold rows written before a seed were computed
@@ -393,24 +399,38 @@ class TestImport:
 
         run_scan(spark, tables, [node("f-x")], "scan-0", "2026-07-20T00:00:00Z")
         spark.sql(f"DELETE FROM {tables.ledger}")
-        spark.sql(f"DELETE FROM {tables.scans}")
+        # The premise is "clear the scan log, leave gold behind" -- so only the scan's
+        # family='scan' commit record is cleared here, not the whole metrics table: gold now
+        # shares that table with the commit record, and deleting all of it would also empty
+        # the very gold rows this test means to leave sitting there unexplained.
+        spark.sql(f"DELETE FROM {tables.metrics} WHERE family = '{run_pipeline.FAMILY_SCAN}'")
         with pytest.raises(BundleError, match="not empty"):
             import_bundle.import_bundle(spark, tables, bundle(), scope=SCOPE)
 
     def test_force_empties_the_derived_tables_too(self, spark, tables):
+        """"Emptied" now means two different things for the two append-only tables, because
+        `metrics` shares its table with the scan log this same import writes. Bronze -- never
+        written by this module -- lands at zero rows, the old, whole-table statement of
+        "emptied". `metrics` cannot: `_replace` DELETEs it and then appends the bundle's own
+        scan log, so the new statement is that it holds ONLY `family='scan'` rows -- no gold
+        family survives the force."""
         from test_ledger_pipeline import node
 
         run_scan(spark, tables, [node("f-x")], "scan-0", "2026-07-20T00:00:00Z")
-        assert spark.table(tables.mttr).count() > 0
+        mttr_rows = spark.table(tables.metrics).where(F.col("family") == run_pipeline.FAMILY_MTTR)
+        assert mttr_rows.count() > 0
         summary = import_bundle.import_bundle(spark, tables, bundle(), scope=SCOPE, force=True)
 
         assert summary["replaced"], "the replaced register should be reported, not silent"
-        for attr in run_pipeline.APPEND_TABLE_ATTRS.values():
-            table = getattr(tables, attr)
-            assert spark.table(table).count() == 0, table
+        assert spark.table(tables.bronze).count() == 0
+        families = {
+            r["family"] for r in spark.table(tables.metrics).select("family").distinct().collect()
+        }
+        assert families == {run_pipeline.FAMILY_SCAN}, families
         # ...and the seed itself landed, rather than being caught by the same broom.
         assert spark.table(tables.ledger).count() == summary["ledger_rows"] > 0
-        assert spark.table(tables.scans).count() == 3
+        scan_rows = spark.table(tables.metrics).where(F.col("family") == run_pipeline.FAMILY_SCAN)
+        assert scan_rows.count() == 3
 
     def test_the_write_probe_lets_a_normal_register_through(self, spark, tables):
         """The probe is a DELETE matching nothing. It must not be able to delete anything."""
@@ -512,8 +532,12 @@ class TestHandoffToTheFirstScan:
         self.seeded(spark, tables)
         run_scan(spark, tables, [node("f-a")], "scan-1", "2026-07-22T00:00:00Z")
         mttr = (
-            spark.table(tables.mttr)
-            .filter((F.col("scan_id") == "scan-1") & (F.col("severity") == "HIGH"))
+            spark.table(tables.metrics)
+            .filter(
+                (F.col("family") == run_pipeline.FAMILY_MTTR)
+                & (F.col("scan_id") == "scan-1")
+                & (F.col("severity") == "HIGH")
+            )
             .collect()[0]
         )
         # f-b closed after ~51 days (2026-06-01 -> 2026-07-22), not ~0 as it would read had

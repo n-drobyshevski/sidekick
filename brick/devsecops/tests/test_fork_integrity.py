@@ -52,10 +52,10 @@ def upstream(name: str):
 def test_the_two_pipelines_cannot_share_a_version_string():
     """The cheap half of the guard: a mixed set is caught on the version alone.
 
-    `1.0-devsecops` against brick's `2.x` -- a comparison that cannot accidentally succeed,
+    `3.0-devsecops` against brick's `3.x` -- a comparison that cannot accidentally succeed,
     which is why the suffix is there rather than a bare number.
     """
-    assert config.PIPELINE_VERSION == "1.0-devsecops"
+    assert config.PIPELINE_VERSION == "3.0-devsecops"
     assert config.PIPELINE_VERSION != upstream("config").PIPELINE_VERSION
 
 
