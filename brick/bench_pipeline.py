@@ -1,15 +1,19 @@
 """Time a whole pipeline run against a synthetic register, and prove two runs agree.
 
+Nothing about the timing instrument is scope-specific, so it measures whichever scope the
+synthetic register below is built for (``os`` by default -- see ``run()``).
+
 Not a test, and deliberately not under ``tests/`` -- pytest must never collect it. This is the
 measuring instrument for performance work on ``run_pipeline.py``: a change to the pipeline
 lands with a before/after number from here, or it does not land.
 
     # baseline, on the branch point
-    python brick/bench_pipeline.py --findings 137870 --scans 3 --out before.json --dump before/
+    python brick/bench_pipeline.py --findings 137870 --scans 3 --out before.json \\
+        --dump before/
 
     # after the change
-    python brick/bench_pipeline.py --findings 137870 --scans 3 --out after.json --dump after/ \
-        --compare before.json
+    python brick/bench_pipeline.py --findings 137870 --scans 3 --out after.json \\
+        --dump after/ --compare before.json
     diff -r before/ after/     # must be empty: the numbers are not allowed to move
 
 **The session is built here, not borrowed from ``tests/conftest.py``.** conftest sets
@@ -135,7 +139,7 @@ def build_session(warehouse: Path, shuffle_partitions: int, aqe: bool):
 
     builder = (
         SparkSession.builder.master("local[*]")
-        .appName("brick-bench")
+        .appName("devsecops-bench")
         .config("spark.sql.warehouse.dir", str(warehouse))
         .config("spark.sql.session.timeZone", "UTC")
         .config("spark.ui.enabled", "false")
@@ -245,7 +249,8 @@ def dump_tables(spark, tables, target: Path) -> None:
     ``metrics_<family>.json``. ``family`` itself is dropped from each file: it is constant
     within a file by construction and would only be noise in the diff. This is what keeps the
     per-family granularity ``diff -r`` had when mttr/program/capacity/sensitivity were
-    separate tables.
+    separate tables. This fork's ``METRICS_FAMILIES`` also carries ``assets``, and that family
+    is dumped the same way as the other three with no special case here.
     """
     import run_pipeline
 
@@ -412,7 +417,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--out", help="write the timings to this JSON file")
     parser.add_argument("--compare", help="a previous --out file to report against")
     parser.add_argument("--dump", help="write every table to this directory as sorted JSON")
-    parser.add_argument("--warehouse", default="/tmp/brick-bench-warehouse")
+    parser.add_argument("--warehouse", default="/tmp/devsecops-bench-warehouse")
     args = parser.parse_args(argv)
 
     result = run(args)

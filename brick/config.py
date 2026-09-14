@@ -1,17 +1,22 @@
-"""Constants for the Databricks pipeline.
+"""Constants for the pipeline: severity taxonomy, per-scope Wiz filters, risk rules.
 
-Deliberately duplicated rather than imported. ``brick/`` runs on a Spark cluster that has
-neither ``wiz_dashboard`` nor Streamlit installed, so it stays self-contained. The sources of
-truth these mirror:
+This directory carries its own copy of every runtime module and depends on nothing outside
+itself -- a plain top-level Python folder, deployable as one flat Databricks Workspace folder
+with no package prefix and no `sys.path` entry but its own. ``README.md`` is where that layout
+and its cost are written down.
+
+The sources of truth these constants mirror, in order of authority:
 
 * ``wiz_dashboard/config.py``      -- severity taxonomy, SLA targets, resolved statuses
 * ``gas/src/domain/insights.ts``   -- EPSS priority threshold
 * ``gas/src/domain/program.ts``    -- the risk rule and the capacity dead band
 
-Change one of those and change this too.
+The static-analysis half -- ``SastRiskRule`` and the CWE tables below -- has no upstream. It
+exists only here, because no other surface measures a register without a CVE in it.
 """
 
 from dataclasses import dataclass
+from typing import Dict, Tuple
 
 # ---- Deployment version ----
 # The runtime modules are pasted into a flat Workspace folder by hand, one file at a time, and
@@ -25,7 +30,13 @@ from dataclasses import dataclass
 # Every runtime module carries MODULE_VERSION, and run_pipeline.check_deployment() compares
 # them before the run touches Spark. Bump this whenever the modules stop being
 # mix-and-matchable with the previous release -- which is nearly always.
-PIPELINE_VERSION = "3.0"
+#
+# The suffix is load-bearing. These module names -- `config`, `metrics`, `ledger` -- are the
+# same ones `brick/` uses, so a sys.path holding both directories resolves each import to
+# whichever came first and you get half of one pipeline and half of the other. A version
+# string that cannot collide turns that into a refusal instead of a wrong number, and
+# `check_deployment` additionally requires every module to come from THIS directory.
+PIPELINE_VERSION = "3.0-devsecops"
 MODULE_VERSION = PIPELINE_VERSION
 
 # ---- Severity taxonomy ----
@@ -64,8 +75,43 @@ API_SEVERITY_VALUES = {
     "INFO": "INFORMATIONAL",
 }
 
-# What a scan pulls when nothing else is asked for.
-DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")
+# What a scan pulls when nothing else is asked for, KEYED BY SCOPE -- and today both keys say
+# the same thing, deliberately.
+#
+# A single list is a volume control that every future population inherits without anybody
+# choosing it for them, and the sibling register made exactly that mistake in production:
+# `gas_devsecops` gave `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted
+# `PASSWORD` 209 -> 0 and `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and
+# published a secrets register with no passwords in it. Nothing was wrong with the number; it
+# was the right answer to a question nobody had asked about that population.
+#
+# All three scopes here are CVE- or weakness-bearing volume registers whose severities mean the
+# same thing, so they agree, and this changes no figure today. What it changes is what happens
+# next: a fourth scope has to state its own gate rather than inherit one -- the sibling's
+# `secrets` register is the population where the inherited gate was wrong. See
+# `default_fetch_severities`.
+#
+# `os` is brick's retired flat `DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")`, keyed rather
+# than flattened, so the host register's gate stays the gate it was scanned with.
+DEFAULT_FETCH_SEVERITIES: Dict[str, Tuple[str, ...]] = {
+    "os": ("CRITICAL", "HIGH"),
+    "sca": ("CRITICAL", "HIGH"),
+    "sast": ("CRITICAL", "HIGH"),
+}
+
+
+def default_fetch_severities(scope: str) -> Tuple[str, ...]:
+    """The severity gate ``scope`` pulls when the run asks for nothing else.
+
+    Refuses an unknown scope rather than falling back to another population's gate: a silent
+    fallback is how the inherited default gets inherited again.
+    """
+    try:
+        return DEFAULT_FETCH_SEVERITIES[scope]
+    except KeyError:
+        raise RuntimeError(
+            f"unknown scope {scope!r} -- expected one of {sorted(DEFAULT_FETCH_SEVERITIES)}"
+        ) from None
 
 # ---- Scopes: which population of findings a run measures ----
 # The scope drives BOTH the API filter and the table names, from one parameter, so a table can
@@ -77,10 +123,12 @@ DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")
 #   status   Not about scoping at all. Without it the API returns only OPEN findings, and
 #            every remediation metric silently collapses -- coverage 0%, efficiency undefined,
 #            MTTR empty -- while looking like a real result.
-#   hasFix   Restricts both scopes to findings a team could actually have remediated. It is
-#            shared rather than OS-only so that remediation rates mean the same thing in each:
-#            awaiting-vendor-fix findings would otherwise sit in `all`'s coverage denominator
-#            and not in `os`'s, making `all` look worse for a reason that is not performance.
+#   hasFix   Restricts the scopes that use it to findings a team could actually have
+#            remediated. It is shared rather than OS-only so that remediation rates mean the
+#            same thing in `os` and `sca`: awaiting-vendor-fix findings sitting in one
+#            register's coverage denominator and not the other's would make that one look
+#            worse for a reason that is not performance. `sast` does not use `_BASE` at all --
+#            see its own entry below.
 _BASE = {
     "status": ["OPEN", "RESOLVED"],
     "hasFix": True,
@@ -90,6 +138,13 @@ SCOPES = {
     # OS-package CVEs on host workloads: the population the Streamlit dashboard measures.
     # Mirrors os_vulns.VARIABLES["filterBy"], minus its hardcoded projectIdV2 -- that is one
     # tenant's project and is exposed here as an opt-in `project_id` parameter instead.
+    #
+    # Copied verbatim from `brick/config.py` when this fork absorbed the host register (S2).
+    # It is OS-VIEW POLICY, not incidental: `detectionMethod` and `assetType` say what a host
+    # finding is, `assetIsRepresentativeResource: False` drops the duplicate the API attaches
+    # to a representative resource, and the `detailedNameV2` exclusions are three packages the
+    # host register deliberately does not report on. Changing any of them changes which
+    # population every host figure is computed over, which is not an error anybody sees.
     "os": {
         **_BASE,
         "detectionMethod": ["OS"],
@@ -97,13 +152,86 @@ SCOPES = {
         "assetIsRepresentativeResource": False,
         "detailedNameV2": {"notEquals": ["openssl", "python", "vim"]},
     },
-    # Every detection method and asset type -- container SBOM, code libraries, OS, the lot.
-    # What still differs from "os" beyond the type/asset restriction: the openssl/python/vim
-    # exclusions and the representative-resource filter are OS-view policy and are not applied
-    # here, so `all` counts a few things `os` deliberately drops.
-    "all": dict(_BASE),
+    # Software composition analysis: CVEs in the libraries a repository depends on. Mirrors
+    # sca_request.py's filterBy, minus its hardcoded projectIdV2.
+    #
+    # This reads the same GraphQL connection the `os` scope above does --
+    # `vulnerabilityFindings`, filtered to the code stage of the pipeline -- which is why it
+    # needs no new maths at all: the findings carry a CVE and the same three exploit signals,
+    # so the ledger, Kaplan-Meier MTTR, the confusion matrix and capacity all apply unchanged
+    # and mean the same thing they mean for a host register.
+    #
+    #   codeToCloudPipelineStage  CODE, i.e. the library as it appears in the repository, not
+    #                             the copy of it baked into a container image further down the
+    #                             pipeline. Without it a single dependency is counted once per
+    #                             repo AND once per image built from that repo.
+    #   isDefaultBranch           or every feature branch is its own asset, and the register
+    #                             grows and shrinks with the team's branching habits.
+    "sca": {
+        **_BASE,
+        "codeToCloudPipelineStage": ["CODE"],
+        "isDefaultBranch": {"equals": True},
+    },
+    # Static analysis: weaknesses in first-party code. A different connection, a different
+    # filter type, and -- see SastRiskRule below -- no exploit intelligence of any kind.
+    #
+    # `_BASE` does not apply: `hasFix` is meaningless for a weakness in your own code, and
+    # `status` is deliberately withheld -- see SAST_FETCH_RESOLVED, which is where the reason
+    # lives, because it is a reason and not an absence.
+    "sast": {
+        "resource": {"isDefaultBranch": {"equals": True}},
+    },
 }
 
+# ---- Whether the sast scope asks for resolved findings as well as open ones ----
+# OFF, for two reasons a live probe measured (2026-08-27, recorded in the repo's CLAUDE.md),
+# neither of which is the one this comment used to give. The old reason was that
+# `ingest.SAST_QUERY` selects no timestamps. It selects one now: `SASTFinding.createdAt` is a
+# non-null `DateTime!`, filterable and sortable. The two that remain:
+#
+#   1. There is no `resolvedAt` on the type. The birth date exists; the death date does not.
+#   2. `status: RESOLVED` returns **zero rows** against this tenant. The filter would not
+#      deliver the population it appears to ask for even if the dates were there.
+#
+# Reason 1 is still what makes it actively wrong rather than merely useless, and the arithmetic
+# has moved rather than gone away. Trace one already-resolved finding through
+# `ledger.reconcile`, with `createdAt` now selected:
+#
+#   first sighting  ->  first_seen = least(coalesce(createdAt, now), now) = createdAt
+#   status RESOLVED ->  api_resolved, and there is no resolvedAt to read, so
+#                       resolved_at = coalesce(NULL, now) = now
+#   therefore           mttr_days = now - createdAt = the finding's AGE at first sighting
+#
+# So the number stops being a flat zero and starts being a plausible one, which is worse. A
+# finding that was fixed within a day two years ago would report an MTTR of 730 days, and the
+# Kaplan-Meier median would be dragged up by the register's own start date instead of down by
+# it. Every historical resolved finding is priced by when we happened to look. `first_seen` is
+# real, `resolved_at` is fabricated, and their difference measures neither.
+# `tests/test_devsecops.py` pins that arithmetic so nobody flips this without meeting it.
+#
+# The `sca` scope takes `status: [OPEN, RESOLVED]` safely because it has BOTH dates:
+# `firstDetectedAt` and `resolvedAt`, so the subtraction has two measured ends.
+#
+# **Turn this on if a `resolvedAt` (or equivalent) appears on `SASTFinding`, not before.** Until
+# then a disappearance between two scans is the better evidence, and it is honest about its
+# error bar: `resolution_src` reads `disappeared` and the date is an upper bound whose
+# uncertainty is the scan interval.
+SAST_FETCH_RESOLVED = False
+
+if SAST_FETCH_RESOLVED:
+    SCOPES["sast"]["status"] = ["OPEN", "RESOLVED"]
+
+# `os` since this fork absorbed the host register (S2): it is the oldest, largest and most
+# read population here, it is what the Streamlit dashboard and the GAS app both measure, and
+# it is the scope the notebooks open on. The property that made `sca` the default before it
+# still holds of `os` and is the real requirement -- a reader who runs this pipeline without
+# choosing a scope gets a register whose numbers mean what they appear to mean: CVEs, real
+# exploit signals and both ends of the clock measured.
+#
+# This constant is read at IMPORT time by `ingest.QUERY = build_query()`, so flipping it flips
+# which document that module-level constant holds. Nothing at runtime reads it --
+# `fetch_findings` calls `query_for(scope)` with the scope the run was given -- but a test
+# that inspects `QUERY` is inspecting the default scope's document and should say so.
 DEFAULT_SCOPE = "os"
 
 # ---- The second clock: when could a team actually have acted? ----
@@ -113,23 +241,31 @@ DEFAULT_SCOPE = "os"
 # `actionable_age_days` / `awaiting_vendor_fix` from the `fix_date` / `fix_observed_at` the
 # ledger has been capturing since the schema was first laid out -- captured precisely so this
 # could be derived later, because a fix date nobody recorded at the time cannot be recovered
-# afterwards. Reference: gas/src/domain/ledgerCore.ts::baseRows.
+# afterwards. Reference: gas/src/domain/ledgerCore.ts::baseRows, and the scope guard below is
+# gas_devsecops/src/domain/ledgerCore.ts's.
 #
 # Two questions decide the derivation, and they are DIFFERENT questions:
 
 #: Scopes where a vendor fix is a thing that can exist at all.
 #:
-#: A fact about the KIND of finding, not about any filter: an OS package CVE is fixed by
-#: whoever ships the package, so "open with no fix available" is a real state a row can be in.
-#: The sibling register is where the guard earns its keep -- `brick/devsecops` sets this to
-#: {"sca"} alone, because "open with no fix available" is true of every SAST finding forever
-#: (nobody vendors your own code), and without the guard those rows would drop out of every
-#: actionable clock while staying in the exposure counts, so the two halves of a page would
-#: disagree in a way that reads as broken arithmetic rather than as a category error.
+#: THE QUESTION IS WHETHER THERE IS A VENDOR TO WAIT ON, and it is a fact about the KIND of
+#: finding rather than about any filter. An OS package CVE is fixed by whoever ships the
+#: package and a library CVE by whoever maintains the library, so "open with no fix available"
+#: is a real, temporary state a row of those scopes can be in. `sast` IS STILL THE EXCEPTION
+#: AND IT IS STILL THE LOAD-BEARING PART OF THIS ENTRY: nobody vendors your own code, so the
+#: definition "open with no fix available" is true of EVERY SAST finding, forever. Without the
+#: guard every open SAST row would read as awaiting a vendor: out of every actionable clock,
+#: still in every exposure count, so the two halves of a page disagree and the gap looks like
+#: broken arithmetic rather than the category error it is. The sibling register measured the
+#: cost on live data -- 2,085 rows (127 SAST + 1,958 secrets) sitting in that state
+#: permanently -- and `tests/test_ledger.py` prices it here as a mutation.
 #:
-#: Deliberately NOT one of `devsecops/tests/test_fork_integrity.py`'s shared constants: the two
-#: registers measure different populations and are SUPPOSED to differ here.
-HAS_VENDOR_FIX = frozenset({"os", "all"})
+#: `os` joined `sca` here when this fork absorbed the host register (S2); brick's retired copy
+#: said {"os", "all"} and `all` is not ported. Adding a scope to `SCOPES` does NOT add it here
+#: -- this set is declared rather than derived, because "is there a vendor" is not visible in
+#: a filter. `SCOPES_PINNING_HAS_FIX` below is the derived one, and they answer different
+#: questions: a scope can have a vendor and not pin `hasFix`, and (in principle) the reverse.
+HAS_VENDOR_FIX = frozenset({"os", "sca"})
 
 #: Scopes whose API filter pins `hasFix: true`, DERIVED from `SCOPES` rather than listed.
 #:
@@ -147,13 +283,16 @@ HAS_VENDOR_FIX = frozenset({"os", "all"})
 #: evidence. `fix_observed_at` is preferred over it wherever it exists, for the same reason in
 #: reverse: it is a moment a fix was SEEN.
 #:
+#: `os` and `sca` pin it through `_BASE`; `sast` does not use `_BASE` at all, which is the same
+#: reason it is absent from `HAS_VENDOR_FIX` arriving by a different route.
+#:
 #: Derived, not hardcoded, because dropping `hasFix` from the filter is a population change
-#: somebody will eventually make -- the sibling register records the reason in
-#: `gas_devsecops/src/sync.ts`: with `hasFix` pinned, a WITHDRAWN fix reads as a remediation,
-#: because the finding leaves the filtered population and leaving the population is what
-#: disappearance-resolution means. When somebody drops it, this set empties itself, the
-#: fallback stops firing and `awaiting_vendor_fix` starts reporting real rows -- instead of
-#: the code silently going on claiming a fix existed for findings nobody filtered for one.
+#: owed a measured round of its own, recorded in the sibling's `gas_devsecops/src/sync.ts`:
+#: with `hasFix` pinned, a WITHDRAWN fix reads as a remediation, because the finding leaves
+#: the filtered population and leaving the population is what disappearance-resolution means.
+#: When somebody drops it, this set empties itself, the fallback stops firing and
+#: `awaiting_vendor_fix` starts reporting real rows -- instead of the code silently going on
+#: claiming a fix existed for findings nobody filtered for one.
 SCOPES_PINNING_HAS_FIX = frozenset(
     scope for scope, spec in SCOPES.items() if spec.get("hasFix") is True
 )
@@ -162,9 +301,10 @@ SCOPES_PINNING_HAS_FIX = frozenset(
 def scope_has_vendor_fix(scope: str) -> bool:
     """Whether ``scope``'s findings have a vendor who ships the fix.
 
-    False means the actionable clock does not apply to the scope at all: no
-    ``fix_available_at``, no ``mttr_actionable_days``, and -- the load-bearing half --
-    ``awaiting_vendor_fix`` is False rather than True-forever.
+    False -- which is to say ``sast``, the only scope here without one -- means the actionable
+    clock does not apply to the scope at all: no ``fix_available_at``, no
+    ``mttr_actionable_days``, and, the half that matters, ``awaiting_vendor_fix`` is False
+    rather than True-forever.
     """
     return scope in HAS_VENDOR_FIX
 
@@ -178,6 +318,99 @@ def scope_pins_has_fix(scope: str) -> bool:
     """
     return scope in SCOPES_PINNING_HAS_FIX
 
+
+# ---- Sources: which API connection a scope reads ----
+# A scope has always chosen a `filterBy`. Two of them now also choose a GraphQL connection and
+# therefore a node shape, so that choice is named rather than left implicit in an `if`.
+#
+# `kind` is the discriminator, and there are exactly two dispatch sites on it: `ingest` picks
+# the query document, `metrics` picks the silver projection. Both projections emit the SAME
+# silver columns, which is what lets `ledger.py` -- the module most expensive to get wrong --
+# stay completely unaware that a second source exists.
+
+
+@dataclass(frozen=True)
+class Source:
+    """The API connection behind a scope.
+
+    ``connection`` is the GraphQL field name, which is also the key the nodes arrive under in
+    the response envelope, which is also what ``ingest.fetch_findings`` pages on. One string,
+    three jobs -- so a scope cannot page one connection and read another.
+    """
+
+    kind: str
+    connection: str
+    #: Whether this scope's filter type accepts a ``severity`` key **at all**. False means
+    #: ``--severities`` cannot be pushed to the API, and ``ingest._severity_gate`` applies it
+    #: to the returned nodes instead -- it has to be applied somewhere, because the scan log
+    #: records the scope and the disappearance guard trusts it.
+    #:
+    #: This answers a DIFFERENT question from ``OBJECT_FILTERS`` below, and the two are not
+    #: substitutes: this one is *whether the key exists on the type*, ``OBJECT_FILTERS`` is
+    #: *what shape the value has to be in* once it does. Both are True/present for `sast`
+    #: today -- the key exists, and it takes an object -- so conflating them would have looked
+    #: fine right up until a type that genuinely lacks the key appeared.
+    severity_filter: bool = True
+
+
+VULN_SOURCE = Source(kind="vulnerability", connection="vulnerabilityFindings")
+# `severity_filter=True` is measured, not assumed: `SASTFindingFilters.severity` exists (as
+# `SASTSeverityFilter` -- see OBJECT_FILTERS for the shape it wants). If a filter type ever
+# turns up without the key, flip this to False -- the scan still records its severity scope, so
+# nothing about the disappearance guard changes; the only cost is pulling rows the run discards.
+SAST_SOURCE = Source(kind="sast", connection="sastFindings")
+
+SOURCES = {
+    # `os` reads the same connection behind the same filter type `sca` does -- which is the
+    # whole reason the host register fitted into this fork with no new branch: one more entry
+    # here, and `query_for`, `build_filter`, `_shape_base` and `metrics.silver_findings` all
+    # route it exactly as they route `sca`.
+    "os": VULN_SOURCE,
+    "sca": VULN_SOURCE,
+    "sast": SAST_SOURCE,
+}
+
+# ---- Which filter keys a scope's filter type takes as an OBJECT rather than a bare list ----
+# The two filter types genuinely disagree about the SAME FIELD NAME, and this table exists so
+# that the disagreement is data a reader can check against the schema rather than a branch
+# buried in ``ingest.build_filter``:
+#
+#   VulnerabilityFindingFilters.severity                 [VulnerabilitySeverity!]  a bare list
+#   VulnerabilityFindingFilters.codeToCloudPipelineStage  [ ...Stage!]             a bare list
+#   VulnerabilityFindingFilters.projectIdV2   VulnerabilityFindingProjectFilter    {equals:[..]}
+#   SASTFindingFilters.severity               SASTSeverityFilter                   {equals:[..]}
+#   SASTFindingFilters.status                 SASTStatusFilter                     {equals:[..]}
+#   SASTFindingFilters.projectId              [String!]                            a bare list
+#
+# This asymmetry has cost the sibling register (`gas_devsecops/`) its whole SAST population
+# once, and it cost this fork the same way until now: ``build_filter`` applied the SCA
+# convention to both scopes, so every SAST run would be refused with HTTP 400
+# `VALIDATION_INVALID_TYPE_VARIABLE` and fetch **zero rows** -- which does not read as an error,
+# it reads as an empty register.
+#
+# DO NOT "TIDY" THIS INTO ONE CONVENTION. Applying SAST's object form to SCA breaks SCA, which
+# works today; the type names above are the evidence. And note `projectId` on SAST is a *bare*
+# list while `projectIdV2` on SCA is an object -- one field's shape says nothing about the
+# next's, in the same type or across types.
+#
+# **Copy these from `npm run probe -- --schema` in `gas_devsecops/`, which prints a ready-made
+# entry per filter type. Never infer one from another type.**
+#
+# `os` and `sca` are the SAME filter type (`VulnerabilityFindingFilters`), so they take the
+# same entry. That `os` needs one at all was MEASURED, not assumed, and the brief that ported
+# the scope predicted it would not: every value written into `SCOPES["os"]` is a bare list, a
+# scalar or a nested `{"notEquals": [...]}`, all of which `_shape_base` leaves alone -- but
+# `build_filter` ADDS `projectIdV2` after `_shape_base` has run, and with no entry here
+# `_list_filter` would emit it as a bare list. Brick's retired `build_filter` wrote
+# `{"equals": [project_id]}` inline. Without this line the host register's `--project_id`
+# would go on the wire in the wrong kind and be refused with HTTP 400
+# `VALIDATION_INVALID_TYPE_VARIABLE` -- zero rows, looking like an empty register.
+# `tests/test_os_scope.py` pins the emitted filter against brick's shape for exactly this.
+OBJECT_FILTERS = {
+    "os": ("projectIdV2",),
+    "sca": ("projectIdV2",),
+    "sast": ("severity", "status"),
+}
 
 # ---- Where this deployment's tables live ----
 # Deployment-specific, and the only two constants in this file that are. They are the defaults
@@ -201,7 +434,7 @@ DEFAULT_SCHEMA = "industry"
 #
 # A flag rather than a deletion, because this is a *tenant's* schema and not a decision: keeping
 # `ingest._asset_selection` and its member list intact means turning the columns back on is one
-# constant, not an archaeology exercise against `os_vulns.py`.
+# constant, not an archaeology exercise against the console's own export.
 #
 # What goes NULL when this is False: asset_id, asset_name, asset_type, cloud, subscription_name,
 # subscription_ext_id -- so the estate breakdowns and every by-subscription panel have nothing
@@ -213,6 +446,42 @@ DEFAULT_SCHEMA = "industry"
 # is unaffected too -- `vuln_key` prefers the finding id, which is still selected, and only falls
 # back to the asset-bearing hash when that is absent.
 FETCH_ASSET_FIELDS = False
+
+# ---- ...which is why `sca` asks for a narrower member list instead ----
+# The paragraph above is about a *union*, and a union fails as a whole: one member the tenant no
+# longer has costs the entire request. That is an argument for asking for fewer members, not for
+# asking for none -- and which members a scope actually returns is knowable.
+#
+# `sca` returns REPOSITORY_BRANCH and nothing else, and `sca_response.json` is the
+# evidence: every node in that captured response carries a `vulnerableAsset` with `id`, `type`,
+# `name`, `cloudPlatform`, `repositoryId` and `repositoryName` populated. So `sca` asks
+# for exactly the two members it needs and gets its asset columns, where the `os` host
+# register -- which would have to ask for all thirteen -- gets none.
+#
+# This is what makes the P2P v5 asset family (metrics.asset_profile) computable here at all:
+# v5's unit of analysis is the asset, and for a code register the asset is the repository
+# branch. `sast` needs no entry -- its `resource` is a plain object, not a union.
+#
+# A scope absent from this map falls back to FETCH_ASSET_FIELDS over the full member list.
+#
+# `os` is deliberately absent, which is brick's behaviour unchanged: a host finding can arrive
+# on any of the thirteen members, so there is no narrower list to ask for, and the fallback
+# leaves `FETCH_ASSET_FIELDS = False` deciding -- no asset columns at all rather than a request
+# the tenant refuses as a whole.
+SCOPE_ASSET_MEMBERS = {
+    "sca": ("VulnerableAssetBase", "VulnerableAssetRepositoryBranch"),
+}
+
+# ---- The asset-category column, which is P2P v5's unit of comparison ----
+# v5 compares vulnerability density, velocity and capacity across asset *categories* -- Windows,
+# Linux/Unix, Mac, appliances. A code register has no operating systems, and the nearest thing
+# that carries the same "assets of this kind behave alike" meaning is the language/ecosystem:
+# a Java repo and an npm repo have different dependency counts, different fix cadences and
+# different upgrade friction for reasons that are about the ecosystem, not the team.
+#
+# NULL for `os`, which has no language -- its asset rows fall into the single UNKNOWN group and
+# the OVERALL row is the only one worth reading there.
+ASSET_GROUP_UNKNOWN = "UNKNOWN"
 
 # ---- Risk classification (Prioritization to Prediction) ----
 # FIRST's own guidance: 0.1 is the point where EPSS starts to be worth acting on.
@@ -253,6 +522,159 @@ class RiskRule:
 
 
 DEFAULT_RISK_RULE = RiskRule()
+
+# ---- Risk classification for static analysis, where none of the above exists ----
+# A SAST finding is a weakness in first-party code. It has no CVE, so it has no KEV entry, no
+# published exploit and no EPSS score -- the three signals RiskRule is made of are all NULL, and
+# under that rule every SAST finding classifies as `unknown` and every rate is undefined.
+#
+# So this rule exists. It is OURS, and the distance from P2P is one step longer here than it is
+# for the CVE registers, which is worth stating in full because the numbers look identical:
+#
+#   P2P    positive class = exploitation observed in the wild, against a CVE.
+#   os/sca positive class = our rule over Wiz's exploit signals. One step: a prediction about
+#          exploitation, made per CVE, by somebody whose job that is.
+#   sast   positive class = our rule over a weakness CLASS. Two steps: from "this weakness is of
+#          a kind that has historically been exploited across all software" to "this instance of
+#          it, in this file, is worth fixing first". That second step is a genuine leap. The
+#          weakness class says nothing about whether this particular call site is reachable,
+#          whether the input is attacker-controlled, or whether the code ships at all.
+#
+# P2P is explicit that it offers no help here: volumes 1, 2 and 3 each say, verbatim, "We won't
+# be discussing CWEs in this study." Nothing below is P2P-sanctioned. What is P2P-sanctioned is
+# publishing the rule's sensitivity beside the rate it produces, which `metrics.rule_sensitivity`
+# does for this rule exactly as it does for the other.
+
+
+@dataclass(frozen=True)
+class SastRiskRule:
+    """The high-risk classifier for static-analysis findings: an **any-of** over three signals.
+
+    Same shape as ``RiskRule`` on purpose -- frozen, inspectable, with a readable ``sentence()``
+    -- because the two are read side by side and a classifier you cannot read is one you cannot
+    audit. Each signal answers a different question, which is why it is an any-of:
+
+      cwe         is this a KIND of weakness that gets exploited?  (external evidence)
+      ai_verdict  does the scanner's own triage think this instance is real?  (vendor opinion)
+      critical    did somebody already say this one is the worst tier?  (existing judgement)
+    """
+
+    cwe: bool = True
+    ai_verdict: bool = True
+    critical: bool = True
+
+    def is_empty(self) -> bool:
+        """True when no signal is enabled -- nothing is decidable, so everything is unknown."""
+        return not (self.cwe or self.ai_verdict or self.critical)
+
+    def sentence(self) -> str:
+        """The rule as a sentence, for a report header."""
+        parts = []
+        if self.cwe:
+            parts.append("CWE in the Top 25")
+        if self.ai_verdict:
+            parts.append("AI triage says exploitable")
+        if self.critical:
+            parts.append("severity CRITICAL")
+        return " or ".join(parts) if parts else "no signal enabled"
+
+
+DEFAULT_SAST_RISK_RULE = SastRiskRule()
+
+# MITRE's CWE Top 25 Most Dangerous Software Weaknesses, 2024 edition.
+#
+# **Provenance, because this is the one input that claims external evidence.** MITRE computes the
+# list annually by scoring CWEs on the frequency and severity of the CVEs mapped to them over a
+# two-year window, with CISA KEV membership weighted in. That makes it the closest thing to
+# "weakness classes that get exploited in the wild" that exists as a citable list -- which is
+# exactly the role CISA KEV plays in `RiskRule`, one level of abstraction up.
+#
+# It is a snapshot and it ages: re-derive it against the current year's publication rather than
+# trusting this tuple indefinitely. The year is in the name of the constant for that reason.
+CWE_TOP_25_2024 = (
+    "CWE-79",   # Cross-site Scripting
+    "CWE-787",  # Out-of-bounds Write
+    "CWE-89",   # SQL Injection
+    "CWE-352",  # Cross-Site Request Forgery
+    "CWE-22",   # Path Traversal
+    "CWE-125",  # Out-of-bounds Read
+    "CWE-78",   # OS Command Injection
+    "CWE-416",  # Use After Free
+    "CWE-862",  # Missing Authorization
+    "CWE-434",  # Unrestricted Upload of File with Dangerous Type
+    "CWE-94",   # Code Injection
+    "CWE-20",   # Improper Input Validation
+    "CWE-77",   # Command Injection
+    "CWE-287",  # Improper Authentication
+    "CWE-269",  # Improper Privilege Management
+    "CWE-502",  # Deserialization of Untrusted Data
+    "CWE-200",  # Exposure of Sensitive Information to an Unauthorized Actor
+    "CWE-863",  # Incorrect Authorization
+    "CWE-918",  # Server-Side Request Forgery
+    "CWE-119",  # Improper Restriction of Operations within the Bounds of a Memory Buffer
+    "CWE-476",  # NULL Pointer Dereference
+    "CWE-798",  # Use of Hard-coded Credentials
+    "CWE-190",  # Integer Overflow or Wraparound
+    "CWE-400",  # Uncontrolled Resource Consumption
+    "CWE-306",  # Missing Authentication for Critical Function
+)
+
+EXPLOITED_CWES = frozenset(CWE_TOP_25_2024)
+
+# **The hierarchy problem, which is the weakest joint in this rule.** CWE is a tree, scanners
+# report leaves, and the Top 25 is mostly interior nodes. sast_response.json
+# shows it immediately: it contains CWE-23 (Relative Path Traversal), which is a child of
+# Top-25 member CWE-22 and would not match by id. P2P vol. 9 names this exact difficulty --
+# "the hierarchical nature of CWEs" -- as a reason it does not categorise this way.
+#
+# So a child is matched through its Top-25 ancestor. This map is **deliberately incomplete**: it
+# holds the children actually seen in this tenant's findings, not a transcription of the CWE
+# tree. An unmapped child does not match, which classifies it `low` rather than `high` -- so the
+# gap costs coverage's numerator, silently, and grows with every scanner rule this map has not
+# caught up with. `metrics.signal_breakdown` publishes `cwe_unmapped` for exactly this reason:
+# it is the size of the doubt, and it is the number to watch before quoting a SAST rate.
+CWE_ANCESTORS = {
+    "CWE-23": "CWE-22",    # Relative Path Traversal        -> Path Traversal
+    "CWE-36": "CWE-22",    # Absolute Path Traversal        -> Path Traversal
+    "CWE-80": "CWE-79",    # Basic XSS                      -> Cross-site Scripting
+    "CWE-83": "CWE-79",    # XSS in attributes              -> Cross-site Scripting
+    "CWE-91": "CWE-94",    # XML Injection                  -> Code Injection
+    "CWE-95": "CWE-94",    # Eval Injection                 -> Code Injection
+    "CWE-470": "CWE-94",   # Unsafe Reflection              -> Code Injection
+    "CWE-1321": "CWE-94",  # Prototype Pollution            -> Code Injection
+    "CWE-88": "CWE-77",    # Argument Injection             -> Command Injection
+    "CWE-611": "CWE-20",   # XML External Entity            -> Improper Input Validation
+    "CWE-547": "CWE-798",  # Hard-coded security constants  -> Use of Hard-coded Credentials
+    "CWE-259": "CWE-798",  # Hard-coded Password            -> Use of Hard-coded Credentials
+    "CWE-321": "CWE-798",  # Hard-coded Cryptographic Key   -> Use of Hard-coded Credentials
+    "CWE-1333": "CWE-400",  # Inefficient Regex Complexity  -> Uncontrolled Resource Consumption
+    "CWE-732": "CWE-863",  # Incorrect Permission Assignment -> Incorrect Authorization
+    "CWE-284": "CWE-862",  # Improper Access Control        -> Missing Authorization
+}
+
+# `aiAnalysis.verdict` values that count as the AI triage firing.
+#
+# UNVERIFIED against the live tenant: every node in the captured SAST response has
+# `aiAnalysis: null`, so this enum is a guess at the vocabulary and the clause will simply never
+# fire until it is corrected. That failure is quiet, which is why `signal_breakdown` publishes
+# `ai_verdict_missing` -- a register where that equals the row count means either the field is
+# not being returned or these are the wrong strings, and both are worth knowing.
+AI_VERDICTS_HIGH = frozenset({"EXPLOITABLE", "TRUE_POSITIVE", "CONFIRMED", "VULNERABLE"})
+
+
+def rule_for_scope(scope: str = DEFAULT_SCOPE):
+    """The high-risk rule a scope is classified under.
+
+    One function rather than a lookup at each call site, because getting it wrong is not an
+    error -- it is a full page of plausible numbers. ``RiskRule`` against a SAST register
+    classifies every finding `unknown` and reports 100% unclassified; ``SastRiskRule`` against
+    a CVE register does the same in the other direction. Both look like data.
+
+    Dispatches on the scope's SOURCE rather than on a list of scope names, so a scope added to
+    ``SOURCES`` is classified correctly without an edit here -- which is how ``os`` arrived
+    (S2) already answering ``DEFAULT_RISK_RULE``: it reads ``VULN_SOURCE``, same as ``sca``.
+    """
+    return DEFAULT_SAST_RISK_RULE if SOURCES.get(scope) is SAST_SOURCE else DEFAULT_RISK_RULE
 
 # ---- Capacity ----
 # The dead band around zero net flow that still counts as "keeping up". P2P v3 Fig. 22 splits
@@ -358,6 +780,21 @@ LEDGER_COLUMNS = [
     "has_exploit",
     "epss",
     "risk_observed_at",
+    # Static-analysis risk inputs. NULL for every CVE-bearing scope (`os`, `sca`) and
+    # populated only by `sast`, but they live on the shared ledger rather than a parallel one
+    # for the same reason `has_kev` does: coverage and efficiency classify over the whole
+    # ledger, including findings the API has stopped returning, so a signal not written down at
+    # observation time cannot be recovered. One schema also keeps `ledger.py` -- the module
+    # most expensive to get wrong -- unaware that a second source exists.
+    #
+    # `cwe` is a comma-separated list rather than an array. A finding can carry several
+    # weaknesses, and an array survives neither the CSV register (see csvstore.py) nor a
+    # spreadsheet; `metrics` splits it on the way into the classifier.
+    "cwe",
+    # The ecosystem the finding was found in (JAVA, JAVASCRIPT, ...). P2P v5's asset category,
+    # which `metrics.asset_profile` groups on -- see ASSET_GROUP_UNKNOWN above.
+    "language",
+    "ai_verdict",
 ]
 
 # The per-run log. Three jobs: it is the idempotency guard (a run whose scan_id is already

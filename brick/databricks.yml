@@ -1,13 +1,11 @@
 # Three scopes, ONE pipeline, as Databricks Jobs deployed with Databricks Asset Bundles.
 #
-# `brick/devsecops/` is the deployment unit for every scope now, including `os` -- the fork
-# split is gone (S2: devsecops absorbed the `os` scope's config, and every job below points at
-# its `run_pipeline.py`). `brick/run_pipeline.py` and its siblings still exist for this step
-# (retired in a later step), but nothing here runs them any more. This file stays at
-# `brick/databricks.yml` rather than moving under `devsecops/`, matching where the surviving
-# tree is headed: `run_pipeline.check_deployment()` requires every runtime module to come from
-# ONE flat folder, and the git_source below hands the workspace exactly that folder,
-# `brick/devsecops/`.
+# `brick/` is the deployment unit for every scope, including `os` -- the fork split that used to
+# put `os` in one directory and `sca`/`sast` in another (`brick/devsecops/`) is gone: S2 merged
+# the `os` scope's config into the surviving tree and moved that tree up to `brick/`, so every
+# job below points at `brick/run_pipeline.py`. `run_pipeline.check_deployment()` still requires
+# every runtime module to come from ONE flat folder, and the git_source below hands the
+# workspace exactly that folder, `brick/`.
 #
 # Three scan jobs, one per scope, because a scope drives both the API filter and the table
 # names -- `wiz_<scope>_*` -- so two scopes in one job would write each other's tables. They are
@@ -72,9 +70,7 @@ resources:
       tasks:
         - task_key: scan
           spark_python_task:
-            # devsecops absorbed the `os` scope's config (S2): this is the one pipeline now,
-            # for all three scopes.
-            python_file: brick/devsecops/run_pipeline.py
+            python_file: brick/run_pipeline.py
             parameters:
               - --scope=os
               - --catalog=${var.catalog}
@@ -111,9 +107,7 @@ resources:
       tasks:
         - task_key: scan
           spark_python_task:
-            # The code register is a separate deployment with the same module names -- exactly
-            # one of the two directories may be on sys.path, which is what this path settles.
-            python_file: brick/devsecops/run_pipeline.py
+            python_file: brick/run_pipeline.py
             parameters:
               - --scope=sca
               - --catalog=${var.catalog}
@@ -137,7 +131,7 @@ resources:
       tasks:
         - task_key: scan
           spark_python_task:
-            python_file: brick/devsecops/run_pipeline.py
+            python_file: brick/run_pipeline.py
             parameters:
               - --scope=sast
               - --catalog=${var.catalog}
@@ -169,7 +163,7 @@ resources:
       tasks:
         - task_key: maintain
           spark_python_task:
-            python_file: brick/devsecops/run_pipeline.py
+            python_file: brick/run_pipeline.py
             parameters:
               - --maintain=true
               - --scope=os

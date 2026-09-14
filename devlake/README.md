@@ -83,8 +83,8 @@ end against a fake Wiz GraphQL server, with no network call and no credentials -
 
 ```bash
 SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=os --scans=2 --lake=/tmp/lakecheck
-SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=devsecops --scope=sca --scans=2 --lake=/tmp/lakecheck
-SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=devsecops --scope=sast --scans=2 --lake=/tmp/lakecheck
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=sca --scans=2 --lake=/tmp/lakecheck
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=sast --scans=2 --lake=/tmp/lakecheck
 ```
 
 Each runs `--scans` scans a day apart, starting `2026-06-01T00:00:00Z`, through the fork's
@@ -140,7 +140,7 @@ default scope, so disappearance fires either way.
 
 ## Open the notebooks locally
 
-The shipped notebooks (`brick/notebooks/*.ipynb`, `brick/devsecops/notebooks/*.ipynb`) reference
+The shipped notebooks (`brick/notebooks/*.ipynb`) reference
 four things a Databricks cluster provides for free and a laptop Jupyter kernel does not:
 `dbutils`, `spark`, `display`/`displayHTML`, and the `%sql` magic. `devlake/notebook.py` supplies
 all four **with no edit to any shipped notebook** — `dbx.get_dbutils()`
@@ -189,7 +189,7 @@ cp devlake/kernel_startup.py /tmp/devlake-ipython/profile_default/startup/00-dev
 export IPYTHONDIR=/tmp/devlake-ipython
 export DEVLAKE_LAKE=/tmp/lakecheck
 export DEVLAKE_SCHEMA=wiz
-export DEVLAKE_FORK=brick        # or devsecops
+export DEVLAKE_FORK=brick
 export SPARK_LOCAL_IP=127.0.0.1
 export WIDGET_CATALOG=spark_catalog
 export WIDGET_SCHEMA=wiz

@@ -1,3 +1,6 @@
+# A copy of brick/requirements.txt. This directory is a standalone deployment (see
+# README.md), so it carries its own -- but the two must not drift: the pinned Delta and
+# Plotly floors are properties of the Databricks runtime, not of either pipeline.
 # Local development and test only. A Databricks cluster already provides Spark, Delta, pandas
 # and Plotly -- do not install pyspark on the cluster, it will shadow the runtime's build.
 # Pinned to the 3.5 patch line delta-spark 3.3.x actually declares (pyspark>=3.5.3,<3.6):

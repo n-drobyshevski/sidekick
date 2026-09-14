@@ -1,13 +1,18 @@
 """The requirements pin and the jar pin have to name the same Delta release.
 
 An unpinned ``pyspark>=3.5`` resolves to pyspark 4.x today (PyPI has no 3.5-only floor), and
-4.x mismatches the ``io.delta:delta-spark_2.12:3.3.2`` jar coordinate hardcoded as
+4.x mismatches the ``io.delta:delta-spark_2.12:3.3.2``-shaped jar coordinate hardcoded as
 ``DELTA_PACKAGE`` in ``conftest.py`` -- delta-spark 3.3.x declares ``pyspark>=3.5.3,<3.6``. The
 failure that produces is not a pip error: it installs cleanly and then dies building the
 ``SparkSession``, so the fix belongs in the requirements file, not in a version check at import
 time. This test pins the fix rather than the failure: the ``delta-spark`` floor in
 ``requirements.txt`` must equal the jar version in ``conftest.py``, and ``pyspark`` must carry
 an upper bound below 3.6 so a future ``pip install`` cannot silently drift back onto 4.x.
+
+One directory's worth of checks, no parametrisation: this used to also parametrise over a
+sibling fork's own ``requirements.txt``/``conftest.py`` pair, back when ``brick/`` and
+``brick/devsecops/`` were two directories each pinning their own jar. There is one tree now, so
+one pair of files is all there is to check.
 """
 
 from __future__ import annotations
@@ -15,8 +20,6 @@ from __future__ import annotations
 import importlib.metadata
 import re
 from pathlib import Path
-
-import pytest
 
 BRICK_DIR = Path(__file__).resolve().parents[1]
 
@@ -36,16 +39,9 @@ def _requirement_bounds(requirements_path: Path, package: str) -> str:
     return match.group(1)
 
 
-@pytest.mark.parametrize(
-    "requirements_name, conftest_name",
-    [
-        ("requirements.txt", "tests/conftest.py"),
-        ("devsecops/requirements.txt", "devsecops/tests/conftest.py"),
-    ],
-)
-def test_delta_spark_floor_matches_the_pinned_jar(requirements_name, conftest_name):
-    requirements_path = BRICK_DIR / requirements_name
-    conftest_path = BRICK_DIR / conftest_name
+def test_delta_spark_floor_matches_the_pinned_jar():
+    requirements_path = BRICK_DIR / "requirements.txt"
+    conftest_path = BRICK_DIR / "tests" / "conftest.py"
 
     jar_version = _delta_package_version(conftest_path)
     bounds = _requirement_bounds(requirements_path, "delta-spark")
@@ -57,12 +53,8 @@ def test_delta_spark_floor_matches_the_pinned_jar(requirements_name, conftest_na
     )
 
 
-@pytest.mark.parametrize(
-    "requirements_name",
-    ["requirements.txt", "devsecops/requirements.txt"],
-)
-def test_pyspark_is_upper_bounded_below_3_6(requirements_name):
-    requirements_path = BRICK_DIR / requirements_name
+def test_pyspark_is_upper_bounded_below_3_6():
+    requirements_path = BRICK_DIR / "requirements.txt"
     bounds = _requirement_bounds(requirements_path, "pyspark")
     upper_match = re.search(r"<\s*([\d.]+)", bounds)
     assert upper_match, (
@@ -76,11 +68,7 @@ def test_pyspark_is_upper_bounded_below_3_6(requirements_name):
     )
 
 
-@pytest.mark.parametrize(
-    "conftest_name",
-    ["tests/conftest.py", "devsecops/tests/conftest.py"],
-)
-def test_installed_delta_spark_matches_the_pinned_jar_exactly(conftest_name):
+def test_installed_delta_spark_matches_the_pinned_jar_exactly():
     """The installed Python package and the ``--packages`` jar have to be the SAME release.
 
     ``delta-spark`` and its jar ship together from one Delta release, and the jar is what
@@ -91,9 +79,9 @@ def test_installed_delta_spark_matches_the_pinned_jar_exactly(conftest_name):
     was ``AnalysisException: Table ... does not support truncate in batch mode``, raised deep
     inside ``csvstore.restore``'s ``saveAsTable`` call, nowhere near this pin. So this asserts
     equality, not a floor: a floor lets the jar and the package drift apart again the next time
-    either is bumped alone.
+    either is bumped alone. See ``brick/tests/test_pins.py`` for the full writeup.
     """
-    conftest_path = BRICK_DIR / conftest_name
+    conftest_path = BRICK_DIR / "tests" / "conftest.py"
     jar_version = _delta_package_version(conftest_path)
     installed_version = importlib.metadata.version("delta-spark")
     assert installed_version == jar_version, (

@@ -1,4 +1,4 @@
-"""One SparkSession for the whole brick suite, with Delta enabled, and one register to read.
+"""One SparkSession for the whole suite, with Delta enabled, and one register to read.
 
 There used to be an identical ``spark`` fixture in each test module. That worked while nothing
 needed Delta, and stopped working the moment the ledger tests did, for a reason worth writing
@@ -26,6 +26,8 @@ from pathlib import Path
 import pytest
 
 BRICK_DIR = Path(__file__).resolve().parents[1]
+#: brick/ is one hop below the repo root. Only the GAS golden fixture is read from there --
+#: everything else is beside these tests.
 REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
@@ -54,7 +56,7 @@ DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.3"
 # Spark 4.0. Measured here on OpenJDK 21.0.10: session start, a Delta write/read, and OPTIMIZE
 # on a single-column CLUSTER BY table (the exact path this suite depends on, see the comment
 # above) all ran clean, no reflective-access stack trace, no added flags. The full suite ran on
-# it too -- 549/551 passed (one pre-existing failure in test_csvstore.py, unrelated to the JVM:
+# it too -- 568/569 passed (one pre-existing failure in test_csvstore.py, unrelated to the JVM:
 # a Delta v2-catalog "does not support truncate in batch mode" error that `import_bundle.py`
 # already documents and works around elsewhere; csvstore.py just doesn't use that workaround
 # yet). So this fixture does not gate the JVM version -- a guard here would block a setup that
@@ -222,9 +224,18 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.xdist_group("live_tables"))
 
 
-LIVE_SCHEMA = "dash"
-LIVE_SCOPE = "os"
+LIVE_SCHEMA = "code"
+LIVE_SCOPE = "sca"
 LIVE_SEVERITIES = ["CRITICAL", "HIGH"]
+
+#: The findings the live register is built from.
+#:
+#: **Synthetic, and labelled as such where it lives.** The captured `sca_response.json` is the
+#: *grouped* query -- one row per repository with severity counts -- so it has no per-finding
+#: rows and cannot drive a pipeline. `sca_findings_example.json` is what the ungrouped query
+#: returns, synthesised over the repository branches and cloud platforms the real capture does
+#: contain. See its header.
+LIVE_FIXTURE = "sca_findings_example.json"
 
 
 @pytest.fixture(scope="session")
@@ -251,7 +262,7 @@ def live_tables(spark):
     import run_pipeline
     from ingest import extract_nodes
 
-    nodes = extract_nodes(json.loads((REPO_ROOT / "os_vulns_response_exemple.json").read_text()))
+    nodes = extract_nodes(json.loads((BRICK_DIR / LIVE_FIXTURE).read_text()))
     spark.sql(f"DROP DATABASE IF EXISTS {LIVE_SCHEMA} CASCADE")
     spark.sql(f"CREATE DATABASE {LIVE_SCHEMA}")
     tables = run_pipeline.resolve_tables(LIVE_SCHEMA, LIVE_SCOPE, argv=[])

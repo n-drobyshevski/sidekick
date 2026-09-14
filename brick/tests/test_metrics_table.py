@@ -1,10 +1,15 @@
 """One metrics table: the families, the union schema, and the crashed gold write that resumes.
 
-These are S1-T6's tests. They cover the part `test_ledger_pipeline.py` does not: the two-commit
-window between the ledger MERGE and the gold append and the three ways out of it, that every
-scan carries every family, that the union's schema is the element-wise merge of the family
-frames' schemas, that both storage modes hold the same `metrics` content, and that
-`closed_observed` counts this scan's own resolutions in this scan's own month.
+These are S1-T6's tests. They cover the part `test_ledger_pipeline.py` does
+not: the two-commit window between the ledger MERGE and the gold append and the three ways out
+of it, that every scan carries every family -- five here, because this register publishes P2P
+v5's `assets` beside the other three gold grains -- that the union's schema is the element-wise
+merge of the family frames' schemas, that both storage modes hold the same `metrics` content, and
+that `closed_observed` counts this scan's own resolutions in this scan's own month.
+
+Every assertion below sweeps `run_pipeline.METRICS_FAMILIES` / `GOLD_FAMILIES` rather than a
+list of its own, so `assets` is covered by the same lines that cover `mttr` -- a family added to
+the register and not to the tuples is a typo, not a population.
 
 **The fixture builders below are copied from `test_ledger_pipeline.py`, not imported.** Importing
 a sibling test module would not bring its fixtures with it -- pytest resolves fixtures from the
@@ -25,7 +30,8 @@ from pathlib import Path
 import pytest
 
 pytest.importorskip(
-    "pyspark", reason="brick tests need pyspark: pip install -r brick/requirements.txt"
+    "pyspark",
+    reason="brick tests need pyspark: pip install -r brick/requirements.txt",
 )
 pytest.importorskip(
     "delta", reason="ledger tests need delta-spark: pip install -r brick/requirements.txt"
@@ -40,7 +46,7 @@ sys.path.insert(0, str(BRICK_DIR))
 import run_pipeline  # noqa: E402
 from config import SCANS_COLUMNS  # noqa: E402
 
-SCOPE = "os"
+SCOPE = "sca"
 SEVERITIES = ["CRITICAL", "HIGH"]
 TS = {
     "s1": "2026-05-01T00:00:00Z",
@@ -405,7 +411,7 @@ def test_a_crash_between_merge_and_commit_record_still_refuses(
 
 
 def test_every_scan_carries_every_family(spark, tables):
-    """One table, four families, and every scan in all of them.
+    """One table, every family, and every scan in all of them.
 
     **Failure of presence**: a family dropped from the fold is invisible in a wide table -- the
     rows that carried it simply stop existing, and every read that filters on `family` returns
@@ -429,15 +435,13 @@ def test_every_scan_carries_every_family(spark, tables):
         assert seen.count(run_pipeline.FAMILY_SCAN) == 1, f"{scan_id}: one commit record"
         assert set(seen) - {run_pipeline.FAMILY_SCAN} == set(run_pipeline.GOLD_FAMILIES), scan_id
 
-    # Capacity carries every month twice, once per population, so a row that does not say
-    # which doubles every count that reads it.
-    capacity = (
-        spark.table(tables.metrics)
-        .filter(F.col("family") == run_pipeline.FAMILY_CAPACITY)
-        .collect()
-    )
-    assert capacity
-    assert all(row["population"] is not None for row in capacity)
+    # Capacity carries every month twice, once per population, and `assets` stacks the same two
+    # populations for the same reason -- so a row that does not say which doubles every count
+    # that reads it.
+    for family in (run_pipeline.FAMILY_CAPACITY, run_pipeline.FAMILY_ASSETS):
+        stacked = spark.table(tables.metrics).filter(F.col("family") == family).collect()
+        assert stacked, family
+        assert all(row["population"] is not None for row in stacked), family
 
 
 # --------------------------------------------------------------------- (c) the union schema
@@ -450,9 +454,9 @@ def test_the_union_schema_is_the_elementwise_merge(spark, tables, monkeypatch):
     recording the receiver and argument of every `unionByName` call whose frames carry a
     `family` column. That is the real published frames -- post-join for `mttr`, post-`withColumn`
     for `program` -- rather than a second implementation recomputed from `metrics.*` here, which
-    could drift from the pipeline and still agree with itself. The populations `capacity` stacks
-    are unioned before `with_scan_columns` stamps them, so they carry no `family` and are not
-    mistaken for a family frame.
+    could drift from the pipeline and still agree with itself. The populations `capacity` and
+    `assets` each stack are unioned before `with_scan_columns` stamps them, so they carry no
+    `family` and are not mistaken for a family frame.
 
     **Failure of presence**: `unionByName(allowMissingColumns=True)` aligns by NAME. Two families
     spelling one column differently give two half-NULL columns; two families giving one name two

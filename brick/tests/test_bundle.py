@@ -6,15 +6,19 @@ no workspace -- that every path the bundle names exists, that every scope it pas
 the fork it points at actually has, and that the two guards which make a scheduled run safe are
 present on every scan job.
 
-The scope check is the one worth having. Both forks' entry points are called
-``run_pipeline.py`` and take a ``--scope``, so a job pointed at the wrong one imports cleanly,
-runs, and measures the wrong register -- ``brick/run_pipeline.py --scope=sca`` fails only once
-it reaches ``resolve_scope``, an hour of cluster time after the deploy that introduced it.
+Ported from ``brick/devsecops/tests/test_bundle.py`` when the fork that used to live beside
+this one was retired (S2): every job in ``brick/databricks.yml`` points at ``brick/run_pipeline.py``
+now that there is only one tree, so ``FORK_OF`` -- which used to map two entry points to two
+forks' ``config.py`` -- collapses to the one entry it was already heading toward. The scope
+check this module exists for stays live even with nothing left to mix up with: a typo could
+still point a job's ``python_file`` at some other path, and
+``test_every_scope_belongs_to_the_fork_the_job_points_at`` would refuse it, because ``FORK_OF``
+only recognises the one path the bundle is supposed to use.
 
-``config.SCOPES`` is read with ``ast`` rather than imported: the two forks carry the same module
-names and exactly one of them may be on ``sys.path`` (see
-``brick/devsecops/tests/test_fork_integrity.py``), so a test that imported both would be asking
-which one won rather than what each says.
+``config.SCOPES`` is read with ``ast`` rather than imported so this test module needs no
+``sys.path`` entry of its own and cannot collide with whatever a test run elsewhere already put
+on ``sys.path`` (see ``brick/tests/test_deployment_integrity.py`` for the guard that matters when
+something does).
 """
 
 from __future__ import annotations
@@ -31,11 +35,10 @@ BRICK_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BRICK_DIR.parent
 BUNDLE = BRICK_DIR / "databricks.yml"
 
-#: Which fork each entry point belongs to, and therefore whose ``SCOPES`` its ``--scope`` is
-#: checked against.
+#: Which tree each entry point belongs to, and therefore whose ``SCOPES`` its ``--scope`` is
+#: checked against. One entry: every job in the bundle points at this tree's ``run_pipeline.py``.
 FORK_OF = {
     "brick/run_pipeline.py": BRICK_DIR / "config.py",
-    "brick/devsecops/run_pipeline.py": BRICK_DIR / "devsecops" / "config.py",
 }
 
 VAR_REF = re.compile(r"\$\{var\.([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -118,7 +121,9 @@ def test_every_python_file_exists(bundle):
 
 
 def test_every_scope_belongs_to_the_fork_the_job_points_at(bundle):
-    """The check that catches a job wired to the other fork's identically-named entry point."""
+    """The check that catches a job wired to an entry point whose config does not have the
+    scope it was given -- the one-tree survivor of a check that used to catch two forks'
+    identically-named entry points instead."""
     for name, job in jobs(bundle).items():
         (task,) = job["tasks"]
         path = task["spark_python_task"]["python_file"]

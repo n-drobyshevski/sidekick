@@ -40,8 +40,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 #: the scan-2 slicing rule that goes with each one.
 FIXTURES = {
     ("brick", "os"): REPO_ROOT / "os_vulns_response_exemple.json",
-    ("devsecops", "sca"): REPO_ROOT / "brick" / "devsecops" / "sca_findings_example.json",
-    ("devsecops", "sast"): REPO_ROOT / "brick" / "devsecops" / "sast_response.json",
+    ("brick", "sca"): REPO_ROOT / "brick" / "sca_findings_example.json",
+    ("brick", "sast"): REPO_ROOT / "brick" / "sast_response.json",
 }
 
 
@@ -178,10 +178,10 @@ def default_fixture(fork: str, scope: str):
     nodes = _extract_nodes(json.loads(path.read_text()))
     if key == ("brick", "os"):
         scan2 = nodes[1:]
-    elif key == ("devsecops", "sca"):
+    elif key == ("brick", "sca"):
         half = max(1, len(nodes) // 2)
         scan2 = nodes[:half]
-    else:  # ("devsecops", "sast")
+    else:  # ("brick", "sast")
         scan2 = list(nodes)
     return path, nodes, scan2
 

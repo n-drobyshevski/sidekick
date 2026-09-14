@@ -59,7 +59,7 @@ def tables(spark, request):
     # half-built ledger for this test to reconcile against.
     spark.sql(f"DROP DATABASE IF EXISTS {name} CASCADE")
     spark.sql(f"CREATE DATABASE {name}")
-    tbl = run_pipeline.resolve_tables(name, "os", argv=[])
+    tbl = run_pipeline.resolve_tables(name, "sca", argv=[])
     run_pipeline.ensure_tables(spark, tbl)
     yield tbl
     spark.sql(f"DROP DATABASE IF EXISTS {name} CASCADE")
@@ -98,7 +98,7 @@ def write_bronze(spark, tables, nodes, scan_id, scan_ts):
         spark, tables.bronze, run_pipeline.BRONZE_TABLE_SCHEMA, "bronze"
     )
     rows = [
-        (scan_id, scan_ts, "os", i, json.dumps(n)) for i, n in enumerate(nodes)
+        (scan_id, scan_ts, "sca", i, json.dumps(n)) for i, n in enumerate(nodes)
     ]
     df = spark.createDataFrame(
         rows, "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
@@ -122,7 +122,7 @@ def run_scan(spark, tables, nodes, scan_id, scan_ts, severities=SEVERITIES):
     """
     write_bronze(spark, tables, nodes, scan_id, scan_ts)
     run_pipeline.build_metrics(
-        spark, tables, scan_id, scan_ts, "os", severities=severities, summary=False
+        spark, tables, scan_id, scan_ts, "sca", severities=severities, summary=False
     )
 
 
@@ -346,6 +346,27 @@ def test_the_scope_guard_survives_a_round_trip_through_the_scan_log(spark, table
     assert run_pipeline.parse_severities(stored["s2"]) == ["CRITICAL", "HIGH"]
 
 
+def test_the_scans_row_carries_the_gate_this_scope_resolved(spark, tables, monkeypatch):
+    """`resolve_severities(scope)` is not a display value: it is what the scan log records.
+
+    ``main`` resolves the gate once and hands the same list to the fetch and to ``record_scan``,
+    so with no ``--severities`` the ``severities`` column holds this scope's own default. The
+    disappearance guard reads that string back on the next scan, which is why "whose default"
+    is a question about remediation figures rather than about volume.
+    """
+    from config import default_fetch_severities
+
+    monkeypatch.delenv("SEVERITIES", raising=False)
+    resolved = run_pipeline.resolve_severities("sca", argv=[])
+    assert resolved == list(default_fetch_severities("sca"))
+
+    run_scan(spark, tables, [node("f-1")], "s1", TS["s1"], severities=resolved)
+
+    stored = family_rows(spark, tables, run_pipeline.FAMILY_SCAN).first()["severities"]
+    assert stored == "CRITICAL,HIGH"
+    assert run_pipeline.parse_severities(stored) == resolved
+
+
 def test_unscoped_scans_are_stored_as_null():
     """NULL means "asked for everything", which is what lets absence mean something.
 
@@ -376,7 +397,7 @@ def test_rebuild_reproduces_the_live_ledger(spark, tables):
     assert live["id:f-2"]["status"] == STATUS_RESOLVED
     assert live["id:f-3"]["reopened_count"] == 1, "f-3 vanished then came back"
 
-    replayed = run_pipeline.rebuild_ledger(spark, tables, "os", SEVERITIES, "scan_ts")
+    replayed = run_pipeline.rebuild_ledger(spark, tables, "sca", SEVERITIES, "scan_ts")
     assert replayed == 3
 
     assert ledger_rows(spark, tables) == live
@@ -387,28 +408,28 @@ def test_rebuild_is_idempotent(spark, tables):
     run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
     run_scan(spark, tables, [node("f-1")], "s2", TS["s2"])
 
-    run_pipeline.rebuild_ledger(spark, tables, "os", SEVERITIES, "scan_ts")
+    run_pipeline.rebuild_ledger(spark, tables, "sca", SEVERITIES, "scan_ts")
     once = ledger_rows(spark, tables)
-    run_pipeline.rebuild_ledger(spark, tables, "os", SEVERITIES, "scan_ts")
+    run_pipeline.rebuild_ledger(spark, tables, "sca", SEVERITIES, "scan_ts")
     assert ledger_rows(spark, tables) == once
 
 
 def test_rebuild_on_bronze_without_seq_still_works(spark, tables):
     """v1 bronze has no `seq` column, and the backfill exists precisely for v1 history."""
-    rows = [("s1", TS["s1"], "os", json.dumps(node("f-1")))]
+    rows = [("s1", TS["s1"], "sca", json.dumps(node("f-1")))]
     spark.createDataFrame(
         rows, "scan_id STRING, scan_ts STRING, scope STRING, node_json STRING"
     ).withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).write.mode("append").option(
         "mergeSchema", "true"
     ).saveAsTable(tables.bronze)
 
-    assert run_pipeline.rebuild_ledger(spark, tables, "os", SEVERITIES, "scan_ts") == 1
+    assert run_pipeline.rebuild_ledger(spark, tables, "sca", SEVERITIES, "scan_ts") == 1
     assert ledger_rows(spark, tables)["id:f-1"]["status"] == STATUS_OPEN
 
 
 def test_rebuild_refuses_when_there_is_no_bronze(spark, tables):
     with pytest.raises(RuntimeError, match="does not exist"):
-        run_pipeline.rebuild_ledger(spark, tables, "os", SEVERITIES, "scan_ts")
+        run_pipeline.rebuild_ledger(spark, tables, "sca", SEVERITIES, "scan_ts")
 
 
 # -------------------------------------------------------------- the metric contract
@@ -520,7 +541,7 @@ def test_maintain_skips_tables_that_do_not_exist_yet(spark, tables):
 @pytest.fixture
 def path_tables(spark, tmp_path):
     """The same three tables, in a directory instead of a schema."""
-    tbl = run_pipeline.resolve_tables("", "os", argv=[], data_path=str(tmp_path / "register"))
+    tbl = run_pipeline.resolve_tables("", "sca", argv=[], data_path=str(tmp_path / "register"))
     run_pipeline.ensure_tables(spark, tbl)
     return tbl
 
@@ -582,7 +603,7 @@ def test_rebuild_replays_a_path_backed_bronze(spark, path_tables):
     run_scan(spark, path_tables, [node("f-1")], "s2", TS["s2"])
     live = ledger_rows(spark, path_tables)
 
-    run_pipeline.rebuild_ledger(spark, path_tables, "os", SEVERITIES, "scan_ts")
+    run_pipeline.rebuild_ledger(spark, path_tables, "sca", SEVERITIES, "scan_ts")
 
     assert ledger_rows(spark, path_tables) == live
 
@@ -613,7 +634,7 @@ def test_the_register_migrates_into_a_catalog_without_losing_anything(spark, pat
 
         # And it is a working ledger, not just readable rows: the next scan has to be able to
         # MERGE into it by name, or the migration would be a one-way trip into a dead table.
-        catalog_tables = run_pipeline.resolve_tables("arrived", "os", argv=["--table_prefix="])
+        catalog_tables = run_pipeline.resolve_tables("arrived", "sca", argv=["--table_prefix="])
         assert catalog_tables.ledger == "arrived.vuln_ledger"
         run_pipeline.ensure_tables(spark, catalog_tables)
         run_scan(spark, catalog_tables, [node("f-1"), node("f-4")], "s3", TS["s3"])

@@ -1,5 +1,9 @@
 """The GAS -> brick seed: the column mapping, and the handoff to the first ordinary scan.
 
+Ported from ``brick/tests/test_import_bundle.py`` when this fork absorbed the ``os`` scope
+(S2): the GAS app is the OS-patching register, so ``SCOPE`` below is ``"os"``, unchanged from
+upstream, and every assertion carries over untouched.
+
 Two halves. The first pins the mapping's four silent failure modes -- a NULL risk signal
 coerced to false, the severity-scope serialization, episodes dropped on the floor, and a
 second import landing on top of a live register. Each of those produces a plausible number
@@ -42,14 +46,14 @@ import run_pipeline  # noqa: E402
 from config import STATUS_OPEN, STATUS_RESOLVED  # noqa: E402
 from import_bundle import BundleError  # noqa: E402
 
-from test_ledger_pipeline import ledger_rows, run_scan  # noqa: E402
+from test_ledger_pipeline import ledger_rows  # noqa: E402
 
 SCOPE = "os"
 SEVERITIES = ["CRITICAL", "HIGH"]
 
 # GAS scan ids ARE their timestamps (gas/src/domain/ledgerCore.ts:170), and the fixture keeps
-# that shape on purpose -- brick treats them as opaque strings, and this is the test that
-# proves it rather than assuming it.
+# that shape on purpose -- this pipeline treats them as opaque strings, and this is the test
+# that proves it rather than assuming it.
 G1 = "2026-07-01T05:00:00Z"
 G2 = "2026-07-08T05:00:00Z"
 G3 = "2026-07-15T05:00:00Z"
@@ -153,6 +157,42 @@ def tables(spark, request):
     spark.sql(f"DROP DATABASE IF EXISTS {name} CASCADE")
 
 
+def write_bronze(spark, tables, nodes, scan_id, scan_ts):
+    """Like ``test_ledger_pipeline.write_bronze``, but stamping ``SCOPE`` ("os") on the bronze
+    rows rather than that module's hardcoded ``"sca"``.
+
+    Not a cosmetic difference: this is not reused directly because ``ledger.reconcile``'s
+    ``_refuse_foreign_scope`` guard reads the *observation* frame's own ``scope`` column (it
+    survives ``metrics.silver_findings`` -> ``ledger.observed`` untouched) and refuses to
+    reconcile it against a differing ``scope`` argument. A ``"sca"``-stamped bronze row handed
+    to ``build_metrics(..., "os", ...)`` doesn't only mislabel a column -- it raises
+    ``RuntimeError`` before anything is written, which is exactly the guard CLAUDE.md's
+    "Three scopes in one ledger" entry describes, doing its job.
+    """
+    run_pipeline.create_clustered(
+        spark, tables.bronze, run_pipeline.BRONZE_TABLE_SCHEMA, "bronze"
+    )
+    rows = [
+        (scan_id, scan_ts, SCOPE, i, json.dumps(n)) for i, n in enumerate(nodes)
+    ]
+    df = spark.createDataFrame(
+        rows, "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
+    )
+    df.withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).write.format("delta").mode(
+        "append"
+    ).option("mergeSchema", "true").saveAsTable(tables.bronze)
+
+
+def run_scan(spark, tables, nodes, scan_id, scan_ts, severities=SEVERITIES):
+    """Like ``test_ledger_pipeline.run_scan``, but through this module's own ``write_bronze``
+    above -- scoped to ``os``, the scope this bundle seeds, rather than that module's ``sca``.
+    """
+    write_bronze(spark, tables, nodes, scan_id, scan_ts)
+    run_pipeline.build_metrics(
+        spark, tables, scan_id, scan_ts, SCOPE, severities=severities, summary=False
+    )
+
+
 # ------------------------------------------------------------------- the severity scope
 
 
@@ -248,6 +288,14 @@ class TestColumnMapping:
     def test_drops_tags_json_rather_than_failing_on_it(self, spark):
         frame = import_bundle.ledger_frame(spark, bundle(), scope=SCOPE)
         assert "tags_json" not in frame.columns
+
+    def test_the_static_analysis_columns_are_null_for_a_gas_import(self, spark):
+        """GAS is the OS-patching register -- it has no CWE, language or AI-verdict inputs,
+        the same "never captured" state a missing exploit signal gets, not an invented one."""
+        row = import_bundle.ledger_frame(spark, bundle(), scope=SCOPE).collect()[0]
+        assert row["cwe"] is None
+        assert row["language"] is None
+        assert row["ai_verdict"] is None
 
     def test_an_unrecognized_severity_becomes_unknown_not_null(self, spark):
         payload = bundle(ledger=[gas_ledger_row("id:f-a", severity="")])
@@ -458,10 +506,10 @@ class TestImport:
 class TestHandoffToTheFirstScan:
     """The test that proves the migration, rather than the mapping.
 
-    After the seed, brick's next ordinary run has to continue the imported lifecycles: keep
-    the ones still present, and resolve the ones that have gone. That depends on three things
-    the import is responsible for -- the scan log's newest row being the last GAS scan, its
-    severity scope parsing back to a real list, and ``last_scan_id`` on each imported row
+    After the seed, this pipeline's next ordinary run has to continue the imported lifecycles:
+    keep the ones still present, and resolve the ones that have gone. That depends on three
+    things the import is responsible for -- the scan log's newest row being the last GAS scan,
+    its severity scope parsing back to a real list, and ``last_scan_id`` on each imported row
     matching that scan.
     """
 
@@ -495,8 +543,8 @@ class TestHandoffToTheFirstScan:
         assert rows["id:f-b"]["status"] == STATUS_RESOLVED
         assert rows["id:f-b"]["resolution_src"] == "disappeared"
         assert rows["id:f-a"]["status"] == STATUS_OPEN
-        # The whole point: the imported history survives the first brick scan. first_seen is
-        # the date GAS recorded, not today, so MTTR measures a real interval.
+        # The whole point: the imported history survives the first pipeline scan. first_seen
+        # is the date GAS recorded, not today, so MTTR measures a real interval.
         assert rows["id:f-a"]["first_seen"].isoformat() == "2026-06-01T00:00:00"
         assert rows["id:f-a"]["last_scan_id"] == "scan-1"
 

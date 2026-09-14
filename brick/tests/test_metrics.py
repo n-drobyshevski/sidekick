@@ -24,6 +24,8 @@ pytest.importorskip(
 # The modules are plain top-level files, so their own directory goes on the path -- the same
 # arrangement the Databricks side uses. REPO_ROOT is still needed for the response fixture.
 BRICK_DIR = Path(__file__).resolve().parents[1]
+#: brick/ is one hop below the repo root. Only the GAS golden fixture is read from there --
+#: everything else is beside these tests.
 REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
@@ -63,7 +65,7 @@ def unknown_node(**over) -> dict:
     )
 
 
-def silver(spark, nodes, scan_ts: str = SCAN_TS, scope: str = "os"):
+def silver(spark, nodes, scan_ts: str = SCAN_TS, scope: str = "sca"):
     """Nodes -> bronze -> silver, exercising the real parse path."""
     rows = [(SCAN_ID, scan_ts, scope, json.dumps(n)) for n in nodes]
     bronze = spark.createDataFrame(
@@ -807,7 +809,7 @@ def test_observation_window(spark):
 
 def test_committed_wiz_fixture_parses_end_to_end(spark):
     """The real response shape, straight from the repo fixture -- no network, no mocks."""
-    payload = json.loads((REPO_ROOT / "os_vulns_response_exemple.json").read_text())
+    payload = json.loads((BRICK_DIR / "sca_findings_example.json").read_text())
     nodes = extract_nodes(payload)
     assert nodes, "fixture should contain findings"
 
@@ -828,14 +830,16 @@ def test_committed_wiz_fixture_parses_end_to_end(spark):
 def test_scope_travels_from_bronze_into_silver_and_gold(spark):
     """A row must say which population it describes even when read outside its own table --
     otherwise an OS row and an all-types row are indistinguishable after a UNION."""
-    df = metrics.classify_risk(silver(spark, [node()], scope="os"), DEFAULT_RISK_RULE)
-    assert df.collect()[0]["scope"] == "os"
+    df = metrics.classify_risk(silver(spark, [node()], scope="sca"), DEFAULT_RISK_RULE)
+    assert df.collect()[0]["scope"] == "sca"
 
     # "program" -- run_pipeline.FAMILY_PROGRAM -- because confusion_matrix is that family's
     # frame; family is a required argument now that every family shares one table.
-    gold = metrics.with_scan_columns(metrics.confusion_matrix(df), SCAN_ID, SCAN_TS, "os", "program")
+    gold = metrics.with_scan_columns(
+        metrics.confusion_matrix(df), SCAN_ID, SCAN_TS, "sca", "program"
+    )
     row = rows_by_severity(gold)["OVERALL"]
-    assert row["scope"] == "os"
+    assert row["scope"] == "sca"
     assert row["scan_id"] == SCAN_ID
     assert row["family"] == "program"
 

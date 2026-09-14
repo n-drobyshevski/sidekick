@@ -1,13 +1,21 @@
 """Seed the ledger from a GAS migration bundle -- the one-shot import that carries an
 existing deployment's history into Delta.
 
-The problem this exists for: `gas/` has been reconciling a daily scan for months and holds
-the only record of when each finding was first seen and when it stopped being returned.
-brick starting from an empty ledger does not merely lack a chart -- it is *wrong*. Every
-``first_seen`` collapses to today, so Kaplan-Meier reads near zero, the capacity grid marks
-everything before today as ``reconstructed``, and the confusion matrix is computed over a
-population one scan deep. ``--rebuild_ledger`` cannot help: it replays bronze, and a fresh
-deployment's bronze is empty.
+Ported from ``brick/import_bundle.py`` when this fork absorbed the ``os`` scope (S2): the
+problem it exists for is unchanged -- ``gas/`` has been reconciling a daily OS-patching scan
+for months and holds the only record of when each finding was first seen and when it stopped
+being returned, and starting this register's ``os`` scope from an empty ledger does not merely
+lack a chart, it is *wrong*. Every ``first_seen`` collapses to today, so Kaplan-Meier reads near
+zero, the capacity grid marks everything before today as ``reconstructed``, and the confusion
+matrix is computed over a population one scan deep. ``--rebuild_ledger`` cannot help: it
+replays bronze, and a fresh deployment's bronze is empty.
+
+There is no equivalent history for ``sca`` or ``sast``: no prior GAS deployment scanned those
+populations, so a bundle only ever exists for ``--scope=os``. Nothing here enforces that --
+``scope`` is stamped from the run the same way ``run_pipeline`` stamps every other write, and
+refusing a non-``os`` scope would be a policy this module has no way to verify -- but it is why
+this stays deployment tooling (``MIGRATION_MODULES`` in ``run_pipeline.py``) rather than
+scope-specific code.
 
 **What this reads.** The ``wiz-sidekick-migration`` bundle written by
 ``gas/src/domain/exportBundle.ts`` (Data -> Migration bundle), which is the same format
@@ -27,7 +35,11 @@ next ordinary run from the ledger this seeds.
 ``gas/src/domain/reconcile.ts``'s list, so 23 of GAS's 24 columns land 1:1. The three
 differences are stated in config.py and handled here: ``scope`` is stamped from the run,
 ``component`` has no GAS source (see ``h:`` below), and ``tags_json`` is dropped because
-brick's ingest selects no asset tags and nothing downstream would read it.
+brick's ingest selects no asset tags and nothing downstream would read it. This fork's ledger
+carries three more columns than GAS's -- ``cwe``, ``language``, ``ai_verdict`` -- and GAS has no
+source for any of them either, being an OS-vulnerability register with no static-analysis
+inputs: every imported row gets all three as NULL, the same "never captured" state
+``has_kev``/``has_exploit``/``epss`` already use for a signal nobody measured.
 
 Four places where a plausible-looking mapping is silently wrong, each with a test:
 
@@ -36,10 +48,10 @@ Four places where a plausible-looking mapping is silently wrong, each with a tes
     metrics.py. Coercing an uncaptured signal to false inflates efficiency and deflates
     coverage at the same time, and nothing in the output says so.
   * **``severities`` is serialized differently on the two sides.** GAS writes JSON array
-    text (``["CRITICAL", "HIGH"]``, gas/src/domain/compaction.ts) and brick writes sorted
-    comma-joined text (``CRITICAL,HIGH``, run_pipeline.serialize_severities). Copied
-    verbatim, ``run_pipeline.parse_severities`` returns None for it, which brick reads as
-    *unscoped* -- the exact state the disappearance scope guard exists to prevent.
+    text (``["CRITICAL", "HIGH"]``, gas/src/domain/compaction.ts) and this pipeline writes
+    sorted comma-joined text (``CRITICAL,HIGH``, run_pipeline.serialize_severities). Copied
+    verbatim, ``run_pipeline.parse_severities`` returns None for it, which the disappearance
+    guard reads as *unscoped* -- the exact state it exists to prevent.
   * **A settled lifecycle can live in ``episodes`` rather than ``ledger``.** GAS compaction
     moves resolved rows out of the live table, and ``ledgerCore.baseRows`` unions the two --
     so the population GAS's own coverage and MTTR are computed over is ledger + episodes.
@@ -51,8 +63,8 @@ Four places where a plausible-looking mapping is silently wrong, each with a tes
 
 **The ``h:`` caveat, stated once.** ``vuln_key`` is ``id:<wiz finding id>`` when the API
 gave one and a hash otherwise, and the hash basis includes ``component``, which GAS never
-persisted. An imported ``h:`` row will therefore be re-hashed differently by the next brick
-scan and start a second lifecycle. Only findings with no Wiz id are affected, which is why
+persisted. An imported ``h:`` row will therefore be re-hashed differently by the next scan
+and start a second lifecycle. Only findings with no Wiz id are affected, which is why
 the summary prints the ``h:`` count -- that number is the blast radius, and it is usually
 zero.
 """
@@ -73,7 +85,7 @@ import run_pipeline
 from config import STATUS_OPEN, STATUS_RESOLVED
 
 # See config.PIPELINE_VERSION: every module in the folder must report the same version.
-MODULE_VERSION = "3.0"
+MODULE_VERSION = "3.0-devsecops"
 
 # The interchange contract, shared with gas/src/domain/importMerge.ts and
 # wiz_dashboard/data/migrate.py. Bumping either of these is a coordinated change across
@@ -83,7 +95,7 @@ BUNDLE_VERSION = 1
 
 # The deep-history half of a windowed export (migrate.ARCHIVE_KIND). GAS refuses it as a
 # live import and so does this: it carries no scans, so seeding from it would leave every
-# imported row with a last_scan_id that names no scan brick knows about, and the
+# imported row with a last_scan_id that names no scan this pipeline knows about, and the
 # disappearance guard would never fire for any of them.
 ARCHIVE_KIND = "wiz-sidekick-migration-archive"
 
@@ -158,14 +170,14 @@ def _status(value: Any) -> str:
 
 
 def gas_severities(text: Any) -> Optional[str]:
-    """GAS's ``scans.severities`` text in brick's serialization.
+    """GAS's ``scans.severities`` text in this pipeline's serialization.
 
-    GAS writes ``'["CRITICAL", "HIGH"]'`` (gas/src/domain/compaction.ts:24-38); brick writes
-    ``'CRITICAL,HIGH'`` (run_pipeline.serialize_severities). NULL means *unscoped* on both
-    sides and passes straight through -- getting that one backwards would either freeze every
-    lifecycle or mass-resolve the register.
+    GAS writes ``'["CRITICAL", "HIGH"]'`` (gas/src/domain/compaction.ts:24-38); this pipeline
+    writes ``'CRITICAL,HIGH'`` (run_pipeline.serialize_severities). NULL means *unscoped* on
+    both sides and passes straight through -- getting that one backwards would either freeze
+    every lifecycle or mass-resolve the register.
 
-    A value that is already in brick's form is accepted too, so a bundle that has been
+    A value that is already in this pipeline's form is accepted too, so a bundle that has been
     through a converter twice is not corrupted by the second pass.
     """
     if text is None or str(text).strip() == "":
@@ -222,8 +234,9 @@ def validate_bundle(data: Any) -> dict:
     if kind == ARCHIVE_KIND:
         raise BundleError(
             "This is the deep-history archive half of a split export, which carries no scans "
-            "-- importing it would leave every row pointing at a scan brick has never seen, "
-            "and none of them could ever resolve by disappearance. Import the live bundle."
+            "-- importing it would leave every row pointing at a scan this pipeline has never "
+            "seen, and none of them could ever resolve by disappearance. Import the live "
+            "bundle."
         )
     if kind != BUNDLE_KIND:
         raise BundleError(f"Not a migration bundle (kind {kind!r}).")
@@ -269,7 +282,7 @@ def _ledger_row(row: dict, *, scope: str) -> tuple:
         str(row["vuln_key"]),
         scope,
         _str(row.get("cve")),
-        # No GAS source: the column is brick's, and reconcile.ts never persisted it.
+        # No GAS source: the column is this pipeline's, and reconcile.ts never persisted it.
         None,
         _str(row.get("severity")),
         _str(row.get("asset_id")),
@@ -292,6 +305,11 @@ def _ledger_row(row: dict, *, scope: str) -> tuple:
         _bool(row.get("has_exploit")),
         _float(row.get("epss")),
         _str(row.get("risk_observed_at")),
+        # cwe, language, ai_verdict: static-analysis-only columns. GAS is the OS-patching
+        # register and has no source for any of them -- see the module docstring.
+        None,
+        None,
+        None,
     )
 
 
@@ -299,8 +317,9 @@ def _episode_row(row: dict, *, scope: str) -> tuple:
     """A sealed episode as a ledger row.
 
     An episode is a completed lifecycle: GAS compaction moved it out of the live table and
-    ``ledgerCore.baseRows`` unions it back in at read time. brick has no episodes table, so it
-    lands as an ordinary RESOLVED row -- which is what every metric treats it as anyway.
+    ``ledgerCore.baseRows`` unions it back in at read time. This pipeline has no episodes
+    table, so it lands as an ordinary RESOLVED row -- which is what every metric treats it as
+    anyway.
 
     ``last_seen`` takes ``resolved_at`` because that is the last moment the lifecycle was
     known to be real; the scan ids are NULL because the scans that saw it were sealed and
@@ -329,6 +348,10 @@ def _episode_row(row: dict, *, scope: str) -> tuple:
         _bool(row.get("has_exploit")),
         _float(row.get("epss")),
         _str(row.get("risk_observed_at")),
+        # cwe, language, ai_verdict: see _ledger_row.
+        None,
+        None,
+        None,
     )
 
 
@@ -339,8 +362,8 @@ def selectable_episodes(bundle: dict) -> tuple:
 
       * ``superseded_by_scan`` set means a later scan took the lifecycle over, so the live
         ledger row already tells its story. Same predicate ``baseRows`` applies.
-      * a ``vuln_key`` that also has a live row keeps the live row. brick's ledger is one row
-        per key by construction, and a reopen there overwrites rather than archives.
+      * a ``vuln_key`` that also has a live row keeps the live row. This pipeline's ledger is
+        one row per key by construction, and a reopen there overwrites rather than archives.
       * successive compactions can leave several episodes for one key. Only one can be
         represented, so the most recently resolved wins and the rest are counted as
         ``collapsed`` -- lost remediation events that would otherwise vanish unremarked.
@@ -405,7 +428,7 @@ def scans_frame(spark: SparkSession, bundle: dict, *, scope: str) -> DataFrame:
 
     ``mode``, ``shape``, ``raw_ref``, ``obs_ref`` and ``sealed`` are dropped: the first two are
     GAS scan-job bookkeeping, the refs are Drive ids meaningless off that deployment, and
-    brick has no compaction for ``sealed`` to describe.
+    this pipeline has no compaction for ``sealed`` to describe.
 
     Every row is stamped ``family=run_pipeline.FAMILY_SCAN``: this frame is written into
     ``tables.metrics`` now, the one table that also carries the gold families, and ``family``
@@ -516,20 +539,20 @@ def import_bundle(
     bundle. Returns a summary.
 
     Refuses a register that already holds anything, because the two ways it could go wrong are
-    both silent. Merging a seed into a ledger brick has already advanced would re-open
-    lifecycles it has since resolved; appending the seed's scan log beside brick's own would
+    both silent. Merging a seed into a ledger this pipeline has already advanced would re-open
+    lifecycles it has since resolved; appending the seed's scan log beside its own would
     put an older scan after a newer one and hand the disappearance guard the wrong previous
     scan.
 
     ``force`` means **replace the register**, not merely the ledger. Gold is the reason: it is
     appended per scan and computed from the ledger *as it stood at that scan*, so gold rows
     written before the seed were derived from a ledger that started empty. Left in place they
-    would sit in `04_scan_history` as a run whose MTTR reads near zero, beside seeded runs where
-    it does not -- a contradiction with no visible cause. So a forced import empties bronze and
-    the whole ``metrics`` table -- the scan log and every gold family together, since they now
-    share one table -- and the register genuinely restarts from the imported history.
-    ``_replace`` on ``metrics`` is what does that emptying: it DELETEs the table before
-    appending the bundle's scan rows, so the gold rows a prior run wrote never survive it.
+    would sit beside seeded runs where MTTR does not read near zero -- a contradiction with no
+    visible cause. So a forced import empties bronze and the whole ``metrics`` table -- the scan
+    log and every gold family together, since they now share one table -- and the register
+    genuinely restarts from the imported history. ``_replace`` on ``metrics`` is what does that
+    emptying: it DELETEs the table before appending the bundle's scan rows, so the gold rows a
+    prior run wrote never survive it.
 
     They are emptied rather than dropped: DELETE needs only MODIFY and keeps the tables' grants,
     where DROP needs ownership and would silently take the grants with it.
@@ -645,8 +668,8 @@ def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
     if summary["hashed_keys"]:
         print(
             f"[import] WARNING {summary['hashed_keys']} row(s) carry a hashed (h:) vuln_key. "
-            f"GAS never persisted `component`, which is part of brick's hash basis, so the "
-            f"next scan will re-key these and start a second lifecycle for each. Findings "
+            f"GAS never persisted `component`, which is part of this pipeline's hash basis, so "
+            f"the next scan will re-key these and start a second lifecycle for each. Findings "
             f"with a Wiz id are unaffected."
         )
     print(

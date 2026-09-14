@@ -11,8 +11,8 @@ scan history, and — in the GAS rebuild — Prioritization-to-Prediction progra
 `wiz_dashboard/ui/pages/`, shared logic in `wiz_dashboard/{config,data,domain,models}`.
 
 `gas_devsecops/` is a fourth register over the same design system: MTTR and remediation
-analytics for SAST / SCA / secrets findings in source repositories, with `brick/devsecops/`
-as its behavioural spec.
+analytics for SAST / SCA / secrets findings in source repositories, with `brick/` (scopes
+`sca`/`sast`) as its behavioural spec.
 
 `gas_hub/` is the fourth GAS app and the only one that is NOT a register: a launcher whose whole
 job is to open the right sidekick. One page, a 2x2 grid of tiles — OS Patching, AI security,
@@ -197,15 +197,20 @@ because they are in this file.
 
 ## brick / devlake — the Databricks register
 
-`brick/` (OS vulnerabilities, scopes `os`/`all`) and `brick/devsecops/` (`sca`/`sast`) are the
-PySpark + Delta surface over the same registers: three tables per scope now, not eight —
-`<p>findings_raw` (bronze), `<p>vuln_ledger` (`MERGE`d), and one `<p>metrics` table holding the
-commit record and every gold family together, told apart by a `family` column (`scan`, `mttr`,
-`program`, `capacity`, plus `assets` on devsecops). Silver is never a table, in either fork: it
-is a per-scan projection of bronze computed in memory and re-derived wherever it is needed. They
-are deliberate FORKS with identical module names and exactly one may be on `sys.path`. `devlake/`
-at the repo root is the dev-only harness that runs either of them on a laptop; it is never
-deployed.
+`brick/` (OS-package CVEs, CVEs in a repository's dependencies, and static-analysis weaknesses
+in first-party code — scopes `os`/`sca`/`sast`) is one PySpark + Delta pipeline over all three
+registers: three tables per scope — `<p>findings_raw` (bronze), `<p>vuln_ledger` (`MERGE`d), and
+one `<p>metrics` table holding the commit record and every gold family together, told apart by a
+`family` column (`scan`, `mttr`, `program`, `capacity`, plus `assets` on `sca`). Silver is never
+a table: it is a per-scan projection of bronze computed in memory and re-derived wherever it is
+needed. `brick/` used to be two directories — `brick/` measuring only `os` and
+`brick/devsecops/` measuring `sca`/`sast` as a self-contained fork with identical module names,
+deployable on its own — and the two have since merged into this one tree. What survives the
+merge is narrower than "exactly one fork may be on `sys.path`": a plain flat module folder, and
+the guard that remains is `run_pipeline.check_deployment()`, which refuses a module imported
+from a foreign directory or a stale `sys.modules` entry left behind by an earlier import in the
+same long-lived process. `devlake/` at the repo root is the dev-only harness that runs it on a
+laptop; it is never deployed.
 
 - **A three-level name is fine locally; a NAMED catalog is not, and the README had it
   backwards.** It claimed `saveAsTable` on `catalog.schema.table` "needs Unity Catalog — a local
@@ -219,7 +224,7 @@ deployed.
   `devlake/lake.py::precreate_clustered` is. An unregistered catalog never reports "not found":
   `databaseExists` returns `False` silently, `CREATE SCHEMA` dies in Spark's own error formatter
   (`_LEGACY_ERROR_TEMP_1055`) and `ensure_schema` re-raises it as a *grant* problem it is not.
-  Pinned in `brick/tests/test_catalog_mode.py` and its devsecops mirror.
+  Pinned in `brick/tests/test_catalog_mode.py`.
 - **THE JAR DECIDES, not the pip package, and one test found it the long way.** `conftest`
   sends `--packages io.delta:delta-spark_2.12:<v>` to spark-submit; pip had resolved 3.3.3 while
   that string still said 3.3.2. Spark 3.5.6 changed RTAS to emit `OverwriteByExpression`, and
@@ -276,9 +281,9 @@ deployed.
 ## gas_devsecops — the code register
 
 A fourth register: MTTR and remediation analytics for **SAST, SCA and secrets** findings.
-`gas_devsecops/` is the SPA; the domain layer is a Phase 2 port of `brick/devsecops/`, which
-already implements the pipeline and is the behavioural spec (same relationship `gas/` has to
-`wiz_dashboard/domain/`). Chassis forked from `gas_ai/`, analytics to be ported from `gas/`.
+`gas_devsecops/` is the SPA; the domain layer is a Phase 2 port of `brick/` (scopes `sca`/`sast`),
+which already implements the pipeline and is the behavioural spec (same relationship `gas/` has
+to `wiz_dashboard/domain/`). Chassis forked from `gas_ai/`, analytics to be ported from `gas/`.
 
 - **The clock is the product, and a clock has to say where it started.** Every figure states
   what it measured from and what it did with the rows it could not measure. Open findings
@@ -291,7 +296,7 @@ already implements the pipeline and is the behavioural spec (same relationship `
   `SAST_FETCH_RESOLVED` stays `false` — for those two reasons, not the old one. The clock
   survives anyway: the ledger prefers the API birth date and dates the death by
   DISAPPEARANCE, so SAST gets a genuine MTTR rather than an age metric once two scans exist
-  (`brick/devsecops/ledger.py`, pinned by `test_mttr_is_measured_from_the_ledgers_own_dates`).
+  (`brick/ledger.py`, pinned by `test_mttr_is_measured_from_the_ledgers_own_dates`).
 - **The same field name carries DIFFERENT KINDS across filter types, and it has now cost the
   register twice.** `VulnerabilityFindingFilters.severity` is `[VulnerabilitySeverity!]`, a
   bare list; `SASTFindingFilters.severity` is `SASTSeverityFilter`, an object taking
@@ -334,7 +339,7 @@ already implements the pipeline and is the behavioural spec (same relationship `
   halves of a page disagree in a way that reads as broken arithmetic rather than a category
   error.
 - **Three scopes in one ledger, and DISAPPEARANCE IS THE DANGEROUS PART.** Neither source
-  does this: `gas/` has one register, and `brick/devsecops`'s reconcile takes a `scope` but
+  does this: `gas/` has one register, and `brick/`'s reconcile takes a `scope` but
   only stamps it — its caller hands it a prior already filtered down. Here the prior is one
   tab holding 17,991 SCA rows, 127 SAST and 1,958 secrets, and every row of the other two
   scopes is absent from any given scan BY CONSTRUCTION. So `reconcile` takes `scope`,

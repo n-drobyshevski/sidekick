@@ -36,7 +36,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 #: folders with no ``__init__.py``, imported by putting the directory itself on ``sys.path``.
 FORKS = {
     "brick": REPO_ROOT / "brick",
-    "devsecops": REPO_ROOT / "brick" / "devsecops",
 }
 
 #: Every top-level module name a fork defines. Shared between the two forks by construction --
