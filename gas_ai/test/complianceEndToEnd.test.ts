@@ -326,9 +326,64 @@ describe("the Overview bands getCompliance ships beside the trees", () => {
     expect(cov.catalogued).toBe(5);
 
     // Every subcategory lands in exactly one state — no row is counted twice and none is
-    // dropped, which is what makes the state strip an accounting rather than a summary.
+    // dropped, which is what makes the state keys an accounting rather than a summary.
     const total = Object.values(cov.stateCounts).reduce((a: any, b: any) => a + b, 0);
     expect(total).toBe(cov.subcategoryCount);
+  });
+});
+
+// ------------------------------------------------------------- posture over time
+//
+// The series the Compliance header draws where the four-segment state bar used to be. Every
+// link in it is a place this has silently broken before: the column has to be declared, the
+// commit has to write it, the reader has to parse it, and the endpoint has to ship it.
+// Nothing in between raises an error when one of the four stops happening — the chart simply
+// renders its empty state, which looks exactly like a register nobody has synced.
+describe("the compliance trend getCompliance ships", () => {
+  it("ships a point for every recorded sync, oldest first", () => {
+    const points = compliance().complianceTrend;
+    // Eight fabricated syncs plus the dry run's own — `seedTrendHistory` writes the census on
+    // all eight, because the compliance census describes `SEED_POSTURE` rather than the
+    // ledger, and the dry run writes its own through the live commit path.
+    expect(points).toHaveLength(9);
+    const at = points.map((p: any) => p.at);
+    expect([...at].sort()).toEqual(at);
+  });
+
+  it("draws the same landscape number the hero above it prints", () => {
+    // THE ASSERTION THAT KEEPS THE HERO AND THE CHART IN ONE POPULATION. The hero is
+    // `complianceKpis.averagePosture`; the line is `censusCompliancePosture.avg`, computed by
+    // different code at a different time. If these ever disagree the header states two
+    // landscapes and gives the reader no way to tell which is which.
+    const data = compliance();
+    const last = data.complianceTrend[data.complianceTrend.length - 1];
+    expect(last.counts.__landscape).toBe(data.kpis.averagePosture);
+    expect(last.coverage.__landscape.scoredFrameworks).toBe(data.kpis.scoredFrameworks);
+  });
+
+  it("carries every collected framework's own percentage, matching its tree", () => {
+    const data = compliance();
+    const last = data.complianceTrend[data.complianceTrend.length - 1];
+    for (const tree of data.trees) {
+      expect(last.counts[tree.frameworkId], tree.frameworkId).toBe(tree.posturePct);
+    }
+  });
+
+  it("carries the coverage each percentage is a share of", () => {
+    // Without this a rising line and a narrowing denominator are the same picture — see
+    // domain/complianceTrend.ts's header. The card prints the pair on every point.
+    const data = compliance();
+    const last = data.complianceTrend[data.complianceTrend.length - 1];
+    for (const tree of data.trees) {
+      const cov = last.coverage[tree.frameworkId];
+      expect(cov.scored, tree.frameworkId).toBe(tree.stateCounts.scored);
+      const reported = Object.values(tree.stateCounts)
+        .reduce((a: any, b: any) => a + b, 0) as number;
+      expect(cov.subcategories, tree.frameworkId).toBe(reported);
+    }
+    // And landscape-wide, the same accounting the coverage band publishes for this sync.
+    expect(last.coverage.__landscape.subcategories).toBe(data.coverage.subcategoryCount);
+    expect(last.coverage.__landscape.scored).toBe(data.coverage.stateCounts.scored);
   });
 });
 

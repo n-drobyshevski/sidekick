@@ -37,16 +37,16 @@
 // `aria-label` on itself — but the visible "3 of 4" count sits OUTSIDE that labelled
 // picture, or a sighted-plus-screen-reader user would see one thing and hear another.
 //
-// postureCell(), checksCell(), stateStrip() and subcategoryDetail() all come from
-// complianceShared.js — the same cells and the same detail panel the per-framework register
-// uses, not a second implementation of either.
+// postureCell(), checksCell(), complianceTrendCard() and subcategoryDetail() all come from
+// complianceShared.js — the same cells, the same header chart and the same detail panel the
+// per-framework register uses, not a second implementation of any of them.
 
 import {
-  checksCell, complianceHero, extChip, findSubcategory, fiveRsDerived, postureAbsence,
-  postureCell, STATES,
-  stateStrip,
+  checksCell, complianceHero, complianceTrendCard, extChip, findSubcategory, fiveRsDerived,
+  postureAbsence, postureCell, STATES,
   subcategoryDetail,
 } from "./complianceShared.js";
+import { landscapeSeries } from "../complianceTrendModel.js";
 import {
   absent, absentText, dataTable, el, meter, pageHeader, plural, sectionLabel, sevBadge, sevRank,
   statRow,
@@ -196,12 +196,27 @@ function renderHeadline(host, data) {
   // shared `.page-hero-sub .sev-badge` — see the matching note in compliance.js.
   if (worstSeverity) subKids.push(el("span", { class: "comp-posture-badge" }, sevBadge(worstSeverity)));
 
-  // The shared strip only ever reads `.stateCounts`, so the landscape-wide roll-up — which is
-  // not a FrameworkTree — can drive the exact same component the register uses per
-  // framework. It no longer cross-filters the weakest-areas band below: that band lists
-  // scored subcategories only now, so every state but one filtered to nothing. The strip
-  // is a summary here, and the landscape's only count of what went unscored.
-  const strip = stateStrip({ stateCounts: coverage.stateCounts || {} });
+  // THE HEADER'S SECOND COLUMN. It was the four-segment state bar; it is the mean's own
+  // history now, because "is the landscape improving" is what this hero is read for and a
+  // distribution of subcategory states never answered it.
+  //
+  // THE LINE IS THE SAME NUMBER AS THE HERO, at every sync rather than at this one — the
+  // mean of the scored frameworks, computed by the same arithmetic
+  // (`complianceKpis.averagePosture` and `censusCompliancePosture.avg` share a predicate, and
+  // a test holds them equal). Not one line per framework: eight lines in a header column is a
+  // thicket, and the rail below lists every framework's current figure with its own bar.
+  //
+  // The state counts the bar carried are still drawn, under the chart: `complianceTrendCard`
+  // takes the landscape-wide roll-up — not a FrameworkTree, but `stateKeys` only ever reads
+  // `.stateCounts` — and it stays the landscape's only count of what went unscored.
+  const strip = complianceTrendCard({
+    tree: { stateCounts: coverage.stateCounts || {} },
+    title: "Posture over time",
+    label: "Landscape compliance posture at each sync, as a percentage",
+    points: data.complianceTrend || [],
+    series: landscapeSeries(),
+    postureScope: data.postureScope,
+  });
 
   const sharedRows = data.sharedControls || [];
   const sharedCount = sharedRows.filter((c) => (c.frameworkCount || 0) >= 2).length;

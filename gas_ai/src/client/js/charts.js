@@ -149,11 +149,53 @@ function withAlpha(hex, alpha) {
  * a count of EDGES, and putting it on an axis counting issues is the other way to lose it
  * (aarsTrend.ts TrendPoint.annotations). The app's hover card renders the title lines, so the
  * note arrives in the same card as the values rather than in a second vocabulary.
+ *
+ * `percent` suffixes every tick and every hovered value with `%`. A bare "96" beside a line
+ * labelled with a framework's name reads as ninety-six of something; the unit has to be on
+ * the axis, because it is the only place a reader looks for it.
+ *
+ * `yRange` ({min, max}) pins the axis the caller computed. THE CALLER COMPUTES IT, not this
+ * function, and not Chart.js — both of the obvious alternatives are wrong for a share:
+ *
+ *   - A 0-100 axis is honest and useless here. Compliance posture lives between 85% and 100%
+ *     on any landscape anybody is running this against, so five sixths of the plot is empty
+ *     and the movement the chart exists to show is four pixels tall.
+ *   - Chart.js's own auto-fit is the opposite failure. It fits the data exactly, so a flat
+ *     line wobbling by one point fills the full height and reads as a collapse.
+ *
+ * The answer is a padded window with a floor on its span, which is a DECISION about how much
+ * movement is worth showing — so it lives in the page's own model beside the sentence that
+ * discloses it (`complianceTrendModel.js` percentRange, which is tested; this function only
+ * draws whatever window it is handed). A caller passing no `yRange` gets 0-100, which is the
+ * right default for a series that genuinely spans it.
  */
-export function trendLine(canvas, points, { yLabel, series, stacked, pointNotes } = {}) {
+export function trendLine(
+  canvas, points, { yLabel, series, stacked, pointNotes, percent, yRange } = {},
+) {
   destroyExisting(canvas);
   const opts = baseOptions();
   opts.scales.y.beginAtZero = true;
+  if (percent) {
+    const fitted = yRange
+      && Number.isFinite(yRange.min) && Number.isFinite(yRange.max)
+      && yRange.max > yRange.min;
+    opts.scales.y.min = fitted ? yRange.min : 0;
+    opts.scales.y.max = fitted ? yRange.max : 100;
+    // Explicit bounds and `beginAtZero` are contradictory instructions; Chart.js resolves
+    // them in the bounds' favour, but leaving the flag set invites a later reader to
+    // "fix" the axis by trusting it.
+    opts.scales.y.beginAtZero = false;
+    opts.scales.y.ticks.callback = (v) => `${v}%`;
+    opts.plugins.tooltip.callbacks = {
+      ...(opts.plugins.tooltip.callbacks || {}),
+      // The dataset's own name stays on the line, because a multi-series percent chart with
+      // three bare numbers in its card names none of them.
+      label: (item) => {
+        const name = item.dataset && item.dataset.label ? `${item.dataset.label}: ` : "";
+        return `${name}${item.parsed.y}%`;
+      },
+    };
+  }
   if (yLabel) {
     // An empty yLabel means the caller already names the axis outside the canvas (the
   // header's own "Cumulative cover" label). A rotated title in a 124px-tall chart clips.
@@ -195,7 +237,12 @@ export function trendLine(canvas, points, { yLabel, series, stacked, pointNotes 
       backgroundColor: stacked
         ? withAlpha(s.color || ACCENT, 0.35)
         : (multi ? s.color || ACCENT : "rgba(190, 18, 60, 0.08)"),
-      fill: stacked || !multi,
+      // A SHARE IS A LEVEL, NOT AN AREA, so a percent line is never filled. The fill under a
+      // single counting series reads as "how much" and is the right cue for one; under a
+      // percentage pinned to a 0-100 axis it is a solid block from the floor to the line,
+      // which reads as a quantity and swamps the only thing on the chart worth looking at —
+      // where the line sits and which way it is going.
+      fill: percent ? false : (stacked || !multi),
       tension: 0.25,
       pointRadius: points.length > 40 ? 0 : 3,
       pointBackgroundColor: s.color || ACCENT,
