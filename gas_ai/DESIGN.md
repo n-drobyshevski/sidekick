@@ -340,6 +340,37 @@ CSS-drawn dot, and the level name. Meaning is in the text and shape, not the col
 
 **Inputs.** White field, hairline border, `--radius-md`, 36px min-height. Labels at the label step.
 
+**Tables.** One component (`gas_shared/ui/data.js`), and a heading row that carries both of the
+controls a register needs. Press a heading to sort it: the active column reverses, any other moves
+the sort and starts from that column's own first direction, `aria-sort` and the glyph following.
+And where a table offers more columns than one question needs, a **cog at the right end of the
+heading row** opens the column list — on the table, not in the page toolbar, because the filters
+beside the search box change which rows the register answers with and this changes nothing but how
+much of the answer is drawn. It pins to the right edge of whatever is scrolling, so the control
+that makes a too-wide table narrower is never itself off-screen. The identity column is listed and
+not offered; a blank heading is not offered at all. The cog marks itself when the reader has moved
+the table off its defaults and its accessible name says how many columns are hidden of how many
+there are, because a missing column with no sign of why reads as a bug in the register rather than
+a choice somebody made.
+
+**A table ships the columns its own question needs, not every column it can draw.** A column
+marked `defaultHidden` starts off and is one press away; the rest is the page's editorial
+judgment about what the register is FOR, and it is pinned by a test per register so that changing
+it is a deliberate edit rather than a diff nobody reads. Three rules keep that judgment honest.
+A column is never hidden by default while the table is SORTED by it — a page that hides its own
+ordering leaves rows in an arrangement with no arrow, no heading and no way to reverse it, and a
+shared `?sort=` link is all it takes to reach. A reader's own refusal still outranks that: hiding
+the sorted column on purpose is allowed. And what gets stored is the DEVIATIONS from the default,
+signed (`-cloud,+tags`) — a link listing the columns to keep hides every column added after it was
+saved, silently, and nobody reports a column they have never seen.
+
+**Fields the payload already carries earn a column before a new field does.** Several registers
+were shipping facts to the browser that nothing drew — the reach count on an asset, the rule
+behind an issue inside a pattern, a scan's own mode. Each is an opt-in column now rather than a
+new request, and each renders its absence honestly: a field that is structurally absent for half a
+register's rows (IaC on an issue, reach on an unscored identity) draws the muted dash, never a
+confident "no".
+
 **Navigation.** A crimson-accented rail, collapsed to 56px by default and expanded on request.
 Group headers at the micro step, uppercase. The active item takes a 2px accent bar plus weight,
 **never a tint alone**.

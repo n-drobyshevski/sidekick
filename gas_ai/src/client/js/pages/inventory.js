@@ -34,8 +34,9 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, debounce,
-  el, errorState, firstRunNotice, heroStat, measuredEmpty, pageHeader,
+  absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog,
+  dataTable, debounce, el, encodeColumnChoice, errorState, firstRunNotice, heroStat,
+  measuredEmpty, nextSort, pageHeader, parseColumnChoice,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
@@ -67,14 +68,27 @@ const FACET_LABELS = {
   flags: "Risk signals",
 };
 
-/** Which columns can be sorted, and what each one is called in the header. */
+/** What each column is called in the header, which can be sorted, and which the reader
+ *  is not offered a way to turn off. */
 const COLUMNS = [
-  { key: "name", label: "Name", sort: "name",
+  // `pinned`: the Columns control lists it and refuses to turn it off. Every other column
+  // here is a fact ABOUT the asset and a reader may not need it; this one is which asset the
+  // row is, and a register of counts attached to nothing is not a narrower table, it is an
+  // unreadable one. The graph workbench's own chooser pins the same column for the same
+  // reason. The Graph-button column at the foot of this list needs no flag — its heading is
+  // blank, and `hideableColumn` (gas_shared/ui/tableModel.js) will not offer a checkbox with
+  // no words beside it.
+  { key: "name", label: "Name", sort: "name", pinned: true,
     help: { lines: ["The asset's own name, as Wiz reports it."] } },
   { key: "kind", label: "Kind", sort: "kind", help: { term: "node-kind" } },
-  { key: "cloud", label: "Cloud", sort: "cloud",
+  // WHERE THE ASSET LIVES, off by default. Both are real facts and neither is what this
+  // register is FOR: it ranks AI assets by what is open on them, and a reader scanning for
+  // that reads the name, the kind and the counts. Cloud and Region are also both FACETS in
+  // the drawer, so the reader who cares about them is already filtering on them rather than
+  // scanning the column — and that reader gets the column back in one press.
+  { key: "cloud", label: "Cloud", sort: "cloud", defaultHidden: true,
     help: { lines: ["Which cloud provider hosts this asset."] } },
-  { key: "region", label: "Region", sort: "region",
+  { key: "region", label: "Region", sort: "region", defaultHidden: true,
     help: { lines: ["The cloud region this asset runs in."] } },
   // The two counts, and the column that says how bad the worst of them is. Three columns
   // rather than one graded verdict: "4 open issues, worst of them HIGH, and 2 failing
@@ -85,13 +99,32 @@ const COLUMNS = [
   { key: "severity", label: "Severity", sort: "severity", help: { term: "severity" } },
   { key: "issues", label: "Issues", sort: "issues", help: { term: "open-issues" } },
   { key: "findings", label: "Cloud findings", sort: "findings", help: { term: "cloud-findings" } },
+  // A COLUMN FOR A FACT THE ROW ALREADY CARRIED AND NOTHING DREW. `dataFindings` — how many
+  // classified findings this asset can REACH, its own if it is a datastore and whatever its
+  // execution identity can read if it is an agent — has been in the inventory payload all
+  // along (api.ts assetTableRow, pinned there by a test). The header counts it, the filter
+  // drawer facets on it ("Reaches classified data"), and the register had no way to show a
+  // reader WHICH assets or HOW MANY each. Off by default because data exposure is a second
+  // question rather than the first one this page answers, and because it is honestly blank
+  // for the identities Wiz never scores — see the note on the cell.
+  { key: "dataFindings", label: "Classified data", sort: null, defaultHidden: true,
+    help: { lines: [
+      "Classified findings this asset can reach — its own if it is a datastore, whatever " +
+      "its execution identity can read if it is an agent.",
+      "Service accounts are unscored, so nothing persists their reach: an identity reads " +
+      "as no answer rather than as zero.",
+    ] } },
   { key: "combos", label: "Toxic combo", sort: "combos", help: { term: "toxic-combination" } },
   { key: "guardrail", label: "Guardrail", sort: null, help: { term: "missing-guardrail" } },
   // The owning business domain, off the resource's own Wiz/Domain tag. Sortable because
   // it is an identity column like Cloud and Region, and read the same way: A-Z first.
   { key: "domain", label: "Domain", sort: "domain",
     help: { lines: ["Which Wiz/Domain tag owns this asset, read live from its own tags."] } },
-  { key: "projects", label: "Projects", sort: null,
+  // Off by default for a reason the other two do not share: a project list is the widest
+  // cell this table can draw (three names and a separator run past the 320px clip on a
+  // register where most rows carry the same two), and it is the one column whose value is
+  // nearly constant down the page. It is a facet too.
+  { key: "projects", label: "Projects", sort: null, defaultHidden: true,
     help: { lines: ["Which Wiz projects this asset belongs to."] } },
   // No `help`: the heading is blank (the Graph button inside it names its own action), so
   // there is no visible text for a dotted-underline trigger to sit beside — the same reason
@@ -103,7 +136,7 @@ const VIEWS_KEY = SAVED_VIEW_KEYS.inventory;
 /** Params a saved view carries. Never `page` (a view opens at the top) and never `panel`. */
 const VIEW_PARAMS = [
   "q", "severities", "kinds", "clouds", "regions", "projects", "domains", "flags",
-  "sort", "dir", "view", "size",
+  "sort", "dir", "view", "size", "cols",
 ];
 
 // -------------------------------------------------------------------- small helpers
@@ -215,6 +248,22 @@ export async function renderInventory(main, params) {
   let query = paramsToQuery(params);
   let view = params.view === "cards" ? "cards" : "table";
   let panelName = params.panel === "filters" ? "filters" : "";
+  // WHERE THIS READER DISAGREES WITH THE COLUMN DEFAULTS — and deliberately NOT part of
+  // `query`.
+  //
+  // `query` is what the register was ASKED (the filters, the sort, the page), it is what
+  // `assetQuery.js` computes an answer from, and that module is a hand-kept mirror of
+  // src/domain/assetTable.ts held to it by a test. Hiding the Region column changes no row,
+  // no count and no facet; folding it in there would put a reading preference inside the
+  // question and oblige the domain to carry it. It rides beside `view` instead, which is the
+  // other thing on this page that changes how the answer is drawn rather than what it is.
+  //
+  // It is a URL param and not storage because everything else on this page is: a filtered,
+  // sorted, narrowed table is shareable here, and a saved view carries `cols` with the rest
+  // (VIEW_PARAMS above). What the param holds is the DEVIATIONS from the defaults below,
+  // signed — gas_shared/ui/tableModel.js writes out why, but the short version is that a link
+  // holding the columns to keep would hide any column added after it was saved, silently.
+  let colChoice = parseColumnChoice(params.cols);
 
   function paramsToQuery(p) {
     return resolveAssetQuery({
@@ -244,6 +293,7 @@ export async function renderInventory(main, params) {
       sort: query.sort === "issues" ? "" : query.sort,
       dir: query.dir === DEFAULT_SORT_DIR[query.sort] ? "" : query.dir,
       view: view === "table" ? "" : view,
+      cols: encodeColumnChoice(colChoice),
       panel: panelName,
       page: query.page ? query.page + 1 : "",
       size: query.pageSize === DEFAULT_PAGE_SIZE ? "" : query.pageSize,
@@ -715,7 +765,7 @@ export async function renderInventory(main, params) {
           title: "Save this view",
           body: el("div", {},
             el("p", { class: "muted small" },
-              "Saves the current filters, sort and layout in this browser. " +
+              "Saves the current filters, sort, columns and layout in this browser. " +
               "To share the view, copy the page link instead."),
             input),
           confirmLabel: "Save",
@@ -867,11 +917,18 @@ export async function renderInventory(main, params) {
   }
 
   function setSort(key) {
-    if (query.sort === key) query.dir = query.dir === "asc" ? "desc" : "asc";
-    else {
-      query.sort = key;
-      query.dir = DEFAULT_SORT_DIR[key];
-    }
+    // The shared rule (gas_shared/ui/tableModel.js): the active column reverses, any other
+    // moves the sort and starts from that column's own first direction. WHICH direction that
+    // is stays here — `DEFAULT_SORT_DIR` says the worst issues first but names A-Z first —
+    // and the "asc"/"desc" spelling stays here too, because that is what this page's URL
+    // carries.
+    const next = nextSort(
+      query.sort ? { key: query.sort, descending: query.dir === "desc" } : null,
+      key,
+      DEFAULT_SORT_DIR[key] === "desc",
+    );
+    query.sort = next.key;
+    query.dir = next.descending ? "desc" : "asc";
     query.page = 0;
     persistParams();
     if (allMode) {
@@ -1067,6 +1124,14 @@ export async function renderInventory(main, params) {
             el("span", { class: "num" }, String(row.openFindings)),
             issueBars(row.findingsBySeverity, "cloud finding"))
         : el("span", { class: "muted small" }, "0")),
+      // `absent()`, not 0, for an asset the reach walk never covered — an identity, which
+      // Wiz does not score. A confident zero there would say "this agent's service account
+      // reaches nothing classified", which is the opposite of what is known: nothing looked.
+      // A scored asset that reaches nothing does read 0, because that IS the answer.
+      dataFindings: (row) => (row.kind === "SERVICE_ACCOUNT" || row.kind === "USER_ACCOUNT"
+        ? absent()
+        : el("span", { class: row.dataFindings ? "num" : "muted small" },
+            String(num(row.dataFindings)))),
       combos: (row) => (row.combos ? el("span", { class: "pill bad" }, `TC ×${row.combos}`) : absent()),
       guardrail: (row) => (row.guardrailMissing ? el("span", { class: "pill warn" }, "missing") : absent()),
       domain: (row) => (row.domain ? domainLink(row) : absent()),
@@ -1080,11 +1145,31 @@ export async function renderInventory(main, params) {
         key: col.sort || col.key,
         label: col.label,
         sortable: !!col.sort,
+        // Both carried, not re-derived. Dropping `pinned` would leave the chooser offering
+        // to hide the Name column while the table's own rules still refused — a checkbox
+        // that ticks itself back on, which is the one way this control can look broken.
+        // Dropping `defaultHidden` would ship every column on and quietly undo the editorial
+        // judgment COLUMNS above makes about what this register is for.
+        pinned: !!col.pinned,
+        defaultHidden: !!col.defaultHidden,
         className: col.key === "name" ? "inv-name-col" : null,
         help: col.help,
         cell: CELLS[col.key],
       })),
       rows,
+      // The reader's own column choice, and the cog in the heading row that edits it. The
+      // component owns both ends: it filters the header and every row together, and it
+      // repaints ITSELF when the cog is used — so this callback only has to remember the
+      // answer. Re-rendering the page from here would tear the cog out from under its own
+      // open popover, which is why it does not.
+      //
+      // The cards view below takes neither: a card is not a row of columns, and dropping a
+      // fact from one would leave a gap rather than a narrower reading.
+      columnChoice: colChoice,
+      onColumnChoice: (next) => {
+        colChoice = next;
+        persistParams();
+      },
       // `dir` is this page's own convention ("asc"/"desc", seeded from the URL); the shared
       // table only needs to know which way the active column currently reads.
       sort: query.sort ? { key: query.sort, descending: query.dir === "desc" } : null,

@@ -474,8 +474,13 @@ export async function renderHistory(main, _params, ctx) {
           cell: (s) => modeCell(s.mode),
         },
         {
+          // Off by default. On a healthy ledger every row reads the same word, and the one
+          // that does not is already visible in the register's own coverage warnings — so
+          // this is a column that answers a question about ONE scan, kept a press away rather
+          // than repeated down the page. The help below still says what it means when it is on.
           key: "shape",
           label: "Shape",
+          defaultHidden: true,
           help: ["Whether the scan saved one row per finding, or counts only. A counts-only "
             + "scan can't feed insights, MTTR or attribution."],
           cell: (s) => shapeLabel(s.shape),
@@ -505,11 +510,29 @@ export async function renderHistory(main, _params, ctx) {
           cell: (s) => deltaCell(s.reopened_count, { sign: "+" }),
         },
         {
+          // Off by default, and the widest cell in the row when it is on — five severity
+          // names, repeated on every scan that ran under the same settings, which is all of
+          // them until somebody changes the scope. A change of scope is what this column is
+          // for, and a reader looking for one turns it on.
           key: "scope",
           label: "Scope",
+          defaultHidden: true,
           help: ["The severities this scan covered — \"all\" when every selectable severity "
             + "was in scope."],
           cell: (s) => (s.severities ? JSON.parse(s.severities).join(", ") : "all"),
+        },
+        {
+          // THE LEDGER'S OWN IDENTIFIER, which this table has always held and never drawn.
+          // It is what a rebuild names, what a support conversation quotes and what the
+          // delete dialog can only refer to by timestamp — two scans a minute apart are two
+          // lines with the same date and nothing else to tell them apart. Off by default:
+          // an opaque id earns its column only when somebody is looking for one.
+          key: "scanId",
+          label: "Scan ID",
+          defaultHidden: true,
+          help: ["The ledger's own identifier for this scan — what a rebuild replays and "
+            + "what to quote when asking about one."],
+          cell: (s) => el("span", { class: "small muted" }, s.scan_id),
         },
         // The sentence used to ride on a `title` attribute, which el() now throws on: a native
         // tooltip cannot be reached by keyboard and does not exist on touch, so the one
@@ -554,6 +577,9 @@ export async function renderHistory(main, _params, ctx) {
       clear(tableHost).append(dataTable({
         columns,
         rows: slice,
+        // Per browser: this page has no URL state of its own to carry a column layout, and a
+        // scan history is a page somebody comes back to rather than shares a view of.
+        columnStore: "sidekick.history.scans.cols",
         // ONE SORTABLE COLUMN, so the active key is always this one; the direction is the
         // state. `dataTable` puts it on the <th> as `aria-sort` and draws the glyph itself.
         sort: { key: "when", descending: sortDir === "desc" },
