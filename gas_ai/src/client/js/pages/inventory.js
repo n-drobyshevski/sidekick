@@ -34,8 +34,9 @@ import {
   facetCounts, filterAssetRows, pageOf, resolveAssetQuery, sortAssetRows,
 } from "../assetQuery.js";
 import {
-  absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog, dataTable, debounce,
-  el, errorState, firstRunNotice, heroStat, measuredEmpty, pageHeader,
+  absent, absentText, chartTable, clear, closeActiveSheet, confirmDialog,
+  dataTable, debounce, el, encodeHiddenColumns, errorState, firstRunNotice, heroStat,
+  measuredEmpty, nextSort, pageHeader, parseHiddenColumns,
   DEFAULT_PAGE_SIZE, PAGE_SIZES, fmtCount, fmtDate, kpiCard, num, pct1, plural,
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
@@ -67,9 +68,17 @@ const FACET_LABELS = {
   flags: "Risk signals",
 };
 
-/** Which columns can be sorted, and what each one is called in the header. */
+/** What each column is called in the header, which can be sorted, and which the reader
+ *  is not offered a way to turn off. */
 const COLUMNS = [
-  { key: "name", label: "Name", sort: "name",
+  // `pinned`: the Columns control lists it and refuses to turn it off. Every other column
+  // here is a fact ABOUT the asset and a reader may not need it; this one is which asset the
+  // row is, and a register of counts attached to nothing is not a narrower table, it is an
+  // unreadable one. The graph workbench's own chooser pins the same column for the same
+  // reason. The Graph-button column at the foot of this list needs no flag — its heading is
+  // blank, and `hideableColumn` (gas_shared/ui/tableModel.js) will not offer a checkbox with
+  // no words beside it.
+  { key: "name", label: "Name", sort: "name", pinned: true,
     help: { lines: ["The asset's own name, as Wiz reports it."] } },
   { key: "kind", label: "Kind", sort: "kind", help: { term: "node-kind" } },
   { key: "cloud", label: "Cloud", sort: "cloud",
@@ -103,7 +112,7 @@ const VIEWS_KEY = SAVED_VIEW_KEYS.inventory;
 /** Params a saved view carries. Never `page` (a view opens at the top) and never `panel`. */
 const VIEW_PARAMS = [
   "q", "severities", "kinds", "clouds", "regions", "projects", "domains", "flags",
-  "sort", "dir", "view", "size",
+  "sort", "dir", "view", "size", "cols",
 ];
 
 // -------------------------------------------------------------------- small helpers
@@ -215,6 +224,21 @@ export async function renderInventory(main, params) {
   let query = paramsToQuery(params);
   let view = params.view === "cards" ? "cards" : "table";
   let panelName = params.panel === "filters" ? "filters" : "";
+  // WHICH COLUMNS ARE OFF — and deliberately NOT part of `query`.
+  //
+  // `query` is what the register was ASKED (the filters, the sort, the page), it is what
+  // `assetQuery.js` computes an answer from, and that module is a hand-kept mirror of
+  // src/domain/assetTable.ts held to it by a test. Hiding the Region column changes no row,
+  // no count and no facet; folding it in there would put a reading preference inside the
+  // question and oblige the domain to carry it. It rides beside `view` instead, which is the
+  // other thing on this page that changes how the answer is drawn rather than what it is.
+  //
+  // It is a URL param and not storage because everything else on this page is: a filtered,
+  // sorted, narrowed table is shareable here, and a saved view carries `cols` with the rest
+  // (VIEW_PARAMS above). What the param holds is the columns REMOVED, never the ones kept —
+  // gas_shared/ui/tableModel.js writes out why, but the short version is that a link holding
+  // the kept list would hide any column added after it was saved, silently.
+  let hiddenCols = parseHiddenColumns(params.cols);
 
   function paramsToQuery(p) {
     return resolveAssetQuery({
@@ -244,6 +268,7 @@ export async function renderInventory(main, params) {
       sort: query.sort === "issues" ? "" : query.sort,
       dir: query.dir === DEFAULT_SORT_DIR[query.sort] ? "" : query.dir,
       view: view === "table" ? "" : view,
+      cols: encodeHiddenColumns(hiddenCols),
       panel: panelName,
       page: query.page ? query.page + 1 : "",
       size: query.pageSize === DEFAULT_PAGE_SIZE ? "" : query.pageSize,
@@ -715,7 +740,7 @@ export async function renderInventory(main, params) {
           title: "Save this view",
           body: el("div", {},
             el("p", { class: "muted small" },
-              "Saves the current filters, sort and layout in this browser. " +
+              "Saves the current filters, sort, columns and layout in this browser. " +
               "To share the view, copy the page link instead."),
             input),
           confirmLabel: "Save",
@@ -867,11 +892,18 @@ export async function renderInventory(main, params) {
   }
 
   function setSort(key) {
-    if (query.sort === key) query.dir = query.dir === "asc" ? "desc" : "asc";
-    else {
-      query.sort = key;
-      query.dir = DEFAULT_SORT_DIR[key];
-    }
+    // The shared rule (gas_shared/ui/tableModel.js): the active column reverses, any other
+    // moves the sort and starts from that column's own first direction. WHICH direction that
+    // is stays here — `DEFAULT_SORT_DIR` says the worst issues first but names A-Z first —
+    // and the "asc"/"desc" spelling stays here too, because that is what this page's URL
+    // carries.
+    const next = nextSort(
+      query.sort ? { key: query.sort, descending: query.dir === "desc" } : null,
+      key,
+      DEFAULT_SORT_DIR[key] === "desc",
+    );
+    query.sort = next.key;
+    query.dir = next.descending ? "desc" : "asc";
     query.page = 0;
     persistParams();
     if (allMode) {
@@ -1080,11 +1112,28 @@ export async function renderInventory(main, params) {
         key: col.sort || col.key,
         label: col.label,
         sortable: !!col.sort,
+        // Carried, not re-derived. Dropping it here would leave the chooser offering to hide
+        // the Name column while the table's own rules still refused — a checkbox that ticks
+        // itself back on, which is the one way this control can look broken.
+        pinned: !!col.pinned,
         className: col.key === "name" ? "inv-name-col" : null,
         help: col.help,
         cell: CELLS[col.key],
       })),
       rows,
+      // The reader's own column choice, and the cog in the heading row that edits it. The
+      // component owns both ends: it filters the header and every row together, and it
+      // repaints ITSELF when the cog is used — so this callback only has to remember the
+      // answer. Re-rendering the page from here would tear the cog out from under its own
+      // open popover, which is why it does not.
+      //
+      // The cards view below takes neither: a card is not a row of columns, and dropping a
+      // fact from one would leave a gap rather than a narrower reading.
+      hidden: hiddenCols,
+      onHidden: (next) => {
+        hiddenCols = next;
+        persistParams();
+      },
       // `dir` is this page's own convention ("asc"/"desc", seeded from the URL); the shared
       // table only needs to know which way the active column currently reads.
       sort: query.sort ? { key: query.sort, descending: query.dir === "desc" } : null,

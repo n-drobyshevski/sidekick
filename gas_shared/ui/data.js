@@ -1,7 +1,10 @@
 // Quantity display: meters, the sortable data table, and the table pager.
 
 import { clear, el } from "./dom.js";
-import { PAGE_SIZES, cellClassName, pageForSize } from "./tableModel.js";
+import {
+  PAGE_SIZES, cellClassName, hiddenColumnSet, pageForSize, regroupSpans, visibleColumns,
+} from "./tableModel.js";
+import { columnsButton } from "./columnPicker.js";
 import { pluralize } from "./format.js";
 import { absent } from "./cells.js";
 import { absentText } from "./figures.js";
@@ -81,6 +84,10 @@ export function progressBar(pct, state = "") {
  *   columns  [{ key, label, sortable, cell(row), className }] — `key` is what onSort gets
  *   sort     { key, descending } — the active column, or null for unsorted
  *   onSort   (key) => void
+ *   hidden   [key] — the columns this reader has turned off (opt-in; inert without it)
+ *   onHidden (hidden) => void — non-null grows the table its own column chooser: a cog at
+ *            the right end of the heading row, which repaints the table itself and then
+ *            tells the caller what to remember. See both notes in the destructure below.
  *   onRowOpen(row) => void — makes each row a keyboard-operable button
  *   rowLabel (row) => string — that row button's accessible name
  *
@@ -141,46 +148,121 @@ export function dataTable(spec) {
     // value turned out to be (a breached SLA, a row that fell out of scope). Returning
     // nothing leaves the cell exactly as `cellClassName(col)` made it.
     cellClass = null,
+    // The columns this reader has turned OFF, by key — `ui/columnPicker.js`'s side of the
+    // Columns control, and the reason the filtering happens HERE rather than in each caller:
+    // `groups` spans and every `colspan` below are counted off the column list, so a caller
+    // that filtered its own array would have to recount both, and a caller that forgot would
+    // ship a header one cell wider than its table with nothing to show for it.
+    //
+    // Opt-in and inert by default: omit it, or pass an empty list, and this renders exactly
+    // what it always did. A key naming no column changes nothing; which columns refuse to be
+    // hidden at all is `hideableColumn`'s call, in ui/tableModel.js, so the picker and the
+    // table cannot disagree about what the reader was offered.
+    hidden = null,
+    // (hidden) => void. Non-null is what PUTS THE CHOOSER ON THE TABLE: the cog at the right
+    // end of the heading row, and the popover behind it (ui/columnPicker.js). Called after
+    // the table has already repainted itself, so a page only has to remember the choice —
+    // persist it to the URL or to storage and return; do NOT re-render the table from here.
+    //
+    // THE REPAINT IS THE COMPONENT'S FOR A REASON. The control lives inside the header it
+    // rebuilds, so a caller that answered a toggle by rebuilding the whole table would tear
+    // the cog out from under its own open popover — which is portaled to <body> and would
+    // sit there anchored to a node no longer in the document, repositioning against a rect
+    // of zeros. Keeping the repaint here keeps the button, its focus and its popover alive
+    // across a column change.
+    onHidden = null,
   } = spec;
 
-  const headCells = new Map();
-  const headRow = el("tr", {});
-  // A column heading is where a metric gets DEFINED: it is asked once per table rather than
-  // once per row, so this is the one place a definition can be a real control without
-  // multiplying the tab order by the row count. `col.help` takes any of tipLabel's shapes.
-  for (const col of columns) {
-    // `col.className` lands on the HEADER as well as the cells. Two rules in the stylesheet
-    // were already written for it and had never once matched: `table.data th.num`, added for
-    // the prune census because a numeric heading otherwise sits adrift from its own figures,
-    // and `.gq-table table.data th.gq-group-start`, the graph's column-group boundary. Both
-    // were dead selectors waiting for this line.
-    if (!col.sortable || !onSort) {
-      headRow.append(el("th", {
-        scope: "col",
-        class: col.className || null,
-      }, tipLabel(col.label, col.help)));
-      continue;
-    }
-    const sortBtn = el("button", {
-      class: "th-sort",
-      "data-sort": col.key,
-      "aria-label": `Sort by ${col.label}`,
-      onclick: () => onSort(col.key),
-    },
-      col.label,
-      el("span", { class: "th-sort-glyph", "aria-hidden": "true" }),
-    );
-    const th = el("th", { scope: "col", class: col.className || null }, sortBtn);
-    // Attached to the sort button rather than wrapping it: pressing a heading sorts, and a
-    // second control inside it would offer two meanings for one press. The description hangs
-    // off the <th>, which is outside the button's own name.
-    const helpLines = tipLines(col.help);
-    if (helpLines) tip(sortBtn, helpLines, { describeIn: th });
-    headCells.set(col.key, th);
-    headRow.append(th);
-  }
+  // WHAT IS ON SCREEN, as opposed to what the caller passed. `columns` is the full list and
+  // stays that way — `regroupSpans` needs it to know which group a hidden column came out
+  // of, and so does the chooser, which has to offer a column back. Everything else reads
+  // `cols`, which is rebuilt by paintHead() on every column change.
+  let hiddenNow = [...hiddenColumnSet(hidden)];
+  let cols = [];
+  let headCells = new Map();
+  let currentSort = sort;
+  let currentRows = rows;
 
+  const thead = el("thead", {});
   const tbody = el("tbody", {});
+
+  // Built ONCE and re-appended by every paintHead(), which is the whole point: the node the
+  // popover is anchored to has to outlive the header it sits in.
+  const chooser = onHidden
+    ? columnsButton({
+        columns,
+        hidden: hiddenNow,
+        onChange: (next) => {
+          hiddenNow = next;
+          paintHead();
+          paintRows(currentRows);
+          onHidden(next);
+        },
+      })
+    : null;
+
+  function paintHead() {
+    cols = visibleColumns(columns, hiddenNow);
+    headCells = new Map();
+    const headRow = el("tr", {});
+    // A column heading is where a metric gets DEFINED: it is asked once per table rather than
+    // once per row, so this is the one place a definition can be a real control without
+    // multiplying the tab order by the row count. `col.help` takes any of tipLabel's shapes.
+    cols.forEach((col, i) => {
+      // The cog rides in the LAST heading cell rather than in a column of its own: an extra
+      // `<th>` would be a column the table then owes an empty `<td>` on every row, for a
+      // control that belongs to the whole table and to no row at all. Where inside that cell
+      // it lands, and why the cell then sticks to the right edge of whatever is scrolling, is
+      // tables.css's `th.th-cols` — including why neither half of it may be done with flex.
+      const last = chooser && i === cols.length - 1;
+      const className = [col.className || "", last ? "th-cols" : ""]
+        .filter(Boolean).join(" ") || null;
+
+      // `col.className` lands on the HEADER as well as the cells. Two rules in the stylesheet
+      // were already written for it and had never once matched: `table.data th.num`, added for
+      // the prune census because a numeric heading otherwise sits adrift from its own figures,
+      // and `.gq-table table.data th.gq-group-start`, the graph's column-group boundary. Both
+      // were dead selectors waiting for this line.
+      let th;
+      if (!col.sortable || !onSort) {
+        th = el("th", { scope: "col", class: className }, tipLabel(col.label, col.help));
+      } else {
+        const sortBtn = el("button", {
+          class: "th-sort",
+          "data-sort": col.key,
+          "aria-label": `Sort by ${col.label}`,
+          onclick: () => onSort(col.key),
+        },
+          col.label,
+          el("span", { class: "th-sort-glyph", "aria-hidden": "true" }),
+        );
+        th = el("th", { scope: "col", class: className }, sortBtn);
+        // Attached to the sort button rather than wrapping it: pressing a heading sorts, and a
+        // second control inside it would offer two meanings for one press. The description hangs
+        // off the <th>, which is outside the button's own name.
+        const helpLines = tipLines(col.help);
+        if (helpLines) tip(sortBtn, helpLines, { describeIn: th });
+        headCells.set(col.key, th);
+      }
+      if (last) th.append(chooser);
+      headRow.append(th);
+    });
+
+    // `scope="colgroup"` is what makes the grouping real rather than visual: a screen reader
+    // announces "AI Agent, Name" for the cell instead of leaving the reader to infer the owner
+    // of the third "Name" column from its position.
+    const shownGroups = regroupSpans(groups, columns, hiddenNow);
+    clear(thead);
+    if (shownGroups.length) {
+      thead.append(el("tr", { class: "th-groups" }, ...shownGroups.map((g) => el("th", {
+        scope: "colgroup",
+        colspan: String(g.span),
+        class: g.className || null,
+      }, g.label))));
+    }
+    thead.append(headRow);
+    paintSort(currentSort);
+  }
 
   function paintSort(s) {
     for (const [key, th] of headCells) {
@@ -193,6 +275,7 @@ export function dataTable(spec) {
   }
 
   function paintRows(list) {
+    currentRows = list;
     clear(tbody);
     for (const row of list) {
       // EVERY cell, because every cell clips: tables.css gives `table.data td` a 320px cap
@@ -200,7 +283,7 @@ export function dataTable(spec) {
       // day. truncTip arms itself only when the cell actually overflowed, measured at hover
       // time, so a column that fits stays silent and a resized window is respected without
       // repainting the table.
-      const cells = columns.map((col) => {
+      const cells = cols.map((col) => {
         // `wrap: true` opts a single column out of the 320px nowrap-ellipsis clip
         // (tables.css `table.data td`) so a prose column — the secrets four-corner
         // table's Reading column, cut mid-sentence at 1280px and worse below it —
@@ -269,38 +352,37 @@ export function dataTable(spec) {
       const detail = rowDetail ? rowDetail(row) : null;
       if (detail) {
         tbody.append(el("tr", { class: "detail-row" },
-          el("td", { colspan: String(columns.length) }, detail)));
+          el("td", { colspan: String(cols.length) }, detail)));
       }
     }
     if (!list.length && emptyText) {
       tbody.append(el("tr", {},
-        el("td", { colspan: String(columns.length), class: "table-empty" }, emptyText)));
+        el("td", { colspan: String(cols.length), class: "table-empty" }, emptyText)));
     }
   }
 
-  paintSort(sort);
+  paintHead();
   paintRows(rows);
-
-  // `scope="colgroup"` is what makes the grouping real rather than visual: a screen reader
-  // announces "AI Agent, Name" for the cell instead of leaving the reader to infer the owner
-  // of the third "Name" column from its position.
-  const groupRow = groups && groups.length
-    ? el("tr", { class: "th-groups" }, ...groups.map((g) => el("th", {
-        scope: "colgroup",
-        colspan: String(g.span),
-        class: g.className || null,
-      }, g.label)))
-    : null;
 
   const wrap = el("div", {
     class: "table-wrap" + (panel ? " table-wrap--panel" : "")
       + (stickyHeader ? " table-wrap--sticky" : "") + (className ? " " + className : ""),
   },
     el("table", { class: "data" + (tableClassName ? " " + tableClassName : "") },
-      el("thead", {}, ...(groupRow ? [groupRow, headRow] : [headRow])),
+      thead,
       tbody));
   wrap.setRows = paintRows;
-  wrap.setSort = paintSort;
+  // The active column is remembered, not just drawn: a column change rebuilds the heading
+  // cells, and a repaint that had to be told the sort again would quietly lose the arrow.
+  wrap.setSort = (s) => { currentSort = s; paintSort(s); };
+  // For a caller that changes the choice from somewhere other than the cog — a saved view,
+  // a reset — without rebuilding the table around it.
+  wrap.setHidden = (next) => {
+    hiddenNow = [...hiddenColumnSet(next)];
+    if (chooser) chooser.set(hiddenNow);
+    paintHead();
+    paintRows(currentRows);
+  };
   return wrap;
 }
 

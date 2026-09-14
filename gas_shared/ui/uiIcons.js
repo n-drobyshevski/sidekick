@@ -47,6 +47,20 @@ const PATHS = {
     "M4.6 10.9 L7.4 6.1",
     "M8.7 6.1 L11.3 9.9",
   ],
+  // Six teeth, not eight. This draws at 13px in a table heading (the column chooser's own
+  // button, ui/columnPicker.js) and eight teeth at 1.5 stroke close up into a ring — the
+  // glyph has to still read as a cog at the size it is actually used, which is the smallest
+  // one in this set.
+  cog: [
+    "M8 3.4 a4.6 4.6 0 1 0 0 9.2 a4.6 4.6 0 0 0 0 -9.2",
+    "M8 6.2 a1.8 1.8 0 1 0 0 3.6 a1.8 1.8 0 0 0 0 -3.6",
+    "M12.6 8 H14.4",
+    "M3.4 8 H1.6",
+    "M10.3 11.98 L11.2 13.54",
+    "M5.7 4.02 L4.8 2.46",
+    "M5.7 11.98 L4.8 13.54",
+    "M10.3 4.02 L11.2 2.46",
+  ],
   // The Security Graph's query builder. `plus` adds a relationship or a filter; the two eyes
   // are the show/hide toggle on a node's column group; `table` and `columns` dress the VIEW
   // control and the column chooser beside it.

@@ -12,9 +12,12 @@
 //   data.js       quantity display: progress track, the sortable table, the paging footer
 //   chartTable.js the data-table alternative under every canvas — the same series a chart
 //                 was handed, as a disclosure a keyboard and a screen reader can read
-//   tableModel.js how a register orders and pages its rows — comparators, where an unknown
-//                 goes, what a tie does. DOM-free, so the half that can be WRONG is the
-//                 half vitest can hold
+//   tableModel.js how a register orders and pages its rows, and which of its columns it
+//                 draws — comparators, where an unknown goes, what a tie does, what a
+//                 second press on a heading means, and which columns refuse to be hidden.
+//                 DOM-free, so the half that can be WRONG is the half vitest can hold
+//   columnPicker.js the "Columns" button and its popover — the reader's own answer to a
+//                 register with more columns than their question needs
 //   cells.js      what a cell says when the answer is "nothing" or "maybe" — the one muted
 //                 em dash, yes/no/unknown
 //   nodeCell.js   and what it says when the answer is "this is a node": the kind medallion.
@@ -74,12 +77,14 @@ export {
   sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./severity.js";
 export { dataTable, meter, pager, progressBar, tableFooter } from "./data.js";
+export { columnsButton } from "./columnPicker.js";
 export {
   chartTable, chartTableModel, chartTablePaged, survivalTableModel,
 } from "./chartTable.js";
 export {
-  DEFAULT_PAGE_SIZE, PAGE_SIZES, compareValues, nullsLast, pageForSize, pageOf, sortRows,
-  triState,
+  DEFAULT_PAGE_SIZE, PAGE_SIZES, columnChoices, compareValues, encodeHiddenColumns,
+  hiddenColumnSet, hideableColumn, nextSort, nullsLast, pageForSize, pageOf,
+  parseHiddenColumns, regroupSpans, sortRows, toggleColumn, triState, visibleColumns,
 } from "./tableModel.js";
 export { absent, triCell } from "./cells.js";
 export { nameCell } from "./nodeCell.js";

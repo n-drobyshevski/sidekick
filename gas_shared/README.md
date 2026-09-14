@@ -21,7 +21,7 @@ read the tree as `"type": "module"`.
 | `api.js` | the `google.script.run` bridge and the `{ok,data}` envelope |
 | `store.js` | the bootstrap cache, the SWR RPC cache and hash routing |
 | `icons.js` | node-kind SVG (512 lines; only `ui/nodeCell.js` and `ui/uiIcons.js` reach it) |
-| `ui/` | 36 component modules plus `index.js`, the one import surface, `helpPage.js` — a page, not a component, so deliberately not in the barrel — and `settingsForm.js` — a DOM-free model reached only by direct path, deliberately not in the barrel either (see "The settings seam" below) |
+| `ui/` | 37 component modules plus `index.js`, the one import surface, `helpPage.js` — a page, not a component, so deliberately not in the barrel — and `settingsForm.js` — a DOM-free model reached only by direct path, deliberately not in the barrel either (see "The settings seam" below) |
 | `styles/` | nine stylesheets: `tokens.base.css` first, `overrides.css` last |
 | `test/contracts/` | sixteen spec factories the apps register from their own test files |
 | `test/testConfig.js` | a manifest fixture, for tests that reach a module reading one |
@@ -234,7 +234,7 @@ reader the wrong tab and never say so.
 **Reached by direct path — `gas_shared/ui/settingsForm.js` — never through `ui/index.js`.** This
 file has no `document` in it anywhere, the same as `ui/scopeModel.js` and `ui/tableModel.js`, but
 unlike those two it is deliberately outside the barrel: a settings-model test has no reason to
-pull the other 36 component modules (`dom.js`'s `el()` included) in behind eight pure functions,
+pull the other 37 component modules (`dom.js`'s `el()` included) in behind eight pure functions,
 and every app's own settings-model file runs under plain Node with no jsdom to spare. The rule is
 asserted, not just stated — `test/contracts/settingsForm.js` checks the import specifier by
 regex against the app's own source, because the failure this guards against is a future edit

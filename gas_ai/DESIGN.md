@@ -340,6 +340,18 @@ CSS-drawn dot, and the level name. Meaning is in the text and shape, not the col
 
 **Inputs.** White field, hairline border, `--radius-md`, 36px min-height. Labels at the label step.
 
+**Tables.** One component (`gas_shared/ui/data.js`), and a heading row that carries both of the
+controls a register needs. Press a heading to sort it: the active column reverses, any other moves
+the sort and starts from that column's own first direction, `aria-sort` and the glyph following.
+And where a table offers more columns than one question needs, a **cog at the right end of the
+heading row** opens the column list — on the table, not in the page toolbar, because the filters
+beside the search box change which rows the register answers with and this changes nothing but how
+much of the answer is drawn. It pins to the right edge of whatever is scrolling, so the control
+that makes a too-wide table narrower is never itself off-screen. The identity column is listed and
+not offered; a blank heading is not offered at all. The cog marks itself when the table is narrowed
+and its accessible name says by how many, because a missing column with no sign of why reads as a
+bug in the register rather than a choice the reader made.
+
 **Navigation.** A crimson-accented rail, collapsed to 56px by default and expanded on request.
 Group headers at the micro step, uppercase. The active item takes a 2px accent bar plus weight,
 **never a tint alone**.

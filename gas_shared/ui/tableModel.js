@@ -143,6 +143,200 @@ export function pageForSize(page, fromSize, toSize) {
 }
 
 /**
+ * WHICH COLUMN A HEADER CLICK SORTS BY NEXT, and in which direction.
+ *
+ * Six copies of these three lines shipped in gas_ai alone — inventory.js, config.js,
+ * graph.js, combos.js and problems.js twice — and every one of them said the same thing:
+ * pressing the ACTIVE column reverses it, pressing another moves to it and starts from that
+ * column's own first direction. This is that rule, once, so a table's headings behave the
+ * same way in every register whether or not each page re-derived it.
+ *
+ * The FIRST direction stays the caller's, exactly as dataTable's own docblock insists — the
+ * pages genuinely disagree about it per column, because "sort by Issues" means the worst
+ * first and "sort by Name" means A first. So this takes it as an argument: the caller looks
+ * up its own table (`DEFAULT_SORT_DIR[key]`, `CONFIG_SORT_DESC[key]`) and passes the answer.
+ *
+ * NOT EVERY COPY IS A CONVERSION WAITING TO HAPPEN, and the difference is worth stating
+ * rather than discovering. inventory.js and config.js hold a direction outright ("asc"/"desc",
+ * a boolean) and read as this function exactly. combos.js and problems.js hold `dir` as +1/-1
+ * against each column's OWN natural order, which is the same rule in a different coat — but
+ * problems.js also marks a heading active before the reader has chosen one (the server's
+ * lead column), and there the two disagree about what the first press on that heading means.
+ * Rewriting it is a decision about that press, not a tidy, so it stays that page's to make.
+ *
+ * @param {{key: string, descending: boolean}|null} sort  the column active now
+ * @param {string} key  the column whose header was just pressed
+ * @param {boolean} [descendingFirst]  which way THAT column reads on its first press
+ * @returns {{key: string, descending: boolean}} the sort to apply — a new object, always
+ */
+export function nextSort(sort, key, descendingFirst = false) {
+  if (sort && sort.key === key) return { key, descending: !sort.descending };
+  return { key, descending: Boolean(descendingFirst) };
+}
+
+
+// --------------------------------------------------------------- which columns are drawn
+//
+// A register that answers one question well has eight columns; a register that answers
+// everybody's has fourteen, and the reader with the fourth question has to scroll sideways
+// past ten they never asked about. The Security Graph's results table already ships the way
+// out of that — a Columns button beside the table — but its own chooser is bound to the
+// shape of a graph query (a group per NODE, the fields that node offers, defaults saved per
+// KIND) and cannot be lifted as it stands. What IS general is underneath it, and it is what
+// follows: a column can be turned off, some columns cannot, and the choice is data.
+//
+// THE CHOICE IS STORED AS WHAT WAS REMOVED, NEVER AS WHAT REMAINS. Both encode the same
+// table today and they disagree about tomorrow: a link (or a saved view) holding the KEPT
+// list pins a reader to the columns that existed the day they saved it, so a column added
+// later is invisible to everyone still holding one — silently, since a column nobody can
+// see is a column nobody reports missing. Holding the REMOVED list means a new column
+// arrives for everybody and only the explicit refusals persist, which is the behaviour a
+// reader would predict. It also keeps the default empty, so an untouched table adds nothing
+// to the URL.
+
+
+/**
+ * The reader's refusals as a Set, from any of the three shapes they arrive in — an array
+ * parsed out of a URL, a Set the picker is holding, or nothing at all.
+ */
+export function hiddenColumnSet(hidden) {
+  if (hidden instanceof Set) return hidden;
+  if (!Array.isArray(hidden)) return new Set();
+  return new Set(hidden.filter((key) => typeof key === "string" && key !== ""));
+}
+
+/**
+ * Can this column be turned off at all?
+ *
+ * Three cannot, and all three for one reason — there would be nothing in the chooser to
+ * turn them back ON with:
+ *
+ *   NO `key`. The chooser addresses a column by key, and plenty of tables here pass columns
+ *   with none (a column nothing sorts by never needed one). Not addressable, so not
+ *   hideable — and a table of only such columns gets no chooser at all, rather than one
+ *   full of controls that do nothing.
+ *
+ *   `pinned: true`. The column that says WHICH ROW THIS IS. Turn the name off and the
+ *   register becomes figures attached to nothing; the graph's own chooser pins the same
+ *   column for the same reason, and says so in as many words.
+ *
+ *   A blank heading. `label: ""` is inventory's Graph-button column: the button inside the
+ *   cell names its own action, so the heading is deliberately empty — and a checkbox with
+ *   no words beside it is not a control. Structural rather than an allowlist, and the same
+ *   exemption test/columnHelp.test.js grants a blank heading for the same reason.
+ */
+export function hideableColumn(col) {
+  if (!col || !col.key || col.pinned) return false;
+  return typeof col.label === "string" && col.label.trim() !== "";
+}
+
+/** The columns a table actually draws, in their own order. Unknown keys are inert. */
+export function visibleColumns(columns, hidden) {
+  const off = hiddenColumnSet(hidden);
+  const list = Array.isArray(columns) ? columns : [];
+  if (!off.size) return list.slice();
+  return list.filter((col) => !(hideableColumn(col) && off.has(col.key)));
+}
+
+/**
+ * One row per column for the chooser: what it is called, whether it is showing, and whether
+ * the reader is allowed to change that.
+ *
+ * A column that cannot be hidden is still LISTED, disabled — the question a reader opens
+ * this control with is "where did Name go", and a list that omits the columns it will not
+ * turn off answers it by pretending they do not exist. A column with no heading is dropped
+ * entirely: there is nothing to print beside the checkbox.
+ */
+export function columnChoices(columns, hidden) {
+  const off = hiddenColumnSet(hidden);
+  return (Array.isArray(columns) ? columns : [])
+    .filter((col) => col && typeof col.label === "string" && col.label.trim() !== "")
+    .map((col) => ({
+      key: col.key || "",
+      label: col.label,
+      hideable: hideableColumn(col),
+      shown: !(hideableColumn(col) && off.has(col.key)),
+    }));
+}
+
+/**
+ * Turn one column off, or back on, and hand back the new refusal list.
+ *
+ * IN COLUMN ORDER, never in click order, so hiding Cloud then Region and hiding Region then
+ * Cloud produce the same string — two readers who made the same table two ways share one
+ * link, and a saved view does not churn on a re-toggle.
+ *
+ * Two presses do nothing and say so by returning the list unchanged: a column that is not
+ * hideable (pinned, unknown, unnamed), and the one that would empty the table. The pinned
+ * column normally makes the second unreachable; a table that pins nothing still cannot be
+ * reduced to no columns, because the chooser would then be the only thing left that knows
+ * the table had any.
+ */
+export function toggleColumn(columns, hidden, key) {
+  const off = hiddenColumnSet(hidden);
+  const list = Array.isArray(columns) ? columns : [];
+  const col = list.find((c) => c && c.key === key);
+  const keep = (set) => list.filter((c) => c && c.key && set.has(c.key)).map((c) => c.key);
+  if (!hideableColumn(col)) return keep(off);
+
+  const next = new Set(off);
+  if (next.has(key)) {
+    next.delete(key);
+    return keep(next);
+  }
+  next.add(key);
+  if (!visibleColumns(list, next).length) return keep(off);
+  return keep(next);
+}
+
+/**
+ * The two-level header's spans, recomputed for the columns still showing.
+ *
+ * dataTable's `groups` are spans over ADJACENT columns summing to the column count, so
+ * which group owns which column is already fully determined — no new field on a column, and
+ * nothing for a caller to keep in step. A group all of whose columns are off is dropped
+ * rather than drawn empty: a heading spanning nothing still draws its rule and its label,
+ * which reads as a column that failed to render.
+ *
+ * Spans that do not sum to the column count mean the caller and this function disagree
+ * about the table, and the honest answer to that is to change nothing.
+ */
+export function regroupSpans(groups, columns, hidden) {
+  const list = Array.isArray(groups) ? groups : [];
+  const cols = Array.isArray(columns) ? columns : [];
+  if (!list.length) return list;
+  const total = list.reduce((n, g) => n + (Number(g && g.span) || 0), 0);
+  if (total !== cols.length) return list;
+
+  const off = hiddenColumnSet(hidden);
+  if (!off.size) return list;
+
+  const out = [];
+  let at = 0;
+  for (const group of list) {
+    const span = Number(group.span) || 0;
+    let shown = 0;
+    for (let i = at; i < at + span; i += 1) {
+      if (!(hideableColumn(cols[i]) && off.has(cols[i].key))) shown += 1;
+    }
+    at += span;
+    if (shown) out.push({ ...group, span: shown });
+  }
+  return out;
+}
+
+/** The refusal list as one URL/storage-safe string. Empty means "every column". */
+export function encodeHiddenColumns(hidden) {
+  return [...hiddenColumnSet(hidden)].join(",");
+}
+
+/** …and back. Whitespace and empties are dropped; unknown keys survive and stay inert. */
+export function parseHiddenColumns(text) {
+  return String(text || "").split(",").map((s) => s.trim()).filter(Boolean);
+}
+
+
+/**
  * The `<td>` class list for one column — the DOM-free half of dataTable()'s cell loop in
  * ui/data.js, so the one thing a column spec decides about its own wrapping has a test that
  * does not need jsdom.
