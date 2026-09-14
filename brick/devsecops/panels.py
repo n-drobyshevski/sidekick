@@ -192,7 +192,7 @@ class Ctx:
 BASE_WIDGETS: Dict[str, Tuple[str, Optional[Sequence[str]]]] = {
     "catalog": (DEFAULT_CATALOG, None),
     "schema": (DEFAULT_SCHEMA, None),
-    "scope": ("sca", ("sca", "sast")),
+    "scope": ("os", ("os", "sca", "sast")),
     "table_prefix": ("", None),
     "severities": ("CRITICAL,HIGH", None),
     "scan_id": ("", None),

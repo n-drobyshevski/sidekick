@@ -152,7 +152,10 @@ def test_the_project_filter_shape_matches_upstream():
     inline, because upstream has exactly one filter type and a one-entry table would be
     theatre. The two spellings must still agree, or the same tenant filter means two things.
 
-    It is the *shape* being compared, not the whole filter: the populations differ on purpose.
+    For `sca` against `os` it is the *shape* being compared and not the whole filter -- those
+    two populations differ on purpose. Since this fork absorbed `os` (S2) there is also a
+    same-name comparison available, and that one IS whole-filter: one scope name, two copies of
+    the code, one population.
     """
     import ingest as ours
 
@@ -178,6 +181,14 @@ def test_the_project_filter_shape_matches_upstream():
     assert ours.build_filter("sca", project_id="p")["projectIdV2"] == (
         theirs.build_filter("os", their_severities, project_id="p")["projectIdV2"]
     ) == {"equals": ["p"]}
+    # And since this fork absorbed `os` (S2), the comparison can be made on the WHOLE filter
+    # rather than on one key: the same scope name, through two copies of the code, must emit
+    # the same population. This is the live half of the pin; `tests/test_os_scope.py` holds a
+    # literal transcription of the same dict, which is what survives brick's deletion. If these
+    # two ever disagree, the literal is the one that has to be re-justified.
+    assert ours.build_filter("os", project_id="p") == theirs.build_filter(
+        "os", their_severities, project_id="p"
+    )
     # And the asymmetry upstream never has to know about: the SAST type spells it `projectId`
     # and takes it bare, which is why the shape is data here and a literal there.
     assert ours.build_filter("sast", project_id="p")["projectId"] == ["p"]
@@ -188,9 +199,15 @@ def test_the_project_filter_shape_matches_upstream():
     assert theirs.build_filter("os", their_severities)["severity"] == ["CRITICAL", "HIGH"]
     assert ours.build_filter("sca")["severity"] == list(config.default_fetch_severities("sca"))
     # The leak itself, stated: brick's own default, read through this fork's config, is not a
-    # severity list at all. Nothing upstream can be changed from here, so the call sites above
-    # state the gate instead.
-    assert theirs.build_filter("os")["severity"] == ["SCA", "SAST"]
+    # severity list at all -- it is this fork's SCOPE NAMES, upper-cased by `severity_filter`.
+    # Written against the dict's keys rather than against the literal `["SCA", "SAST"]` it used
+    # to name: absorbing `os` added a key, so the literal moved to `["OS", "SCA", "SAST"]` while
+    # the defect it describes did not change at all. Pinning the defect to a list of scope names
+    # makes every future scope look like a regression here.
+    assert theirs.build_filter("os")["severity"] == [
+        s.upper() for s in config.DEFAULT_FETCH_SEVERITIES
+    ]
+    assert "CRITICAL" not in theirs.build_filter("os")["severity"]
 
 
 def test_the_vendor_fix_scopes_differ_and_that_asymmetry_is_the_point():
@@ -209,11 +226,20 @@ def test_the_vendor_fix_scopes_differ_and_that_asymmetry_is_the_point():
     (priced in ``tests/test_devsecops.py``) while looking like a consistency fix.
     """
     theirs = upstream("config")
-    assert config.HAS_VENDOR_FIX == frozenset({"sca"})
+    assert config.HAS_VENDOR_FIX == frozenset({"os", "sca"})
     assert "sast" not in config.HAS_VENDOR_FIX
     assert "sca" in config.HAS_VENDOR_FIX
+    # `os` joined when this fork absorbed the host register (S2). It does not weaken the pin:
+    # the asymmetry being guarded is `sast` against everything else, and `os` arrives on the
+    # same side of it as `sca` for the same reason -- somebody ships the fixed package.
+    assert "os" in config.HAS_VENDOR_FIX
     assert theirs.HAS_VENDOR_FIX == frozenset({"os", "all"})
+    # Still different, and now for a different reason: upstream names `all`, which is dropped
+    # rather than ported. So the two sets are no longer disjoint and the inequality alone would
+    # be a weaker claim than it was -- which is why `sast` is asserted out of it above and
+    # every scope is checked against its own fork's SCOPES below.
     assert config.HAS_VENDOR_FIX != theirs.HAS_VENDOR_FIX
+    assert "all" not in config.SCOPES
     # Every scope one of them names is a scope that fork actually has.
     assert config.HAS_VENDOR_FIX <= set(config.SCOPES)
     assert theirs.HAS_VENDOR_FIX <= set(theirs.SCOPES)
@@ -227,7 +253,7 @@ def test_the_has_fix_pin_is_read_from_the_filter_in_both_forks():
     scope has to take the claim with it, or the code goes on asserting a fix existed for
     findings nobody filtered for one.
     """
-    for module, scopes in ((config, ("sca",)), (upstream("config"), ("os", "all"))):
+    for module, scopes in ((config, ("os", "sca")), (upstream("config"), ("os", "all"))):
         derived = frozenset(s for s, f in module.SCOPES.items() if f.get("hasFix") is True)
         assert module.SCOPES_PINNING_HAS_FIX == derived
         for scope in scopes:
@@ -236,10 +262,24 @@ def test_the_has_fix_pin_is_read_from_the_filter_in_both_forks():
     assert not config.scope_pins_has_fix("sast")
 
 
-def test_this_fork_measures_code_and_refuses_to_pretend_otherwise():
-    """`os` and `all` are brick's scopes. Accepting either here would write `wiz_os_*` tables
-    full of code findings, which is a naming lie rather than an error anybody would notice."""
-    assert sorted(config.SCOPES) == ["sast", "sca"]
-    assert config.DEFAULT_SCOPE == "sca"
-    for theirs in ("os", "all"):
-        assert theirs not in config.SCOPES
+def test_this_fork_measures_three_populations_and_all_is_not_one_of_them():
+    """**This test used to read "this fork measures code and refuses to pretend otherwise"**,
+    and asserted that `os` and `all` were both refused -- on the claim that accepting either
+    would write `wiz_os_*` tables full of code findings, a naming lie rather than an error.
+
+    Half of that claim is gone by decision: this fork absorbed the host register (S2), so `os`
+    names host findings here and the tables it writes are the ones brick used to write. The
+    other half stands and is what is kept: `all` was brick's every-detection-method scope, it
+    overlapped `os`, it was never scheduled, and it is dropped rather than ported -- so it is
+    refused at every entry point rather than served as an empty-looking register.
+
+    `POPULATION_ALL` is a different constant with the same spelling (the capacity table's
+    all-findings row label) and is deliberately untouched.
+    """
+    assert sorted(config.SCOPES) == ["os", "sast", "sca"]
+    assert config.DEFAULT_SCOPE == "os"
+    assert "all" not in config.SCOPES
+    assert "all" not in config.SOURCES
+    assert config.POPULATION_ALL == "all"
+    # Upstream still has it, which is what makes "not ported" a statement rather than a typo.
+    assert "all" in upstream("config").SCOPES

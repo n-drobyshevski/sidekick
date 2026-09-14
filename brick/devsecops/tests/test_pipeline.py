@@ -121,17 +121,29 @@ def test_table_prefix_is_overridable_and_can_be_empty(monkeypatch):
     assert bare.metrics == "c.s.metrics"
 
 
-def test_scope_defaults_to_sca_and_rejects_unknown_values(monkeypatch):
-    """`sca` rather than `sast`, because it is the register whose numbers mean what they appear
-    to mean -- its findings carry a CVE, real exploit signals and real timestamps.
+def test_scope_defaults_to_os_and_rejects_unknown_values(monkeypatch):
+    """`os` -- the oldest, largest and most read population here, and what the notebooks open on.
 
-    And `os` is rejected outright: this fork does not measure hosts, and silently accepting the
-    scope name would write `wiz_os_*` tables full of code findings."""
+    **This test used to assert `sca`, and to assert that `os` was REFUSED.** The claim it
+    encoded was "this fork does not measure hosts, so silently accepting the scope name would
+    write `wiz_os_*` tables full of code findings". That claim is gone by decision, not by
+    accident: this fork absorbed the host register, `os` is a real scope with brick's own
+    filter behind it, and `wiz_os_*` tables full of host findings is now the correct outcome.
+    The property the old assertion was protecting -- a scope name that is not a population here
+    is refused rather than served -- is kept below, and `all` is still one of those: it was
+    brick's every-detection-method scope, it overlapped `os`, and it is dropped rather than
+    ported.
+
+    The reason `sca` was the default before still holds of `os` and is why the flip is safe: a
+    reader who chooses no scope gets a register whose numbers mean what they appear to mean --
+    CVEs, real exploit signals, and both ends of the clock measured.
+    """
     monkeypatch.delenv("SCOPE", raising=False)
     monkeypatch.setattr(dbx, "widget", lambda name: "")
-    assert run_pipeline.resolve_scope(argv=[]) == "sca"
+    assert run_pipeline.resolve_scope(argv=[]) == "os"
+    assert run_pipeline.resolve_scope(argv=["--scope=sca"]) == "sca"
     assert run_pipeline.resolve_scope(argv=["--scope=sast"]) == "sast"
-    for wrong in ("os", "all", "containers"):
+    for wrong in ("all", "containers", "secrets"):
         with pytest.raises(RuntimeError, match="unknown scope"):
             run_pipeline.resolve_scope(argv=[f"--scope={wrong}"])
 
@@ -410,23 +422,55 @@ def test_unknown_scope_is_rejected():
 # ----------------------------------------------------------------------- the query
 
 
-def test_the_shipped_query_asks_for_exactly_two_asset_members():
+def test_the_sca_query_asks_for_exactly_two_asset_members():
     """The inversion of brick's rule, and the reason this fork can compute P2P v5 at all.
 
     A union fails as a whole, so one member the tenant no longer has costs the entire request
     -- which is why `FETCH_ASSET_FIELDS` is off for a register that would have to ask for all
     thirteen. `sca` returns REPOSITORY_BRANCH and nothing else, so it asks for the two members
     it needs and gets its asset columns. `sca_response.json` is the evidence.
+
+    Reads `build_query(scope="sca")` rather than the module-level `QUERY`, which used to be the
+    same document and is not any more: `QUERY` is `build_query()`, so it follows
+    `config.DEFAULT_SCOPE`, and that became `os` when this fork absorbed the host register.
+    Nothing about the `sca` document changed -- see the test below for what `QUERY` now holds.
     """
+    sca_query = ingest.build_query(scope="sca")
     assert FETCH_ASSET_FIELDS is False
     assert ingest.asset_members("sca") == (
         "VulnerableAssetBase",
         "VulnerableAssetRepositoryBranch",
     )
-    assert "... on VulnerableAssetRepositoryBranch {" in QUERY
-    assert "... on VulnerableAssetVirtualMachine {" not in QUERY
+    assert "... on VulnerableAssetRepositoryBranch {" in sca_query
+    assert "... on VulnerableAssetVirtualMachine {" not in sca_query
     # And the ecosystem column P2P v5 groups on, asked for only where it is read.
-    assert "codeLibraryLanguage" in QUERY
+    assert "codeLibraryLanguage" in sca_query
+
+
+def test_the_module_level_query_is_the_default_scope_s_document():
+    """`QUERY = build_query()` is evaluated at import, so it is whatever `DEFAULT_SCOPE` says.
+
+    That is `os` now, and the os document is the bare one: no `vulnerableAsset` union (a host
+    finding can arrive on any of the thirteen members, so `FETCH_ASSET_FIELDS` decides and it
+    is off) and no `codeLibraryLanguage` (a host register has no ecosystem to group on).
+
+    Runtime is unaffected and this is the assertion that says so out loud: `fetch_findings`
+    calls `query_for(scope)` with the scope the run was given, and no caller reads `QUERY` to
+    decide what to send. It is a module constant a test can inspect, and the thing worth
+    pinning about it is which document it is -- a reader who assumes it is still the `sca` one
+    will draw the wrong conclusion from every assertion made against it.
+    """
+    assert ingest.QUERY == ingest.build_query(scope="os") == ingest.query_for("os")
+    assert "codeLibraryLanguage" not in QUERY
+    assert "vulnerableAsset" not in QUERY
+    # The filter keys that make it the os population reach the wire through `build_filter`,
+    # not through the document -- both halves are named here because the document alone does
+    # not say which scope it belongs to.
+    os_filter = build_filter("os")
+    assert os_filter["detectionMethod"] == ["OS"]
+    assert os_filter["assetType"] == ["VIRTUAL_MACHINE"]
+    assert os_filter["assetIsRepresentativeResource"] is False
+    assert os_filter["detailedNameV2"] == {"notEquals": ["openssl", "python", "vim"]}
 
 
 def test_the_query_still_parses_with_the_asset_omitted():

@@ -88,10 +88,16 @@ API_SEVERITY_VALUES = {
 # published a secrets register with no passwords in it. Nothing was wrong with the number; it
 # was the right answer to a question nobody had asked about that population.
 #
-# Both scopes here are CVE-bearing volume registers whose severities mean the same thing, so
-# they agree, and this changes no figure today. What it changes is what happens next: a third
-# scope has to state its own gate rather than inherit one. See `default_fetch_severities`.
+# All three scopes here are CVE- or weakness-bearing volume registers whose severities mean the
+# same thing, so they agree, and this changes no figure today. What it changes is what happens
+# next: a fourth scope has to state its own gate rather than inherit one -- the sibling's
+# `secrets` register is the population where the inherited gate was wrong. See
+# `default_fetch_severities`.
+#
+# `os` is brick's retired flat `DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")`, keyed rather
+# than flattened, so the host register's gate stays the gate it was scanned with.
 DEFAULT_FETCH_SEVERITIES: Dict[str, Tuple[str, ...]] = {
+    "os": ("CRITICAL", "HIGH"),
     "sca": ("CRITICAL", "HIGH"),
     "sast": ("CRITICAL", "HIGH"),
 }
@@ -120,20 +126,39 @@ def default_fetch_severities(scope: str) -> Tuple[str, ...]:
 #   status   Not about scoping at all. Without it the API returns only OPEN findings, and
 #            every remediation metric silently collapses -- coverage 0%, efficiency undefined,
 #            MTTR empty -- while looking like a real result.
-#   hasFix   Restricts both scopes to findings a team could actually have remediated. It is
-#            shared rather than OS-only so that remediation rates mean the same thing in each:
-#            awaiting-vendor-fix findings would otherwise sit in `all`'s coverage denominator
-#            and not in `os`'s, making `all` look worse for a reason that is not performance.
+#   hasFix   Restricts the scopes that use it to findings a team could actually have
+#            remediated. It is shared rather than OS-only so that remediation rates mean the
+#            same thing in `os` and `sca`: awaiting-vendor-fix findings sitting in one
+#            register's coverage denominator and not the other's would make that one look
+#            worse for a reason that is not performance. `sast` does not use `_BASE` at all --
+#            see its own entry below.
 _BASE = {
     "status": ["OPEN", "RESOLVED"],
     "hasFix": True,
 }
 
 SCOPES = {
+    # OS-package CVEs on host workloads: the population the Streamlit dashboard measures.
+    # Mirrors os_vulns.VARIABLES["filterBy"], minus its hardcoded projectIdV2 -- that is one
+    # tenant's project and is exposed here as an opt-in `project_id` parameter instead.
+    #
+    # Copied verbatim from `brick/config.py` when this fork absorbed the host register (S2).
+    # It is OS-VIEW POLICY, not incidental: `detectionMethod` and `assetType` say what a host
+    # finding is, `assetIsRepresentativeResource: False` drops the duplicate the API attaches
+    # to a representative resource, and the `detailedNameV2` exclusions are three packages the
+    # host register deliberately does not report on. Changing any of them changes which
+    # population every host figure is computed over, which is not an error anybody sees.
+    "os": {
+        **_BASE,
+        "detectionMethod": ["OS"],
+        "assetType": ["VIRTUAL_MACHINE"],
+        "assetIsRepresentativeResource": False,
+        "detailedNameV2": {"notEquals": ["openssl", "python", "vim"]},
+    },
     # Software composition analysis: CVEs in the libraries a repository depends on. Mirrors
     # devsecops/sca_request.py's filterBy, minus its hardcoded projectIdV2.
     #
-    # This reads the same GraphQL connection `brick/`'s `os` scope does --
+    # This reads the same GraphQL connection the `os` scope above does --
     # `vulnerabilityFindings`, filtered to the code stage of the pipeline -- which is why it
     # needs no new maths at all: the findings carry a CVE and the same three exploit signals,
     # so the ledger, Kaplan-Meier MTTR, the confusion matrix and capacity all apply unchanged
@@ -199,10 +224,18 @@ SAST_FETCH_RESOLVED = False
 if SAST_FETCH_RESOLVED:
     SCOPES["sast"]["status"] = ["OPEN", "RESOLVED"]
 
-# SCA rather than SAST, because it is the register whose numbers mean what they appear to
-# mean: its findings carry a CVE, real exploit signals and real timestamps. A reader who runs
-# this pipeline without choosing a scope should get the defensible half.
-DEFAULT_SCOPE = "sca"
+# `os` since this fork absorbed the host register (S2): it is the oldest, largest and most
+# read population here, it is what the Streamlit dashboard and the GAS app both measure, and
+# it is the scope the notebooks open on. The property that made `sca` the default before it
+# still holds of `os` and is the real requirement -- a reader who runs this pipeline without
+# choosing a scope gets a register whose numbers mean what they appear to mean: CVEs, real
+# exploit signals and both ends of the clock measured.
+#
+# This constant is read at IMPORT time by `ingest.QUERY = build_query()`, so flipping it flips
+# which document that module-level constant holds. Nothing at runtime reads it --
+# `fetch_findings` calls `query_for(scope)` with the scope the run was given -- but a test
+# that inspects `QUERY` is inspecting the default scope's document and should say so.
+DEFAULT_SCOPE = "os"
 
 # ---- The second clock: when could a team actually have acted? ----
 # The SLA/MTTR clock a team can be held to starts when a fix becomes AVAILABLE, not when the
@@ -218,20 +251,24 @@ DEFAULT_SCOPE = "sca"
 
 #: Scopes where a vendor fix is a thing that can exist at all.
 #:
-#: SCA ONLY, AND THAT GUARD IS THE LOAD-BEARING PART OF THIS WHOLE FILE ENTRY. A dependency
-#: has a maintainer who ships the fixed version; a weakness in first-party code does not. The
-#: definition "open with no fix available" is therefore true of EVERY SAST finding, forever.
-#: Without the guard every open SAST row would read as awaiting a vendor: out of every
-#: actionable clock, still in every exposure count, so the two halves of a page disagree and
-#: the gap looks like broken arithmetic rather than the category error it is. The sibling
-#: register measured the cost on live data -- 2,085 rows (127 SAST + 1,958 secrets) sitting in
-#: that state permanently -- and `tests/test_ledger.py` prices it here as a mutation.
+#: THE QUESTION IS WHETHER THERE IS A VENDOR TO WAIT ON, and it is a fact about the KIND of
+#: finding rather than about any filter. An OS package CVE is fixed by whoever ships the
+#: package and a library CVE by whoever maintains the library, so "open with no fix available"
+#: is a real, temporary state a row of those scopes can be in. `sast` IS STILL THE EXCEPTION
+#: AND IT IS STILL THE LOAD-BEARING PART OF THIS ENTRY: nobody vendors your own code, so the
+#: definition "open with no fix available" is true of EVERY SAST finding, forever. Without the
+#: guard every open SAST row would read as awaiting a vendor: out of every actionable clock,
+#: still in every exposure count, so the two halves of a page disagree and the gap looks like
+#: broken arithmetic rather than the category error it is. The sibling register measured the
+#: cost on live data -- 2,085 rows (127 SAST + 1,958 secrets) sitting in that state
+#: permanently -- and `tests/test_ledger.py` prices it here as a mutation.
 #:
-#: `brick/config.py` says {"os", "all"}. Deliberately NOT one of
-#: `tests/test_fork_integrity.py`'s shared constants: the two registers measure different
-#: populations and are SUPPOSED to differ here. What that file pins instead is the asymmetry
-#: itself -- "sast" not in this set, "sca" in it.
-HAS_VENDOR_FIX = frozenset({"sca"})
+#: `os` joined `sca` here when this fork absorbed the host register (S2); brick's retired copy
+#: said {"os", "all"} and `all` is not ported. Adding a scope to `SCOPES` does NOT add it here
+#: -- this set is declared rather than derived, because "is there a vendor" is not visible in
+#: a filter. `SCOPES_PINNING_HAS_FIX` below is the derived one, and they answer different
+#: questions: a scope can have a vendor and not pin `hasFix`, and (in principle) the reverse.
+HAS_VENDOR_FIX = frozenset({"os", "sca"})
 
 #: Scopes whose API filter pins `hasFix: true`, DERIVED from `SCOPES` rather than listed.
 #:
@@ -249,8 +286,8 @@ HAS_VENDOR_FIX = frozenset({"sca"})
 #: evidence. `fix_observed_at` is preferred over it wherever it exists, for the same reason in
 #: reverse: it is a moment a fix was SEEN.
 #:
-#: `sca` pins it through `_BASE`; `sast` does not use `_BASE` at all, which is the same reason
-#: it is absent from `HAS_VENDOR_FIX` arriving by a different route.
+#: `os` and `sca` pin it through `_BASE`; `sast` does not use `_BASE` at all, which is the same
+#: reason it is absent from `HAS_VENDOR_FIX` arriving by a different route.
 #:
 #: Derived, not hardcoded, because dropping `hasFix` from the filter is a population change
 #: owed a measured round of its own, recorded in the sibling's `gas_devsecops/src/sync.ts`:
@@ -267,9 +304,10 @@ SCOPES_PINNING_HAS_FIX = frozenset(
 def scope_has_vendor_fix(scope: str) -> bool:
     """Whether ``scope``'s findings have a vendor who ships the fix.
 
-    False -- which is to say ``sast`` -- means the actionable clock does not apply to the scope
-    at all: no ``fix_available_at``, no ``mttr_actionable_days``, and, the half that matters,
-    ``awaiting_vendor_fix`` is False rather than True-forever.
+    False -- which is to say ``sast``, the only scope here without one -- means the actionable
+    clock does not apply to the scope at all: no ``fix_available_at``, no
+    ``mttr_actionable_days``, and, the half that matters, ``awaiting_vendor_fix`` is False
+    rather than True-forever.
     """
     return scope in HAS_VENDOR_FIX
 
@@ -326,6 +364,11 @@ VULN_SOURCE = Source(kind="vulnerability", connection="vulnerabilityFindings")
 SAST_SOURCE = Source(kind="sast", connection="sastFindings")
 
 SOURCES = {
+    # `os` reads the same connection behind the same filter type `sca` does -- which is the
+    # whole reason the host register fitted into this fork with no new branch: one more entry
+    # here, and `query_for`, `build_filter`, `_shape_base` and `metrics.silver_findings` all
+    # route it exactly as they route `sca`.
+    "os": VULN_SOURCE,
     "sca": VULN_SOURCE,
     "sast": SAST_SOURCE,
 }
@@ -355,7 +398,19 @@ SOURCES = {
 #
 # **Copy these from `npm run probe -- --schema` in `gas_devsecops/`, which prints a ready-made
 # entry per filter type. Never infer one from another type.**
+#
+# `os` and `sca` are the SAME filter type (`VulnerabilityFindingFilters`), so they take the
+# same entry. That `os` needs one at all was MEASURED, not assumed, and the brief that ported
+# the scope predicted it would not: every value written into `SCOPES["os"]` is a bare list, a
+# scalar or a nested `{"notEquals": [...]}`, all of which `_shape_base` leaves alone -- but
+# `build_filter` ADDS `projectIdV2` after `_shape_base` has run, and with no entry here
+# `_list_filter` would emit it as a bare list. Brick's retired `build_filter` wrote
+# `{"equals": [project_id]}` inline. Without this line the host register's `--project_id`
+# would go on the wire in the wrong kind and be refused with HTTP 400
+# `VALIDATION_INVALID_TYPE_VARIABLE` -- zero rows, looking like an empty register.
+# `tests/test_os_scope.py` pins the emitted filter against brick's shape for exactly this.
 OBJECT_FILTERS = {
+    "os": ("projectIdV2",),
     "sca": ("projectIdV2",),
     "sast": ("severity", "status"),
 }
@@ -411,6 +466,11 @@ FETCH_ASSET_FIELDS = False
 # branch. `sast` needs no entry -- its `resource` is a plain object, not a union.
 #
 # A scope absent from this map falls back to FETCH_ASSET_FIELDS over the full member list.
+#
+# `os` is deliberately absent, which is brick's behaviour unchanged: a host finding can arrive
+# on any of the thirteen members, so there is no narrower list to ask for, and the fallback
+# leaves `FETCH_ASSET_FIELDS = False` deciding -- no asset columns at all rather than a request
+# the tenant refuses as a whole.
 SCOPE_ASSET_MEMBERS = {
     "sca": ("VulnerableAssetBase", "VulnerableAssetRepositoryBranch"),
 }
@@ -422,8 +482,8 @@ SCOPE_ASSET_MEMBERS = {
 # a Java repo and an npm repo have different dependency counts, different fix cadences and
 # different upgrade friction for reasons that are about the ecosystem, not the team.
 #
-# NULL for `os` and `all`, which have no language, so their asset rows fall into the single
-# UNKNOWN group and the OVERALL row is the only one worth reading there.
+# NULL for `os`, which has no language -- its asset rows fall into the single UNKNOWN group and
+# the OVERALL row is the only one worth reading there.
 ASSET_GROUP_UNKNOWN = "UNKNOWN"
 
 # ---- Risk classification (Prioritization to Prediction) ----
@@ -612,6 +672,10 @@ def rule_for_scope(scope: str = DEFAULT_SCOPE):
     error -- it is a full page of plausible numbers. ``RiskRule`` against a SAST register
     classifies every finding `unknown` and reports 100% unclassified; ``SastRiskRule`` against
     a CVE register does the same in the other direction. Both look like data.
+
+    Dispatches on the scope's SOURCE rather than on a list of scope names, so a scope added to
+    ``SOURCES`` is classified correctly without an edit here -- which is how ``os`` arrived
+    (S2) already answering ``DEFAULT_RISK_RULE``: it reads ``VULN_SOURCE``, same as ``sca``.
     """
     return DEFAULT_SAST_RISK_RULE if SOURCES.get(scope) is SAST_SOURCE else DEFAULT_RISK_RULE
 
@@ -719,7 +783,7 @@ LEDGER_COLUMNS = [
     "has_exploit",
     "epss",
     "risk_observed_at",
-    # Static-analysis risk inputs. NULL for every CVE-bearing scope (`os`, `all`, `sca`) and
+    # Static-analysis risk inputs. NULL for every CVE-bearing scope (`os`, `sca`) and
     # populated only by `sast`, but they live on the shared ledger rather than a parallel one
     # for the same reason `has_kev` does: coverage and efficiency classify over the whole
     # ledger, including findings the API has stopped returning, so a signal not written down at
