@@ -43,11 +43,13 @@ PAGES = [
     "08_code_assets",
 ]
 
-#: brick/'s GAS importer has no counterpart here: the Apps Script app scans one Wiz project for
-#: vulnerability findings on hosts, so there is no code-register history to seed from. The
-#: numbering keeps its gap rather than renumbering the pages, so a reader who knows brick's set
-#: can see at a glance which one is missing and why.
-MIGRATION = []
+#: `07_import_gas` -- ported from `brick/notebooks/07_import_gas.ipynb` when this fork absorbed
+#: the `os` scope (S2). GAS is the OS-patching register: the importer seeds `--scope=os` history
+#: only, `sca`/`sast` have no prior GAS deployment to import from, and nothing here enforces that
+#: (see `import_bundle`'s module docstring). It is not a read page -- `page_only` skips the
+#: page-shaped guards for it -- so it stays out of `PAGES` and in its own list, the way brick's
+#: own suite splits the two.
+MIGRATION = ["07_import_gas"]
 
 #: Everything that ships under notebooks/, in the order `sorted(glob)` returns them -- the
 #: importer is 07 and the P2P v5 page is 08, so the page list is not contiguous.

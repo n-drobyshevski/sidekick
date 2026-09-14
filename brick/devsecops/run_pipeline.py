@@ -155,18 +155,23 @@ RUNTIME_MODULES = ("config", "dbx", "ingest", "ledger", "metrics", "run_pipeline
 # printed above it, which is the same class of bug with a quieter failure.
 NOTEBOOK_MODULES = ("panels", "figures", "tiles")
 
-# Storage tooling, treated exactly like the notebook layer and for the same reason: `csvstore`
-# writes both the export and (on restore) the register itself, so a stale copy beside a fresh
-# `ledger.py` is as fatal as a stale metrics.py -- but a scheduled Job must never fail because
-# a module it does not import is missing from the folder. Absent is fine; present and
+# Storage tooling, treated exactly like the notebook layer and for the same reason:
+# `import_bundle` writes the ledger and the `family='scan'` rows of `metrics`, and `csvstore`
+# writes both the export and (on restore) the register itself, so a stale copy of either beside
+# a fresh `ledger.py` is as fatal as a stale metrics.py -- but a scheduled Job must never fail
+# because a module it does not import is missing from the folder. Absent is fine; present and
 # disagreeing is not.
 #
-# `brick/import_bundle.py` has no counterpart here on purpose: the GAS app scans one Wiz project
-# for vulnerability findings on hosts, so there is no code-register history to seed from.
+# `import_bundle` ported from `brick/import_bundle.py` when this fork absorbed the `os` scope
+# (S2): the GAS app it seeds from is the OS-patching register, so the importer is only ever run
+# with `--scope=os`, but it is deployment tooling like `csvstore`, not scope-specific code, and
+# lives here rather than behind a scope check.
 #
-# `csvstore` is imported lazily by `export_csv` rather than at module scope, so a Job that never
-# passes `--csv_path` neither needs the file nor pays for it.
-MIGRATION_MODULES = ("csvstore",)
+# Neither is imported by this module at module scope -- `csvstore` is reached lazily from
+# `export_csv`, and `import_bundle` imports `run_pipeline` (not the other way around) and calls
+# `check_deployment()` itself -- so a Job that never passes `--csv_path` and never runs the
+# importer pays for neither.
+MIGRATION_MODULES = ("import_bundle", "csvstore")
 
 # The optional layers share one rule, so they share one loop in check_deployment.
 OPTIONAL_MODULES = NOTEBOOK_MODULES + MIGRATION_MODULES

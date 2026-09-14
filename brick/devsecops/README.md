@@ -248,6 +248,7 @@ To read the notebooks as well, four more files go on the same `sys.path`:
 ├── figures.py
 ├── tiles.py
 ├── csvstore.py
+├── import_bundle.py
 └── notebooks/
     ├── 00_security_posture.ipynb
     ├── 01_mttr_sla.ipynb
@@ -256,6 +257,7 @@ To read the notebooks as well, four more files go on the same `sys.path`:
     ├── 04_scan_history.ipynb
     ├── 05_estate.ipynb
     ├── 06_run_and_verify.ipynb
+    ├── 07_import_gas.ipynb
     └── 08_code_assets.ipynb
 ```
 

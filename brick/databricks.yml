@@ -1,14 +1,20 @@
-# The two registers as Databricks Jobs, deployed with Databricks Asset Bundles.
+# Three scopes, ONE pipeline, as Databricks Jobs deployed with Databricks Asset Bundles.
 #
-# `brick/` is the deployment unit, which is why this file lives here rather than at the repo
-# root: `run_pipeline.check_deployment()` requires every runtime module to come from ONE flat
-# folder, and the git_source below hands the workspace exactly that.
+# `brick/devsecops/` is the deployment unit for every scope now, including `os` -- the fork
+# split is gone (S2: devsecops absorbed the `os` scope's config, and every job below points at
+# its `run_pipeline.py`). `brick/run_pipeline.py` and its siblings still exist for this step
+# (retired in a later step), but nothing here runs them any more. This file stays at
+# `brick/databricks.yml` rather than moving under `devsecops/`, matching where the surviving
+# tree is headed: `run_pipeline.check_deployment()` requires every runtime module to come from
+# ONE flat folder, and the git_source below hands the workspace exactly that folder,
+# `brick/devsecops/`.
 #
-# Three scan jobs, one per register, because a scope drives both the API filter and the table
+# Three scan jobs, one per scope, because a scope drives both the API filter and the table
 # names -- `wiz_<scope>_*` -- so two scopes in one job would write each other's tables. They are
 # separate jobs rather than tasks of one job for the same reason `max_concurrent_runs` is 1: a
 # scope's scan must be able to fail, retry and be re-run without dragging the other two through
-# it.
+# it. (One job with three chained tasks, so three concurrent MERGEs into one ledger cannot
+# collide, is Step 3 -- not this change.)
 #
 # NOT VALIDATED HERE. `databricks bundle validate -t dev` resolves a workspace and the current
 # user, so it cannot run in this repo's test environment; `brick/tests/test_bundle.py` checks
@@ -66,7 +72,9 @@ resources:
       tasks:
         - task_key: scan
           spark_python_task:
-            python_file: brick/run_pipeline.py
+            # devsecops absorbed the `os` scope's config (S2): this is the one pipeline now,
+            # for all three scopes.
+            python_file: brick/devsecops/run_pipeline.py
             parameters:
               - --scope=os
               - --catalog=${var.catalog}
@@ -146,8 +154,8 @@ resources:
     # behind it.
     #
     # This maintains the `os` register only. The code registers want the same treatment; add
-    # them as copies of this job with devsecops' python_file and --scope=sca / --scope=sast
-    # once those registers are large enough to be worth the rewrite.
+    # them as copies of this job with --scope=sca / --scope=sast once those registers are large
+    # enough to be worth the rewrite.
     wiz_os_maintain:
       name: wiz-os-maintain
       schedule:
@@ -161,7 +169,7 @@ resources:
       tasks:
         - task_key: maintain
           spark_python_task:
-            python_file: brick/run_pipeline.py
+            python_file: brick/devsecops/run_pipeline.py
             parameters:
               - --maintain=true
               - --scope=os
