@@ -34,7 +34,7 @@ import { el } from "./dom.js";
 import { openPopover } from "./popover.js";
 import { uiIcon } from "./uiIcons.js";
 import {
-  columnChoices, hiddenColumnSet, toggleColumn,
+  DEFAULT_COLUMNS, columnChoices, columnsChanged, hasDefaultHidden, toggleColumn,
 } from "./tableModel.js";
 
 /**
@@ -49,18 +49,22 @@ import {
  * somewhere else and needs the button to follow.
  *
  *   columns   the SAME array handed to dataTable — full, not pre-filtered
- *   hidden    [key] hidden now
- *   onChange  (hidden) => void, on every toggle and on "Show all"
+ *   choice    {off, on} — where this reader has disagreed with the page's defaults
+ *   onChange  (choice) => void, on every toggle and on the reset
  *   label     the accessible name; "Columns", as the reference names the control
  */
 export function columnsButton(spec) {
   const {
-    columns = [], hidden = [], onChange = null, label = "Columns",
+    columns = [], choice = null, onChange = null, label = "Columns", sortKey = null,
   } = spec || {};
 
-  if (!columnChoices(columns, []).some((choice) => choice.hideable)) return null;
+  // A FUNCTION, not a value: the table can be re-sorted while this button lives, and a column
+  // on screen only because it is the sort has to tick and untick with it.
+  const activeSort = () => (typeof sortKey === "function" ? sortKey() : sortKey) || "";
 
-  let current = [...hiddenColumnSet(hidden)];
+  if (!columnChoices(columns, null).some((c) => c.hideable)) return null;
+
+  let current = choice || DEFAULT_COLUMNS;
 
   const btn = el("button", {
     class: "col-pick-btn",
@@ -79,9 +83,15 @@ export function columnsButton(spec) {
    * only some readers get is worse than one nobody has to decode.
    */
   function paintCount() {
-    const n = current.length;
-    btn.classList.toggle("is-narrowed", n > 0);
-    btn.setAttribute("aria-label", n ? `${label} — ${n} hidden` : label);
+    const rows = columnChoices(columns, current, activeSort());
+    const off = rows.filter((c) => c.hideable && !c.shown).length;
+    // THE MARK IS THE READER'S OWN DEVIATION, not the count of hidden columns. A table that
+    // starts with four optional columns off is at its default, and a dot that were always lit
+    // on such a table would be decoration within a day. The NAME carries the count either
+    // way, so "how much am I not seeing" is always answerable, marked or not.
+    btn.classList.toggle("is-narrowed", columnsChanged(current));
+    btn.setAttribute("aria-label",
+      off ? `${label} — ${off} of ${rows.length} hidden` : label);
   }
 
   function open() {
@@ -91,24 +101,28 @@ export function columnsButton(spec) {
     // it. Also the one place the rule "the table keeps some of these" has room to be stated.
     const head = el("p", { class: "col-pick-head" }, label);
     const list = el("div", { class: "col-pick-list" });
-    const reset = el("button", { class: "link", onclick: () => showAll() }, "Show all columns");
+    // "Reset" and "Show all" are the same press — clear every deviation — and the label says
+    // which one it IS on this table. On a table that hides nothing of its own accord the
+    // default IS every column, and calling that "reset" would be a riddle.
+    const reset = el("button", { class: "link", onclick: () => restore() },
+      hasDefaultHidden(columns) ? "Reset to defaults" : "Show all columns");
 
-    for (const choice of columnChoices(columns, current)) {
+    for (const c of columnChoices(columns, current, activeSort())) {
       const box = el("input", { type: "checkbox" });
-      box.checked = choice.shown;
-      box.disabled = !choice.hideable;
-      if (choice.hideable) {
-        box.addEventListener("change", () => apply(choice.key));
-        boxes.set(choice.key, box);
+      box.checked = c.shown;
+      box.disabled = !c.hideable;
+      if (c.hideable) {
+        box.addEventListener("change", () => apply(c.key));
+        boxes.set(c.key, box);
       }
       list.append(el("label", {
-        class: "col-pick-row" + (choice.hideable ? "" : " is-fixed"),
+        class: "col-pick-row" + (c.hideable ? "" : " is-fixed"),
       },
         box,
-        el("span", { class: "col-pick-name" }, choice.label),
+        el("span", { class: "col-pick-name" }, c.label),
         // Not "disabled" and not a lock: the reader is being told the register keeps this
         // column, which is a fact about the table and not a refusal aimed at them.
-        choice.hideable ? null : el("span", { class: "col-pick-always" }, "always"),
+        c.hideable ? null : el("span", { class: "col-pick-always" }, "always"),
       ));
     }
 
@@ -120,21 +134,22 @@ export function columnsButton(spec) {
      * is off. `toggleColumn` is the one that decides; this makes the popover admit it.
      */
     function sync() {
-      const off = hiddenColumnSet(current);
-      for (const [key, box] of boxes) box.checked = !off.has(key);
-      reset.disabled = !current.length;
+      const shown = new Map(
+        columnChoices(columns, current, activeSort()).map((c) => [c.key, c.shown]));
+      for (const [key, box] of boxes) box.checked = shown.get(key) !== false;
+      reset.disabled = !columnsChanged(current);
       paintCount();
     }
 
     function apply(key) {
-      current = toggleColumn(columns, current, key);
+      current = toggleColumn(columns, current, key, activeSort());
       sync();
       if (onChange) onChange(current);
     }
 
-    function showAll() {
-      if (!current.length) return;
-      current = [];
+    function restore() {
+      if (!columnsChanged(current)) return;
+      current = DEFAULT_COLUMNS;
       sync();
       if (onChange) onChange(current);
     }
@@ -146,7 +161,24 @@ export function columnsButton(spec) {
       anchor: btn,
       className: "col-pick-pop",
       ariaLabel: label,
-      position: { width: 260, minWidth: 220, maxHeight: 420, minHeight: 160 },
+      position: {
+        width: 260, minWidth: 220, maxHeight: 420, minHeight: 160,
+        // THE LIST SCROLLS; THE POPOVER DOES NOT RUN OFF THE SCREEN. `positionPopover`
+        // REPORTS the room it left rather than applying it — `onRoom` is its whole mechanism
+        // for that, and `openPopover` hands this options bag straight through, so a caller
+        // opts in here. Without it the `maxHeight` above is inert: measured on the DevSecOps
+        // scan history, whose table sits 700px down a 950px window, the panel opened 372px
+        // tall from y=723 and put its last three columns 145px below the fold — visible to a
+        // hit test, reachable by nothing. A cog near the bottom of a page is the normal case
+        // for this control, not an edge one: it rides in a table heading, and tables are
+        // rarely at the top.
+        //
+        // Applied to the BODY rather than to the popover: `.col-pick` is the flex column, so
+        // clamping it lets the head and foot keep their height and the list take what is
+        // left. Re-run on every reposition, so a scroll re-measures instead of freezing the
+        // first answer.
+        onRoom: (px) => { body.style.maxHeight = px + "px"; },
+      },
       build: () => body,
     });
     // Focus goes INTO the panel or Tab walks straight past it: the popover is portaled to the
@@ -156,9 +188,56 @@ export function columnsButton(spec) {
   }
 
   btn.set = (next) => {
-    current = [...hiddenColumnSet(next)];
+    current = next || DEFAULT_COLUMNS;
     paintCount();
   };
   paintCount();
   return btn;
+}
+
+
+// ------------------------------------------------------------------ remembering the choice
+//
+// WHERE A COLUMN CHOICE LIVES IS THE PAGE'S CALL, and the pages genuinely differ. gas_ai's
+// inventory puts it in the URL beside the filters, because everything else on that page is
+// there and a saved view carries it with the rest — a link to a narrowed register arrives
+// narrowed. Most tables in these registers have no shareable address of their own: they sit
+// inside a section of a page whose URL says nothing about them, and a choice held only in
+// memory is one a reader re-makes on every visit, which is the same as not offering it.
+//
+// So this is the OTHER answer, and it is per browser rather than per link: `dataTable`'s
+// `columnStore` key. Storage can refuse (a sandboxed iframe, private mode, a browser with
+// site data blocked) and both halves answer that the same way the saved-views reader does —
+// a refusal reads as "no preference", never as an error, and the table renders at its
+// defaults. Nothing here is worth a toast: the reader loses a column layout, not work.
+
+/** A stored choice, or the page's defaults when there is none or storage refused. */
+export function readStoredColumns(key) {
+  if (!key) return null;
+  try {
+    const raw = window.localStorage.getItem(key);
+    const parsed = raw ? JSON.parse(raw) : null;
+    if (!parsed || typeof parsed !== "object") return null;
+    return { off: asKeys(parsed.off), on: asKeys(parsed.on) };
+  } catch {
+    return null;
+  }
+}
+
+/** Remember it, or quietly do not. A choice back at its defaults REMOVES the entry rather
+ *  than storing two empty lists: the default is what an absent preference already means. */
+export function writeStoredColumns(key, choice) {
+  if (!key) return;
+  try {
+    const off = asKeys(choice && choice.off);
+    const on = asKeys(choice && choice.on);
+    if (!off.length && !on.length) window.localStorage.removeItem(key);
+    else window.localStorage.setItem(key, JSON.stringify({ off, on }));
+  } catch {
+    // The reader keeps the layout for this visit; the next one starts at the defaults.
+  }
+}
+
+function asKeys(v) {
+  return Array.isArray(v) ? v.filter((k) => typeof k === "string" && k !== "") : [];
 }

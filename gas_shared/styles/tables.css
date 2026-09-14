@@ -289,7 +289,13 @@ table.data th.th-cols {
   border-bottom: 1px solid var(--hairline); background: var(--surface);
   font-size: var(--fs-label); font-weight: 600; color: var(--ink);
 }
-.col-pick-list { padding: var(--space-1); overflow-y: auto; overscroll-behavior: contain; }
+/* `min-height: 0` is what lets it actually scroll: a flex item's floor is its CONTENT by
+   default, so without this the list refuses to shrink inside a clamped `.col-pick` and the
+   overflow it was given has nothing to do. */
+.col-pick-list {
+  padding: var(--space-1); min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+}
 .col-pick-row {
   display: flex; align-items: center; gap: var(--space-2);
   padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);

@@ -185,24 +185,61 @@ export function nextSort(sort, key, descendingFirst = false) {
 // KIND) and cannot be lifted as it stands. What IS general is underneath it, and it is what
 // follows: a column can be turned off, some columns cannot, and the choice is data.
 //
-// THE CHOICE IS STORED AS WHAT WAS REMOVED, NEVER AS WHAT REMAINS. Both encode the same
-// table today and they disagree about tomorrow: a link (or a saved view) holding the KEPT
-// list pins a reader to the columns that existed the day they saved it, so a column added
-// later is invisible to everyone still holding one — silently, since a column nobody can
-// see is a column nobody reports missing. Holding the REMOVED list means a new column
-// arrives for everybody and only the explicit refusals persist, which is the behaviour a
-// reader would predict. It also keeps the default empty, so an untouched table adds nothing
-// to the URL.
+// A COLUMN CAN ALSO START OFF (`defaultHidden: true`), and that is the half that makes the
+// chooser worth having rather than merely available. A register whose table is exactly the
+// eight columns its own question needs, with the other six one press away, is a better
+// register than one that ships fourteen and a control to hide six of them — most readers
+// never open a control they have no reason to believe exists. The default is the page's
+// editorial judgment about which facts the register is FOR; the chooser is what makes that
+// judgment cheap to disagree with.
+//
+// SO THERE ARE THREE STATES PER COLUMN, not two: at its default, explicitly off, explicitly
+// on. The reader's choice is the DEVIATIONS — two small sets — and anything not named in
+// either takes the page's default.
+//
+// AND IT IS STORED AS DEVIATIONS FOR THE REASON IT IS SIGNED. A link (or a saved view)
+// holding the columns to KEEP pins a reader to the ones that existed the day they saved it,
+// so a column added later is invisible to everyone still holding one — silently, since a
+// column nobody can see is a column nobody reports missing. Deviations mean a new column
+// arrives at its own default for everybody and only the explicit disagreements persist. The
+// sign is what keeps that true when a DEFAULT changes: `-region` still means "hide Region"
+// on the day the page decides Region should have been hidden all along, where an unsigned
+// list of "columns not at their default" would quietly flip to meaning the opposite. It also
+// keeps the default empty, so an untouched table adds nothing to the URL.
 
 
 /**
- * The reader's refusals as a Set, from any of the three shapes they arrive in — an array
- * parsed out of a URL, a Set the picker is holding, or nothing at all.
+ * The reader's deviations as two Sets, from any of the shapes they arrive in — the `{off,
+ * on}` object the picker holds, an array of signed keys parsed out of a URL, a bare array
+ * (every key OFF, which is what a hand-typed `?cols=cloud,region` means), or nothing.
  */
-export function hiddenColumnSet(hidden) {
-  if (hidden instanceof Set) return hidden;
-  if (!Array.isArray(hidden)) return new Set();
-  return new Set(hidden.filter((key) => typeof key === "string" && key !== ""));
+export function columnChoice(choice) {
+  const empty = { off: new Set(), on: new Set() };
+  if (!choice) return empty;
+  if (Array.isArray(choice)) return fromKeys(choice);
+  if (choice instanceof Set) return fromKeys([...choice]);
+  if (choice.off || choice.on) {
+    return { off: asSet(choice.off), on: asSet(choice.on) };
+  }
+  return empty;
+}
+
+function asSet(v) {
+  if (v instanceof Set) return new Set(v);
+  return new Set(Array.isArray(v) ? v.filter((k) => typeof k === "string" && k !== "") : []);
+}
+
+function fromKeys(keys) {
+  const off = new Set();
+  const on = new Set();
+  for (const raw of keys) {
+    if (typeof raw !== "string" || raw === "") continue;
+    const sign = raw[0];
+    const key = sign === "-" || sign === "+" ? raw.slice(1) : raw;
+    if (!key) continue;
+    (sign === "+" ? on : off).add(key);
+  }
+  return { off, on };
 }
 
 /**
@@ -224,18 +261,43 @@ export function hiddenColumnSet(hidden) {
  *   cell names its own action, so the heading is deliberately empty — and a checkbox with
  *   no words beside it is not a control. Structural rather than an allowlist, and the same
  *   exemption test/columnHelp.test.js grants a blank heading for the same reason.
+ *
+ * A `defaultHidden` column is of course hideable — it is already hidden. The flag says where
+ * it STARTS, never whether the reader may touch it.
  */
 export function hideableColumn(col) {
   if (!col || !col.key || col.pinned) return false;
   return typeof col.label === "string" && col.label.trim() !== "";
 }
 
+/**
+ * Is this column drawn, given the page's default and the reader's deviation from it?
+ *
+ * `sortKey` is the column the table is CURRENTLY ORDERED BY, and it beats `defaultHidden`
+ * alone: a page that hides the column it is sorting on has hidden its own ordering, and the
+ * rows then arrive in an arrangement with nothing on screen to explain it — no arrow, no
+ * heading, no way to reverse it. It is reachable without anyone doing anything odd: a shared
+ * link naming a sort (`?sort=firstSeen`) lands on a table whose default leaves that column
+ * off, which is exactly the case a per-page fix would forget.
+ *
+ * A reader's OWN refusal still wins over it. Hiding the sorted column on purpose is a
+ * legitimate thing to do — the order stays, the column goes — and a control that silently
+ * refuses a press is worse than an unexplained order the reader chose.
+ */
+export function columnShown(col, choice, sortKey) {
+  if (!hideableColumn(col)) return true;
+  const c = columnChoice(choice);
+  if (c.on.has(col.key)) return true;
+  if (c.off.has(col.key)) return false;
+  if (!col.defaultHidden) return true;
+  return Boolean(sortKey) && sortKey === col.key;
+}
+
 /** The columns a table actually draws, in their own order. Unknown keys are inert. */
-export function visibleColumns(columns, hidden) {
-  const off = hiddenColumnSet(hidden);
+export function visibleColumns(columns, choice, sortKey) {
+  const c = columnChoice(choice);
   const list = Array.isArray(columns) ? columns : [];
-  if (!off.size) return list.slice();
-  return list.filter((col) => !(hideableColumn(col) && off.has(col.key)));
+  return list.filter((col) => columnShown(col, c, sortKey));
 }
 
 /**
@@ -247,46 +309,81 @@ export function visibleColumns(columns, hidden) {
  * turn off answers it by pretending they do not exist. A column with no heading is dropped
  * entirely: there is nothing to print beside the checkbox.
  */
-export function columnChoices(columns, hidden) {
-  const off = hiddenColumnSet(hidden);
+export function columnChoices(columns, choice, sortKey) {
+  const c = columnChoice(choice);
   return (Array.isArray(columns) ? columns : [])
     .filter((col) => col && typeof col.label === "string" && col.label.trim() !== "")
     .map((col) => ({
       key: col.key || "",
       label: col.label,
       hideable: hideableColumn(col),
-      shown: !(hideableColumn(col) && off.has(col.key)),
+      shown: columnShown(col, c, sortKey),
     }));
 }
 
+/** Does this table hide anything of its own accord? Decides what "reset" is called. */
+export function hasDefaultHidden(columns) {
+  return (Array.isArray(columns) ? columns : [])
+    .some((col) => col && col.defaultHidden && hideableColumn(col));
+}
+
 /**
- * Turn one column off, or back on, and hand back the new refusal list.
+ * Turn one column off, or back on, and hand back the new deviation set.
+ *
+ * A column returned to its default leaves the set entirely rather than being recorded as
+ * agreeing with it — so a reader who hides Region and shows it again is back to an empty
+ * choice and an untouched URL, not to `?cols=%2Bregion`.
  *
  * IN COLUMN ORDER, never in click order, so hiding Cloud then Region and hiding Region then
- * Cloud produce the same string — two readers who made the same table two ways share one
+ * Cloud produce the same string — two readers who built the same table two ways share one
  * link, and a saved view does not churn on a re-toggle.
  *
- * Two presses do nothing and say so by returning the list unchanged: a column that is not
+ * Two presses do nothing and say so by returning the choice unchanged: a column that is not
  * hideable (pinned, unknown, unnamed), and the one that would empty the table. The pinned
  * column normally makes the second unreachable; a table that pins nothing still cannot be
  * reduced to no columns, because the chooser would then be the only thing left that knows
  * the table had any.
  */
-export function toggleColumn(columns, hidden, key) {
-  const off = hiddenColumnSet(hidden);
+export function toggleColumn(columns, choice, key, sortKey) {
+  const c = columnChoice(choice);
   const list = Array.isArray(columns) ? columns : [];
-  const col = list.find((c) => c && c.key === key);
-  const keep = (set) => list.filter((c) => c && c.key && set.has(c.key)).map((c) => c.key);
-  if (!hideableColumn(col)) return keep(off);
+  const col = list.find((x) => x && x.key === key);
+  if (!hideableColumn(col)) return canonical(list, c);
 
-  const next = new Set(off);
-  if (next.has(key)) {
-    next.delete(key);
-    return keep(next);
-  }
-  next.add(key);
-  if (!visibleColumns(list, next).length) return keep(off);
-  return keep(next);
+  const next = { off: new Set(c.off), on: new Set(c.on) };
+  next.off.delete(key);
+  next.on.delete(key);
+  // What the reader asked for, against what this column would do with no deviation recorded
+  // at all. A press that lands back on that records nothing — which is what keeps a hide-then-
+  // show round trip back at an untouched URL rather than at one asserting the default aloud.
+  //
+  // MEASURED AGAINST THE DEFAULT *AS THE SORT LEAVES IT*, not against `defaultHidden` alone.
+  // A column on screen only because the table is ordered by it is showing, so the press that
+  // turns it off disagrees with the state and has to be stored — comparing with the bare flag
+  // instead makes that press record nothing, which leaves the column on screen and the
+  // checkbox snapping back: a control that visibly refuses every press.
+  const wantShown = !columnShown(col, c, sortKey);
+  if (wantShown !== columnShown(col, null, sortKey)) (wantShown ? next.on : next.off).add(key);
+  if (!visibleColumns(list, next, sortKey).length) return canonical(list, c);
+  return canonical(list, next);
+}
+
+/** The same choice, in column order and with nothing in it that names no column. */
+function canonical(columns, choice) {
+  const keys = columns.filter((c) => c && c.key).map((c) => c.key);
+  return {
+    off: keys.filter((k) => choice.off.has(k)),
+    on: keys.filter((k) => choice.on.has(k)),
+  };
+}
+
+/** Back to the page's own defaults — every deviation dropped. */
+export const DEFAULT_COLUMNS = { off: [], on: [] };
+
+/** Has the reader moved this table off its defaults at all? */
+export function columnsChanged(choice) {
+  const c = columnChoice(choice);
+  return c.off.size > 0 || c.on.size > 0;
 }
 
 /**
@@ -301,38 +398,40 @@ export function toggleColumn(columns, hidden, key) {
  * Spans that do not sum to the column count mean the caller and this function disagree
  * about the table, and the honest answer to that is to change nothing.
  */
-export function regroupSpans(groups, columns, hidden) {
+export function regroupSpans(groups, columns, choice, sortKey) {
   const list = Array.isArray(groups) ? groups : [];
   const cols = Array.isArray(columns) ? columns : [];
   if (!list.length) return list;
   const total = list.reduce((n, g) => n + (Number(g && g.span) || 0), 0);
   if (total !== cols.length) return list;
 
-  const off = hiddenColumnSet(hidden);
-  if (!off.size) return list;
-
+  const c = columnChoice(choice);
   const out = [];
   let at = 0;
+  let dropped = false;
   for (const group of list) {
     const span = Number(group.span) || 0;
     let shown = 0;
-    for (let i = at; i < at + span; i += 1) {
-      if (!(hideableColumn(cols[i]) && off.has(cols[i].key))) shown += 1;
-    }
+    for (let i = at; i < at + span; i += 1) if (columnShown(cols[i], c, sortKey)) shown += 1;
     at += span;
+    if (shown !== span) dropped = true;
     if (shown) out.push({ ...group, span: shown });
   }
-  return out;
+  return dropped ? out : list;
 }
 
-/** The refusal list as one URL/storage-safe string. Empty means "every column". */
-export function encodeHiddenColumns(hidden) {
-  return [...hiddenColumnSet(hidden)].join(",");
+/** The choice as one URL/storage-safe string: `-key` hidden, `+key` revealed. Empty is the
+ *  page's own defaults, so an untouched table writes nothing. */
+export function encodeColumnChoice(choice) {
+  const c = columnChoice(choice);
+  return [...c.off].map((k) => "-" + k).concat([...c.on].map((k) => "+" + k)).join(",");
 }
 
-/** …and back. Whitespace and empties are dropped; unknown keys survive and stay inert. */
-export function parseHiddenColumns(text) {
-  return String(text || "").split(",").map((s) => s.trim()).filter(Boolean);
+/** …and back. Whitespace and empties are dropped; unknown keys survive and stay inert. An
+ *  unsigned key reads as hidden — that is what a hand-typed `?cols=cloud` means. */
+export function parseColumnChoice(text) {
+  const c = fromKeys(String(text || "").split(",").map((s) => s.trim()));
+  return { off: [...c.off], on: [...c.on] };
 }
 
 

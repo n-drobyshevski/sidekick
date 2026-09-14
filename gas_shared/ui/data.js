@@ -2,9 +2,9 @@
 
 import { clear, el } from "./dom.js";
 import {
-  PAGE_SIZES, cellClassName, hiddenColumnSet, pageForSize, regroupSpans, visibleColumns,
+  PAGE_SIZES, cellClassName, columnChoice, pageForSize, regroupSpans, visibleColumns,
 } from "./tableModel.js";
-import { columnsButton } from "./columnPicker.js";
+import { columnsButton, readStoredColumns, writeStoredColumns } from "./columnPicker.js";
 import { pluralize } from "./format.js";
 import { absent } from "./cells.js";
 import { absentText } from "./figures.js";
@@ -84,10 +84,13 @@ export function progressBar(pct, state = "") {
  *   columns  [{ key, label, sortable, cell(row), className }] — `key` is what onSort gets
  *   sort     { key, descending } — the active column, or null for unsorted
  *   onSort   (key) => void
- *   hidden   [key] — the columns this reader has turned off (opt-in; inert without it)
- *   onHidden (hidden) => void — non-null grows the table its own column chooser: a cog at
- *            the right end of the heading row, which repaints the table itself and then
+ *   columnChoice  {off, on} — where this reader disagreed with the page's column defaults
+ *            (opt-in; every column renders at its own default without it)
+ *   onColumnChoice (choice) => void — non-null grows the table its own column chooser: a cog
+ *            at the right end of the heading row, which repaints the table itself and then
  *            tells the caller what to remember. See both notes in the destructure below.
+ *   columnStore  a localStorage key — the same cog, remembered per browser instead, for a
+ *            table with no shareable address of its own. Either prop alone is enough.
  *   onRowOpen(row) => void — makes each row a keyboard-operable button
  *   rowLabel (row) => string — that row button's accessible name
  *
@@ -148,18 +151,23 @@ export function dataTable(spec) {
     // value turned out to be (a breached SLA, a row that fell out of scope). Returning
     // nothing leaves the cell exactly as `cellClassName(col)` made it.
     cellClass = null,
-    // The columns this reader has turned OFF, by key — `ui/columnPicker.js`'s side of the
-    // Columns control, and the reason the filtering happens HERE rather than in each caller:
-    // `groups` spans and every `colspan` below are counted off the column list, so a caller
-    // that filtered its own array would have to recount both, and a caller that forgot would
-    // ship a header one cell wider than its table with nothing to show for it.
+    // WHERE THIS READER HAS DISAGREED with the page's own column defaults: `{off, on}`, two
+    // lists of keys — `ui/columnPicker.js`'s side of the Columns control. A column named in
+    // neither takes its `defaultHidden` (ui/tableModel.js writes out why the choice is
+    // deviations and why they are signed).
     //
-    // Opt-in and inert by default: omit it, or pass an empty list, and this renders exactly
-    // what it always did. A key naming no column changes nothing; which columns refuse to be
-    // hidden at all is `hideableColumn`'s call, in ui/tableModel.js, so the picker and the
-    // table cannot disagree about what the reader was offered.
-    hidden = null,
-    // (hidden) => void. Non-null is what PUTS THE CHOOSER ON THE TABLE: the cog at the right
+    // The filtering happens HERE rather than in each caller because `groups` spans and every
+    // `colspan` below are counted off the column list: a caller that filtered its own array
+    // would have to recount both, and a caller that forgot would ship a header one cell wider
+    // than its table with nothing to show for it.
+    //
+    // Inert by default: omit it and every column renders at its own default, which for a
+    // table that sets no `defaultHidden` is exactly what this component always did. A key
+    // naming no column changes nothing; which columns refuse to be hidden at all is
+    // `hideableColumn`'s call, so the picker and the table cannot disagree about what the
+    // reader was offered.
+    columnChoice: choice = null,
+    // (choice) => void. Non-null is what PUTS THE CHOOSER ON THE TABLE: the cog at the right
     // end of the heading row, and the popover behind it (ui/columnPicker.js). Called after
     // the table has already repainted itself, so a page only has to remember the choice —
     // persist it to the URL or to storage and return; do NOT re-render the table from here.
@@ -170,14 +178,22 @@ export function dataTable(spec) {
     // sit there anchored to a node no longer in the document, repositioning against a rect
     // of zeros. Keeping the repaint here keeps the button, its focus and its popover alive
     // across a column change.
-    onHidden = null,
+    onColumnChoice = null,
+    // The other way to keep a choice: a localStorage key the component reads at build time
+    // and writes on every change, for the many tables that sit inside a page whose URL says
+    // nothing about them. Also grows the cog, so `columnStore` alone is the whole adoption.
+    //
+    // `onColumnChoice` still fires when both are given — the store is where the choice is
+    // KEPT, not a substitute for telling the page. A page that wants the URL instead simply
+    // does not pass this.
+    columnStore = "",
   } = spec;
 
   // WHAT IS ON SCREEN, as opposed to what the caller passed. `columns` is the full list and
   // stays that way — `regroupSpans` needs it to know which group a hidden column came out
   // of, and so does the chooser, which has to offer a column back. Everything else reads
   // `cols`, which is rebuilt by paintHead() on every column change.
-  let hiddenNow = [...hiddenColumnSet(hidden)];
+  let chosen = choice || (columnStore ? readStoredColumns(columnStore) : null);
   let cols = [];
   let headCells = new Map();
   let currentSort = sort;
@@ -186,23 +202,30 @@ export function dataTable(spec) {
   const thead = el("thead", {});
   const tbody = el("tbody", {});
 
+  // WHICH COLUMN THE ROWS ARE IN THE ORDER OF, read fresh on every repaint rather than
+  // captured: `setSort` can change it after the table is built, and a column kept on screen
+  // only because it is the sort has to leave when the sort does.
+  const sortKeyNow = () => (currentSort && currentSort.key) || "";
+
   // Built ONCE and re-appended by every paintHead(), which is the whole point: the node the
   // popover is anchored to has to outlive the header it sits in.
-  const chooser = onHidden
+  const chooser = onColumnChoice || columnStore
     ? columnsButton({
         columns,
-        hidden: hiddenNow,
+        choice: chosen,
+        sortKey: sortKeyNow,
         onChange: (next) => {
-          hiddenNow = next;
+          chosen = next;
           paintHead();
           paintRows(currentRows);
-          onHidden(next);
+          if (columnStore) writeStoredColumns(columnStore, next);
+          if (onColumnChoice) onColumnChoice(next);
         },
       })
     : null;
 
   function paintHead() {
-    cols = visibleColumns(columns, hiddenNow);
+    cols = visibleColumns(columns, chosen, sortKeyNow());
     headCells = new Map();
     const headRow = el("tr", {});
     // A column heading is where a metric gets DEFINED: it is asked once per table rather than
@@ -251,7 +274,7 @@ export function dataTable(spec) {
     // `scope="colgroup"` is what makes the grouping real rather than visual: a screen reader
     // announces "AI Agent, Name" for the cell instead of leaving the reader to infer the owner
     // of the third "Name" column from its position.
-    const shownGroups = regroupSpans(groups, columns, hiddenNow);
+    const shownGroups = regroupSpans(groups, columns, chosen, sortKeyNow());
     clear(thead);
     if (shownGroups.length) {
       thead.append(el("tr", { class: "th-groups" }, ...shownGroups.map((g) => el("th", {
@@ -377,9 +400,9 @@ export function dataTable(spec) {
   wrap.setSort = (s) => { currentSort = s; paintSort(s); };
   // For a caller that changes the choice from somewhere other than the cog — a saved view,
   // a reset — without rebuilding the table around it.
-  wrap.setHidden = (next) => {
-    hiddenNow = [...hiddenColumnSet(next)];
-    if (chooser) chooser.set(hiddenNow);
+  wrap.setColumnChoice = (next) => {
+    chosen = next;
+    if (chooser) chooser.set(chosen);
     paintHead();
     paintRows(currentRows);
   };

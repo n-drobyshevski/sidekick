@@ -22,7 +22,7 @@ import { dueChip, fwTags, openAssetSheet, openIssueSheet } from "../detailSheets
 import { kindIconSvg, kindLabel, categoryOf } from "../../../../../gas_shared/icons.js";
 import {
   absent,
-  clear, dataTable, debounce, el, errorState, firstRunNotice, heroStat, measuredEmpty,
+  clear, dataTable, debounce, el, errorState, firstRunNotice, fmtDate, heroStat, measuredEmpty,
   outcomeBadge, pageHeader,
   outcomeLabel, plural, sectionLabel, select, statRow, tableFooter,
   selectField, sevBadge, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, statusPill,
@@ -926,15 +926,50 @@ export async function renderCombos(main, params) {
         ] },
         cell: (i) => dueChip(i.dueAt) || absent(),
       },
+      // WHERE THE ASSET LIVES, off by default. This table sits inside one toxic-combination
+      // pattern and its question is which assets are in it and how urgent each one is — the
+      // five columns above. An account and a project list are how you find the owner once
+      // you have picked a row, which is the next question rather than this one.
       {
-        key: "account", label: "Account",
+        key: "account", label: "Account", sortable: false, defaultHidden: true,
         help: { lines: ["The cloud account or subscription the affected asset lives in."] },
         cell: (i) => i.account || absent(),
       },
       {
-        key: null, label: "Projects",
+        // A REAL KEY, where this used to carry `key: null`. The chooser addresses a column by
+        // key, so a null one is a column a reader can never turn back on — and the positional
+        // fallback the mapping below invents (`col-6`) would silently rename itself the day
+        // another column is inserted above it, taking every stored preference with it.
+        key: "projects", label: "Projects", sortable: false, defaultHidden: true,
         help: { lines: ["Which Wiz projects the affected asset belongs to."] },
         cell: (i) => (i.projects || []).join(", ") || absent(),
+      },
+      {
+        key: "region", label: "Region", sortable: false, defaultHidden: true,
+        help: { lines: ["The cloud region the affected asset runs in."] },
+        cell: (i) => i.region || absent(),
+      },
+      // THREE FACTS THE PAYLOAD ALREADY CARRIED. `api_getIssues` ships the whole `IssueRow`
+      // minus the problem model's own fields (server/api.ts `publicRow`), so the rule that
+      // fired, when it was first seen and where it runs have all been one dereference away
+      // since this table shipped.
+      //
+      // The RULE is the interesting one: a group is a PATTERN, not a rule, and the catch-all
+      // group (`OTHER_GROUP_ID`, "no rule pattern matched") unions rows from many of them —
+      // so inside that group the table was showing a list of assets with nothing saying what
+      // each one actually failed.
+      {
+        key: "rule", label: "Rule", sortable: false, defaultHidden: true,
+        help: { lines: [
+          "The Wiz rule this issue failed. A pattern can union several rules, and the " +
+          "catch-all pattern unions every rule that matched none of the others.",
+        ] },
+        cell: (i) => i.ruleName || absent(),
+      },
+      {
+        key: "firstSeen", label: "First seen", sortable: false, defaultHidden: true,
+        help: { term: "first-seen" },
+        cell: (i) => (i.createdAt ? el("span", { class: "small" }, fmtDate(i.createdAt)) : absent()),
       },
     ];
 
@@ -948,10 +983,20 @@ export async function renderCombos(main, params) {
       columns: COLS.map((col, i) => ({
         key: col.key || `col-${i}`,
         label: col.label,
-        sortable: !!col.key,
+        // `sortable: false` is now said out loud by the columns that mean it, because having
+        // a key and being sortable stopped being the same thing: a column needs a key to be
+        // CHOOSABLE, and this page sorts through `ISSUE_SORT_DESC`/`issueComparator`, which
+        // know nothing about the five columns added for the chooser. Same shape problems.js's
+        // actions table already uses. `!!col.key` still gates the rest, so a column with no
+        // key of its own is unsortable as it always was.
+        sortable: col.sortable !== false && !!col.key,
+        defaultHidden: !!col.defaultHidden,
         help: col.help,
         cell: col.cell,
       })),
+      // Per browser. This page's URL carries which pattern is open and which page of it; a
+      // column layout inside one pattern's table is not part of that.
+      columnStore: "sidekickai.combos.issues.cols",
       rows,
       sort: view.sort ? { key: view.sort, descending } : null,
       onSort: (key) => {

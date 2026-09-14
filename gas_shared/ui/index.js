@@ -77,14 +77,15 @@ export {
   sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./severity.js";
 export { dataTable, meter, pager, progressBar, tableFooter } from "./data.js";
-export { columnsButton } from "./columnPicker.js";
+export { columnsButton, readStoredColumns, writeStoredColumns } from "./columnPicker.js";
 export {
   chartTable, chartTableModel, chartTablePaged, survivalTableModel,
 } from "./chartTable.js";
 export {
-  DEFAULT_PAGE_SIZE, PAGE_SIZES, columnChoices, compareValues, encodeHiddenColumns,
-  hiddenColumnSet, hideableColumn, nextSort, nullsLast, pageForSize, pageOf,
-  parseHiddenColumns, regroupSpans, sortRows, toggleColumn, triState, visibleColumns,
+  DEFAULT_COLUMNS, DEFAULT_PAGE_SIZE, PAGE_SIZES, columnChoice, columnChoices, columnShown,
+  columnsChanged, compareValues, encodeColumnChoice, hasDefaultHidden, hideableColumn,
+  nextSort, nullsLast, pageForSize, pageOf, parseColumnChoice, regroupSpans, sortRows,
+  toggleColumn, triState, visibleColumns,
 } from "./tableModel.js";
 export { absent, triCell } from "./cells.js";
 export { nameCell } from "./nodeCell.js";

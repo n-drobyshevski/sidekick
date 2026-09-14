@@ -830,7 +830,12 @@ export async function renderHistory(host, _params, _ctx) {
           { key: "ts", label: "When", sortable: true, cell: (r) => fmtDateTime(r.ts) },
           { key: "scope", label: "Register", sortable: true, cell: (r) => r.scopeLabel },
           {
-            key: "severities", label: "Severities covered", help: { term: "coverage" },
+            // Off by default, and the widest cell in the row when it is on: a severity list
+            // repeated on every scan that ran under the same settings, which is all of them
+            // until somebody changes the gate. A CHANGE is what this column is for, and a
+            // reader looking for one turns it on.
+            key: "severities", label: "Severities covered", defaultHidden: true,
+            help: { term: "coverage" },
             cell: (r) => (r.allSeverities
               ? el("span", {}, "All severities", el("span", { class: "domain-chip" }, "gate off"))
               : r.severitiesText),
@@ -840,8 +845,35 @@ export async function renderHistory(host, _params, _ctx) {
           { key: "resolved", label: "−Resolved", className: "num", cell: (r) => fmtCount(r.resolvedCount) },
           { key: "reopened", label: "Reopened", className: "num", cell: (r) => fmtCount(r.reopenedCount) },
           { key: "sealed", label: "Sealed", cell: (r) => (r.sealed ? "Sealed" : "") },
+          // TWO FIELDS `scanRowsView` HAS ALWAYS PROJECTED AND NOTHING HAS EVER READ. `mode`
+          // in particular had no reader at all in this app — it is lifted off the ledger row,
+          // carried onto the view model and then dropped, so a register running on seeded
+          // data said so nowhere on the page that lists its scans. `scanId` is the identifier
+          // a sync is grouped by (`groupBySync`) and the one to quote when asking about a
+          // sweep; three rows share it, which is the fact the heading's own denominator makes.
+          //
+          // Off by default like every column added here: they answer questions about ONE scan,
+          // and the seven above are the history.
+          {
+            key: "mode", label: "Mode", defaultHidden: true,
+            help: ["How this scan ran, as the ledger recorded it — a live sweep, or seeded "
+              + "sample data."],
+            // `absentText`, not a word: a scan row whose mode the ledger never recorded is
+            // one we were not told about, and dataTable promotes the bare string to the one
+            // muted em dash every other absent cell draws.
+            cell: (r) => (r.mode ? statusPill("neutral", String(r.mode)) : absentText),
+          },
+          {
+            key: "scanId", label: "Sync ID", defaultHidden: true,
+            help: ["The ledger's own identifier for the sweep this scan belonged to — the "
+              + "three rows of one sync share it."],
+            cell: (r) => el("span", { class: "small muted" }, r.scanId || absentText),
+          },
         ],
         rows: cut.rows,
+        // Per browser: this page carries no URL state for the table, and a scan history is
+        // somewhere a reader returns to rather than shares a view of.
+        columnStore: "sidekickdevsecops.history.scans.cols",
         sort: sortSpec,
         onSort: (key) => {
           const value = key === "scope" ? (r) => r.scopeLabel

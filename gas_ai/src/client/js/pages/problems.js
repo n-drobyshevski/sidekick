@@ -650,6 +650,9 @@ export async function renderProblems(main, params) {
   }
 
   function table(rows, shownCount, totalCount) {
+    // Read once, up here, because two columns below depend on it: the lead sort marks a
+    // heading active, and the Rank column's default follows the same setting.
+    const rankLeads = Boolean(problemsData && problemsData.rankLeadsSort);
     const COLS = [
       // A column heading is asked once per table, so this is where a metric can be DEFINED
       // by a real control without multiplying the tab order by the row count.
@@ -694,12 +697,55 @@ export async function renderProblems(main, params) {
         key: "firstSeen", label: "First seen", help: { term: "first-seen" },
         cell: (r) => fmtDate(r.firstSeenAt) || absent(),
       },
+      // TWO FACTS WIZ ALREADY SENT AND THIS REGISTER NEVER DREW, off by default. Both are on
+      // `publicProblemRow`'s allow-list (server/api.ts) and both are already rendered as
+      // columns elsewhere in this app — business impact in the Actions table below, IaC in
+      // the Cloud Configuration register — so this is one table catching up with what the
+      // payload had all along rather than a new claim about a row.
+      //
+      // Off rather than on because the queue's first question is what to do next, which the
+      // five columns above answer; these two are the second question ("whose, and where does
+      // the fix belong") and they are blank on a good share of rows.
+      {
+        // A STRING, not a list. The Actions table below joins `businessImpacts` because an
+        // action spans several assets; one problem row carries the worst single rating off
+        // its own asset (`ProblemRow.businessImpact`), and treating it as an array here would
+        // print it one character per comma.
+        key: "impact", label: "Business impact", sortable: false, defaultHidden: true,
+        help: { lines: ["The business-impact rating Wiz carries for the affected asset."] },
+        cell: (r) => (r.businessImpact
+          ? statusPill("neutral", String(r.businessImpact))
+          : absent()),
+      },
+      {
+        // NEVER A "NO" ON AN ISSUE ROW. `iac` is false for every ISSUE by construction —
+        // issuesV2 carries no IaC link at all (ProblemRow.iac's own doc comment) — so a
+        // rendered "no" here would be this register asserting Wiz looked and found nothing,
+        // on half its rows, where in fact nothing was ever asked. The em dash is the same
+        // answer the Cloud Configuration register's own IaC column gives, for the same reason.
+        key: "iac", label: "IaC", sortable: false, defaultHidden: true,
+        help: { lines: [
+          "Whether Wiz traced this row back to an Infrastructure-as-Code source — where the " +
+          "fix belongs in a repository rather than in the console.",
+          "Only findings carry the link. An issue has no IaC field at all, so it reads as no " +
+          "answer rather than as a no.",
+        ] },
+        cell: (r) => (r.iac ? statusPill("neutral", "IaC") : absent()),
+      },
       // The minimal model's own number, and the clauses behind it. Last column on purpose:
       // it is the newest reading on this row and the one a reader is least likely to be
       // looking for, and putting it left of Wiz's own severity would imply a precedence the
       // shipped default (`rank_leads_sort` off) does not give it.
+      //
+      // OFF BY DEFAULT FOR THE SAME REASON IT IS LAST, and gated on the setting rather than
+      // fixed: the column's own help says nothing here sorts or filters by it unless Rank
+      // leads is turned on, and a column nothing uses is exactly what the chooser is for. The
+      // moment the setting DOES make it the lead sort it comes back on by default, because a
+      // register ordered by a column it does not draw is a register ranked by nothing a
+      // reader can check — the transparency argument this table's First seen column already
+      // makes, applied to the ranking's own number.
       {
-        key: "rank", label: "Rank", className: "num",
+        key: "rank", label: "Rank", className: "num", defaultHidden: !rankLeads,
         help: { lines: [
           "The experimental blended score — rule, clock, exploitation, adjacency — defined " +
           "on the Scoring Models page. Nothing here sorts or filters by it unless Rank leads " +
@@ -727,8 +773,17 @@ export async function renderProblems(main, params) {
         stickyHeader: true,
         columns: COLS.map((col) => ({
           key: col.key, label: col.label, help: col.help, sortable: true, cell: col.cell,
+          // CARRIED, NOT RE-DERIVED. This map builds a fresh object per column, so a flag it
+          // does not name is a flag the component never sees — and the failure is silent: the
+          // table simply renders every column, which is what it did before the flag existed.
+          defaultHidden: !!col.defaultHidden,
         })),
         rows,
+        // Per browser rather than in the URL: this page's address carries the question (the
+        // severity filter, the page) and a column layout is not part of it. The inventory
+        // puts its own in the URL because that page's links are shared as saved views;
+        // nothing here is.
+        columnStore: "sidekickai.problems.cols",
         sort: activeKey ? { key: activeKey, descending } : null,
         onSort: (key) => {
           view.dir = view.sort === key ? -view.dir : 1;
@@ -964,7 +1019,10 @@ export async function renderProblems(main, params) {
         cell: (r) => r.title,
       },
       {
-        key: "kind", label: "Kind",
+        // Off by default, because this table's own toolbar already has a Kind FILTER two
+        // rows above it: a reader who cares which population an action belongs to narrows to
+        // it rather than scanning a column of pills that mostly read the same word.
+        key: "kind", label: "Kind", defaultHidden: true,
         help: { lines: [
           "Whether this action closes a Wiz issue, a Cloud Configuration finding, or both — " +
           "the two populations Priorities unions into one queue.",
@@ -1001,7 +1059,7 @@ export async function renderProblems(main, params) {
           : absent()),
       },
       {
-        key: "impact", label: "Business impact", sortable: false,
+        key: "impact", label: "Business impact", sortable: false, defaultHidden: true,
         help: { lines: ["Which business-impact tags Wiz attached to the assets this action touches."] },
         cell: (r) => ((r.businessImpacts || []).length
           ? el("span", {}, r.businessImpacts.join(", "))
@@ -1016,10 +1074,40 @@ export async function renderProblems(main, params) {
         cell: (r) => actionSignalChips(r),
       },
       {
-        key: "firstSeen", label: "First seen", help: { term: "first-seen" },
+        // Off by default. An action is a piece of WORK, and how long its oldest problem has
+        // been open does not change what the work is or how much of it one fix closes —
+        // which is what the five columns this table leads with are for.
+        key: "firstSeen", label: "First seen", defaultHidden: true, help: { term: "first-seen" },
         cell: (r) => (r.firstSeenAt
           ? el("span", { class: "small" }, fmtDate(r.firstSeenAt))
           : absent()),
+      },
+      // TWO COUNTS THE ROLLUP HAS ALWAYS COMPUTED AND NOTHING HAS EVER DRAWN
+      // (src/domain/actions.ts). Both say something about the work that its size does not:
+      // where the fix belongs, and how much of it somebody has already decided to live with.
+      //
+      // `autoRemediable` is deliberately NOT given a column beside them — the rollup hardcodes
+      // it false today, so a column would report "no" for every action in the register as
+      // though Wiz had been asked.
+      {
+        key: "iac", label: "IaC", className: "num", sortable: false, defaultHidden: true,
+        help: { lines: [
+          "How many of this action's problems Wiz traced back to an Infrastructure-as-Code " +
+          "source — the share of this work that belongs in a repository rather than a console.",
+          "Only findings carry the link, so an action over issues alone reads zero.",
+        ] },
+        cell: (r) => (r.iac ? String(r.iac) : el("span", { class: "muted small" }, "0")),
+      },
+      {
+        key: "ignored", label: "Accepted risk", className: "num", sortable: false,
+        defaultHidden: true,
+        help: { lines: [
+          "How many of this action's problems are already covered by an accepted-risk " +
+          "decision in Wiz — work somebody has decided not to do.",
+        ] },
+        cell: (r) => (r.ignored
+          ? el("span", { class: "pill warn" }, String(r.ignored))
+          : el("span", { class: "muted small" }, "0")),
       },
     ];
     const descending = view.aSort && (ACTION_SORT_DESC[view.aSort] ? view.aDir === 1 : view.aDir === -1);
@@ -1034,8 +1122,14 @@ export async function renderProblems(main, params) {
           key: col.key, label: col.label, help: col.help,
           sortable: col.sortable !== false && !!ACTION_COMPARATORS[col.key],
           className: col.className, cell: col.cell,
+          // Carried for the same reason as the register table above: a flag this map does not
+          // name never reaches the component, and the table quietly renders everything.
+          defaultHidden: !!col.defaultHidden,
         })),
         rows,
+        // Per browser, as the register table above. This page's URL carries which mode is
+        // open and what is filtered; a column layout is not part of the question.
+        columnStore: "sidekickai.actions.cols",
         sort: view.aSort ? { key: view.aSort, descending } : null,
         onSort: (key) => {
           view.aDir = view.aSort === key ? -view.aDir : 1;
