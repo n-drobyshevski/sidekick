@@ -41,7 +41,7 @@ dbx.py            reaching dbutils from inside a module, and doing without it of
 ingest.py         Wiz OAuth + paginated GraphQL -> raw finding dicts
 ledger.py         pure PySpark cross-scan lifecycle reconciliation (no I/O)
 metrics.py        pure PySpark DataFrame -> DataFrame transforms (no I/O)
-run_pipeline.py   the Databricks entry point: bronze -> silver -> ledger -> three gold tables
+run_pipeline.py   the Databricks entry point: bronze -> the ledger -> one metrics table
 
 import_bundle.py  one-shot: seed the ledger from a gas/ migration bundle
 csvstore.py       the register as typed CSV, for a deployment with no catalog — see CSV register
@@ -127,8 +127,8 @@ Three different update disciplines coexist on a ledger row, and they are not int
 
 ### Disappearance is an inference, and it is labelled as one
 
-`resolution_src` records how each closure was learned, and `…metrics_mttr` publishes
-`resolved_api` / `resolved_disappeared` per severity. A register whose closures are
+`resolution_src` records how each closure was learned, and the `mttr` family of `…metrics`
+publishes `resolved_api` / `resolved_disappeared` per severity. A register whose closures are
 overwhelmingly inferred is telling you something about the data source as much as about the
 security programme — which you can only notice if the split is on the table.
 
@@ -139,27 +139,48 @@ difference is under 24 hours.
 
 ## Tables
 
-Everything except the ledger is appended, never overwritten. Every row carries `scan_id` /
-`scan_ts`, so repeated runs accumulate into a trend instead of clobbering the last one. The
-ledger is the exception: it is `MERGE`d, so a vulnerability keeps one row and one history no
-matter how many times it is scanned.
+Bronze and metrics are appended, never overwritten — every row carries `scan_id` / `scan_ts`, so
+repeated runs accumulate into a trend instead of clobbering the last one. The ledger is the
+exception: it is `MERGE`d, so a vulnerability keeps one row and one history no matter how many
+times it is scanned. Three tables per scope, not eight:
 
 | Table | Grain | Contents |
 | --- | --- | --- |
 | `…wiz_os_findings_raw` | scan × finding | bronze: `node_json` as a string, plus `seq` (API order) |
-| `…wiz_os_findings` | scan × finding | silver: typed columns, `mttr_days`, `age_days`, `risk_class` |
 | **`…wiz_os_vuln_ledger`** | **one row per `vuln_key`** | **the durable base: `first_seen`, `last_seen`, `status`, `resolved_at`, `resolution_src`, `reopened_count`, the fix clock and the exploit signals** |
-| **`…wiz_os_scans`** | **one row per run** | **the run log: `scope`, `severities`, and the new/resolved/reopened deltas** |
-| `…wiz_os_metrics_mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, and the `snap_*` snapshot comparison |
-| `…wiz_os_metrics_program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
-| `…wiz_os_metrics_capacity` | scan × month × **`population`** | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
-| `…wiz_os_metrics_sensitivity` | scan × signal subset | the same confusion matrix and rates under each of the seven non-empty rules, with the configured one marked `active` |
+| **`…wiz_os_metrics`** | **wide, told apart by `family`** | **the commit record and every gold family, appended together — see the legend below** |
 
-The gold tables are computed from the ledger. The snapshot figures are still computed and
-published beside them as `snap_km_median`, `snap_mttr_median`, `snap_resolved`, `snap_open` —
-**the gap between `km_median` and `snap_km_median` is the size of what v1 was missing.**
+Silver — the typed projection of bronze — is **not** a table, in any storage mode. It is computed
+in memory for the scan being built and re-derived from bronze by anything that needs it later
+(`panels._silver_frame` calls the same `metrics.silver_findings` the pipeline does): storing it
+would be a second copy of data the register already holds, and bronze is what must survive.
 
-`…metrics_capacity` gains the two columns v1 could not produce, both of which need scan history:
+`…metrics` carries every row that used to have its own table — the run log and all three gold
+families — with `family` telling them apart. Every row carries `scan_id`, `scan_ts`, `scope` and
+`family`; the rest of a row's columns belong to that one family and are NULL on the other
+families' rows, which is what `mergeSchema` on the append gives for free. **A read that does not
+filter on `family` blends grains that share no key**, so every reader does: `panels.register_views`
+publishes one session view per family (`v_scans`, `v_mttr`, `v_program`, `v_capacity`) and nothing
+else reads the table directly.
+
+| `family` | Grain | Contents |
+| --- | --- | --- |
+| `scan` | one row per run | the commit record: `scope`, `severities`, and the new/resolved/reopened deltas — what used to be `…wiz_os_scans` |
+| `mttr` | scan × severity (+ `OVERALL`) | MTTR mean/median, open counts, open-age p50/p90, SLA target and compliance, the resolution-source split, and the `snap_*` snapshot comparison |
+| `program` | scan × severity (+ `OVERALL`) | the confusion matrix, coverage and efficiency with bounds, prevalence, signal coverage |
+| `capacity` | scan × month × **`population`** | opened, closed, backlog at month start, MMCR, net flow, verdict, `reconstructed`, `closed_observed` |
+
+There is no `sensitivity` family and nothing is published under that name any more: the seven-subset
+rule sweep is recomputed at read time by `panels.rule_sweep` from `v_lifecycles` rather than stored
+per scan — see [What v2 does not do](#what-v2-does-not-do).
+
+The three gold families are computed from the ledger and written together as **one append** —
+see [The scan record is load-bearing](#the-scan-record-is-load-bearing) for what that buys on a
+crash. The snapshot figures are still computed and published beside the `mttr` family as
+`snap_km_median`, `snap_mttr_median`, `snap_resolved`, `snap_open` — **the gap between `km_median`
+and `snap_km_median` is the size of what v1 was missing.**
+
+The `capacity` family gains the two columns v1 could not produce, both of which need scan history:
 
 - **`reconstructed`** — the month predates the first scan, so its opens and closes are back-dated
   from the API's own dates rather than watched by us. Not evidence of capacity, and excluded from
@@ -169,7 +190,7 @@ published beside them as `snap_km_median`, `snap_mttr_median`, `snap_resolved`, 
   that found them. An independent route to `closed`, which is derived from `resolved_at`. Where
   the two disagree, one of them is wrong, and publishing both is what lets a reader notice.
 
-### `…metrics_capacity` carries two populations — always filter on `population`
+### The `capacity` family carries two populations — always filter on `population`
 
 Each month appears twice, once per population, and **an unfiltered read doubles every count.**
 
@@ -187,33 +208,43 @@ The grid is built per population from that population's own earliest `first_dete
 register whose first high-risk finding arrived late has a shorter `high_risk` series. A register
 with no high-risk lifecycles at all writes no `high_risk` rows.
 
-> **Upgrading from 2.0:** `population` is added by schema evolution, so rows written by 2.0 land
-> with `population = NULL` and are all-findings rows. Backfill them
-> (`UPDATE … SET population = 'all' WHERE population IS NULL`) or filter on
-> `coalesce(population, 'all')`, or the old scans quietly drop out of every filtered query.
->
-> **Until a 2.1+ run has written to the table, the column is absent rather than NULL** — the
-> evolution happens on the first write, so a register last scanned under 2.0 has the 2.0 schema
-> and `UPDATE … SET population` fails with the same unresolved-column error the query does. The
-> notebooks handle both cases (`panels.context` treats a missing column as all-findings and
-> coalesces a NULL one), so the pages open either way; SQL written by hand against the table
-> needs `coalesce`, and needs the column to exist first:
-> `ALTER TABLE … ADD COLUMN population STRING`.
+### The scan record is load-bearing
 
-### The scan log is load-bearing
-
-`…wiz_os_scans` is not bookkeeping. It records which severities each scan covered, and
-**disappearance is only safe because of it**: `--severities` defaults to `CRITICAL,HIGH`, so
-without knowing a scan's scope, every MEDIUM row in the ledger would "vanish" on the first
-scoped run and mass-resolve. Absence of something nobody looked for is not remediation. The same
-table is the idempotency guard, and its earliest row is the observation horizon that
+The `family='scan'` rows of `…wiz_os_metrics` are not bookkeeping. Each one records which
+severities that scan covered, and **disappearance is only safe because of it**: `--severities`
+defaults to `CRITICAL,HIGH`, so without knowing a scan's scope, every MEDIUM row in the ledger
+would "vanish" on the first scoped run and mass-resolve. Absence of something nobody looked for
+is not remediation. The same rows are the idempotency guard (`recorded_scan`) and the torn-write
+detector (`ledger_already_merged`), and the earliest one is the observation horizon that
 `reconstructed` is measured against.
+
+**Write order per scan, and what each gap costs.** The ledger `MERGE` commits first; the
+`family='scan'` commit record lands one statement later, closing the window a crash can leave
+disagreeing to one statement wide; the `mttr`/`program`/`capacity` families land after that, as
+one union append. A crash in the *first* gap — MERGE committed, no commit record — is
+unrecoverable by construction: the retry finds the ledger already moved with nothing recording
+it, and refuses rather than reconciling the same findings twice; recover with `--rebuild_ledger`.
+A crash in the *second* gap — commit record written, gold append never landed — used to be the
+same story: the retry found `recorded_scan`, printed "already recorded, nothing to do", and that
+scan's gold was gone for good. It no longer is. `gold_missing` detects the gap (no `mttr` row for
+that `scan_id`), and the retry republishes gold from bronze and the ledger — printing
+`[scan] resumed gold` — because gold is re-derivable from data the register still has, so a
+missing gold row is recoverable and a missing scan is not.
+
+**The resume has one condition.** Gold describes the ledger *as it stood* for that scan, and the
+ledger only ever stands at one scan at a time — so a resume is only valid for the *newest* scan
+on record. Once a later scan has merged, its gold has already moved the ledger past the crashed
+scan's state, and republishing would stamp that later state with the older scan's `scan_ts` — a
+wrong number, not a missing one, and one nothing downstream could tell from a right one. The
+retry refuses by name in that case, and points at `--rebuild_ledger`, which now regenerates gold
+per replayed scan (not only the ledger) — the only way to put a stale scan's gold back once a
+later scan has moved on.
 
 Fully qualified as `<catalog>.<schema>.<prefix><name>`, where the prefix defaults to
 `wiz_<scope>_`. Two reasons: these usually land in a schema shared with other teams, where a
-bare `findings` or `metrics_capacity` would be a collision waiting to happen; and the scope in
-the name keeps an OS run and an all-types run in separate tables. `--table_prefix` overrides it
-(empty opts out entirely).
+bare `findings` or `metrics` would be a collision waiting to happen; and the scope in the name
+keeps an OS run and an all-types run in separate tables. `--table_prefix` overrides it (empty
+opts out entirely).
 
 That separation is structural, and `ledger.reconcile` still refuses to assume it: a prior row or
 an observation stating a scope other than the one it was asked for raises rather than being
@@ -223,14 +254,14 @@ remediated, with real resolution dates and a delta that reads like a good week.
 
 ### Table layout
 
-Three tables carry a physical layout. The rest are left alone.
+Two tables carry a physical layout. The third — `metrics`, at 9–150 rows per scan across every
+family — is left alone: there is nothing there worth laying out.
 
 | Table | `CLUSTER BY` | Deletion vectors | Why |
 | --- | --- | --- | --- |
 | `…vuln_ledger` | `vuln_key` | **on** | `vuln_key` is the MERGE's `ON` key |
 | `…findings_raw` | `scan_id` | off | every read of bronze filters on `scan_id` |
-| `…findings` | `scan_id` | off | same, plus the scan pin every page applies |
-| the four gold tables, `…scans` | — | — | 9–150 rows per scan; nothing to lay out |
+| `…metrics` | — | — | unclustered; every read already filters on `family` and the scan pin |
 
 **Deletion vectors are the half that pays.** Without them a `MERGE` that matches a row rewrites
 the entire file containing it, so the daily reconcile — which touches every finding the scan
@@ -240,9 +271,11 @@ every row is touched daily and there is little to skip; on a mature one, where t
 long-resolved findings nobody observed today, it is the difference between rewriting the table
 and rewriting the day.
 
-They are set **explicitly**, on all three, because the two runtimes disagree about the default —
-Databricks enables deletion vectors for a clustered table, open-source Delta does not — and a
-cluster configured unlike the test suite is how a number stops being reproducible.
+They are set **explicitly**, on both clustered tables (on for the ledger, off for bronze),
+because the two runtimes disagree about the default — Databricks enables deletion vectors for a
+clustered table, open-source Delta does not — and a cluster configured unlike the test suite is
+how a number stops being reproducible. `metrics` declares no clustering at all, so the question
+does not arise for it.
 
 **Clustering `vuln_key` is not what makes the MERGE fast, and it is worth knowing why.** A
 `vuln_key` is `id:<wiz-finding-id>` or `h:<sha>`; both are effectively random. Clustering gives
@@ -251,24 +284,27 @@ range — so almost no file can be pruned. Random keys are the worst case for ra
 skipping. It is still the right key (it is the only one the MERGE joins on, and point lookups do
 benefit), but the reason the reconcile gets cheaper is the deletion vectors.
 
-`scan_id` on bronze and silver is different: those reads genuinely do prune. Note that they
-already skipped perfectly **by accident** — each run appends only its own scan, so every file
-had `min(scan_id) == max(scan_id)`. The first `OPTIMIZE` that packs two scans into one file
-would have destroyed that. `CLUSTER BY (scan_id)` makes it a property of the table instead of a
-lucky consequence of the write pattern, which is what makes running `--maintain` safe.
+`scan_id` on bronze is different: that read genuinely does prune. Note that it already skipped
+perfectly **by accident** — each run appends only its own scan, so every file had
+`min(scan_id) == max(scan_id)`. The first `OPTIMIZE` that packs two scans into one file would
+have destroyed that. `CLUSTER BY (scan_id)` makes it a property of the table instead of a lucky
+consequence of the write pattern, which is what makes running `--maintain` safe.
 
 **The protocol bump, and its blast radius.** Clustering raises a table to Delta **writer version
 7**; deletion vectors raise the **reader to version 3**. Protocol versions cannot be downgraded.
 So the ledger becomes unreadable to any client that does not speak reader 3 (DBR 12.2+ is fine),
-while bronze and silver stay at reader 1 and can still be read by anything. That split is the
-practical reason deletion vectors are off on the two append-only tables — they would buy nothing
-there and cost every reader. Nothing in this repo reads these tables (`gas/` and
-`wiz_dashboard/` never touch Delta), but an external consumer is worth checking before you
-migrate.
+while bronze and `metrics` stay at reader 1 and can still be read by anything. That split is the
+practical reason deletion vectors are off on bronze — they would buy nothing there and cost
+every reader; `metrics` never faces the question, since it carries no clustering spec at all.
+Nothing in this repo reads these tables (`gas/` and `wiz_dashboard/` never touch Delta), but an
+external consumer is worth checking before you migrate.
 
 **Layout is declared at creation.** A clustering spec cannot be added by an append, so the
-ledger is created by `ensure_tables` and bronze and silver by whatever first writes them. An
-existing register keeps its unclustered layout until someone migrates it — see
+ledger is created by `ensure_tables` (clustered) and bronze by whatever first writes it
+(clustered too, at that point). `ensure_tables` also creates `metrics` when it is missing, as an
+empty declared frame with no clustering spec — its gold columns arrive later through
+`mergeSchema`, the same way `snap_*` and `population` do. An existing register keeps its
+unclustered layout until someone migrates it — see
 [Migrating an existing register](#migrating-an-existing-register).
 
 #### What this measured, which is not what it was supposed to measure
@@ -606,13 +642,15 @@ side at 20,000 findings, `64` produced the fastest single run and the tightest s
 Reconciling one scan twice would advance every lifecycle a second time, so a retry must be
 recognisable as a retry. Databricks retries a failed task **within the same run**, so
 `--scan_id={{job.run_id}}` makes the second attempt arrive with the id the first one used. The
-run then finds its own row in `…wiz_os_scans` and does nothing.
+run then finds its own `family='scan'` row in `…wiz_os_metrics` (`recorded_scan`) and — unless
+that scan's gold went missing, in which case it republishes just that, see
+[The scan record is load-bearing](#the-scan-record-is-load-bearing) — does nothing further.
 
 Without it, `scan_id` is random and a retry looks like a brand-new scan. Also set
 `"max_concurrent_runs": 1` so two runs cannot reconcile against each other.
 
-If a run dies *between* the ledger MERGE and the scan-log write, the next run detects it — the
-ledger carries the scan id, the log does not — and **refuses rather than double-counting**.
+If a run dies *between* the ledger MERGE and the commit record, the next run detects it — the
+ledger carries the scan id, `metrics` does not — and **refuses rather than double-counting**.
 Recover with `--rebuild_ledger`.
 
 **A failed ingest leaves partial bronze, and that is fine.** Findings are written to bronze in
@@ -620,9 +658,9 @@ batches as they are paged out of the API, rather than held in the driver until t
 finishes — a full register is hundreds of thousands of JSON documents and one list of all of
 them is a driver problem waiting to happen. So a crash mid-sweep leaves the batches that
 committed. Nothing reads them: bronze rows are only ever selected by a `scan_id` that has a
-`…wiz_os_scans` row, and a retry passing the same `--scan_id` clears them before re-ingesting.
-A run that dies mid-ingest and is *never* retried leaves orphaned bronze rows, which cost
-storage and nothing else.
+`family='scan'` row in `…wiz_os_metrics`, and a retry passing the same `--scan_id` clears them
+before re-ingesting. A run that dies mid-ingest and is *never* retried leaves orphaned bronze
+rows, which cost storage and nothing else.
 
 ### Maintenance
 
@@ -656,8 +694,9 @@ Everything above applies to tables created from now on. A register that already 
 unclustered layout — a clustering spec cannot be added by an append, and this pipeline will not
 silently rewrite the physical layout of a production ledger on the next scheduled run.
 
-Migrating is three statements per table and one decision. Run them once, from a notebook or the
-SQL editor, with the pipeline stopped:
+Migrating is a handful of statements against the two clustered tables — `metrics` declares no
+layout, so there is nothing to `ALTER` on it. Run them once, from a notebook or the SQL editor,
+with the pipeline stopped:
 
 ```sql
 ALTER TABLE <catalog>.<schema>.wiz_os_vuln_ledger CLUSTER BY (vuln_key);
@@ -665,11 +704,9 @@ ALTER TABLE <catalog>.<schema>.wiz_os_vuln_ledger
   SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'true');
 
 ALTER TABLE <catalog>.<schema>.wiz_os_findings_raw CLUSTER BY (scan_id);
-ALTER TABLE <catalog>.<schema>.wiz_os_findings     CLUSTER BY (scan_id);
 
 OPTIMIZE <catalog>.<schema>.wiz_os_vuln_ledger;
 OPTIMIZE <catalog>.<schema>.wiz_os_findings_raw;
-OPTIMIZE <catalog>.<schema>.wiz_os_findings;
 ```
 
 Three things to know before you do:
@@ -687,8 +724,9 @@ bronze into new, correctly-clustered tables — see below.
 
 ### Backfilling from existing bronze
 
-If you have been running v1, bronze already holds months of scans. `--rebuild_ledger` truncates
-the ledger and the scan log, then replays every bronze scan oldest-first through the same
+If you have been running v1, bronze already holds months of scans. `--rebuild_ledger` deletes
+the *whole* `metrics` table (commit records and every gold family, not only the replayed
+`scan_id`s) along with the ledger, then replays every bronze scan oldest-first through the same
 reconciler the live path uses:
 
 ```bash
@@ -704,6 +742,15 @@ scans are assumed to have used the `--severities` you pass. If your history was 
 different scope, pass *that* scope — otherwise the replay will resolve-by-disappearance severities
 the original scans never covered, and invent remediation that never happened. Scans written by v2
 carry their own scope and are unaffected.
+
+**It regenerates gold too, not only the ledger.** Each replayed scan reconciles, commits its
+record, and then publishes its own gold from the ledger as it stood at that point in the replay
+— the same three steps in the same order a live scan takes, because it is the same two
+functions. That makes `metrics` a pure function of bronze plus the replay's `--severities`, and
+it is the only way to put back a scan's gold once a later scan has moved the ledger past it (see
+[The scan record is load-bearing](#the-scan-record-is-load-bearing)). It also means the cost is
+per replayed scan rather than a single pass: a rebuild over a long history is a genuinely long
+job, and is not something to run on a schedule.
 
 The rebuild is idempotent, and `brick/tests/test_ledger_pipeline.py` pins the invariant that
 matters: replaying bronze lands exactly where running those scans live landed.
@@ -723,8 +770,8 @@ imports, and now exports too.
 ```
 GAS  Data → Migration bundle (Drive)        →  migration-<ts>.json.gz
      upload to a Unity Catalog volume       →  /Volumes/<cat>/<schema>/<vol>/migration-….json.gz
-brick 07_import_gas  (or the CLI below)     →  <p>vuln_ledger + <p>scans
-     06_run_and_verify, one scan            →  the gold tables, from real lifetimes
+brick 07_import_gas  (or the CLI below)     →  <p>vuln_ledger + the family='scan' rows of <p>metrics
+     06_run_and_verify, one scan            →  the gold families, from real lifetimes
 ```
 
 ```bash
@@ -732,29 +779,30 @@ python brick/import_bundle.py --catalog=<catalog> --schema=<schema> --scope=os \
   --bundle_path=/Volumes/<catalog>/<schema>/<volume>/migration-20260811T000000Z.json.gz
 ```
 
-It seeds an **empty** register and refuses one that holds anything — the ledger, the scan log,
-or any of the six appended tables. Merging a seed into a register that has already scanned
+It seeds an **empty** register and refuses one that holds anything — the ledger, or any row of
+`metrics`, commit record or gold alike. Merging a seed into a register that has already scanned
 would re-open lifecycles it has since resolved, and appending an older scan log beside brick's
 own would hand the disappearance guard the wrong previous scan.
 
-`--force_import=true` **replaces the register**, not merely the two lifecycle tables. The gold
-tables are why: they are appended per scan and computed from the ledger *as it stood at that
-scan*, so rows written before a seed were derived from a ledger that started empty. Left in
-place they sit in `04_scan_history` as a run whose MTTR reads near zero, beside seeded runs
-where it does not — a contradiction with nothing on the page to explain it. So a forced import
-overwrites the ledger and the scan log and empties bronze, silver and all four gold tables, and
-the register genuinely restarts from the imported history. Re-scan to repopulate them.
+`--force_import=true` **replaces the register**, not merely the ledger. Gold is why: it is
+appended per scan and computed from the ledger *as it stood at that scan*, so gold rows written
+before a seed were derived from a ledger that started empty. Left in place they sit in
+`04_scan_history` as a run whose MTTR reads near zero, beside seeded runs where it does not — a
+contradiction with nothing on the page to explain it. So a forced import empties bronze and the
+*whole* `metrics` table — the scan log and every gold family together, since they now share one
+table — and the register genuinely restarts from the imported history. Re-scan to repopulate
+them.
 
 They are emptied rather than dropped: `DELETE` needs only `MODIFY` and keeps each table's
 grants, where `DROP` needs ownership and would take the grants with it.
 
 **If the import stops with "No write access"**, that is Unity Catalog, not the bundle. A
 `DELETE … WHERE 1=0` probe runs before the expensive work precisely so the refusal names the
-grant instead of surfacing as a `Py4JJavaError` at `saveAsTable` six Spark jobs later. Note
-that overwriting is not a way around it — UC gives a table's owner `MODIFY` implicitly, so
-being refused it means this principal does not own the table, and replacing or dropping needs
+grant instead of surfacing as a `Py4JJavaError` at `saveAsTable` some jobs later. Note that
+overwriting is not a way around it — UC gives a table's owner `MODIFY` implicitly, so being
+refused it means this principal does not own the table, and replacing or dropping needs
 ownership or `MANAGE`, a strictly higher bar. Grant at the schema, because the first scan after
-the import creates six more tables:
+the import creates the one remaining table, bronze:
 
 ```sql
 GRANT USE CATALOG ON CATALOG <catalog> TO `<principal>`;
@@ -787,7 +835,7 @@ coverage and MTTR are computed over, so importing only the live ledger would shr
 | --- | --- |
 | `tags_json` | brick's ingest selects no asset tags, so nothing downstream would read it — and domain triage is unavailable here either way |
 | a back-dated actionable clock | `fix_date` / `fix_observed_at` arrive and are read (see [The actionable clock](#the-actionable-clock)), but the bundle carries no fix history beyond what each lifecycle's last observation held |
-| bronze, and therefore a back-dated gold trend | the bundle holds reconciled lifecycles, not raw findings. `<p>scans` shows the imported runs; the gold tables begin accumulating from the first brick run |
+| bronze, and therefore a back-dated gold trend | the bundle holds reconciled lifecycles, not raw findings. The `family='scan'` rows of `<p>metrics` show the imported runs; the gold families begin accumulating from the first brick run |
 | `mttr_history` | GAS's precomputed daily KPI series. It rides in the bundle and brick has no table for it |
 | several episodes for one `vuln_key` | brick's ledger is one row per key, so the most recently resolved wins; the import counts the rest |
 
@@ -807,28 +855,24 @@ blast radius, and it is usually zero.
 
 ```sql
 SELECT severity, coverage_pct, efficiency_pct, prevalence_pct, signal_coverage_pct
-FROM   <catalog>.<schema>.wiz_os_metrics_program
-WHERE  scan_id = (
-  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_os_metrics_program
+FROM   <catalog>.<schema>.wiz_os_metrics
+WHERE  family  = 'program'
+AND    scan_id = (
+  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_os_metrics WHERE family = 'program'
 )
 ORDER BY severity;
 ```
 
 Read that against `prevalence_pct` on the same row, not against the P2P baselines — see
-[Reading coverage and efficiency](#reading-coverage-and-efficiency). How much of it is the rule:
+[Reading coverage and efficiency](#reading-coverage-and-efficiency). How much of it is the rule
+is not a table to query: `metrics_sensitivity` is not published — the sweep is on the notebook
+page, not in the register. `panels.rule_sweep(spark, ctx)` recomputes coverage and efficiency
+under each of the seven non-empty signal subsets from `v_lifecycles` at read time, and
+`02_program_performance` is where it renders.
 
-```sql
-SELECT rule_label, active, coverage_pct, efficiency_pct, high_risk, unknown
-FROM   <catalog>.<schema>.wiz_os_metrics_sensitivity
-WHERE  scan_id = (
-  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_os_metrics_sensitivity
-)
-ORDER BY active DESC, rule_label;
-```
-
-The run itself prints all three families — MTTR and SLA by severity, coverage and efficiency
-with the rule-sensitivity table beside them, and the most recent capacity months for each
-population.
+The run itself prints the `mttr` and `program` families by severity — MTTR/SLA and coverage and
+efficiency with the rule-sensitivity sweep beside them (recomputed, not read back from a table)
+— and the most recent `capacity` months for each population.
 
 To read the numbers rather than query them, open the [notebooks](#notebooks).
 
@@ -836,10 +880,10 @@ Once both scopes are running, compare them on the `scope` column:
 
 ```sql
 SELECT scope, coverage_pct, efficiency_pct
-FROM   <catalog>.<schema>.wiz_os_metrics_program  WHERE severity = 'OVERALL'
+FROM   <catalog>.<schema>.wiz_os_metrics  WHERE family = 'program' AND severity = 'OVERALL'
 UNION ALL
 SELECT scope, coverage_pct, efficiency_pct
-FROM   <catalog>.<schema>.wiz_all_metrics_program WHERE severity = 'OVERALL';
+FROM   <catalog>.<schema>.wiz_all_metrics WHERE family = 'program' AND severity = 'OVERALL';
 ```
 
 Start with `--severities=CRITICAL` on the first run: it is the fastest way to confirm the
@@ -909,7 +953,8 @@ and all (measured on duckdb 1.5.5, row counts equal to Spark's):
 ```sql
 INSTALL delta; LOAD delta;
 SELECT severity, km_median, mttr_actionable_median
-FROM   delta_scan('file:///tmp/lakecheck/wiz.db/wiz_os_metrics_mttr');
+FROM   delta_scan('file:///tmp/lakecheck/wiz.db/wiz_os_metrics')
+WHERE  family = 'mttr';
 ```
 
 To open the notebooks, `jupyter lab` from the fork's `notebooks/` directory with
@@ -945,10 +990,11 @@ Set the same value in the `data_path` widget and notebooks 00–05 read the regi
 declared exactly as they would be in a catalog. Nothing about the register is degraded by not
 having a catalog — the catalog was only ever the name.
 
-**Silver is not stored** in this mode. It is a pure per-scan projection of bronze, so keeping it
-would be a second copy of data the register already holds; `panels` rebuilds the findings views
-from bronze with the same function the pipeline would have written silver with. Bronze is the
-table that must survive: `--rebuild_ledger` replays it, and everything else follows.
+**Silver is never stored, in any mode** — not just this one. It is a pure per-scan projection of
+bronze, computed in memory and re-derived by anything that needs it later (`panels._silver_frame`
+calls the same `metrics.silver_findings` the pipeline uses); keeping it would be a second copy of
+data the register already holds. Bronze is the table that must survive: `--rebuild_ledger`
+replays it, and everything else — the ledger, the commit record, gold — follows.
 
 ### Where the path must point
 
@@ -987,8 +1033,7 @@ When a real catalog arrives, register each directory as an external table. No co
 ```sql
 CREATE TABLE <catalog>.<schema>.wiz_os_vuln_ledger  USING DELTA LOCATION '<root>/wiz_os_vuln_ledger';
 CREATE TABLE <catalog>.<schema>.wiz_os_findings_raw USING DELTA LOCATION '<root>/wiz_os_findings_raw';
-CREATE TABLE <catalog>.<schema>.wiz_os_scans        USING DELTA LOCATION '<root>/wiz_os_scans';
--- and the four metrics_* directories the same way
+CREATE TABLE <catalog>.<schema>.wiz_os_metrics      USING DELTA LOCATION '<root>/wiz_os_metrics';
 ```
 
 Then drop `--data_path`, pass `--catalog` and `--schema`, and the next scan continues the same
@@ -997,7 +1042,7 @@ come across, because they live in the Delta log rather than in the metastore —
 `test_the_register_migrates_into_a_catalog_without_losing_anything` is that paragraph as a test,
 including that the migrated ledger still accepts a `MERGE`.
 
-Silver has no directory to register; the first catalog-backed scan creates it.
+Silver has no directory to register — it is never stored, in any mode.
 
 If a path ever has to be rebuilt rather than registered — a directory copied between accounts,
 say — `--rebuild_ledger` replays bronze into a fresh register and lands where the live scans
@@ -1459,9 +1504,13 @@ everything we know now", not "classified with what we knew then".
 
 ### Since the rule is the label, its sensitivity is a published metric
 
-`…metrics_sensitivity` recomputes coverage and efficiency under each of the seven non-empty
+`metrics.rule_sensitivity` recomputes coverage and efficiency under each of the seven non-empty
 signal subsets — KEV alone, EPSS alone, KEV-or-exploit, and so on — with the active rule marked
-`active = true`. Ported from `gas/src/domain/program.ts::ruleSensitivity`.
+`active = true`. Ported from `gas/src/domain/program.ts::ruleSensitivity`. **It is not a
+published table any more.** `panels.rule_sweep` calls the same transform at read time, over
+`v_lifecycles`, so the sweep is always the current rule against the current register rather than
+a snapshot from whenever a scan last ran — see
+[What v2 does not do](#what-v2-does-not-do) for why the old table was dropped.
 
 It answers **"how much does the headline depend on which signals I turned on?"** and nothing
 else. It is deliberately *not* P2P vol. 9's Figure 19, which plots candidate strategies against
@@ -1469,7 +1518,7 @@ observed exploitation; the subsets here are scored against themselves, so a subs
 "wrong" — a narrow rule simply reports high efficiency over a small high-risk population.
 Label it *rule sensitivity*, never *strategy comparison*.
 
-What the table is good for is seeing the shape of the trade: each row carries `high_risk` and
+What the sweep is good for is seeing the shape of the trade: each row carries `high_risk` and
 `unknown` alongside the two rates, so a subset that buys efficiency by shrinking the high-risk
 population — or by pushing rows into `unknown` — cannot hide it. The `KEV only` row is usually the
 starkest: P2P vol. 9 pp. 22–24 found CISA KEV alone covers only ~19% of what is exploited in
@@ -1484,7 +1533,7 @@ behind, which is when you least want a flattering number.
 
 `metrics.kaplan_meier` (ported from `gas/src/domain/remediation.ts::kaplanMeier`) keeps those
 findings in the risk set as **right-censored** observations: "not closed yet" is evidence, just
-not the same evidence as "closed on day 40". Columns on `…metrics_mttr`:
+not the same evidence as "closed on day 40". Columns on the `mttr` family of `…metrics`:
 
 | Column | |
 | --- | --- |
@@ -1542,7 +1591,7 @@ Five columns on every lifecycle (`ledger.lifecycle_frame`), ported from
 | `actionable_age_days` | for an open finding, `now − actionable_from` |
 | `awaiting_vendor_fix` | open, in a scope that HAS a vendor, and no fix available yet |
 
-and on `…metrics_mttr`, per severity plus `OVERALL`: `mttr_actionable_mean`,
+and on the `mttr` family of `…metrics`, per severity plus `OVERALL`: `mttr_actionable_mean`,
 `mttr_actionable_median`, `actionable_resolved`, `actionable_age_p50` / `_p90`, and
 `actionable_sla_compliant`. `actionable_resolved` is the population the second clock could
 price at all, and it is published beside the rates for that reason — it is the denominator that
@@ -1596,11 +1645,16 @@ of it available on the GAS side:
 Two entries left this list with the notebooks. The **Kaplan–Meier survival curve** is now
 `metrics.km_curve`, which `kaplan_meier` itself consumes — one implementation, so the staircase
 on `01_mttr_sla` and the published `km_median` cannot disagree. The **rule-sensitivity sweep**
-exists twice, on purpose: `metrics.rule_sensitivity` writes `…metrics_sensitivity` under the
-configured rule, so the sweep is queryable from SQL and trends across scans; `panels.rule_sweep`
-recomputes it at read time against `ctx.rule`, so changing the rule in a notebook moves the
-filled point without a re-scan. Both walk the same `metrics.RULE_SUBSETS`, so they cannot
-disagree about what a subset is.
+used to exist twice — `metrics.rule_sensitivity` published a `…metrics_sensitivity` row per scan
+under the configured rule, and `panels.rule_sweep` recomputed the same thing at read time against
+`ctx.rule`. It now exists once: nothing publishes the sweep any more, and `panels.rule_sweep` is
+the only path a reader has to it, recomputed from `v_lifecycles` on every open of
+`02_program_performance` against whatever rule the notebook is configured with — so it is always
+current and never a snapshot from whenever a scan last ran, at the cost of not being queryable
+from SQL or trendable across scans the way the old table was. `metrics.rule_sensitivity` itself
+is unchanged and still tested; it is simply not called from `run_pipeline` any more. Both it and
+`panels.rule_sweep` still walk the same `metrics.RULE_SUBSETS`, so they cannot disagree about
+what a subset is.
 
 Two ledger fields also stay deliberately simple relative to GAS: there is no `tags_json`
 (see above), and no `resolved_episodes` table, so a `vuln_key` has exactly one lifecycle row and

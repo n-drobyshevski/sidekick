@@ -32,7 +32,7 @@ wrong thing, which is the worst of the available failures.
 
 Two guards make it loud instead:
 
-- `PIPELINE_VERSION` here is `1.0-devsecops`, which cannot collide with brick's `2.x`, so
+- `PIPELINE_VERSION` here is `3.0-devsecops`, which cannot collide with brick's `3.0`, so
   `check_deployment()` catches a mixed set on the version alone.
 - `run_pipeline._check_one_directory()` additionally requires every loaded module to have come
   from *this* directory, which catches two forks that happened to share a version.
@@ -88,7 +88,8 @@ the two that resolve. That is what makes the v5 asset family computable here at 
 finding has **no CVE, and therefore no KEV entry, no published exploit and no EPSS score**.
 Under `RiskRule` every one of them classifies `unknown` and every rate is undefined — correctly,
 and uselessly. So `config.SastRiskRule` is an any-of over three signals, in the same frozen,
-inspectable shape, swept by the same `metrics_sensitivity` table.
+inspectable shape, swept by the same rule-sensitivity sweep (`panels.rule_sweep`, recomputed at
+read time — see [`brick/README.md`](../README.md#since-the-rule-is-the-label-its-sensitivity-is-a-published-metric)).
 
 | Signal | Question it answers | What it is |
 | --- | --- | --- |
@@ -190,14 +191,15 @@ P2P offers no help and says so: volumes 1, 2 and 3 each state, verbatim, *"We wo
 CWEs in this study."*
 
 **So: do not compare a SAST rate to the SCA register's, to brick's, or to any P2P baseline.**
-Compare it to `prevalence_pct` on the same row, and read `metrics_sensitivity` beside it — which
-matters more for that rule than for the other, not less.
+Compare it to `prevalence_pct` on the same row, and read the rule-sensitivity sweep beside it —
+which matters more for that rule than for the other, not less.
 
 ---
 
 ## Assets at risk (P2P v5)
 
-`…metrics_assets` is volume 5, whose unit of analysis is the asset rather than the vulnerability:
+The `assets` family of `…metrics` — the only gold family this fork carries that brick's `os`
+scope does not — is volume 5, whose unit of analysis is the asset rather than the vulnerability:
 *"the fact that we manage vulnerabilities in assets rather than in a vacuum requires us to know
 where risk isn't, where it is now, and where it will eventually be."* The asset is the repository
 branch, and the language/ecosystem is v5's asset *category* — its analogue of Windows / Linux /

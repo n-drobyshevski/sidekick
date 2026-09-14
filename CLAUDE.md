@@ -198,10 +198,14 @@ because they are in this file.
 ## brick / devlake — the Databricks register
 
 `brick/` (OS vulnerabilities, scopes `os`/`all`) and `brick/devsecops/` (`sca`/`sast`) are the
-PySpark + Delta surface over the same registers: bronze → silver → a `MERGE`d ledger → the
-`scans` commit row → gold tables. They are deliberate FORKS with identical module names and
-exactly one may be on `sys.path`. `devlake/` at the repo root is the dev-only harness that runs
-either of them on a laptop; it is never deployed.
+PySpark + Delta surface over the same registers: three tables per scope now, not eight —
+`<p>findings_raw` (bronze), `<p>vuln_ledger` (`MERGE`d), and one `<p>metrics` table holding the
+commit record and every gold family together, told apart by a `family` column (`scan`, `mttr`,
+`program`, `capacity`, plus `assets` on devsecops). Silver is never a table, in either fork: it
+is a per-scan projection of bronze computed in memory and re-derived wherever it is needed. They
+are deliberate FORKS with identical module names and exactly one may be on `sys.path`. `devlake/`
+at the repo root is the dev-only harness that runs either of them on a laptop; it is never
+deployed.
 
 - **A three-level name is fine locally; a NAMED catalog is not, and the README had it
   backwards.** It claimed `saveAsTable` on `catalog.schema.table` "needs Unity Catalog — a local
@@ -256,6 +260,18 @@ either of them on a laptop; it is never deployed.
   bare-list-vs-`{equals:[…]}` asymmetry into a loud failure instead of an empty register. Patch
   `get_token` on BOTH `ingest` and `run_pipeline`: the latter does `from ingest import get_token`
   at import, so patching only the module leaves the real OAuth call bound.
+- **The scan row is the commit record for the `MERGE`, and it lands one statement after it —
+  gold lands one statement after that, and a crash in either gap is recoverable in only one
+  direction.** A crash between the `MERGE` and the commit record is not recoverable: the retry
+  finds the ledger already moved with nothing recording it, and refuses rather than
+  double-counting. A crash between the commit record and the gold append used to look the same —
+  the retry found the commit record and reported "already recorded, nothing to do", and that
+  scan's gold was gone for good, permanently absent from every metric anyone reads. It no longer
+  is: gold is re-derivable from bronze plus the ledger, so `gold_missing` (no gold row for a
+  committed `scan_id`) triggers a republish on retry instead. The resume only holds while the
+  ledger still stands where that scan left it — once a later scan has merged, only
+  `--rebuild_ledger` can put the older scan's gold back, and it now regenerates gold per replayed
+  scan rather than only the ledger, for exactly that reason.
 
 ## gas_devsecops — the code register
 
