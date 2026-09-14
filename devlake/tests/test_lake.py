@@ -1,4 +1,4 @@
-"""Does a local lake survive a session restart, and does the session refuse both forks?
+"""Does a local lake survive a session restart, and does the session refuse a stale import?
 
 ``test_a_table_survives_a_session_restart`` is the one this whole package exists for: a table
 created by one process has to be readable, MERGE-able, and physically unchanged (same
@@ -51,7 +51,7 @@ def test_a_table_survives_a_session_restart(tmp_path_factory):
     JVM this whole test box is asked to run.
     """
     lake_dir = tmp_path_factory.mktemp("restart_lake")
-    devlake_session.put_fork_on_path("brick")
+    devlake_session.put_brick_on_path()
     import ledger as ledger_mod
     import run_pipeline
 
@@ -73,7 +73,7 @@ def test_a_table_survives_a_session_restart(tmp_path_factory):
         # `create_clustered`'s builder cannot parse a three-level name at all (see lake.py's
         # docstring) -- this is the DDL stand-in, and both `ledger` and `bronze` have a
         # declared schema to precreate with. There is no `silver` to skip any more: silver is
-        # not a Delta table in either fork, it is a projection derived from bronze in memory
+        # not a Delta table at all, it is a projection derived from bronze in memory
         # (`metrics.silver_findings`), so it has no on-disk shape to precreate at all.
         assert set(created) == {tables.ledger, tables.bronze}
 
@@ -135,24 +135,22 @@ def test_a_table_survives_a_session_restart(tmp_path_factory):
         spark_b.stop()
 
 
-# ---------------------------------------------------------------------------- the fork guard
+# -------------------------------------------------------------------- the stale-import guard
 
 
-def test_the_session_refuses_both_forks_on_the_path(monkeypatch):
-    """Both ways a mix can happen: the other fork's directory already on ``sys.path``, and a
-    fork module already imported from a different directory."""
-    monkeypatch.syspath_prepend(str(devlake_session.FORKS["devsecops"]))
-    with pytest.raises(RuntimeError, match="devsecops.*already on it"):
-        devlake_session.put_fork_on_path("brick")
-
-    monkeypatch.undo()  # clean sys.path before the second scenario
-
+def test_the_session_refuses_a_stale_module_import(monkeypatch):
+    """The one way a flat module directory can still resolve to the wrong file now that there
+    is only one tree: a module name already imported from somewhere other than ``brick/`` --
+    a prior test module loading a file by path, a notebook cell, a stale ``sys.modules`` entry
+    from an old checkout. See ``brick/tests/test_deployment_integrity.py`` for the same class
+    of guard enforced again, at runtime, inside ``run_pipeline.check_deployment()``.
+    """
     fake_config = types.SimpleNamespace(
-        __file__=str(devlake_session.FORKS["devsecops"] / "config.py")
+        __file__=str(devlake_session.REPO_ROOT / "gas_devsecops" / "config.py")
     )
     monkeypatch.setitem(sys.modules, "config", fake_config)
     with pytest.raises(RuntimeError, match="config.*already imported"):
-        devlake_session.put_fork_on_path("brick")
+        devlake_session.put_brick_on_path()
 
 
 # --------------------------------------------------------------------------- the jar pin(s)
@@ -167,10 +165,10 @@ def test_the_jar_coordinate_matches_the_installed_package():
 def _isolated_sys_path():
     """Swap out ``sys.path`` for a throwaway copy for the duration of the block.
 
-    Loading a fork's ``conftest.py`` by file path runs its module-level
+    Loading ``brick/tests/conftest.py`` by file path runs its module-level
     ``sys.path.insert(0, str(BRICK_DIR))`` -- exactly the sys.path mutation
-    ``devlake.session.put_fork_on_path`` exists to police, and permanent here would let this
-    file's own fork-guard test start failing depending on what ran before it. Reassigning
+    ``devlake.session.put_brick_on_path`` exists to police, and permanent here would let this
+    file's own stale-import test start failing depending on what ran before it. Reassigning
     ``sys.path`` to a copy means that ``insert`` call (looked up as ``sys.path`` at the moment
     it runs) mutates the copy, not the list every other import in this process shares; the
     ``finally`` restores the original object.
@@ -184,7 +182,8 @@ def _isolated_sys_path():
 
 
 def _load_by_path(name: str, path: Path):
-    """``brick/devsecops/tests/test_fork_integrity.py::upstream()``'s pattern, generalised."""
+    """Load a module by file path under an isolated ``sys.path``, so its own module-level
+    ``sys.path`` mutation cannot leak into this process."""
     spec = importlib.util.spec_from_file_location(name, path)
     module = importlib.util.module_from_spec(spec)
     with _isolated_sys_path():
@@ -192,30 +191,27 @@ def _load_by_path(name: str, path: Path):
     return module
 
 
-def test_the_fork_conftests_pin_the_same_delta_line():
-    """Both fork ``conftest.py`` files hardcode ``DELTA_PACKAGE``; the installed ``delta-spark``
+def test_the_conftest_pins_the_same_delta_line():
+    """``brick/tests/conftest.py`` hardcodes ``DELTA_PACKAGE``; the installed ``delta-spark``
     has to be the same release LINE.
 
-    Not exact equality: the jar bump from 3.3.2 to match the installed 3.3.3 patch is a
-    separate step, tracked, not done here. This only pins that nobody has drifted onto a
-    different MAJOR.MINOR line -- 3.2 vs 3.3, say -- which would be the real breakage
-    (``brick/tests/conftest.py``'s own comment: 3.2 cannot cluster the ledger by one column).
+    Not exact equality: a jar bump to match an installed patch release is a separate step,
+    tracked, not done here. This only pins that nobody has drifted onto a different MAJOR.MINOR
+    line -- 3.2 vs 3.3, say -- which would be the real breakage (``brick/tests/conftest.py``'s
+    own comment: 3.2 cannot cluster the ledger by one column).
     """
     installed = importlib.metadata.version("delta-spark")
     installed_line = ".".join(installed.split(".")[:2])
 
-    for label, conftest_path in (
-        ("brick", REPO_ROOT / "brick" / "tests" / "conftest.py"),
-        ("devsecops", REPO_ROOT / "brick" / "devsecops" / "tests" / "conftest.py"),
-    ):
-        module = _load_by_path(f"_devlake_conftest_{label}", conftest_path)
-        match = re.search(r"delta-spark_2\.12:([\d.]+)", module.DELTA_PACKAGE)
-        assert match, f"{conftest_path} has no DELTA_PACKAGE coordinate to read"
-        pinned_line = ".".join(match.group(1).split(".")[:2])
-        assert pinned_line == installed_line, (
-            f"{conftest_path} pins {module.DELTA_PACKAGE!r} ({pinned_line}), which is not the "
-            f"same delta-spark line as the installed {installed} ({installed_line})"
-        )
+    conftest_path = REPO_ROOT / "brick" / "tests" / "conftest.py"
+    module = _load_by_path("_devlake_conftest_brick", conftest_path)
+    match = re.search(r"delta-spark_2\.12:([\d.]+)", module.DELTA_PACKAGE)
+    assert match, f"{conftest_path} has no DELTA_PACKAGE coordinate to read"
+    pinned_line = ".".join(match.group(1).split(".")[:2])
+    assert pinned_line == installed_line, (
+        f"{conftest_path} pins {module.DELTA_PACKAGE!r} ({pinned_line}), which is not the "
+        f"same delta-spark line as the installed {installed} ({installed_line})"
+    )
 
 
 # ------------------------------------------------------------------------------ reregister

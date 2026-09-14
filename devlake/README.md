@@ -1,37 +1,39 @@
 # devlake
 
-A local Spark+Delta lake for developing `brick/` and `brick/devsecops/` off Databricks.
-**Dev-only, never deployed** — neither fork's `requirements.txt` names anything here, and the
-Asset Bundle (`brick/databricks.yml`) points at the fork directories directly.
+A local Spark+Delta lake for developing `brick/` off Databricks. **Dev-only, never deployed** —
+`brick/requirements.txt` names nothing here, and the Asset Bundle (`brick/databricks.yml`)
+points at `brick/` directly.
 
 ## Why this exists
 
-The two forks are already mature PySpark + Delta pipelines with their own test suites, but
-until now nothing ran the *whole* `main()` against a real catalog-mode register locally, and
-nothing let the shipped notebooks run off Databricks. This package is the harness for that: one
+`brick/` is already a mature PySpark + Delta pipeline with its own test suite, but until now
+nothing ran the *whole* `main()` against a real catalog-mode register locally, and nothing let
+the shipped notebooks run off Databricks. This package is the harness for that: one
 `SparkSession` per lake directory, a re-registration step so a fresh process can find tables an
 earlier process created, and (in later steps) a fake Wiz transport and IPython/`dbutils` shims.
 
-## The fork rule
+## One tree, and the failure that is still real
 
-`brick/` and `brick/devsecops/` define the same module names (`config`, `ingest`,
-`run_pipeline`, ...) in different files. A `sys.path` holding both directories resolves a bare
-`import config` to whichever came first — half of one pipeline and half of the other, with no
-error. `devlake.session.put_fork_on_path` refuses to put a second fork's directory on
-`sys.path`, and refuses if any fork module name is already imported from a different directory.
-Exactly one fork is ever active in a process; use two processes (or `subprocess`) to run both.
-`devlake` itself has to live at the repo root rather than inside either fork directory for
-exactly this reason — a fork directory can only ever host that one fork.
+`brick/` used to have a sibling fork (`brick/devsecops/`) defining the same module names
+(`config`, `ingest`, `run_pipeline`, ...) in different files — a `sys.path` holding both
+directories would resolve a bare `import config` to whichever came first, half of one pipeline
+and half of the other, with no error. That fork is retired: one tree, four scopes. What is
+still real on a flat Databricks workspace folder is a STALE IMPORT — a `sys.modules` entry left
+behind from some other directory entirely (a prior test module, a notebook cell, an old
+checkout on `sys.path` ahead of this one) — and `devlake.session.put_brick_on_path` still
+refuses that outright, checking every module name it defines against the directory it was
+actually loaded from. `devlake` itself has to live at the repo root rather than inside `brick/`
+for exactly this reason — a fork directory can only ever host that one tree.
 
 ## The jar pin
 
 `devlake.session.jar_coordinate()` derives the Ivy coordinate from
 `importlib.metadata.version("delta-spark")` rather than hardcoding it. The Python package and
 the jar are one release; a hardcoded pin drifting out of step with the installed package is
-exactly what broke `csvstore` restore under Spark 3.5.9 (see the fork conftests). Both fork
-`tests/conftest.py` files still hardcode `DELTA_PACKAGE` — `test_lake.py` checks they at least
-name the same MAJOR.MINOR line as whatever is installed, not exact equality, since the patch
-pin is a separate step.
+exactly what broke `csvstore` restore under Spark 3.5.9 (see `brick/tests/conftest.py`'s own
+comments). `brick/tests/conftest.py` still hardcodes `DELTA_PACKAGE` — `test_lake.py` checks it
+at least names the same MAJOR.MINOR line as whatever is installed, not exact equality, since the
+patch pin is a separate step.
 
 ## The builder limitation, and why DDL pre-creation exists
 
@@ -76,18 +78,18 @@ by hand against a restarted lake.
 
 ## Run a fake scan
 
-`devlake/fakewiz.py` and `devlake/run.py` let a fork's real `run_pipeline.main()` run end to
+`devlake/fakewiz.py` and `devlake/run.py` let `brick`'s real `run_pipeline.main()` run end to
 end against a fake Wiz GraphQL server, with no network call and no credentials -- ingest,
 `ensure_schema`, `recorded_scan`, `clear_scan`, MERGE and the gold families (all appended into
 `metrics`, one write, `family`-tagged) all run exactly as a Databricks Job would run them.
 
 ```bash
-SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=os --scans=2 --lake=/tmp/lakecheck
-SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=sca --scans=2 --lake=/tmp/lakecheck
-SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=sast --scans=2 --lake=/tmp/lakecheck
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --scope=os --scans=2 --lake=/tmp/lakecheck
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --scope=sca --scans=2 --lake=/tmp/lakecheck
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --scope=sast --scans=2 --lake=/tmp/lakecheck
 ```
 
-Each runs `--scans` scans a day apart, starting `2026-06-01T00:00:00Z`, through the fork's
+Each runs `--scans` scans a day apart, starting `2026-06-01T00:00:00Z`, through `brick`'s
 committed fixture (`devlake.run.default_fixture`), then prints the scan log (the `metrics`
 table's `family='scan'` rows) and the `resolution_src` split. Measured on the committed fixtures:
 
@@ -111,14 +113,13 @@ scan-2   sast   40     0          0                     the committed capture ha
 **The seam is `ingest._post`.** `devlake.fakewiz.FakeWiz` replaces it with an in-memory,
 paginated server that answers under the right connection (`vulnerabilityFindings` for
 `os`/`sca`, `sastFindings` for `sast`) and, before answering, validates that `filterBy` is
-shaped the way *this scope's* filter type actually wants it -- reading
-`config.OBJECT_FILTERS` when the fork has one (devsecops) and the equivalent single-connection
-table when it does not (brick). A mismatch (SAST's `severity` sent SCA's way, or vice versa)
-raises the same `RuntimeError` `ingest._post` itself raises on a live HTTP 400, formatted
-through the fork's own `describe_errors` -- so a wrong shape is loud, the way it would be
-against the real tenant, rather than a silent empty page. `devlake.run.scan(fork, scope, nodes,
-...)` is the one-call harness around it: it puts the requested fork on `sys.path` (switching
-away from whichever fork was there before, if any), precreates the tables
+shaped the way *this scope's* filter type actually wants it -- reading `config.OBJECT_FILTERS`
+(every scope has an entry there today; the equivalent single-connection table is a defensive
+fallback that does not currently fire). A mismatch (SAST's `severity` sent SCA's way, or vice
+versa) raises the same `RuntimeError` `ingest._post` itself raises on a live HTTP 400, formatted
+through `ingest`'s own `describe_errors` -- so a wrong shape is loud, the way it would be
+against the real tenant, rather than a silent empty page. `devlake.run.scan(scope, nodes, ...)`
+is the one-call harness around it: it puts `brick/` on `sys.path`, precreates the tables
 `create_clustered`'s builder cannot parse a three-level name for -- `lake.precreate_clustered`,
 which now covers every clustered table (`ledger`, `bronze`; there is no `silver` table to
 precreate separately, since silver is not stored) -- installs the fake, and calls
@@ -149,7 +150,7 @@ Databricks, and this module is what puts a fake `dbutils` there, plus `spark`, `
 `displayHTML`, and a `%sql` input transformer that rewrites a `%sql`-led cell into
 `display(spark.sql("""..."""))` using the exact same rule
 `brick/tests/test_notebooks.py::sql_cells` uses (`devlake.notebook.split_sql_cell` — pinned
-against every shipped `.ipynb` in both forks by
+against every shipped `.ipynb` under `brick/notebooks/` by
 `devlake/tests/test_notebook_shims.py::test_the_sql_transformer_splits_exactly_as_the_notebook_test_does`).
 
 **Why a kernel *startup* file, not a documented first cell.** Every notebook's own cell 2 (the
@@ -177,7 +178,7 @@ search) before importing `devlake`, and writes any remaining failure straight to
 
 ```bash
 # 1. Build a lake to point the notebooks at (see "Run a fake scan" above).
-SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --fork=brick --scope=os --scans=2 --lake=/tmp/lakecheck
+SPARK_LOCAL_IP=127.0.0.1 python3 -m devlake.run --scope=os --scans=2 --lake=/tmp/lakecheck
 
 # 2. Wire the startup file into a throwaway IPython profile.
 mkdir -p /tmp/devlake-ipython/profile_default/startup
@@ -189,7 +190,6 @@ cp devlake/kernel_startup.py /tmp/devlake-ipython/profile_default/startup/00-dev
 export IPYTHONDIR=/tmp/devlake-ipython
 export DEVLAKE_LAKE=/tmp/lakecheck
 export DEVLAKE_SCHEMA=wiz
-export DEVLAKE_FORK=brick
 export SPARK_LOCAL_IP=127.0.0.1
 export WIDGET_CATALOG=spark_catalog
 export WIDGET_SCHEMA=wiz
@@ -203,10 +203,10 @@ widget that already exists keeps its value, so change a filter through the widge
 re-exporting the env var, once the kernel is running).
 
 Equivalently, from a running kernel that already has `spark` some other way (or one you built by
-hand), `%load_ext devlake.notebook` reads the same `DEVLAKE_LAKE` / `DEVLAKE_SCHEMA` /
-`DEVLAKE_FORK` env vars, builds the session, reregisters the lake, and installs the shim —
-`devlake.kernel_startup` is a one-line wrapper around exactly this call, run automatically at
-IPython startup instead of by hand.
+hand), `%load_ext devlake.notebook` reads the same `DEVLAKE_LAKE` / `DEVLAKE_SCHEMA` env vars,
+builds the session, reregisters the lake, and installs the shim — `devlake.kernel_startup` is a
+one-line wrapper around exactly this call, run automatically at IPython startup instead of by
+hand.
 
 **Measured, and it does NOT pass**: `brick/notebooks/00_security_posture.ipynb`, run this way
 against a two-scan lake via `nbclient.NotebookClient` in a real `ipykernel` subprocess (its own
@@ -265,7 +265,7 @@ it explicitly from the repo root:
 SPARK_LOCAL_IP=127.0.0.1 python3 -m pytest devlake/tests -q
 ```
 
-Needs `pyspark` and `delta-spark` installed (from either fork's `requirements.txt`) plus
+Needs `pyspark` and `delta-spark` installed (from `brick/requirements.txt`) plus
 `devlake/requirements.txt`'s own deps for the notebook/DuckDB steps (`duckdb`, `ipykernel`,
 `nbclient`, `pyyaml`; `jupyterlab` only if you want `jupyter lab brick/notebooks` for interactive
 use — no test imports it). Tests `importorskip` both `pyspark` and `delta` and skip cleanly if

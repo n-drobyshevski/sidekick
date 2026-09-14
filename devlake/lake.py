@@ -86,7 +86,7 @@ def _render_ddl(schema) -> str:
     """A ``StructType`` as a ``CREATE TABLE`` column list.
 
     Copied from ``brick/tests/test_catalog_mode.py::render_ddl`` rather than imported: that
-    module lives under a fork's own ``tests/`` directory, on a ``sys.path`` this package must
+    module lives under ``brick``'s own ``tests/`` directory, on a ``sys.path`` this package must
     not assume is set up, and importing test code from library code would run the guard
     backwards regardless. ``simpleString()`` is ``StructType.toDDL``'s SQL spelling -- Scala-only
     in PySpark 3.5 -- so nested types render correctly with no hand-rolled type-name table to get
@@ -116,9 +116,9 @@ def precreate_clustered(spark: "SparkSession", run_pipeline_module, tables) -> l
     run unchanged from there on -- it finds the table already there and never calls the builder.
 
     Iterates ``run_pipeline_module.CLUSTERING`` -- ``ledger`` and ``bronze`` -- and skips
-    whichever already exist, reading each one's declared schema straight off the fork
+    whichever already exist, reading each one's declared schema straight off ``brick``
     (``ledger.LEDGER_SCHEMA``, ``run_pipeline.BRONZE_TABLE_SCHEMA``). There is no ``silver`` here
-    to skip any more: silver is not a Delta table at all in either fork -- it is a projection
+    to skip any more: silver is not a Delta table at all -- it is a projection
     derived from ``bronze`` in memory (``metrics.silver_findings``), so it has no on-disk shape
     to precreate. ``metrics`` (the gold + scan-log table) is unclustered and needs no entry here
     either; it is created the way ``scans`` used to be, as an empty declared frame that gains its
