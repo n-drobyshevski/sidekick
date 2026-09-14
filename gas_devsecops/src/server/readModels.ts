@@ -108,10 +108,10 @@ import {
   RESOLVED_STATUSES,
   SCOPES,
   SEVERITY_ORDER,
-  SLA_TARGETS,
   ruleForScope,
   type Scope,
 } from "../domain/config";
+import { effectiveSlaTargets } from "../domain/settingsLogic";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
@@ -229,6 +229,16 @@ interface NormParams {
    * the public `ModelParams` — nothing calling in from `api.ts` is meant to set it directly.
    */
   project: string | null;
+  /**
+   * The SLA windows actually in force — `settingsLogic.effectiveSlaTargets`, read off
+   * `settingsStore.loadSettings()` exactly once here, same as `project` above. NEVER a
+   * `ModelParams` field for the same reason `project` is not one: a per-page override would
+   * let one caller ask this register to report an attainment number no other page on it
+   * would agree with. `buildMttr`, `buildExecutive` and `buildRegister` are the readers —
+   * see `insights.agingDistribution` / `triageFunnel`, `remediation.openPastSla`,
+   * `lifecycle.mttrFromLedger` and `fixNext`'s matching parameters.
+   */
+  slaTargets: Record<string, number>;
 }
 
 /**
@@ -242,12 +252,21 @@ function norm(p?: ModelParams): NormParams {
   const severities = Array.isArray(sevRaw) && sevRaw.length
     ? sevRaw.map((s) => normalizeSeverity(s)).filter((s, i, a) => a.indexOf(s) === i).sort()
     : null;
+  // One `loadSettings()` for both fields it feeds below — `project` and `slaTargets` are two
+  // independent readings of the same settings row, not two separate reasons to fetch it twice.
+  const settings = loadSettings();
   // `cleanProjectView` already collapses anything that is not a genuine string to "" — this
   // is just the last step, turning that "no scope stored" value into the `null` every other
   // knob here uses for "not narrowed".
-  const projectRaw = loadSettings().projectView;
+  const projectRaw = settings.projectView;
   const project = projectRaw ? projectRaw : null;
-  return { scope, severities, showNoFix: p?.showNoFix !== false, project };
+  return {
+    scope,
+    severities,
+    showNoFix: p?.showNoFix !== false,
+    project,
+    slaTargets: effectiveSlaTargets(settings),
+  };
 }
 
 /** The key a cached model is stored under. Spelled out so the field order is stable. */
@@ -566,7 +585,10 @@ function buildMttr(n: NormParams): Rec {
   const scoped = scopedRows(snap.rows, n);
   const rows = visibleRows(snap.rows, n);
 
-  const { perSev, overall } = mttrFromLedger(rows as unknown as Rec[], { now: snap.now });
+  const { perSev, overall } = mttrFromLedger(
+    rows as unknown as Rec[],
+    { now: snap.now, slaTargets: n.slaTargets },
+  );
   const { slaPct, oldestDays } = overallSlaOldest(perSev);
 
   // Per-severity KM off ONE curve per severity, keyed by normalized severity so it lines up
@@ -631,7 +653,7 @@ function buildMttr(n: NormParams): Rec {
       kmP90PerSev,
       kmLowerBoundPerSev,
       kmPerSev,
-      openPastSla: openPastSla(rows),
+      openPastSla: openPastSla(rows, { slaTargets: n.slaTargets }),
       /**
        * The open backlog as an age DISTRIBUTION, against the per-severity SLA edge.
        *
@@ -645,7 +667,7 @@ function buildMttr(n: NormParams): Rec {
        * row with no readable `first_seen` is not young, it is undated, and the page prints
        * that count rather than letting the bars quietly cover fewer rows than the hero does.
        */
-      aging: agingDistribution(rows),
+      aging: agingDistribution(rows, undefined, n.slaTargets),
       /**
        * The SAME open rows, against their OWN deadline instead of the shared 7/30/90 edges:
        * how much of each finding's SLA window it has consumed, in tenths.
@@ -657,10 +679,12 @@ function buildMttr(n: NormParams): Rec {
        * two populations that have no tenth to plot — past the window, and no window at all —
        * are counted separately rather than folded into a bar.
        *
-       * `SLA_TARGETS` is passed in from HERE rather than read inside `insights.ts`, which
-       * keeps that function pure over its arguments; the client never receives the table.
+       * `n.slaTargets` — the EFFECTIVE windows (the shared constant, overridden by whatever
+       * this register's operator saved on the Deadlines tab) — is passed in from HERE rather
+       * than read inside `insights.ts`, which keeps that function pure over its arguments;
+       * the client never receives the table.
        */
-      slaConsumed: slaConsumedDeciles(rows, SLA_TARGETS),
+      slaConsumed: slaConsumedDeciles(rows, n.slaTargets),
       awaiting: awaitingVendorFix(rows),
       /**
        * The second clock, scoped and labelled. `notMeasured` is every scoped row this block
@@ -672,7 +696,7 @@ function buildMttr(n: NormParams): Rec {
         scope: "sca" as const,
         rowCount: scaVisible.length,
         notMeasured: rows.length - scaVisible.length,
-        openPastSla: openPastSla(actionableView(scaVisible)),
+        openPastSla: openPastSla(actionableView(scaVisible), { slaTargets: n.slaTargets }),
         km: shipKM(kaplanMeier(actionableView(scaVisible))),
         /** How long we waited for a fix to EXIST, over the pre-toggle sca population. Pairs
          *  additively with the clock above: exposure = latency + actionable. */
@@ -689,7 +713,14 @@ export function mttrModel(p?: ModelParams): Rec {
   // entry has none of it, and the section would be missing entirely from a page whose other
   // figures are drawn — a chart absent for a cache reason reads as a register with nothing
   // inside its windows.
-  return cached("dsMttr2", keyOf(n), () => buildMttr(n), CLOCK_TTL_SEC);
+  //
+  // `slaTargets` JOINS THE KEY (not just `keyOf`'s base four) because this compute reads it —
+  // `openPastSla`, `agingDistribution` and `mttrFromLedger`'s `sla_target`/`sla_pct` all take
+  // it as an argument below. Without it in the key, an operator saving a new Deadlines window
+  // would keep serving the OLD attainment figures for up to `CLOCK_TTL_SEC`, off a cache entry
+  // whose params look identical to the one now in effect. `secretsModel`'s own key (below)
+  // shows the mirror rule: a param the compute does not read never joins a key either.
+  return cached("dsMttr2", { ...keyOf(n), slaTargets: n.slaTargets }, () => buildMttr(n), CLOCK_TTL_SEC);
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -749,7 +780,9 @@ function buildExecutive(n: NormParams): Rec {
     weekTrend: weekTrend(scoped, n, snap.now),
     // What to do next, and what the list left out. One call, one pass over the rows the
     // severity tiles already counted, so the ranked figure and the tiles cannot disagree.
-    fixNext: fixNext(rows, { now: snap.now }) as unknown as Rec,
+    // `slaTargets` is the EFFECTIVE map so tier 2/3's "past SLA" gate — and therefore
+    // `unranked.insideSla` — agree with the same windows `mttrModel` measures against.
+    fixNext: fixNext(rows, { now: snap.now, slaTargets: n.slaTargets }) as unknown as Rec,
     movement: openMovement(rows, n),
     tiers: riskTierStats(scopedTierRows(rows), undefined),
     signalCoverage: signalCoverage(rows),
@@ -900,7 +933,14 @@ function openMovement(rows: BaseRow[], n: NormParams): Rec {
 
 export function executiveModel(p?: ModelParams): Rec {
   const n = norm(p);
-  return cached("dsExecutive1", keyOf(n), () => buildExecutive(n), CLOCK_TTL_SEC);
+  // `slaTargets` joins the key because `fixNext` (inside `buildExecutive`) reads it — see
+  // `mttrModel`'s matching comment for why a param the compute reads has to be in the key.
+  return cached(
+    "dsExecutive1",
+    { ...keyOf(n), slaTargets: n.slaTargets },
+    () => buildExecutive(n),
+    CLOCK_TTL_SEC,
+  );
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -986,7 +1026,7 @@ function buildRegister(scope: Scope, n: NormParams): Rec {
     // from the table rather than from what a page might like to see.
     concentration: concentration(rows as unknown as Rec[], CONCENTRATION_DIMS[scope], 5, scope),
     tiers: riskTierStats(scopedTierRows(rows), undefined, scope),
-    funnel: triageFunnel(rows as never, undefined, new Set<string>(), false, scope),
+    funnel: triageFunnel(rows as never, undefined, new Set<string>(), false, scope, n.slaTargets),
     awaiting: awaitingVendorFix(rows, { scope }),
     latestScan: latest,
     signalCoverage: signalCoverage(rows),
@@ -1033,8 +1073,10 @@ export function registerModel(scope: Scope, p?: ModelParams): Rec {
     // gate the last scan applied, the base filter words). A warm dsRegister1 entry carries
     // none of it, and the page would draw no provenance line at all over figures that have
     // one — worse than a stale number, because it is a silently missing caveat.
+    // `slaTargets` joins the key because `triageFunnel`'s `overdue` step (inside
+    // `buildRegister`) reads it — see `mttrModel`'s matching comment.
     "dsRegister2",
-    { ...keyOf(n), scope },
+    { ...keyOf(n), scope, slaTargets: n.slaTargets },
     () => buildRegister(scope, n),
     CLOCK_TTL_SEC,
   );

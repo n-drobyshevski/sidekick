@@ -143,6 +143,7 @@ function api_testScanVars(p) { return timedApi_("testScanVars", p); }
 function api_probeSyncStep(p) { return timedApi_("probeSyncStep", p); }
 function api_getSettings(p) { return timedApi_("getSettings", p); }
 function api_setSettings(p) { return timedApi_("setSettings", p); }
+function api_getSettingsImpact(p) { return timedApi_("getSettingsImpact", p); }
 function api_getAccess(p) { return timedApi_("getAccess", p); }
 function api_saveAccess(p) { return timedApi_("saveAccess", p); }
 function api_saveAdmins(p) { return timedApi_("saveAdmins", p); }

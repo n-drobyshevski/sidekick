@@ -211,6 +211,43 @@ export function relativeAge(ts) {
 }
 
 /**
+ * "43 (57 all time)" — the open figure first, the whole-register one behind it.
+ *
+ * PROMOTED FROM gas/src/client/js/settingsReadouts.js (P2), where it was the one formatting
+ * rule on the Settings page's live readouts. It belongs here rather than in the new
+ * gas_shared/ui/settingsReadouts.js because it is a NUMBER FORMATTER, the same family as
+ * `fmtCount`/`pct1`/`days1` above, not a DOM builder — and it is not gas's alone: the shared
+ * `severitySplitModel` below (settingsReadouts.js) uses it too, to pair a severity's open
+ * count against its all-time one in the same caption.
+ *
+ * A register holds resolved lifecycles as well as open ones, and every figure this formats was
+ * counting both while labelling itself "open". What a reader is deciding about is the open
+ * backlog, so that number leads.
+ *
+ * THE SUPPRESSION IS THE POINT of keeping this in one place. When the two are equal the second
+ * is dropped entirely, because a line that prints the same number twice reads as a bug and
+ * sends the reader looking for a difference that is not there. gas's own scopeSwitch.js (since
+ * deleted; see ui/scopeModel.js's history) reached the same conclusion for the same reason and
+ * guarded its own second figure on `unassignedBase > shown`.
+ *
+ * ONE THING IN THIS BRIEF WAS WRONG, worth recording so the next reader does not trust it: the
+ * package brief that moved this function claimed it "already depends on fmtCount". It does
+ * not — gas's original had its own private `fmt(n) { return (n || 0).toLocaleString(); }`,
+ * which treats a missing count as the NUMBER `0`, never the em dash. `fmtCount` refuses first
+ * and returns `absentText` for a null count, which is the right answer for a rendered cell but
+ * the wrong one here: `openAndTotal(undefined, undefined)` is contracted to read `"0"`, not
+ * `"—"` (see the moved test cases in gas_shared/test/contracts/settingsReadouts.js). So this
+ * keeps gas's original fallback-to-zero shape, built on `num(v, 0)` — the same refuse-before-
+ * cast allowlist as every formatter above, just given an explicit zero fallback instead of
+ * `fmtCount`'s null one.
+ */
+export function openAndTotal(open, total, unit = "all time") {
+  const o = num(open, 0);
+  const t = num(total, 0);
+  return o === t ? o.toLocaleString() : `${o.toLocaleString()} (${t.toLocaleString()} ${unit})`;
+}
+
+/**
  * The denominator node every rate on these pages carries.
  *
  * A RATE WITHOUT ITS DENOMINATOR IS NOT A MEASUREMENT — "99.6% unvalidated" and "3-day

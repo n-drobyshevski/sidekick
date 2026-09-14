@@ -32,37 +32,11 @@ import {
   chartTableModel, chartTablePaged, survivalTableModel,
 } from "../../gas_shared/ui/chartTable.js";
 import { DEFAULT_PAGE_SIZE, pageOf } from "../../gas_shared/ui/tableModel.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
-// ------------------------------------------------------------------ the comment stripper
-
-/**
- * The file with its `//` comments removed — string-aware, so a comment marker inside a quoted
- * string survives. Copied from gas_devsecops/test/chartTable.test.js's `code()` (itself copied
- * from `test/pagesLit.test.js`'s), for the identical reason: `ui/chartTable.js`'s own header
- * and several page comments below NAME `el("canvas"` and `chartTable(` while explaining the
- * rule, and a raw-text count would be thrown off by the sentence that states it.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// `ui/chartTable.js`'s own header and several page comments below NAME `el("canvas"` and
+// `chartTable(` while explaining the rule, and a raw-text count would be thrown off by the
+// sentence that states it — hence sweeping comment-stripped CODE rather than the source text.
 
 const PAGES_DIR = fileURLToPath(new URL("../src/client/js/pages/", import.meta.url));
 const PAGE_FILES = readdirSync(PAGES_DIR).filter((f) => f.endsWith(".js"));

@@ -63,11 +63,17 @@ import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
 import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
-import { relativeAge } from "../../gas_shared/ui/figures.js";
+import { openAndTotal, relativeAge } from "../../gas_shared/ui/figures.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
+import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
+import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
+import { registerSettingsReadoutsContract } from "../../gas_shared/test/contracts/settingsReadouts.js";
+import {
+  createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
+} from "../../gas_shared/ui/settingsReadouts.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 
@@ -376,4 +382,25 @@ registerScanStepContract({
   ...base,
   progressSrc: readFileSync(new URL("../src/client/js/syncProgress.js", import.meta.url), "utf8"),
   baseCss: readFileSync(new URL("../../gas_shared/styles/base.css", import.meta.url), "utf8"),
+});
+
+// =========================================================================================
+//  The settings kernel: this register's own SETTINGS_TABS/SETTING_FIELDS, plus the kernel's
+//  own fixed behaviour against a synthetic registry (settingsForm.js's own concern, not this
+//  app's — see that contract's header). `spine: true` pins the canonical tab order this wave
+//  put in place: Register leads (Graph and Compliance keep their own names and order behind
+//  it), Access then System close it out.
+// =========================================================================================
+registerSettingsFormContract({
+  ...base, tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB, spine: true,
+});
+
+// =========================================================================================
+//  The settings read-out vocabulary. gas_ai's own Settings page does not draw with this yet
+//  (that is P3 onward's job) — this registers the shared primitives' own fixed behaviour,
+//  the same way registerQuadContract/registerSparklineContract hold their modules' behaviour
+//  independent of which page in this app happens to call them.
+// =========================================================================================
+registerSettingsReadoutsContract({
+  ...base, impactSplitModel, severitySplitModel, tickTimeline, createCutHistogram, openAndTotal,
 });

@@ -13,7 +13,6 @@ import {
   changeSummary,
   changedFields,
   DEFAULT_TAB,
-  dirtyTabs,
   draftWarnings,
   fieldErrors,
   normalizeTab,
@@ -169,15 +168,6 @@ describe("field to tab ownership", () => {
       expect(ALL_TABS).toContain(SETTING_FIELDS[k].tab);
     }
   });
-
-  it("returns dirty tabs in tablist order, deduplicated", () => {
-    // fiveRsPins (compliance) edited first, defaultDepth (graph) second.
-    expect(dirtyTabs(["fiveRsPins", "defaultDepth", "maxNodes"])).toEqual(["graph", "compliance"]);
-  });
-
-  it("has no dirty tab for an empty change list", () => {
-    expect(dirtyTabs([])).toEqual([]);
-  });
 });
 
 describe("the save bar's wording", () => {
@@ -209,7 +199,10 @@ describe("normalizeTab", () => {
   // The Access tab is not drawn for a reader who may not edit the roster, so a bookmark made by
   // someone who could must land somewhere real rather than selecting a tab that was never built.
   it("rejects a tab the page did not build", () => {
-    const built = ["graph", "compliance", "system"];
+    // Register included: it is the default, and the fallback below only lands on DEFAULT_TAB
+    // when the built set actually contains it — the same requirement `pages/settings.js` meets
+    // by building Register unconditionally, unlike Access.
+    const built = ["register", "graph", "compliance", "system"];
     expect(normalizeTab("access", built)).toBe(DEFAULT_TAB);
     expect(normalizeTab("compliance", built)).toBe("compliance");
   });

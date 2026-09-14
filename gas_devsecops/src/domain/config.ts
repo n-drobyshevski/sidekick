@@ -328,3 +328,19 @@ export const MIN_UNSEALED_FLAT_SCANS = 2;
 
 /** Retention / compaction guardrail: default retention window, in days. gas/src/domain/config.ts:92. */
 export const DEFAULT_RETENTION_DAYS = 180;
+
+/**
+ * `settingsImpact.ts`'s `ageHistogram` measurement horizon, in whole days: an open row older
+ * than this is reported as `overCap` rather than binned or, worse, silently extrapolated past
+ * the population actually measured.
+ *
+ * NOT A MEASURED STATISTIC — no production open-age distribution was available to size this
+ * against, so 730 (two years) borrows the closest thing this codebase has to a stated opinion
+ * on "how far back does anyone actually look": the longest preset gas/'s own retention control
+ * already offers an operator (`gas/src/client/js/pages/data.js`'s `[730, "2 years"]`). This
+ * register's own `retentionDays` setting has no such preset (a free-form number floored at
+ * `RETENTION_MIN_DAYS`), and retention governs SCAN sealing, not finding age, so it is not a
+ * cap this constant could simply inherit — it is a fresh, reasoned default an operator can
+ * revisit once real backlog ages are on hand to check it against.
+ */
+export const AGE_HISTOGRAM_CAP_DAYS = 730;

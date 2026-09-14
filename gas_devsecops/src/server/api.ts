@@ -43,10 +43,14 @@
 // `getRegisterPage({scope:"secrets"})` back would render a register page missing the only
 // blocks that say whether a credential is live.
 
-import { SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS, type Scope } from "../domain/config";
+import {
+  AGE_HISTOGRAM_CAP_DAYS, RESOLVED_STATUSES, SCOPE_LABELS, SCOPES, SEVERITY_ORDER, SLA_TARGETS,
+  type Scope,
+} from "../domain/config";
 import { normalizeSeverity } from "../domain/severity";
-import { withSettings } from "../domain/settingsLogic";
+import { effectiveSlaTargets, withSettings } from "../domain/settingsLogic";
 import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
+import * as settingsImpact from "../domain/settingsImpact";
 import type { Rec } from "../domain/util";
 import {
   execGroupSlice,
@@ -63,6 +67,7 @@ import {
 import { BUILD_ID } from "./buildInfo";
 import { getProp, hasWizCredentials, projectScope, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
+import { cached } from "./serverCache";
 import { loadSettings, saveSettings } from "./settingsStore";
 import { readAll, TAB_HEADERS, TABS } from "./sheetsDb";
 import * as access from "./access";
@@ -132,7 +137,30 @@ export interface Bootstrap {
    *  a second copy of the mapping — `railStatus.js`'s `withLabels`. */
   scopeLabels: Record<string, string>;
   severityOrder: readonly string[];
+  /**
+   * THE SHARED, BYTE-IDENTICAL CONSTANT — `domain/config.ts`'s `SLA_TARGETS`, NEVER the
+   * per-register override. This is the CANONICAL value `src/client/js/pages/settings.js`'s
+   * `doSave` reads as `draftWarnings`'s `sharedSlaTargets`: the baseline a saved draft is
+   * compared AGAINST to decide whether to warn the operator that a changed window "would no
+   * longer match the window the OS, AI and pipeline registers use" (settingsModel.js).
+   *
+   * MUST NOT become the effective map. If this field started shipping this register's own
+   * saved override, `sharedSlaTargets` would equal the very draft it is meant to be compared
+   * against — the warning could never fire again, for every operator who has ever saved a
+   * custom window. `effectiveSlaTargets` below is the second field that exists so this one
+   * does not have to carry both meanings.
+   */
   slaTargets: Record<string, number>;
+  /**
+   * THE EFFECTIVE MAP — `settingsLogic.effectiveSlaTargets(settings)`: `slaTargets` above,
+   * overlaid with whatever this register's operator saved on the Deadlines tab. This is what
+   * every SLA figure the register actually PUBLISHES is measured against server-side
+   * (`readModels.ts`'s `buildMttr` / `buildExecutive` / `buildRegister`, `fixNext.ts`) — ships
+   * here too so a client reader wanting "the window this register measures against" never has
+   * to re-derive the overlay from `settings.slaTargets` itself (though that field carries the
+   * same value, `cleanSettings` having already applied it — see that file's header).
+   */
+  effectiveSlaTargets: Record<string, number>;
   /**
    * When each scope was last scanned — THREE CLOCKS, not one, unlike `latestSync` below.
    *
@@ -311,6 +339,7 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     scopeLabels: SCOPE_LABELS,
     severityOrder: SEVERITY_ORDER,
     slaTargets: SLA_TARGETS,
+    effectiveSlaTargets: effectiveSlaTargets(settings),
     latestSync,
     lastScanByScope,
     activeJob: (() => {
@@ -801,6 +830,114 @@ export function getScanHistory(p?: unknown): ApiResult {
 /** What the register costs and what is consuming the cell ceiling. */
 export function getStorageStats(_p?: unknown): ApiResult {
   return run(() => readModels.storageModel());
+}
+
+/** Same open/resolved test the rest of the domain uses (config.RESOLVED_STATUSES). A private
+ *  copy at each call site is how the Executive tiles once counted resolved rows under a label
+ *  that said "open" — see readModels.ts's own `isOpen` and its docstring. */
+function isOpenRow(status: unknown): boolean {
+  return !RESOLVED_STATUSES.has(String(status ?? "").toUpperCase());
+}
+
+/**
+ * Everything the Settings page needs to say, beside each control, what that control is
+ * currently doing to the register — this register's twin of gas/'s `settingsImpactData`. See
+ * `domain/settingsImpact.ts`'s header for the thesis and for what is and is not ported from
+ * gas/'s file of the same name (no risk cube, no display-toggle impact — this register has
+ * neither control today).
+ *
+ * WHAT THIS WALKS, FOR THE EXECUTION BUDGET. ONE `ledgerStore.loadBaseRows({ now })` — the same
+ * full BaseRow derivation every page's read-model reuses (`readModels.ts`'s `baseSnapshot()`
+ * calls the identical function) — grouped by `scope` in a single pass for the census AND the
+ * age histogram (P6b folds `settingsImpact.ageHistogram` into the same per-scope loop that
+ * already builds `severityCensus`, rather than walking `rows` a second time), plus
+ * `ledgerStore.loadScanRows()`, which is scans-tab-only and already memoized per execution
+ * (`ledgerStore.ts`'s own comment: "cheap; enough for history/meta reads"). No second loader,
+ * no per-scope re-derivation, and the whole thing sits behind `cached()` at a 1 h TTL besides.
+ *
+ * THE VIEW-PROJECT SCOPE APPLIES to the census and the histogram alike, exactly as it does to
+ * every other model (`readModels.ts`'s `NormParams.project`): `loadBaseRows()` is register-wide
+ * by construction, so a reader working inside one project scope previews a severity-gate,
+ * scope, or SLA-window change against the population they can actually see, not the whole
+ * tenant. Scans are NOT project-scoped — a sync run is a whole-register event with no project
+ * dimension of its own.
+ */
+function settingsImpactData(): Rec {
+  const now = Date.now();
+  const settings = loadSettings();
+  const projectView = settings.projectView || null;
+
+  let rows = ledgerStore.loadBaseRows({ now }) as unknown as Rec[];
+  if (projectView) {
+    rows = rows.filter((r) =>
+      inProject(parseProjects(r["projects_json"] as string | null | undefined), projectView));
+  }
+
+  const byScope = {} as Record<Scope, Rec>;
+  const ageHistogramByScope = {} as Record<Scope, Record<string, settingsImpact.AgeBin>>;
+  for (const scope of SCOPES) {
+    const scoped = rows.filter((r) => r["scope"] === scope);
+    const isOpen = (r: Rec) => isOpenRow(r["status"]);
+    byScope[scope] = {
+      total: scoped.length,
+      openTotal: scoped.filter(isOpen).length,
+      bySeverity: settingsImpact.severityCensus(
+        scoped, (r) => normalizeSeverity(r["severity"]), isOpen),
+    };
+    ageHistogramByScope[scope] = settingsImpact.ageHistogram(
+      scoped, (r) => normalizeSeverity(r["severity"]), isOpen, (r) => r["age_days"]);
+  }
+
+  return {
+    census: { byScope },
+    // Target-independent by construction (see settingsImpact.ts's ageHistogram docstring: it is
+    // a distribution of AGES, not a count against any particular SLA_TARGETS/effectiveSlaTargets
+    // value), which is exactly why it can sit beside `census` under the same projectView-only
+    // cache key below rather than forcing slaTargets into it.
+    ageHistogram: ageHistogramByScope,
+    capDays: AGE_HISTOGRAM_CAP_DAYS,
+    // ONE LANE, every scope's scan rows in one time-ordered list — see settingsImpact.ts's
+    // scanAges docstring for why three per-scope lanes would misstate a floor this register
+    // computes once, across all three registers together.
+    scans: settingsImpact.scanAges(
+      ledgerStore.loadScanRows().map((s) => ({ scope: s.scope, ts: s.ts, sealed: s.sealed })),
+      now,
+    ),
+  };
+}
+
+/**
+ * Keyed on `projectView` ALONE, not on `scopes` or `fetchSeverities` despite both being real
+ * Settings fields — this is the audit gas/'s own comment gets wrong in code (it claims to
+ * exclude its two display toggles and includes them anyway). The REASONING gas/ states, applied
+ * here rather than its inconsistent code: key on what actually changes the returned value.
+ *
+ *   - `census` is built over the UNFILTERED base per scope, on purpose (settingsImpact.ts's
+ *     header) — the whole point is to preview a change to the severity gate or the scope set,
+ *     which needs the population from BEFORE that gate or that set was applied. Changing either
+ *     one therefore changes nothing this endpoint returns.
+ *   - `scans` reads every scan row regardless of the current scope set or severity gate — a
+ *     scan already run stays in the log whether or not its scope is still enabled.
+ *   - `ageHistogram` MUST NOT gain `slaTargets` in the key either, for the same shape of reason,
+ *     one step further: it is a distribution of ages, built with no reference to any SLA window
+ *     at all (settingsImpact.ts's `ageHistogram` never reads `SLA_TARGETS` or
+ *     `effectiveSlaTargets`) — it is what lets a client re-derive `breached(t)` for a target the
+ *     operator hasn't saved yet, the way the EPSS cube lets one re-derive a classifier readout
+ *     for a threshold that hasn't been saved. Keying on `slaTargets` would cache a value that
+ *     cannot change with `slaTargets` behind a key that pretends it can.
+ *   - `projectView` DOES change the census AND the histogram: it is a real filter over
+ *     `loadBaseRows()`'s rows, applied before either is built, and a reader can switch project
+ *     view without saving any other setting, so its own cache entry is what keeps two project
+ *     views from serving each other's counts.
+ *
+ * 1 h TTL, same as gas/'s `settingsImpact2` entry — the scan ages are wall-clock relative, so a
+ * durable (cross-request-forever) cache would drift by design.
+ */
+const cachedSettingsImpactData = () =>
+  cached("settingsImpact", { projectView: loadSettings().projectView || null }, () => settingsImpactData(), 3600);
+
+export function getSettingsImpact(_p?: unknown): ApiResult {
+  return run(() => cachedSettingsImpactData());
 }
 
 // --------------------------------------------------------------------------------------- //

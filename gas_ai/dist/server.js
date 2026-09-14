@@ -690,12 +690,12 @@ var Server = (() => {
 
   // src/domain/registerScope.ts
   var CANDIDATE_CATEGORIES = [
-    { id: RISK_CATEGORY_ID, name: "AI Security" },
-    { id: "wct-id-3", name: "Vulnerability Assessment" },
-    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats" },
-    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security" },
-    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management" },
-    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management" }
+    { id: RISK_CATEGORY_ID, name: "AI Security", count: 99, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "wct-id-3", name: "Vulnerability Assessment", count: 677, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats", count: 536, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security", count: 439, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management", count: 1390, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+    { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management", count: 3477, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" }
   ];
   var DEFAULT_CATEGORY_IDS = [RISK_CATEGORY_ID];
   function cleanCategoryIds(v) {
@@ -4061,7 +4061,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "b73129c11f05" : "dev";
+  var BUILD_ID = true ? "56a517e39a60" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
@@ -12381,6 +12381,7 @@ var Server = (() => {
     getScanQueries: () => getScanQueries,
     getScanStepDetail: () => getScanStepDetail,
     getSettings: () => getSettings,
+    getSettingsImpact: () => getSettingsImpact,
     getStorageStats: () => getStorageStats,
     getSyncHistory: () => getSyncHistory,
     getToxicCombos: () => getToxicCombos,
@@ -13889,6 +13890,146 @@ var Server = (() => {
       passCount,
       failCount,
       wizPosturePct
+    };
+  }
+
+  // src/domain/settingsImpact.ts
+  function categoryMaskOf(categories, candidateIds) {
+    let mask = 0;
+    for (const cat of categories != null ? categories : []) {
+      const idx = candidateIds.indexOf(cat);
+      if (idx >= 0) mask |= 1 << idx;
+    }
+    return mask;
+  }
+  function buildCategoryCube(rows, candidateIds, configuredIds) {
+    var _a5;
+    const cells = {};
+    let seenBits = 0;
+    for (const r of rows) {
+      const mask = categoryMaskOf(r.categories, candidateIds);
+      seenBits |= mask;
+      const key = String(mask);
+      cells[key] = ((_a5 = cells[key]) != null ? _a5 : 0) + 1;
+    }
+    const configured = new Set(configuredIds);
+    const measuredCandidateIds = candidateIds.filter(
+      (id, i) => configured.has(id) || (seenBits & 1 << i) !== 0
+    );
+    return { total: rows.length, cells, candidateIds: [...candidateIds], measuredCandidateIds };
+  }
+  var DEFAULT_CANDIDATE_IDS = CANDIDATE_CATEGORIES.map((c) => c.id);
+  function parsesAsDate(v) {
+    return typeof v === "string" && v !== "" && Number.isFinite(Date.parse(v));
+  }
+  function termCoverageOf(rows) {
+    var _a5;
+    let dueAtN = 0;
+    let createdAtN = 0;
+    let exploitationN = 0;
+    let adjacencyN = 0;
+    for (const r of rows) {
+      if (parsesAsDate(r.dueAt)) dueAtN += 1;
+      if (parsesAsDate(r.createdAt)) createdAtN += 1;
+      const tier = String((_a5 = r.exploitationTier) != null ? _a5 : "").trim().toLowerCase();
+      if (tier && tier !== "unknown") exploitationN += 1;
+      if (r.aiAdjacency) adjacencyN += 1;
+    }
+    return {
+      total: rows.length,
+      rule: rows.length,
+      time: { dueAt: dueAtN, createdAt: createdAtN },
+      exploitation: exploitationN,
+      adjacency: adjacencyN
+    };
+  }
+  var RANK_EPSS_BINS = 100;
+  var RANK_DAY_MS = 864e5;
+  function rankLadderIdx(value, buckets) {
+    let idx = 0;
+    for (let i = 0; i < buckets.length; i++) if (value > buckets[i]) idx = i + 1;
+    return idx;
+  }
+  function rankClamp01(v) {
+    const n = typeof v === "number" ? v : Number(v);
+    if (!Number.isFinite(n)) return 0;
+    return n < 0 ? 0 : n > 1 ? 1 : n;
+  }
+  function rankWeightFor(row, rule) {
+    var _a5, _b;
+    for (const rw of (_a5 = rule.ruleWeights) != null ? _a5 : []) {
+      if (rw && String((_b = rw.ruleId) != null ? _b : "").trim() === rankKeyOf(row)) return rankClamp01(rw.weight);
+    }
+    return rankClamp01(rule.defaultRuleWeight);
+  }
+  function rankEpssBinOf(v, bins = RANK_EPSS_BINS) {
+    if (v >= 1) return bins;
+    return Math.max(0, Math.min(bins - 1, Math.floor(v * bins + 1e-9)));
+  }
+  function rankTupleOf(row, rule, nowIso2) {
+    var _a5, _b, _c, _d;
+    const overdueBuckets = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
+    const ageBuckets = (_b = rule.ageDayBuckets) != null ? _b : DEFAULT_RANK_RULE.ageDayBuckets;
+    const now = Date.parse(nowIso2);
+    const due = row.dueAt ? Date.parse(row.dueAt) : NaN;
+    const dueStep = Number.isFinite(due) && Number.isFinite(now) ? rankLadderIdx((now - due) / RANK_DAY_MS, overdueBuckets) : null;
+    const created = row.createdAt ? Date.parse(row.createdAt) : NaN;
+    const ageStep = Number.isFinite(created) && Number.isFinite(now) ? rankLadderIdx((now - created) / RANK_DAY_MS, ageBuckets) : null;
+    const tier = String((_c = row.exploitationTier) != null ? _c : "").trim().toLowerCase();
+    const peak = typeof row.epssPeak === "number" && Number.isFinite(row.epssPeak) ? row.epssPeak : null;
+    let exploitationTier = "unmeasured";
+    let epssBin = null;
+    if (tier === "kev") exploitationTier = "kev";
+    else if (tier === "exploit") exploitationTier = "exploit";
+    else if (tier === "none") exploitationTier = "none";
+    else if (tier === "epss") {
+      if (peak !== null) {
+        exploitationTier = "epss";
+        epssBin = rankEpssBinOf(peak);
+      } else exploitationTier = "none";
+    }
+    const adjRaw = String((_d = row.aiAdjacency) != null ? _d : "").trim().toUpperCase();
+    const adjacency2 = adjRaw === "DIRECT" || adjRaw === "ADJACENT" || adjRaw === "UNLINKED" ? adjRaw : "unmeasured";
+    return { ruleWeightKey: rankWeightFor(row, rule), dueStep, ageStep, exploitationTier, epssBin, adjacency: adjacency2 };
+  }
+  var RANK_EXPL_CODE = {
+    kev: "k",
+    exploit: "e",
+    epss: "p",
+    none: "n",
+    unmeasured: "u"
+  };
+  var RANK_ADJ_CODE = {
+    DIRECT: "D",
+    ADJACENT: "A",
+    UNLINKED: "U",
+    unmeasured: "u"
+  };
+  function rankTupleKey(t) {
+    return [
+      t.ruleWeightKey.toFixed(4),
+      t.dueStep === null ? "x" : t.dueStep,
+      t.ageStep === null ? "x" : t.ageStep,
+      RANK_EXPL_CODE[t.exploitationTier],
+      t.epssBin === null ? "x" : t.epssBin,
+      RANK_ADJ_CODE[t.adjacency]
+    ].join("|");
+  }
+  function buildRankCube(rows, rule, nowIso2) {
+    var _a5, _b, _c;
+    const overdueBuckets = (_a5 = rule.overdueDayBuckets) != null ? _a5 : DEFAULT_RANK_RULE.overdueDayBuckets;
+    const ageBuckets = (_b = rule.ageDayBuckets) != null ? _b : DEFAULT_RANK_RULE.ageDayBuckets;
+    const cells = {};
+    for (const row of rows) {
+      const key = rankTupleKey(rankTupleOf(row, rule, nowIso2));
+      cells[key] = ((_c = cells[key]) != null ? _c : 0) + 1;
+    }
+    return {
+      total: rows.length,
+      cells,
+      overdueSteps: overdueBuckets.length,
+      ageSteps: ageBuckets.length,
+      epssBins: RANK_EPSS_BINS
     };
   }
 
@@ -18788,6 +18929,61 @@ var Server = (() => {
         rankLeadsSort: getRankLeadsSort2()
       };
     });
+  }
+  function settingsImpactData() {
+    var _a5;
+    const openIssues2 = loadIssues().filter(isUnresolvedIssue);
+    const candidateIds = CANDIDATE_CATEGORIES.map((c) => c.id);
+    const configuredIds = getIssueCategories2();
+    const categoryCube = buildCategoryCube(openIssues2, candidateIds, configuredIds);
+    const problems = durablyCached("problemsModel", null, problemsModel);
+    const termCoverage = termCoverageOf(problems.rows);
+    const rankRule = effectiveRankRule();
+    const rankCube = buildRankCube(
+      problems.rows.map((r) => {
+        var _a6;
+        return {
+          ruleId: r.ruleId,
+          ruleShortId: r.ruleShortId,
+          dueAt: (_a6 = r.dueAt) != null ? _a6 : void 0,
+          createdAt: r.firstSeenAt,
+          exploitationTier: r.exploitationTier,
+          epssPeak: r.epssPeak,
+          aiAdjacency: r.aiAdjacency
+        };
+      }),
+      rankRule,
+      nowIso()
+    );
+    const assets = durablyCached("assetsModel2", null, assetsModel);
+    const agentCount = Number((_a5 = assets.kpis["agents"]) != null ? _a5 : 0);
+    return {
+      categoryCube,
+      // The six candidates' dated calibration figures, travelling WITH their provenance rather
+      // than the client hand-copying them off a comment — registerScope.ts's own header on why.
+      candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({
+        id: c.id,
+        name: c.name,
+        count: c.count,
+        measuredAt: c.measuredAt,
+        measuredScope: c.measuredScope
+      })),
+      termCoverage,
+      rankCube,
+      agentCount
+    };
+  }
+  var cachedSettingsImpactData = () => cached(
+    "settingsImpact1",
+    {
+      issueCategories: getIssueCategories2(),
+      syncScope: getSyncScope2()
+    },
+    () => settingsImpactData(),
+    3600
+  );
+  function getSettingsImpact(_p) {
+    return run(() => cachedSettingsImpactData());
   }
   var ACCESS_MAX_BYTES = 8e3;
   var ACCESS_MAX_ENTRIES = 500;

@@ -30,6 +30,7 @@ import { describe, expect, it } from "vitest";
 import { registerFirstRunView, scaModel } from "../src/client/js/pages/sca.js";
 import { sastModel } from "../src/client/js/pages/sast.js";
 import { secretsModel } from "../src/client/js/pages/secrets.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const SRC = (name) =>
   readFileSync(new URL(`../src/client/js/pages/${name}.js`, import.meta.url), "utf8");
@@ -37,34 +38,8 @@ const SCA_SRC = SRC("sca");
 const SAST_SRC = SRC("sast");
 const SECRETS_SRC = SRC("secrets");
 
-/**
- * The file with its `//` comments removed — string-aware, so a `//` inside a quoted string
- * stays. Copied from `test/pagesRegisters.test.js`'s `code()` (that file is protected and may
- * not be edited to export it) — a third copy, for the same reason `chartTable.test.js`'s own
- * copy gives: several module headers here NAME `firstRunNotice(` and `chartCard(` while
- * explaining the rule, so a raw-text sweep would trip on the sentence that states it.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// Several module headers here NAME `firstRunNotice(` and `chartCard(` while explaining the
+// rule, so a raw-text sweep would trip on the sentence that states it — hence sweeping CODE.
 const SCA_CODE = code(SCA_SRC);
 const SAST_CODE = code(SAST_SRC);
 const SECRETS_CODE = code(SECRETS_SRC);

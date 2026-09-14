@@ -1,7 +1,14 @@
-// Settings — five task tabs (Register / Risk / Attribution / Lifecycle / System) over one
-// batched save bar. settingsModel.js owns the draft/dirty/validate model; settingsReadouts.js
-// owns the live "what is this control doing right now" readouts; this file wires DOM controls
-// to the draft and repaints both on every edit.
+// Settings — Register / Risk / Attribution / Lifecycle / Access / System over one batched save
+// bar. settingsModel.js owns the draft/dirty/validate model; settingsReadouts.js owns the live
+// "what is this control doing right now" readouts; this file wires DOM controls to the draft
+// and repaints both on every edit.
+//
+// ACCESS IS NOT ALWAYS BUILT. `renderAccessPanel()` (accessEditor.js) answers null for a reader
+// who may not edit the roster, and this page then draws no Access tab at all — the same rule
+// gas_ai's and gas_devsecops's own Access tabs already follow. The tablist below is built from
+// only the tabs that actually got a panel, and `normalizeTab` is called with that built set as
+// its second argument, so a stale `#/settings?tab=access` bookmark falls back instead of
+// selecting a tab nothing rendered.
 
 import { call } from "../../../../../gas_shared/api.js";
 import { backfillStatusView } from "../backfillStatus.js";
@@ -13,14 +20,14 @@ import {
   normalizeTab, SETTINGS_TABS, settingsDraft, settingsPatch, TAB_FIELDS, tabStatus, validateDraft,
 } from "../settingsModel.js";
 import {
-  createRiskReadout, renderRetentionReadout, severityScopeReadout, toggleHeadline,
-  toggleReadoutBar, toggleReadoutNote,
+  createRiskReadout, renderRetentionReadout, severityScopeReadout,
 } from "../settingsReadouts.js";
 import {
   absent, clear, confirmDialog, diagnosticsPanel, disclosure, el, errorCountBadge, errorLogBody,
   heroLines,
-  fmtDateTime, normalizeErrorLog, openSheet, pageHeader, saveBar, settingRow,
-  settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor, tipLabel, toast,
+  fmtDateTime, impactSplit, impactSplitModel, normalizeErrorLog, openSheet, pageHeader, saveBar,
+  settingRow, settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor,
+  tipLabel, toast,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -822,16 +829,20 @@ export async function renderSettings(main, params, ctx) {
   const riskTab = tabPanel("risk", riskPanel);
   const attributionTab = tabPanel("attribution", domainsPanel, attributionCrossRef);
   const lifecycleTab = tabPanel("lifecycle", retentionPanel, jobsPanel);
-  // The Access roster editor is NOT a diagnostic — it is an editor with its own save control —
-  // so it stays a sibling of the read-out grid rather than moving inside it.
+  // THE ONE SECTION THAT MAY LEGITIMATELY VANISH — renderAccessPanel() (accessEditor.js)
+  // answers null both for a reader who may not edit the roster and for a failed fetch, and its
+  // own rule is that a non-editor gets no section at all rather than a disabled one. No `panels`
+  // entry is built for it in that case, exactly as gas_ai's own settings.js does.
+  const accessTab = accessPanelNode ? tabPanel("access", accessPanelNode) : null;
   const systemTab = tabPanel(
     "system",
     diagnostics.node,
       // The hub field, on System because it is a fact about this DEPLOYMENT rather than about
-      // the register's own data. `accessPanelNode` is the tier signal this page already
-      // trusts — renderAccessPanel() answers null for a reader who may not edit the roster —
-      // and the same tier owns the hub URL. `saveHubUrl` re-checks server-side regardless, so
-      // this decides what to OFFER, never what is allowed.
+      // the register's own data — gas_ai's and gas_devsecops's own System tabs draw it here for
+      // the same reason. `accessPanelNode` is the tier signal this page already trusts —
+      // renderAccessPanel() answers null for a reader who may not edit the roster — and the
+      // same tier owns the hub URL. `saveHubUrl` re-checks server-side regardless, so this
+      // decides what to OFFER, never what is allowed.
       //
       // `refresh` is what makes the header catch up: the hub button is drawn from the
       // bootstrap payload, so without it a reader saves a URL and the control it is FOR does
@@ -841,26 +852,33 @@ export async function renderSettings(main, params, ctx) {
         canEdit: !!accessPanelNode,
         onSaved: () => { ctx && ctx.refresh && ctx.refresh(); },
       }),
-    accessPanelNode,
   );
 
   const panels = {
     register: registerTab, risk: riskTab, attribution: attributionTab,
     lifecycle: lifecycleTab, system: systemTab,
   };
+  if (accessTab) panels.access = accessTab;
+
+  // Only the tabs that actually got a panel — SETTINGS_TABS names Access whether or not this
+  // reader may edit the roster, and `panels.access` above is the thing that actually decides.
+  const tabDefs = SETTINGS_TABS.filter((t) => panels[t.key]);
+  const tabKeys = tabDefs.map((t) => t.key);
 
   // Deep-linkable via `#/settings?tab=risk`, not a sub-path (parseHash splits on "?" and looks
   // up PAGES[pathPart], so a sub-path would fall through to a different page). The Attribution
-  // handoff (below) forces this tab regardless of any ?tab= already in the hash.
-  const initialTab = params.attribute ? "attribution" : normalizeTab(params.tab);
+  // handoff (below) forces this tab regardless of any ?tab= already in the hash. `normalizeTab`
+  // takes `tabKeys` as its second argument so a stale `#/settings?tab=access` bookmark from a
+  // reader who has since lost roster access falls back instead of selecting a tab nothing built.
+  const initialTab = params.attribute ? "attribution" : normalizeTab(params.tab, tabKeys);
 
   const tabs = tabList({
-    tabs: SETTINGS_TABS.map((t) => ({ key: t.key, label: t.label })),
+    tabs: tabDefs.map((t) => ({ key: t.key, label: t.label })),
     active: initialTab,
     ariaLabel: "Settings sections",
     idPrefix: "settings",
     onSelect: (key) => {
-      for (const t of SETTINGS_TABS) panels[t.key].hidden = t.key !== key;
+      for (const k of tabKeys) panels[k].hidden = k !== key;
       // history.replaceState — does not fire hashchange, does not re-render. This also covers
       // the Attribution handoff's "read-then-strip": the very first onSelect (fired during
       // tabList's own construction, for `initialTab`) replaces the whole query string,
@@ -871,7 +889,7 @@ export async function renderSettings(main, params, ctx) {
 
   const bar = saveBar({ onSave, onDiscard, onJump: (tab) => tabs.select(tab) });
 
-  main.append(tabs.node, registerTab, riskTab, attributionTab, lifecycleTab, systemTab, bar.node);
+  main.append(tabs.node, ...tabKeys.map((k) => panels[k]), bar.node);
 
   // ------------------------------------------------------------------------ shared repainting
   // Fields currently failing their OWN legality check (fieldErrors), keyed by SETTING_KEYS
@@ -922,9 +940,9 @@ export async function renderSettings(main, params, ctx) {
     // instead of two so the tablist's dirty and invalid marks can never read from two
     // different snapshots of `draft`.
     const status = tabStatus(draft, saved, errors, TAB_FIELDS);
-    for (const t of SETTINGS_TABS) {
-      tabs.setDirty(t.key, !!(status[t.key] && status[t.key].dirty));
-      tabs.setInvalid(t.key, !!(status[t.key] && status[t.key].invalid));
+    for (const k of tabKeys) {
+      tabs.setDirty(k, !!(status[k] && status[k].dirty));
+      tabs.setInvalid(k, !!(status[k] && status[k].invalid));
     }
   }
 
@@ -938,19 +956,33 @@ export async function renderSettings(main, params, ctx) {
     clear(scopeReadoutHost);
     scopeReadoutHost.append(severityScopeReadout(impact.census, draft, boot.palette.selectable));
 
-    vfHeadline.textContent = toggleHeadline(impact.toggles.noFix, impact.toggles.openTotal,
-      "have no vendor fix available");
+    const vfModel = impactSplitModel({
+      count: impact.toggles.noFix, total: impact.toggles.openTotal, unit: "findings",
+      phrase: "have no vendor fix available",
+      includedLabel: "Has a vendor fix", excludedLabel: "No vendor fix",
+      on: draft.showNoFix,
+      onNote: `All ${impact.toggles.openTotal.toLocaleString()} open findings counted.`,
+      offNote: `${impact.toggles.noFix.toLocaleString()} findings hidden from every chart, `
+        + "table, KPI and export.",
+    });
+    vfHeadline.textContent = vfModel.headline;
     clear(vfBarHost);
-    vfBarHost.append(toggleReadoutBar(impact.toggles.noFix, impact.toggles.openTotal,
-      "Has a vendor fix", "No vendor fix"));
-    vfNote.textContent = toggleReadoutNote(impact.toggles.noFix, impact.toggles.openTotal, draft.showNoFix);
+    vfBarHost.append(impactSplit(vfModel));
+    vfNote.textContent = vfModel.note;
 
-    eolHeadline.textContent = toggleHeadline(impact.toggles.eolOpen, impact.toggles.openTotal,
-      "are on an end-of-life operating system");
+    const eolModel = impactSplitModel({
+      count: impact.toggles.eolOpen, total: impact.toggles.openTotal, unit: "findings",
+      phrase: "are on an end-of-life operating system",
+      includedLabel: "Supported OS", excludedLabel: "End-of-life OS",
+      on: draft.includeEol,
+      onNote: `All ${impact.toggles.openTotal.toLocaleString()} open findings counted.`,
+      offNote: `${impact.toggles.eolOpen.toLocaleString()} findings hidden from every chart, `
+        + "table, KPI and export.",
+    });
+    eolHeadline.textContent = eolModel.headline;
     clear(eolBarHost);
-    eolBarHost.append(toggleReadoutBar(impact.toggles.eolOpen, impact.toggles.openTotal,
-      "Supported OS", "End-of-life OS"));
-    eolNote.textContent = toggleReadoutNote(impact.toggles.eolOpen, impact.toggles.openTotal, draft.includeEol);
+    eolBarHost.append(impactSplit(eolModel));
+    eolNote.textContent = eolModel.note;
 
     riskReadout.update(impact.risk.cube, draft.riskRule, { onThresholdChange: setEpssThreshold });
 

@@ -55,14 +55,30 @@ import { RISK_CATEGORY_ID } from "./toxicCombos";
  * it. Wiz's `securityCategories` returns 500+ rows including CIS benchmark and UUID-keyed
  * custom categories (§6.8), and a tenant whose ids differ from these would be locked out of
  * its own register by a whitelist.
+ *
+ * `count`/`measuredAt`/`measuredScope` carry the table above INTO the data, so a reader of
+ * `settingsImpact.ts`'s payload never hand-copies these six numbers out of a comment. They
+ * are that same one-estate, one-day fact and nothing more: never mixed into a live figure
+ * (`settingsImpactData` computes those separately, over whatever the register holds today),
+ * and labelled with their own provenance so a page cannot present them as current.
  */
-export const CANDIDATE_CATEGORIES: ReadonlyArray<{ id: string; name: string }> = [
-  { id: RISK_CATEGORY_ID, name: "AI Security" },
-  { id: "wct-id-3", name: "Vulnerability Assessment" },
-  { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats" },
-  { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security" },
-  { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management" },
-  { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management" },
+export const CANDIDATE_CATEGORIES: ReadonlyArray<{
+  id: string;
+  name: string;
+  /** Open issues this candidate carried at `measuredAt`, over `measuredScope` — dated
+   *  calibration, not a live count. See the module header and `measuredAt`/`measuredScope`. */
+  count: number;
+  /** ISO date the `count` above was measured. */
+  measuredAt: string;
+  /** The one estate `count` describes — never mixed with a count from another. */
+  measuredScope: string;
+}> = [
+  { id: RISK_CATEGORY_ID, name: "AI Security", count: 99, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+  { id: "wct-id-3", name: "Vulnerability Assessment", count: 677, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+  { id: "41a3ed79-9a2c-4466-9109-f845fd057bd4", name: "High Profile Threats", count: 536, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+  { id: "5c3c85b5-bb94-4ee7-8f3e-c186d0229280", name: "Data Security", count: 439, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+  { id: "1f28667a-9d12-48dd-898d-d326bb422f8d", name: "Key & Secret Management", count: 1390, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
+  { id: "861eb856-54f6-4d1b-8ca1-1d6130841d20", name: "Identity Management", count: 3477, measuredAt: "2026-08-23", measuredScope: "VALUE-CHAIN project" },
 ];
 
 /**

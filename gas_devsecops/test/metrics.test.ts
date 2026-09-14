@@ -93,3 +93,34 @@ describe("scope filter", () => {
     expect(sca.perSev.HIGH!.mttr_mean).toBe(4);
   });
 });
+
+// P5: `sla_target`/`sla_compliant`/`sla_pct` used to read `config.SLA_TARGETS` directly inside
+// `summarize`, ignoring any window a caller might want measured instead — the trailing
+// `slaTargets` parameter (both functions; `calculateMttr` only forwards it) is what fixes that.
+// Omitted, both still default to `SLA_TARGETS` — every test above this block passes no such
+// argument and is unaffected.
+describe("slaTargets parameter", () => {
+  const day = (n: number) => new Date(Date.UTC(2026, 0, n)).toISOString();
+
+  it("summarize: a caller-supplied window replaces SLA_TARGETS for sla_target/sla_compliant/sla_pct", () => {
+    // CRITICAL resolved in 10 days: past the default 7-day target, inside a 30-day one.
+    const rows = [{ sev: "CRITICAL", firstSeen: Date.parse(day(1)), resolved: Date.parse(day(11)) }];
+    const byDefault = summarize(rows);
+    expect(byDefault.perSev.CRITICAL!.sla_target).toBe(7);
+    expect(byDefault.perSev.CRITICAL!.sla_compliant).toBe(0);
+
+    const widened = summarize(rows, undefined, undefined, { CRITICAL: 30 });
+    expect(widened.perSev.CRITICAL!.sla_target).toBe(30);
+    expect(widened.perSev.CRITICAL!.sla_compliant).toBe(1);
+    expect(widened.perSev.CRITICAL!.sla_pct).toBe(100);
+  });
+
+  it("calculateMttr forwards it unchanged", () => {
+    const records = [
+      { severity: "CRITICAL", firstDetectedAt: day(1), resolvedAt: day(11) },
+    ];
+    const widened = calculateMttr(records, undefined, undefined, { CRITICAL: 30 });
+    expect(widened.perSev.CRITICAL!.sla_target).toBe(30);
+    expect(widened.perSev.CRITICAL!.sla_compliant).toBe(1);
+  });
+});

@@ -136,6 +136,7 @@ import {
 import { dropUnselected, scopeFiveRs, withCountsFrom } from "../domain/complianceScope";
 import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
 import { CANDIDATE_CATEGORIES, registerScopeSignature } from "../domain/registerScope";
+import * as settingsImpact from "../domain/settingsImpact";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
@@ -3235,6 +3236,113 @@ export function setSettings(p?: unknown): ApiResult {
       rankLeadsSort: settingsStore.getRankLeadsSort(),
     };
   });
+}
+
+/**
+ * Everything the Settings page needs to say, beside each control, what that control is
+ * currently doing to the register — in ONE payload, mirroring `gas/`'s `getSettingsImpact`.
+ * See `domain/settingsImpact.ts`'s header for the four figures and the honesty requirement
+ * the category cube (and, as of P11, the rank cube) keep.
+ *
+ * WHAT THIS WALKS. `syncStore.loadIssues()` once (memoized per execution, and likely already
+ * warm — every issue-reading endpoint calls it) to build the category cube; then one ALREADY
+ * -CACHED model, `problemsModel` (the Priorities queue), via `durablyCached` — the same
+ * read-through cache the Priorities page itself hits — reused for BOTH `termCoverage` and the
+ * P11 rank cube, and `assetsModel` (for the agent count) the same way. On a warm cache this is
+ * one sheet read plus two cache lookups, PLUS one more O(rows) pass over `problems.rows` to
+ * bucket every row into the rank cube (`buildRankCube`) — the walk this endpoint is most
+ * likely to strain the 6-minute cap on, so it is measured rather than assumed: on the
+ * reference tenant's ~200-row queue this is low-single-digit milliseconds, and
+ * `test/settingsImpact.test.ts` builds a cube from several thousand synthetic rows to pin the
+ * cell count (and therefore the serialized size against `CacheService`'s 100 KB ceiling) at a
+ * scale well past any tenant this app has been measured against. On a cold cache (first load
+ * after a sync) the whole function pays exactly what `getProblems` and `getAssets` already pay
+ * on their own first load, plus that one extra bucketing pass — never a second, independent
+ * full computation of the queue itself.
+ */
+function settingsImpactData(): Rec {
+  const openIssues = syncStore.loadIssues().filter(isUnresolvedIssue);
+  const candidateIds = CANDIDATE_CATEGORIES.map((c) => c.id);
+  const configuredIds = settingsStore.getIssueCategories();
+  const categoryCube = settingsImpact.buildCategoryCube(openIssues, candidateIds, configuredIds);
+
+  const problems = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
+  const termCoverage = settingsImpact.termCoverageOf(problems.rows);
+
+  // P11: the sparse joint over the rank tuple, built from the SAME `effectiveRankRule()` that
+  // scored `problems.rows` in the first place — see `domain/settingsImpact.ts`'s "P11: rank
+  // cube" section for the tuple, and why `ruleWeightKey`/the two ladders can be fixed at this
+  // rule without a caller-supplied one going stale: none of them are draft fields on this
+  // panel. `createdAt` reads `firstSeenAt`, the same field name `withRankScores` maps it
+  // through onto a `ProblemRow` — one birth-date field, one meaning, on both sides.
+  const rankRule = effectiveRankRule();
+  const rankCube = settingsImpact.buildRankCube(
+    problems.rows.map((r) => ({
+      ruleId: r.ruleId,
+      ruleShortId: r.ruleShortId,
+      dueAt: r.dueAt ?? undefined,
+      createdAt: r.firstSeenAt,
+      exploitationTier: r.exploitationTier,
+      epssPeak: r.epssPeak,
+      aiAdjacency: r.aiAdjacency,
+    })),
+    rankRule,
+    nowIso(),
+  );
+
+  const assets = durablyCached("assetsModel2", null, assetsModel) as AssetsModel;
+  const agentCount = Number(assets.kpis["agents"] ?? 0);
+
+  return {
+    categoryCube,
+    // The six candidates' dated calibration figures, travelling WITH their provenance rather
+    // than the client hand-copying them off a comment — registerScope.ts's own header on why.
+    candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({
+      id: c.id,
+      name: c.name,
+      count: c.count,
+      measuredAt: c.measuredAt,
+      measuredScope: c.measuredScope,
+    })),
+    termCoverage,
+    rankCube,
+    agentCount,
+  };
+}
+
+// Keyed on the two settings that define the register's scope — the collected category set
+// and the sync perimeter — reusing gas's own argument for `cachedSettingsImpactData`: key on
+// what changes the MEASURED POPULATION, never on a field the client re-cuts itself (there,
+// the risk-classifier thresholds; here, there is no such field at all — this payload carries
+// no threshold for the client to preview against).
+//
+// `issueCategories` is read LIVE by `settingsImpactData` (it feeds `measuredCandidateIds`
+// directly, no resync required), so keying on it is load-bearing: without it, flipping the
+// category picker would keep serving a stale honesty flag for up to an hour. `syncScope` is
+// NOT read anywhere in `settingsImpactData` today — the cube and the two reused models all
+// come from the LEDGER, which only a sync can move, and `dataVersion()` (folded into every
+// `cached()` key already) covers that. It is kept in the key anyway because
+// `registerScope.ts` treats the pair as ONE scope decision (`registerScopeSignature` stamps
+// both), and a payload titled "what does the register scope cost" silently missing half of
+// that scope's own key would be the kind of drift this app spends a great deal of effort
+// refusing elsewhere. The cost is a harmless extra cache miss on a syncScope-only save, never
+// a wrong answer.
+//
+// 1h TTL, same as gas — the agent count and term coverage are wall-clock-stale-tolerant, and
+// a save immediately bumps the data version anyway.
+const cachedSettingsImpactData = () =>
+  cached(
+    "settingsImpact1",
+    {
+      issueCategories: settingsStore.getIssueCategories(),
+      syncScope: settingsStore.getSyncScope(),
+    },
+    () => settingsImpactData(),
+    3600,
+  );
+
+export function getSettingsImpact(_p?: unknown): ApiResult {
+  return run(() => cachedSettingsImpactData());
 }
 
 // ------------------------------------------------------------------------- access

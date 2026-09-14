@@ -161,3 +161,37 @@
 .cell-verdict svg { flex: 0 0 auto; }
 .cell-verdict--ok { color: var(--ok); }
 .cell-verdict--muted { color: var(--text-3); }
+
+/* --------------------------------------------------------- Register: .settings-scope-block
+   One block per register (sca/sast/secrets) on the Settings register tab — a collect row, a
+   severities row and (secrets only) a disclosure, grouped so a reader can tell where one
+   register's controls end and the next one's begin. Without a rule here the group was
+   invisible: `.setting-row + .setting-row` only sees siblings, and every scope's rows sit one
+   level DEEPER than that selector reaches (inside this block, not as direct children of
+   `.settings-panel__body`), so three registers' worth of rows ran together as one undifferentiated
+   list with nothing marking the seams between them. */
+.settings-scope-block + .settings-scope-block {
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--hairline);
+}
+
+/* --------------------------------------------------------- Register: .settings-severity-row
+   The severities control for one register: a `togglePills` row (`.pill-row`, already
+   `display: flex` in components.css) beside a live "All severities" / "HIGH, LOW" caption. The
+   wrapping div around both had no rule of its own, so default block flow put the caption on its
+   OWN line under the pills instead of beside them — the two belong to the same fact and read as
+   one only sitting on the same line, wrapping together when the row is too narrow to hold both. */
+.settings-severity-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2);
+}
+
+/* --------------------------------------------------------- System: .settings-retention-warn
+   A below-floor retention value is LEGAL — cleanSettings raises it to the floor on save rather
+   than refusing it — so this is `.settings-field-error`'s warn-toned twin: same shape (visible
+   text, never colour alone), `--warn` ink instead of `--bad` because the value is about to be
+   sent, not rejected. gas_shared/styles/settings.css already names this selector in a comment
+   beside `.settings-field-error` ("Distinct from .settings-retention-warn...") but never defines
+   it — that file is a different package's this round, so the rule lands here instead. CANDIDATE
+   FOR PROMOTION to gas_shared/styles/settings.css once a second app draws this same caption. */
+.settings-retention-warn { display: block; margin-top: var(--space-1); color: var(--warn); }

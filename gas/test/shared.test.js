@@ -37,13 +37,19 @@ import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js"
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
-import { relativeAge } from "../../gas_shared/ui/figures.js";
+import { openAndTotal, relativeAge } from "../../gas_shared/ui/figures.js";
 import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
 import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
+import { registerSettingsReadoutsContract } from "../../gas_shared/test/contracts/settingsReadouts.js";
+import {
+  createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
+} from "../../gas_shared/ui/settingsReadouts.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
+import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
+import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
 
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 import { scopeChrome, scopeKinds } from "../src/client/js/scopeKinds.js";
@@ -118,10 +124,17 @@ registerZScaleContract(base);
 // =========================================================================================
 registerParityContract({
   ...base,
-  // FIVE MODULES, AND EACH IS A FACT ABOUT AN OS-VULNERABILITY REGISTER that means nothing in
+  // FOUR MODULES, AND EACH IS A FACT ABOUT AN OS-VULNERABILITY REGISTER that means nothing in
   // a sibling: which two scopes exist (scopeBar), a CVE's page at NIST (nvd), a delta that
-  // knows which direction is worse (changeChip), a duration that changes unit across three
-  // orders of magnitude (span), and an in/out proportion with arbitrary tones (splitBar).
+  // knows which direction is worse (changeChip), and a duration that changes unit across three
+  // orders of magnitude (span).
+  //
+  // `splitBar.js` LEFT THIS LIST WITH P2, and unlike the two entries below it was never
+  // justified by a fact about THIS register — its own comment here already said the nearby
+  // component (`sevSegmentBar`) draws severities and only severities, which is an argument
+  // against merging the two, not an argument that the in/out-proportion idea itself is
+  // gas-only. It is `gas_shared/ui/splitBar.js` now, reached through the barrel; its two call
+  // sites (both in settingsReadouts.js) are unchanged.
   //
   // `combobox.js` LEFT THIS LIST FIRST, and it was the only entry that was ever on it under
   // protest. gas_shared/ui/combobox.js resolves an option row's glyph by NAME through
@@ -143,7 +156,7 @@ registerParityContract({
   // cannot use it: its `getStorageStats` publishes no `cellLimit`, so there is no ratio to
   // draw. That is a missing FIGURE, not a missing widget.)
   localUiModules: [
-    "changeChip.js", "nvd.js", "scopeBar.js", "span.js", "splitBar.js",
+    "changeChip.js", "nvd.js", "scopeBar.js", "span.js",
   ],
   sheetOrder: SHEET_ORDER,
   localSheets: ["./styles/tokens.css", "./styles/pages.css"],
@@ -439,4 +452,23 @@ registerScanStepContract({
   ...base,
   progressSrc: readFileSync(new URL("../src/client/js/scanProgress.js", import.meta.url), "utf8"),
   baseCss: readFileSync(new URL("../../gas_shared/styles/base.css", import.meta.url), "utf8"),
+});
+
+// =========================================================================================
+//  The settings kernel: this register's own SETTINGS_TABS/SETTING_FIELDS, plus the kernel's
+//  own fixed behaviour against a synthetic registry (settingsForm.js's own concern, not this
+//  app's — see that contract's header). `spine: true` pins the canonical tab order this wave
+//  put in place: Register · Risk · Attribution · Lifecycle · Access · System.
+// =========================================================================================
+registerSettingsFormContract({
+  ...base, tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB, spine: true,
+});
+
+// =========================================================================================
+//  The settings read-out vocabulary: gas is the first and, until P3 onward, only caller — see
+//  gas_shared/ui/settingsReadouts.js's own header for what moved here from gas's client mirror
+// =========================================================================================
+registerSettingsReadoutsContract({
+  ...base, beforeAll, afterAll,
+  impactSplitModel, severitySplitModel, tickTimeline, createCutHistogram, openAndTotal,
 });

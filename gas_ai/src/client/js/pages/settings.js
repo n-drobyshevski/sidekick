@@ -31,6 +31,10 @@ import {
   fieldErrors, normalizeTab, rankDraftFromPreset, rankDraftPatch, rankShareTotal, SETTINGS_TABS,
   settingsDraft, settingsPatch, TAB_FIELDS, tabStatus, validateDraft,
 } from "../settingsModel.js";
+import {
+  agentCallsText, categoryDroppedOnlyText, categoryScopeReadout, derivedFiveRsSelected,
+  fetchScopeReadoutModel, fiveRsSplit, rankImpactReadout, termCoverageReadout,
+} from "../settingsReadouts.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
 import { staleNotices } from "../staleness.js";
@@ -46,7 +50,7 @@ export async function renderSettings(main, params, ctx) {
     pageHeader({
       route: "settings",
       lede: heroLines(
-        "Graph, register scope and ranking, compliance, access, system",
+        "Register scope and ranking, graph, compliance, access, system",
         "Grouped by task; one save bar covers the tabs that share a draft.",
       ),
     }),
@@ -85,6 +89,7 @@ export async function renderSettings(main, params, ctx) {
     call("api_getSettings", {}),
     swrCall("api_getFiveRsScope", {}),
     renderAccessPanel(),
+    swrCall("api_getSettingsImpact", {}),
   ]);
 
   if (settled[0].status === "rejected") {
@@ -105,6 +110,15 @@ export async function renderSettings(main, params, ctx) {
     };
 
   const accessPanelNode = settled[2].status === "fulfilled" ? settled[2].value : null;
+
+  // The three free readouts' payload (P8) — agentCount is the only field THIS page draws
+  // from it; the category cube and term coverage are P10/P11's job and go untouched. This
+  // whole page already batches its fetch into one Promise.allSettled BEFORE building any
+  // panel, unlike gas's Settings (which paints first and repaints once impact lands) — so
+  // every readout below reads `impact` directly at build time rather than through a second
+  // repaint pass. Decorative like the neighbours above: a rejection here costs the Graph
+  // tab one sentence, never the page.
+  const impact = settled[3].status === "fulfilled" ? settled[3].value : null;
 
   clear(host);
 
@@ -180,6 +194,15 @@ export async function renderSettings(main, params, ctx) {
     settings.hasCredentials ? null : statusPill("neutral", "Needs credentials"),
     autoExpandSwitch.node);
 
+  // "One Wiz API call per agent per scan" is a rate nobody can multiply without the other
+  // factor — how many agents. `agentCallsText` says nothing (returns null, and this line is
+  // never drawn) rather than guess when the payload never arrived; `impact` is already
+  // resolved by the time this runs, so there is no separate repaint to wire up.
+  const agentCallsLine = agentCallsText(impact ? impact.agentCount : null);
+  const agentCountNote = agentCallsLine
+    ? el("p", { class: "small muted" }, agentCallsLine)
+    : null;
+
   const expandPanel = settingsPanel({
     title: "Agent neighbourhoods",
     description: "Whether opening an AI agent asks Wiz for its full neighbourhood, or reads "
@@ -198,6 +221,7 @@ export async function renderSettings(main, params, ctx) {
           : "Unavailable in dry-run — see Wiz connection on the System tab.",
         control: autoExpandControl,
       }),
+      agentCountNote,
     ],
   });
 
@@ -294,12 +318,11 @@ export async function renderSettings(main, params, ctx) {
     // Compliance page, so the same framework would have two different shapes in two places.
     groups.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
 
-    /** What this rule would be with no pin at all — the value setPin() diffs against. */
-    function derivedSelected(row) {
-      if (row.reason === "pinnedIn") return false;
-      if (row.reason === "pinnedOut") return true;
-      return row.selected;
-    }
+    // What this rule would be with no pin at all — the value setPin() diffs against, and the
+    // live derived/pinned split below (fiveRsSplitHost) needs the identical answer. Aliased
+    // onto settingsReadouts.js's own export rather than re-declared, so the toggle logic here
+    // and the split readout can never read two different rules for the same question.
+    const derivedSelected = derivedFiveRsSelected;
 
     // Reads `draft` fresh on every call rather than closing over a snapshot, so a Discard that
     // reassigns `draft` to a brand-new object is picked up with no rebinding step here.
@@ -451,6 +474,12 @@ export async function renderSettings(main, params, ctx) {
 
     const groupCtrls = groups.map(buildGroup);
 
+    // THE LIVE COUNTERPART TO THE DESCRIPTION'S "as saved" FIGURE just below. That line reads
+    // scope.selected/scope.total and never moves as you edit; this reads the DRAFT fresh on
+    // every syncAll() and always moves. Four buckets, every rule in exactly one of them, which
+    // is what makes splitBar the right mark here (see fiveRsSplit's own header).
+    const fiveRsSplitHost = el("div", { class: "scope-split" });
+
     function selectedCount() {
       return groupCtrls.reduce(
         (n, g) => n + g.group.rows.filter((r) => draftSelected(r)).length, 0);
@@ -464,6 +493,8 @@ export async function renderSettings(main, params, ctx) {
       scopeSearchCount.textContent = q
         ? shown + " of " + scope.total + " rules"
         : scope.total + " rules";
+      clear(fiveRsSplitHost);
+      fiveRsSplitHost.append(fiveRsSplit(scope.policies, draft.fiveRsPins));
     }
 
     // Not a save, so it is not the save bar's job: it empties both pin lists, which is an edit
@@ -488,6 +519,7 @@ export async function renderSettings(main, params, ctx) {
         + "a rule pins it; toggling it back to what the derivation says clears the pin and lets "
         + "the landscape keep deciding it.",
       body: [
+        fiveRsSplitHost,
         el("div", { class: "toolbar" },
           el("div", { class: "field" }, scopeSearch), scopeSearchCount),
         el("div", { class: "scope-groups" }, ...groupCtrls.map((g) => g.node)),
@@ -549,6 +581,12 @@ export async function renderSettings(main, params, ctx) {
   // rest of the app would say about the same fact.
   const scopeNotices = boot ? staleNotices(boot).filter((n) => n.id === "registerScope") : [];
 
+  // The dropped-category figure (P10): the standing notice below is true and unquantified on
+  // its own, and this is what makes it concrete — how many open issues are stamped ONLY with
+  // categories THIS DRAFT removes, relative to what was last saved. Draft-derived, so it is
+  // recomputed on every edit inside repaintImpactReadouts() rather than built once here.
+  const droppedOnlyHost = el("p", { class: "small", role: "status", hidden: true });
+
   const registerPanel = settingsPanel({
     title: "Register scope",
     description: "Which Wiz risk categories the issue register collects.",
@@ -568,9 +606,18 @@ export async function renderSettings(main, params, ctx) {
         el("strong", {}, "Changing this changes what every published figure counts. "),
         "The stored register keeps counting the OLD categories until the next sync applies "
         + "the new scope — nothing here takes effect on its own."),
+      // THE SAME CLAIM, AS A NUMBER — see the comment on droppedOnlyHost above.
+      droppedOnlyHost,
       ...scopeNotices.map((n) => el("div", { class: "notice warn", role: "status" },
         n.text + " ", el("a", { href: n.href }, n.link))),
       ...categoryRows.map((c) => c.row),
+      // THE CATEGORY SCOPE READOUT (P10): one bar per candidate category against the common
+      // scale of the whole open register, never stacked — the categories overlap heavily
+      // (registerScope.ts: "each issue sits in roughly five categories" on the reference
+      // tenant), and a split bar would assert parts of a whole that this data does not have.
+      // Payload-derived, built once from the resolved `impact` rather than repainted —
+      // unlike droppedOnlyHost above, nothing here reads the draft.
+      impact ? categoryScopeReadout(impact.categoryCube, impact.candidateCategories) : null,
     ],
   });
 
@@ -593,6 +640,22 @@ export async function renderSettings(main, params, ctx) {
     onChange: (v) => { draft.syncScope = v; onEdit(); },
   });
   syncScopeSelect.id = "set-sync-scope";
+
+  // THE MEASURED SIDE, AND THE UNMEASURED SIDE NAMED — promoted out of the disclosure below
+  // (which used to be the only place this admission lived) and into the readout itself, so it
+  // is visible without opening "Why this matters". `boot.counts.openIssues` does not move with
+  // the select above: it is what the LAST sync collected, which is exactly the "measured"
+  // figure this control's own standing notice already warns is not what a re-scoped sync would
+  // return. No "would collect N" for the tenant side — this app has no way to know it without
+  // a live Wiz call, and fetchScopeReadoutModel refuses to guess one.
+  const fetchScopeModel = fetchScopeReadoutModel(
+    boot && boot.counts && typeof boot.counts.openIssues === "number"
+      ? boot.counts.openIssues
+      : null,
+  );
+  const fetchScopeReadout = el("div", { class: "fetch-scope-readout" },
+    el("p", { class: "small" }, fetchScopeModel.projectLine),
+    el("p", { class: "small muted" }, fetchScopeModel.tenantLine));
 
   const fetchPanel = settingsPanel({
     title: "Fetch scope",
@@ -634,6 +697,7 @@ export async function renderSettings(main, params, ctx) {
           + "if that property is unset — or every perimeter regardless.",
         control: syncScopeSelect,
       }),
+      fetchScopeReadout,
     ],
   });
 
@@ -714,6 +778,21 @@ export async function renderSettings(main, params, ctx) {
     onChange: (v) => { draft.rankLeadsSort = v; onEdit(); },
   });
 
+  // Term coverage (P10): how many rows in the Priorities queue actually measure each of the
+  // four blend terms — the ranking panel's cheapest real figure, and the thing that makes
+  // "putting a large share on a term most rows cannot measure" a visible mistake instead of a
+  // silent one. Draft-derived only through the clock: `timeSource` picks which of
+  // termCoverage.time's two independent counts the Clock row reads, so this whole block is
+  // rebuilt inside repaintImpactReadouts() on every edit, same as droppedOnlyHost above.
+  const termCoverageHost = el("div", {});
+
+  // Rank impact (P11): would this rule change actually reorder the queue, and by how much —
+  // the score histogram, the moved-count, the tau agreement and the top-N carry-over, all
+  // computed from `impact.rankCube` against `draft.rankRule` vs `saved.rankRule`. Rebuilt on
+  // every edit inside repaintImpactReadouts(), same as termCoverageHost: every field this
+  // panel edits (shares, timeSource, both weight tables, epssThreshold) can move the figures.
+  const rankImpactHost = el("div", {});
+
   const rankPanel = settingsPanel({
     title: "Priorities ranking",
     description: "The minimal model that scores every row in the Priorities queue.",
@@ -744,6 +823,7 @@ export async function renderSettings(main, params, ctx) {
           + "deadline set.",
         control: timeSourceSelect,
       }),
+      termCoverageHost,
       el("div", { class: "rank-inputs" },
         el("span", { class: "rank-inputs__title" }, "Exploitation ladder"),
         rankNumber("expl-kev", "On CISA KEV", rankLeaf("exploitationWeights", "kev")),
@@ -757,6 +837,7 @@ export async function renderSettings(main, params, ctx) {
         rankNumber("adj-direct", "On an AI asset", rankLeaf("adjacencyWeights", "DIRECT")),
         rankNumber("adj-adjacent", "Adjacent to one", rankLeaf("adjacencyWeights", "ADJACENT")),
         rankNumber("adj-unlinked", "No known link", rankLeaf("adjacencyWeights", "UNLINKED"))),
+      rankImpactHost,
       settingRow({
         label: "Rank leads the Priorities order", htmlFor: "set-rank-leads",
         description: "Off: the Priorities page keeps Wiz severity → due date → age. "
@@ -990,7 +1071,33 @@ export async function renderSettings(main, params, ctx) {
     }
   }
 
+  // The two P10 readouts that must move as the reader edits the draft — see droppedOnlyHost's
+  // and termCoverageHost's own comments for why each is draft-derived rather than built once.
+  // Guarded exactly like gas's own `repaintReadouts()`: every control above already applied
+  // its own edit, so a missing payload costs these two lines and nothing else.
+  function repaintImpactReadouts() {
+    if (!impact) return;
+    if (impact.categoryCube) {
+      const text = categoryDroppedOnlyText(
+        impact.categoryCube, draft.issueCategories, saved.issueCategories,
+      );
+      droppedOnlyHost.hidden = !text;
+      droppedOnlyHost.textContent = text || "";
+    }
+    if (impact.termCoverage) {
+      clear(termCoverageHost);
+      const node = termCoverageReadout(impact.termCoverage, draft.rankRule.timeSource);
+      if (node) termCoverageHost.append(node);
+    }
+    if (impact.rankCube) {
+      clear(rankImpactHost);
+      const node = rankImpactReadout(impact.rankCube, draft.rankRule, saved.rankRule);
+      if (node) rankImpactHost.append(node);
+    }
+  }
+
   function onEdit() {
+    repaintImpactReadouts();
     syncDirty();
   }
 

@@ -25,6 +25,8 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
+
 const read = (p) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
 
 const manifest = JSON.parse(read("dist/appsscript.json"));
@@ -49,12 +51,8 @@ const SERVICE_SCOPES = {
   DocumentApp: "https://www.googleapis.com/auth/documents",
 };
 
-/** Comments stripped: a service NAMED in prose is not a service CALLED. */
-function code(text) {
-  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-}
-
-/** Every mapped service the built, pushed files actually reference. */
+/** Every mapped service the built, pushed files actually reference — comments stripped
+ *  first, since a service NAMED in prose is not a service CALLED. */
 function servicesUsed() {
   const bundle = code(read("dist/server.js")) + "\n" + code(read("dist/entry.js"));
   return Object.keys(SERVICE_SCOPES)

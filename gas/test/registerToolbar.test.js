@@ -22,35 +22,7 @@ import { describe, expect, it } from "vitest";
 
 import { RISK_TIER_ORDER } from "../src/domain/program";
 import { readRegisterParams, registerParamPatch } from "../src/client/js/pages/registerModel.js";
-
-/** The comment stripper the other source-sweeping tests here use. */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    if (c === "/" && n === "*") {
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const SRC = readFileSync(
   new URL("../src/client/js/pages/overview.js", import.meta.url), "utf8",

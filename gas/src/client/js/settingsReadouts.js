@@ -3,16 +3,32 @@
 // (no RPC, no page state) so settings.js stays readable: it fetches the payload once, and
 // re-renders these into fixed host nodes as the draft changes.
 //
-// Two shapes appear here. Most readouts have no interactive element of their own (the splitBar,
-// the retention timeline) and are simply rebuilt from scratch on every draft change — cheap, and
-// simplest to get right. The risk classifier is the one exception: it owns a `<input type=range>`
-// slider that the reader may be actively dragging when a change elsewhere triggers a repaint, and
-// replacing that element mid-drag would silently abort the drag (the browser stops delivering
-// `input` events to a node once it is removed from the document). So `createRiskReadout()` builds
-// its skeleton — including the range input — ONCE and returns an `update()` that only ever
-// rewrites attributes/text/children around it, never the input itself. See its comment below.
+// P2 MOVED THE REUSABLE HALF OF THIS FILE INTO gas_shared/ui/settingsReadouts.js:
+// `impactSplitModel`/`impactSplit` (the with/without split every toggle draws — pages/settings.js
+// calls these directly now, once per toggle), `severitySplitModel` (the shared half of
+// `severityScopeReadout` below), `tickTimeline` (`retentionTicks` below builds the pure state;
+// `tickTimeline` only draws it) and `createCutHistogram` (the EPSS threshold histogram's
+// generalised shape, min/max/step/format rather than a hard-coded 0..1). `openAndTotal` moved to
+// gas_shared/ui/figures.js, beside `fmtCount`/`pct1`/`days1` — it is a number formatter, not a
+// DOM builder, and `severitySplitModel` uses it too now.
+//
+// WHAT IS LEFT HERE IS THE PART THAT READS GAS'S OWN DOMAIN: the severity-scope adapter that
+// resolves `draft.fetchSeverities` into a predicate (`severitySplitModel` takes a predicate,
+// never a selected array — see that function's own header for why), `createRiskReadout`'s
+// clause table, `ruleSentence`/`ruleIsEmpty` and the overlap caveat (they read gas's own
+// `RiskRule`), and `retentionTicks`, the arithmetic that decides which state a scan's tick is in
+// — `tickTimeline` itself refuses to know that.
+//
+// The risk classifier is still the one control with a persistent interactive element: it owns
+// the `<input type=range>` EPSS slider (now inside the cut histogram it composes), which the
+// reader may be actively dragging when a change elsewhere triggers a repaint. See
+// `createRiskReadout`'s own comment, and `createCutHistogram`'s in gas_shared, for why that
+// element is built once and never recreated.
 
-import { clear, el, splitBar, tipAnchor } from "./ui.js";
+import {
+  absentText, clear, createCutHistogram, el, openAndTotal, severitySplitModel, splitBar,
+  tickTimeline,
+} from "./ui.js";
 import {
   breakdownFromCube, epssHistogram, openSlice, ruleIsEmpty, ruleSentence,
 } from "./riskCube.js";
@@ -21,24 +37,17 @@ function fmt(n) {
   return (n || 0).toLocaleString();
 }
 
-function pct(n, total) {
-  return total ? ((n / total) * 100).toFixed(1) + "%" : "0.0%";
-}
-
-/**
- * "43 (57 all time)" — the open figure first, the whole-register one behind it.
- *
- * The register holds resolved lifecycles as well as open ones, and every figure on this page
- * was counting both while labelling itself "open". What a reader is deciding about is the
- * open backlog, so that number leads.
- *
- * THE SUPPRESSION IS THE POINT of putting this in one place. When the two are equal the second
- * is dropped entirely, because a line that prints the same number twice reads as a bug and
- * sends the reader looking for a difference that is not there. scopeSwitch.js reached the same
- * conclusion for the same reason and guards its own second figure on `unassignedBase > shown`.
- */
-export function openAndTotal(open, total, unit = "all time") {
-  return open === total ? fmt(open) : `${fmt(open)} (${fmt(total)} ${unit})`;
+// THIS `pct` IS DELIBERATELY NOT THE ONE THE BRIEF'S FIX TOUCHED. `impactSplitModel`
+// (gas_shared) returns `absentText` for a zero-denominator share and drops the parenthetical —
+// P2's one deliberate pixel. The risk classifier's summary sentence below was a THIRD call site
+// of the old shared `pct()`, and P2 left it on the old shape rather than take an unreviewed
+// second pixel. That was the right call to FLAG and the wrong place to STOP: an empty scan scope
+// renders both readouts at once, so the page would answer "what is 0 of 0" two ways within a few
+// centimetres — unmeasured in the toggle headlines, a confident 0.0% here. One page, one answer.
+// `shareOf` is the same rule as impactSplitModel's, stated once for the one caller left that
+// cannot reach it (the sentence is built from gas's own RiskRule vocabulary, not from a spec).
+export function shareOf(n, total) {
+  return total ? `${((n / total) * 100).toFixed(1)}%` : absentText;
 }
 
 /**
@@ -47,77 +56,26 @@ export function openAndTotal(open, total, unit = "all time") {
  * a single "Not scanned" segment for the rest. The caption repeats every severity's count in
  * words — including the out-of-scope ones, named as such — so the bar is never the only way to
  * read the numbers.
+ *
+ * The shared half is `severitySplitModel` (gas_shared/ui/settingsReadouts.js); this function is
+ * gas's own adapter from `draft.fetchSeverities` — an ARRAY — to the PREDICATE that module
+ * requires, which is the one thing it may not do generically (see that module's own header).
  */
 export function severityScopeReadout(census, draft, selectable) {
   // The bar is drawn over OPEN findings: choosing a scan scope is a decision about the backlog
   // you are going to work, and a segment sized by resolved history would misstate it. The
   // all-time figure rides along in the caption where it differs.
-  const byOpen = (census && census.bySeverity && census.bySeverity.open) || {};
-  const byAll = (census && census.bySeverity && census.bySeverity.all) || {};
-  const openTotal = (census && census.openTotal) || 0;
-  const total = (census && census.total) || 0;
-  const segments = [];
-  const parts = [];
-  let inScope = 0;
-  for (const sev of selectable) {
-    const n = byOpen[sev] || 0;
-    if (draft.fetchSeverities.includes(sev)) {
-      inScope += n;
-      segments.push({ label: sev, value: n, tone: sev });
-      parts.push(`${sev} ${openAndTotal(n, byAll[sev] || 0)}`);
-    } else {
-      // A comma, not a second parenthetical: "MEDIUM 26 (33 all time) (not scanned)" stacks two
-      // bracketed asides on one item and stops scanning cleanly. The list separator is `·`, so
-      // a comma inside an item is unambiguous.
-      parts.push(`${sev} ${openAndTotal(n, byAll[sev] || 0)}, not scanned`);
-    }
-  }
-  segments.push({ label: "Not scanned", value: Math.max(0, openTotal - inScope), tone: "out" });
-  return splitBar({
-    segments,
-    caption: `${parts.join(" · ")} — ${fmt(inScope)} of ${fmt(openTotal)} open findings scanned`
-      + `${total > openTotal ? `, ${fmt(total)} in the register all time` : ""}.`,
-    ariaLabel: `${fmt(inScope)} of ${fmt(openTotal)} open findings are in the scan scope`,
+  const model = severitySplitModel({
+    selectable,
+    bySeverityOpen: (census && census.bySeverity && census.bySeverity.open) || {},
+    bySeverityAll: (census && census.bySeverity && census.bySeverity.all) || {},
+    inScope: (sev) => draft.fetchSeverities.includes(sev),
+    openTotal: (census && census.openTotal) || 0,
+    total: (census && census.total) || 0,
+    outLabel: "Not scanned",
+    unit: "findings",
   });
-}
-
-/**
- * "N of M open findings (X%) <phrase>." — the shared shape for the vendor-fix / EOL headline.
- *
- * `total` must be the OPEN population. It used to be every row in the register, which made the
- * percentage arithmetically wrong rather than merely mislabelled: `baseRowNoFix` is
- * `awaiting_vendor_fix`, which ledgerCore sets to `open && no fix available`, so the numerator
- * was already open-only. An open numerator over an all-rows denominator, printed as a percent,
- * under a label saying "open findings".
- */
-export function toggleHeadline(count, openTotal, phrase) {
-  return `${fmt(count)} of ${fmt(openTotal)} open findings (${pct(count, openTotal)}) ${phrase}.`;
-}
-
-/**
- * The static with/without split for a display toggle — deliberately NOT switch-dependent: this
- * is "what is out there", and `toggleReadoutNote` below is where the current switch state is
- * said. `includedLabel`/`excludedLabel` name the two sides in words (e.g. "Has a vendor fix" /
- * "No vendor fix"), so the tone (accent vs. hatched neutral) is never the only signal.
- */
-export function toggleReadoutBar(count, total, includedLabel, excludedLabel) {
-  const included = Math.max(0, total - count);
-  return splitBar({
-    segments: [
-      { label: includedLabel, value: included, tone: "in" },
-      { label: excludedLabel, value: count, tone: "out" },
-    ],
-    caption: `${includedLabel} ${fmt(included)} · ${excludedLabel} ${fmt(count)} `
-      + `— ${fmt(total)} open.`,
-    ariaLabel: `${fmt(count)} of ${fmt(total)} open findings, ${excludedLabel.toLowerCase()}`,
-  });
-}
-
-/** The one line that actually changes with the switch. */
-export function toggleReadoutNote(count, total, on) {
-  return on
-    ? `All ${fmt(total)} open findings counted.`
-    : `${fmt(count)} findings hidden from every chart, table, KPI and export.`;
+  return splitBar(model);
 }
 
 function riskRow(name, open, missing) {
@@ -144,12 +102,13 @@ function riskRow(name, open, missing) {
  * The high-risk classifier's live readout: one row per ENABLED clause, the rule as a sentence,
  * the total, the overlap caveat, and the EPSS histogram with its own threshold slider.
  *
- * Returns `{ node, update(cube, rule, { onThresholdChange }) }`. The skeleton — including the
- * `<input type="range">` — is built exactly once; `update()` only ever rewrites what is already
- * there. This is load-bearing, not a style choice: the range fires `input` continuously while
- * being dragged, and if `update()` (which every draft edit calls) tore down and rebuilt that
- * element, dragging it would silently stop moving after the first pixel — the node the browser
- * is delivering pointer events to would no longer be attached to the document.
+ * Returns `{ node, update(cube, rule, { onThresholdChange }) }`. Composes
+ * `createCutHistogram()` for the histogram block — built exactly once, including its
+ * `<input type="range">` — for the reason that module's own header gives: the range fires
+ * `input` continuously while being dragged, and if `update()` (which every draft edit calls)
+ * tore down and rebuilt that element, dragging it would silently stop moving after the first
+ * pixel — the node the browser is delivering pointer events to would no longer be attached to
+ * the document.
  */
 export function createRiskReadout() {
   // The clause rows sit ABOVE the summary sentence, so they are where a reader meets these
@@ -174,36 +133,31 @@ export function createRiskReadout() {
     "The clauses above can overlap on the same finding, so they do not sum to the total.",
   );
 
-  const histBars = el("div", { class: "epss-hist" });
-  const cutline = el("div", { class: "epss-cutline", "aria-hidden": "true" });
-  const histWrap = el("div", { class: "epss-hist-wrap" }, histBars, cutline);
-  const range = el("input", {
-    type: "range", class: "epss-range", min: "0", max: "1", step: "0.01",
-    "aria-label": "EPSS threshold slider",
+  // `onThreshold` is declared before the histogram is built, not after: `onCut` below closes
+  // over it by reference, and every call to it happens on a later `input` event, well after
+  // `update()` has had its first chance to set it — but declaring it first keeps that plain to
+  // read rather than relying on hoisting to make it true.
+  let onThreshold = null;
+  const cutHist = createCutHistogram({
+    min: 0, max: 1, step: 0.01, buckets: 20,
+    ariaLabel: "EPSS threshold slider",
+    format: (v) => v.toFixed(2),
+    axisNote: "Bar height is the square root of the count — EPSS is skewed hard enough that a "
+      + "linear scale would flatten everything above 0.25 to nothing. Hover a bar for its exact "
+      + "figure.",
+    // A native `title` used to carry the bucket's exact figure — the one place this histogram
+    // states a number at all — which put it out of reach of touch entirely and truncated it at
+    // the OS's discretion. Twenty bars in the tab order would cost more than the figure is
+    // worth, so this stays a pointer affordance (as the note beside it says) and the counts a
+    // reader must have are in the clause rows above.
+    barTip: (start, end, n) => `${start.toFixed(2)}–${end.toFixed(2)}: ${fmt(n)} finding(s)`,
+    onCut: (v) => { if (onThreshold) onThreshold(v); },
   });
-  const cutLabel = el("span", { class: "num" });
-  const axis = el(
-    "div", { class: "epss-axis small muted" },
-    el("span", {}, "0.00"), cutLabel, el("span", {}, "1.00"),
-  );
-  const scaleNote = el(
-    "p", { class: "epss-scale-note muted small" },
-    "Bar height is the square root of the count — EPSS is skewed hard enough that a linear " +
-    "scale would flatten everything above 0.25 to nothing. Hover a bar for its exact figure.",
-  );
-  const unmeasuredEl = el("p", { class: "risk-unmeasured muted small" });
 
   const node = el(
     "div", { class: "risk-readout" },
-    rowsHost, sentenceEl, emptyEl, caveatEl,
-    el("div", { class: "epss-hist-scroll" }, histWrap),
-    range, axis, scaleNote, unmeasuredEl,
+    rowsHost, sentenceEl, emptyEl, caveatEl, cutHist.node,
   );
-
-  let onThreshold = null;
-  range.addEventListener("input", () => {
-    if (onThreshold) onThreshold(Number(range.value));
-  });
 
   function update(cube, rule, { onThresholdChange } = {}) {
     onThreshold = onThresholdChange || null;
@@ -234,11 +188,12 @@ export function createRiskReadout() {
     caveatEl.hidden = empty;
     if (!empty) {
       clear(sentenceEl);
+      const share = shareOf(open.anyOf, openTotal);
       sentenceEl.append(
         `${ruleSentence(rule)} → `,
         el("strong", { class: "num" }, fmt(open.anyOf)),
-        ` of ${fmt(openTotal)} open findings in scan scope are high risk `
-        + `(${pct(open.anyOf, openTotal)}).`,
+        ` of ${fmt(openTotal)} open findings in scan scope are high risk`
+        + `${share === absentText ? "." : ` (${share}).`}`,
       );
       // Only when it adds something. If nothing in scope is resolved the two sentences are the
       // same sentence, and printing it twice invites the reader to hunt for a difference.
@@ -250,42 +205,44 @@ export function createRiskReadout() {
       }
     }
 
-    range.value = String(rule.epssThreshold);
-    cutLabel.textContent = `${rule.epssThreshold.toFixed(2)} (current cut)`;
-
     // Drawn over the OPEN population, because that is what the rest of this card now reports.
     // A histogram of every row the register ever held, under a headline about open findings,
     // would be two different questions sharing one axis.
     const hist = epssHistogram(openCube, 20);
     const histAll = epssHistogram(cube, 20);
-    clear(histBars);
-    const max = Math.max(...hist.buckets, 1);
-    const scale = (n) => (max ? (Math.sqrt(n) / Math.sqrt(max)) * 100 : 0);
-    const per = 1 / hist.buckets.length;
-    hist.buckets.forEach((n, i) => {
-      const start = i * per;
-      const bar = el("div", {
-        class: `epss-bar${start >= rule.epssThreshold ? " above" : ""}`,
-      });
-      // A native `title` used to carry the bucket's exact figure — the one place this
-      // histogram states a number at all — which put it out of reach of touch entirely and
-      // truncated it at the OS's discretion. `tipAnchor` because the bar is a plain div:
-      // twenty bars in the tab order would cost more than the figure is worth, so this stays
-      // a pointer affordance (as the scale note beside it says) and the counts a reader must
-      // have are in the clause rows above.
-      tipAnchor(bar, () =>
-        [`${start.toFixed(2)}–${(start + per).toFixed(2)}: ${fmt(n)} finding(s)`]);
-      bar.style.height = n === 0 ? "0%" : `${Math.max(2, scale(n))}%`;
-      histBars.append(bar);
+    cutHist.update({
+      counts: hist.buckets,
+      cut: rule.epssThreshold,
+      unmeasuredNote: `${openAndTotal(hist.unmeasured, histAll.unmeasured)} findings have no `
+        + "EPSS score and are never flagged by this clause.",
     });
-    cutline.style.left = `${rule.epssThreshold * 100}%`;
-
-    unmeasuredEl.textContent =
-      `${openAndTotal(hist.unmeasured, histAll.unmeasured)} findings have no EPSS score `
-      + "and are never flagged by this clause.";
   }
 
   return { node, update };
+}
+
+/**
+ * Which state each scan's retention tick is in, and the two summary counts — pure, so
+ * `test/settingsReadouts.test.js` can finally hold it. `tickTimeline` (gas_shared) only draws
+ * whatever this returns; it does not know what "sealed" or "pinned" mean.
+ */
+export function retentionTicks(scans, retentionDays) {
+  const list = scans || [];
+  let sealedCount = 0;
+  let wouldSeal = 0;
+  const ticks = list.map((s) => {
+    if (s.sealed) sealedCount += 1;
+    const willSeal = !s.sealed && !s.pinned
+      && retentionDays !== null && s.ageDays > retentionDays;
+    if (willSeal) wouldSeal += 1;
+    const state = s.sealed ? "sealed" : willSeal ? "would" : s.pinned ? "pinned" : "plain";
+    const why = s.sealed ? "already sealed"
+      : willSeal ? `would seal at ${retentionDays}d`
+        : s.pinned ? "always kept (most recent)"
+          : "within the retention window";
+    return { state, hint: `${s.ageDays}d old — ${why}` };
+  });
+  return { ticks, sealedCount, wouldSeal };
 }
 
 /**
@@ -295,48 +252,23 @@ export function createRiskReadout() {
  * every call; nothing in it is interactive.
  */
 export function renderRetentionReadout(scans, draft) {
-  const list = scans || [];
-  const track = el("div", { class: "retention-timeline" });
-  let sealedCount = 0;
-  let wouldSeal = 0;
-  for (const s of list) {
-    if (s.sealed) sealedCount += 1;
-    const willSeal = !s.sealed && !s.pinned
-      && draft.retentionDays !== null && s.ageDays > draft.retentionDays;
-    if (willSeal) wouldSeal += 1;
-    const cls = s.sealed ? "is-sealed" : willSeal ? "is-would" : s.pinned ? "is-pinned" : "";
-    const glyph = s.sealed ? "✓" : willSeal ? "→" : s.pinned ? "•" : "";
-    const why = s.sealed ? "already sealed"
-      : willSeal ? `would seal at ${draft.retentionDays}d`
-        : s.pinned ? "always kept (most recent)"
-          : "within the retention window";
-    // The tick's age and its reason were a native `title`, unreachable by keyboard and
-    // absent on touch. Kept as a hover card on the same non-interactive div: the legend and
-    // the summary line beneath the timeline already state every rule in words, so the card
-    // identifies WHICH scan a tick is rather than carrying anything only it knows.
-    const tick = el(
-      "div",
-      { class: `retention-tick${cls ? " " + cls : ""}` },
-      el("span", { class: "retention-tick__glyph", "aria-hidden": "true" }, glyph),
-      el("span", { class: "retention-tick__bar" }),
-    );
-    tipAnchor(tick, () => [`${s.ageDays}d old — ${why}`]);
-    track.append(tick);
-  }
-  const total = list.length;
+  const { ticks, sealedCount, wouldSeal } = retentionTicks(scans, draft.retentionDays);
+  const total = (scans || []).length;
   const summary = draft.retentionDays === null
     ? `${fmt(sealedCount)} of ${fmt(total)} scans are already sealed. Sealing is off — no ` +
       "more will seal automatically."
     : `${fmt(sealedCount)} of ${fmt(total)} scans are already sealed. At ${draft.retentionDays} ` +
       `days, ${fmt(wouldSeal)} more would seal on the next pass.`;
-  return el(
-    "div", { class: "retention-readout" },
-    el("div", { class: "retention-timeline-scroll" }, track),
-    el(
-      "p", { class: "muted small" },
-      "✓ sealed · → would seal · • pinned — held back regardless of " +
+  return tickTimeline({
+    ticks,
+    states: {
+      sealed: { glyph: "✓", word: "sealed" },
+      would: { glyph: "→", word: "would seal" },
+      pinned: { glyph: "•", word: "pinned" },
+    },
+    legend: "✓ sealed · → would seal · • pinned — held back regardless of " +
       "the window (the two most recent scans).",
-    ),
-    el("p", { class: "muted small" }, summary),
-  );
+    summary,
+    ariaLabel: `${fmt(sealedCount)} of ${fmt(total)} scans are sealed`,
+  });
 }

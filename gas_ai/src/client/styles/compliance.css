@@ -654,3 +654,25 @@
 }
 .scope-disclose:hover { background: var(--wash-hover); color: var(--ink); }
 .scope-disclose:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+
+/* The 5Rs LIVE split (settingsReadouts.js's fiveRsSplitModel/fiveRsSplit): derived-in /
+   pinned-in / pinned-out / derived-out, over gas_shared's splitBar(). The two DERIVED tones
+   are the shared component's own "in"/"out" — the landscape's own answer, same as every other
+   toggle split in the tree. The two PINNED tones are new and app-local (gas_shared ships only
+   "in"/"out"; a fourth-and-fifth tone belonging to one app's one card has no reuse case), and
+   they borrow tickTimeline's own precedent for the identical fact (gas_shared/styles/
+   components.css's `.tick-timeline__tick--pinned`): a pin is a HUMAN override, not the
+   landscape's own derivation, and it earns a border rather than a different hue — the same
+   distinction `.scope-reason--pinned` a few rules up draws on the row list this bar
+   summarizes. Never the only cue: the caption beneath the bar (splitBar's own contract) names
+   all four counts in words regardless. */
+.splitbar__seg--pinned-in {
+  background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.splitbar__seg--pinned-out {
+  background-image: repeating-linear-gradient(
+    135deg, var(--text-3) 0, var(--text-3) 2px, transparent 2px, transparent 6px);
+  background-color: transparent; opacity: 0.6;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}

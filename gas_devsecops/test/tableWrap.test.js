@@ -16,6 +16,7 @@ import { describe, expect, it } from "vitest";
 
 import { cellClassName } from "../../gas_shared/ui/tableModel.js";
 import { REMOVAL_CELLS, removalQuadModel } from "../src/client/js/pages/secrets.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const DATA_SRC = readFileSync(new URL("../../gas_shared/ui/data.js", import.meta.url), "utf8");
 const TABLES_CSS = readFileSync(new URL("../../gas_shared/styles/tables.css", import.meta.url), "utf8");
@@ -24,42 +25,10 @@ const COMPONENTS_CSS = readFileSync(
   new URL("../../gas_shared/styles/components.css", import.meta.url), "utf8",
 );
 const PAGES_DIR = new URL("../src/client/js/pages/", import.meta.url);
-/**
- * The file with its comments removed — string-aware, so a `//` inside a quote survives.
- * The fourth copy of `pagesLit.test.js`'s `code()`, for the reason `chartTable.test.js`
- * gives for the third: those files are protected and there is no shared test helper.
- *
- * IT IS LOAD-BEARING FOR THE LAST CASE BELOW: `secrets.js`'s own comment EXPLAINS that its
- * four-corner table used to carry a prose reading "in a `wrap: true` cell", and a raw-text
- * sweep counts that sentence as a call site — measured, on the first run of that case.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    if (c === "/" && n === "*") {
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
-}
+
+// LOAD-BEARING FOR THE LAST CASE BELOW: `secrets.js`'s own comment EXPLAINS that its
+// four-corner table used to carry a prose reading "in a `wrap: true` cell", and a raw-text
+// sweep counts that sentence as a call site — measured, on the first run of that case.
 
 const PAGE_SOURCES = readdirSync(PAGES_DIR)
   .filter((f) => f.endsWith(".js"))

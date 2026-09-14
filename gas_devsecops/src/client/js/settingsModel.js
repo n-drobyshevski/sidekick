@@ -1,21 +1,26 @@
-// The settings draft model: which knobs the page-level save bar owns, which tab owns each,
-// what changed between the saved state and the draft, and whether the draft is legal to send.
+// The settings draft model: which knobs the page-level save bar owns, which tab owns each, and
+// the per-tab dirty/invalid state the tablist reads.
 //
-// Pure — no DOM, no RPC — so the save bar's wording, the per-tab dirty markers, the validation
-// messages and the warnings are unit-testable without a browser. There is no jsdom in this
-// suite, so this split is the only kind of test the client half can have; registerModel.js and
-// accessModel.js are the same shape.
+// THIS FILE USED TO CARRY A SECOND, DEAD REGISTRY. An earlier `SETTINGS_TABS`/`SETTING_FIELDS`
+// pair here (plus their own `settingsDraft`/`validateDraft`/`draftWarnings`/`normalizeTab`/
+// `changedFields`/`changeSummary`/`changeCountText`/`dirtyTabs`) predated the page that actually
+// shipped, and grepped clean: nothing in `src/` ever imported any of it. `pages/settings.js`
+// built its OWN parallel Register/Deadlines/Access/System registry instead — a `TAB_FIELDS`
+// half here, a `FIELD_LABELS` half there, `SETTINGS_KEYS`/`BATCHED_KEYS` split across both
+// files — and it was that split, not the dead file, that this page actually ran on. The dead
+// half is gone; `SETTING_FIELDS` below is the one registry both files now read, tab AND label
+// in the same place `SETTING_FIELDS` holds them in gas/ and gas_ai/.
 //
-// ONE source of truth for field -> tab ownership. The save bar names the owning tab and the tab
-// itself wears a dirty marker; both read SETTING_FIELDS, so a knob can never be listed under
-// one tab in the bar and another on the tablist.
+// `normalizeTab`/`changedFields`/`settingsPatch`/`changeSummary`/`changeCountText`/`tabStatus`
+// are `gas_shared/ui/settingsForm.js`'s kernel, bound to the registry below — see that module's
+// header for why its `sameValue` leaf is `a === b || Object.is(a, b)` (this app's OWN two
+// former copies — the dead `sameValue` here and `pages/settings.js`'s own `sameValue` — used
+// two DIFFERENT wrong leaves between them: the dead one fell back to `JSON.stringify`, matching
+// gas/gas_ai's bug; the page's own live one fell back to bare `a === b`, matching the opposite
+// bug. Neither survives; the kernel's disjunction does), and for why `dirtyTabs` is not part of
+// it at all — `tabStatus` replaced its only call site before this page shipped.
 
-// NO CONSTANTS ARE DUPLICATED HERE. The scopes, the severity order and — above all — the
-// shared SLA windows arrive from `api_bootstrap`, which reads them straight from
-// src/domain/config.ts. A second copy of SLA_TARGETS in the client would be a second place for
-// the four sidekicks' byte-identical windows to drift, and the drift would be invisible: the
-// page would simply stop warning about a divergence it had itself introduced. Every function
-// below that needs them takes a `ctx`.
+import { settingsForm } from "../../../../gas_shared/ui/settingsForm.js";
 
 /** The tabs, in order. `key` is what rides in the hash (`#/settings?tab=deadlines`). */
 export const SETTINGS_TABS = [
@@ -28,41 +33,64 @@ export const SETTINGS_TABS = [
 export const DEFAULT_TAB = "register";
 
 /**
- * Every knob the page-level save bar owns, and where it lives.
+ * Every knob the page-level save bar batches, and where it lives. Deliberately six of the
+ * seven Settings fields `pages/settings.js`'s `draftFromSettings` lifts: `showExperimental` is
+ * a real Settings field but saves itself the moment its switch is flipped (see that page's own
+ * module header), so it carries no tab here and never goes dirty. `projectView` is a real
+ * Settings key too and is not in this registry at all — it is view-scope chrome with its own
+ * `api_setProjectView` endpoint, not a page-level save-bar field; `test/pagesSettings.test.js`
+ * pins that exclusion.
  *
- * Deliberately NOT every control on the page. The access roster writes a different store
- * (Script Properties, through api_saveAccess / api_saveAdmins) behind its own validation, and
- * "show experimental content" writes localStorage and reshapes the nav rail with no server to
- * reject it — both keep their own save affordance. Mixing two save models inside ONE form is
- * the thing to avoid; two forms with one model each is fine.
- *
- * The System tab owns nothing here on purpose: the credential state, the project scope and the
- * build stamp are read-only, and the experimental toggle saves itself. A tab with no batched
- * field simply never goes dirty.
+ * The System tab owns three fields here (the daily sync hour, automatic compaction, the
+ * retention window) that the dead registry this replaced never named at all — it predated the
+ * maintenance panel that shipped them.
  */
 export const SETTING_FIELDS = {
   scopes: { tab: "register", label: "registers collected" },
-  fetchSeverities: { tab: "register", label: "severity scope" },
-  slaTargets: { tab: "deadlines", label: "SLA targets" },
+  fetchSeverities: { tab: "register", label: "severities requested" },
+  slaTargets: { tab: "deadlines", label: "remediation windows" },
+  syncSchedule: { tab: "system", label: "sync hour" },
+  autoCompact: { tab: "system", label: "automatic compaction" },
+  retentionDays: { tab: "system", label: "retention window" },
 };
 
 export const SETTING_KEYS = Object.keys(SETTING_FIELDS);
 
-/**
- * A tab key the hash is allowed to name; anything else falls back.
- *
- * `available` exists because the Access tab is not always there: renderAccessPanel() answers
- * null for anyone who may not edit the roster, and this app's rule is that a non-editor gets no
- * section at all rather than a disabled one. A stale `?tab=access` bookmark must land somewhere
- * real instead of selecting a tab that was never built.
- */
-export function normalizeTab(key, available) {
-  const keys = available && available.length ? available : SETTINGS_TABS.map((t) => t.key);
-  if (keys.indexOf(key) >= 0) return key;
-  return keys.indexOf(DEFAULT_TAB) >= 0 ? DEFAULT_TAB : keys[0];
-}
+const kernel = settingsForm({ tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB });
 
-/** Per-scope severity lists as the page holds them: copied, never aliased. */
+/**
+ * The bound kernel. `pages/settings.js` imports every one of these rather than re-declaring
+ * them — see this file's own header, and settingsForm.js's for `normalizeTab`'s two-argument
+ * form, `changeCountText`'s array signature (this page used to be the one holdout taking a
+ * plain count; its caller is fixed rather than the kernel growing a second convention),
+ * `tabStatus`'s key-presence reading of `errors`, and `sameValue`'s leaf.
+ */
+export const {
+  normalizeTab, changedFields, settingsPatch, changeSummary, changeCountText, tabStatus,
+  TAB_FIELDS,
+} = kernel;
+
+// =========================================================================================
+//  Prepared, not yet wired: settingsDraft / validateDraft / draftWarnings
+// =========================================================================================
+//
+// THESE THREE ARE GENUINE, CORRECT LOGIC OVER THIS REGISTER'S REAL FIELDS — `scopes`,
+// `fetchSeverities`, `slaTargets`, the same three names `SETTING_FIELDS` above owns — and they
+// are NOT a fork of gas_ai's shape. What they are is UNWIRED: `pages/settings.js` builds its
+// own draft with `draftFromSettings` and validates each control inline as it is typed (see that
+// file's own `oninput` handlers), rather than calling `validateDraft`/`draftWarnings` the way
+// gas's and gas_ai's pages do. That gap is a later package's job to close — `draftWarnings` in
+// particular gives this register the same three confirm-before-you-regret-it prompts gas_ai's
+// page already shows (dropping a register FREEZES its open findings the same way dropping a
+// vulnerability severity does there) — so these stay, tested, rather than being deleted for
+// having no caller yet. `test/settingsModel.test.js` holds the cases.
+//
+// `settingsDraft` covers only the three fields above — NOT the six `SETTING_FIELDS` names, and
+// deliberately not `syncSchedule`/`autoCompact`/`retentionDays`: those are simple scalars the
+// live page already drafts and validates itself (`draftFromSettings`, `pages/settings.js`), and
+// this narrower draft is what `validateDraft`/`draftWarnings` below actually need.
+
+/** Per-scope severity lists as the page would hold them: copied, never aliased. */
 function severitiesOf(v, scopes) {
   const out = {};
   for (const scope of scopes) out[scope] = [...((v || {})[scope] || [])];
@@ -70,9 +98,9 @@ function severitiesOf(v, scopes) {
 }
 
 /**
- * Lift the api_getSettings payload into a flat draft over exactly SETTING_KEYS. Arrays and the
- * per-scope object are copied, not aliased, so editing the draft can never mutate the payload
- * the rest of the page is still reading.
+ * Lift an api_getSettings-shaped payload into a flat draft over `scopes`/`fetchSeverities`/
+ * `slaTargets`. Arrays and the per-scope object are copied, not aliased, so editing the draft
+ * can never mutate the payload the rest of a caller is still reading.
  */
 export function settingsDraft(settings, ctx) {
   const s = settings || {};
@@ -89,68 +117,10 @@ export function settingsDraft(settings, ctx) {
   };
 }
 
-/** Order-insensitive for the lists: re-picking the same severities in another order is not an edit. */
-function sameValue(a, b) {
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
-  }
-  if (a && b && typeof a === "object" && typeof b === "object") {
-    const ka = Object.keys(a).sort();
-    const kb = Object.keys(b).sort();
-    if (JSON.stringify(ka) !== JSON.stringify(kb)) return false;
-    return ka.every((k) => sameValue(a[k], b[k]));
-  }
-  return JSON.stringify(a) === JSON.stringify(b);
-}
-
-/** The field keys whose draft value differs from the saved one, in SETTING_KEYS order. */
-export function changedFields(saved, draft) {
-  return SETTING_KEYS.filter((k) => !sameValue(saved[k], draft[k]));
-}
-
-/** Only the changed fields, ready to send as one atomic patch to api_setSettings. */
-export function settingsPatch(saved, draft) {
-  const out = {};
-  for (const k of changedFields(saved, draft)) out[k] = draft[k];
-  return out;
-}
-
-/** Tab keys carrying at least one changed field, in tablist order. */
-export function dirtyTabs(changed) {
-  const owned = new Set(changed.map((k) => SETTING_FIELDS[k].tab));
-  return SETTINGS_TABS.filter((t) => owned.has(t.key)).map((t) => t.key);
-}
-
-const TAB_LABEL = Object.fromEntries(SETTINGS_TABS.map((t) => [t.key, t.label]));
-
 /**
- * What the save bar says. Each change carries the tab that owns it, because a tabbed page can
- * hide a dirty control behind an inactive tab — naming the tab is what makes it findable, and
- * the bar renders each entry as a link to that tab.
- */
-export function changeSummary(changed) {
-  return changed.map((k) => ({
-    field: k,
-    label: SETTING_FIELDS[k].label,
-    tab: SETTING_FIELDS[k].tab,
-    tabLabel: TAB_LABEL[SETTING_FIELDS[k].tab],
-  }));
-}
-
-export function changeCountText(changed) {
-  const n = changed.length;
-  return `${n} unsaved change${n === 1 ? "" : "s"}`;
-}
-
-/**
- * Whether the draft may be sent, and why not.
- *
- * The server re-validates (`validateSettings` in domain/settingsLogic.ts), so nothing illegal
- * can be stored either way. Refusing here anyway is the point: a server refusal after the fact
- * answers a reader with a rejected save and no idea which control caused it.
- *
- * Returns `{ ok, message, tab }` — `tab` so the caller can switch to the offending control
- * rather than leaving the reader to hunt for it behind a tab.
+ * Whether the draft may be sent, and why not: an empty register list is not a legal Settings
+ * object, and neither is a non-positive SLA target. Returns `{ ok, message, tab }` — `tab` so a
+ * caller can switch to the offending control rather than leaving the reader to hunt for it.
  */
 export function validateDraft(draft) {
   if (!draft.scopes.length) {
@@ -174,10 +144,12 @@ export function validateDraft(draft) {
 
 /**
  * Consequences worth a confirm rather than a refusal — legal, and almost always a mistake.
+ * Every warning here is grounded in something this register's ledger actually does, not in a
+ * general worry.
  *
- * Kept separate from validateDraft because "illegal" and "surprising" are different answers
- * and the caller handles them differently. Every warning here is grounded in something this
- * register measured or decided, not in a general worry.
+ * `ctx` carries what the module never has on its own: `scopes` (the full register list),
+ * `severityOrder`, `scopeLabels` (for the reader-facing name), and `sharedSlaTargets` (the
+ * four sidekicks' byte-identical SLA windows, for the divergence warning below).
  */
 export function draftWarnings(saved, draft, ctx) {
   const c = ctx || {};
@@ -191,13 +163,21 @@ export function draftWarnings(saved, draft, ctx) {
   const dropped = saved.scopes.filter((s) => draft.scopes.indexOf(s) < 0);
   if (dropped.length) {
     const names = dropped.map(labelOf).join(", ");
+    // Pronoun and register count both have to agree with `dropped.length`: this warning is
+    // reachable with either one register dropped or two (three would empty `draft.scopes`
+    // outright, which validateDraft refuses before draftWarnings ever runs) — the wording used
+    // to say "in it FREEZES ... until the register is collected again" even when two registers
+    // were dropped at once, disagreeing with its own plural "two registers" title.
+    const pronoun = dropped.length === 1 ? "it" : "them";
+    const registerWord = dropped.length === 1 ? "register" : "registers";
+    const registerVerb = dropped.length === 1 ? "is" : "are";
     out.push({
       tab: "register",
       title: dropped.length === 1 ? `Stop collecting ${names}?` : "Stop collecting two registers?",
-      body: `Nothing will scan ${names} again, so every open finding in it FREEZES: it can `
+      body: `Nothing will scan ${names} again, so every open finding in ${pronoun} FREEZES: it can `
         + "never be resolved by disappearance, because resolution by absence needs a scan that "
         + "looked. The rows stay in the ledger and in every open count, ageing, until the "
-        + "register is collected again.",
+        + `${registerWord} ${registerVerb} collected again.`,
       confirmLabel: "Stop collecting",
     });
   }
@@ -211,8 +191,8 @@ export function draftWarnings(saved, draft, ctx) {
     if (draft.scopes.indexOf(scope) < 0) continue;
     const before = saved.fetchSeverities[scope] || [];
     const after = draft.fetchSeverities[scope] || [];
-    // An EMPTY list means "every severity", never "none" — that is the settled answer for
-    // secrets after two wrong ones, and reading it as a narrowing here would invert it.
+    // An EMPTY list means "every severity", never "none" — settled after §8.3/§9.2, and
+    // reading it as a narrowing here would invert it.
     const wasAll = !before.length;
     const isAll = !after.length;
     if (isAll) continue;                       // widening to everything strands nothing
@@ -223,10 +203,10 @@ export function draftWarnings(saved, draft, ctx) {
     out.push({
       tab: "register",
       title: `Stop requesting ${lost.join(", ")} from ${labelOf(scope)}?`,
-      body: "Findings at those severities are already in the ledger, and a scan that does not "
-        + "request them cannot resolve them by absence — the guard that stops an unrequested "
-        + "severity mass-resolving also stops it ever closing. They will sit open and ageing "
-        + "until the gate is widened again.",
+      body: "Findings at those severities are already in the ledger, and a scan that no longer "
+        + "requests them cannot resolve those findings by absence — the same guard that stops "
+        + "an unrequested severity from mass-resolving also stops it from ever closing. They "
+        + "will sit open and ageing until the gate is widened again.",
       confirmLabel: "Narrow the scope",
     });
   }
@@ -252,80 +232,4 @@ export function draftWarnings(saved, draft, ctx) {
   }
 
   return out;
-}
-
-// ============================================================================ per-tab status
-//
-// TAB_FIELDS below is NOT SETTING_FIELDS above. SETTING_FIELDS/SETTINGS_TABS predate the page
-// that shipped (graph/compliance/access/system, over defaultDepth/maxNodes/autoExpand/
-// fiveRsPins) and nothing in src/ or test/ ever imported them — grepped clean before writing
-// this. pages/settings.js built its own Register/Deadlines/Access/System tabs over the real
-// seven-field Settings contract with its own parallel FIELD_TABS constant instead. Rather than
-// widen that gap, TAB_FIELDS is the real map and pages/settings.js's own FIELD_TABS now reads
-// `= TAB_FIELDS` so the two cannot drift, the same promise SETTING_FIELDS's header makes for
-// the tabs that were never built.
-
-/**
- * Field -> owning tab for the real Settings page's save-bar batch. Mirrors FIELD_TABS in
- * pages/settings.js, which re-exports this constant rather than restating it.
- */
-export const TAB_FIELDS = {
-  scopes: "register",
-  fetchSeverities: "register",
-  slaTargets: "deadlines",
-  syncSchedule: "system",
-  autoCompact: "system",
-  retentionDays: "system",
-};
-
-/** Order-insensitive equality for a draft field value — arrays and per-scope records copy the
- * same shape `changedFields` above already compares this way; kept local rather than shared
- * so this module never imports from pages/settings.js (the DOM half imports FROM here, not
- * the other way around). */
-function sameFieldValue(a, b) {
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
-  }
-  if (a && b && typeof a === "object" && typeof b === "object") {
-    const ka = Object.keys(a).sort();
-    const kb = Object.keys(b).sort();
-    if (JSON.stringify(ka) !== JSON.stringify(kb)) return false;
-    return ka.every((k) => sameFieldValue(a[k], b[k]));
-  }
-  return a === b;
-}
-
-/**
- * Per-tab dirty/invalid state, so a tablist can show which HIDDEN tab holds unsaved or
- * illegal state without a reader opening it first.
- *
- * `dirty` — true when some field owned by that tab differs between `draft` and `saved`.
- * `saved` MUST be the last-SAVED snapshot, never the initial-load one that never changes
- * across a session: a field changed and then changed back to the saved value is not dirty,
- * the same rule `changedFields` above already applies to the save bar's own count. Passing
- * an initial-load snapshot here instead would make a revert read as still-dirty forever.
- *
- * `invalid` — true when `errors` names a field owned by that tab. `errors` is any object
- * keyed by field name; only KEY PRESENCE is read, so the caller's contract is to delete a
- * key once that field clears rather than to set it to a falsy message.
- *
- * `tabFields` is the field->tab map to read (TAB_FIELDS in production) — a parameter rather
- * than a closed-over constant so this stays testable against a synthetic shape.
- *
- * Returns one entry per tab NAMED IN tabFields; a tab that owns no field there (Access, on
- * this page) never appears and is therefore never dirty or invalid by construction.
- */
-export function tabStatus(draft, saved, errors, tabFields) {
-  const fields = tabFields || {};
-  const d = draft || {};
-  const s = saved || {};
-  const errs = errors || {};
-  const tabs = {};
-  for (const tab of new Set(Object.values(fields))) tabs[tab] = { dirty: false, invalid: false };
-  for (const [field, tab] of Object.entries(fields)) {
-    if (!tabs[tab]) continue;
-    if (!sameFieldValue(s[field], d[field])) tabs[tab].dirty = true;
-    if (Object.prototype.hasOwnProperty.call(errs, field)) tabs[tab].invalid = true;
-  }
-  return tabs;
 }
