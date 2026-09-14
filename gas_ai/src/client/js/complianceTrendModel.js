@@ -84,8 +84,8 @@ export function frameworkSeries(frameworkId, name) {
  *
  * THE READER IS TOLD. A truncated axis is a legitimate instrument and a notorious one, and
  * the difference is entirely whether it is disclosed — so `complianceTrendView` publishes
- * `range` and the card prints the baseline in words whenever it is not zero. Never draw this
- * window without that sentence.
+ * `range` and `baselineNote`, and the card carries that sentence on the chart's own tip.
+ * Never draw this window without publishing the baseline somewhere the reader can reach it.
  */
 const MIN_SPAN = 10;
 const MIN_PAD = 2;
@@ -137,8 +137,9 @@ export function percentRange(points, series) {
  * THE SENTENCE THAT MAKES THE TRUNCATED AXIS LEGITIMATE. A y axis that does not start at
  * zero exaggerates every movement drawn on it, which is exactly why it is the standard way
  * to mislead with a line chart — and exactly why it is the right instrument here, where the
- * full range would hide the movement instead. What separates the two is saying so, on the
- * chart, where the reader is looking, rather than in a tip they may never open.
+ * full range would hide the movement instead. What separates the two is that the reader can
+ * find out: the card carries this on the chart's tip, beside the rest of what the series is
+ * and is not.
  */
 export function baselineNote(range) {
   const min = range && Number.isFinite(range.min) ? range.min : 0;

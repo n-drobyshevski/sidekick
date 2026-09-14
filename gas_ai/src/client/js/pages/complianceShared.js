@@ -264,9 +264,15 @@ export function stateKeys(tree) {
  * THE CHART IS OPTIONAL AND THE CARD IS NOT. Chart.js arrives on demand over
  * `google.script.run` and a deployment's policy may refuse to run it at all (chartsLoader.js
  * states the unknown plainly); `chartUnavailable` then replaces the box and everything else
- * here — the counts, the coverage sentence, the scope note — still stands. The data table
- * beside it is drawn EAGERLY for the same reason it is on every other chart in this app: it
- * is the non-visual reading of the same array, not a fallback for a failed one.
+ * here — the heading and its tip, the state counts, the scope note — still stands. The data
+ * table beside it is drawn EAGERLY for the same reason it is on every other chart in this
+ * app: it is the non-visual reading of the same array, not a fallback for a failed one.
+ *
+ * THE COLUMN CARRIES ONE PARAGRAPH AT MOST. The axis baseline and the coverage sentence live
+ * on the heading's tip rather than under the canvas — see the note at that call. What is
+ * left underneath only ever draws when something is actually wrong with the reading: a
+ * broken line, a hero stating a different figure, or a project view the series cannot
+ * follow.
  */
 export function complianceTrendCard({
   tree, points, series, postureScope, label, title, note,
@@ -277,17 +283,28 @@ export function complianceTrendCard({
   const card = el("div", { class: "comp-strip" },
     el("p", { class: "comp-trend-head" },
       title,
+      // THE CAPTION SLOT IS THE TIP. The axis baseline and the coverage the percentage is a
+      // share of used to be two paragraphs under the canvas — four wrapped lines of caveat
+      // in a page HEADER, which pushed the stat row below the fold and made the column read
+      // as a footnote with a chart in it. Neither fact is dropped: both are computed
+      // (`complianceTrendModel.js`) and both arrive here, on the mark, which is the move
+      // `stateKeys`' own 44 words of caveat already made and what DESIGN.md means by the Tip
+      // being the app's answer to "what is this". The coverage ALSO rides on every point's
+      // hover card (`view.notes`), so the denominator is a hover away from the figure it
+      // qualifies rather than only at the bottom of the column.
       tip(tipMark(), [
         "One point per successful sync, at the percentage Wiz scored then. Recorded going "
           + "forward only: the stored posture is overwritten on every sync, so this series "
           + "cannot be reconstructed for syncs that ran before it was being kept.",
         "A framework with no score at a sync breaks the line rather than dropping to zero — "
           + "NO_RESOURCES and NO_POLICIES are the opposite of everything failing.",
-        "The axis is fitted to the window rather than run from zero, and never narrower than "
-          + "10 points — wide enough that a one-point wobble is drawn as a one-point wobble, "
-          + "narrow enough that a real slide is visible. The baseline is stated under the "
-          + "chart whenever it is not zero.",
-      ])),
+        // The concrete baseline, not a general statement about axes: a truncated axis is
+        // legitimate to exactly the extent that the reader can find out where it starts.
+        view.baseline,
+        // What the latest percentage is a share of, and whether that denominator moved —
+        // the one way a rising line here can mean the opposite of what it looks like.
+        view.foot,
+      ].filter(Boolean))),
     view.draw
       ? el("div", { class: "comp-trend-box" }, canvas)
       : el("div", { class: "chart-empty", role: "status" }, view.reason),
@@ -303,13 +320,6 @@ export function complianceTrendCard({
     // when that swap applies, and a second opinion about it here is how the hero and this
     // sentence would come to disagree.
     note ? el("p", { class: "comp-strip-note" }, note) : null,
-    // THE TRUNCATED AXIS, DISCLOSED. The window is fitted to the data rather than run from
-    // zero, because posture lives near the top of its range and the full scale would flatten
-    // the movement — which is also the classic way to mislead with a line chart, and the only
-    // thing separating the two is this sentence. On the chart, not in the tip.
-    view.baseline ? el("p", { class: "comp-strip-note" }, view.baseline) : null,
-    // The denominator, which is the other way this line could mislead — see `coverageFoot`.
-    view.foot ? el("p", { class: "comp-strip-note" }, view.foot) : null,
     // What population the SERIES describes, where that differs from the page around it.
     view.scopeNote ? el("p", { class: "comp-strip-note" }, view.scopeNote) : null,
     // THE SAME `view.points`/`view.series` THE CHART WRAPPER READS BELOW, named once above
