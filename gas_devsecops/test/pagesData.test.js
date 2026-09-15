@@ -29,10 +29,10 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  boundedDays, capacityVerdict, capacityView, coldKpiCards, coldRepoRows, coldScatterPoints,
-  coldTeamRows, coldZoneView, coverageMeterPct, densityView, footholdCellKind, footholdView,
-  groupRows, halfLifeView, heatLevel, heatModel, overallRow, tableRow, unmeasurableNote,
-  projectCountNote,
+  boundedDays, capacityVerdict, capacityView, coldestShareNote, coldKpiCards, coldModeCaption,
+  coldRepoRows, coldScatterPoints, coldTeamRows, coldZoneView, coverageMeterPct, densityView,
+  footholdCellKind, footholdView, groupRows, halfLifeView, heatLevel, heatModel, overallRow,
+  tableRow, unmeasurableNote, projectCountNote,
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
@@ -687,6 +687,413 @@ describe("repos: the cold zone's absences are notices, never error boxes", () =>
     expect(REPOS_SRC).toMatch(/errorState\(\s*\n?\s*"Couldn't load the repository profile\./);
   });
 });
+// -----------------------------------------------------------------------------------------
+//  repos.js — the cold zone drawn RELATIVE to the estate (phase 2)
+// -----------------------------------------------------------------------------------------
+//
+// ONE LINE IN DAYS, TWO WAYS OF DRAWING IT. `cold_after_days` is the EFFECTIVE threshold in
+// both modes (src/domain/coldZone.ts's header), so nothing below branches on the mode to read
+// a NUMBER — every assertion here is about the SENTENCE that says where the number came from,
+// which is the only thing on this page that a mode can change. The fixtures above are
+// deliberately left as they were: a payload with no `mode` at all is an older server, and the
+// first describe here is what pins that it reads as the fixed window rather than as a gap.
+
+/** A relative-mode `ColdZoneResult`, carrying the phase-2 fields the fixtures above omit. */
+function relativeModel(over = {}, totalsOver = {}) {
+  return coldModel({
+    mode: "relative",
+    cold_after_days: 47, // the DERIVED line — what the estate produced, not what was set
+    fixed_after_days: 90, // …and the operator's window, which survives the switch
+    target_share_pct: 20,
+    achieved_share_pct: (10 / 46) * 100,
+    floor_days: 14,
+    floor_applied: false,
+    derived_days: 47,
+    eligible_repos: 46,
+    cold_bound_only: 0,
+    totals: coldTotals({
+      repos_with_open: 46, cold_repos: 10, teams_in_coldest_share: 0, ...totalsOver,
+    }),
+    ...over,
+  });
+}
+
+/** The fixed-mode payload a phase-2 server sends: the same window, with the new fields said. */
+function fixedModel(over = {}, totalsOver = {}) {
+  return coldModel({
+    mode: "fixed",
+    cold_after_days: 90,
+    fixed_after_days: 90,
+    target_share_pct: null,
+    achieved_share_pct: (3 / 46) * 100,
+    floor_days: null,
+    floor_applied: false,
+    derived_days: null,
+    eligible_repos: 46,
+    cold_bound_only: 0,
+    totals: coldTotals({
+      repos_with_open: 46, cold_repos: 3, teams_in_coldest_share: 0, ...totalsOver,
+    }),
+    ...over,
+  });
+}
+
+describe("repos: coldZoneView lifts the mode, and a payload that never heard of one is fixed", () => {
+  it("an older payload with no mode block reads as the fixed window, not as a gap", () => {
+    const v = coldZoneView(coldModel());
+    expect(v.mode).toBe("fixed");
+    expect(v.fixedAfterDays).toBeNull();
+    expect(v.targetSharePct).toBeNull();
+    expect(v.floorDays).toBeNull();
+    expect(v.floorApplied).toBe(false);
+    expect(v.derivedDays).toBeNull();
+    expect(v.coldBoundOnly).toBeNull();
+    // `eligible_repos === totals.repos_with_open` by construction, so the older payload can
+    // still answer "a share of what" out of the totals it does carry.
+    expect(v.eligibleRepos).toBe(6);
+    // …and the achieved share falls back to the totals' own copy of the same number.
+    expect(v.achievedSharePct).toBeCloseTo((2 / 6) * 100, 10);
+    expect(v.teamsInColdestShare).toBe(0);
+  });
+
+  it("only the exact word is relative — anything else is the older contract", () => {
+    for (const mode of ["RELATIVE", "Relative", " relative", "dynamic", 1, true, null, {}]) {
+      expect(coldZoneView(coldModel({ mode })).mode, JSON.stringify(mode)).toBe("fixed");
+    }
+    expect(coldZoneView(coldModel({ mode: "relative" })).mode).toBe("relative");
+  });
+
+  it("a relative payload publishes the target, the floor and the line that was refused", () => {
+    const v = coldZoneView(relativeModel({ floor_applied: true, derived_days: 9,
+      cold_after_days: 14 }));
+    expect(v.mode).toBe("relative");
+    expect(v.coldAfterDays).toBe(14); // the EFFECTIVE line, which is the floor here
+    expect(v.fixedAfterDays).toBe(90); // the setting, still published, and NOT what classified
+    expect(v.targetSharePct).toBe(20);
+    expect(v.floorDays).toBe(14);
+    expect(v.floorApplied).toBe(true);
+    expect(v.derivedDays).toBe(9);
+    expect(v.eligibleRepos).toBe(46);
+  });
+
+  it("a NULL achieved share is kept, never quietly replaced by the totals' number", () => {
+    // The field carrying null is a statement — "no repository has an open finding, so there is
+    // no share" — and the fallback exists only for a payload that has no field at all.
+    const v = coldZoneView(relativeModel({ achieved_share_pct: null }));
+    expect(v.achievedSharePct).toBeNull();
+  });
+
+  it("the shape-over-flag refusal still holds over every one of the new fields", () => {
+    const v = coldZoneView({
+      coldZone: {
+        measurable: true, totals: null, repos: null, teams: null, cold_after_days: 47,
+        mode: "relative", target_share_pct: 20, floor_days: 14, derived_days: 47,
+        eligible_repos: 46, cold_bound_only: 3,
+      },
+    });
+    expect(v.measurable).toBe(false);
+    // The mode and the operator's numbers survive — they are facts about the SETTING, which is
+    // knowable even where the data is not — but nothing counted from rows does.
+    expect(v.mode).toBe("relative");
+    expect(v.targetSharePct).toBe(20);
+    expect(v.teamsInColdestShare).toBe(0);
+    expect(coldKpiCards(v)).toEqual([]);
+    expect(coldestShareNote(v)).toBeNull();
+    expect(typeof coldModeCaption(v)).toBe("string"); // a caption for every state, never a throw
+  });
+
+  it("every refusable input still yields a caption rather than an exception", () => {
+    for (const model of [null, undefined, {}, { coldZone: null }, []]) {
+      expect(typeof coldModeCaption(coldZoneView(model)), JSON.stringify(model)).toBe("string");
+    }
+    expect(typeof coldModeCaption(null)).toBe("string");
+    expect(typeof coldModeCaption(undefined)).toBe("string");
+  });
+});
+
+describe("repos: coldModeCaption — one sentence per state, in the copy the section was drawn with", () => {
+  const caption = (model) => coldModeCaption(coldZoneView(model));
+
+  const FIXED_LEAD = "Fixed window: a repository is cold after at least 90 days with nothing"
+    + " resolved, removed or rotated.";
+  const RELATIVE_LEAD = "Relative mode: the line is set so the idlest 20% of the 46"
+    + " repositories with open findings are cold.";
+
+  it("fixed and populated: the window, then the share it drew", () => {
+    expect(caption(fixedModel())).toBe(
+      `${FIXED_LEAD} 3 of 46 repositories with open findings (6.5%) are cold.`,
+    );
+  });
+
+  it("fixed with nothing open: no share is reported, and no 0% is invented", () => {
+    expect(caption(fixedModel(
+      { eligible_repos: 0, achieved_share_pct: null },
+      { repos_with_open: 0, cold_repos: 0 },
+    ))).toBe(`${FIXED_LEAD} No repository has an open finding, so there is no share to report.`);
+  });
+
+  it("fixed and not measurable: the window is a setting, and the caption says where it lives", () => {
+    expect(caption({
+      coldZone: {
+        measurable: false, mode: "fixed", cold_after_days: 90, fixed_after_days: 90,
+        target_share_pct: null, achieved_share_pct: null, floor_days: null, floor_applied: false,
+        derived_days: null, eligible_repos: null, cold_bound_only: null,
+        observed_from: null, as_of: "2026-06-15T00:00:00.000Z",
+        bucket_edges: null, bucket_labels: null, repos: null, teams: null, totals: null,
+        row_count: 0, dropped_no_repo: 0, unclassified_secrets: 0, scopes_without_scan: [],
+      },
+    })).toBe(`${FIXED_LEAD} The window is set in Settings, on the Deadlines tab.`);
+  });
+
+  it("relative with the floor idle: where the line landed, and that the floor did not bind", () => {
+    expect(caption(relativeModel())).toBe(
+      `${RELATIVE_LEAD} It landed at 47 days idle, and 10 repositories (21.7%) are cold.`
+      + " The 14-day floor did not apply.",
+    );
+  });
+
+  it("relative with the floor holding: the line that was refused, and the smaller zone", () => {
+    expect(caption(relativeModel(
+      { floor_applied: true, derived_days: 9, cold_after_days: 14,
+        achieved_share_pct: (2 / 46) * 100 },
+      { cold_repos: 2 },
+    ))).toBe(
+      `${RELATIVE_LEAD} The idlest 20% would have been 9 days, so the 14-day floor holds the`
+      + " line instead, and 2 repositories (4.3%) are cold — a smaller zone than the 20% asked"
+      + " for.",
+    );
+  });
+
+  it("relative with nothing to rank: the line rests on the floor, and says so", () => {
+    expect(caption(relativeModel(
+      { eligible_repos: 0, achieved_share_pct: null, derived_days: null, cold_after_days: 14 },
+      { repos_with_open: 0, cold_repos: 0 },
+    ))).toBe(
+      "Relative mode: no repository has an open finding, so there is nothing to rank. The line"
+      + " rests on the 14-day floor until one does.",
+    );
+  });
+
+  it("relative and not measurable: what would produce a line, and the floor under it", () => {
+    expect(caption({
+      coldZone: {
+        measurable: false, mode: "relative", cold_after_days: 14, fixed_after_days: 90,
+        target_share_pct: 20, achieved_share_pct: null, floor_days: 14, floor_applied: false,
+        derived_days: null, eligible_repos: null, cold_bound_only: null,
+        observed_from: null, as_of: "2026-06-15T00:00:00.000Z",
+        bucket_edges: null, bucket_labels: null, repos: null, teams: null, totals: null,
+        row_count: 0, dropped_no_repo: 0, unclassified_secrets: 0, scopes_without_scan: [],
+      },
+    })).toBe(
+      "Relative mode: the line is derived from the estate once a scan has been saved, and it"
+      + " never falls below the 14-day floor.",
+    );
+  });
+
+  it("the bound-only suffix rides on either mode, and is grammatical at one", () => {
+    // A cold repository whose idle time was never MEASURED is ranked and classified at the
+    // bound it can prove — a systematic under-estimate — so the count is said out loud.
+    expect(caption(relativeModel({ cold_bound_only: 4 }))).toContain(
+      " 4 of them have no movement on record at all, so their idle time is a lower bound.",
+    );
+    expect(caption(fixedModel({ cold_bound_only: 1 }))).toBe(
+      `${FIXED_LEAD} 3 of 46 repositories with open findings (6.5%) are cold. 1 of them has no`
+      + " movement on record at all, so its idle time is a lower bound.",
+    );
+  });
+
+  it("says nothing about a bound nobody is resting on", () => {
+    expect(caption(relativeModel())).not.toContain("lower bound");
+    expect(caption(fixedModel())).not.toContain("lower bound");
+  });
+
+  it("NO caption, in any state, writes a bound with \">\" or \"≥\"", () => {
+    // README.md above the Pages table: prose says "at least N", a CELL says "≥ N", and neither
+    // ever says ">". This is prose in every one of its eight shapes.
+    const models = [
+      coldModel(), fixedModel(), relativeModel(),
+      fixedModel({ eligible_repos: 0, achieved_share_pct: null }, { repos_with_open: 0 }),
+      relativeModel({ floor_applied: true, derived_days: 9, cold_after_days: 14 }),
+      relativeModel({ eligible_repos: 0, achieved_share_pct: null }, { repos_with_open: 0 }),
+      relativeModel({ cold_bound_only: 7 }),
+      { coldZone: { measurable: false, mode: "relative", cold_after_days: 14, floor_days: 14 } },
+      { coldZone: { measurable: false, mode: "fixed", cold_after_days: 90 } },
+      null, {},
+    ];
+    for (const model of models) {
+      const text = coldModeCaption(coldZoneView(model));
+      expect(text, JSON.stringify(model)).not.toContain(">");
+      expect(text, JSON.stringify(model)).not.toContain("≥");
+      expect(text.trim().length).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe("repos: the cold-repositories card names the share it drew and what drew it", () => {
+  it("prints the achieved share on the face of the card, over the population it is of", () => {
+    const [card] = coldKpiCards(coldZoneView(relativeModel()));
+    expect(card.sub).toBe("21.7% of 46 with open findings");
+  });
+
+  it("falls back to today's sentence where there is no share to print", () => {
+    const [card] = coldKpiCards(coldZoneView(relativeModel(
+      { achieved_share_pct: null }, { repos_with_open: 0, cold_repos: 0 },
+    )));
+    expect(card.sub).toBe("Of 0 with open findings");
+    expect(card.sub).not.toMatch(/%/);
+  });
+
+  it("the denominator names the mode, the target and where the line landed", () => {
+    const [card] = coldKpiCards(coldZoneView(relativeModel()));
+    expect(card.denominator).toContain(
+      "Relative mode: the idlest 20% of them are the cold zone, and the line landed at 47 days"
+      + " idle.",
+    );
+    expect(card.denominator).toContain("for at least 47 days");
+    expect(card.denominator).not.toMatch(/>/);
+  });
+
+  it("…or the floor sentence, where the floor is what held the line", () => {
+    const [card] = coldKpiCards(coldZoneView(relativeModel(
+      { floor_applied: true, derived_days: 9, cold_after_days: 14,
+        achieved_share_pct: (2 / 46) * 100 },
+      { cold_repos: 2 },
+    )));
+    expect(card.denominator).toContain(
+      "Relative mode: the idlest 20% of them would have been 9 days, so the 14-day floor holds"
+      + " the line instead and the zone is smaller than the 20% asked for.",
+    );
+  });
+
+  it("appends the bound-only sentence when cold repositories are resting on a bound", () => {
+    const [card] = coldKpiCards(coldZoneView(relativeModel({ cold_bound_only: 4 })));
+    expect(card.denominator).toMatch(
+      / 4 of them have no movement on record at all, so their idle time is a lower bound\.$/,
+    );
+    expect(coldKpiCards(coldZoneView(relativeModel()))[0].denominator)
+      .not.toContain("lower bound");
+  });
+
+  it("says nothing about a mode on the fixed window — that denominator is unchanged", () => {
+    const [card] = coldKpiCards(coldZoneView(fixedModel()));
+    expect(card.denominator).toBe(
+      "Of 46 repositories with open findings (6.5%). Cold means no finding resolved, removed or"
+      + " rotated for at least 90 days, measured at the last scan.",
+    );
+  });
+
+  it("leaves the other three cards exactly as they were", () => {
+    const relative = coldKpiCards(coldZoneView(relativeModel()));
+    const fixed = coldKpiCards(coldZoneView(fixedModel()));
+    expect(relative.map((c) => c.key))
+      .toEqual(["coldRepos", "openInCold", "highRiskInCold", "unobserved"]);
+    for (const i of [1, 2, 3]) {
+      expect(relative[i].denominator, relative[i].key).not.toMatch(/Relative mode/);
+      expect(relative[i].sub, relative[i].key).toBe(fixed[i].sub);
+    }
+  });
+});
+
+describe("repos: coldTeamRows — the rank is not the row number, and the badge is relative only", () => {
+  it("carries the rank and the mark the payload published", () => {
+    const v = coldZoneView(relativeModel({
+      teams: [
+        coldTeam({ project: "quiet", label: "quiet", relative_rank: 1, in_coldest_share: true }),
+        coldTeam({ relative_rank: 2, in_coldest_share: false }),
+      ],
+    }));
+    const rows = coldTeamRows(v);
+    expect(rows.map((r) => r.relativeRank)).toEqual([1, 2]);
+    expect(rows.map((r) => r.inColdestShare)).toEqual([true, false]);
+  });
+
+  it("a project with no repository carrying an open finding has NO rank, not a last place", () => {
+    const v = coldZoneView(relativeModel({
+      teams: [coldTeam({
+        repos_with_open: 0, cold_repos: 0, cold_share_pct: null, verdict: "clear",
+        relative_rank: null, in_coldest_share: false,
+      })],
+    }));
+    expect(coldTeamRows(v)[0].relativeRank).toBeNull();
+  });
+
+  it("fixed mode marks nobody, and the note under the table stays silent", () => {
+    // `in_coldest_share` is a claim about a TARGET share and fixed mode never named one, so
+    // the domain leaves it false on every row and the total at zero.
+    const v = coldZoneView(fixedModel({
+      teams: [coldTeam({ relative_rank: 1, in_coldest_share: false })],
+    }));
+    expect(coldTeamRows(v).every((r) => r.inColdestShare === false)).toBe(true);
+    expect(coldestShareNote(v)).toBeNull();
+  });
+
+  it("an older payload has neither field, and neither is invented", () => {
+    const [row] = coldTeamRows(coldZoneView(coldModel()));
+    expect(row.relativeRank).toBeNull();
+    expect(row.inColdestShare).toBe(false);
+  });
+});
+
+describe("repos: coldestShareNote — the marks counted, and the clamp that decides how many", () => {
+  it("counts the badged projects and states the refusal behind the count", () => {
+    const v = coldZoneView(relativeModel({}, { teams_in_coldest_share: 2 }));
+    expect(coldestShareNote(v)).toBe(
+      "2 projects are in the coldest 20% by the share of their open-finding repositories that"
+      + " are cold. A project with no cold repository is never marked.",
+    );
+  });
+
+  it("reads grammatically at one project", () => {
+    const v = coldZoneView(relativeModel({}, { teams_in_coldest_share: 1 }));
+    expect(coldestShareNote(v)).toBe(
+      "1 project is in the coldest 20% by the share of its open-finding repositories that are"
+      + " cold. A project with no cold repository is never marked.",
+    );
+  });
+
+  it("is null — not a sentence about zero projects — when nobody is marked", () => {
+    expect(coldestShareNote(coldZoneView(relativeModel()))).toBeNull();
+    expect(coldestShareNote(null)).toBeNull();
+    expect(coldestShareNote(undefined)).toBeNull();
+  });
+});
+
+describe("repos: the mode reaches the section, the column and the canvas", () => {
+  // SOURCE-AS-TEXT, for the same reason the notice-vs-error check above is: no jsdom here, and
+  // what can go wrong is WHERE the sentence is appended and WHETHER the canvas is told.
+  const section = REPOS_SRC.slice(
+    REPOS_SRC.indexOf("function renderColdZone"),
+    REPOS_SRC.indexOf("function renderGroupTable"),
+  );
+  const renderFn = REPOS_SRC.slice(REPOS_SRC.indexOf("function renderColdZone"));
+  const body = renderFn.slice(0, renderFn.indexOf("\n  }\n"));
+
+  it("the caption is the section's FIRST child, ahead of both notice branches", () => {
+    expect(body).toMatch(/denomNote\(coldModeCaption\(view\)\)/);
+    // Before the early return for "not measurable" — and therefore before the one for "not
+    // populated" too, which is further down the same function.
+    expect(body.indexOf("coldModeCaption"))
+      .toBeLessThan(body.indexOf("if (!view.measurable)"));
+  });
+
+  it("the project table carries a Coldest rank column, its pill and its glossary id", () => {
+    expect(section).toMatch(/label: "Coldest rank"/);
+    expect(section).toMatch(/term: "coldest-share"/);
+    expect(section).toMatch(/statusPill\("warn", `Coldest \$\{fmtCount\(view\.targetSharePct\)\}%`\)/);
+    // The column sits after Cold share and before Open in cold.
+    expect(section.indexOf('label: "Cold share"')).toBeLessThan(section.indexOf('label: "Coldest rank"'));
+    expect(section.indexOf('label: "Coldest rank"')).toBeLessThan(section.indexOf('label: "Open in cold"'));
+  });
+
+  it("the scatter is told which mode drew the line it is about to draw a rule at", () => {
+    expect(section).toMatch(/coldZoneScatter\(canvas, points, \{[\s\S]*?mode: view\.mode,/);
+  });
+
+  it("the badge's count line is rendered under the project table", () => {
+    expect(section).toMatch(/coldestShareNote\(view\)/);
+  });
+});
+
 // =========================================================================================
 //  history.js
 // =========================================================================================

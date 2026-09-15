@@ -1844,12 +1844,21 @@ export function coverageEfficiencyScatter(canvas, points) {
  * second category hue but "everything else", and the contrast note is relieved the way the
  * checker asks, by the `chartTable` twin every caller ships beside this canvas.
  *
+ * WHERE THE RULE CAME FROM IS PART OF THE RULE. One dashed line at 47 days is two different
+ * claims: an operator's standing window, or the idle time of the k-th idlest repository on
+ * this estate at this scan (`src/domain/coldZone.ts` — `cold_after_days` is the EFFECTIVE line
+ * in both modes, so the canvas receives one number either way). A derived line MOVES when the
+ * population moves, and a reader comparing two screenshots a week apart has to be able to see
+ * that from the picture. Hence "(relative)" on the label and the mode in the description —
+ * no second colour, no second line, no legend: one more word on a rule that was already
+ * labelled.
+ *
  * @param {*} canvas
  * @param {Array<{label: string, idleDays: number, open: number, cold: boolean,
  *                bounded: boolean}>} points  one per observed repository with open findings
- * @param {{thresholdDays: number}} opts
+ * @param {{thresholdDays: number, mode: string}} opts
  */
-export function coldZoneScatter(canvas, points, { thresholdDays } = {}) {
+export function coldZoneScatter(canvas, points, { thresholdDays, mode } = {}) {
   destroyExisting(canvas);
   const plotted = (points || []).filter(
     (p) => typeof p.idleDays === "number" && Number.isFinite(p.idleDays)
@@ -1857,6 +1866,9 @@ export function coldZoneScatter(canvas, points, { thresholdDays } = {}) {
   );
   const threshold =
     typeof thresholdDays === "number" && Number.isFinite(thresholdDays) ? thresholdDays : null;
+  // Absent means the fixed window — the older contract — and only the exact word is relative.
+  const relative = mode === "relative";
+  const modeText = relative ? "relative mode" : "the fixed window";
   describe(
     canvas,
     "Idle days against open findings for each repository the newest scan still returns: " +
@@ -1867,7 +1879,10 @@ export function coldZoneScatter(canvas, points, { thresholdDays } = {}) {
             `${localeNum(p.open)} open${p.cold ? " (in the cold zone)" : ""}`,
         )
         .join("; ") +
-      (threshold === null ? "." : `. The cold-zone threshold is ${Math.round(threshold)} days.`),
+      "." +
+      (threshold === null
+        ? ` The cold-zone line comes from ${modeText}.`
+        : ` The cold-zone threshold is ${Math.round(threshold)} days, from ${modeText}.`),
   );
   const opts = baseOptions("");
   opts.scales.x.type = "linear";
@@ -1910,7 +1925,10 @@ export function coldZoneScatter(canvas, points, { thresholdDays } = {}) {
       // Flipped inside the plot near the right edge, so the label never clips.
       const right = x > chartArea.right - 80;
       ctx.textAlign = right ? "right" : "left";
-      ctx.fillText(`cold at ${Math.round(threshold)} d`, x + (right ? -4 : 4), chartArea.top + 2);
+      // "(relative)" rather than a second rule or a second colour: the line is in the same
+      // place either way, and what changes is what it is a line OF.
+      const label = `cold at ${Math.round(threshold)} d` + (relative ? " (relative)" : "");
+      ctx.fillText(label, x + (right ? -4 : 4), chartArea.top + 2);
       ctx.restore();
     },
   };

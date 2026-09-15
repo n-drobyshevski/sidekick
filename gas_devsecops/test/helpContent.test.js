@@ -74,6 +74,12 @@ const EXPECTED_IDS = [
   // about the scanner, and idle is the number both are read off.
   // (No quoted ids inside this comment: test/pagesHelp.test.js reads this array as TEXT.)
   "cold-zone", "unobserved", "idle",
+  // Phase 2's two, from the second way the cold line can be drawn. The mode entry is what the
+  // Settings control and the Repositories caption both point at; the other is the team-level
+  // mark on the project table, which is a POSITION relative to the other projects rather than
+  // a verdict about any one of them — a distinction worth a card of its own.
+  // (No quoted ids inside this comment: test/pagesHelp.test.js reads this array as TEXT.)
+  "cold-zone-mode", "coldest-share",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164

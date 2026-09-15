@@ -57,6 +57,17 @@ vi.mock("chart.js", () => {
   };
 });
 
+/** A `fakeCanvas` that REMEMBERS its attributes — `describe()` writes the chart's aria-label
+ *  there, and that label is the whole non-visual reading of a canvas. */
+function describedCanvas() {
+  const canvas = fakeCanvas();
+  canvas.attrs = {};
+  canvas.setAttribute = (k, v) => {
+    canvas.attrs[k] = v;
+  };
+  return canvas;
+}
+
 function fakeCanvas() {
   return {
     setAttribute() {},
@@ -410,6 +421,48 @@ describe("coldZoneScatter", () => {
     expect(fn).toMatch(/cold at \$\{Math\.round\(threshold\)\} d/);
     expect(fn).toMatch(/strokeStyle = HAIRLINE/);
     expect(fn).toMatch(/fillStyle = INK2/);
+  });
+
+  // ------------------------------------------------------------------ which line is it
+  //
+  // A DASHED RULE AT 47 DAYS IS TWO DIFFERENT CLAIMS. In fixed mode it is an operator's
+  // standing window; in relative mode it is the idle time of the k-th idlest repository on
+  // this estate at this scan, and it MOVES when the population moves. The canvas receives one
+  // number either way (`cold_after_days` is the effective line in both modes), so the only
+  // place that difference can be stated is the rule's own label and the description — and a
+  // reader comparing two screenshots a week apart needs it stated.
+
+  it("adds \"(relative)\" to the rule's label only when the line was derived", () => {
+    const fn = CHARTS_SRC.slice(CHARTS_SRC.indexOf("export function coldZoneScatter"));
+    // The label is still built from the same template the check above pins, with one word
+    // appended — not a second, separately-spelled label that could drift from it.
+    expect(fn).toMatch(
+      /const label = `cold at \$\{Math\.round\(threshold\)\} d` \+ \(relative \? " \(relative\)" : ""\);/,
+    );
+    expect(fn).toMatch(/const relative = mode === "relative";/);
+    // No second colour and no second rule to carry the distinction — one more word.
+    expect(fn).not.toMatch(/relative \? CATEGORICAL/);
+  });
+
+  it("names the mode in the description, and an absent mode is the fixed window", async () => {
+    const charts = await loadCharts();
+    const points = [
+      { label: "cold-one", idleDays: 151, open: 12, cold: true, bounded: false },
+      { label: "warm-one", idleDays: 12, open: 40, cold: false, bounded: true },
+    ];
+    const relative = describedCanvas();
+    charts.coldZoneScatter(relative, points, { thresholdDays: 47, mode: "relative" });
+    expect(relative.attrs["aria-label"]).toContain("47 days, from relative mode.");
+
+    const fixed = describedCanvas();
+    charts.coldZoneScatter(fixed, points, { thresholdDays: 90 });
+    expect(fixed.attrs["aria-label"]).toContain("90 days, from the fixed window.");
+    expect(fixed.attrs["aria-label"]).not.toContain("relative");
+
+    // No threshold to name, and the description still says which definition is in force.
+    const noLine = describedCanvas();
+    charts.coldZoneScatter(noLine, points, { mode: "relative" });
+    expect(noLine.attrs["aria-label"]).toContain("The cold-zone line comes from relative mode.");
   });
 });
 

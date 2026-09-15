@@ -33,6 +33,17 @@
 // has it stopped". See `coldZoneView` below for what the page does with the result, and
 // `src/domain/coldZone.ts`'s header for why "cold" and "unobserved" are two states rather
 // than one.
+//
+// THE LINE CAN BE DRAWN TWO WAYS, AND NOTHING HERE BRANCHES ON WHICH. The operator either
+// names a WINDOW (fixed: cold after 90 idle days) or names a SHARE (relative: the idlest 20%
+// of the repositories with open findings are cold, floored so a healthy estate is not
+// slandered). Both produce ONE effective threshold in days, and `cold_after_days` is always
+// that threshold — so every figure, bucket and cell below reads one number and no renderer
+// asks which mode it came from. What the mode changes is the SENTENCE: `coldModeCaption`
+// heads the section with where the line came from, the cold-repositories card's denominator
+// repeats it one level down, the project table grows a relative rank beside the absolute
+// verdict, and the scatter's rule says "(relative)" when the line was derived. See
+// `coldModeCaption` for the copy and for what it refuses to round off.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
@@ -40,7 +51,8 @@ import { pagedTable } from "./sca.js";
 import {
   absentText, boundedDays, chartTable, chartTableModel, clear, days1, denomNote, el,
   emptyState, errorState, figureCard, firstRunNotice, fmtCount, fmtDate, fmtDays, meter,
-  num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, skeletonStack, uiIcon,
+  num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, skeletonStack, statusPill,
+  uiIcon,
 } from "../ui.js";
 // `verdictMark` is `pages/program.js`'s own dot-and-word for a capacity verdict, promoted to
 // `ui/verdict.js` in this same wave so this page's Capacity column can draw the identical
@@ -185,9 +197,48 @@ export function coldZoneView(model) {
     && teams !== null;
   const reposWithOpen = totals ? num(totals.repos_with_open, 0) : 0;
   const unobserved = totals ? num(totals.repos_unobserved, 0) : 0;
+  // ABSENT IS "fixed", AND ONLY THE EXACT WORD IS RELATIVE. `mode` arrived with the second
+  // definition of the line, so a payload that predates it carries no `mode` at all and is
+  // asking for exactly what it always got. Anything that is not the literal `"relative"` —
+  // a stray casing, a number, a half-applied cache entry — is read as the older contract
+  // rather than cast, for the same reason the shape decides `measurable` above.
+  const mode = present && cz.mode === "relative" ? "relative" : "fixed";
+  // THE SHARE THE LINE ACTUALLY DREW. A payload that carries the field and a NULL in it is
+  // making a real statement ("no repository has an open finding, so there is no share"), so
+  // the fallback fires only when the KEY IS MISSING — an older server — and lands on the
+  // totals' own copy of the same number. Collapsing the two would turn an honest refusal
+  // into a figure copied from somewhere else.
+  const achievedRaw = present && Object.prototype.hasOwnProperty.call(cz, "achieved_share_pct")
+    ? num(cz.achieved_share_pct)
+    : undefined;
+  const eligibleRaw = present ? num(cz.eligible_repos) : null;
   return {
     present,
     measurable,
+    // WHICH DEFINITION DREW THE LINE — never a second copy of the line itself. `coldAfterDays`
+    // below is the EFFECTIVE threshold in both modes (src/domain/coldZone.ts's header), so
+    // nothing this page renders branches on the mode to read a number; the mode is read to
+    // say WHERE the number came from, which is a different sentence.
+    mode,
+    // The operator's fixed window, which survives the switch: in relative mode it is what was
+    // asked for before the estate was consulted, and it is NOT what the page classifies by.
+    fixedAfterDays: present ? num(cz.fixed_after_days) : null,
+    targetSharePct: present ? num(cz.target_share_pct) : null,
+    achievedSharePct: achievedRaw === undefined
+      ? (totals ? num(totals.cold_repo_share_pct) : null)
+      : achievedRaw,
+    floorDays: present ? num(cz.floor_days) : null,
+    floorApplied: present && cz.floor_applied === true,
+    derivedDays: present ? num(cz.derived_days) : null,
+    // `eligible_repos === totals.repos_with_open` by construction, so an older payload that
+    // carries only the totals can still answer "a share of what".
+    eligibleRepos: eligibleRaw === null
+      ? (totals ? num(totals.repos_with_open, 0) : null)
+      : eligibleRaw,
+    // The cold repositories whose idle time was never measured — the cost of ranking a
+    // repository at the bound it can prove. Null, not 0, when nothing was measurable.
+    coldBoundOnly: present ? num(cz.cold_bound_only) : null,
+    teamsInColdestShare: totals ? num(totals.teams_in_coldest_share, 0) : 0,
     // The threshold and the clock ride along even when nothing is measurable: a reader asking
     // "cold after how long?" is asking about the setting, not about the data.
     coldAfterDays: present ? num(cz.cold_after_days) : null,
@@ -208,6 +259,104 @@ export function coldZoneView(model) {
     // every one of them still returned by the newest scan, has nothing for this section to say.
     populated: measurable && (reposWithOpen > 0 || unobserved > 0),
   };
+}
+
+/**
+ * "N of them have no movement on record at all" — the cost of a line drawn over lower bounds.
+ *
+ * A repository that has never closed anything has no measured silence, only a bound counted
+ * from when this register started watching (`coldZone.ts`: `idle_is_bound`). Both modes
+ * classify and print it by that bound, which is a systematic UNDER-estimate of how long it
+ * has really been quiet — so the count of cold repositories resting on one is said out loud
+ * rather than left inside a figure that looks measured.
+ */
+function boundOnlySentence(n) {
+  return n === 1
+    ? "1 of them has no movement on record at all, so its idle time is a lower bound."
+    : `${fmtCount(n)} of them have no movement on record at all, so their idle time is a`
+      + " lower bound.";
+}
+
+/**
+ * WHERE THE LINE CAME FROM, in one sentence, above everything the line decided.
+ *
+ * The section publishes one threshold in days and every figure under it reads that one
+ * number — which is exactly why the number alone is not enough to read the section. Ninety
+ * days can be an operator's standing window or the idle time of the tenth-idlest repository
+ * on this estate last Tuesday, and those two facts age completely differently: the first is a
+ * policy a team can be held to, the second moves when the population moves and says nothing
+ * about any absolute amount of silence. So the caption names the MODE first, then what the
+ * mode produced, and in relative mode it also names what it AIMED at — because a share that
+ * was asked for and a share that was achieved are two numbers and the register publishes both
+ * (`target_share_pct` / `achieved_share_pct`).
+ *
+ * WHAT IT REFUSES TO ROUND OFF:
+ *   * The floor gets its own clause in both directions. "The 14-day floor did not apply" is a
+ *     fact the reader needs in order to trust the derived line; "the floor holds the line
+ *     instead" is the reason the zone came out SMALLER than the share asked for, and without
+ *     it the achieved share reads as a failure of the estate rather than a deliberate refusal
+ *     to slander four repositories that were all touched last week.
+ *   * "Nothing to rank" is not "0% are cold". With no eligible repository the relative line
+ *     rests on the floor and the caption says so, rather than reporting a share over an empty
+ *     population.
+ *   * Not measurable is its own sentence in both modes: there is no clock, so there is no
+ *     line to have landed anywhere, and the caption says what WOULD produce one.
+ *
+ * NOTATION (README.md, above the Pages table): prose says "at least N", a cell says "≥ N",
+ * and neither ever says ">". This is prose, so every duration here goes through `fmtDays`
+ * behind "at least", and `test/pagesData.test.js` sweeps every combination for both glyphs.
+ *
+ * @param {object|null|undefined} view  a `coldZoneView` result
+ * @returns {string} always a sentence — every state this section can be in has one
+ */
+export function coldModeCaption(view) {
+  const v = view || {};
+  const relative = v.mode === "relative";
+  const days = num(v.coldAfterDays);
+  const floor = num(v.floorDays);
+  // "the 14-day floor", or just "the floor" where the payload never said how deep it is. The
+  // phrase is built once because it is said in four different sentences below.
+  const floorPhrase = floor === null ? "floor" : `${fmtCount(floor)}-day floor`;
+  // The TARGET is an operator's whole-number choice (Settings clamps it to 1..50), so it
+  // prints as a count with a per-cent sign; the ACHIEVED share is a measurement and prints
+  // through `pct1`. Two different kinds of number, two different formatters.
+  const targetText = `${fmtCount(num(v.targetSharePct))}%`;
+  const eligible = num(v.eligibleRepos, 0);
+  const cold = v.totals ? num(v.totals.cold_repos, 0) : 0;
+  const achieved = num(v.achievedSharePct);
+  const boundOnly = num(v.coldBoundOnly, 0);
+  const suffix = boundOnly > 0 ? ` ${boundOnlySentence(boundOnly)}` : "";
+  const windowText = days === null ? "the cold-zone window" : `at least ${fmtDays(days)}`;
+  const fixedLead = `Fixed window: a repository is cold after ${windowText} with nothing`
+    + " resolved, removed or rotated.";
+  const coldCount = `${fmtCount(cold)} ${cold === 1 ? "repository" : "repositories"}`
+    + (achieved === null ? "" : ` (${pct1(achieved)})`);
+
+  if (v.measurable !== true) {
+    return relative
+      ? "Relative mode: the line is derived from the estate once a scan has been saved, and it"
+        + ` never falls below the ${floorPhrase}.`
+      : `${fixedLead} The window is set in Settings, on the Deadlines tab.`;
+  }
+  if (eligible <= 0) {
+    return relative
+      ? "Relative mode: no repository has an open finding, so there is nothing to rank. The"
+        + ` line rests on the ${floorPhrase} until one does.`
+      : `${fixedLead} No repository has an open finding, so there is no share to report.`;
+  }
+  if (!relative) {
+    return `${fixedLead} ${fmtCount(cold)} of ${fmtCount(eligible)} repositories with open`
+      + ` findings${achieved === null ? "" : ` (${pct1(achieved)})`} are cold.${suffix}`;
+  }
+  const lead = `Relative mode: the line is set so the idlest ${targetText} of the`
+    + ` ${fmtCount(eligible)} repositories with open findings are cold.`;
+  if (v.floorApplied === true) {
+    return `${lead} The idlest ${targetText} would have been ${fmtDays(num(v.derivedDays))}, so`
+      + ` the ${floorPhrase} holds the line instead, and ${coldCount} are cold — a smaller zone`
+      + ` than the ${targetText} asked for.${suffix}`;
+  }
+  return `${lead} It landed at ${fmtDays(days)} idle, and ${coldCount} are cold. The`
+    + ` ${floorPhrase} did not apply.${suffix}`;
 }
 
 /**
@@ -250,6 +399,32 @@ export function projectCountNote(view, rowCount) {
 }
 
 /**
+ * The badge's own count line, under the project table — or null when nobody is badged.
+ *
+ * TWO SENTENCES, AND THE SECOND ONE IS THE REFUSAL. "The coldest 20%" of an estate where one
+ * project has anything cold at all is that ONE project: `rankTeams` clamps the badge to the
+ * projects that actually have a cold repository (`coldZone.ts`'s `C` clamp), so a reader who
+ * counts the marks and finds fewer than the arithmetic implies is seeing the clamp, not a
+ * rendering bug. A line that only reported the count would leave that looking like one.
+ *
+ * Null in fixed mode by construction rather than by a branch here: `in_coldest_share` is only
+ * ever true in relative mode, so the total it is counted from is 0 and there is nothing to
+ * say. Same shape as `unmeasurableNote` above — a sentence about zero projects is noise.
+ *
+ * @param {{teamsInColdestShare?: number, targetSharePct?: number|null}|null|undefined} view
+ * @returns {string|null}
+ */
+export function coldestShareNote(view) {
+  const n = view ? num(view.teamsInColdestShare, 0) : 0;
+  if (!n) return null;
+  const one = n === 1;
+  return `${fmtCount(n)} ${one ? "project is" : "projects are"} in the coldest`
+    + ` ${fmtCount(num(view.targetSharePct))}% by the share of ${one ? "its" : "their"}`
+    + " open-finding repositories that are cold. A project with no cold repository is never"
+    + " marked.";
+}
+
+/**
  * The four figures, as specs — label, value, the sentence under it and the denominator behind
  * it. DOM-free so the claims can be read without a DOM, the way every other view model on
  * this page is.
@@ -270,18 +445,44 @@ export function coldKpiCards(view) {
   const backlogShare = num(t.cold_backlog_share_pct);
   const repoShare = num(t.cold_repo_share_pct);
   const openInUnobserved = num(t.open_in_unobserved, 0);
+  // THE SHARE THE LINE DREW, said on the face of the card. `achievedSharePct` is the same
+  // number as `cold_repo_share_pct` in fixed mode and falls back to it on an older payload —
+  // it is read here because in RELATIVE mode it is the number the target is judged against,
+  // and a card that printed the count alone would leave "did the line do what was asked?"
+  // unanswerable without opening the denominator.
+  const achieved = num(view.achievedSharePct === undefined ? repoShare : view.achievedSharePct);
+  const relative = view.mode === "relative";
+  const targetText = `${fmtCount(num(view.targetSharePct))}%`;
+  const floor = num(view.floorDays);
+  const floorPhrase = floor === null ? "floor" : `${fmtCount(floor)}-day floor`;
+  // WHERE THE LINE CAME FROM, in the one denominator whose population the line decides. The
+  // caption above the section says this at length for the whole section; the card says it
+  // again because a denominator is read on its own, one level down from a figure, and
+  // "46 repositories with open findings" is a population a relative line CHOSE the size of.
+  const modeClause = !relative
+    ? ""
+    : view.floorApplied === true
+      ? ` Relative mode: the idlest ${targetText} of them would have been`
+        + ` ${fmtDays(num(view.derivedDays))}, so the ${floorPhrase} holds the line instead and`
+        + ` the zone is smaller than the ${targetText} asked for.`
+      : ` Relative mode: the idlest ${targetText} of them are the cold zone, and the line`
+        + ` landed at ${fmtDays(view.coldAfterDays)} idle.`;
+  const boundOnly = num(view.coldBoundOnly, 0);
+  const boundClause = boundOnly > 0 ? ` ${boundOnlySentence(boundOnly)}` : "";
   return [
     {
       key: "coldRepos",
       label: "Cold repositories",
       value: fmtCount(num(t.cold_repos, 0)),
-      sub: `Of ${fmtCount(withOpen)} with open findings`,
+      sub: achieved === null
+        ? `Of ${fmtCount(withOpen)} with open findings`
+        : `${pct1(achieved)} of ${fmtCount(withOpen)} with open findings`,
       help: { term: "cold-zone" },
       denominator:
         `Of ${fmtCount(withOpen)} repositories with open findings`
-        + (repoShare === null ? "" : ` (${pct1(repoShare)})`)
-        + `. Cold means no finding resolved, removed or rotated for ${windowText}, measured at`
-        + " the last scan.",
+        + (achieved === null ? "" : ` (${pct1(achieved)})`)
+        + `.${modeClause} Cold means no finding resolved, removed or rotated for ${windowText},`
+        + ` measured at the last scan.${boundClause}`,
     },
     {
       key: "openInCold",
@@ -373,6 +574,14 @@ export function coldTeamRows(view) {
     // that none of its repositories has gone cold, which is a different claim from "there was
     // nothing to ask the question of". Same refusal shape as `coverageMeterPct` above.
     sharePct: num(t.cold_share_pct),
+    // THE RANK IS NOT THE ROW NUMBER, and both modes carry it. The table is published in the
+    // payload's own order (cold repositories desc); the rank orders the same projects on a
+    // different axis — the SHARE of their open-finding repositories that is cold — so rank 1
+    // is routinely not the first row, and a project with nothing open has NO rank at all
+    // rather than a last place it never raced for.
+    relativeRank: num(t.relative_rank),
+    // Only ever true in relative mode, and never for a project with no cold repository.
+    inColdestShare: t.in_coldest_share === true,
     openInCold: num(t.open_in_cold, 0),
     highRiskInCold: num(t.high_risk_in_cold, 0),
     // OVER OBSERVED REPOSITORIES ONLY — the domain says so, and it matters: a repository that
@@ -747,6 +956,11 @@ export async function renderRepos(host, _params, _ctx) {
   function renderColdZone(model) {
     const view = coldZoneView(model);
     clear(coldHost);
+    // FIRST, IN ALL THREE BRANCHES. Every figure below is read off one line in days, and the
+    // same number means different things depending on which mode drew it — so the sentence
+    // that says which one goes ABOVE the figures rather than under them, and it is printed on
+    // the two notice branches too, where the line is the only thing there is to say.
+    coldHost.append(denomNote(coldModeCaption(view)));
     if (!view.measurable) {
       coldHost.append(emptyState(
         "The cold zone is not measured yet.",
@@ -831,6 +1045,26 @@ export async function renderRepos(host, _params, _ctx) {
           },
         },
         {
+          // THE RELATIVE POSITION, beside the absolute verdict rather than instead of it. The
+          // rank is computed in both modes so the column always reads; the BADGE is a claim
+          // about a target share and only relative mode names one, so it appears only there.
+          // `warn` rather than `bad` on purpose: being the coldest project on a healthy
+          // estate is a POSITION, not a verdict, and the Verdict column earlier in the same
+          // row is where the absolute reading lives.
+          key: "coldestRank", label: "Coldest rank", help: { term: "coldest-share" },
+          cell: (r) => {
+            const rank = r.relativeRank === null ? absentText : fmtCount(r.relativeRank);
+            if (!r.inColdestShare) return rank;
+            // The pill draws its own dot and its own word, so there is no new class and no
+            // new colour here — and the two are separated by a plain space rather than by a
+            // wrapper class, because a pill already carries its own padding.
+            return el("span", {},
+              rank,
+              " ",
+              statusPill("warn", `Coldest ${fmtCount(view.targetSharePct)}%`));
+          },
+        },
+        {
           key: "openInCold", label: "Open in cold", className: "num",
           cell: (r) => fmtCount(r.openInCold),
         },
@@ -859,6 +1093,10 @@ export async function renderRepos(host, _params, _ctx) {
       emptyText: "No project has a repository to report on yet.",
     }));
     coldHost.append(denomNote(projectCountNote(view, rows.length)));
+    // The marks in the column above, counted — and the clamp that decides how many there are,
+    // stated. Null when nobody is marked, which is every project in fixed mode.
+    const coldest = coldestShareNote(view);
+    if (coldest) coldHost.append(denomNote(coldest));
   }
 
   /**
@@ -1017,7 +1255,12 @@ export async function renderRepos(host, _params, _ctx) {
       })));
     loadCharts()
       .then((api) => {
-        api.coldZoneScatter(canvas, points, { thresholdDays: view.coldAfterDays });
+        api.coldZoneScatter(canvas, points, {
+          thresholdDays: view.coldAfterDays,
+          // The rule's label says "(relative)" when the line was derived, because a dashed
+          // rule at 47 days is a different claim depending on where 47 came from.
+          mode: view.mode,
+        });
         onPageTeardown(() => {
           try {
             api.destroyChart(canvas);

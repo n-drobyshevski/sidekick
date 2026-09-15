@@ -561,6 +561,12 @@ export function fixNextView(payload, boot) {
  * time the page is opened. That is a different reading from the one the card otherwise
  * promises, so the denominator sentence says which it is rather than quietly printing both the
  * same way.
+ *
+ * AND THE MODE RIDES ALONG, for the reason the Repositories page's caption spells out at
+ * length: `cold_after_days` is the EFFECTIVE line in both modes, so one number reaches this
+ * card whichever definition drew it, and "at least 47 days" means something different when a
+ * person chose 47 than when the estate's tenth-idlest repository did. The card still prints
+ * ONE figure; the denominator sentence is where the difference is stated.
  */
 export function coldShareView(payload) {
   const cz = payload && typeof payload === "object" && !Array.isArray(payload)
@@ -574,6 +580,17 @@ export function coldShareView(payload) {
   const source = payload && typeof payload.coldZoneAsOfSource === "string"
     ? payload.coldZoneAsOfSource
     : null;
+  // Absent means the older contract — the fixed window — and only the literal "relative" is
+  // relative. Same refusal as `pages/repos.js`'s `coldZoneView`, and for the same reason.
+  const mode = present && cz.mode === "relative" ? "relative" : "fixed";
+  const modeFields = {
+    mode,
+    targetSharePct: present ? num(cz.target_share_pct) : null,
+    achievedSharePct: present ? num(cz.achieved_share_pct) : null,
+    floorApplied: present && cz.floor_applied === true,
+    derivedDays: present ? num(cz.derived_days) : null,
+    floorDays: present ? num(cz.floor_days) : null,
+  };
   if (!measurable) {
     return {
       show: false,
@@ -581,11 +598,13 @@ export function coldShareView(payload) {
       atLedgerClock: source !== "wallClock",
       pct: null, openInCold: 0, openFindings: 0, coldRepos: 0, reposWithOpen: 0,
       coldAfterDays: present ? num(cz.cold_after_days) : null,
+      ...modeFields,
     };
   }
   return {
     show: true,
     measurable: true,
+    ...modeFields,
     // TRUE unless the server SAID it fell back — an older payload that carries no source at
     // all is not evidence of a wall-clock reading, and the caveat is only worth printing where
     // it is known to apply.
@@ -1070,6 +1089,17 @@ export async function renderExecutive(host, params, _ctx) {
     const windowText = view.coldAfterDays === null
       ? "the cold-zone window"
       : `at least ${fmtDays(view.coldAfterDays)}`;
+    // WHERE THAT WINDOW CAME FROM. Nothing here branches on the mode to read a NUMBER — the
+    // line above is the effective one in both modes — but a derived line and a chosen one are
+    // different claims about the same figure, and the floor case is the one where the zone is
+    // deliberately smaller than the share that was asked for.
+    const targetText = `${fmtCount(view.targetSharePct)}%`;
+    const modeClause = view.mode !== "relative"
+      ? ""
+      : view.floorApplied === true
+        ? ` — the floor, which holds the zone smaller than the ${targetText} asked for`
+        : ` — the line relative mode set so the idlest ${targetText} of repositories with open`
+          + " findings are cold";
     const clock = view.atLedgerClock
       ? "Measured at the last scan, never against today."
       : "Measured against the current time rather than the last scan — the clock the ledger"
@@ -1082,8 +1112,8 @@ export async function renderExecutive(host, params, _ctx) {
       denominator:
         `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings, on`
         + ` ${fmtCount(view.coldRepos)} of ${fmtCount(view.reposWithOpen)} repositories with`
-        + ` open findings where nothing has been resolved, removed or rotated for ${windowText}.`
-        + ` ${clock}`,
+        + " open findings where nothing has been resolved, removed or rotated for"
+        + ` ${windowText}${modeClause}. ${clock}`,
     })));
     coldHost.append(el("p", { class: "small muted" },
       "Which repositories, and which projects → ",
