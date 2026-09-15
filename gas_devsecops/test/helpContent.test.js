@@ -67,6 +67,13 @@ const EXPECTED_IDS = [
   // card renders two lines, so a third line is a definition nobody reaches, and this is a
   // count where capacity defines a comparison.
   "closed-per-month",
+  // The cold zone's three, from the Repositories section and the Executive card it feeds.
+  // Three entries rather than one folded entry, for this array's usual reason: the tip card
+  // renders two lines, so a third word defined as a third line is defined nowhere a reader can
+  // reach. The split itself is the product — cold is a fact about a team, unobserved a fact
+  // about the scanner, and idle is the number both are read off.
+  // (No quoted ids inside this comment: test/pagesHelp.test.js reads this array as TEXT.)
+  "cold-zone", "unobserved", "idle",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164

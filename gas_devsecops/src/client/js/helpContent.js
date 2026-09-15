@@ -384,6 +384,37 @@ const ENTRIES = [
     ],
   },
   {
+    // THE COLD ZONE'S THREE WORDS. `cold-zone` is the state and its clock; `unobserved` is the
+    // state that must never be mistaken for it (a fact about the scanner, not about a team);
+    // `idle` is the number both of them are read off. Three entries rather than one because
+    // the tip card renders an entry's first two lines — a definition folded in as a third line
+    // is a definition nobody can reach — and because the Repositories page puts the three in
+    // three different places: the section label, a verdict column, and a figure column.
+    id: "cold-zone",
+    term: "Cold zone",
+    lines: [
+      "A repository with open findings where nothing has moved for at least the cold-zone window: no finding resolved, removed or rotated in that time.",
+      "Measured at the last scan, never against today, so the same saved ledger always reads the same. With no movement on record the figure is a lower bound \u2014 see Lower bound.",
+      "A repository the scanner has stopped returning is Unobserved instead — counted apart, and never counted as warm.",
+    ],
+  },
+  {
+    id: "unobserved",
+    term: "Unobserved",
+    lines: [
+      "The scanner stopped returning this repository: no finding on it reached the last scan of any register it has rows in.",
+      "Its findings close by disappearance, which looks like a whole repository being remediated at once — so it is tested first, counted apart, and never counted as warm or cold.",
+    ],
+  },
+  {
+    id: "idle",
+    term: "Idle days",
+    lines: [
+      "Days since the last movement on a repository: the most recent finding resolved, removed or rotated, whichever came last.",
+      "Measured from the last scan, never from today. Where nothing has ever moved there is no measurement, so the count runs from when we started watching and is published as a lower bound.",
+    ],
+  },
+  {
     id: "returned",
     term: "Returned",
     lines: [

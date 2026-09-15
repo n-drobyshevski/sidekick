@@ -144,6 +144,56 @@
 .verdict-dot--ok { background: var(--ok); }
 .verdict-dot--neutral { background: var(--text-3); }
 .verdict-dot--bad { background: var(--bad); }
+/* The fourth tone, added with the cold zone's project rollup. `partly-cold` — some of a
+   project's repositories have gone quiet, not all of them — is a different claim from
+   `fully-cold`, and the two collapsed into one red dot would lose the only distinction the
+   team table's verdict column exists to draw. The WORD still carries it either way
+   (ui/verdict.js); this is the tone that repeats it. */
+.verdict-dot--warn { background: var(--warn); }
+
+/* ------------------------------------------ Repositories: the team x idle-bucket heatmap
+   An app-local table (`table.data.heat`), not a component: this is the one grid in the app
+   whose cells carry an ordinal shade, and nothing in `gas_shared` draws one.
+
+   THE RAMP IS NEUTRAL INK, AND THAT IS A RULE RATHER THAN A PREFERENCE. DESIGN.md §4 says
+   outright that if this register ever grows an ordinal scale the brand yellow would be tier 2
+   of 4 (it is literally gas_ai's `--rank-2-solid`) and that at that point "the ramp moves, not
+   the brand" — so the brand is not in the ramp at all. The severity palette is the other
+   thing a reader already knows the meaning of, and idle time is not severity: borrowing
+   red/orange/amber here would have a 70-day-idle cell read as "HIGH". What is left is ink at
+   four alphas over the page's own ground — a scale with no second meaning to mistake it for.
+
+   AND THE COUNT IS ALWAYS PRINTED. The shade is the redundancy, never the reading: every cell
+   spells its repository count and, under it, the open findings sitting in that bucket, so the
+   grid survives greyscale, a dichromat, and the forced-colors rule below that strips the
+   fills outright (`background` is one of the properties forced-colors mode overrides, so the
+   alphas would land on a system ground they were never measured against). */
+/* The caption is the grid's method sentence and reads as prose, so it is left-aligned and
+   sits above the header rather than centred over it the way a browser's default caption does.
+   No other table in this app has one — `dataTable` puts its explanation in a `<p>` beside the
+   table — but this grid's columns move with the operator's threshold, and a sentence a reader
+   might not connect to the table it belongs to is worse than no sentence. */
+table.data.heat caption {
+  caption-side: top; text-align: left; padding: 0 0 var(--space-2);
+}
+/* A project name is a row LABEL, not a column heading: the base `table.data th` rule dresses
+   every `th` as an uppercase micro-label, which is right above a column of numbers and wrong
+   in front of one. Only the alignment, weight and case are restored; the ground stays. */
+table.data.heat th[scope="row"] {
+  font-size: var(--fs-body); font-weight: 600; letter-spacing: normal;
+  text-transform: none; color: var(--ink);
+}
+.heat-cell[data-level="0"] { background: transparent; }
+.heat-cell[data-level="1"] { background: rgba(23, 23, 23, 0.06); }
+.heat-cell[data-level="2"] { background: rgba(23, 23, 23, 0.12); }
+.heat-cell[data-level="3"] { background: rgba(23, 23, 23, 0.20); }
+.heat-cell[data-level="4"] { background: rgba(23, 23, 23, 0.30); }
+/* The open-findings line under the count, on its own line rather than trailing it: a cell is
+   a figure and its denominator-in-miniature, and inline they read as one run-on number. */
+.heat-cell > .small { display: block; }
+@media (forced-colors: active) {
+  .heat-cell { background: transparent; }
+}
 
 /* ------------------------------------------------ Repositories: the foothold cell, as a verdict
    Yes/No used to print as plain text; the glyph now carries the same word rather than replacing

@@ -16,6 +16,7 @@
 
 import {
   ACCENT,
+  coldZoneScatter,
   coverageEfficiencyLines,
   coverageEfficiencyScatter,
   coverCurve,
@@ -40,6 +41,7 @@ import {
 
 window.__WSK_CHARTS__ = {
   ACCENT,
+  coldZoneScatter,
   coverageEfficiencyLines,
   coverageEfficiencyScatter,
   coverCurve,

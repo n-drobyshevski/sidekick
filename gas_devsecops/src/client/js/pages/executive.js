@@ -30,9 +30,9 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absent, absentText, clear, dataTable, days1, disclosure, el, emptyState, errorState, fmtCount,
-  fmtDate, fmtDateTime, fmtDays, heroStat, num, pageHeader, pluralize, sectionLabel, sevKeyRow,
-  sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
+  absent, absentText, clear, dataTable, days1, disclosure, el, emptyState, errorState,
+  figureCard, fmtCount, fmtDate, fmtDateTime, fmtDays, heroStat, num, pageHeader, pct1,
+  pluralize, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -533,6 +533,73 @@ export function fixNextView(payload, boot) {
 }
 
 /**
+ * The cold zone, as the one figure a leader reads about it: how much of the open backlog is
+ * sitting on repositories where nothing is moving.
+ *
+ * ONE NUMBER, AND IT IS A SHARE RATHER THAN A COUNT. "412 open findings are cold" is a figure
+ * whose meaning changes with the size of the register; "31.4% of the backlog is cold" is the
+ * same fact read against the only denominator that makes it comparable week to week. Both are
+ * published — the share is the value, the pair behind it is the sentence underneath — because
+ * a rate without its denominator is not a measurement (PRODUCT.md, and `pagesLit` gate 3/7).
+ *
+ * NULL IS AN ANSWER AND IT IS NOT ZERO. `cold_backlog_share_pct` is null over an empty
+ * denominator — a register with no open findings at all has no cold SHARE, and rendering that
+ * as 0.0% would say the backlog is all warm when there is no backlog. The card draws
+ * `absentText` instead, which is what every other absent figure on this page draws.
+ *
+ * THE SHAPE IS CHECKED, NOT THE FLAG. `api_getExecutivePage` ships `coldZone` as a
+ * `ColdZoneHeadline` — the totals and the clock, never the per-repo or per-team arrays — and
+ * sets `totals` to null in exactly the case `measurable: false` describes. A payload that said
+ * `measurable: true` over a null `totals` (an older server answering a newer client) would
+ * pass a flag check and then throw inside the renderer, which `guard()` would dress as a red
+ * error box for what is really an absence. So this decides for itself from what arrived.
+ *
+ * `coldZoneAsOfSource` IS CARRIED BECAUSE THE CLOCK CAN SLIP. Every duration in the cold-zone
+ * family is measured at the LEDGER's clock — the newest scan's timestamp — so the same saved
+ * ledger always reads the same number. Where the server could not find that clock it falls
+ * back to the wall clock and says so, and a figure measured against "now" grows a little every
+ * time the page is opened. That is a different reading from the one the card otherwise
+ * promises, so the denominator sentence says which it is rather than quietly printing both the
+ * same way.
+ */
+export function coldShareView(payload) {
+  const cz = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload.coldZone
+    : null;
+  const present = !!cz && typeof cz === "object" && !Array.isArray(cz);
+  const totals = present && cz.totals && typeof cz.totals === "object" && !Array.isArray(cz.totals)
+    ? cz.totals
+    : null;
+  const measurable = present && cz.measurable === true && totals !== null;
+  const source = payload && typeof payload.coldZoneAsOfSource === "string"
+    ? payload.coldZoneAsOfSource
+    : null;
+  if (!measurable) {
+    return {
+      show: false,
+      measurable: false,
+      atLedgerClock: source !== "wallClock",
+      pct: null, openInCold: 0, openFindings: 0, coldRepos: 0, reposWithOpen: 0,
+      coldAfterDays: present ? num(cz.cold_after_days) : null,
+    };
+  }
+  return {
+    show: true,
+    measurable: true,
+    // TRUE unless the server SAID it fell back — an older payload that carries no source at
+    // all is not evidence of a wall-clock reading, and the caveat is only worth printing where
+    // it is known to apply.
+    atLedgerClock: source !== "wallClock",
+    pct: num(totals.cold_backlog_share_pct),
+    openInCold: num(totals.open_in_cold, 0),
+    openFindings: num(totals.open_findings, 0),
+    coldRepos: num(totals.cold_repos, 0),
+    reposWithOpen: num(totals.repos_with_open, 0),
+    coldAfterDays: num(cz.cold_after_days),
+  };
+}
+
+/**
  * The front door on a ledger nobody has read, and what would change that.
  *
  * WHAT THIS REPLACES. With no sync saved, this page rendered `0 lifecycles in the ledger · 0
@@ -652,6 +719,11 @@ export async function renderExecutive(host, params, _ctx) {
   // Directly under the hero and ABOVE the tiles: the hero states the register's claim about
   // itself, this states what follows from it, and only then comes the description.
   const fixHost = el("div", {});
+  // BETWEEN "what to fix next" AND "what is open by severity", because it answers the question
+  // that sits between them: the fix-next list says where to spend the next hour, the severity
+  // strip says how big the problem is, and this says how much of it nobody is spending any
+  // hour on at all.
+  const coldHost = el("div", {});
   const sevHost = el("div", {});
   const registerHost = el("div", {});
   const scanHost = el("div", {});
@@ -664,7 +736,7 @@ export async function renderExecutive(host, params, _ctx) {
   // header, then the figure and its stat strip.
   host.append(
     pageHeader({ route: "executive" }),
-    noticeHost, heroHost, fixHost, sevHost, registerHost, scanHost,
+    noticeHost, heroHost, fixHost, coldHost, sevHost, registerHost, scanHost,
   );
 
   // One failing section must never blank the front door.
@@ -699,11 +771,13 @@ export async function renderExecutive(host, params, _ctx) {
     // waits on. Both blocks are cleared so a stale paint cannot leave zeros behind them.
     if (first.show) {
       clear(fixHost);
+      clear(coldHost);
       clear(sevHost);
       clear(registerHost);
       return;
     }
     guard("the fix-next list", fixHost, () => renderFixNext(payload));
+    guard("the cold-zone share", coldHost, () => renderColdShare(payload));
     guard("open findings by severity", sevHost, () => renderSeverity(payload));
     guard("the register split", registerHost, () => renderRegisters(payload));
   };
@@ -962,6 +1036,58 @@ export async function renderExecutive(host, params, _ctx) {
     // stops before the backlog does, and a count of what was cut off the end is exactly the
     // kind of statement R2 refuses to move behind a signifier.
     if (view.cutNote) fixHost.append(el("p", { class: "small muted" }, view.cutNote));
+  }
+
+  // ------------------------------------------------------------------------- cold zone
+
+  /**
+   * One card: the share of the open backlog sitting where nothing is moving.
+   *
+   * ONE FIGURE AND NO TABLE, which is the same slice rule the hero follows. The Repositories
+   * page draws the whole family — every cold repository, every project, the idle-bucket grid
+   * and the scatter — and `coldZoneHeadline` (src/domain/coldZone.ts) is the projection that
+   * keeps the per-repository arrays off this payload entirely rather than shipping them and
+   * rendering one number out of them.
+   *
+   * THE LINK IS THE REST OF THE ANSWER. A reader who wants to know WHICH repositories is one
+   * click away, and that is a cross-reference rather than a second copy of the section.
+   */
+  function renderColdShare(payload) {
+    const view = coldShareView(payload);
+    clear(coldHost);
+    coldHost.append(sectionLabel("The cold zone", { term: "cold-zone" }));
+    if (!view.show) {
+      // A NOTICE, NEVER AN ERROR. No scan on record means there is no clock to measure
+      // idleness against — a state this block renders correctly, not a failure of it.
+      coldHost.append(emptyState(
+        "The cold zone is not measured yet.",
+        "Idle time is counted from the last scan back to the movement before it, so this"
+        + " figure appears once a sync has saved one.",
+        { variant: "notice" },
+      ));
+      return;
+    }
+    const windowText = view.coldAfterDays === null
+      ? "the cold-zone window"
+      : `at least ${fmtDays(view.coldAfterDays)}`;
+    const clock = view.atLedgerClock
+      ? "Measured at the last scan, never against today."
+      : "Measured against the current time rather than the last scan — the clock the ledger"
+        + " was measured at could not be read, so this figure moves as the page is reopened.";
+    coldHost.append(el("div", { class: "kpi-row" }, figureCard({
+      label: "Backlog in the cold zone",
+      value: view.pct === null ? absentText : pct1(view.pct),
+      sub: `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings`,
+      help: { term: "cold-zone" },
+      denominator:
+        `${fmtCount(view.openInCold)} of ${fmtCount(view.openFindings)} open findings, on`
+        + ` ${fmtCount(view.coldRepos)} of ${fmtCount(view.reposWithOpen)} repositories with`
+        + ` open findings where nothing has been resolved, removed or rotated for ${windowText}.`
+        + ` ${clock}`,
+    })));
+    coldHost.append(el("p", { class: "small muted" },
+      "Which repositories, and which projects → ",
+      el("a", { class: "linklike", href: "#/repos" }, "Repositories")));
   }
 
   // -------------------------------------------------------------------------- severity

@@ -810,11 +810,11 @@ export async function renderSettings(host, params, ctx) {
     // it is here rather than on System because it is a deadline a reader sets, not a
     // maintenance knob.
     //
-    // TODO(cold-zone tip): the label is plain text because the `cold-zone` glossary entry is
-    // being added by the client work package. Once `helpContent.js` defines it, this becomes
-    // `glossaryTip("Cold-zone window", "cold-zone")` — until then a tip pointing at an
-    // undefined id would be a help link that opens nothing (test/pagesSettings.test.js and
-    // pagesLit gate 6/7 both hold that rule).
+    // The label routes to the `cold-zone` glossary entry, like the panel's own title routes to
+    // `sla-target`: a window is a setting whose NAME is a measurement decision, and the entry
+    // is where the decision is written (movement is resolved/removed/rotated, measured at the
+    // last scan). The entry exists now — it was added with the Repositories section this
+    // setting drives — so the plain-text placeholder that stood here is gone.
     const coldId = "settings-cold-after-days";
     const coldErrorId = `${coldId}-error`;
     const coldWarn = el("span", { class: "small settings-retention-warn", hidden: true });
@@ -850,7 +850,7 @@ export async function renderSettings(host, params, ctx) {
       },
     });
     body.push(settingRow({
-      label: "Cold-zone window", htmlFor: coldId,
+      label: glossaryTip("Cold-zone window", "cold-zone"), htmlFor: coldId,
       description: "Days a repository may sit with open findings and no remediation movement "
         + "before it is called cold. Movement is any finding resolved, removed or rotated.",
       control: el("div", {}, coldInput, coldWarn, coldError),

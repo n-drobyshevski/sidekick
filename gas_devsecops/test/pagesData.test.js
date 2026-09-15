@@ -13,22 +13,25 @@
 // "no severities requested" inverts the claim from "measured everything" to "measured
 // nothing", which is the one mistake this suite is built to catch first.
 //
-// OWNERSHIP, ADAPTED FROM THE BRIEF. The brief asks this suite to assert that "ownership
-// coverage renders its unowned count". Measured against the real payload
-// (`readModels.ts::buildRepos`, `domain/assets.ts::assetProfile`), `reposModel` carries no
-// ownership field at all: `owner_project` never reaches `AssetProfileRow`'s 17 published
-// columns, so there is no owned/unowned split anywhere in `api_getReposPage`'s reply. CLAUDE.md
-// is explicit that a fabricated number is worse than an honest gap ("invent no numbers", "a
-// zero has to prove it looked"), so `ownershipView()` reports `available: false` with a
-// reason rather than a count, and the test below pins THAT — the honest-absence behavior —
-// instead of a number nothing computed. See repos.js's module header for the full account.
+// OWNERSHIP IS NO LONGER AN ABSENCE, and the describe that pinned the absence is gone with it.
+// This suite used to assert that `ownershipView()` reported `available: false` with a reason
+// — the honest-gap behaviour, because `assetProfile()` never read `owner_project` and there
+// was no owned/unowned split anywhere in `api_getReposPage`'s reply. That is still true of
+// `assetProfile()`; what changed is that the payload now carries a SECOND family beside it,
+// `model.coldZone` (src/domain/coldZone.ts), built from the ledger rows where `owner_project`
+// has always been. Its `teams` array is one row per project with a real "(no project)" bucket,
+// so the question the old test pinned as unanswerable is answered, and the describes below
+// pin the new claims instead. The rule the deleted test encoded has not moved: an absence is
+// still an absence and is still drawn with `emptyState`, which is what the source-as-text case
+// at the end of the cold-zone block checks.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  boundedDays, capacityVerdict, capacityView, coverageMeterPct, densityView, footholdCellKind,
-  footholdView, groupRows, halfLifeView, overallRow, ownershipView, tableRow,
+  boundedDays, capacityVerdict, capacityView, coldKpiCards, coldRepoRows, coldScatterPoints,
+  coldTeamRows, coldZoneView, coverageMeterPct, densityView, footholdCellKind, footholdView,
+  groupRows, halfLifeView, heatLevel, heatModel, overallRow, tableRow, unmeasurableNote,
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
@@ -209,46 +212,464 @@ describe("repos: coverageMeterPct refuses null BEFORE any cast, so an unmeasured
   // stops it, checked BEFORE any arithmetic rather than cleaned up after.
 });
 
-describe("repos: ownership coverage — honestly absent, not a fabricated unowned count", () => {
-  // WAVE 1, ITEM 1.1 CHANGED BOTH ASSERTIONS BELOW, AND THE CLAIM THEY PIN IS UNCHANGED: an
-  // honest gap is not a fabricated number. What moved is HOW that gap reaches the screen.
-  //
-  // `v.reason` no longer names `assetProfile` or `owner_project` as identifiers, on purpose —
-  // it used to read as developer trace ("assetProfile() … AssetProfileRow's 17 published
-  // columns") reaching a reader who has no way to act on either name. The trace itself still
-  // exists, moved into `ownershipView`'s own code comment in repos.js; `v.reason` is reader
-  // prose now, and this test drops the two identifier checks rather than gaming them into
-  // still matching leftover jargon.
-  //
-  // The render-path check moved from `errorState` to `emptyState(..., {variant:"notice"})`.
-  // `errorState`'s `role="alert"` red box drew on EVERY visit to this page for a permanent,
-  // known gap — CLAUDE.md's audit names this defect by name ("Repositories draws a red
-  // role=\"alert\" error box on every visit for a permanent, known data gap"). An absence
-  // that renders correctly every time is not a failure, so it does not belong on `errorState`.
-  it("reports unavailable rather than inventing a coverage percentage or an unowned count", () => {
-    const v = ownershipView();
-    expect(v.available).toBe(false);
-    expect(v.unownedCount).toBeNull();
-    expect(v.reason).toMatch(/owned\/unowned split/i);
-    // Reader prose, not developer trace — the identifiers a reader cannot act on moved into
-    // repos.js's own code comment above `ownershipView`.
-    expect(v.reason).not.toMatch(/assetProfile/);
-    expect(v.reason).not.toMatch(/owner_project/);
+// -----------------------------------------------------------------------------------------
+//  repos.js — the cold zone
+// -----------------------------------------------------------------------------------------
+//
+// THE PAYLOAD THESE READ is `model.coldZone`, a `ColdZoneResult` (src/domain/coldZone.ts).
+// The fixtures below are hand-written rather than imported from the domain's own tests on
+// purpose: what is being pinned here is how the PAGE behaves when handed a shape, including
+// shapes the domain would never produce (a null `totals` under `measurable: true` — an older
+// server answering a newer client), and a fixture generated by the producer cannot express
+// those.
+
+/** A `ColdRepoRow`-shaped fixture with the fields this page actually reads. */
+function coldRepo(over = {}) {
+  return {
+    repo_id: "r1",
+    repo_name: "repo-one",
+    project: "platform",
+    open_findings: 12,
+    open_high_risk: 3,
+    oldest_open_age_days: 210.5,
+    last_movement_at: "2026-03-01T00:00:00.000Z",
+    last_movement_kind: "resolved",
+    idle_days: 151,
+    idle_bound_days: null,
+    idle_is_bound: false,
+    idle_reading_days: 151,
+    observed: true,
+    last_observed_at: "2026-06-15T00:00:00.000Z",
+    disappeared_at: null,
+    disappeared_at_last_observation: 0,
+    reopened_open: 0,
+    verdict: "cold",
+    cold: true,
+    bucket: 3,
+    ...over,
+  };
+}
+
+/** A `ColdTeamRow`-shaped fixture, same bargain. */
+function coldTeam(over = {}) {
+  return {
+    project: "platform",
+    label: "platform",
+    repos: 4,
+    repos_observed: 4,
+    repos_unobserved: 0,
+    repos_with_open: 3,
+    cold_repos: 1,
+    watching_repos: 0,
+    warm_repos: 2,
+    clear_repos: 1,
+    open_findings: 40,
+    open_in_cold: 12,
+    high_risk_in_cold: 3,
+    open_in_unobserved: 0,
+    cold_share_pct: (1 / 3) * 100,
+    last_movement_at: "2026-05-02T00:00:00.000Z",
+    verdict: "partly-cold",
+    buckets: [1, 1, 0, 1, 0],
+    bucket_open: [5, 9, 0, 12, 0],
+    ...over,
+  };
+}
+
+function coldTotals(over = {}) {
+  return {
+    repos: 10,
+    repos_observed: 9,
+    repos_unobserved: 1,
+    repos_with_open: 6,
+    cold_repos: 2,
+    watching_repos: 1,
+    warm_repos: 3,
+    clear_repos: 3,
+    open_findings: 100,
+    open_in_cold: 24,
+    high_risk_in_cold: 6,
+    open_in_unobserved: 8,
+    cold_repo_share_pct: (2 / 6) * 100,
+    cold_backlog_share_pct: 24,
+    teams: 2,
+    teams_fully_cold: 0,
+    teams_partly_cold: 1,
+    repos_no_project: 1,
+    buckets: [2, 1, 0, 2, 1],
+    bucket_open: [10, 6, 0, 24, 4],
+    ...over,
+  };
+}
+
+function coldModel(over = {}) {
+  return {
+    coldZone: {
+      measurable: true,
+      cold_after_days: 90,
+      observed_from: "2025-11-01T00:00:00.000Z",
+      as_of: "2026-06-15T00:00:00.000Z",
+      bucket_edges: [0, 30, 60, 90],
+      bucket_labels: ["0–30 d", "30–60 d", "60–90 d", "≥ 90 d", "not yet measurable"],
+      repos: [coldRepo()],
+      teams: [coldTeam()],
+      totals: coldTotals(),
+      row_count: 400,
+      dropped_no_repo: 0,
+      unclassified_secrets: 12,
+      scopes_without_scan: [],
+      ...over,
+    },
+  };
+}
+
+describe("repos: coldZoneView refuses a shape it cannot draw, rather than throwing inside a render", () => {
+  it("a payload with no cold-zone block at all is absent, not measurable, and still safe to read", () => {
+    for (const model of [null, undefined, {}, { coldZone: null }, { coldZone: [] }, []]) {
+      const v = coldZoneView(model);
+      expect(v.measurable, JSON.stringify(model)).toBe(false);
+      // Every array is a REAL array whether or not anything was measured — a renderer that
+      // reached for `.length` on a null would throw and be dressed as an error box.
+      expect(Array.isArray(v.repos)).toBe(true);
+      expect(Array.isArray(v.teams)).toBe(true);
+      expect(v.totals).toBeNull();
+      expect(v.populated).toBe(false);
+    }
+    expect(coldZoneView(null).present).toBe(false);
   });
 
-  it("the render path draws the honest-absence state (emptyState, not errorState)", () => {
-    // Source-as-text: renderOwnership() must reach for emptyState with the "notice" variant —
-    // a perturbation that rendered a bare number instead is exactly what CLAUDE.md's "invent
-    // no numbers" rule exists to catch, and a perturbation that reached for errorState instead
-    // is exactly the alert-box defect this item fixed.
-    const fn = REPOS_SRC.slice(REPOS_SRC.indexOf("function renderOwnership"));
-    const body = fn.slice(0, fn.indexOf("\n  }\n"));
-    expect(body).toMatch(/emptyState\(/);
-    expect(body).toMatch(/variant: "notice"/);
-    expect(body).not.toMatch(/errorState\(/);
+  it("an unmeasurable block keeps its threshold and its counts but publishes no rows", () => {
+    const v = coldZoneView({
+      coldZone: {
+        measurable: false, cold_after_days: 90, observed_from: null,
+        as_of: "2026-06-15T00:00:00.000Z", bucket_edges: null, bucket_labels: null,
+        repos: null, teams: null, totals: null,
+        row_count: 400, dropped_no_repo: 2, unclassified_secrets: 12, scopes_without_scan: [],
+      },
+    });
+    expect(v.present).toBe(true);
+    expect(v.measurable).toBe(false);
+    expect(v.coldAfterDays).toBe(90); // the setting is knowable even when the data is not
+    expect(v.bucketLabels).toBeNull();
+    expect(v.repos).toEqual([]);
+    expect(v.totals).toBeNull();
+  });
+
+  // THE PERTURBATION THIS EXISTS FOR: `measurable: true` over a null `totals`. A view that
+  // trusted the flag would hand `coldKpiCards` a null and throw on the first field read,
+  // which `renderRepos` has no guard for — the section would vanish behind a stack trace in
+  // the console for what is, to a reader, an absence.
+  it("trusts the shape over the flag: measurable:true with nothing behind it reads unmeasurable", () => {
+    const v = coldZoneView({
+      coldZone: { measurable: true, totals: null, repos: null, teams: null, cold_after_days: 90 },
+    });
+    expect(v.measurable).toBe(false);
+    expect(coldKpiCards(v)).toEqual([]);
+    expect(coldTeamRows(v)).toEqual([]);
+    expect(coldRepoRows(v)).toEqual([]);
+    expect(coldScatterPoints(v)).toEqual([]);
+    expect(heatModel(v)).toBeNull();
+    expect(unmeasurableNote(v)).toBeNull();
+  });
+
+  it("a measured, populated block publishes the rows, the labels and the threshold", () => {
+    const v = coldZoneView(coldModel());
+    expect(v.measurable).toBe(true);
+    expect(v.populated).toBe(true);
+    expect(v.coldAfterDays).toBe(90);
+    // FROM THE PAYLOAD. The heatmap header is never spelled on the page — it moves with the
+    // operator's threshold, and a hardcoded "≥ 90 d" would be silently wrong at 120.
+    expect(v.bucketLabels).toEqual(["0–30 d", "30–60 d", "60–90 d", "≥ 90 d", "not yet measurable"]);
+    expect(v.repos).toHaveLength(1);
+    expect(v.teams).toHaveLength(1);
+  });
+
+  it("a measured register where nothing is open and nothing dropped out is NOT populated", () => {
+    // Measurable and empty is a real state and not an error: there is a clock, and there is
+    // nothing for it to measure. The page draws a notice for it, never a row of zeros.
+    const v = coldZoneView(coldModel({
+      repos: [], teams: [],
+      totals: coldTotals({ repos_with_open: 0, repos_unobserved: 0, cold_repos: 0 }),
+    }));
+    expect(v.measurable).toBe(true);
+    expect(v.populated).toBe(false);
   });
 });
 
+describe("repos: the four cold-zone figures each carry their own denominator", () => {
+  const cards = coldKpiCards(coldZoneView(coldModel()));
+
+  it("publishes exactly the four figures, each with a denominator sentence", () => {
+    expect(cards.map((c) => c.key))
+      .toEqual(["coldRepos", "openInCold", "highRiskInCold", "unobserved"]);
+    for (const card of cards) {
+      expect(typeof card.denominator, card.key).toBe("string");
+      expect(card.denominator.trim().length, card.key).toBeGreaterThan(0);
+    }
+  });
+
+  it("names the threshold in prose — \"at least N days\", never \">\"", () => {
+    const coldCard = cards[0];
+    expect(coldCard.denominator).toMatch(/at least 90 days/);
+    expect(coldCard.denominator).not.toMatch(/>/);
+  });
+
+  it("the backlog card prints its share of open findings, and the count it is a share of", () => {
+    expect(cards[1].sub).toBe("24.0% of 100 open findings");
+  });
+
+  it("a null share prints no percentage rather than a 0.0%", () => {
+    // `cold_backlog_share_pct` is null over an empty denominator — a register with no open
+    // findings has no cold SHARE, and 0.0% would say the backlog is all warm.
+    const v = coldZoneView(coldModel({
+      totals: coldTotals({ cold_backlog_share_pct: null, cold_repo_share_pct: null }),
+    }));
+    const [repoCard, backlogCard] = coldKpiCards(v);
+    expect(backlogCard.sub).toBe("Of 100 open findings");
+    expect(backlogCard.sub).not.toMatch(/%/);
+    expect(repoCard.denominator).not.toMatch(/%/);
+  });
+});
+
+describe("repos: unmeasurableNote — the repositories no figure can speak for", () => {
+  it("counts the watching repositories and says they are in neither figure", () => {
+    const note = unmeasurableNote(coldZoneView(coldModel()));
+    expect(note).toMatch(/1 repository has/);
+    expect(note).toMatch(/neither the cold figure nor the warm one/);
+  });
+
+  it("is null — not a sentence about zero repositories — when there are none", () => {
+    expect(unmeasurableNote(coldZoneView(coldModel({ totals: coldTotals({ watching_repos: 0 }) }))))
+      .toBeNull();
+    expect(unmeasurableNote(null)).toBeNull();
+  });
+});
+
+describe("repos: heatLevel — the ordinal shade, refused before the cast", () => {
+  it("a count of zero is level 0, not the lightest shade", () => {
+    // An empty cell means nothing is there; the lightest shade means "something, and it is the
+    // least of it". The table prints the 0 either way.
+    expect(heatLevel(0, 10)).toBe(0);
+  });
+
+  it("the maximum is the top step, and nothing asks for a fifth", () => {
+    expect(heatLevel(10, 10)).toBe(4);
+    // `count/max*4` is exactly 4 at the maximum; without the min() this would be level 5, a
+    // value the stylesheet has no rule for.
+    expect(heatLevel(9.9, 10)).toBe(4);
+  });
+
+  it("walks the four steps in order", () => {
+    expect(heatLevel(1, 10)).toBe(1);
+    expect(heatLevel(3, 10)).toBe(2);
+    expect(heatLevel(5, 10)).toBe(3);
+    expect(heatLevel(8, 10)).toBe(4);
+  });
+
+  it("refuses every non-finite input rather than emitting data-level=\"NaN\"", () => {
+    // `data-level="NaN"` matches no rule in pages.css: the cell keeps its number and silently
+    // loses its shade, which is exactly the kind of failure nobody sees in review.
+    for (const bad of [null, undefined, "", "4", [], {}, false, NaN, Infinity]) {
+      expect(heatLevel(bad, 10), `count=${String(bad)}`).toBe(0);
+      expect(heatLevel(4, bad), `max=${String(bad)}`).toBe(0);
+    }
+    expect(heatLevel(4, 0)).toBe(0); // no maximum to scale against
+    expect(heatLevel(-1, 10)).toBe(0);
+  });
+});
+
+describe("repos: heatModel — the grid, its header and its unshaded totals row", () => {
+  it("takes its columns from the payload and never spells them itself", () => {
+    const model = heatModel(coldZoneView(coldModel()));
+    expect(model.columns)
+      .toEqual(["0–30 d", "30–60 d", "60–90 d", "≥ 90 d", "not yet measurable"]);
+  });
+
+  it("every cell carries its repository count, its open findings and a level", () => {
+    const model = heatModel(coldZoneView(coldModel()));
+    expect(model.rows[0].cells.map((c) => c.count)).toEqual([1, 1, 0, 1, 0]);
+    expect(model.rows[0].cells.map((c) => c.open)).toEqual([5, 9, 0, 12, 0]);
+    expect(model.rows[0].cells.map((c) => c.level)).toEqual([4, 4, 0, 4, 0]);
+  });
+
+  it("the totals row is unshaded — the ramp compares projects, not a project with the sum", () => {
+    const model = heatModel(coldZoneView(coldModel()));
+    expect(model.totals.label).toBe("All projects");
+    expect(model.totals.cells.map((c) => c.count)).toEqual([2, 1, 0, 2, 1]);
+    expect(model.totals.cells.every((c) => c.level === 0)).toBe(true);
+  });
+
+  it("draws nothing rather than an empty table when there is no grid", () => {
+    expect(heatModel(coldZoneView(coldModel({ teams: [] })))).toBeNull();
+    expect(heatModel(coldZoneView(coldModel({ bucket_labels: null })))).toBeNull();
+    expect(heatModel(null)).toBeNull();
+  });
+});
+
+describe("repos: coldTeamRows — a share nobody could take draws no meter", () => {
+  it("carries the project's figures and its verdict word", () => {
+    const [row] = coldTeamRows(coldZoneView(coldModel()));
+    expect(row.label).toBe("platform");
+    expect(row.verdict).toBe("partly-cold");
+    expect(row.verdictWord).toBe("Partly cold");
+    expect(row.coldRepos).toBe(1);
+    expect(row.openInCold).toBe(12);
+    expect(row.highRiskInCold).toBe(3);
+  });
+
+  it("a null cold share is null on the row, so the cell draws the em dash and no track", () => {
+    // `cold_share_pct` is null over an empty denominator (a project with no repository
+    // carrying an open finding). `meter()` opens with `Number(value) || 0`, so a row that
+    // passed the null through would draw a confident 0% track beside a cell that measured
+    // nothing — the same defect `coverageMeterPct` above exists to refuse.
+    const v = coldZoneView(coldModel({
+      teams: [coldTeam({ cold_share_pct: null, repos_with_open: 0, cold_repos: 0, verdict: "clear" })],
+    }));
+    const [row] = coldTeamRows(v);
+    expect(row.sharePct).toBeNull();
+    expect(Number(row.sharePct) || 0).toBe(0); // what the cast-first version would have drawn
+  });
+
+  it("a measured zero share KEEPS its meter — the empty track is the measurement", () => {
+    const v = coldZoneView(coldModel({ teams: [coldTeam({ cold_share_pct: 0, cold_repos: 0 })] }));
+    expect(coldTeamRows(v)[0].sharePct).toBe(0);
+  });
+
+  it("the no-project bucket is a row like any other, labelled and never dropped", () => {
+    const v = coldZoneView(coldModel({
+      teams: [coldTeam({ project: null, label: "(no project)" }), coldTeam()],
+    }));
+    const rows = coldTeamRows(v);
+    expect(rows).toHaveLength(2);
+    expect(rows[0].label).toBe("(no project)");
+    expect(rows[0].key).toBe("(no project)");
+  });
+
+  it("a team that has never moved prints the em dash, never a date of zero", () => {
+    const v = coldZoneView(coldModel({ teams: [coldTeam({ last_movement_at: null })] }));
+    expect(coldTeamRows(v)[0].lastMovementText).toBe("—");
+  });
+});
+
+describe("repos: coldRepoRows — the bound reads \"≥\", and never \">\"", () => {
+  it("a measured idle time prints as a plain day figure", () => {
+    const [row] = coldRepoRows(coldZoneView(coldModel()));
+    expect(row.idleBounded).toBe(false);
+    expect(row.idleText).toBe("151.0 d");
+    expect(row.idleText).not.toMatch(/≥|>/);
+  });
+
+  it("a repository with no movement on record prints its LOWER BOUND, with \"≥\"", () => {
+    // README.md above the Pages table: "at least N" in prose, "≥ N" in a cell, never ">" —
+    // "at least" is inclusive and ">" is not. `boundedDays` (ui/figures.js) is the one
+    // implementation; this pins that the page routes the bound through it rather than
+    // spelling a second one.
+    const v = coldZoneView(coldModel({
+      repos: [coldRepo({
+        idle_days: null, idle_bound_days: 226.5, idle_is_bound: true, idle_reading_days: 226.5,
+        last_movement_at: null, last_movement_kind: null,
+      })],
+    }));
+    const [row] = coldRepoRows(v);
+    expect(row.idleBounded).toBe(true);
+    expect(row.idleText).toBe("≥ 226.5 d");
+    expect(row.idleText).not.toContain(">");
+    expect(row.movementText).toBe("—"); // never a date of zero
+  });
+
+  it("lists the cold AND the unobserved, cold first, biggest backlog first inside each", () => {
+    const v = coldZoneView(coldModel({
+      repos: [
+        coldRepo({ repo_id: "warm", repo_name: "warm-one", cold: false, verdict: "warm", bucket: 0 }),
+        coldRepo({ repo_id: "gone", repo_name: "gone-one", cold: false, observed: false,
+          verdict: "unobserved", bucket: null, open_findings: 99 }),
+        coldRepo({ repo_id: "cold-small", repo_name: "cold-small", open_findings: 2 }),
+        coldRepo({ repo_id: "cold-big", repo_name: "cold-big", open_findings: 40 }),
+      ],
+    }));
+    // The unobserved repository has the biggest backlog of the three and is still last: its
+    // idle time measures a scanner outage, not a team's silence, so it never outranks a cold
+    // repository in a list about engagement.
+    expect(coldRepoRows(v).map((r) => r.key)).toEqual(["cold-big", "cold-small", "gone"]);
+  });
+
+  it("carries the returned count beside a repository whose movement a reopen cleared", () => {
+    // A reopen clears resolved_at/removed_at/rotated_at (reconcile.ts), so the repository
+    // reads as never having moved. The count of findings that came back is what tells the
+    // reader why, and the page prints it beside the absence.
+    const v = coldZoneView(coldModel({
+      repos: [coldRepo({ last_movement_at: null, last_movement_kind: null, reopened_open: 4 })],
+    }));
+    expect(coldRepoRows(v)[0].reopenedOpen).toBe(4);
+  });
+
+  it("a repository with no project recorded is filed under (no project), never blank", () => {
+    const v = coldZoneView(coldModel({ repos: [coldRepo({ project: null })] }));
+    expect(coldRepoRows(v)[0].project).toBe("(no project)");
+  });
+});
+
+describe("repos: coldScatterPoints — observed repositories with a backlog, and nothing else", () => {
+  it("plots a cold repository with its idle time, its backlog and its bound flag", () => {
+    const [p] = coldScatterPoints(coldZoneView(coldModel()));
+    expect(p).toEqual({
+      label: "repo-one", idleDays: 151, open: 12, cold: true, bounded: false,
+    });
+  });
+
+  it("drops the unobserved and the empty — neither is a point about engagement", () => {
+    const v = coldZoneView(coldModel({
+      repos: [
+        coldRepo({ repo_id: "gone", observed: false, verdict: "unobserved", cold: false }),
+        coldRepo({ repo_id: "clear", open_findings: 0, cold: false, verdict: "clear" }),
+        coldRepo({ repo_id: "noclock", idle_days: null, idle_bound_days: null,
+          idle_reading_days: null, idle_is_bound: true }),
+        coldRepo({ repo_id: "keep" }),
+      ],
+    }));
+    expect(coldScatterPoints(v).map((p) => p.label)).toEqual(["repo-one"]);
+    expect(coldScatterPoints(v)).toHaveLength(1);
+  });
+
+  it("carries the bound flag for a repository whose idle time is a lower bound", () => {
+    const v = coldZoneView(coldModel({
+      repos: [coldRepo({ idle_days: null, idle_bound_days: 40, idle_reading_days: 40,
+        idle_is_bound: true, cold: false, verdict: "watching" })],
+    }));
+    expect(coldScatterPoints(v)[0]).toMatchObject({ bounded: true, idleDays: 40, cold: false });
+  });
+});
+
+describe("repos: the cold zone's absences are notices, never error boxes", () => {
+  // SOURCE-AS-TEXT, the same shape the deleted ownership case used: this project runs no
+  // jsdom, and the decision that can be wrong is which COMPONENT an absence reaches for.
+  // `errorState` draws a red role="alert" box — right for an RPC that failed, wrong for a
+  // register that has no scan yet, and the defect CLAUDE.md's audit named on this very page.
+  const fn = REPOS_SRC.slice(REPOS_SRC.indexOf("function renderColdZone"));
+  const body = fn.slice(0, fn.indexOf("\n  }\n"));
+
+  it("the unmeasurable branch reaches emptyState with the notice variant", () => {
+    expect(body).toMatch(/emptyState\(/);
+    expect(body).toMatch(/variant: "notice"/);
+    expect(body).toMatch(/The cold zone is not measured yet\./);
+    expect(body).toMatch(/no scan\s*"?\s*\+?\s*"?\s*has been saved/);
+  });
+
+  it("reaches for errorState nowhere in the section", () => {
+    expect(body).not.toMatch(/errorState\(/);
+    // …and neither does any other block of the section: the whole family draws absences.
+    const section = REPOS_SRC.slice(
+      REPOS_SRC.indexOf("function renderColdZone"),
+      REPOS_SRC.indexOf("function renderGroupTable"),
+    );
+    expect(section).not.toMatch(/errorState\(/);
+  });
+
+  it("the page still keeps errorState for the one thing that IS a failure — the RPC", () => {
+    // Not a vacuous check: a page that simply deleted `errorState` would pass the two above.
+    expect(REPOS_SRC).toMatch(/errorState\(\s*\n?\s*"Couldn't load the repository profile\./);
+  });
+});
 // =========================================================================================
 //  history.js
 // =========================================================================================

@@ -13,24 +13,34 @@
 // batch of trivial repos is added without real exposure changing. `densityView` below reads
 // exactly those three fields and nothing this page draws sums or averages a density.
 //
-// OWNERSHIP ATTRIBUTION IS PROMISED BY THE STUB AND NOT IN THIS PAYLOAD, and that is a
-// finding rather than an oversight to paper over. `owner_project` is captured on every
-// ledger row (ledgerTypes.ts) and reaches the per-register CONCENTRATION dimension
-// (readModels.ts's `CONCENTRATION_DIMS`), but `assetProfile()` — the function that builds
-// THIS payload — never reads it: the 17 published `AssetProfileRow` columns
-// (test/assets.test.ts's `OUTPUT_COLUMNS_ASSET_PROFILE`) have no ownership field, and
-// `buildRepos` in readModels.ts calls only `assetProfilePopulations` and `signalCoverage`.
-// So `ownershipView` below states the gap rather than inventing an unowned count — CLAUDE.md
-// is explicit that a fabricated number is worse than an honest absence, and "a zero has to
-// prove it looked" applies just as hard to a percentage nobody computed.
+// OWNERSHIP ATTRIBUTION IS ON THIS PAGE NOW, and the route it takes is worth stating because
+// it is not the one this page spent its whole life waiting for. `assetProfile()` still does
+// not read `owner_project` — its 17 published `AssetProfileRow` columns
+// (test/assets.test.ts's `OUTPUT_COLUMNS_ASSET_PROFILE`) have no ownership field and none was
+// added — so the density, foothold, half-life and capacity blocks below are unchanged and
+// still carry no owner. What changed is that `buildRepos` (readModels.ts) now composes a
+// SECOND family into the same payload: `model.coldZone`, a `ColdZoneResult`
+// (src/domain/coldZone.ts) built from the ledger rows themselves, where `owner_project` has
+// always been. Its `teams` array is one row per project, and a repository with no project at
+// all is a REAL ROW in it under the label "(no project)" (`COLD_PROJECT_NONE`) rather than a
+// drop — which is what finally answers the unowned question that used to be stated here as a
+// gap, as a count of repositories and of the open findings on them rather than as a
+// percentage nobody computed. The old `ownershipView`'s honest refusal is gone because the
+// absence it reported is gone, not because the bar for stating one moved.
+//
+// THE COLD ZONE IS THE SECTION THAT FAMILY DRAWS, and it is first on the page on purpose: the
+// rest of this register answers "how fast is code risk closing" and that one answers "where
+// has it stopped". See `coldZoneView` below for what the page does with the result, and
+// `src/domain/coldZone.ts`'s header for why "cold" and "unobserved" are two states rather
+// than one.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import { pagedTable } from "./sca.js";
 import {
   absentText, boundedDays, chartTable, chartTableModel, clear, days1, denomNote, el,
-  emptyState, errorState, figureCard, firstRunNotice, fmtCount, meter, num, onPageTeardown,
-  pageHeader, pct1, sectionLabel, skeletonStack, uiIcon,
+  emptyState, errorState, figureCard, firstRunNotice, fmtCount, fmtDate, fmtDays, meter,
+  num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, skeletonStack, uiIcon,
 } from "../ui.js";
 // `verdictMark` is `pages/program.js`'s own dot-and-word for a capacity verdict, promoted to
 // `ui/verdict.js` in this same wave so this page's Capacity column can draw the identical
@@ -147,24 +157,376 @@ export function capacityView(result) {
 }
 
 /**
- * Ownership attribution — ABSENT FROM THIS PAYLOAD, stated rather than papered over.
+ * The cold zone, read off `model.coldZone` — a `ColdZoneResult` (src/domain/coldZone.ts).
  *
- * `owner_project` never reaches `assetProfile()`'s output columns (see the module header),
- * so there is no owned/unowned split to render. `available: false` is the whole answer;
- * `reason` is reader prose for `renderOwnership` below — an absence stated in the register's
- * own vocabulary rather than the trace a developer would want, which is this comment instead:
- * `owner_project` is written to every ledger row and reaches the per-register concentration
- * tables, but `assetProfile()` (src/domain/assets.ts) — the function that builds THIS page's
- * data — does not read it. None of `AssetProfileRow`'s 17 published columns names an owner.
+ * REFUSE BEFORE ANY CAST, and refuse on the SHAPE rather than on the flag. `measurable` is a
+ * field in the payload, but every block this page draws reads `totals`, `repos` and `teams`,
+ * and the domain sets all three to null in exactly the case the flag describes. A payload
+ * that said `measurable: true` and carried a null `totals` — an older server, a half-applied
+ * cache entry — would pass a flag check and then throw inside a render function, which on
+ * this page means the whole section is replaced by an error box for what is really an
+ * absence. So the view decides `measurable` for itself from what actually arrived, and every
+ * array it publishes is a real array whether or not anything was measured.
+ *
+ * `present` IS NOT `measurable`, and the difference is worth keeping: `present: false` means
+ * no cold-zone block reached this page at all (an old payload), `measurable: false` means the
+ * block arrived and honestly says it has no clock yet. Both draw the same notice today; only
+ * one of them is a deployment mismatch, and collapsing them would make that invisible.
  */
-export function ownershipView() {
+export function coldZoneView(model) {
+  const cz = model && typeof model === "object" && !Array.isArray(model) ? model.coldZone : null;
+  const present = !!cz && typeof cz === "object" && !Array.isArray(cz);
+  const totals = present && cz.totals && typeof cz.totals === "object" && !Array.isArray(cz.totals)
+    ? cz.totals
+    : null;
+  const repos = present && Array.isArray(cz.repos) ? cz.repos : null;
+  const teams = present && Array.isArray(cz.teams) ? cz.teams : null;
+  const measurable = present && cz.measurable === true && totals !== null && repos !== null
+    && teams !== null;
+  const reposWithOpen = totals ? num(totals.repos_with_open, 0) : 0;
+  const unobserved = totals ? num(totals.repos_unobserved, 0) : 0;
   return {
-    available: false,
-    unownedCount: null,
-    reason: "Every finding is captured with the project that owns it, but that field does not "
-      + "reach this page's data — so there is no owned/unowned split to show here without "
-      + "inventing one.",
+    present,
+    measurable,
+    // The threshold and the clock ride along even when nothing is measurable: a reader asking
+    // "cold after how long?" is asking about the setting, not about the data.
+    coldAfterDays: present ? num(cz.cold_after_days) : null,
+    asOf: present && typeof cz.as_of === "string" ? cz.as_of : null,
+    observedFrom: present && typeof cz.observed_from === "string" ? cz.observed_from : null,
+    // FROM THE PAYLOAD, NEVER HARDCODED. The bucket edges move with the threshold (a 120-day
+    // window makes them 0-40/40-80/80-120/≥ 120), so a header spelled here would be a second,
+    // silently wrong statement of the operator's setting. Null when nothing is measurable,
+    // which is exactly when the heatmap is not drawn.
+    bucketLabels: measurable && Array.isArray(cz.bucket_labels)
+      ? cz.bucket_labels.map((l) => String(l))
+      : null,
+    repos: measurable ? repos : [],
+    teams: measurable ? teams : [],
+    totals: measurable ? totals : null,
+    // IS THERE A POPULATION TO SPEAK ABOUT AT ALL. Not the same question as "is it
+    // measurable": a register with a clock and ten repositories, every one of them clear and
+    // every one of them still returned by the newest scan, has nothing for this section to say.
+    populated: measurable && (reposWithOpen > 0 || unobserved > 0),
   };
+}
+
+/**
+ * The repositories the figures above cannot speak for, as one sentence — or null.
+ *
+ * `watching` is the domain's sixth verdict: a repository with open findings, no movement ever
+ * recorded, and a lower bound still short of the threshold. It is neither cold nor warm, and
+ * the reason it exists as its own state is that a REOPEN clears the movement columns
+ * (reconcile.ts), so a repository whose only close came back has no movement on record
+ * through no fault of anyone's. Printing it as warm would claim remediation nobody did;
+ * printing it as cold would claim a silence nobody has measured yet. So it is counted apart
+ * and the count is said out loud under the cards rather than being left to the heatmap's
+ * fifth column to imply.
+ */
+export function unmeasurableNote(view) {
+  const watching = view && view.totals ? num(view.totals.watching_repos, 0) : 0;
+  if (!watching) return null;
+  const one = watching === 1;
+  return `${fmtCount(watching)} ${one ? "repository has" : "repositories have"} no movement on`
+    + ` record and less idle time than the window, so ${one ? "it is" : "they are"} not yet`
+    + " measurable — counted in neither the cold figure nor the warm one.";
+}
+
+/**
+ * The four figures, as specs — label, value, the sentence under it and the denominator behind
+ * it. DOM-free so the claims can be read without a DOM, the way every other view model on
+ * this page is.
+ *
+ * FOUR CARDS AND FOUR DENOMINATORS (pagesLit gate 3/7). Each of these is a count over a
+ * population that is NOT "every repository", and the populations differ from card to card —
+ * repositories with open findings, open findings, high-risk open findings, and the whole
+ * estate — so a shared sentence would be wrong three times out of four.
+ */
+export function coldKpiCards(view) {
+  const t = view && view.totals;
+  if (!t) return [];
+  const days = view.coldAfterDays;
+  const windowText = days === null ? "the cold-zone window" : `at least ${fmtDays(days)}`;
+  const withOpen = num(t.repos_with_open, 0);
+  const openFindings = num(t.open_findings, 0);
+  const openInCold = num(t.open_in_cold, 0);
+  const backlogShare = num(t.cold_backlog_share_pct);
+  const repoShare = num(t.cold_repo_share_pct);
+  const openInUnobserved = num(t.open_in_unobserved, 0);
+  return [
+    {
+      key: "coldRepos",
+      label: "Cold repositories",
+      value: fmtCount(num(t.cold_repos, 0)),
+      sub: `Of ${fmtCount(withOpen)} with open findings`,
+      help: { term: "cold-zone" },
+      denominator:
+        `Of ${fmtCount(withOpen)} repositories with open findings`
+        + (repoShare === null ? "" : ` (${pct1(repoShare)})`)
+        + `. Cold means no finding resolved, removed or rotated for ${windowText}, measured at`
+        + " the last scan.",
+    },
+    {
+      key: "openInCold",
+      label: "Open findings sitting cold",
+      value: fmtCount(openInCold),
+      sub: backlogShare === null
+        ? `Of ${fmtCount(openFindings)} open findings`
+        : `${pct1(backlogShare)} of ${fmtCount(openFindings)} open findings`,
+      help: { term: "idle" },
+      denominator:
+        `Of ${fmtCount(openFindings)} open findings across every repository`
+        + (backlogShare === null ? "" : `, ${pct1(backlogShare)} of them`)
+        + ". The backlog on repositories where nothing has moved for " + windowText + ".",
+    },
+    {
+      key: "highRiskInCold",
+      label: "High-risk findings sitting cold",
+      value: fmtCount(num(t.high_risk_in_cold, 0)),
+      sub: `Of ${fmtCount(openInCold)} open in cold repositories`,
+      denominator:
+        `Of ${fmtCount(openInCold)} open findings on cold repositories. Secrets carry no risk`
+        + " class at all — there is no exploit intelligence for a leaked string — so they are"
+        + " open findings here and never high-risk ones.",
+    },
+    {
+      key: "unobserved",
+      label: "Unobserved repositories",
+      value: fmtCount(num(t.repos_unobserved, 0)),
+      sub: `${fmtCount(openInUnobserved)} open ${pluralize(openInUnobserved, "finding")} on them`,
+      help: { term: "unobserved" },
+      denominator:
+        `Of ${fmtCount(num(t.repos, 0))} repositories in the ledger. The scanner returned`
+        + " nothing for these in the last scan of any register they have rows in, so their"
+        + " findings close by disappearance — counted apart from cold, and never as warm.",
+    },
+  ];
+}
+
+/** The word a repository's verdict is printed as. The word is the signal; the dot repeats it. */
+const COLD_VERDICT_LABEL = {
+  cold: "Cold",
+  warm: "Warm",
+  clear: "Clear",
+  watching: "Not yet measurable",
+  unobserved: "Unobserved",
+};
+
+/** The same, for a project's rollup of its repositories. */
+const TEAM_VERDICT_LABEL = {
+  "fully-cold": "Fully cold",
+  "partly-cold": "Partly cold",
+  warm: "Warm",
+  clear: "Clear",
+};
+
+/**
+ * The label a repository with no `owner_project` is filed under.
+ *
+ * `src/domain/coldZone.ts` exports this exact string as `COLD_PROJECT_NONE` and puts it on
+ * every team row's `label`, so the team table never spells it itself. It is repeated here for
+ * the one place the payload cannot supply it — a REPOSITORY row, whose `project` is the raw
+ * `owner_project` and is null for exactly these repositories. Not imported: no page in this
+ * client imports from `src/domain/` (history.js's header states the rule and why), and a
+ * one-word literal is a smaller cost than pulling a server module into the browser bundle.
+ */
+const NO_PROJECT = "(no project)";
+
+/**
+ * One row per project, formatted.
+ *
+ * ORDER IS THE PAYLOAD'S, and the table is handed no sort spec so it stays that way.
+ * `coldZoneProfile` already sorts teams by cold repositories desc, then open-in-cold desc,
+ * then label — a rule that belongs beside the one that computed the counts, not re-derived
+ * against a formatted string here. The "(no project)" bucket sorts by the same rule as every
+ * other row: it is a team like any other and is never pinned last or hidden.
+ */
+export function coldTeamRows(view) {
+  const teams = view && Array.isArray(view.teams) ? view.teams : [];
+  return teams.map((t) => ({
+    key: t.project === null || t.project === undefined ? NO_PROJECT : String(t.project),
+    label: t.label || NO_PROJECT,
+    verdict: t.verdict || null,
+    verdictWord: TEAM_VERDICT_LABEL[t.verdict] || absentText,
+    repos: num(t.repos, 0),
+    coldRepos: num(t.cold_repos, 0),
+    // NULL IS A REAL ANSWER and it draws NO meter. A project whose repositories all read
+    // clear has no repository with open findings to divide by, and the domain returns null
+    // rather than 0 for exactly that reason; a 0% track here would be a picture asserting
+    // that none of its repositories has gone cold, which is a different claim from "there was
+    // nothing to ask the question of". Same refusal shape as `coverageMeterPct` above.
+    sharePct: num(t.cold_share_pct),
+    openInCold: num(t.open_in_cold, 0),
+    highRiskInCold: num(t.high_risk_in_cold, 0),
+    // OVER OBSERVED REPOSITORIES ONLY — the domain says so, and it matters: a repository that
+    // dropped out of the scanner closes its findings by disappearance, and folding that date
+    // in would date a team's last movement to a scanner outage.
+    lastMovementAt: typeof t.last_movement_at === "string" ? t.last_movement_at : null,
+    lastMovementText: typeof t.last_movement_at === "string"
+      ? fmtDate(t.last_movement_at)
+      : absentText,
+  }));
+}
+
+/**
+ * Which of the five shades a cell takes: 0 for nothing at all, then four steps.
+ *
+ * REFUSED BEFORE ANY CAST, both arguments. `count / max` with either side a string, an array
+ * or null produces a NaN that `Math.floor` passes straight through, and `data-level="NaN"`
+ * matches no rule in the sheet — a cell that silently loses its shade while still printing
+ * its number. Anything that was not a finite number to begin with, and any non-positive
+ * maximum, is level 0: no shade, which is what an unshadeable cell should look like.
+ *
+ * A COUNT OF ZERO IS LEVEL 0 AND NOT LEVEL 1. The lightest shade means "something is here,
+ * and it is the least of it"; an empty cell means nothing is there. The table prints the 0
+ * either way — the shade is the redundancy, never the reading.
+ *
+ * FOUR STEPS, NOT A CONTINUOUS RAMP, and `Math.min(3, …)` is what keeps the top of the scale
+ * inside the sheet: `count === max` lands on `floor(4)` and would ask for a fifth step that
+ * does not exist.
+ */
+export function heatLevel(count, max) {
+  if (typeof count !== "number" || !Number.isFinite(count)) return 0;
+  if (typeof max !== "number" || !Number.isFinite(max)) return 0;
+  if (count <= 0 || max <= 0) return 0;
+  return 1 + Math.min(3, Math.floor((count / max) * 4));
+}
+
+/**
+ * The project × idle-bucket grid: the columns from the payload, one row per project, and a
+ * totals row under them.
+ *
+ * THE TOTALS ROW CARRIES NO SHADE, deliberately. The ramp compares projects with each other,
+ * and the totals are the sum of every one of them — shaded on the same scale, every cell in
+ * that row would saturate at the darkest step and say nothing except "this row is bigger",
+ * which the reader can already see from the numbers. Level 0 across the row; the counts are
+ * printed exactly as they are everywhere else.
+ *
+ * Returns null where there is no grid to draw — no columns (nothing measurable) or no
+ * projects. A caller draws nothing rather than an empty table.
+ */
+export function heatModel(view) {
+  const columns = view && Array.isArray(view.bucketLabels) ? view.bucketLabels : null;
+  const teams = view && Array.isArray(view.teams) ? view.teams : [];
+  if (!columns || !columns.length || !teams.length) return null;
+  const cellsOf = (row) => columns.map((_, i) => ({
+    count: num(row && Array.isArray(row.buckets) ? row.buckets[i] : null, 0),
+    open: num(row && Array.isArray(row.bucket_open) ? row.bucket_open[i] : null, 0),
+  }));
+  const rows = teams.map((t) => ({
+    key: t.project === null || t.project === undefined ? NO_PROJECT : String(t.project),
+    label: t.label || NO_PROJECT,
+    cells: cellsOf(t),
+  }));
+  let max = 0;
+  for (const row of rows) for (const cell of row.cells) if (cell.count > max) max = cell.count;
+  for (const row of rows) for (const cell of row.cells) cell.level = heatLevel(cell.count, max);
+  const totals = view.totals
+    ? {
+        key: "__all__",
+        label: "All projects",
+        cells: cellsOf(view.totals).map((c) => ({ ...c, level: 0 })),
+      }
+    : null;
+  return { columns: columns.slice(), rows, totals, max };
+}
+
+/**
+ * The repositories the section is actually about: the cold ones and the ones the scanner has
+ * lost sight of, in that order.
+ *
+ * THE TWO STATES SHARE A TABLE AND NOT A FIGURE. They are different claims — one about a team,
+ * one about the pipeline — which is why the cards above count them separately; but a reader
+ * chasing "which repositories do I have to do something about" wants one list, and the verdict
+ * column says which kind each row is. Warm, clear and not-yet-measurable repositories are not
+ * in it: they are not what the section is for, and the counts above already say how many.
+ *
+ * SORTED HERE, AND THE TABLE IS GIVEN NO SORT SPEC, so this order survives to the screen
+ * (`sortRows` returns the list untouched when no `value` is given). Cold first, then
+ * unobserved; within each, the biggest backlog first, name as the tie-break so two paints over
+ * the same payload cannot reshuffle.
+ */
+export function coldRepoRows(view) {
+  const repos = view && Array.isArray(view.repos) ? view.repos : [];
+  const rows = repos
+    .filter((r) => r && (r.cold === true || r.observed === false))
+    .map((r) => {
+      const label = r.repo_name || r.repo_id || absentText;
+      const bounded = r.idle_is_bound === true;
+      const reading = num(r.idle_reading_days);
+      // THE ONE BOUND FORMATTER, not a second spelling of it. `boundedDays` (ui/figures.js)
+      // is what puts "≥" in front of a lower bound everywhere in this app, and it decides
+      // which it is from WHICH ARGUMENT is non-null — so `idle_is_bound` chooses the slot and
+      // `idle_reading_days` is the number either way, exactly as the domain publishes them.
+      // README.md above the Pages table fixes the notation: "at least N" in prose, "≥ N" in a
+      // cell, never ">".
+      const idle = boundedDays(bounded ? null : reading, bounded ? reading : null);
+      const movementAt = typeof r.last_movement_at === "string" ? r.last_movement_at : null;
+      const kind = typeof r.last_movement_kind === "string" ? r.last_movement_kind : null;
+      return {
+        key: r.repo_id || label,
+        label,
+        project: r.project === null || r.project === undefined ? NO_PROJECT : String(r.project),
+        verdict: r.verdict || null,
+        verdictWord: COLD_VERDICT_LABEL[r.verdict] || absentText,
+        cold: r.cold === true,
+        observed: r.observed !== false,
+        idleText: idle.text,
+        idleBounded: idle.bounded,
+        idleDays: reading,
+        movementAt,
+        movementKind: kind,
+        movementText: movementAt === null
+          ? absentText
+          : fmtDate(movementAt) + (kind ? ` · ${kind}` : ""),
+        // WHY A REPOSITORY CAN HAVE NO MOVEMENT AT ALL, printed beside the absence rather than
+        // left as a mystery: a reopen clears the resolved/removed/rotated columns, so a
+        // repository whose only close came back reads as never having moved. `returned` is
+        // this register's word for that and has its own glossary entry.
+        reopenedOpen: num(r.reopened_open, 0),
+        open: num(r.open_findings, 0),
+        highRisk: num(r.open_high_risk, 0),
+        oldestOpenAgeDays: num(r.oldest_open_age_days),
+      };
+    });
+  rows.sort((a, b) => {
+    if (a.cold !== b.cold) return a.cold ? -1 : 1;
+    if (b.open !== a.open) return b.open - a.open;
+    return String(a.label).localeCompare(String(b.label));
+  });
+  return rows;
+}
+
+/**
+ * The scatter's points: one per OBSERVED repository that still has an open finding.
+ *
+ * BOTH FILTERS EARN THEIR PLACE. An unobserved repository has an idle time that measures a
+ * scanner outage rather than a team's silence, so plotting it would put a point in the cold
+ * quadrant that no remediation could ever move. A repository with nothing open has no backlog
+ * to plot against and would sit on the y axis at zero, adding a row of dots that says only
+ * "these are fine" — which the cards already say in one number.
+ *
+ * `bounded` rides along because the x value is a MEASUREMENT for some repositories and a LOWER
+ * BOUND for others, and the canvas draws one dot either way (the same reason
+ * `renderHalfLifeChart` carries the flag): the tooltip and the table beside it are where the
+ * difference is stated.
+ */
+export function coldScatterPoints(view) {
+  const repos = view && Array.isArray(view.repos) ? view.repos : [];
+  const points = [];
+  for (const r of repos) {
+    if (!r || r.observed === false) continue;
+    const open = num(r.open_findings, 0);
+    const idle = num(r.idle_reading_days);
+    if (open <= 0 || idle === null) continue;
+    points.push({
+      label: r.repo_name || r.repo_id || absentText,
+      idleDays: idle,
+      open,
+      cold: r.cold === true,
+      bounded: r.idle_is_bound === true,
+    });
+  }
+  return points;
 }
 
 /** One row of the per-repo / per-language table, formatted for `pagedTable`'s columns. */
@@ -249,7 +611,7 @@ export async function renderRepos(host, _params, _ctx) {
   }));
 
   const densityHost = el("div", { class: "kpi-row" });
-  const ownershipHost = el("div", {});
+  const coldHost = el("div", {});
   const repoHost = el("div", {});
   const langHost = el("div", {});
   const chartsHost = el("div", { class: "chart-row" });
@@ -262,8 +624,12 @@ export async function renderRepos(host, _params, _ctx) {
   function ensureSections() {
     if (sectionsHost.childNodes.length) return;
     sectionsHost.append(
-      sectionLabel("Ownership attribution"),
-      ownershipHost,
+      // FIRST, AND THAT IS THE POINT OF THE SECTION. Everything below it reads the estate by
+      // volume — how many findings, how concentrated, how fast they die. This one reads it by
+      // SILENCE, and a reader who scrolls past three tables of counts before meeting the
+      // repositories nobody is working on has already been told the wrong thing first.
+      sectionLabel("Cold zone", { term: "cold-zone" }),
+      coldHost,
       sectionLabel("By repository"),
       repoHost,
       sectionLabel("By language"),
@@ -291,11 +657,11 @@ export async function renderRepos(host, _params, _ctx) {
     // re-attaches them the next time this runs non-first (see history.js for the identical
     // shape).
     if (first) {
-      [ownershipHost, repoHost, langHost, chartsHost, sectionsHost].forEach(clear);
+      [coldHost, repoHost, langHost, chartsHost, sectionsHost].forEach(clear);
       return;
     }
     ensureSections();
-    renderOwnership();
+    renderColdZone(model);
     renderGroupTable(repoHost, model && model.byRepo && model.byRepo.all, "repository", "repositories");
     renderGroupTable(langHost, model && model.byLanguage && model.byLanguage.all, "language", "languages");
     renderHalfLifeChart(model);
@@ -305,9 +671,10 @@ export async function renderRepos(host, _params, _ctx) {
     paint(await promise);
   } catch (e) {
     console.error("[repos] api_getReposPage failed:", e);
-    // errorState, like `renderOwnership` below already uses — this one call site was the
-    // page's last "failure dressed as an absence", and it sat two functions above a correct
-    // use of the right component.
+    // errorState, because this IS a failure: the RPC did not answer. Every other absence on
+    // this page — an unmeasured cold zone, a language with no rows, a repository whose curve
+    // never fell to half — renders through `emptyState` instead, and the split between the two
+    // is the whole reason this call site is spelled out rather than shared.
     clear(densityHost).append(errorState(
       "Couldn't load the repository profile.",
       { detail: String((e && e.message) || e) },
@@ -348,18 +715,303 @@ export async function renderRepos(host, _params, _ctx) {
     densityHost.append(densityCard, footholdCard);
   }
 
-  function renderOwnership() {
-    const view = ownershipView();
-    clear(ownershipHost);
-    // A permanent, known data gap is an ABSENCE, not a failure — this section renders correctly
-    // every single time it runs, it simply has nothing to show. `errorState`'s role="alert" red
-    // box used to draw here on every visit, which told a reader the page was broken rather than
-    // that ownership is a real, stated gap in what this page's data carries.
-    ownershipHost.append(emptyState(
-      "Ownership is not measured on this page.",
-      view.reason,
-      { variant: "notice" },
+  /**
+   * The cold zone: four figures, two tables, a grid and a scatter — or one notice.
+   *
+   * NEITHER ABSENCE IS AN ERROR, and both are drawn with `emptyState(..., {variant:"notice"})`
+   * rather than `errorState`. A register with no scan on record has no clock to measure
+   * idleness against, and a register whose repositories are all clear and all still returned
+   * by the newest scan has nothing to be idle. Both are states this page renders correctly; a
+   * red role="alert" box would tell a reader the page is broken — the exact defect the
+   * ownership section that used to sit here was fixed for, and no reason to reintroduce it
+   * under a new name.
+   */
+  function renderColdZone(model) {
+    const view = coldZoneView(model);
+    clear(coldHost);
+    if (!view.measurable) {
+      coldHost.append(emptyState(
+        "The cold zone is not measured yet.",
+        "Idle time is counted from the last scan back to the movement before it, and no scan"
+        + " has been saved, so there is no clock to measure idleness against.",
+        { variant: "notice" },
+      ));
+      return;
+    }
+    if (!view.populated) {
+      coldHost.append(emptyState(
+        "No repository is sitting still.",
+        "Nothing has an open finding to go quiet on, and the scanner has not lost sight of"
+        + " any repository. This section appears when one of those two things is true.",
+        { variant: "notice" },
+      ));
+      return;
+    }
+    renderColdKpis(view);
+    renderColdTeams(view);
+    renderColdHeat(view);
+    renderColdRepos(view);
+    renderColdChart(view);
+  }
+
+  function renderColdKpis(view) {
+    const row = el("div", { class: "kpi-row" });
+    for (const card of coldKpiCards(view)) {
+      row.append(figureCard({
+        label: card.label,
+        value: card.value,
+        sub: card.sub,
+        help: card.help || null,
+        denominator: card.denominator,
+      }));
+    }
+    coldHost.append(row);
+    // The repositories none of the four figures can speak for, said out loud rather than left
+    // to the heatmap's fifth column to imply. Null when there are none — an always-printed
+    // sentence about zero repositories is noise.
+    const note = unmeasurableNote(view);
+    if (note) coldHost.append(denomNote(note));
+  }
+
+  function renderColdTeams(view) {
+    const rows = coldTeamRows(view);
+    coldHost.append(el("h3", { class: "section-label" }, "By project"));
+    if (!rows.length) {
+      coldHost.append(emptyState(
+        "No project has a repository to report on yet.",
+        "A project appears here as soon as one of its repositories carries a finding.",
+        { variant: "notice" },
+      ));
+      return;
+    }
+    coldHost.append(pagedTable({
+      columns: [
+        { key: "label", label: "Project", cell: (r) => r.label },
+        {
+          key: "verdict", label: "Verdict",
+          // The dot AND the word, never the dot alone — `ui/verdict.js` carries the mapping
+          // for both this page's verdict families.
+          cell: (r) => verdictMark(r.verdict, r.verdictWord),
+        },
+        { key: "repos", label: "Repos", className: "num", cell: (r) => fmtCount(r.repos) },
+        {
+          key: "coldRepos", label: "Cold repos", className: "num",
+          help: { term: "cold-zone" },
+          cell: (r) => fmtCount(r.coldRepos),
+        },
+        {
+          key: "share", label: "Cold share", className: "num",
+          // The percentage plus a picture of it, `decorative` because the figure is already in
+          // words beside it — the same `.rate-with-meter` recipe the Coverage column above
+          // uses. A null share draws NO meter: see `coldTeamRows` for the refusal and why an
+          // empty track would be a claim rather than a blank.
+          cell: (r) => {
+            if (r.sharePct === null) return absentText;
+            return el("span", { class: "rate-with-meter" },
+              pct1(r.sharePct),
+              meter(r.sharePct, { className: "meter--stat", decorative: true }));
+          },
+        },
+        {
+          key: "openInCold", label: "Open in cold", className: "num",
+          cell: (r) => fmtCount(r.openInCold),
+        },
+        {
+          key: "highRiskInCold", label: "High-risk in cold", className: "num",
+          cell: (r) => fmtCount(r.highRiskInCold),
+        },
+        {
+          // A DATE, not a figure — left-aligned like every other date column in this app
+          // (history.js's "When"). `num` would right-align it against a column of counts it
+          // has nothing to line up with.
+          key: "lastMovement", label: "Last movement",
+          help: {
+            term: "idle",
+            lines: [
+              "The most recent finding resolved, removed or rotated anywhere in the project,"
+              + " over the repositories the scanner still returns.",
+            ],
+          },
+          cell: (r) => r.lastMovementText,
+        },
+      ],
+      rows,
+      // NO SORT SPEC — see `coldTeamRows`: the payload's own order is the published one, and
+      // `sortRows` leaves a list untouched when it is given no value function.
+      emptyText: "No project has a repository to report on yet.",
+    }));
+    coldHost.append(denomNote(
+      `${fmtCount(rows.length)} ${rows.length === 1 ? "project" : "projects"}, including the`
+      + " repositories with no project recorded, which are counted together as one.",
     ));
+  }
+
+  /**
+   * The project × idle-bucket grid.
+   *
+   * HAND-BUILT RATHER THAN `dataTable`, and that is the exception this page makes rather than
+   * a component it is missing: no table in `gas_shared` takes a per-cell ordinal shade, and
+   * the one this needs (`data-level` off `heatLevel`, styled in pages.css) is meaningful on
+   * exactly one grid in one app. Adding it to the shared component would put a shading channel
+   * in front of every register that has no use for one.
+   *
+   * THE HEADER COMES FROM THE PAYLOAD. `bucket_labels` moves with the operator's threshold —
+   * at 120 days the columns are 0-40/40-80/80-120/≥ 120 — so a header spelled here would be a
+   * second, silently wrong statement of the setting.
+   */
+  function renderColdHeat(view) {
+    const heat = heatModel(view);
+    if (!heat) return;
+    const head = el("tr", {}, el("th", { scope: "col" }, "Project"));
+    for (const label of heat.columns) head.append(el("th", { scope: "col", class: "num" }, label));
+    const body = el("tbody", {});
+    const paintRow = (r) => {
+      const tr = el("tr", {}, el("th", { scope: "row" }, r.label));
+      for (const cell of r.cells) {
+        tr.append(el("td", {
+          class: "num heat-cell",
+          // Every cell prints its own count and the open findings under it, shaded or not:
+          // the shade repeats the number, it never replaces it.
+          "data-level": String(cell.level),
+        }, fmtCount(cell.count), el("span", { class: "small muted" }, `${fmtCount(cell.open)} open`)));
+      }
+      return tr;
+    };
+    for (const r of heat.rows) body.append(paintRow(r));
+    if (heat.totals) body.append(paintRow(heat.totals));
+    coldHost.append(el("h3", { class: "section-label" }, "Idle time by project"));
+    coldHost.append(el("div", { class: "table-wrap" },
+      el("table", { class: "data heat" },
+        el("caption", { class: "small muted" },
+          "Repositories per project by how long they have been idle, and the open findings"
+          + " sitting in each band. The last column is the repositories with no movement on"
+          + " record yet — not idle for zero days, but not yet measurable. Unobserved"
+          + " repositories and repositories with nothing open are in no column."),
+        el("thead", {}, head),
+        body)));
+  }
+
+  function renderColdRepos(view) {
+    const rows = coldRepoRows(view);
+    coldHost.append(el("h3", { class: "section-label" }, "Cold and unobserved repositories"));
+    if (!rows.length) {
+      coldHost.append(emptyState(
+        "No repository is cold, and none has dropped out of the scanner.",
+        "Every repository with an open finding has moved inside the window.",
+        { variant: "notice" },
+      ));
+      return;
+    }
+    coldHost.append(pagedTable({
+      columns: [
+        { key: "label", label: "Repository", cell: (r) => r.label },
+        { key: "project", label: "Project", cell: (r) => r.project },
+        { key: "verdict", label: "Verdict", cell: (r) => verdictMark(r.verdict, r.verdictWord) },
+        {
+          key: "idle", label: "Idle", className: "num", help: { term: "idle" },
+          cell: (r) => r.idleText,
+        },
+        {
+          key: "movement", label: "Last movement",
+          // THE TERM OF ART IN THIS COLUMN IS "returned", not "movement": the date needs no
+          // glossary, and the suffix beside it does — a repository reading "—" here has had
+          // its movement columns CLEARED by a reopen rather than never having moved, and
+          // `returned` is this register's word for a finding seen again after it resolved.
+          help: {
+            term: "returned",
+            lines: [
+              "The most recent finding resolved, removed or rotated on this repository.",
+              "\u2014 N returned beside it counts the open findings that have come back at"
+              + " least once: a return clears the movement columns, which is why a repository"
+              + " with returns can show no movement at all.",
+            ],
+          },
+          cell: (r) => {
+            if (!r.reopenedOpen) return r.movementText;
+            // A repository can read "no movement" because a reopen CLEARED its movement
+            // columns, which is a different thing from nothing ever having happened. The count
+            // of findings that came back is printed beside the absence so the reader sees why.
+            return el("span", {},
+              r.movementText,
+              el("span", { class: "small muted" }, ` — ${fmtCount(r.reopenedOpen)} returned`));
+          },
+        },
+        { key: "open", label: "Open", className: "num", cell: (r) => fmtCount(r.open) },
+        { key: "highRisk", label: "High-risk", className: "num", cell: (r) => fmtCount(r.highRisk) },
+        {
+          key: "oldest", label: "Oldest open", className: "num",
+          cell: (r) => (r.oldestOpenAgeDays === null ? absentText : days1(r.oldestOpenAgeDays)),
+        },
+      ],
+      rows,
+      // NO SORT SPEC — `coldRepoRows` publishes cold first, then unobserved, biggest backlog
+      // first inside each, and that order is the section's whole argument.
+      emptyText: "No repository is cold, and none has dropped out of the scanner.",
+    }));
+    coldHost.append(denomNote(
+      `${fmtCount(rows.length)} ${rows.length === 1 ? "repository" : "repositories"} listed:`
+      + " every cold one and every one the scanner has lost sight of. Warm, clear and"
+      + " not-yet-measurable repositories are counted above and not listed here.",
+    ));
+  }
+
+  /**
+   * Idle time against backlog, one dot per repository the newest scan still returns.
+   *
+   * The same loader dance as `renderHalfLifeChart` below, for the same reasons: Chart.js is a
+   * second bundle fetched on demand, a deployment whose CSP refuses it falls back to
+   * `chartUnavailable` rather than to a blank box, and the chart is destroyed on teardown so a
+   * route change does not leave a live Chart bound to a detached canvas.
+   */
+  function renderColdChart(view) {
+    const points = coldScatterPoints(view);
+    coldHost.append(el("h3", { class: "section-label" }, "Idle time against backlog"));
+    if (!points.length) {
+      coldHost.append(emptyState(
+        "No repository to plot yet.",
+        "The scatter needs a repository the scanner still returns that has at least one open"
+        + " finding.",
+        { variant: "notice" },
+      ));
+      return;
+    }
+    const canvas = el("canvas");
+    coldHost.append(el("div", { class: "chart-card" },
+      el("div", { class: "chart-box" }, canvas),
+      chartTable({
+        canvas,
+        caption: "Every repository the newest scan still returns that has an open finding, its"
+          + " idle time and its backlog. \"at least\" marks a repository with no movement on"
+          + " record — that figure is a lower bound counted from when this register started"
+          + " watching, not a measured silence.",
+        model: chartTableModel({
+          columns: [
+            { key: "label", label: "Repository", format: "text" },
+            { key: "idleDays", label: "Idle days", format: "days" },
+            { key: "open", label: "Open", format: "count" },
+            {
+              key: "bounded",
+              label: "Reading",
+              format: "text",
+              align: "text",
+              value: (p) => (p.bounded ? "at least" : "measured"),
+            },
+          ],
+          rows: points,
+        }),
+      })));
+    loadCharts()
+      .then((api) => {
+        api.coldZoneScatter(canvas, points, { thresholdDays: view.coldAfterDays });
+        onPageTeardown(() => {
+          try {
+            api.destroyChart(canvas);
+          } catch (e) {
+            /* already detached */
+          }
+        });
+      })
+      .catch(() => chartUnavailable(canvas));
   }
 
   function renderGroupTable(target, result, singular, plural) {

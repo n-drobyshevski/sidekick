@@ -1818,3 +1818,120 @@ export function coverageEfficiencyScatter(canvas, points) {
     plugins: [labels],
   });
 }
+
+/**
+ * The cold zone as a scatter: idle days on x, open findings on y, a dashed rule at the
+ * threshold. Up-and-to-the-RIGHT is the worst quadrant here — a big backlog nobody has
+ * touched — which is the opposite of `coverageEfficiencyScatter` above and the reason the
+ * threshold rule is drawn at all: without it the reader has to know where 90 days is.
+ *
+ * Implemented as `type: "line"` with `showLine: false` **on purpose**, exactly as the
+ * coverage scatter is. charts.js registers only the controllers it uses, and
+ * ScatterController is not among them; a genuine `type: "scatter"` would fail at runtime in
+ * the bundle. LineController + PointElement + LinearScale are all registered, and a line
+ * dataset with no line drawn is exactly a scatter. Do not "fix" this into type: "scatter"
+ * without also registering the controller.
+ *
+ * TWO CLASSES, AND THE COLOUR IS THE SECOND CUE RATHER THAN THE FIRST. Cold repositories are
+ * `rectRot` filled in this register's accent INK (`CATEGORICAL[0]` = `--accent-text`; never
+ * `--accent`, which is 1.52:1 on the canvas ground — DESIGN.md's Split-Accent Rule); every
+ * other repository is a hollow `circle` outlined in the neutral `OTHER_COLOR`. The shape
+ * carries the split on its own in greyscale, under every CVD simulation, and in forced
+ * colors. Validated with the dataviz skill's own checker over the two marks
+ * (`#7c4a0a`, `#94a3b8`): CVD separation ΔE 27.3 deutan / 28.1 tritan and normal-vision
+ * ΔE 28.6, all well past the ≥ 8 bar; it reports the neutral below the chroma floor and
+ * under 3:1 against the surface, which is what "neutral" means here — the grey is not a
+ * second category hue but "everything else", and the contrast note is relieved the way the
+ * checker asks, by the `chartTable` twin every caller ships beside this canvas.
+ *
+ * @param {*} canvas
+ * @param {Array<{label: string, idleDays: number, open: number, cold: boolean,
+ *                bounded: boolean}>} points  one per observed repository with open findings
+ * @param {{thresholdDays: number}} opts
+ */
+export function coldZoneScatter(canvas, points, { thresholdDays } = {}) {
+  destroyExisting(canvas);
+  const plotted = (points || []).filter(
+    (p) => typeof p.idleDays === "number" && Number.isFinite(p.idleDays)
+      && typeof p.open === "number" && Number.isFinite(p.open),
+  );
+  const threshold =
+    typeof thresholdDays === "number" && Number.isFinite(thresholdDays) ? thresholdDays : null;
+  describe(
+    canvas,
+    "Idle days against open findings for each repository the newest scan still returns: " +
+      plotted
+        .map(
+          (p) =>
+            `${p.label}, idle ${p.bounded ? "at least " : ""}${Math.round(p.idleDays)} days, ` +
+            `${localeNum(p.open)} open${p.cold ? " (in the cold zone)" : ""}`,
+        )
+        .join("; ") +
+      (threshold === null ? "." : `. The cold-zone threshold is ${Math.round(threshold)} days.`),
+  );
+  const opts = baseOptions("");
+  opts.scales.x.type = "linear";
+  opts.scales.x.beginAtZero = true;
+  opts.scales.x.title = { display: true, text: "idle days", font: FONT, color: INK2 };
+  opts.scales.y.title = { display: true, text: "open findings", font: FONT, color: INK2 };
+  opts.plugins.tooltip.callbacks.title = (items) =>
+    items.length ? plotted[items[0].dataIndex].label : "";
+  opts.plugins.tooltip.callbacks.label = (ctx) => {
+    const p = plotted[ctx.dataIndex];
+    return [
+      // "at least" in prose, "≥" in a cell — README.md above the Pages table. A tooltip is
+      // prose, so a bound reads the long way here and the short way in the table beside it.
+      `Idle ${p.bounded ? "at least " : ""}${Math.round(p.idleDays)} d`,
+      `${localeNum(p.open)} open`,
+    ];
+  };
+  // The threshold as a dashed vertical rule, labelled in words. Dashed BECAUSE it is a
+  // threshold rather than data — the one place a dash is right on a canvas whose gridlines are
+  // all solid hairlines — and labelled because a rule with no label is a line a reader has to
+  // guess the meaning of. Drawn after the datasets so a point never hides it.
+  const rule = threshold === null ? null : {
+    id: "coldThreshold",
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      const x = scales.x.getPixelForValue(threshold);
+      if (!Number.isFinite(x) || x < chartArea.left || x > chartArea.right) return;
+      ctx.save();
+      ctx.strokeStyle = HAIRLINE;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = "600 11px " + FONT.family;
+      ctx.fillStyle = INK2;
+      ctx.textBaseline = "top";
+      // Flipped inside the plot near the right edge, so the label never clips.
+      const right = x > chartArea.right - 80;
+      ctx.textAlign = right ? "right" : "left";
+      ctx.fillText(`cold at ${Math.round(threshold)} d`, x + (right ? -4 : 4), chartArea.top + 2);
+      ctx.restore();
+    },
+  };
+  return new Chart(canvas, {
+    type: "line", // see the note above — NOT "scatter"
+    data: {
+      datasets: [
+        {
+          data: plotted.map((p) => ({ x: p.idleDays, y: p.open })),
+          showLine: false,
+          pointRadius: plotted.map((p) => (p.cold ? 7 : 5)),
+          pointHoverRadius: 9,
+          pointBackgroundColor: plotted.map((p) => (p.cold ? CATEGORICAL[0] : "#ffffff")),
+          pointBorderColor: plotted.map((p) => (p.cold ? CATEGORICAL[0] : OTHER_COLOR)),
+          pointBorderWidth: 2,
+          // The non-colour cue: a filled diamond is cold, a hollow circle is not.
+          pointStyle: plotted.map((p) => (p.cold ? "rectRot" : "circle")),
+        },
+      ],
+    },
+    options: opts,
+    plugins: rule ? [rule] : [],
+  });
+}
