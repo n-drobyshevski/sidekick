@@ -38,21 +38,6 @@ export const SEVERITY_TEXT: Record<string, string> = {
 };
 
 /**
- * The redundant cue. Severity never carries meaning by colour alone — every mark pairs its
- * fill with one of these and a word (PRODUCT.md, Accessibility). The red/orange/amber band
- * is a measured colourblind risk: HIGH and MEDIUM sit 6.7 apart in normal vision and 1.6
- * apart under deuteranopia, so these are load-bearing rather than decorative.
- */
-export const SEVERITY_GLYPHS: Record<string, string> = {
-  CRITICAL: "●",
-  HIGH: "▲",
-  MEDIUM: "■",
-  LOW: "◆",
-  INFO: "○",
-  UNKNOWN: "—",
-};
-
-/**
  * Remediation windows in days.
  *
  * Identical to gas/ and to brick/config.py, and that is a decision rather than an
@@ -157,15 +142,6 @@ export const RESOLUTION_DISAPPEARED = "disappeared";
  * Same threshold as gas/ and brick/, for the same reason SLA_TARGETS is.
  */
 export const EPSS_PRIORITY_THRESHOLD = 0.1;
-
-/**
- * Bumped when a stored derivation's INPUTS change shape. Anything that changes WHICH rows
- * a derivation reads has to move this, or a persisted result is silently reused across the
- * change and the knob appears to do nothing.
- */
-// 1 -> 2: ledgerCore.baseRows' fix clock is now per scope (fix_available_at = first_seen for
-// sast and secrets, since neither waits on a vendor), which changes every derived row.
-export const DERIVATION_VERSION = 2;
 
 // --------------------------------------------------------------------------------------- //
 //  Risk classification — Prioritization to Prediction (P2P). brick/config.py is

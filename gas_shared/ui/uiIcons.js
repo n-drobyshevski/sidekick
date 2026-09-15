@@ -244,11 +244,6 @@ export function missingUiIcons() {
   return [...MISSING];
 }
 
-/** Forget what has been reported — for a test that asserts the warning fires exactly once. */
-export function resetMissingUiIcons() {
-  MISSING.clear();
-}
-
 /** A standalone 16x16 stroke <svg> for UI chrome (buttons, actions) — decorative only;
  * the caller supplies the accessible name (button aria-label/title), not this icon. */
 export function uiIcon(name, size = 16) {

@@ -2156,13 +2156,6 @@ export function loadFindings(): FindingRow[] {
   return findingsMemo;
 }
 
-export function loadDataFindings(): DataFindingRow[] {
-  if (dataFindingsMemo === undefined) {
-    dataFindingsMemo = readAll(TABS.dataFindings).map(rowToDataFinding);
-  }
-  return dataFindingsMemo;
-}
-
 export function loadFrameworks(): FrameworkRow[] {
   if (frameworksMemo === undefined) frameworksMemo = readAll(TABS.frameworks).map(rowToFramework);
   return frameworksMemo;

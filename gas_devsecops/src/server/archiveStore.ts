@@ -184,16 +184,6 @@ export function trashNamed(folder: Subfolder, name: string): void {
   while (it.hasNext()) it.next().setTrashed(true);
 }
 
-/**
- * Empty the durable read-model folder.
- *
- * For a future `resetData`: a reset bumps the version, so every entry is already
- * unreachable — but reset should mean reset rather than "unreachable and still on disk".
- */
-export function trashReadModels(): void {
-  for (const name of listNames("readmodels")) trashNamed("readmodels", name);
-}
-
 // ------------------------------------------------------------------- raw scan pages
 function pageFileName(pageIndex: number): string {
   return `page-${String(pageIndex).padStart(4, "0")}.json.gz`;

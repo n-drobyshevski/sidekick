@@ -182,22 +182,6 @@ export function writeSyncPage(
   return writeGzJson(syncFolder(syncId), name, payload).getId();
 }
 
-/** All raw pages of one battery step, in page order (missing/unreadable pages skipped). */
-export function readSyncStepPages(syncId: string, stepIndex: number): unknown[] {
-  const prefix = `step-${stepIndex}-page-`;
-  const pages: Array<{ name: string; payload: unknown }> = [];
-  const files = syncFolder(syncId).getFiles();
-  while (files.hasNext()) {
-    const f = files.next();
-    const name = f.getName();
-    if (!name.startsWith(prefix)) continue;
-    const payload = parseGzBlob(f.getBlob());
-    if (payload !== null) pages.push({ name, payload });
-  }
-  pages.sort((a, b) => (a.name < b.name ? -1 : 1));
-  return pages.map((p) => p.payload);
-}
-
 /** Trash a sync's raw archive folder (best-effort; used by resetData). */
 export function trashSyncArchive(syncId: string): void {
   try {
@@ -207,15 +191,6 @@ export function trashSyncArchive(syncId: string): void {
   } finally {
     // Never hand back a handle to a folder this execution just trashed.
     syncFolderMemo.delete(safeName(syncId));
-  }
-}
-
-export function trashFile(fileId: string | null): void {
-  if (!fileId) return;
-  try {
-    DriveApp.getFileById(fileId).setTrashed(true);
-  } catch (e) {
-    console.warn(`Couldn't trash file ${fileId}: ${e}`);
   }
 }
 

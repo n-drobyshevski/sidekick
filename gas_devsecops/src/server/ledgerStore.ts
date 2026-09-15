@@ -282,10 +282,6 @@ export function loadScanRows(): ScanRow[] {
   return scanRowsMemo;
 }
 
-export function scanRowExists(scanId: string): boolean {
-  return loadScanRows().some((r) => r.scan_id === scanId);
-}
-
 /**
  * Whether a sync's COMMIT landed: any `scans` row carrying its id prefix.
  *
@@ -776,28 +772,6 @@ export function previousSeverityCounts(scope: Scope): Record<string, number> {
 /** The most recent scan OF `scope`. Scope is required — see `ledgerCore.latestScan`. */
 export function latestScanRow(scope: Scope): ScanRow | null {
   return latestScan(loadScanRows(), scope);
-}
-
-/**
- * Repoint ONE scan row at a rewritten observations file.
- *
- * `writeGzJson` trashes the same-named file and creates a fresh one, so rewriting an obs file
- * yields a NEW Drive id and the old `scans.obs_ref` points at a trashed one — and
- * `previousSeverityCounts` reads through that ref.
- *
- * DIVERGENCE (gas/): it takes the SCOPE as well, and rewrites the tab rather than using
- * `updateWhere`. `updateWhere` patches the FIRST row matching one column, and `scan_id` names
- * three rows here — so the gas/ signature would silently repoint sca's row whichever scope
- * asked. The read-modify-write costs one extra tab read on a path that runs after a manual
- * obs rewrite, which is not a path that runs often.
- */
-export function setScanObsRef(scanId: string, scope: Scope, obsRef: string): void {
-  const rows = loadScanRows();
-  const target = rows.find((r) => r.scan_id === scanId && r.scope === scope);
-  if (!target) return;
-  target.obs_ref = obsRef;
-  overwrite(TABS.scans, scansAsc(rows) as unknown as Rec[]);
-  invalidateLedgerMemos();
 }
 
 // --------------------------------------------------------------------------- #
