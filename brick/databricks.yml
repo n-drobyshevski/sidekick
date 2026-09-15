@@ -7,12 +7,31 @@
 # every runtime module to come from ONE flat folder, and the git_source below hands the
 # workspace exactly that folder, `brick/`.
 #
-# Three scan jobs, one per scope, because a scope drives both the API filter and the table
-# names -- `wiz_<scope>_*` -- so two scopes in one job would write each other's tables. They are
-# separate jobs rather than tasks of one job for the same reason `max_concurrent_runs` is 1: a
-# scope's scan must be able to fail, retry and be re-run without dragging the other two through
-# it. (One job with three chained tasks, so three concurrent MERGEs into one ledger cannot
-# collide, is Step 3 -- not this change.)
+# ONE scan job, THREE chained tasks -- scan_os -> scan_sca -> scan_sast -- not three separate
+# jobs. Step 3 put every scope's rows into the SAME three tables (`wiz_findings_raw`,
+# `wiz_vuln_ledger`, `wiz_metrics`), and the ledger MERGE is not safe run concurrently against
+# one target: two writers racing the same Delta table can each build a plan against the other's
+# not-yet-committed state. A job's own tasks run in `depends_on` order by construction, so
+# chaining the three scopes as tasks of ONE job is what keeps the three MERGEs from ever
+# overlapping -- `max_concurrent_runs: 1` (below) is what keeps two RUNS of that same chain from
+# overlapping each other.
+#
+# `run_if: ALL_DONE` on `scan_sca` and `scan_sast` -- rather than the default `ALL_SUCCESS` --
+# is what keeps a failing scope from taking the other two down with it, and keeps it from being
+# blocked by a scope that failed before it: the chain exists only to serialize the writes, not
+# to make one scope's health a precondition for another's. If `scan_os` fails, `scan_sca` still
+# runs; if `scan_sca` then also fails, `scan_sast` still runs after it.
+#
+# `--scan_id={{job.run_id}}-<scope>`, not the bare `{{job.run_id}}` the four single-task jobs
+# used to pass. `{{job.run_id}}` is the same value across all three tasks of one run -- it names
+# the JOB run, not the task -- so passing it unqualified would make `scan_sca`'s commit row in
+# the shared `wiz_metrics` collide with `scan_os`'s from the same run. `{{task.run_id}}` is
+# scope-distinct but changes on every retry of that task (it names the TASK run), which breaks
+# the idempotency guard in `run_pipeline.recorded_scan`: a retried task would arrive with a new
+# id, find no row for it, and reconcile the same scan a second time. `{{job.run_id}}-<scope>` is
+# both retry-stable (constant across retries of a given task, exactly like the bare form it
+# replaces) and scope-distinct (one commit row per scope per job run) -- see CLAUDE.md,
+# "Databricks {{task.run_id}} changes on a task retry".
 #
 # NOT VALIDATED HERE. `databricks bundle validate -t dev` resolves a workspace and the current
 # user, so it cannot run in this repo's test environment; `brick/tests/test_bundle.py` checks
@@ -53,22 +72,24 @@ variables:
 
 resources:
   jobs:
-    wiz_os_scan:
-      name: wiz-os-scan
-      # Daily at 06:00 UTC. The ledger advances once a day, so a disappearance is dated to
-      # within 24 hours of when it happened.
+    wiz_scan:
+      name: wiz-scan
+      # Daily at 06:00 UTC -- the start time the old `wiz-os-scan` used, kept because `scan_os`
+      # is still the chain's first task. The ledger advances once a day, so a disappearance is
+      # dated to within 24 hours of when it happened.
       schedule:
         quartz_cron_expression: "0 0 6 * * ?"
         timezone_id: UTC
-      # Two concurrent scans of one scope would both pass the recorded_scan check and advance
-      # every lifecycle twice.
+      # A second concurrent run of this chain would let two tasks race the same MERGE target
+      # exactly as the chain above exists to prevent -- this is what stops a second RUN, not a
+      # second task within one run.
       max_concurrent_runs: 1
-      git_source:
+      git_source: &git_source_main
         git_url: https://github.com/n-drobyshevski/sidekick
         git_provider: gitHub
         git_branch: ${var.git_branch}
       tasks:
-        - task_key: scan
+        - task_key: scan_os
           spark_python_task:
             python_file: brick/run_pipeline.py
             parameters:
@@ -78,10 +99,10 @@ resources:
               - --wiz_api_url=${var.wiz_api_url}
               - --secret_scope=${var.secret_scope}
               - --severities=${var.severities}
-              # Databricks retries a failed task WITHIN the same run, so the retry arrives with
-              # the id the first attempt used, finds its own row in `<prefix>scans` and does
-              # nothing. Without it a retry looks like a brand-new scan and reconciles twice.
-              - --scan_id={{job.run_id}}
+              # {{job.run_id}} is constant across retries of THIS task; the -os suffix is what
+              # keeps it distinct from scan_sca's and scan_sast's commit rows in the same run,
+              # now that all three scopes share wiz_vuln_ledger / wiz_metrics.
+              - --scan_id={{job.run_id}}-os
           new_cluster: &single_node
             spark_version: 14.3.x-scala2.12
             node_type_id: ${var.node_type_id}
@@ -94,18 +115,12 @@ resources:
             custom_tags:
               ResourceClass: SingleNode
 
-    wiz_sca_scan:
-      name: wiz-sca-scan
-      schedule:
-        quartz_cron_expression: "0 30 6 * * ?"
-        timezone_id: UTC
-      max_concurrent_runs: 1
-      git_source:
-        git_url: https://github.com/n-drobyshevski/sidekick
-        git_provider: gitHub
-        git_branch: ${var.git_branch}
-      tasks:
-        - task_key: scan
+        - task_key: scan_sca
+          # Runs after scan_os so the two scopes' MERGEs into the shared ledger never overlap.
+          depends_on:
+            - task_key: scan_os
+          # Not the default ALL_SUCCESS: an os failure must not block the sca scan behind it.
+          run_if: ALL_DONE
           spark_python_task:
             python_file: brick/run_pipeline.py
             parameters:
@@ -115,21 +130,14 @@ resources:
               - --wiz_api_url=${var.wiz_api_url}
               - --secret_scope=${var.secret_scope}
               - --severities=${var.severities}
-              - --scan_id={{job.run_id}}
+              - --scan_id={{job.run_id}}-sca
           new_cluster: *single_node
 
-    wiz_sast_scan:
-      name: wiz-sast-scan
-      schedule:
-        quartz_cron_expression: "0 0 7 * * ?"
-        timezone_id: UTC
-      max_concurrent_runs: 1
-      git_source:
-        git_url: https://github.com/n-drobyshevski/sidekick
-        git_provider: gitHub
-        git_branch: ${var.git_branch}
-      tasks:
-        - task_key: scan
+        - task_key: scan_sast
+          # Runs after scan_sca for the same reason scan_sca runs after scan_os.
+          depends_on:
+            - task_key: scan_sca
+          run_if: ALL_DONE
           spark_python_task:
             python_file: brick/run_pipeline.py
             parameters:
@@ -139,33 +147,31 @@ resources:
               - --wiz_api_url=${var.wiz_api_url}
               - --secret_scope=${var.secret_scope}
               - --severities=${var.severities}
-              - --scan_id={{job.run_id}}
+              - --scan_id={{job.run_id}}-sast
           new_cluster: *single_node
 
     # OPTIMIZE over the clustered tables, and nothing else -- it ingests nothing. Its own job,
     # weekly, deliberately: OPTIMIZE is an unbounded rewrite over the whole register, and the
     # job that has to finish before anyone can read this morning's number should not be queued
     # behind it.
-    #
-    # This maintains the `os` register only. The code registers want the same treatment; add
-    # them as copies of this job with --scope=sca / --scope=sast once those registers are large
-    # enough to be worth the rewrite.
-    wiz_os_maintain:
-      name: wiz-os-maintain
+    wiz_maintain:
+      name: wiz-maintain
       schedule:
         quartz_cron_expression: "0 0 3 ? * SUN"
         timezone_id: UTC
       max_concurrent_runs: 1
-      git_source:
-        git_url: https://github.com/n-drobyshevski/sidekick
-        git_provider: gitHub
-        git_branch: ${var.git_branch}
+      git_source: *git_source_main
       tasks:
         - task_key: maintain
           spark_python_task:
             python_file: brick/run_pipeline.py
             parameters:
               - --maintain=true
+              # Still required: main() calls resolve_tables(namespace, scope, ...) before it
+              # ever checks --maintain, and resolve_tables needs a scope to resolve. The three
+              # tables are shared across every scope now (Step 3), so this names the same
+              # wiz_findings_raw / wiz_vuln_ledger / wiz_metrics that a run naming --scope=sca or
+              # --scope=sast would -- os is an arbitrary valid scope here, not "the os register".
               - --scope=os
               - --catalog=${var.catalog}
               - --schema=${var.schema}
