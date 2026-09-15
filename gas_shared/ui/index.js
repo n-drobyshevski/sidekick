@@ -58,6 +58,10 @@
 //                 breaks) and the role="img" SVG around it
 //   splitBar.js   one track split into labelled segments, with the figures repeated in words
 //                 beneath it — an in/out proportion, or a severity mix
+//   unitChart.js  countable quantity as countable marks: the per-table unit ladder and the
+//                 part-to-whole model (pure), the inline tally, the waffle lattice and the
+//                 key row that is why a waffle owes no chartTable disclosure. The class is
+//                 `.isotype` on purpose — the density walker already counts that bucket
 //   settingsReadouts.js  what a Settings control is doing to the register, right now: the
 //                 with/without split a toggle draws (impactSplitModel/impactSplit), the
 //                 severity scan-scope split (severitySplitModel, `inScope` a PREDICATE never
@@ -119,6 +123,10 @@ export { quadModel, quadTable } from "./quad.js";
 export { sparkLabel, sparkPath, sparkline } from "./sparkline.js";
 export { rowDrag, ruleGrip } from "./rowReorder.js";
 export { splitBar } from "./splitBar.js";
+export {
+  COUNT_UNITS, FILLS, FINE_UNITS, GRID_CELLS, MAX_EXACT_CELLS, MAX_MARKS, MAX_SEGMENTS,
+  TONES, unitChartModel, unitCounts, unitGrid, unitKeyRow, unitRow, unitScale,
+} from "./unitChart.js";
 export {
   createCutHistogram, impactSplit, impactSplitModel, severitySplitModel, tickTimeline,
 } from "./settingsReadouts.js";

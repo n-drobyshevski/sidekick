@@ -344,6 +344,100 @@
    it saying what was not measured — the same rule `data-tone` obeys two sections down. */
 .hatch { background-image: var(--hatch); }
 
+/* ---------------------------------------------------------------------- unit chart */
+/* Countable quantity as countable marks (ui/unitChart.js), in two layouts that share one
+   mark. PROMOTED from gas_devsecops/src/client/styles/pages.css, where the tally shipped
+   first as the Executive page's open-backlog isotype; the four rules below the comment are
+   byte-identical to that copy, deliberately, so the promotion moves no pixel.
+
+   THE CLASS STAYS `.isotype` even though the module generalises. dev/densityModel.mjs's
+   VISUAL_PREDICATES already counts `hasClass("isotype")` as a picture, and renaming it would
+   have meant editing the measuring instrument in the same wave that uses it to prove a
+   change — a before-column and an after-column measured by two different rulers. The grid is
+   the same class with a modifier for that reason and no other.
+
+   Neurath's rule, in three declarations: quantity is MORE MARKS OF THE SAME SIZE. Every mark
+   is 8x12 whatever the row's count is, and the unit is chosen once per table (unitScale) so
+   two rows' marks are comparable - a mark that grew with its value would make the row's
+   length and the mark's size two different encodings of one number.
+
+   --ink, NOT --accent. The brand accent is a FILL token at 1.52:1 on white in one of the
+   three registers; a mark carrying a COUNT has to be legible on its own, so these are the
+   page's ink. Nothing about the tally is colour-coded either - the percentage beside it is
+   the readout, and the marks are a second encoding of it.
+
+   The partial mark is CLIPPED, not shrunk: same box, same baseline, --tenths of it painted.
+   var(--tenths) is a bare integer so `var(--tenths) * 10%` resolves inside calc(). */
+.isotype { display: inline-flex; gap: 2px; margin-right: 8px; vertical-align: middle; }
+.isotype-mark { width: 8px; height: 12px; background: var(--ink); border-radius: 1px; display: inline-block; }
+.isotype-mark--part { clip-path: inset(0 calc(100% - var(--tenths) * 10%) 0 0); }
+
+/* The waffle. --isotype-cols is an INSTANCE value written by unitGrid as an inline custom
+   property, the same way --tenths is above; it is not a design token and does not belong in
+   tokens.base.css, because a lattice width is a property of one picture rather than of the
+   system. The cell is square and the gap is the smallest step on the spacing ramp, so 100
+   cells read as one block rather than as a hundred things. */
+.isotype--grid {
+  display: grid;
+  grid-template-columns: repeat(var(--isotype-cols, 10), 9px);
+  gap: var(--space-half);
+  margin-right: 0;
+  width: max-content;
+}
+.isotype-cell { width: 9px; height: 9px; border-radius: 1px; background: var(--ink); }
+
+/* TWO CHANNELS, NOT ONE. data-tone carries the verdict, data-fill carries a SILHOUETTE, so
+   two adjacent segments differ by shape as well as by fill and the lattice survives grayscale
+   and a red/green confusion. The tone set is quad.js's, unchanged - a fifth tone would be a
+   severity, and a severity distribution has sevSegmentBar. */
+.isotype-cell[data-tone="ok"] { background: var(--ok); }
+.isotype-cell[data-tone="warn"] { background: var(--warn); }
+.isotype-cell[data-tone="bad"] { background: var(--bad); }
+.isotype-cell[data-fill="ring"] { background: var(--page); box-shadow: inset 0 0 0 2px currentColor; }
+.isotype-cell[data-fill="ring"][data-tone="neutral"] { color: var(--ink); }
+.isotype-cell[data-fill="ring"][data-tone="ok"] { color: var(--ok); }
+.isotype-cell[data-fill="ring"][data-tone="warn"] { color: var(--warn); }
+.isotype-cell[data-fill="ring"][data-tone="bad"] { color: var(--bad); }
+.isotype-cell[data-fill="hatch"] { background-color: var(--surface); background-image: var(--hatch); }
+.isotype-cell--empty { background: var(--surface-2); }
+
+/* The key row is why a waffle owes no chart-table disclosure: every figure the lattice draws
+   is printed here, on the surface, in real text. See ui/unitChart.js's unitKeyRow. */
+.isotype-wrap { display: flex; flex-direction: column; gap: var(--space-2); }
+.isotype-keys { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
+.isotype-key { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-label); }
+.isotype-key-swatch { width: 9px; height: 9px; border-radius: 1px; background: var(--ink); flex: none; }
+.isotype-key-swatch[data-tone="ok"] { background: var(--ok); }
+.isotype-key-swatch[data-tone="warn"] { background: var(--warn); }
+.isotype-key-swatch[data-tone="bad"] { background: var(--bad); }
+.isotype-key-swatch[data-fill="ring"] { background: var(--page); box-shadow: inset 0 0 0 2px currentColor; }
+.isotype-key-swatch[data-fill="hatch"] { background-color: var(--surface); background-image: var(--hatch); }
+.isotype-key-swatch--empty { background: var(--surface-2); }
+.isotype-caption { margin: 0; }
+
+/* Forced colours drop `background` entirely, which would leave the marks invisible with
+   nothing in their place - the one state where the picture is the only thing that changed. An
+   outlined mark in CanvasText survives the substitution, and the clip still applies to it. The
+   grid needs the same treatment plus its silhouette channel kept intact, because with every
+   fill flattened to one forced colour the silhouette is ALL that is left to tell two segments
+   apart. --hatch survives unaided: it is ink at an alpha rather than a hue. */
+@media (forced-colors: active) {
+  .isotype-mark { border: 2px solid CanvasText; background: transparent; }
+  .isotype-cell, .isotype-key-swatch { forced-color-adjust: none; }
+  .isotype-cell[data-fill="solid"], .isotype-key-swatch[data-fill="solid"] {
+    background: CanvasText; border: 1px solid CanvasText;
+  }
+  .isotype-cell[data-fill="ring"], .isotype-key-swatch[data-fill="ring"] {
+    background: Canvas; box-shadow: none; border: 2px solid CanvasText;
+  }
+  .isotype-cell[data-fill="hatch"], .isotype-key-swatch[data-fill="hatch"] {
+    background-color: Canvas; border: 1px dashed CanvasText;
+  }
+  .isotype-cell--empty, .isotype-key-swatch--empty {
+    background: Canvas; border: 1px solid GrayText;
+  }
+}
+
 /* -------------------------------------------------------------------------- quad */
 /* Two yes/no questions crossed (ui/quad.js). A real table, ruled by hairlines like every
    other surface here, with the two axis words as `<th scope>` headers rather than as prose
