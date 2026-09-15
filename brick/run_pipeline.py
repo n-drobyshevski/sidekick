@@ -117,6 +117,7 @@ except ImportError as exc:
         f"See brick/README.md section 2."
     ) from exc
 
+# ------------------------------------- the register's tables, families and module manifest
 BRONZE_TABLE = "findings_raw"
 LEDGER_TABLE = "vuln_ledger"
 METRICS_TABLE = "metrics"
@@ -185,6 +186,7 @@ MIGRATION_MODULES = ("import_bundle", "csvstore")
 OPTIONAL_MODULES = NOTEBOOK_MODULES + MIGRATION_MODULES
 
 
+# -------------------------------------------------------------------- the deployment guard
 def check_deployment() -> None:
     """Refuse to run against a folder holding a mix of versions.
 
@@ -269,6 +271,7 @@ def _check_one_directory() -> None:
         f"reloading, and see brick/README.md."
     )
 
+# ---------------------------------------------- table references, and where they may point
 # These tables usually land in a schema shared with other teams, where bare names like
 # `findings_raw` and `metrics` are an obvious collision risk -- `metrics` especially, since it
 # is the name of the whole published register. Hence a prefix. Pass --table_prefix= (empty) to
@@ -356,6 +359,7 @@ def table_exists(spark: SparkSession, table: str) -> bool:
     return DeltaTable.isDeltaTable(spark, path)
 
 
+# --------------------------------------- the run's result, its parameters, and the session
 @dataclass(frozen=True)
 class RunResult:
     """What a run produced. Returned by ``main()`` so a notebook has a handle on the tables it
@@ -418,7 +422,7 @@ def get_spark(shuffle_partitions: Optional[int] = None) -> SparkSession:
     return spark
 
 
-# --------------------------------------------------------------- the scan log + the ledger
+# ------------------------------------------ the tables, the scan log, and the ledger MERGE
 
 
 def serialize_severities(severities) -> Optional[str]:
@@ -859,6 +863,7 @@ def clear_scan(spark: SparkSession, tables: Tables, scan_id: str, scope: str) ->
             )
 
 
+# ---------------------------------------------------------------- bronze: ingest and write
 BRONZE_SCHEMA = "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
 
 # The same columns as they are *stored*. `scan_ts` arrives as a string and is cast on the way in
@@ -956,6 +961,7 @@ def ingest_to_bronze(
     return total
 
 
+# --------------------------------------------------- reconciling a scan against the ledger
 def reconcile_scan(
     spark: SparkSession,
     tables: Tables,
@@ -1072,6 +1078,7 @@ def closed_observed(spark: SparkSession, scan_log: list, scan_ts: str, deltas: d
     )
 
 
+# --------------------------------------------- gold: build and publish the metric families
 # The snapshot-sourced columns republished beside the ledger-sourced ones. Kept deliberately
 # short: enough to see how far v1 was off, not a second copy of the whole table.
 SNAPSHOT_COLUMNS = ["km_median", "mttr_median", "resolved", "open"]
@@ -1269,6 +1276,7 @@ def with_snapshot_columns(ledger_mttr, snapshot_mttr):
     return ledger_mttr.join(snap, "severity", "left")
 
 
+# ---------------------------------------------------------------- the run summary, printed
 def summarize(
     scan_id, scope, rule, deltas, mttr, program, capacity, assets=None, *, severities=None
 ) -> None:
@@ -1344,6 +1352,7 @@ def _show_capacity(capacity, population: str) -> None:
     ).orderBy(F.col("month").desc()).show(6, truncate=False)
 
 
+# -------------------------------------------------------------------- parameter resolution
 def resolve_namespace(argv: Optional[list] = None) -> str:
     """``<catalog>.<schema>``, with the catalog required -- there is no safe default for it.
 
@@ -1533,6 +1542,7 @@ def truthy(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+# ------------------------------------ operations: rebuild, maintain, export, ensure schema
 def rebuild_ledger(
     spark: SparkSession,
     tables: Tables,
@@ -1751,6 +1761,7 @@ def ensure_schema(spark: SparkSession, namespace: str) -> None:
         ) from exc
 
 
+# ------------------------------------------------------------------------------------ main
 def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     """Run the pipeline. Returns what it wrote, or ``None`` when there was nothing to do."""
     # A half-updated workspace folder is the cheapest failure to detect and the most expensive
