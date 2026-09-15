@@ -500,7 +500,7 @@ export function secretsModel(payload, opts) {
     // statement about age, which is what the question here actually is.
     aging: bucketTotals(reg.aging),
     oldestRepos: oldestReposModel(reg.oldest),
-    concentration: concentrationModel(reg.concentration, ["repo", "secret_kind", "owner_project"]),
+    concentration: concentrationModel(reg.concentration, ["repo", "secret_kind", "owner_project", "domain"]),
     movement: withoutRequestedSeverities(movementModel(reg.movement, reg.latestScan)),
 
     twinNote: TWIN_NOTE,

@@ -294,9 +294,9 @@ describe("openBySeverityTrend", () => {
 describe("groupKeyOf / GROUP_COLUMNS", () => {
   // The dimension list is insights.GROUP_COLUMNS, imported rather than restated so the trend
   // and the breakdown tree can never name a different set (D8 brief rule 1).
-  it("is exactly the register's five dimensions", () => {
+  it("is exactly the register's six dimensions", () => {
     expect(Object.keys(GROUP_COLUMNS).sort())
-      .toEqual(["cwe", "language", "owner_project", "repo", "secret_kind"]);
+      .toEqual(["cwe", "domain", "language", "owner_project", "repo", "secret_kind"]);
   });
 
   it("reads each dimension's own ledger column", () => {

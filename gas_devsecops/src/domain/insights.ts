@@ -23,10 +23,19 @@
 //                                   currentScan). This register has no such frame abstraction
 //                                   yet (reconcile.ts, ported separately) — every function here
 //                                   already reads a row's own `severity` column directly.
-//   domain / supportGroup          host-only. `_domain` / `_supportGroup` are server-attached
-//   (GROUP_COLUMNS dims, and        from Wiz/Domain-style tags on a VM/host asset; a source
-//   oldestOpen's bySupportGroup /   repository carries no such taxonomy. The repo's ownership
-//   byDomain views)                axis here is `owner_project` (from projects[], every scope).
+//   supportGroup                   host-only, and STILL DROPPED. `_supportGroup` is a
+//   (GROUP_COLUMNS dim, and         SUBSCRIPTION tag, and wizQueries.ts records that
+//   oldestOpen's bySupportGroup)    `subscriptionName` is always null on a repository branch —
+//                                   there is no subscription here to carry one.
+//   domain                         DROPPED THEN, RESTORED SINCE — see GROUP_COLUMNS below.
+//   (GROUP_COLUMNS dim, and        The original entry said a source repository carries no such
+//   oldestOpen's byDomain view)    taxonomy. It does: the tenant tags repositories with
+//                                   `Wiz/Domain`. What is true is that the three finding
+//                                   documents cannot SELECT an asset's tags, so the value
+//                                   arrives through a separate graphSearch join
+//                                   (src/server/repoDomains.ts) and is attached to rows on
+//                                   read. `owner_project` remains the other ownership axis;
+//                                   the two are orthogonal, not a replacement for each other.
 //   atype / cloud / os /           host-only. Asset type, cloud platform, operating system and
 //   subscription (GROUP_COLUMNS    cloud subscription are VM/host attributes with no repository
 //   dims)                          analog; `owner_project` already carries subscription's
@@ -448,11 +457,32 @@ export function movement(
 
 // Groupable dimensions for the multi-level breakdown, mapped directly to their LedgerRow/
 // BaseRow flat column — see the module header for what gas/'s GROUP_COLUMNS dropped and why.
-// Exactly the D9 brief's set: repo, language, owner_project, secret_kind, cwe.
+// The D9 brief's set (repo, language, owner_project, secret_kind, cwe), plus `domain`.
+//
+// `domain` IS THE ONE ENTRY THAT IS NOT A LEDGER COLUMN, and it is spelled the same way anyway
+// because it does not need to be anything else: `_domain` is a flat field on the row by the
+// time any grouping runs (`readModels.baseSnapshot` attaches it), so the lookup below reads it
+// exactly as it reads `repo_name`. Nothing here learns that it came from a join.
+//
+// The module header above records `domain` as DROPPED, host-only, on the grounds that "a source
+// repository carries no such taxonomy". That was wrong about the tenant — its repositories do
+// carry `Wiz/Domain` — and right only about the QUERIES: the three finding documents cannot
+// select an asset's tags, which is why the value arrives through `src/server/repoDomains.ts`
+// rather than off the row. `_supportGroup` stays dropped and that entry stands: it is a
+// SUBSCRIPTION tag, and `wizQueries.ts` records that `subscriptionName` is always null on a
+// repository branch, so there is no subscription here to carry one.
+//
+// A ROW WITH NO DOMAIN FALLS IN `(none)`, like every other dimension's blank — the bucketing
+// below already does that for a null column, and a domain nobody tagged is exactly a blank.
+// That is the ONE place this register lets unattributed rows show up as a named bucket, and it
+// is legitimate here where it would not be in the scope switcher: a breakdown is a partition of
+// a population that has to add up, so the rows nobody could place have to be visible in it.
+// The switcher offers a scope to STAND IN, which `(none)` is not — see domainScope.ts.
 export const GROUP_COLUMNS: Record<string, string> = {
   repo: "repo_name",
   language: "language",
   owner_project: "owner_project",
+  domain: "_domain",
   secret_kind: "secret_kind",
   cwe: "cwe",
 };

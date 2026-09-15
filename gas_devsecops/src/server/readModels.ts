@@ -116,6 +116,8 @@ import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
 import { inProject, parseProjects } from "../domain/projectScope";
+import { inDomain } from "../domain/domainScope";
+import { attachDomains } from "./repoDomains";
 import { clampInt, parseTs, type Rec } from "../domain/util";
 import {
   REGISTER_ROWS_DEFAULT_PAGE_SIZE,
@@ -230,6 +232,18 @@ interface NormParams {
    */
   project: string | null;
   /**
+   * The OTHER view scope — a business-domain tag value, or null for the whole register. Read
+   * from `settingsStore.loadSettings().domainView` below and absent from `ModelParams` for
+   * every reason `project` above is: it is app-header chrome, and a page that set it directly
+   * could disagree with what the header shows.
+   *
+   * AT MOST ONE OF `project` AND `domain` IS EVER SET — `settingsLogic.withProjectView` /
+   * `withDomainView` clear each other on the way in. `scopedRows` still applies both, because
+   * a filter that is null is a no-op and writing it as a chain rather than a branch means a
+   * stored pair carrying both narrows to the intersection instead of silently ignoring one.
+   */
+  domain: string | null;
+  /**
    * The SLA windows actually in force — `settingsLogic.effectiveSlaTargets`, read off
    * `settingsStore.loadSettings()` exactly once here, same as `project` above. NEVER a
    * `ModelParams` field for the same reason `project` is not one: a per-page override would
@@ -260,18 +274,25 @@ function norm(p?: ModelParams): NormParams {
   // knob here uses for "not narrowed".
   const projectRaw = settings.projectView;
   const project = projectRaw ? projectRaw : null;
+  // The same last step for the domain scope, through the same `cleanViewScope` guarantee.
+  const domainRaw = settings.domainView;
+  const domain = domainRaw ? domainRaw : null;
   return {
     scope,
     severities,
     showNoFix: p?.showNoFix !== false,
     project,
+    domain,
     slaTargets: effectiveSlaTargets(settings),
   };
 }
 
 /** The key a cached model is stored under. Spelled out so the field order is stable. */
 function keyOf(n: NormParams): Rec {
-  return { scope: n.scope, severities: n.severities, showNoFix: n.showNoFix, project: n.project };
+  return {
+    scope: n.scope, severities: n.severities, showNoFix: n.showNoFix,
+    project: n.project, domain: n.domain,
+  };
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -294,12 +315,25 @@ let baseMemo: BaseSnapshot | undefined;
  * bumps that version on every write, so a mutate-then-read inside a single execution rebuilds
  * rather than serving the rows it had just invalidated — the same hazard `serverCache`'s own
  * memos guard, for the same reason.
+ *
+ * THE DOMAIN JOIN HAPPENS HERE, ONCE, AND THIS IS THE ONLY PLACE IT CAN. `_domain` is resolved
+ * on read and never persisted (see domain/domainTag.ts), so a row that has not been through
+ * `attachDomains` carries no domain at all — and every model below takes its rows from this one
+ * snapshot. Attaching anywhere further down would mean one model answering by domain while
+ * another silently reported the whole register; attaching further up, inside `loadBaseRows`,
+ * would put a server-side join inside the store that every pure test constructs rows through.
+ *
+ * `refreshRepoDomains` bumps the data version, so a refreshed map invalidates this memo by the
+ * same mechanism a sync does — the map is never joined against stale rows, nor rows against a
+ * stale map.
  */
 function baseSnapshot(): BaseSnapshot {
   const version = dataVersion();
   if (!baseMemo || baseMemo.version !== version) {
     const now = Date.now();
-    baseMemo = { version, now, rows: loadBaseRows({ now }) };
+    const rows = loadBaseRows({ now });
+    attachDomains(rows as unknown as Rec[]);
+    baseMemo = { version, now, rows };
   }
   return baseMemo;
 }
@@ -379,11 +413,18 @@ function isOpen(status: unknown): boolean {
  * (`parseProjects` returns `[]`) matches no slug and so drops out of every scoped view,
  * which is `unattributedCount`'s population and is reported at `bootstrap`, not silently
  * redistributed into "no scope selected".
+ *
+ * THE DOMAIN FILTER GOES THROUGH `inDomain`, FOR THE SAME REASON AND WITH THE SAME
+ * CONSEQUENCE. A row whose repository carries no domain tag — or whose repository the join map
+ * has not seen — has no `_domain` and matches no name, so it drops out of every domain-scoped
+ * view. That population is `noDomainCount`'s and is reported at `bootstrap` as `scope.noDomain`,
+ * where the switcher's caption says it out loud.
  */
 function scopedRows(rows: BaseRow[], n: NormParams): BaseRow[] {
   let out = rows;
   if (n.scope) out = out.filter((r) => r.scope === n.scope);
   if (n.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n.project!));
+  if (n.domain) out = out.filter((r) => inDomain(r, n.domain!));
   if (n.severities) {
     const keep = new Set(n.severities);
     out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
@@ -981,9 +1022,18 @@ const CONCENTRATION_DIMS: Record<Scope, string[]> = {
   // THIS COPY DOES NOT DECIDE WHAT RENDERS. `concentrationModel(payload, dims)` maps over the
   // dims the PAGE hands it, so removing a name here alone yields a card with zero rows rather
   // than no card; `pages/sca.js` and `pages/sast.js` carry the matching lists and say so.
-  sca: ["repo", "owner_project"],
-  sast: ["repo", "cwe", "owner_project"],
-  secrets: ["repo", "secret_kind", "owner_project"],
+  //
+  // `domain` IS ON ALL THREE, because unlike `language` it is not a restatement of another
+  // card: a domain cuts ACROSS the project hierarchy (a domain owns repositories that several
+  // projects file, and a project can hold repositories several domains own), and it is the
+  // axis a reader escalates along — a project is where Wiz files the work, a domain is who
+  // answers for it. It is also the one dimension here that can be empty for a legitimate
+  // reason (the join map has never been refreshed), and the card that results says `(none)`
+  // for every row rather than disappearing — which is the honest shape, and is why
+  // `concentrationModel` keeping zero-row cards is left alone rather than special-cased.
+  sca: ["repo", "owner_project", "domain"],
+  sast: ["repo", "cwe", "owner_project", "domain"],
+  secrets: ["repo", "secret_kind", "owner_project", "domain"],
 };
 
 function buildRegister(scope: Scope, n: NormParams): Rec {
@@ -1646,7 +1696,7 @@ function movementNoteFor(win: MovementWindow): string {
 /**
  * The population the decomposition replays — the KPI band's, MINUS the severity filter.
  *
- * The project scope and the no-fix toggle DO apply: they narrow which findings are the
+ * BOTH VIEW SCOPES and the no-fix toggle DO apply: they narrow which findings are the
  * reader's. The DISPLAY SEVERITY FILTER MUST NOT, and that is the one thing this function
  * exists to say. `outsideGate` counts open rows whose severity the last scan never looked at;
  * running it over a population a display filter had already narrowed to the same severities
@@ -1654,9 +1704,11 @@ function movementNoteFor(win: MovementWindow): string {
  * the whole section was built to end.
  */
 function movementPopulation(rows: BaseRow[], n: NormParams): MovementRow[] {
-  const scoped = n.project
-    ? rows.filter((r) => inProject(parseProjects(r.projects_json), n.project!))
-    : rows;
+  let scoped = rows;
+  if (n.project) {
+    scoped = scoped.filter((r) => inProject(parseProjects(r.projects_json), n.project!));
+  }
+  if (n.domain) scoped = scoped.filter((r) => inDomain(r, n.domain!));
   return n.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
 }
 
@@ -1721,13 +1773,17 @@ function buildHistory(n: NormParams): Rec {
     history: listHistory(),
     trend: trendFor(n, snap.rows),
     // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
-    // facts with no project dimension and do NOT narrow with `n.project`; everything else in
-    // this payload does.
+    // facts with no project OR domain dimension and do NOT narrow with either view scope;
+    // everything else in this payload does. The note names whichever scope is actually live,
+    // because "scoped to the selected project" over a domain scope would be a wrong answer to
+    // the only question the note exists to answer.
     scanScopeApplies: false,
-    scanScopeNote: n.project
+    scanScopeNote: n.project || n.domain
       ? "scans, perScope and history describe the whole register — a sync and a "
-        + "daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above "
-        + "are scoped to the selected project."
+        + "daily snapshot carry no "
+        + (n.project ? "project" : "domain")
+        + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected "
+        + (n.project ? "project" : "domain") + "."
       : null,
   };
 }

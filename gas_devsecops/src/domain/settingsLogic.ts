@@ -92,10 +92,27 @@ export interface Settings {
    * this field and see the whole register again — rather than becoming a trap that some
    * validation step refuses to save because the name it once matched is gone.
    *
-   * Mutually exclusive with nothing: this register has exactly one scope dimension, so there
-   * is no second view-scope field for this one to conflict with.
+   * MUTUALLY EXCLUSIVE WITH `domainView`, and the header control is what enforces it: the
+   * two are orthogonal cuts of the same register — a project is where a repository sits in the
+   * tenant's hierarchy, a domain is who the tenant says owns it — and a header that carries
+   * "the scope" cannot carry two of them and still answer "what am I looking at" in one line.
+   * Picking either clears the other; see `withProjectView` / `withDomainView` below, which is
+   * where that is done rather than left to two call sites to remember.
    */
   projectView: string;
+  /**
+   * The other VIEW scope — which business domain's rows the pages show. `""` means no domain
+   * scope, exactly as `projectView`'s `""` means no project scope.
+   *
+   * Holds the TAG VALUE verbatim (`"SAP"`), because that is the only identity a domain has:
+   * it is a string a person typed on a repository in Wiz, not an object with a slug. See
+   * src/domain/domainScope.ts for why membership compares it exactly rather than folded.
+   *
+   * NOT VALIDATED against any catalogue of known domains, for `projectView`'s reason
+   * unchanged: a stale value naming a domain the register no longer holds must stay
+   * clearable rather than becoming a trap some validation step refuses to save.
+   */
+  domainView: string;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -111,6 +128,7 @@ export const DEFAULT_SETTINGS: Settings = {
   autoCompact: false,
   retentionDays: DEFAULT_RETENTION_DAYS,
   projectView: "",
+  domainView: "",
 };
 
 function asList(v: unknown, allowed: readonly string[]): string[] | null {
@@ -191,16 +209,21 @@ function cleanRetentionDays(v: unknown): number {
 }
 
 /**
- * Coerce the stored view-scope slug into a trimmed string, refusing anything that is not
- * ALREADY a string BEFORE any cast runs — the same trap `numericOrNull` above guards against,
- * on the string side of it. `String(null)` is `"null"`, `String(undefined)` is `"undefined"`,
- * `String(0)` is `"0"`, `String(false)` is `"false"`, and `String({})` is `"[object Object]"`:
- * every one of those would read as a real (if odd) project slug instead of "no scope stored"
- * if the value were cast before being checked. Only a genuine string is trimmed and kept;
- * anything else — null, undefined, a number, an array, a plain object — collapses to `""`,
- * the same value a missing field produces.
+ * Coerce a stored view scope — a project slug or a domain tag value — into a trimmed string,
+ * refusing anything that is not ALREADY a string BEFORE any cast runs. The same trap
+ * `numericOrNull` above guards against, on the string side of it: `String(null)` is `"null"`,
+ * `String(undefined)` is `"undefined"`, `String(0)` is `"0"`, `String(false)` is `"false"`, and
+ * `String({})` is `"[object Object]"` — every one of those would read as a real (if odd) scope
+ * instead of "no scope stored" if the value were cast before being checked. Only a genuine
+ * string is trimmed and kept; anything else — null, undefined, a number, an array, a plain
+ * object — collapses to `""`, the same value a missing field produces.
+ *
+ * ONE FUNCTION FOR BOTH SCOPES. A project slug and a domain tag value are different
+ * vocabularies but the same KIND of stored value: opaque, operator-chosen, and deliberately
+ * unvalidated against any catalogue (see `Settings.projectView`). Giving each its own coercion
+ * would invite one of them to drift.
  */
-function cleanProjectView(v: unknown): string {
+function cleanViewScope(v: unknown): string {
   return typeof v === "string" ? v.trim() : "";
 }
 
@@ -252,7 +275,11 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     // only a literal boolean true turns compaction on.
     autoCompact: r.autoCompact === true,
     retentionDays: cleanRetentionDays(r.retentionDays),
-    projectView: cleanProjectView(r.projectView),
+    projectView: cleanViewScope(r.projectView),
+    // The same coercion, and deliberately the same function: both hold an opaque operator-
+    // chosen string whose only invalid form is "not a string". Two copies of that rule is how
+    // one of them later grows a difference nobody intended.
+    domainView: cleanViewScope(r.domainView),
   };
 }
 
@@ -284,6 +311,29 @@ export function validateSettings(s: Settings): string[] {
 /** Merge a patch over current settings, then re-clean. */
 export function withSettings(current: Settings, patch: Partial<Settings>): Settings {
   return cleanSettings({ ...current, ...patch } as unknown as Rec);
+}
+
+/**
+ * Set the project view scope, CLEARING the domain one.
+ *
+ * ONE AT A TIME, ENFORCED STRUCTURALLY. The two view scopes are orthogonal cuts of the same
+ * register and both could be applied at once — but the app header carries a single "Scope"
+ * control and a single caption, and a control that says `SAP` while a second stored value
+ * also narrows to `CE-TRANSPORT` is a header that cannot answer "what am I looking at". gas/
+ * learned this with its manual-group and support-group comboboxes, which could both be live,
+ * and made it one control for exactly this reason (see gas/src/client/js/scopeKinds.js).
+ *
+ * The clearing lives HERE rather than in the two API endpoints, so "picking one replaces the
+ * other" is a property of the settings themselves and not a rule two call sites have to
+ * remember — the same argument `gas_shared/ui/scopeModel.js` makes on the client side.
+ */
+export function withProjectView(current: Settings, projectView: unknown): Settings {
+  return withSettings(current, { projectView, domainView: "" } as Partial<Settings>);
+}
+
+/** Set the domain view scope, CLEARING the project one. See `withProjectView`. */
+export function withDomainView(current: Settings, domainView: unknown): Settings {
+  return withSettings(current, { domainView, projectView: "" } as Partial<Settings>);
 }
 
 /**

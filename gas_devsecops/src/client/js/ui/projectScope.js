@@ -10,12 +10,9 @@
 // zero. A zero meaning "nothing here" and a zero meaning "never synced" look identical on
 // screen and call for opposite reactions, so the control simply cannot express the second one.
 //
-// Ported from gas_ai/src/client/js/ui/projectScope.js, with two differences this register's
+// Ported from gas_ai/src/client/js/ui/projectScope.js, with one difference this register's
 // shape forces:
 //
-//   * NO DOMAINS. `Wiz/Domain` is a tag the AI sidekick's tenant writes on assets
-//     (domain/maintenance.ts:256 — this register has no such tag), so there is no second
-//     switcher axis, no `d:` value prefix, and no domain-coverage figure.
 //   * THE UNIT IS FINDINGS, KEYED ON SLUG. This register has no live asset graph to key a
 //     switcher on `id` — only ledger rows carrying `projects_json` — and `domain/projectScope.ts`
 //     already settled on `slug` as the stable identity (a display name can be re-typed without
@@ -23,6 +20,26 @@
 //     for the same reason it existed there: scoped, "N of M findings" alone silently attributes
 //     the rows nobody could place to whichever project is in view, when the truth is that some
 //     of the other M-N carry no project at all.
+//
+// TWO DIMENSIONS NOW, ONE CONTROL, ONE AT A TIME. This file carried only projects until the
+// `Wiz/Domain` tag became reachable. It was never that the tenant did not tag its repositories
+// — it does — but that the tag could not be FETCHED: the three finding documents cannot select
+// `tags` on a repository asset, so the tag arrives through a separate graphSearch join
+// (`src/server/repoDomains.ts`), and until that existed a domain picker would have offered
+// slices whose pages all render zero. An earlier revision of this header stated the stronger
+// claim, that this register has no such tag, citing `domain/maintenance.ts:256`; that was
+// wrong about the tenant and is corrected here rather than quietly deleted.
+//
+// The two are ORTHOGONAL, NOT NESTED, and listing them as two flat groups rather than one tree
+// is the honest shape — the same conclusion gas/src/client/js/scopeKinds.js reached about its
+// own pair. A PROJECT is where Wiz files the repository; a DOMAIN is who the tenant says owns
+// it. Either can cut across the other, and a tree here would assert a hierarchy the data does
+// not have.
+//
+// ONE AT A TIME IS ENFORCED ON THE SERVER, not here: `settingsLogic.withProjectView` /
+// `withDomainView` clear each other, so the mutual exclusion is a property of the stored
+// settings rather than a rule this control has to remember. `scopeModel.js` already enforces
+// the client half — one active `{kind, id}`, and picking anything replaces it.
 //
 // REDUCED, NOT DELETED. `projectScopeControl` — the combobox, the caption, the `.scoped`
 // class — is `gas_shared/ui/scopeControl.js` now, and the assembly that turned a payload into
@@ -154,9 +171,36 @@ export function scopeOptions(list) {
  * exported and tested directly; the mapping to the model's `id` happens here, in one line,
  * rather than by rewriting a builder and its test to say the same thing differently.
  */
+/**
+ * The domains on offer, as switcher rows.
+ *
+ * ONE ROW PER DOMAIN THE REGISTER ACTUALLY HOLDS — `domainCatalogue` derives the list from the
+ * ledger's rows, not from the join map, so a domain the tenant has tagged but this register
+ * holds no finding for is simply absent rather than present and answering zero. Same property
+ * `scopeOptions` above keeps for projects, same reason.
+ *
+ * NO KIND SPLIT INSIDE THE GROUP, unlike projects. A project row can be a business unit, a
+ * support group or a leaf, and the reader needs to know which because picking a folder reaches
+ * a whole subtree. A domain reaches exactly its own rows — there is no hierarchy to warn
+ * about, so there is nothing for a sub-heading to say.
+ */
+export function domainScopeOptions(list) {
+  return (list || []).map((d) => ({
+    value: d.name,
+    label: d.name,
+    // Declared in words, for `scopeOptions`' reason: a domain and a project are different
+    // questions about the same finding, and that is a meaning, so it does not travel by glyph
+    // or colour alone.
+    hint: `Domain · ${findingCount(d.findings)}`,
+    group: "Domains",
+    icon: "tag",
+  }));
+}
+
 export function scopeKinds(data) {
   const opts = (data && data.filterOptions) || {};
   const list = opts.projectList || [];
+  const domains = opts.domainList || [];
   return [{
     key: "project",
     prefix: "",
@@ -169,7 +213,21 @@ export function scopeKinds(data) {
     caption: (opt, d, ctx) => projectCaption(d, ctx.stale, opt),
     // THE EXACT ARGUMENT `api_setProjectView` HAS ALWAYS TAKEN. Pinned against the deleted
     // implementation by the registerScopeContract block in test/shared.test.js.
-    payload: (id) => ({ projectView: id }),
+    payload: (id) => ({ projectView: id, domainView: "" }),
+  }, {
+    key: "domain",
+    // PREFIXED, because the project kind is this register's bare one and a domain named
+    // `VALUE-CHAIN` could otherwise collide with a project slug on the wire. `d:` rather than
+    // some new letter: gas_ai already spells its domain prefix that way, and scopeModel.js's
+    // own header names it as the established convention.
+    prefix: "d",
+    icon: "tag",
+    options: () => domainScopeOptions(domains).map((o) => ({ ...o, id: o.value })),
+    label: (opt, d, ctx) => (ctx.stale
+      ? "a domain this register does not hold"
+      : (opt ? opt.label : ctx.id)),
+    caption: (opt, d, ctx) => domainCaption(d, ctx.stale, opt),
+    payload: (id) => ({ domainView: id, projectView: "" }),
   }];
 }
 
@@ -178,7 +236,8 @@ function findingFacts(data) {
   const register = scope ? Number(scope.register) || 0 : 0;
   const shown = scope ? Number(scope.shown) || 0 : 0;
   const unattributed = scope ? Number(scope.unattributed) || 0 : 0;
-  return { scope, register, shown, unattributed };
+  const noDomain = scope ? Number(scope.noDomain) || 0 : 0;
+  return { scope, register, shown, unattributed, noDomain };
 }
 
 /**
@@ -201,6 +260,29 @@ function projectCaption(data, stale, opt) {
 }
 
 /**
+ * The domain caption — the exact mirror of `projectCaption`, and the mirroring is the point.
+ *
+ * THE DENOMINATOR TRAVELS WITH THE NUMBER, for the reason stated above it: "12" alone cannot
+ * tell a small domain from a small register.
+ *
+ * AND THE SECOND FIGURE IS THE ONE THAT KEEPS IT HONEST. `noDomain` counts rows whose
+ * repository this register cannot name a domain for. Without it, "1,204 of 8,331" quietly
+ * attributes the other 7,127 to some other domain, when for most of them the truth is that
+ * nobody tagged the repository — or that the join map has never been refreshed. Those two are
+ * one figure here on purpose: from the header they are the same fact ("these rows are not in
+ * any domain you can pick"), and the Settings map-health readout is where they separate.
+ */
+function domainCaption(data, stale, opt) {
+  const f = findingFacts(data);
+  const clause = f.noDomain > 0
+    ? ` · ${nf.format(f.noDomain)} have no domain`
+    : "";
+  if (stale) return `Not in this register — showing 0 of ${nf.format(f.register)}`;
+  if (!opt) return `${findingCount(f.register)} synced${clause}`;
+  return `${nf.format(f.shown)} of ${nf.format(f.register)} findings${clause}`;
+}
+
+/**
  * The parts of the control that are not the dimension.
  *
  * `show` is this register's own answer to "is there anything to slice by". Nothing synced, or
@@ -210,8 +292,13 @@ export function scopeChrome(data) {
   const f = findingFacts(data);
   const opts = (data && data.filterOptions) || {};
   const list = opts.projectList || [];
+  const domains = opts.domainList || [];
   return {
-    show: Boolean(f.scope && list.length),
+    // EITHER DIMENSION IS ENOUGH. A register whose repositories are untagged (or whose domain
+    // map has never been refreshed) still has its project hierarchy to slice by, and one whose
+    // findings carry no project can still be cut by domain. Requiring both would hide a working
+    // control because the other axis is empty.
+    show: Boolean(f.scope && (list.length || domains.length)),
     label: "everything synced",
     caption: (d) => projectCaption(d, false, null),
     // "Everything synced", not "All projects": the register holds what the last sync was
@@ -221,20 +308,28 @@ export function scopeChrome(data) {
       hint: () => findingCount(f.register),
       icon: "folders",
     },
-    resetPayload: () => ({ projectView: "" }),
+    // CLEARS BOTH KINDS, which is why the row is named after neither of them — see the
+    // `reset.label` note above.
+    resetPayload: () => ({ projectView: "", domainView: "" }),
     defaultLabel: "Everything synced",
-    // Without this the trigger prints the raw slug, which reads as corruption rather than as
-    // a scope that no longer matches what was fetched.
-    fallbackLabel: "Project not in this register",
-    searchPlaceholder: "Search projects…",
-    // WHAT THE PANEL HAS TO SAY THAT ITS ROWS CANNOT. Every row is a project name; none of
-    // them can tell you that choosing one re-scopes every figure in the app, or that a few
-    // figures refuse to be scoped and say so where they are drawn (registerWideNote). A
-    // consequence this large should not have to be discovered by trying it.
+    // Without this the trigger prints the raw stored value, which reads as corruption rather
+    // than as a scope that no longer matches what was fetched. Named for neither kind, because
+    // a stale value may be either.
+    fallbackLabel: "Not in this register",
+    searchPlaceholder: "Search projects and domains…",
+    // WHAT THE PANEL HAS TO SAY THAT ITS ROWS CANNOT. Every row is a name; none of them can
+    // tell you that choosing one re-scopes every figure in the app, or that a few figures
+    // refuse to be scoped and say so where they are drawn (registerWideNote). A consequence
+    // this large should not have to be discovered by trying it.
+    //
+    // NAMES BOTH KINDS, because both are in the list below it and they are not the same
+    // question: a project is where Wiz files the repository, a domain is who the tenant says
+    // owns it. Naming only one would leave a reader to guess which heading they had picked
+    // from — and the two cut across each other, so guessing wrong is easy.
     header: {
       title: "Scope",
-      note: "Every page answers for the project you pick. Figures that cannot be scoped say "
-        + "so where they are drawn.",
+      note: "Every page answers for the project or domain you pick. Figures that cannot be "
+        + "scoped say so where they are drawn.",
     },
   };
 }
@@ -242,19 +337,25 @@ export function scopeChrome(data) {
 /**
  * Everything the control asserts, from the bootstrap payload alone. The same
  * `{show, current, label, caption, stale, options, pinned}` shape as before the move to the
- * shared model, so test/projectScopeView.test.js holds it unchanged — including every option
- * `value`, which is still the bare slug.
+ * shared model, so test/projectScopeView.test.js holds it unchanged — including every PROJECT
+ * option `value`, which is still the bare slug. Domain rows are the new ones and carry `d:`.
  *
  * @param {object|null} bootstrapData
  */
 export function projectScopeView(bootstrapData) {
+  const scope = (bootstrapData && bootstrapData.scope) || {};
+  const projectView = scope.projectView || "";
+  const domainView = scope.domainView || "";
   const view = scopeView({
     kinds: scopeKinds(bootstrapData),
     data: bootstrapData,
-    active: {
-      kind: "project",
-      id: (bootstrapData && bootstrapData.scope && bootstrapData.scope.projectView) || "",
-    },
+    // EXACTLY ONE OF THE TWO IS EVER SET — `settingsLogic.withProjectView`/`withDomainView`
+    // clear each other on the way into storage. Reading the project first is not a preference:
+    // a payload carrying both is a defect upstream, and silently intersecting them here would
+    // hide it.
+    active: projectView
+      ? { kind: "project", id: projectView }
+      : { kind: "domain", id: domainView },
     chrome: scopeChrome(bootstrapData),
   });
   if (!view.show) {

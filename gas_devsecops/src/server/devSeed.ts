@@ -33,6 +33,7 @@
 import * as scanJobs from "./scanJobs";
 import * as ledgerStore from "./ledgerStore";
 import type { ScopePersist } from "./ledgerStore";
+import * as repoDomains from "./repoDomains";
 import { SAMPLE_SYNCS } from "./sampleData";
 import type { Scope } from "../domain/config";
 
@@ -83,4 +84,84 @@ export function seedSampleLedger(): SeedResult {
   ).length;
 
   return { seeded, syncs: SAMPLE_SYNCS.length, rows };
+}
+
+/**
+ * A repository → domain map over the repositories THIS SEED actually produced, so the domain
+ * scope and the "By business domain" breakdowns are exercisable without a tenant.
+ *
+ * WHY THE HARNESS NEEDS THIS AT ALL, when it needs nothing equivalent for projects. A project
+ * rides in on the finding — `projects[]` is in all three query documents, so the generated
+ * sample nodes carry it and the project switcher fills itself. A DOMAIN does not: it is
+ * fetched separately by `repoDomains.refreshRepoDomains`, which needs Wiz. Without a seeded
+ * map the domain half of the switcher is permanently empty on the dev harness, and a feature
+ * nobody can look at locally is one nobody verifies before it ships.
+ *
+ * DERIVED FROM THE SEEDED REPOSITORIES, NOT A FIXED FIXTURE LIST. A hardcoded map would drift
+ * the moment `dev/sampleData.dev.ts` renamed a repository, and would then demonstrate the
+ * failure mode (a map whose tokens match nothing) while looking like the feature. Reading the
+ * repositories back out of the ledger is also the honest exercise: it is exactly the overlap
+ * the real join depends on.
+ *
+ * THE DOMAIN NAMES ARE SYNTHETIC AND THE ASSIGNMENT IS ARBITRARY — a stable hash of the
+ * repository name, so a reload does not reshuffle the picture. They are not a claim about any
+ * tenant's vocabulary. NOT EVERY REPOSITORY GETS ONE, deliberately: one in four is left out so
+ * the harness shows the state that actually matters on screen — the `noDomain` clause in the
+ * caption, and the `(none)` bucket in a breakdown — rather than a tidy fiction in which
+ * everything is attributed.
+ *
+ * Guarded by the same `SAMPLE_SYNCS` check `seedSampleLedger` opens with, so a deployed build
+ * cannot write a fake map over a real one.
+ */
+export interface DomainSeedResult {
+  repos: number;
+  domains: number;
+  unmapped: number;
+  reason?: string;
+}
+
+const DEV_DOMAINS = ["CROSS", "SAP", "VALUE-CHAIN", "RETAIL"];
+
+export function seedDomainMap(): DomainSeedResult {
+  if (SAMPLE_SYNCS.length === 0) {
+    return { repos: 0, domains: 0, unmapped: 0, reason: "no sample data in this build" };
+  }
+  // ONE ENTRY PER REPOSITORY, KEYED ON ITS IDENTITY, WITH ALL ITS TOKENS — not one entry per
+  // token. A repository is indexed under both its id and its name, and `resolveDomain` returns
+  // on the FIRST token that hits, so deciding tagged-or-not per token would leave a repository
+  // "untagged by name, tagged by id" — which resolves, and would make the untagged population
+  // below a number with nothing behind it. A real repository entity contributes all of its
+  // tokens or none of them; the seed has to do the same or it is not exercising the join.
+  const repos = new Map<string, string[]>();
+  for (const row of Object.values(ledgerStore.loadState().ledger)) {
+    const id = String(row.repo_id ?? "").trim();
+    const name = String(row.repo_name ?? "").trim();
+    const identity = id || name;
+    if (!identity) continue;
+    const tokens = repos.get(identity) ?? [];
+    for (const t of [id, name]) {
+      if (t && tokens.indexOf(t) < 0) tokens.push(t);
+    }
+    repos.set(identity, tokens);
+  }
+
+  const map: Record<string, string> = {};
+  const domains = new Set<string>();
+  let unmapped = 0;
+  for (const [identity, tokens] of [...repos.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+    // A stable, boring hash — the point is only that the same repository lands in the same
+    // bucket across reloads, not that the distribution is good.
+    let h = 0;
+    for (let i = 0; i < identity.length; i++) h = (h * 31 + identity.charCodeAt(i)) >>> 0;
+    if (h % 4 === 3) {
+      unmapped += 1; // the untagged quarter — see the note above
+      continue;
+    }
+    const domain = DEV_DOMAINS[h % DEV_DOMAINS.length]!;
+    for (const t of tokens) map[repoDomains.foldToken(t)] = domain;
+    domains.add(domain);
+  }
+
+  repoDomains.setDomainMap(map);
+  return { repos: repos.size - unmapped, domains: domains.size, unmapped };
 }

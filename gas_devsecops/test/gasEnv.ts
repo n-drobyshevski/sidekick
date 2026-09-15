@@ -126,6 +126,12 @@ export function teardownServer(): void {
 //     from the convention the comment above documents, not an oversight in this file: it is
 //     called out here, by its real name, rather than silently matched against a name it does
 //     not use.
+//   - `repoDomains` is the second of those: it memoizes the repository → domain map for the
+//     same per-execution reason and exports `resetDomainMapMemo`. It is worth naming twice
+//     over, because its memo is the one that caches a FAILED read as well as a successful
+//     one (see `getDomainMap` — a broken tab must cost one read per execution, not one per
+//     model), so a leaked memo would carry an empty map into a test that seeded a real one
+//     and the symptom would be a domain axis that is simply absent rather than an error.
 //   - `props.ts` was checked and holds no per-execution memo at all — every getter reads
 //     PropertiesService directly on every call — so nothing is swept for it.
 //   - `jobsStore.ts`, `locks.ts`, `api.ts`, `main.ts`, `setup.ts`, `welcome.ts`,
@@ -144,6 +150,9 @@ export async function resetServerMemos(): Promise<void> {
 
   const settings = await import("../src/server/settingsStore");
   settings.resetSettingsMemo();
+
+  const repoDomains = await import("../src/server/repoDomains");
+  repoDomains.resetDomainMapMemo();
 }
 
 // ------------------------------------------------------------- the fake platform's own API

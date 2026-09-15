@@ -83,6 +83,7 @@ vi.mock("../src/server/sheetsDb", async (importOriginal) => {
   return {
     TABS: real.TABS,
     TAB_HEADERS: real.TAB_HEADERS,
+    ensureTab: () => null,
     readAll: (tab: string) => tables[tab] ?? [],
     readTail: (tab: string, n: number) => (tables[tab] ?? []).slice(-n),
     overwrite: (tab: string, rows: Row[]) => {

@@ -244,4 +244,21 @@ export type BaseRow = LedgerRow & {
   mttr_actionable_days: number | null;
   actionable_age_days: number | null;
   awaiting_vendor_fix: boolean;
+  /**
+   * The business domain that owns this finding's repository — ATTACHED IN MEMORY, NEVER A
+   * COLUMN.
+   *
+   * Every other field on this type is either a ledger column or derived from one. This is
+   * neither: `src/server/repoDomains.ts` writes it onto the row at read time from the
+   * repository → domain join map, and nothing ever persists it. `src/domain/domainTag.ts`'s
+   * header carries the full argument — the short form is that the key is configurable, and a
+   * baked column would make correcting a typed-wrong tag key cost a full re-scan while the
+   * stale value kept winning for anything reading the tab directly.
+   *
+   * OPTIONAL, AND THE ABSENCE IS MEANINGFUL. Unset means no domain is known for this row —
+   * either the repository carries no such tag, or the join map has never been refreshed. It is
+   * deliberately not defaulted to a placeholder: see `domainScope.noDomainCount` for why the
+   * count is reported instead of a synthetic "Untagged" owner.
+   */
+  _domain?: string | null;
 };

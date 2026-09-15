@@ -163,6 +163,12 @@ var Server = (() => {
     wizAuthUrl: "WIZ_AUTH_URL",
     wizApiUrl: "WIZ_API_URL",
     wizProjectIdV2: "WIZ_PROJECT_ID_V2",
+    // The repository tag key whose VALUE is a business domain. Unset means `Wiz/Domain`, which
+    // is what this tenant writes; a property rather than a setting because it is a fact about
+    // the tenant's tagging convention, not a per-operator view preference — the same tier
+    // WIZ_PROJECT_ID_V2 sits in. See domain/domainTag.ts for why it is resolved on READ: a key
+    // baked into the ledger would make correcting a typo cost a full re-scan.
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID",
     // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
@@ -458,7 +464,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "5b581b3e441e" : "dev";
+  var BUILD_ID = true ? "0855e80d4874" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2305,6 +2311,7 @@ var Server = (() => {
     repo: "repo_name",
     language: "language",
     owner_project: "owner_project",
+    domain: "_domain",
     secret_kind: "secret_kind",
     cwe: "cwe"
   };
@@ -3362,7 +3369,8 @@ var Server = (() => {
     syncSchedule: DEFAULT_SYNC_HOUR,
     autoCompact: false,
     retentionDays: DEFAULT_RETENTION_DAYS,
-    projectView: ""
+    projectView: "",
+    domainView: ""
   };
   function asList(v, allowed) {
     if (!Array.isArray(v)) return null;
@@ -3407,7 +3415,7 @@ var Server = (() => {
     if (n2 === null) return DEFAULT_RETENTION_DAYS;
     return Math.max(Math.floor(n2), RETENTION_MIN_DAYS);
   }
-  function cleanProjectView(v) {
+  function cleanViewScope(v) {
     return typeof v === "string" ? v.trim() : "";
   }
   function cleanSlaTargets(raw) {
@@ -3434,11 +3442,21 @@ var Server = (() => {
       // only a literal boolean true turns compaction on.
       autoCompact: r.autoCompact === true,
       retentionDays: cleanRetentionDays(r.retentionDays),
-      projectView: cleanProjectView(r.projectView)
+      projectView: cleanViewScope(r.projectView),
+      // The same coercion, and deliberately the same function: both hold an opaque operator-
+      // chosen string whose only invalid form is "not a string". Two copies of that rule is how
+      // one of them later grows a difference nobody intended.
+      domainView: cleanViewScope(r.domainView)
     };
   }
   function withSettings(current, patch) {
     return cleanSettings({ ...current, ...patch });
+  }
+  function withProjectView(current, projectView) {
+    return withSettings(current, { projectView, domainView: "" });
+  }
+  function withDomainView(current, domainView) {
+    return withSettings(current, { domainView, projectView: "" });
   }
   function effectiveSlaTargets(settings) {
     return { ...SLA_TARGETS, ...cleanSlaTargets(settings == null ? void 0 : settings.slaTargets) };
@@ -3457,6 +3475,12 @@ var Server = (() => {
     scans: "scans",
     // Repositories and their owning project hierarchy — the register's asset dimension.
     repos: "repos",
+    // The repository-identity → business-domain join, refreshed from Wiz separately from any
+    // scan (src/server/repoDomains.ts). ITS OWN TAB rather than a settings cell, for gas/'s
+    // measured reason: a settings value is one 50k cell, and a tenant with a few thousand
+    // repositories indexed under several identity tokens each overruns it. Lazily created —
+    // see `ensureTab` — so a deployment that has not re-run setup() still gets it on first use.
+    domainMap: "domain_map",
     compactions: "compactions",
     settings: "settings",
     jobs: "jobs",
@@ -3662,6 +3686,10 @@ var Server = (() => {
       "first_seen",
       "last_seen"
     ],
+    // One row per identity token, not per repository: the join indexes a repository under every
+    // id/name/externalId it carries, because nothing here can verify which of them a finding's
+    // `repo_id` will turn out to be. See repoDomains.ts.
+    [TABS.domainMap]: ["token", "domain"],
     [TABS.compactions]: [
       "compaction_id",
       "ts",
@@ -3703,6 +3731,21 @@ var Server = (() => {
   function sheet(tab) {
     const sh = ledgerSpreadsheet().getSheetByName(tab);
     if (!sh) throw new Error(`Missing tab ${tab} \u2014 run setup().`);
+    return sh;
+  }
+  function ensureTab(tab) {
+    const headers = TAB_HEADERS[tab];
+    if (!headers) throw new Error(`Tab "${tab}" is not declared in TAB_HEADERS.`);
+    const ss = ledgerSpreadsheet();
+    const existing = ss.getSheetByName(tab);
+    if (existing) {
+      ensureHeaders(existing, tab);
+      return existing;
+    }
+    const sh = ss.insertSheet(tab);
+    sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    sh.setFrozenRows(1);
     return sh;
   }
   function ensureTabs(ss) {
@@ -4582,6 +4625,7 @@ var Server = (() => {
     cancelSync: () => cancelSync2,
     compact: () => compact,
     deleteScans: () => deleteScans2,
+    domainMapHealth: () => domainMapHealth,
     getAccess: () => getAccess,
     getChartsBundle: () => getChartsBundle,
     getExecutivePage: () => getExecutivePage,
@@ -4599,11 +4643,13 @@ var Server = (() => {
     getSettingsImpact: () => getSettingsImpact,
     getStorageStats: () => getStorageStats,
     putSettings: () => putSettings,
+    refreshDomains: () => refreshDomains,
     resetLedger: () => resetLedger2,
     runSync: () => runSync,
     saveAccess: () => saveAccess,
     saveAdmins: () => saveAdmins,
     saveHubUrl: () => saveHubUrl,
+    setDomainView: () => setDomainView,
     setProjectView: () => setProjectView,
     testWizConnection: () => testWizConnection
   });
@@ -4658,6 +4704,279 @@ var Server = (() => {
       if (parseProjects(row.projects_json).length === 0) count += 1;
     }
     return count;
+  }
+
+  // src/domain/domainScope.ts
+  var DOMAIN_FIELD = "_domain";
+  function domainOfRow(row) {
+    const v = row ? row._domain : null;
+    return typeof v === "string" ? v.trim() : "";
+  }
+  function domainCatalogue(rows) {
+    const byName = /* @__PURE__ */ new Map();
+    for (const row of rows) {
+      const name = domainOfRow(row);
+      if (!name) continue;
+      const seen = byName.get(name);
+      if (seen) seen.findings += 1;
+      else byName.set(name, { name, findings: 1 });
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }
+  function inDomain(row, name) {
+    if (!name) return false;
+    return domainOfRow(row) === name;
+  }
+  function noDomainCount(rows) {
+    let count = 0;
+    for (const row of rows) {
+      if (!domainOfRow(row)) count += 1;
+    }
+    return count;
+  }
+
+  // src/domain/domainTag.ts
+  var DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
+  function resolveDomainTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_DOMAIN_TAG_KEY;
+  }
+  function recordTags(record) {
+    if (!record) return {};
+    const out = {};
+    const raw = record["tags_json"];
+    if (typeof raw === "string" && raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          for (const [k, v] of Object.entries(parsed)) out[k] = v;
+        }
+      } catch {
+      }
+    }
+    for (const asset of ["vulnerableAsset", "resource"]) {
+      const node = record[asset];
+      if (node && typeof node === "object" && !Array.isArray(node)) {
+        const nested = node["tags"];
+        if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+          for (const [k, v] of Object.entries(nested)) out[k] = v;
+        }
+      }
+      const flatBag = record[`${asset}.tags`];
+      if (flatBag && typeof flatBag === "object" && !Array.isArray(flatBag)) {
+        for (const [k, v] of Object.entries(flatBag)) out[k] = v;
+      }
+      const prefix = `${asset}.tags.`;
+      for (const [k, v] of Object.entries(record)) {
+        if (k.startsWith(prefix)) out[k.slice(prefix.length)] = v;
+      }
+    }
+    addTagList(out, record["tags"]);
+    for (const [k, v] of Object.entries(record)) {
+      if (k.startsWith("tag:")) out[k.slice(4)] = v;
+    }
+    return out;
+  }
+  function addTagList(out, tags) {
+    if (Array.isArray(tags)) {
+      for (const t of tags) {
+        if (!t || typeof t !== "object" || Array.isArray(t)) continue;
+        const key = t["key"];
+        if (!present(key)) continue;
+        out[String(key)] = t["value"];
+      }
+      return;
+    }
+    if (tags && typeof tags === "object") {
+      for (const [k, v] of Object.entries(tags)) out[k] = v;
+    }
+  }
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    const want = key.trim().toLowerCase();
+    if (!want || !tags) return null;
+    for (const [k, v] of Object.entries(tags)) {
+      if (String(k).trim().toLowerCase() !== want) continue;
+      if (!present(v)) continue;
+      const value = String(v).trim();
+      if (value) return value;
+    }
+    return null;
+  }
+
+  // src/server/wizReposQuery.ts
+  var PAGE_SIZE2 = 100;
+  var MAX_PAGES2 = 50;
+  function isSafeTagKey(key) {
+    return /^[\w/.:-]{1,120}$/.test(key);
+  }
+  function reposByTagQuery(tagKey) {
+    if (!isSafeTagKey(tagKey)) {
+      throw new Error(
+        `Unsafe WIZ_DOMAIN_TAG_KEY ${JSON.stringify(tagKey)} \u2014 allowed: letters, digits, _ . : / - (max 120 chars).`
+      );
+    }
+    return 'query GetRepositoriesByWizDomainTag($first: Int, $after: String) {\n  graphSearch(\n    query: {\n      type: [REPOSITORY, REPOSITORY_BRANCH]\n      select: true\n      where: { tags: { CONTAINS: [{ key: "' + tagKey + '" }] } }\n    }\n    first: $first\n    after: $after\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes { entities { id name properties } }\n  }\n}\n';
+  }
+
+  // src/server/repoDomains.ts
+  function configuredDomainTagKey() {
+    return resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey));
+  }
+  function foldToken(v) {
+    return String(v).trim().toLowerCase();
+  }
+  var RECORD_ID_COLS = ["repo_id", "repo_name"];
+  var FRAME_ID_COLS = [
+    "vulnerableAsset.id",
+    "vulnerableAsset.name",
+    "resource.id",
+    "resource.name",
+    "resource.externalId"
+  ];
+  function recordIdentityTokens(record) {
+    const out = [];
+    for (const col of RECORD_ID_COLS) {
+      const v = record[col];
+      if (present(v)) out.push(String(v));
+    }
+    for (const col of FRAME_ID_COLS) {
+      const v = record[col];
+      if (present(v)) {
+        out.push(String(v));
+        continue;
+      }
+      const [head, leaf] = col.split(".");
+      const node = record[head];
+      if (node && typeof node === "object" && !Array.isArray(node)) {
+        const nested = node[leaf];
+        if (present(nested)) out.push(String(nested));
+      }
+    }
+    return out;
+  }
+  function resolveDomain(record, map, tagKey) {
+    const own = domainOfTags(recordTags(record), tagKey);
+    if (own) return own;
+    for (const token of recordIdentityTokens(record)) {
+      const domain = map[foldToken(token)];
+      if (domain) return domain;
+    }
+    return null;
+  }
+  function attachDomains(records) {
+    const map = getDomainMap();
+    if (!Object.keys(map).length) return;
+    const tagKey = configuredDomainTagKey();
+    for (const r of records) {
+      const domain = resolveDomain(r, map, tagKey);
+      if (domain) r[DOMAIN_FIELD] = domain;
+    }
+  }
+  var mapMemo;
+  function getDomainMap() {
+    var _a, _b;
+    if (mapMemo !== void 0) return mapMemo;
+    const map = {};
+    try {
+      ensureTab(TABS.domainMap);
+      for (const row of readAll(TABS.domainMap)) {
+        const token = String((_a = row["token"]) != null ? _a : "");
+        const domain = String((_b = row["domain"]) != null ? _b : "");
+        if (token && domain) map[token] = domain;
+      }
+    } catch (e) {
+      console.warn(`Domain map unreadable \u2014 no domains attached this execution: ${String(e)}`);
+    }
+    mapMemo = map;
+    return map;
+  }
+  function setDomainMap(map) {
+    ensureTab(TABS.domainMap);
+    const rows = Object.entries(map).sort((a, b) => a[0].localeCompare(b[0])).map(([token, domain]) => ({ token, domain }));
+    overwrite(TABS.domainMap, rows);
+    mapMemo = { ...map };
+    bumpDataVersion();
+  }
+  function entityProperties(entity) {
+    const p = entity["properties"];
+    if (p && typeof p === "object" && !Array.isArray(p)) return p;
+    if (typeof p === "string" && p) {
+      try {
+        const parsed = JSON.parse(p);
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed;
+      } catch {
+      }
+    }
+    return {};
+  }
+  var PROP_ID_KEYS = [
+    "id",
+    "externalId",
+    "providerUniqueId",
+    "repositoryId",
+    "repositoryName",
+    "fullName",
+    "name",
+    "cloudProviderURL"
+  ];
+  function parseRepoEntity(entity, tagKey) {
+    const props = entityProperties(entity);
+    const domain = domainOfTags(recordTags(props), tagKey);
+    const tokens = [];
+    if (domain) {
+      for (const k of PROP_ID_KEYS) {
+        const v = props[k];
+        if (present(v) && String(v).trim()) tokens.push(foldToken(v));
+      }
+      for (const k of ["id", "name"]) {
+        const v = entity[k];
+        if (present(v) && String(v).trim()) tokens.push(foldToken(v));
+      }
+    }
+    return { domain, tokens };
+  }
+  function fetchRepoDomains() {
+    var _a;
+    const tagKey = configuredDomainTagKey();
+    const query = reposByTagQuery(tagKey);
+    const map = {};
+    const domains = /* @__PURE__ */ new Set();
+    let cursor = null;
+    let repos = 0;
+    let logged = false;
+    for (let page = 0; page < MAX_PAGES2; page++) {
+      const result = queryPage(query, { first: PAGE_SIZE2, after: cursor });
+      for (const node of result.nodes) {
+        const entities = (_a = node["entities"]) != null ? _a : [];
+        for (const entity of entities) {
+          if (!logged) {
+            console.log(`Domain-tag sample entity: ${JSON.stringify(entity).slice(0, 800)}`);
+            logged = true;
+          }
+          const { domain, tokens } = parseRepoEntity(entity, tagKey);
+          if (!domain) continue;
+          for (const token of tokens) map[token] = domain;
+          repos += 1;
+          domains.add(domain);
+        }
+      }
+      if (!result.pageInfo.hasNextPage || !result.pageInfo.endCursor) break;
+      cursor = result.pageInfo.endCursor;
+    }
+    return { map, stats: { repos, keys: Object.keys(map).length, domains: domains.size, tagKey } };
+  }
+  function refreshRepoDomains() {
+    const { map, stats } = fetchRepoDomains();
+    setDomainMap(map);
+    return stats;
+  }
+  function mapHealth() {
+    const map = getDomainMap();
+    return {
+      keys: Object.keys(map).length,
+      domains: new Set(Object.values(map)).size,
+      tagKey: configuredDomainTagKey()
+    };
   }
 
   // src/domain/settingsImpact.ts
@@ -6536,23 +6855,34 @@ var Server = (() => {
     const settings = loadSettings();
     const projectRaw = settings.projectView;
     const project2 = projectRaw ? projectRaw : null;
+    const domainRaw = settings.domainView;
+    const domain = domainRaw ? domainRaw : null;
     return {
       scope,
       severities,
       showNoFix: (p == null ? void 0 : p.showNoFix) !== false,
       project: project2,
+      domain,
       slaTargets: effectiveSlaTargets(settings)
     };
   }
   function keyOf(n2) {
-    return { scope: n2.scope, severities: n2.severities, showNoFix: n2.showNoFix, project: n2.project };
+    return {
+      scope: n2.scope,
+      severities: n2.severities,
+      showNoFix: n2.showNoFix,
+      project: n2.project,
+      domain: n2.domain
+    };
   }
   var baseMemo;
   function baseSnapshot() {
     const version = dataVersion();
     if (!baseMemo || baseMemo.version !== version) {
       const now = Date.now();
-      baseMemo = { version, now, rows: loadBaseRows({ now }) };
+      const rows = loadBaseRows({ now });
+      attachDomains(rows);
+      baseMemo = { version, now, rows };
     }
     return baseMemo;
   }
@@ -6596,6 +6926,7 @@ var Server = (() => {
     let out = rows;
     if (n2.scope) out = out.filter((r) => r.scope === n2.scope);
     if (n2.project) out = out.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
+    if (n2.domain) out = out.filter((r) => inDomain(r, n2.domain));
     if (n2.severities) {
       const keep = new Set(n2.severities);
       out = out.filter((r) => keep.has(normalizeSeverity(r.severity)));
@@ -6964,9 +7295,18 @@ var Server = (() => {
     // THIS COPY DOES NOT DECIDE WHAT RENDERS. `concentrationModel(payload, dims)` maps over the
     // dims the PAGE hands it, so removing a name here alone yields a card with zero rows rather
     // than no card; `pages/sca.js` and `pages/sast.js` carry the matching lists and say so.
-    sca: ["repo", "owner_project"],
-    sast: ["repo", "cwe", "owner_project"],
-    secrets: ["repo", "secret_kind", "owner_project"]
+    //
+    // `domain` IS ON ALL THREE, because unlike `language` it is not a restatement of another
+    // card: a domain cuts ACROSS the project hierarchy (a domain owns repositories that several
+    // projects file, and a project can hold repositories several domains own), and it is the
+    // axis a reader escalates along — a project is where Wiz files the work, a domain is who
+    // answers for it. It is also the one dimension here that can be empty for a legitimate
+    // reason (the join map has never been refreshed), and the card that results says `(none)`
+    // for every row rather than disappearing — which is the honest shape, and is why
+    // `concentrationModel` keeping zero-row cards is left alone rather than special-cased.
+    sca: ["repo", "owner_project", "domain"],
+    sast: ["repo", "cwe", "owner_project", "domain"],
+    secrets: ["repo", "secret_kind", "owner_project", "domain"]
   };
   function buildRegister(scope, n2) {
     const snap = baseSnapshot();
@@ -7314,7 +7654,11 @@ var Server = (() => {
     return `No scan of this register at least ${MOVEMENT_WINDOW_DAYS} days older than its latest` + (win.days === null ? "" : ` \u2014 its saved scans span ${win.days} days`) + ".";
   }
   function movementPopulation(rows, n2) {
-    const scoped = n2.project ? rows.filter((r) => inProject(parseProjects(r.projects_json), n2.project)) : rows;
+    let scoped = rows;
+    if (n2.project) {
+      scoped = scoped.filter((r) => inProject(parseProjects(r.projects_json), n2.project));
+    }
+    if (n2.domain) scoped = scoped.filter((r) => inDomain(r, n2.domain));
     return n2.showNoFix ? scoped : scoped.filter((r) => !baseRowNoFix(r));
   }
   function buildHistory(n2) {
@@ -7371,10 +7715,12 @@ var Server = (() => {
       history: listHistory(),
       trend: trendFor(n2, snap.rows),
       // See the block comment above: `scans`, `perScope` and `history` are per-scan/per-day
-      // facts with no project dimension and do NOT narrow with `n.project`; everything else in
-      // this payload does.
+      // facts with no project OR domain dimension and do NOT narrow with either view scope;
+      // everything else in this payload does. The note names whichever scope is actually live,
+      // because "scoped to the selected project" over a domain scope would be a wrong answer to
+      // the only question the note exists to answer.
       scanScopeApplies: false,
-      scanScopeNote: n2.project ? "scans, perScope and history describe the whole register \u2014 a sync and a daily snapshot carry no project dimension to narrow by. Only rows/kpis/trend above are scoped to the selected project." : null
+      scanScopeNote: n2.project || n2.domain ? "scans, perScope and history describe the whole register \u2014 a sync and a daily snapshot carry no " + (n2.project ? "project" : "domain") + " dimension to narrow by. Only rows/kpis/trend above are scoped to the selected " + (n2.project ? "project" : "domain") + "." : null
     };
   }
   function trendFor(n2, all) {
@@ -8174,8 +8520,10 @@ var Server = (() => {
       }
       const settings = loadSettings();
       const allRows = loadBaseRows();
+      attachDomains(allRows);
       const projectView = settings.projectView || null;
-      const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : allRows.length;
+      const domainView = settings.domainView || null;
+      const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : domainView ? allRows.filter((r) => inDomain(r, domainView)).length : allRows.length;
       return {
         product: "Wiz Sidekick DevSecOps",
         buildId: BUILD_ID,
@@ -8197,14 +8545,19 @@ var Server = (() => {
         settings,
         scope: {
           projectView: settings.projectView,
+          domainView: settings.domainView,
           shown,
           register: allRows.length,
           unattributed: unattributedCount(allRows),
+          noDomain: noDomainCount(allRows),
           // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
           // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
           syncProjectId: (_f = (_e = projectScope()) == null ? void 0 : _e[0]) != null ? _f : null
         },
-        filterOptions: { projectList: projectCatalogue(allRows) }
+        filterOptions: {
+          projectList: projectCatalogue(allRows),
+          domainList: domainCatalogue(allRows)
+        }
       };
     });
   }
@@ -8272,7 +8625,16 @@ var Server = (() => {
     });
   }
   function setProjectView(p) {
-    return mutate(() => saveSettings(withSettings(loadSettings(), { projectView: p.projectView })));
+    return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)));
+  }
+  function setDomainView(p) {
+    return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)));
+  }
+  function refreshDomains(_p) {
+    return mutate(() => refreshRepoDomains());
+  }
+  function domainMapHealth(_p) {
+    return run(() => mapHealth());
   }
   function getChartsBundle(_p) {
     return run(() => {
@@ -8586,6 +8948,7 @@ var Server = (() => {
   // src/server/devSeed.ts
   var devSeed_exports = {};
   __export(devSeed_exports, {
+    seedDomainMap: () => seedDomainMap,
     seedSampleLedger: () => seedSampleLedger
   });
 
@@ -8619,6 +8982,41 @@ var Server = (() => {
       (row) => scopesTouched.has(row.scope)
     ).length;
     return { seeded, syncs: SAMPLE_SYNCS.length, rows };
+  }
+  var DEV_DOMAINS = ["CROSS", "SAP", "VALUE-CHAIN", "RETAIL"];
+  function seedDomainMap() {
+    var _a, _b, _c;
+    if (SAMPLE_SYNCS.length === 0) {
+      return { repos: 0, domains: 0, unmapped: 0, reason: "no sample data in this build" };
+    }
+    const repos = /* @__PURE__ */ new Map();
+    for (const row of Object.values(loadState().ledger)) {
+      const id = String((_a = row.repo_id) != null ? _a : "").trim();
+      const name = String((_b = row.repo_name) != null ? _b : "").trim();
+      const identity = id || name;
+      if (!identity) continue;
+      const tokens = (_c = repos.get(identity)) != null ? _c : [];
+      for (const t of [id, name]) {
+        if (t && tokens.indexOf(t) < 0) tokens.push(t);
+      }
+      repos.set(identity, tokens);
+    }
+    const map = {};
+    const domains = /* @__PURE__ */ new Set();
+    let unmapped = 0;
+    for (const [identity, tokens] of [...repos.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
+      let h = 0;
+      for (let i = 0; i < identity.length; i++) h = h * 31 + identity.charCodeAt(i) >>> 0;
+      if (h % 4 === 3) {
+        unmapped += 1;
+        continue;
+      }
+      const domain = DEV_DOMAINS[h % DEV_DOMAINS.length];
+      for (const t of tokens) map[foldToken(t)] = domain;
+      domains.add(domain);
+    }
+    setDomainMap(map);
+    return { repos: repos.size - unmapped, domains: domains.size, unmapped };
   }
   return __toCommonJS(index_exports);
 })();
