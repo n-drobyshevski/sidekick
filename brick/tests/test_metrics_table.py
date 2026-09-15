@@ -70,7 +70,7 @@ def tables(spark, request):
     name = "mt_" + re.sub(r"\W", "_", request.node.name).lower()[:100]
     spark.sql(f"DROP DATABASE IF EXISTS {name} CASCADE")
     spark.sql(f"CREATE DATABASE {name}")
-    tbl = run_pipeline.resolve_tables(name, SCOPE, argv=[])
+    tbl = run_pipeline.resolve_tables(name, argv=[])
     run_pipeline.ensure_tables(spark, tbl)
     yield tbl
     spark.sql(f"DROP DATABASE IF EXISTS {name} CASCADE")
@@ -92,7 +92,7 @@ def path_tables(spark, data_root):
     on the second dot (CLAUDE.md, brick section). `--data_path` needs no catalog at all, so the
     tables `main` resolves are the same references this fixture built.
     """
-    tbl = run_pipeline.resolve_tables("", SCOPE, argv=[], data_path=data_root)
+    tbl = run_pipeline.resolve_tables("", argv=[], data_path=data_root)
     run_pipeline.ensure_tables(spark, tbl)
     return tbl
 
@@ -257,11 +257,11 @@ def test_a_failed_gold_append_is_resumed_by_the_retry(
     )
 
     # The state a crash in the gold append leaves: a commit record, a moved ledger, no gold.
-    logged = run_pipeline.recorded_scan(spark, path_tables, "s2")
+    logged = run_pipeline.recorded_scan(spark, path_tables, "s2", SCOPE)
     assert logged is not None, "the commit record lands before gold and must have survived"
     assert logged["resolved_count"] == 1, "f-3 disappeared, and the MERGE recorded it"
-    assert run_pipeline.gold_missing(spark, path_tables, "s2") is True
-    assert run_pipeline.ledger_already_merged(spark, path_tables, "s2") is True
+    assert run_pipeline.gold_missing(spark, path_tables, "s2", SCOPE) is True
+    assert run_pipeline.ledger_already_merged(spark, path_tables, "s2", SCOPE) is True
     assert gold_rows_for(spark, path_tables, "s2") == []
 
     ledger_before = ledger_rows(spark, path_tables)
@@ -320,8 +320,8 @@ def test_the_old_short_circuit_is_the_defect(spark, path_tables, data_root, monk
     assert gold_rows_for(spark, path_tables, "s2") == [], (
         "the defect: the short circuit leaves the crashed scan with no gold at all"
     )
-    assert run_pipeline.recorded_scan(spark, path_tables, "s2") is not None
-    assert run_pipeline.ledger_already_merged(spark, path_tables, "s2") is True
+    assert run_pipeline.recorded_scan(spark, path_tables, "s2", SCOPE) is not None
+    assert run_pipeline.ledger_already_merged(spark, path_tables, "s2", SCOPE) is True
     # And it is scoped to the crashed scan: the register is not broken, one scan is missing
     # from it, which is why nothing downstream announces it.
     assert set(families_by_scan(spark, path_tables)["s1"]) == set(run_pipeline.METRICS_FAMILIES)
@@ -394,8 +394,8 @@ def test_a_crash_between_merge_and_commit_record_still_refuses(
         with pytest.raises(RuntimeError, match="between the MERGE"):
             run_scan(spark, path_tables, [node("f-1")], "s2", TS["s2"])
 
-    assert run_pipeline.recorded_scan(spark, path_tables, "s2") is None
-    assert run_pipeline.ledger_already_merged(spark, path_tables, "s2") is True
+    assert run_pipeline.recorded_scan(spark, path_tables, "s2", SCOPE) is None
+    assert run_pipeline.ledger_already_merged(spark, path_tables, "s2", SCOPE) is True
 
     metrics_before = metrics_rows(spark, path_tables)
     with pytest.raises(RuntimeError) as refused:

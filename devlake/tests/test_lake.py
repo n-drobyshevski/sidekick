@@ -56,7 +56,7 @@ def test_a_table_survives_a_session_restart(tmp_path_factory):
     import run_pipeline
 
     namespace = lake.namespace("wiz")
-    tables = run_pipeline.resolve_tables(namespace, "os", argv=[])
+    tables = run_pipeline.resolve_tables(namespace, argv=[])
     field_names = [f.name for f in ledger_mod.LEDGER_SCHEMA.fields]
 
     def ledger_row(vuln_key: str, **overrides) -> dict:
@@ -108,7 +108,8 @@ def test_a_table_survives_a_session_restart(tmp_path_factory):
         }
 
         detail = spark_b.sql(f"DESCRIBE DETAIL {tables.ledger}").collect()[0]
-        assert detail["clusteringColumns"] == ["vuln_key"]
+        # Two columns, not one: every scope shares one table set and `scope` leads the key.
+        assert detail["clusteringColumns"] == ["scope", "vuln_key"]
         assert detail["properties"]["delta.enableDeletionVectors"] == "true"
 
         # And the reregistered table still takes a MERGE -- reregistration only changed a

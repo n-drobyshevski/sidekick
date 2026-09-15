@@ -109,9 +109,9 @@ MANIFEST = "_manifest.json"
 def table_basename(reference: str) -> str:
     """The bare table name behind either reference form.
 
-    ``cat.schema.wiz_sca_metrics`` and ``delta.`/vol/reg/wiz_sca_metrics``` both yield
-    ``wiz_sca_metrics``, so the CSV is named after the table in both storage modes and an
-    export can be moved between them.
+    ``cat.schema.wiz_metrics`` and ``delta.`/vol/reg/wiz_metrics``` both yield ``wiz_metrics``,
+    so the CSV is named after the table in both storage modes and an export can be moved
+    between them.
     """
     path = run_pipeline.as_path(reference)
     if path is not None:
@@ -281,7 +281,7 @@ def load(
 ) -> run_pipeline.Tables:
     """Register every exported table as a session temp view and return a ``Tables`` for them.
 
-    The view is named exactly as the table was -- ``wiz_sca_metrics``, not ``v_mttr`` -- so
+    The view is named exactly as the table was -- ``wiz_metrics``, not ``v_mttr`` -- so
     the returned ``Tables`` is interchangeable with a catalog-backed or path-backed one and
     nothing downstream can tell the difference. ``panels.context`` relies on precisely that.
 

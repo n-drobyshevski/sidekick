@@ -32,6 +32,7 @@ def _load_conftest_module(name: str, path: Path):
 @pytest.fixture
 def conftest_module(monkeypatch, request):
     monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    monkeypatch.delenv("BRICK_TEST_DRIVER_MEMORY", raising=False)
     return _load_conftest_module(
         f"_test_worker_heap_conftest_{request.node.name}",
         BRICK_DIR / "tests" / "conftest.py",
@@ -43,9 +44,23 @@ def test_driver_memory_is_4g_outside_xdist(conftest_module, monkeypatch):
     assert conftest_module._driver_memory() == "4g"
 
 
-def test_driver_memory_is_2g_inside_an_xdist_worker(conftest_module, monkeypatch):
+def test_driver_memory_is_3g_inside_an_xdist_worker(conftest_module, monkeypatch):
+    """Was 2g until 3.0. The claim it pinned -- a worker fits in 2g -- was falsified by
+    measurement: the 3.0 suite's ``live_tables`` worker ran out of Java heap around stage
+    11,000 at 2g, twice, and finished clean at 3g. The size lives in ``_driver_memory``'s
+    docstring with that measurement; this test holds it there."""
     monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw0")
-    assert conftest_module._driver_memory() == "2g"
+    assert conftest_module._driver_memory() == "3g"
+
+
+def test_driver_memory_honours_the_override_in_both_processes(conftest_module, monkeypatch):
+    """``BRICK_TEST_DRIVER_MEMORY`` is how the sizes above were measured, so it must win over
+    both of them -- an override that only reached the controller would size nothing."""
+    monkeypatch.setenv("BRICK_TEST_DRIVER_MEMORY", "5g")
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    assert conftest_module._driver_memory() == "5g"
+    monkeypatch.setenv("PYTEST_XDIST_WORKER", "gw1")
+    assert conftest_module._driver_memory() == "5g"
 
 
 def test_driver_memory_ignores_a_controller_inherited_worker_count(conftest_module, monkeypatch):

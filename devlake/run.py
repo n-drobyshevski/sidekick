@@ -203,7 +203,7 @@ def scan(
     # it to already exist, and main()'s own ensure_schema only runs after it does.
     lake_module.reregister(spark, lake_path, schema)
     namespace = lake_module.namespace(schema)
-    tables = run_pipeline_module.resolve_tables(namespace, scope, argv=[])
+    tables = run_pipeline_module.resolve_tables(namespace, argv=[])
     lake_module.precreate_clustered(spark, run_pipeline_module, tables)
 
     fake = fakewiz.FakeWiz(scope, ingest_module, nodes=nodes)
@@ -280,14 +280,18 @@ def _cli(argv: Optional[Sequence[str]] = None) -> int:
     from pyspark.sql import functions as F  # noqa: PLC0415 -- pyspark, not a brick module
 
     tables = result.tables
-    print("\n-- scans --")
+    # Scoped, both of them. One lake now holds one table set for every scope, so a run of
+    # `--scope=os` against a lake that has also seen `sca` would otherwise print the other
+    # register's scans under this one's heading -- the harness's whole job is to show what this
+    # run did.
+    print(f"\n-- scans ({args.scope}) --")
     spark.table(tables.metrics).where(
-        F.col("family") == run_pipeline_module.FAMILY_SCAN
+        (F.col("family") == run_pipeline_module.FAMILY_SCAN) & (F.col("scope") == args.scope)
     ).select(*run_pipeline_module.SCANS_COLUMNS).orderBy("scan_ts").show(truncate=False)
-    print("-- resolution_src split (ledger) --")
-    spark.table(tables.ledger).groupBy("resolution_src").count().orderBy("resolution_src").show(
-        truncate=False
-    )
+    print(f"-- resolution_src split (ledger, {args.scope}) --")
+    spark.table(tables.ledger).where(F.col("scope") == args.scope).groupBy(
+        "resolution_src"
+    ).count().orderBy("resolution_src").show(truncate=False)
     return 0
 
 

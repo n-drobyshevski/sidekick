@@ -296,7 +296,7 @@ def context(
         # not something a reader should be able to grow a Delta table beside.
         import csvstore
 
-        prefix = _param("table_prefix", run_pipeline.default_table_prefix(scope))
+        prefix = _param("table_prefix", run_pipeline.DEFAULT_TABLE_PREFIX)
         tables = csvstore.load(
             spark, csv_path, "" if prefix == _EMPTY_PREFIX_SENTINEL else prefix
         )
@@ -307,7 +307,7 @@ def context(
         # `run_pipeline.resolve_data_path` and the README's PoC storage section.
         data_path = run_pipeline.resolve_data_path(argv=argv)
         namespace = "" if data_path else (namespace or run_pipeline.resolve_namespace(argv=argv))
-        tables = run_pipeline.resolve_tables(namespace, scope, argv=argv, data_path=data_path)
+        tables = run_pipeline.resolve_tables(namespace, argv=argv, data_path=data_path)
     namespace = namespace or ""
 
     if ensure:
@@ -391,6 +391,13 @@ def register_views(spark: SparkSession, ctx: Ctx) -> None:
     is a Databricks SQL extension open-source Spark cannot parse, and the tests run on
     open-source Spark. The result is the same object either way -- a session temp view that a
     ``%sql`` cell reads by name.
+
+    **Every view below is scope-filtered, and that filter is now the only thing separating the
+    three registers.** It always read ``scope``; until the table sets were merged it was reading
+    a column that could only hold one value, so a dropped predicate would have changed nothing
+    and no test could have seen it. The same predicate now decides whether a page about host
+    CVEs also counts library CVEs and source findings -- silently, because blending grains that
+    share a schema produces larger numbers rather than an error.
     """
     pinned = (F.col("scan_id") == ctx.scan_id) & (F.col("scope") == ctx.scope)
     scoped = F.col("scope") == ctx.scope
@@ -1397,7 +1404,15 @@ def weakness_mix(spark: SparkSession, ctx: Ctx, limit: int = 15) -> DataFrame:
 
 
 def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
-    """Every table this deployment owns, with what is actually in it. There are three.
+    """Every table this deployment owns, with what **this scope** has in it. There are three.
+
+    The three tables are shared by every scope, so every count here is a count of
+    ``scope = ctx.scope`` rows and the ``scope`` column beside ``table_name`` says so. An
+    unfiltered count would be a fourth number on the page -- the size of the whole estate --
+    sitting in a column whose neighbours are all about one register, which is the shape of a
+    figure nobody notices is answering a different question. The estate-wide count is a
+    ``SELECT count(*)`` away for whoever wants it; a page about one scope should not print it
+    unlabelled.
 
     ``scan_id`` is special-cased rather than looped over uniformly: the ledger is MERGEd
     current state and has ``first_scan_id`` / ``last_scan_id`` instead, while bronze and
@@ -1409,7 +1424,9 @@ def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
     raised on. Bronze is not created until the first ingest, so "absent" is the honest thing for
     an inventory to say about a register nobody has scanned -- a page that dies with
     TABLE_OR_VIEW_NOT_FOUND, or that quietly lists two tables where there were three, is worse
-    in both directions.
+    in both directions. With one shared table set, "the table exists and holds no rows of this
+    scope" is a new and equally honest answer, and it is a zero rather than a NULL: the table
+    was read, and nothing of this register was in it.
     """
     latest = {
         ctx.tables.bronze: "max_by(scan_id, scan_ts)",
@@ -1422,12 +1439,14 @@ def table_inventory(spark: SparkSession, ctx: Ctx) -> DataFrame:
         ts_expr = ts.get(table, "max(scan_ts)")
         if run_pipeline.table_exists(spark, table):
             row = spark.sql(
-                f"SELECT '{table}' AS table_name, count(*) AS rows, "
-                f"{scan_expr} AS latest_scan_id, {ts_expr} AS latest_ts FROM {table}"
+                f"SELECT '{table}' AS table_name, '{ctx.scope}' AS scope, count(*) AS rows, "
+                f"{scan_expr} AS latest_scan_id, {ts_expr} AS latest_ts FROM {table} "
+                f"WHERE scope = '{ctx.scope}'"
             )
         else:
             row = spark.sql(
-                f"SELECT '{table}' AS table_name, CAST(NULL AS BIGINT) AS rows, "
+                f"SELECT '{table}' AS table_name, '{ctx.scope}' AS scope, "
+                f"CAST(NULL AS BIGINT) AS rows, "
                 f"CAST(NULL AS STRING) AS latest_scan_id, CAST(NULL AS TIMESTAMP) AS latest_ts"
             )
         out = row if out is None else out.unionByName(row)
@@ -1444,27 +1463,34 @@ def scan_pin_check(spark: SparkSession, ctx: Ctx) -> DataFrame:
     mttr says s1" is exactly the torn write ``run_pipeline.gold_missing`` exists to resume from.
     This surfaces it *before* the next run hits it, and before somebody reads a page whose
     halves come from different scans.
+
+    Every subquery filters ``scope``. The tables are shared by all three registers, so the
+    unfiltered ``max_by`` would answer with whichever scope scanned last -- and the three are
+    chained in one job, so that is routinely not this one. It would read as this register's
+    families disagreeing with its context, i.e. as exactly the torn write this exists to find.
     """
     metrics_table = ctx.tables.metrics
+    scoped = f"scope = '{ctx.scope}'"
     return spark.sql(
         f"""
         SELECT 'context' AS source, '{ctx.scan_id}' AS scan_id
         UNION ALL SELECT '{run_pipeline.FAMILY_MTTR}',
                          (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
-                           WHERE family = '{run_pipeline.FAMILY_MTTR}')
+                           WHERE family = '{run_pipeline.FAMILY_MTTR}' AND {scoped})
         UNION ALL SELECT '{run_pipeline.FAMILY_PROGRAM}',
                          (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
-                           WHERE family = '{run_pipeline.FAMILY_PROGRAM}')
+                           WHERE family = '{run_pipeline.FAMILY_PROGRAM}' AND {scoped})
         UNION ALL SELECT '{run_pipeline.FAMILY_CAPACITY}',
                          (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
-                           WHERE family = '{run_pipeline.FAMILY_CAPACITY}')
+                           WHERE family = '{run_pipeline.FAMILY_CAPACITY}' AND {scoped})
         UNION ALL SELECT '{run_pipeline.FAMILY_ASSETS}',
                          (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
-                           WHERE family = '{run_pipeline.FAMILY_ASSETS}')
+                           WHERE family = '{run_pipeline.FAMILY_ASSETS}' AND {scoped})
         UNION ALL SELECT '{run_pipeline.FAMILY_SCAN}',
                          (SELECT max_by(scan_id, scan_ts) FROM {metrics_table}
-                           WHERE family = '{run_pipeline.FAMILY_SCAN}')
-        UNION ALL SELECT 'ledger', (SELECT max(last_scan_id) FROM {ctx.tables.ledger})
+                           WHERE family = '{run_pipeline.FAMILY_SCAN}' AND {scoped})
+        UNION ALL SELECT 'ledger',
+                         (SELECT max(last_scan_id) FROM {ctx.tables.ledger} WHERE {scoped})
         """
     )
 
@@ -1476,21 +1502,33 @@ def run_health(spark: SparkSession, ctx: Ctx) -> DataFrame:
     table: a scan whose commit record stands with zero ``mttr`` rows beside it is the torn write
     the retry path resumes. The driving row still comes from ``v_scans``, i.e. from the commit
     records themselves, so a scan that never committed is absent here rather than reported empty.
+
+    ``v_scans`` is already this scope's commit records, but every correlated subquery filters
+    ``scope`` too. Scan ids do not collide across scopes today (``run_pipeline.clear_scan`` says
+    why), so the counts would be the same -- and the day one does collide is the day this page
+    would report a healthy scan by counting another register's rows, which is the one reading it
+    exists to prevent.
     """
     metrics_table = ctx.tables.metrics
+    scope = ctx.scope
     return spark.sql(
         f"""
         SELECT s.scan_id, s.scan_ts, s.total,
                (SELECT count(*) FROM {metrics_table} m WHERE m.scan_id = s.scan_id
-                 AND m.family = '{run_pipeline.FAMILY_MTTR}') AS mttr_rows,
+                 AND m.family = '{run_pipeline.FAMILY_MTTR}'
+                 AND m.scope = '{scope}') AS mttr_rows,
                (SELECT count(*) FROM {metrics_table} p WHERE p.scan_id = s.scan_id
-                 AND p.family = '{run_pipeline.FAMILY_PROGRAM}') AS program_rows,
+                 AND p.family = '{run_pipeline.FAMILY_PROGRAM}'
+                 AND p.scope = '{scope}') AS program_rows,
                (SELECT count(*) FROM {metrics_table} c WHERE c.scan_id = s.scan_id
-                 AND c.family = '{run_pipeline.FAMILY_CAPACITY}') AS capacity_rows,
+                 AND c.family = '{run_pipeline.FAMILY_CAPACITY}'
+                 AND c.scope = '{scope}') AS capacity_rows,
                (SELECT count(*) FROM {metrics_table} a WHERE a.scan_id = s.scan_id
-                 AND a.family = '{run_pipeline.FAMILY_ASSETS}') AS assets_rows,
+                 AND a.family = '{run_pipeline.FAMILY_ASSETS}'
+                 AND a.scope = '{scope}') AS assets_rows,
                (SELECT count(*) FROM {ctx.tables.ledger} l
-                 WHERE l.last_scan_id = s.scan_id) AS ledger_rows
+                 WHERE l.last_scan_id = s.scan_id
+                   AND l.scope = '{scope}') AS ledger_rows
         FROM v_scans s ORDER BY s.scan_ts DESC
         """
     )
@@ -1567,7 +1605,7 @@ OUTPUT_COLUMNS: Dict[str, Tuple[str, ...]] = {
         "first_detected_at", "resolved_at", "has_kev", "has_exploit", "epss", "age_days",
         "mttr_days",
     ),
-    "table_inventory": ("table_name", "rows", "latest_scan_id", "latest_ts"),
+    "table_inventory": ("table_name", "scope", "rows", "latest_scan_id", "latest_ts"),
     "scan_pin_check": ("source", "scan_id"),
     "run_health": (
         "scan_id", "scan_ts", "total", "mttr_rows", "program_rows", "capacity_rows",

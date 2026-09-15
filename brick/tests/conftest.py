@@ -80,7 +80,16 @@ DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.3"
 # Like --packages, this can only be set before the JVM starts: spark.driver.memory is read by
 # spark-submit at launch and setting it on the builder afterwards is silently ignored.
 def _driver_memory() -> str:
-    """4g for a single process; 2g per worker under xdist.
+    """4g for a single process; 3g per worker under xdist.
+
+    3g, not 2g, since 3.0. Measured on the 3.0 suite (707 tests, one shared table set, the
+    scope-isolation and metrics-table modules each building path-backed registers and
+    replaying them): at 2g the worker holding the ``live_tables`` group died with
+    ``java.lang.OutOfMemoryError: Java heap space`` around stage 11,000, twice, once before and
+    once after ``merge_ledger`` learned to release its checkpoint -- the release moved the death
+    later but not past the end. At 3g the same run finished with no OOM in 31 minutes at
+    ``-n 2``. Three workers at 3g is 9g, inside the ~13 GiB cgroup the 4g-per-worker cascade
+    below was measured against.
 
     Keyed on ``PYTEST_XDIST_WORKER``, not ``PYTEST_XDIST_WORKER_COUNT``. The count used to be
     read here at *import* time, but conftest.py is imported in the xdist CONTROLLER first --
@@ -93,8 +102,14 @@ def _driver_memory() -> str:
     (e.g. ``"gw0"``) is set only *inside* a worker's own process, never in the controller, so
     reading it from ``pytest_configure`` -- which xdist runs separately in every process,
     controller and each worker alike -- correctly tells this process apart from the controller.
+
+    ``BRICK_TEST_DRIVER_MEMORY`` overrides both sizes, for measuring how much heap a run of the
+    whole suite actually needs on a given box rather than guessing.
     """
-    return "2g" if os.environ.get("PYTEST_XDIST_WORKER") else "4g"
+    override = os.environ.get("BRICK_TEST_DRIVER_MEMORY")
+    if override:
+        return override
+    return "3g" if os.environ.get("PYTEST_XDIST_WORKER") else "4g"
 
 
 def pytest_configure(config):
@@ -265,7 +280,7 @@ def live_tables(spark):
     nodes = extract_nodes(json.loads((BRICK_DIR / LIVE_FIXTURE).read_text()))
     spark.sql(f"DROP DATABASE IF EXISTS {LIVE_SCHEMA} CASCADE")
     spark.sql(f"CREATE DATABASE {LIVE_SCHEMA}")
-    tables = run_pipeline.resolve_tables(LIVE_SCHEMA, LIVE_SCOPE, argv=[])
+    tables = run_pipeline.resolve_tables(LIVE_SCHEMA, argv=[])
     run_pipeline.ensure_tables(spark, tables)
 
     def scan(scan_id, scan_ts, payload):

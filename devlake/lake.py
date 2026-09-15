@@ -143,10 +143,14 @@ def precreate_clustered(spark: "SparkSession", run_pipeline_module, tables) -> l
             continue
         if isinstance(table_schema, str):
             table_schema = spark.createDataFrame([], table_schema).schema
+        # `cluster_by` is a TUPLE of column names -- `(scope, vuln_key)` for the ledger,
+        # `(scope, scan_id)` for bronze -- since every scope shares one table set and `scope`
+        # leads every read. Rendered as a comma list here; `create_clustered` unpacks the same
+        # tuple into the builder's `clusterBy(*cols)`.
         cluster_by, deletion_vectors = run_pipeline_module.CLUSTERING[attr]
         spark.sql(
             f"CREATE TABLE IF NOT EXISTS {table} ({_render_ddl(table_schema)}) USING DELTA "
-            f"CLUSTER BY ({cluster_by}) TBLPROPERTIES "
+            f"CLUSTER BY ({', '.join(cluster_by)}) TBLPROPERTIES "
             f"(delta.enableDeletionVectors = {'true' if deletion_vectors else 'false'})"
         )
         created.append(table)

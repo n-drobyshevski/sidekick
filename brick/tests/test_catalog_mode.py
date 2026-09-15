@@ -74,11 +74,6 @@ SEVERITIES = ["CRITICAL", "HIGH"]
 #: The repo root -- where the captured OS response is committed -- is one hop above brick/.
 REPO_ROOT = BRICK_DIR.parent
 
-#: The scope named by the tests that build a table name only to talk about its *arity*. It is
-#: deliberately the one scope no register fixture in this module builds, so their "the table is
-#: not there" assertions are facts about the name rather than about test ordering.
-PURE_SCOPE = "sast"
-
 #: One entry per scope with a committed capture, and the numbers two scans of that capture
 #: produce. Measured on this box (2026-09-14, Spark 3.5.9 / delta-spark 3.3.3) by running the
 #: same two scans ``three_level_register`` runs; the OS figures were carried over verbatim from
@@ -98,6 +93,9 @@ SCOPE_FIXTURES = {
     # fixture is the day the disappearance path starts being covered here.
     "os": {
         "fixture": REPO_ROOT / "os_vulns_response_exemple.json",
+        # The prefix this fixture asks for, so the two module-parametrised registers below stay
+        # apart. It is NOT the default any more -- see `three_level_register`.
+        "prefix": "wiz_os_",
         "ledger": "wiz_os_vuln_ledger",
         "findings": 4,
         "resolved": {"uc-scan-1": 2, "uc-scan-2": 0},
@@ -110,6 +108,7 @@ SCOPE_FIXTURES = {
     # resolve by disappearance, on top of the 12 the API had already resolved on scan 1.
     "sca": {
         "fixture": BRICK_DIR / "sca_findings_example.json",
+        "prefix": "wiz_sca_",
         "ledger": "wiz_sca_vuln_ledger",
         "findings": 54,
         "resolved": {"uc-scan-1": 12, "uc-scan-2": 21},
@@ -154,7 +153,7 @@ def create_clustered_by_ddl(spark, table: str, schema, attr: str) -> None:
     cluster_by, deletion_vectors = run_pipeline.CLUSTERING[attr]
     spark.sql(
         f"CREATE TABLE IF NOT EXISTS {table} ({render_ddl(schema)}) USING DELTA "
-        f"CLUSTER BY ({cluster_by}) TBLPROPERTIES "
+        f"CLUSTER BY ({', '.join(cluster_by)}) TBLPROPERTIES "
         f"(delta.enableDeletionVectors = {'true' if deletion_vectors else 'false'})"
     )
 
@@ -198,14 +197,18 @@ def test_the_session_catalog_is_the_one_the_conftest_installed(spark):
     )
 
 
-@pytest.mark.parametrize("scope", sorted(SCOPE_FIXTURES))
-def test_resolve_tables_qualifies_every_table_with_the_catalog(scope):
-    tables = run_pipeline.resolve_tables(NAMESPACE, scope, argv=[])
+def test_resolve_tables_qualifies_every_table_with_the_catalog():
+    """**No longer parametrised over the scope**, because the answer no longer depends on it:
+    one table set serves every scope and `resolve_tables` does not take one. The parametrised
+    version's extra assertion -- that each scope's ledger is its own table -- is the claim this
+    step retires; what replaced it is `scope` in the ledger's key and in every read of it.
+    """
+    tables = run_pipeline.resolve_tables(NAMESPACE, argv=[])
     for attr in ("bronze", "ledger", "metrics"):
         name = getattr(tables, attr)
         assert name.startswith(f"{NAMESPACE}."), name
         assert name.count(".") == 2, name
-    assert tables.ledger == f"{NAMESPACE}.{SCOPE_FIXTURES[scope]['ledger']}"
+    assert tables.ledger == f"{NAMESPACE}.wiz_vuln_ledger"
 
 
 # ------------------------------------------------------------------------------ the one refusal
@@ -226,7 +229,7 @@ def test_the_delta_builder_is_the_one_thing_that_cannot_parse_a_three_level_name
     """
     from pyspark.errors import ParseException
 
-    tables = run_pipeline.resolve_tables(NAMESPACE, PURE_SCOPE, argv=[])
+    tables = run_pipeline.resolve_tables(NAMESPACE, argv=[])
     with pytest.raises(ParseException) as exc:
         run_pipeline.ensure_tables(spark, tables)
     assert "PARSE_SYNTAX_ERROR" in str(exc.value)
@@ -316,13 +319,20 @@ def three_level_register(spark, uc_schema, facts):
     ``create_clustered_by_ddl`` for ``create_clustered``, which is the single call the previous
     test showed cannot parse the name.
 
-    Both scopes land in the same schema. Their table names differ by ``resolve_tables``' own
-    per-scope prefix, so the two registers are built side by side and neither can read the
-    other's rows -- which is the property the ``scope`` column exists to guarantee in
-    production too.
+    Both scopes land in the same schema, and this fixture asks for a per-scope
+    ``--table_prefix`` to keep them in separate table sets. **That is no longer the default and
+    no longer how production separates them** -- one table set now serves every scope, with
+    ``scope`` in the ledger's MERGE key and in every read. It is asked for here because this
+    module is about three-level NAMES: the fixture is module-scoped and parametrised, both
+    scopes use the same two ``scan_id``s, and one shared register would make every count below
+    a count of two populations. Scope isolation inside one register is its own subject and has
+    its own module (``test_scope_isolation.py``); what this one proves is that a whole register
+    is writable, readable and reconcilable under ``catalog.schema.table``.
     """
     scope = facts["scope"]
-    tables = run_pipeline.resolve_tables(NAMESPACE, scope, argv=[])
+    tables = run_pipeline.resolve_tables(
+        NAMESPACE, argv=[f"--table_prefix={facts['prefix']}"]
+    )
     nodes = extract_nodes(json.loads(facts["fixture"].read_text()))
     assert len(nodes) == facts["findings"], (
         f"the committed {scope} fixture changed size; re-measure SCOPE_FIXTURES"
@@ -373,6 +383,10 @@ def test_a_whole_register_lands_under_three_level_names(spark, three_level_regis
     """
     tables = three_level_register
     findings = facts["findings"]
+    # The explicit `--table_prefix` this fixture asked for landed: `wiz_os_` / `wiz_sca_`, not
+    # the `wiz_` default. Asserted so the separation these counts depend on is visible here and
+    # not only in the fixture that arranged it.
+    assert tables.ledger == f"{NAMESPACE}.{facts['ledger']}"
     for attr in ("bronze", "ledger", "metrics"):
         name = getattr(tables, attr)
         assert name.count(".") == 2, name
@@ -392,7 +406,8 @@ def test_a_whole_register_lands_under_three_level_names(spark, three_level_regis
     assert scans["uc-scan-1"]["severities"] == "CRITICAL,HIGH"
 
     # The scope's own register is the only one this ledger holds: both scopes were built into
-    # this schema, so a prefix that leaked would show up as the other capture's rows here.
+    # this schema under explicit prefixes, so a prefix that leaked would show up as the other
+    # capture's rows here.
     assert {r["scope"] for r in ledger.select("scope").distinct().collect()} == {facts["scope"]}
 
     for scan_id, expected in facts["resolved"].items():
@@ -415,17 +430,20 @@ def test_a_whole_register_lands_under_three_level_names(spark, three_level_regis
 def test_the_three_level_ledger_kept_its_clustering(spark, three_level_register):
     """The register is physically what production creates, not merely readable."""
     detail = spark.sql(f"DESCRIBE DETAIL {three_level_register.ledger}").collect()[0]
-    assert detail["clusteringColumns"] == ["vuln_key"]
+    assert detail["clusteringColumns"] == ["scope", "vuln_key"]
     assert detail["properties"]["delta.enableDeletionVectors"] == "true"
 
 
 def test_a_scan_recorded_under_three_level_names_reads_back_through_recorded_scan(
-    spark, three_level_register
+    spark, three_level_register, facts
 ):
     """The idempotency guard resolves the three-level ``scans`` table too."""
-    assert run_pipeline.recorded_scan(spark, three_level_register, "uc-scan-2") is not None
-    assert run_pipeline.recorded_scan(spark, three_level_register, "never-ran") is None
-    assert run_pipeline.ledger_already_merged(spark, three_level_register, "uc-scan-2")
+    scope = facts["scope"]
+    assert (
+        run_pipeline.recorded_scan(spark, three_level_register, "uc-scan-2", scope) is not None
+    )
+    assert run_pipeline.recorded_scan(spark, three_level_register, "never-ran", scope) is None
+    assert run_pipeline.ledger_already_merged(spark, three_level_register, "uc-scan-2", scope)
 
 
 # ------------------------------------------------------------------- the negative: no plugin
@@ -455,7 +473,7 @@ def test_an_unregistered_catalog_is_not_reached_at_all(spark, catalog):
     namespace = run_pipeline.resolve_namespace(
         argv=[f"--catalog={catalog}", f"--schema={SCHEMA}"]
     )
-    tables = run_pipeline.resolve_tables(namespace, PURE_SCOPE, argv=[])
+    tables = run_pipeline.resolve_tables(namespace, argv=[])
 
     assert spark.catalog.databaseExists(namespace) is False
 

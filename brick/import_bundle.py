@@ -499,29 +499,87 @@ def require_write_access(spark: SparkSession, table: str) -> None:
         ) from exc
 
 
-def _replace(spark: SparkSession, df: DataFrame, table: str) -> None:
-    """Replace a table's contents: empty it, then append.
+def _replace(spark: SparkSession, df: DataFrame, table: str, scope: str) -> None:
+    """Replace **this scope's** rows in a table: delete them, then append the bundle's.
+
+    ``WHERE scope = '<scope>'`` and never the bare ``DELETE FROM {table}`` this used to issue.
+    Every scope shares one table set now (``run_pipeline.DEFAULT_TABLE_PREFIX``), so the
+    unqualified statement emptied two registers that have nothing to do with the bundle being
+    imported -- and emptied them into a shape no rebuild could recover, because
+    ``rebuild_ledger`` replays bronze and this same function had just deleted that too. The
+    predicate matches the one ``run_pipeline.rebuild_ledger`` uses for the same reason.
+
+    On ``metrics`` it is deliberately every FAMILY of this scope, gold included, and not just
+    ``family='scan'``: gold rows written before a seed were computed from a ledger that started
+    empty, so leaving them would put a near-zero-MTTR run in the trend beside seeded ones with
+    nothing on the page to say why. That is what ``force`` has always promised; what changed is
+    that it now promises it about one register instead of about the whole estate.
 
     Not ``mode("overwrite")``. That resolves through Delta's DataSource V2 catalog, which
     answers *"Table … does not support truncate in batch mode"* -- so the tidier-looking
     single-commit version is one this suite cannot run and a cluster might. DELETE-then-append
     is what ``run_pipeline.rebuild_ledger`` already does to the same two tables, needs the same
-    MODIFY privilege, and is exercised by every test below.
+    MODIFY privilege, and is exercised by every test below. It is also the only form that can
+    carry a predicate at all, which is now a second reason rather than a cost.
 
-    The cost is a window between the two statements in which the table is empty. Acceptable
-    here and nowhere else: this runs once, before the register has any readers.
+    The cost is a window between the two statements in which this scope's rows are gone.
+    Acceptable here and nowhere else: this runs once, before the register has any readers.
     """
-    spark.sql(f"DELETE FROM {table}")
+    spark.sql(f"DELETE FROM {table} WHERE scope = '{scope}'")
     run_pipeline.write_append(df, table)
 
 
-def occupied_tables(spark: SparkSession, tables: run_pipeline.Tables) -> dict:
-    """``{table: rows}`` for every pipeline table that exists and is not empty."""
+def refuse_a_frame_of_another_scope(scope: str, **frames: DataFrame) -> None:
+    """Refuse any frame about to be written whose ``scope`` is not the one being imported.
+
+    **This is not a check on the bundle.** ``_ledger_row`` / ``_episode_row`` / ``scans_frame``
+    stamp ``scope`` from the parameter, and the interchange contract (``BUNDLE_KIND`` v1) has
+    no scope field at all -- GAS is the OS-patching register and says so by carrying no
+    ``cwe`` / ``language`` / ``ai_verdict`` source. So there is no bundle-stated scope here to
+    disagree with, and a guard asserting ``F.lit(scope) == scope`` would fire on nothing.
+
+    What it actually holds is the tie between the WRITE and the DELETE. ``_replace`` clears
+    ``WHERE scope = '<scope>'`` and then appends these frames; if a frame ever carried a
+    different scope -- a future bundle that states one, a caller that builds the frames itself,
+    a mapping change that reads the scope off a row -- the append would land rows the clearing
+    statement cannot reach, and ``force`` would stop meaning "replace this register". That is a
+    half-replaced register, which is the failure of absence this module exists to avoid,
+    arriving from the one direction ``occupied_tables`` cannot see.
+
+    Cheap enough to be unconditional: a ``distinct()`` over two frames of a few thousand rows.
+    """
+    for name, frame in frames.items():
+        found = sorted(
+            str(r["scope"])
+            for r in frame.select("scope").distinct().collect()
+            if r["scope"] is not None
+        )
+        if found != [scope]:
+            raise BundleError(
+                f"The {name} frame carries scope {found or ['(none)']} but this import is for "
+                f"scope {scope!r}. Every row written here is cleared by a "
+                f"DELETE ... WHERE scope = '{scope}', so a row of another scope would be "
+                f"appended to a register that was never emptied -- and would sit inside "
+                f"whichever register it names, dated by this bundle's history. Import the "
+                f"bundle under the scope it was exported from."
+            )
+
+
+def occupied_tables(spark: SparkSession, tables: run_pipeline.Tables, scope: str) -> dict:
+    """``{table: rows}`` for every pipeline table holding rows **of this scope**.
+
+    Scoped, and the question it asks is the one the refusal below acts on: "is the register I
+    am about to replace already in use". With one table set per deployment, an unscoped count
+    answers a different question -- "is any register in use" -- and answers it wrongly in both
+    directions. A first-ever ``os`` import into a deployment already scanning ``sca`` would be
+    refused as a non-empty register it has no business reading; and a forced import would then
+    report the *other* registers' row counts as what it replaced.
+    """
     counts = {}
     for attr in REGISTER_ATTRS:
         table = getattr(tables, attr)
         if run_pipeline.table_exists(spark, table):
-            rows = spark.table(table).count()
+            rows = spark.table(table).where(F.col("scope") == scope).count()
             if rows:
                 counts[table] = rows
     return counts
@@ -548,11 +606,23 @@ def import_bundle(
     appended per scan and computed from the ledger *as it stood at that scan*, so gold rows
     written before the seed were derived from a ledger that started empty. Left in place they
     would sit beside seeded runs where MTTR does not read near zero -- a contradiction with no
-    visible cause. So a forced import empties bronze and the whole ``metrics`` table -- the scan
-    log and every gold family together, since they now share one table -- and the register
-    genuinely restarts from the imported history. ``_replace`` on ``metrics`` is what does that
-    emptying: it DELETEs the table before appending the bundle's scan rows, so the gold rows a
-    prior run wrote never survive it.
+    visible cause. So a forced import empties this scope's bronze and this scope's whole share
+    of ``metrics`` -- the scan log and every gold family together, since they now share one
+    table -- and the register genuinely restarts from the imported history. ``_replace`` on
+    ``metrics`` is what does that emptying: it DELETEs this scope's rows before appending the
+    bundle's scan rows, so the gold rows a prior run wrote never survive it.
+
+    **"The register" is ONE SCOPE'S register, and every statement below says so.** A GAS bundle
+    is the Apps Script app's own history and that app scans hosts, so an import is an ``os``
+    import; the three scopes share one table set (``run_pipeline.DEFAULT_TABLE_PREFIX``), and
+    until this was scoped a ``--force_import`` emptied the ledger, the metrics table and bronze
+    outright -- taking the ``sca`` and ``sast`` registers with it, unrecoverably, since the
+    bronze that ``--rebuild_ledger`` would replay went in the same statement. Measured by
+    reproducing that one statement inline
+    (``test_import_bundle.py::TestAnImportTouchesOneScope``): on a register holding the
+    committed ``sca`` capture, an ``os`` import that names no other scope takes all 54 ``sca``
+    lifecycles and every published ``sca`` metrics row to zero, and prints a summary that looks
+    exactly like a successful seed.
 
     They are emptied rather than dropped: DELETE needs only MODIFY and keeps the tables' grants,
     where DROP needs ownership and would silently take the grants with it.
@@ -569,32 +639,36 @@ def import_bundle(
     require_write_access(spark, tables.ledger)
     require_write_access(spark, tables.metrics)
 
-    occupied = occupied_tables(spark, tables)
+    occupied = occupied_tables(spark, tables, scope)
     if occupied and not force:
-        listed = "\n".join(f"    {t}: {n} row(s)" for t, n in occupied.items())
+        listed = "\n".join(f"    {t}: {n} {scope} row(s)" for t, n in occupied.items())
         raise BundleError(
-            f"This register is not empty:\n{listed}\n\n"
+            f"The {scope!r} register is not empty:\n{listed}\n\n"
             f"An import seeds an empty register. Merging into one that has already scanned "
             f"would re-open resolved lifecycles and mis-order the scan log, and any gold rows "
             f"already written were computed from a ledger that started empty.\n"
-            f"Pass --force_import=true to REPLACE the register -- it overwrites the ledger and "
-            f"empties bronze and the metrics table (the scan log together with every gold "
-            f"family)."
+            f"Pass --force_import=true to REPLACE the {scope!r} register -- it overwrites that "
+            f"scope's ledger rows and empties its bronze and its share of the metrics table "
+            f"(the scan log together with every gold family). The other scopes' rows in these "
+            f"same tables are not read and not touched."
         )
 
     episodes, collapsed = selectable_episodes(bundle)
     rows = ledger_frame(spark, bundle, scope=scope).localCheckpoint(eager=True)
     scans = scans_frame(spark, bundle, scope=scope)
+    # Before the first DELETE: what is written and what is cleared have to be the same scope,
+    # or `force` stops replacing what it says it replaces. See the function's own header.
+    refuse_a_frame_of_another_scope(scope, ledger=rows, scans=scans)
 
-    _replace(spark, rows, tables.ledger)
+    _replace(spark, rows, tables.ledger, scope)
 
     # bronze only, and before metrics: see "Order matters" above.
     cleared = {}
     if tables.bronze in occupied:
-        spark.sql(f"DELETE FROM {tables.bronze}")
+        spark.sql(f"DELETE FROM {tables.bronze} WHERE scope = '{scope}'")
         cleared[tables.bronze] = occupied[tables.bronze]
 
-    _replace(spark, scans, tables.metrics)
+    _replace(spark, scans, tables.metrics, scope)
     if tables.metrics in occupied:
         cleared[tables.metrics] = occupied[tables.metrics]
 
@@ -602,8 +676,9 @@ def import_bundle(
     span = rows.agg(
         F.min("first_seen").alias("first_seen"), F.max("last_seen").alias("last_seen")
     ).collect()[0]
-    latest = run_pipeline.previous_scan(spark, tables)
+    latest = run_pipeline.previous_scan(spark, tables, scope)
     return {
+        "scope": scope,
         "ledger_rows": rows.count(),
         "episodes_folded": len(episodes),
         "episodes_collapsed": collapsed,
@@ -618,16 +693,25 @@ def import_bundle(
     }
 
 
-def seeded_overview(spark: SparkSession, tables: run_pipeline.Tables) -> DataFrame:
-    """What landed, by status: the read-back an operator checks the import against.
+def seeded_overview(
+    spark: SparkSession, tables: run_pipeline.Tables, scope: str
+) -> DataFrame:
+    """What landed **for this scope**, by status: the read-back an operator checks against.
 
     Lives here rather than in the notebook for the same reason every other aggregate does --
     a number computed in a cell is a number no test can reach. ``earliest_first_seen`` is the
     one to look at: if it reads today, the seed did not take and every MTTR below it is
     measuring the import rather than the register.
+
+    Scoped, or the check does not check the import: the ledger holds every scope, so an
+    unfiltered ``min(first_seen)`` would answer with whichever register happens to have the
+    oldest row -- and a seed that did not take would read as though it had, because some other
+    scope's history supplied the old date. It would fail in the safe-looking direction, which
+    is the direction a read-back must never fail in.
     """
     return (
         spark.table(tables.ledger)
+        .where(F.col("scope") == scope)
         .groupBy("status")
         .agg(
             F.count("*").alias("lifecycles"),
@@ -641,7 +725,11 @@ def seeded_overview(spark: SparkSession, tables: run_pipeline.Tables) -> DataFra
 
 
 def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
-    print(f"[import] {summary['ledger_rows']} lifecycle(s) -> {tables.ledger}")
+    """Every line names the scope. These tables hold three registers, and a line reading
+    "REPLACED a non-empty register: wiz_vuln_ledger (54)" without one is a sentence an operator
+    would reasonably read as "the register", i.e. all of it."""
+    scope = summary["scope"]
+    print(f"[import] {summary['ledger_rows']} {scope} lifecycle(s) -> {tables.ledger}")
     print(
         f"[import]   {summary['episodes_folded']} sealed episode(s) folded in"
         + (
@@ -650,16 +738,21 @@ def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
             else ""
         )
     )
-    print(f"[import] {summary['scans']} scan(s) -> {tables.metrics}")
+    print(f"[import] {summary['scans']} {scope} scan(s) -> {tables.metrics}")
     if summary["replaced"]:
         print(
-            f"[import] REPLACED a non-empty register: "
-            + ", ".join(f"{t.split('.')[-1]} ({n})" for t, n in summary["replaced"].items())
+            f"[import] REPLACED a non-empty {scope!r} register: "
+            + ", ".join(
+                f"{t.split('.')[-1]} ({n} {scope} row(s))"
+                for t, n in summary["replaced"].items()
+            )
         )
+        print("[import]   rows of the other scopes in those tables were not touched")
     if summary["cleared"]:
         print(
-            f"[import]   emptied {len(summary['cleared'])} derived table(s) -- their rows were "
-            f"computed from a ledger that started empty, so re-scan to repopulate them"
+            f"[import]   emptied the {scope} rows of {len(summary['cleared'])} derived "
+            f"table(s) -- they were computed from a ledger that started empty, so re-scan to "
+            f"repopulate them"
         )
     print(
         f"[import] observed {summary['earliest_first_seen']} .. {summary['latest_last_seen']}, "
@@ -687,7 +780,7 @@ def main() -> Optional[dict]:
     data_path = run_pipeline.resolve_data_path()
     namespace = "" if data_path else run_pipeline.resolve_namespace()
     scope = run_pipeline.resolve_scope()
-    tables = run_pipeline.resolve_tables(namespace, scope, data_path=data_path)
+    tables = run_pipeline.resolve_tables(namespace, data_path=data_path)
     path = run_pipeline.param("bundle_path")
     if not path:
         raise BundleError(

@@ -3,10 +3,15 @@ validates the filter shape it receives.
 
 One lake, one Spark session, shared by every Spark-backed test below -- moving from one scope
 to the next between tests goes through ``devlake.run._ensure_brick_on_path`` (called inside
-``devlake.run.scan`` itself), not through a session restart. Every scope gets its own
-``scan_id`` prefix and shares one schema -- table names are prefixed by scope
-(``resolve_tables``'s own ``default_table_prefix``), so ``os``, ``sca`` and ``sast`` land in
-separate tables without needing separate schemas.
+``devlake.run.scan`` itself), not through a session restart.
+
+**All three scopes land in the same three tables.** They used to land in nine, prefixed by
+scope; the register is one table set now, with ``scope`` in the ledger's MERGE key and in every
+read of it. So every read below that is about one scope says so -- the ledger and the metrics
+families all hold the other two scopes' rows by the time the later tests run, and the tests run
+in file order, ``os`` then ``sca`` then ``sast``. Each test's own scope is the newest thing in
+the tables when it runs and the oldest thing still there when the next one does; that is the
+property this module is positioned to prove and ``test_scope_isolation.py`` proves directly.
 
 Both the session and brick's module state are torn down at module teardown (see
 ``_cleanup``), so a *different* test file collected in the same run -- ``test_lake.py``'s own
@@ -86,7 +91,9 @@ def test_os_two_scans_produce_two_committed_scan_rows_with_disappearance(spark, 
     import run_pipeline as run_pipeline_module  # noqa: PLC0415
 
     def family(name):
-        return spark.table(tables.metrics).where(F.col("family") == name)
+        return spark.table(tables.metrics).where(
+            (F.col("family") == name) & (F.col("scope") == "os")
+        )
 
     scans = family(run_pipeline_module.FAMILY_SCAN).orderBy("scan_ts").collect()
     assert [r["scan_id"] for r in scans] == ["os-scan-1", "os-scan-2"]
@@ -94,14 +101,15 @@ def test_os_two_scans_produce_two_committed_scan_rows_with_disappearance(spark, 
     assert [r["new_count"] for r in scans] == [4, 0]
     assert [r["resolved_count"] for r in scans] == [2, 1]
 
-    disappeared = spark.table(tables.ledger).filter("resolution_src = 'disappeared'").collect()
+    ledger = spark.table(tables.ledger).where(F.col("scope") == "os")
+    disappeared = ledger.filter("resolution_src = 'disappeared'").collect()
     assert len(disappeared) == 1
     assert disappeared[0]["status"] == "RESOLVED"
     assert disappeared[0]["severity"] == "CRITICAL"  # the finding default_fixture drops
 
     resolution_src_counts = {
         row["resolution_src"]: row["count"]
-        for row in spark.table(tables.ledger).groupBy("resolution_src").count().collect()
+        for row in ledger.groupBy("resolution_src").count().collect()
     }
     assert resolution_src_counts == {None: 1, "api": 2, "disappeared": 1}
 
@@ -146,13 +154,20 @@ def test_sca_two_scans_land_and_disappearance_fires(spark, lake_dir):
     import run_pipeline as run_pipeline_module  # noqa: PLC0415
 
     def family(name):
-        return spark.table(tables.metrics).where(F.col("family") == name)
+        return spark.table(tables.metrics).where(
+            (F.col("family") == name) & (F.col("scope") == "sca")
+        )
 
     assert family(run_pipeline_module.FAMILY_SCAN).count() == 2
     scan2_row = family(run_pipeline_module.FAMILY_SCAN).filter("scan_id = 'sca-scan-2'").collect()[0]
     assert scan2_row["resolved_count"] > 0
 
-    disappeared_count = spark.table(tables.ledger).filter("resolution_src = 'disappeared'").count()
+    disappeared_count = (
+        spark.table(tables.ledger)
+        .where(F.col("scope") == "sca")
+        .filter("resolution_src = 'disappeared'")
+        .count()
+    )
     assert disappeared_count > 0
 
     scan_ids = {
@@ -214,9 +229,8 @@ def test_sast_lands_null_then_a_real_birth_date(spark, lake_dir):
     )
     assert result2.tables == tables  # same scope, same run -- table identity should not move
 
-    ledger_row = (
-        spark.table(tables.ledger).filter("vuln_key = 'id:devlake-synthetic-sast-1'").collect()
-    )
+    sast_ledger = spark.table(tables.ledger).where(F.col("scope") == "sast")
+    ledger_row = sast_ledger.filter("vuln_key = 'id:devlake-synthetic-sast-1'").collect()
     assert len(ledger_row) == 1
     assert ledger_row[0]["first_seen"].strftime("%Y-%m-%dT%H:%M:%SZ") == created_at
 
@@ -224,14 +238,105 @@ def test_sast_lands_null_then_a_real_birth_date(spark, lake_dir):
     # synthetic node must not have retroactively invented dates for the rest of the register.
     # Their `first_seen` stays the scan-1 timestamp (the observed fallback), unchanged by scan 2.
     original_first_seen = (
-        spark.table(tables.ledger)
-        .filter("vuln_key != 'id:devlake-synthetic-sast-1'")
+        sast_ledger.filter("vuln_key != 'id:devlake-synthetic-sast-1'")
         .select("first_seen")
         .distinct()
         .collect()
     )
     assert len(original_first_seen) == 1
     assert original_first_seen[0]["first_seen"].strftime("%Y-%m-%dT%H:%M:%SZ") == "2026-06-01T00:00:00Z"
+
+
+# ------------------------------------------------------------- all three, one table set
+
+
+#: The order the chained Databricks job runs them in, and the ledger row count each scope's
+#: committed capture produces on a first scan. Named rather than inlined because the assertion
+#: below divides them by scope and because a fixture that changes size has to fail here saying
+#: "re-measure", not quietly shift what "unchanged" means.
+SHARED_SCOPES = ("os", "sca", "sast")
+SHARED_LEDGER_ROWS = {"os": 4, "sca": 54, "sast": 40}
+
+
+def _ledger_counts_by_scope(spark, tables) -> dict:
+    """``SELECT scope, count(*) FROM <ledger> GROUP BY scope`` -- the one read that can see a
+    scan of one scope having disturbed another."""
+    return {
+        row["scope"]: row["count"]
+        for row in spark.table(tables.ledger).groupBy("scope").count().collect()
+    }
+
+
+def test_three_scopes_land_in_one_register_and_none_disturbs_the_ones_before_it(
+    spark, lake_dir
+):
+    """os, then sca, then sast, into ONE lake and ONE table set -- the shape the chained job
+    produces, run end to end through the real ``main()``.
+
+    **Failure of absence**: the danger here is not that a scope fails to land, it is that a
+    scope that lands RESOLVES one that already had. ``reconcile`` dates a disappearance as a
+    remediation, and every row of the other two scopes is absent from any given scan by
+    construction -- so the thing to measure is not the final counts but whether each scope's
+    count survives the scans that come after it. That is why the counts are captured after
+    every scan rather than only at the end: a register where os was emptied by the sca scan and
+    then re-created would still end with three rows in a ``GROUP BY scope``.
+
+    A fresh schema of its own, in the shared lake: the three tests above already interleave
+    these same scopes in ``e2e``, and this one has to be able to say what each count was at each
+    step without inheriting theirs. ``brick/tests/test_scope_isolation.py`` proves the same
+    property directly, against the filters that carry it; this proves it through the real
+    entry point, with the real fixtures, in one directory on disk.
+    """
+    schema = "shared"
+    snapshots = []
+    tables = None
+    for index, scope in enumerate(SHARED_SCOPES):
+        _, scan1_nodes, _ = run.default_fixture(scope)
+        assert len(scan1_nodes) == SHARED_LEDGER_ROWS[scope], (
+            f"the committed {scope} capture changed size; re-measure SHARED_LEDGER_ROWS"
+        )
+        result = run.scan(
+            scope, scan1_nodes,
+            lake=lake_dir, schema=schema, scan_id=f"shared-{scope}-1",
+            scan_ts=f"2026-07-{index + 1:02d}T00:00:00Z", spark=spark,
+        )
+        tables = result.tables
+        snapshots.append((scope, _ledger_counts_by_scope(spark, tables)))
+
+    # One ledger, three populations.
+    final = snapshots[-1][1]
+    assert set(final) == set(SHARED_SCOPES)
+    assert final == SHARED_LEDGER_ROWS
+    assert spark.table(tables.ledger).count() == sum(SHARED_LEDGER_ROWS.values())
+
+    # And every scope's count is the same in every snapshot taken after it landed. This is the
+    # assertion the final counts cannot make: a scope emptied and rebuilt would pass those.
+    for position, (scope, taken) in enumerate(snapshots):
+        for later_scope, later in snapshots[position:]:
+            assert later[scope] == taken[scope], (
+                f"the {scope} register held {taken[scope]} rows and holds {later[scope]} "
+                f"after the {later_scope} scan -- a scan of one scope moved another"
+            )
+
+    # Not one row of an earlier scope was even touched by a later scan: an unscoped prior read
+    # would have re-stamped these with the scanning scope's own last_scan_id.
+    import run_pipeline as run_pipeline_module  # noqa: PLC0415
+
+    for scope in SHARED_SCOPES:
+        rows = spark.table(tables.ledger).where(F.col("scope") == scope)
+        assert {r["last_scan_id"] for r in rows.select("last_scan_id").distinct().collect()} == {
+            f"shared-{scope}-1"
+        }, scope
+        assert rows.filter("resolved_at IS NOT NULL AND resolution_src = 'disappeared'").count() == 0
+
+    # One commit record per scope, in the one metrics table.
+    scan_rows = (
+        spark.table(tables.metrics)
+        .where(F.col("family") == run_pipeline_module.FAMILY_SCAN)
+        .collect()
+    )
+    assert sorted(r["scope"] for r in scan_rows) == sorted(SHARED_SCOPES)
+    assert {r["scan_id"] for r in scan_rows} == {f"shared-{s}-1" for s in SHARED_SCOPES}
 
 
 # ----------------------------------------------------------------------- the fake's own shape

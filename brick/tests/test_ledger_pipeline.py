@@ -59,7 +59,7 @@ def tables(spark, request):
     # half-built ledger for this test to reconcile against.
     spark.sql(f"DROP DATABASE IF EXISTS {name} CASCADE")
     spark.sql(f"CREATE DATABASE {name}")
-    tbl = run_pipeline.resolve_tables(name, "sca", argv=[])
+    tbl = run_pipeline.resolve_tables(name, argv=[])
     run_pipeline.ensure_tables(spark, tbl)
     yield tbl
     spark.sql(f"DROP DATABASE IF EXISTS {name} CASCADE")
@@ -282,7 +282,7 @@ def test_a_rerun_of_the_same_scan_is_a_no_op(spark, tables, monkeypatch):
     run_scan(spark, tables, [node("f-1")], "s1", TS["s1"])
     before = ledger_rows(spark, tables)
 
-    assert run_pipeline.recorded_scan(spark, tables, "s1") is not None
+    assert run_pipeline.recorded_scan(spark, tables, "s1", "sca") is not None
 
     def explode(*_args, **_kwargs):
         raise AssertionError("a recorded scan must not be re-ingested")
@@ -294,7 +294,7 @@ def test_a_rerun_of_the_same_scan_is_a_no_op(spark, tables, monkeypatch):
         f"--schema={tables.metrics.split('.')[0]}", "--wiz_api_url=https://example/graphql",
     ])
     # resolve_namespace would build a different namespace, so drive the guard directly.
-    assert run_pipeline.recorded_scan(spark, tables, "s1")["new_count"] == 1
+    assert run_pipeline.recorded_scan(spark, tables, "s1", "sca")["new_count"] == 1
     assert ledger_rows(spark, tables) == before
 
 
@@ -306,7 +306,7 @@ def test_a_torn_write_is_detected(spark, tables):
     already resolved. Detecting it is cheap; recovering silently is not possible.
     """
     run_scan(spark, tables, [node("f-1")], "s1", TS["s1"])
-    assert run_pipeline.ledger_already_merged(spark, tables, "s1") is True
+    assert run_pipeline.ledger_already_merged(spark, tables, "s1", "sca") is True
 
     # Simulate the crash: drop the scan log row, keep the merged ledger. Scoped to
     # family='scan' -- deleting the whole scan_id would take the gold rows beside it too, which
@@ -315,11 +315,11 @@ def test_a_torn_write_is_detected(spark, tables):
         f"DELETE FROM {tables.metrics} WHERE scan_id = 's1' AND family = "
         f"'{run_pipeline.FAMILY_SCAN}'"
     )
-    assert run_pipeline.recorded_scan(spark, tables, "s1") is None
-    assert run_pipeline.ledger_already_merged(spark, tables, "s1") is True
+    assert run_pipeline.recorded_scan(spark, tables, "s1", "sca") is None
+    assert run_pipeline.ledger_already_merged(spark, tables, "s1", "sca") is True
 
     # And a scan that never ran is not mistaken for one that did.
-    assert run_pipeline.ledger_already_merged(spark, tables, "never-ran") is False
+    assert run_pipeline.ledger_already_merged(spark, tables, "never-ran", "sca") is False
 
 
 def test_the_scope_guard_survives_a_round_trip_through_the_scan_log(spark, tables):
@@ -460,13 +460,22 @@ def test_metrics_run_unchanged_against_the_ledger(spark, tables):
 def test_the_clustered_tables_declare_their_clustering(spark, tables):
     """The ledger clusters on the MERGE key; bronze on what every read filters by.
 
+    **Two columns each, not one.** These assertions used to read `["vuln_key"]` and
+    `["scan_id"]`, and the claim behind them was that each scope had its own table set, so
+    `scope` was constant within a table and clustering on it would have sorted nothing. Every
+    scope shares one table set now: the MERGE joins on `(vuln_key, scope)` and every read of
+    either table narrows `scope` first, so `scope` leads both keys.
+
     `run_scan` goes through the real creation path, so this is also the test that the tables
     are created at all -- bronze has no entry in `ensure_tables` (see `ingest_to_bronze`).
     """
     run_scan(spark, tables, [node("f-1"), node("f-2")], "s1", TS["s1"])
 
-    assert detail(spark, tables.ledger)["clusteringColumns"] == ["vuln_key"]
-    assert detail(spark, tables.bronze)["clusteringColumns"] == ["scan_id"]
+    assert detail(spark, tables.ledger)["clusteringColumns"] == ["scope", "vuln_key"]
+    assert detail(spark, tables.bronze)["clusteringColumns"] == ["scope", "scan_id"]
+    # Read off the module's own table rather than restated, so the two cannot drift.
+    assert run_pipeline.CLUSTERING["ledger"][0] == ("scope", "vuln_key")
+    assert run_pipeline.CLUSTERING["bronze"][0] == ("scope", "scan_id")
 
 
 def test_appending_a_scan_does_not_drop_the_clustering(spark, tables):
@@ -482,10 +491,10 @@ def test_appending_a_scan_does_not_drop_the_clustering(spark, tables):
     run_scan(spark, tables, [node("f-1"), node("f-3")], "s3", TS["s3"])
 
     for table, key in (
-        (tables.ledger, "vuln_key"),
-        (tables.bronze, "scan_id"),
+        (tables.ledger, ["scope", "vuln_key"]),
+        (tables.bronze, ["scope", "scan_id"]),
     ):
-        assert detail(spark, table)["clusteringColumns"] == [key], table
+        assert detail(spark, table)["clusteringColumns"] == key, table
 
 
 def test_only_the_ledger_carries_deletion_vectors(spark, tables):
@@ -523,7 +532,7 @@ def test_maintain_optimizes_every_clustered_table_and_changes_no_number(spark, t
     assert set(optimized) == {tables.ledger, tables.bronze}
     assert {t: sorted_rows(spark, t) for t in watched} == before
     # And the layout survives being optimized, which is the point of running it.
-    assert detail(spark, tables.ledger)["clusteringColumns"] == ["vuln_key"]
+    assert detail(spark, tables.ledger)["clusteringColumns"] == ["scope", "vuln_key"]
 
 
 def test_maintain_skips_tables_that_do_not_exist_yet(spark, tables):
@@ -541,7 +550,7 @@ def test_maintain_skips_tables_that_do_not_exist_yet(spark, tables):
 @pytest.fixture
 def path_tables(spark, tmp_path):
     """The same three tables, in a directory instead of a schema."""
-    tbl = run_pipeline.resolve_tables("", "sca", argv=[], data_path=str(tmp_path / "register"))
+    tbl = run_pipeline.resolve_tables("", argv=[], data_path=str(tmp_path / "register"))
     run_pipeline.ensure_tables(spark, tbl)
     return tbl
 
@@ -591,8 +600,8 @@ def test_a_path_backed_register_is_clustered_the_same_way(spark, path_tables):
     migration below would silently drop the layout shipped in the previous change."""
     run_scan(spark, path_tables, [node("f-1")], "s1", TS["s1"])
 
-    assert detail(spark, path_tables.ledger)["clusteringColumns"] == ["vuln_key"]
-    assert detail(spark, path_tables.bronze)["clusteringColumns"] == ["scan_id"]
+    assert detail(spark, path_tables.ledger)["clusteringColumns"] == ["scope", "vuln_key"]
+    assert detail(spark, path_tables.bronze)["clusteringColumns"] == ["scope", "scan_id"]
     assert detail(spark, path_tables.ledger)["properties"]["delta.enableDeletionVectors"] == "true"
 
 
@@ -634,7 +643,7 @@ def test_the_register_migrates_into_a_catalog_without_losing_anything(spark, pat
 
         # And it is a working ledger, not just readable rows: the next scan has to be able to
         # MERGE into it by name, or the migration would be a one-way trip into a dead table.
-        catalog_tables = run_pipeline.resolve_tables("arrived", "sca", argv=["--table_prefix="])
+        catalog_tables = run_pipeline.resolve_tables("arrived", argv=["--table_prefix="])
         assert catalog_tables.ledger == "arrived.vuln_ledger"
         run_pipeline.ensure_tables(spark, catalog_tables)
         run_scan(spark, catalog_tables, [node("f-1"), node("f-4")], "s3", TS["s3"])

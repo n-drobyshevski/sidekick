@@ -271,7 +271,11 @@ def test_the_os_gate_is_stated_rather_than_inherited():
 def test_this_register_has_three_scopes_and_all_is_not_one_of_them():
     """`all` was brick's every-detection-method scope. It overlapped `os`, was never scheduled,
     and is dropped rather than ported -- so asking for it is a refusal at every entry point,
-    not a scan that writes `wiz_all_*` tables nobody asked for.
+    not a scan that stamps `scope = 'all'` on rows nobody asked for. (It used to read "not a
+    scan that writes `wiz_all_*` tables": the tables no longer carry the scope, so the
+    consequence of accepting the name is now a fourth population inside the shared ledger
+    rather than a fourth pair of tables beside it. Worse, not better -- hence the same
+    refusal.)
 
     `POPULATION_ALL` is a different thing with the same spelling -- the capacity table's
     all-findings row label -- and is untouched by any of this.

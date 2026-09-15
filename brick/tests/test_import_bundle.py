@@ -151,7 +151,7 @@ def tables(spark, request):
     name = "i_" + re.sub(r"\W", "_", request.node.name).lower()[:100]
     spark.sql(f"DROP DATABASE IF EXISTS {name} CASCADE")
     spark.sql(f"CREATE DATABASE {name}")
-    tbl = run_pipeline.resolve_tables(name, SCOPE, argv=[])
+    tbl = run_pipeline.resolve_tables(name, argv=[])
     run_pipeline.ensure_tables(spark, tbl)
     yield tbl
     spark.sql(f"DROP DATABASE IF EXISTS {name} CASCADE")
@@ -524,9 +524,9 @@ class TestHandoffToTheFirstScan:
 
     def test_the_scan_log_hands_over_the_last_gas_scan(self, spark, tables):
         self.seeded(spark, tables)
-        assert run_pipeline.previous_scan(spark, tables)[0] == G3
+        assert run_pipeline.previous_scan(spark, tables, SCOPE)[0] == G3
         # ...covering the severities GAS was actually scanning, not "everything".
-        by_sev = run_pipeline.prev_scan_id_by_severity(spark, tables)
+        by_sev = run_pipeline.prev_scan_id_by_severity(spark, tables, SCOPE)
         assert by_sev["CRITICAL"] == G3 and by_sev["HIGH"] == G3
         assert "MEDIUM" not in by_sev
 
@@ -593,3 +593,177 @@ class TestHandoffToTheFirstScan:
         assert mttr["resolved"] == 1
         assert mttr["mttr_median"] > 45
         assert mttr["resolved_disappeared"] == 1
+
+
+# ------------------------------------------------- the other scopes in the same tables
+#
+# Failure of ABSENCE, across scopes. Every scope shares one table set
+# (`run_pipeline.DEFAULT_TABLE_PREFIX`), and a GAS bundle is ONE register's history -- the Apps
+# Script app scans hosts, so an import is an `os` import. Until `import_bundle` was scoped, a
+# `--force_import` issued `DELETE FROM <ledger>`, `DELETE FROM <metrics>` and
+# `DELETE FROM <bronze>` with no predicate: it emptied the `sca` and `sast` registers as
+# collateral, and emptied them past recovery, because `--rebuild_ledger` replays bronze and
+# bronze went in the same three statements.
+#
+# The perturbation below is the one line that does it, reproduced inline rather than described.
+
+SCA_FIXTURE = BRICK_DIR / "sca_findings_example.json"
+
+
+def seed_a_sca_register(spark, tables):
+    """A real second register in the same three tables: two `sca` scans of the committed
+    capture, through the ordinary `build_metrics` path.
+
+    The same fixture `test_catalog_mode`'s `sca` entry uses, and deliberately not a handful of
+    synthetic rows: the number this test is about is how much of another register a scoped
+    DELETE leaves alone, and a two-row register would make a passing perturbation look
+    plausible. Returns nothing; the callers read the tables.
+    """
+    from ingest import extract_nodes
+
+    nodes = extract_nodes(json.loads(SCA_FIXTURE.read_text(encoding="utf-8")))
+    for scan_id, scan_ts, payload in (
+        ("sca-scan-1", "2026-06-01T00:00:00Z", nodes),
+        ("sca-scan-2", "2026-06-08T00:00:00Z", nodes[: len(nodes) // 2]),
+    ):
+        run_pipeline.create_clustered(
+            spark, tables.bronze, run_pipeline.BRONZE_TABLE_SCHEMA, "bronze"
+        )
+        rows = [(scan_id, scan_ts, "sca", i, json.dumps(n)) for i, n in enumerate(payload)]
+        spark.createDataFrame(
+            rows, "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
+        ).withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).write.format(
+            "delta"
+        ).mode("append").option("mergeSchema", "true").saveAsTable(tables.bronze)
+        run_pipeline.build_metrics(
+            spark, tables, scan_id, scan_ts, "sca", severities=SEVERITIES, summary=False
+        )
+
+
+def scoped_rows(spark, table, scope):
+    """Every row of one scope, ordered deterministically, for byte-identical comparison."""
+    frame = spark.table(table).where(F.col("scope") == scope)
+    return sorted(
+        [tuple(str(v) for v in r.asDict().values()) for r in frame.collect()]
+    )
+
+
+class TestAnImportTouchesOneScope:
+    def test_a_forced_os_import_leaves_the_sca_register_byte_identical(self, spark, tables):
+        """The measurement. Seed `sca`, force-import the `os` bundle on top, and require every
+        `sca` row in all three tables to survive unchanged -- and the `os` ledger to be exactly
+        the bundle's keys, not the bundle's plus whatever the perturbation left behind.
+        """
+        seed_a_sca_register(spark, tables)
+        before = {
+            attr: scoped_rows(spark, getattr(tables, attr), "sca")
+            for attr in import_bundle.REGISTER_ATTRS
+        }
+        # Not a vacuous comparison: the fixture's own size, asserted so a fixture that shrinks
+        # to nothing fails here rather than making the next three assertions trivially true.
+        assert len(before["ledger"]) == 54, len(before["ledger"])
+        assert len(before["metrics"]) > 0 and len(before["bronze"]) > 0
+
+        payload = bundle(ledger=[gas_ledger_row("id:f-a"), gas_ledger_row("id:f-b")])
+        summary = import_bundle.import_bundle(
+            spark, tables, payload, scope=SCOPE, force=True
+        )
+
+        after = {
+            attr: scoped_rows(spark, getattr(tables, attr), "sca")
+            for attr in import_bundle.REGISTER_ATTRS
+        }
+        assert after == before, "the os import moved sca rows"
+
+        # ...and the os side is exactly the bundle, so the isolation was not bought by the
+        # import failing to write.
+        os_keys = {
+            r["vuln_key"]
+            for r in spark.table(tables.ledger).where(F.col("scope") == SCOPE).collect()
+        }
+        assert os_keys == {"id:f-a", "id:f-b"}
+        assert summary["ledger_rows"] == 2
+        assert summary["scope"] == SCOPE
+
+    def test_dropping_the_scope_predicate_from_one_delete_empties_the_sca_register(
+        self, spark, tables, monkeypatch
+    ):
+        """The perturbation, on ONE of the three DELETEs -- `_replace`, which clears the ledger
+        and the metrics table.
+
+        Reproduced inline rather than asserted from a comment: this is the statement the module
+        issued until it was scoped, and the point is that nothing else in the module stops it.
+        The `os` import still succeeds and still reports a plausible summary; the only visible
+        difference is 54 `sca` lifecycles and their whole published history gone, which no
+        number the importer prints would have shown.
+        """
+        seed_a_sca_register(spark, tables)
+        before_ledger = len(scoped_rows(spark, tables.ledger, "sca"))
+        before_metrics = len(scoped_rows(spark, tables.metrics, "sca"))
+        assert before_ledger == 54 and before_metrics > 0
+
+        def unscoped_replace(spark_, df, table, scope):
+            spark_.sql(f"DELETE FROM {table}")  # <-- the missing WHERE scope = '<scope>'
+            run_pipeline.write_append(df, table)
+
+        monkeypatch.setattr(import_bundle, "_replace", unscoped_replace)
+        summary = import_bundle.import_bundle(
+            spark, tables, bundle(), scope=SCOPE, force=True
+        )
+
+        # The import looks fine from the outside.
+        assert summary["ledger_rows"] > 0
+        # And the other register is gone.
+        assert len(scoped_rows(spark, tables.ledger, "sca")) == 0, (
+            "the perturbation did not reach the sca ledger -- the guard is decorative"
+        )
+        assert len(scoped_rows(spark, tables.metrics, "sca")) == 0
+
+    def test_a_scanned_sca_register_does_not_refuse_a_first_os_import(self, spark, tables):
+        """The same predicate read from the other side. `occupied_tables` answers "is the
+        register I am replacing already in use"; unscoped it answered "is any register in use",
+        and a deployment already scanning `sca` could then never seed `os` at all without
+        `--force_import` -- which would have gone on to delete the `sca` register it was
+        wrongly complaining about.
+        """
+        seed_a_sca_register(spark, tables)
+        assert import_bundle.occupied_tables(spark, tables, SCOPE) == {}
+        summary = import_bundle.import_bundle(spark, tables, bundle(), scope=SCOPE)
+        assert summary["replaced"] == {}
+        assert len(scoped_rows(spark, tables.ledger, "sca")) == 54
+
+    def test_a_frame_of_another_scope_is_refused_before_anything_is_written(
+        self, spark, tables
+    ):
+        """The tie between the write and the DELETE, which is what
+        `refuse_a_frame_of_another_scope` actually holds -- see its docstring for why it is not
+        a check on the bundle (the bundle states no scope; the frames are stamped from the
+        parameter).
+
+        Hand-assembled, because no bundle can produce it today. That is the point: the frame
+        and the DELETE predicate are two spellings of one value, and the day they can differ is
+        the day `force` silently stops replacing what it clears.
+        """
+        rows = import_bundle.ledger_frame(spark, bundle(), scope="sca")
+        scans = import_bundle.scans_frame(spark, bundle(), scope=SCOPE)
+        with pytest.raises(BundleError, match="carries scope"):
+            import_bundle.refuse_a_frame_of_another_scope(SCOPE, ledger=rows, scans=scans)
+        # And it passes when they agree, so the refusal is about the disagreement and not
+        # about the shape of the frames.
+        import_bundle.refuse_a_frame_of_another_scope(
+            SCOPE, ledger=import_bundle.ledger_frame(spark, bundle(), scope=SCOPE), scans=scans
+        )
+
+    def test_seeded_overview_reports_this_scope_only(self, spark, tables):
+        """An unfiltered read-back fails in the safe-looking direction: some other register's
+        older `first_seen` would make a seed that did not take read as though it had."""
+        seed_a_sca_register(spark, tables)
+        summary = import_bundle.import_bundle(spark, tables, bundle(), scope=SCOPE, force=True)
+        overview = import_bundle.seeded_overview(spark, tables, SCOPE).collect()
+        # Read off the summary rather than restated as a literal: the point is that the
+        # read-back sees the import and nothing else, and 54 sca rows sitting in the same table
+        # is what makes that a real question.
+        assert sum(r["lifecycles"] for r in overview) == summary["ledger_rows"]
+        assert summary["ledger_rows"] < 54
+        sca_overview = import_bundle.seeded_overview(spark, tables, "sca").collect()
+        assert sum(r["lifecycles"] for r in sca_overview) == 54

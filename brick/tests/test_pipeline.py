@@ -90,34 +90,44 @@ def test_identifiers_are_validated(monkeypatch):
     with pytest.raises(RuntimeError, match="not a valid identifier"):
         run_pipeline.resolve_namespace(argv=["--catalog=ok", "--schema=wiz;DROP TABLE x"])
     with pytest.raises(RuntimeError, match="not a valid identifier"):
-        run_pipeline.resolve_tables("cat.sch", "sca", argv=["--table_prefix=bad-prefix"])
+        run_pipeline.resolve_tables("cat.sch", argv=["--table_prefix=bad-prefix"])
 
 
-def test_tables_are_prefixed_with_the_scope_by_default(monkeypatch):
-    """A shared schema makes a bare `findings_raw` / `metrics` a collision risk, and the
-    scope in the name keeps an OS run and an all-types run in separate tables."""
+def test_every_scope_resolves_the_same_three_prefixed_tables(monkeypatch):
+    """A shared schema makes a bare `findings_raw` / `metrics` a collision risk, hence a prefix.
+
+    **This test used to be `test_tables_are_prefixed_with_the_scope_by_default`, and it
+    asserted `wiz_sca_*` against `wiz_sast_*`.** The claim it encoded was that the two
+    registers "never share a table", enforced by the scope sitting in the default prefix. That
+    claim is retired by decision: three scopes meant nine tables to grant, optimise and
+    document, and they now share one set. What the old test was protecting -- that the
+    populations are never blended -- did not go away with it; it moved into `scope`, which is
+    half the ledger's MERGE key and a predicate on every read of it
+    (`test_scope_isolation.py`). A name is not a boundary; a predicate can be perturbed.
+    """
     monkeypatch.delenv("TABLE_PREFIX", raising=False)
     monkeypatch.setattr(dbx, "widget", lambda name: "")
     # A deliberately generic namespace: the catalog is a runtime parameter, and a real one
     # here would read like configuration.
     ns = "some_catalog.some_schema"
-    tables = run_pipeline.resolve_tables(ns, "sca", argv=[])
-    assert tables.bronze == f"{ns}.wiz_sca_findings_raw"
-    assert tables.ledger == f"{ns}.wiz_sca_vuln_ledger"
-    assert tables.metrics == f"{ns}.wiz_sca_metrics"
+    tables = run_pipeline.resolve_tables(ns, argv=[])
+    assert tables.bronze == f"{ns}.wiz_findings_raw"
+    assert tables.ledger == f"{ns}.wiz_vuln_ledger"
+    assert tables.metrics == f"{ns}.wiz_metrics"
 
-    # The two registers never share a table. They measure populations with different positive
-    # classes -- see the README -- so blending them would be meaningless as well as wrong.
-    assert run_pipeline.resolve_tables(ns, "sast", argv=[]).metrics == f"{ns}.wiz_sast_metrics"
+    # And the names carry no scope at all -- `resolve_tables` no longer takes one, so there is
+    # no second call to compare against. The register is one table set for every scope.
+    assert "sca" not in tables.ledger and "sast" not in tables.ledger
+    assert run_pipeline.DEFAULT_TABLE_PREFIX == "wiz_"
 
 
 def test_table_prefix_is_overridable_and_can_be_empty(monkeypatch):
     monkeypatch.setattr(dbx, "widget", lambda name: "")
     assert (
-        run_pipeline.resolve_tables("c.s", "sca", argv=["--table_prefix=sec_"]).metrics
+        run_pipeline.resolve_tables("c.s", argv=["--table_prefix=sec_"]).metrics
         == "c.s.sec_metrics"
     )
-    bare = run_pipeline.resolve_tables("c.s", "sca", argv=["--table_prefix="])
+    bare = run_pipeline.resolve_tables("c.s", argv=["--table_prefix="])
     assert bare.metrics == "c.s.metrics"
 
 
@@ -128,7 +138,9 @@ def test_scope_defaults_to_os_and_rejects_unknown_values(monkeypatch):
     encoded was "this fork does not measure hosts, so silently accepting the scope name would
     write `wiz_os_*` tables full of code findings". That claim is gone by decision, not by
     accident: this fork absorbed the host register, `os` is a real scope with brick's own
-    filter behind it, and `wiz_os_*` tables full of host findings is now the correct outcome.
+    filter behind it, and host findings in the register is now the correct outcome. (The
+    `wiz_os_*` tables themselves are gone too -- every scope shares `wiz_*` now, with `scope`
+    a column -- but that is a later change and not why this one flipped.)
     The property the old assertion was protecting -- a scope name that is not a population here
     is refused rather than served -- is kept below, and `all` is still one of those: it was
     brick's every-detection-method scope, it overlapped `os`, and it is dropped rather than
@@ -286,13 +298,15 @@ def test_ingest_keeps_the_population_scope_separate_from_the_secret_scope(monkey
             return FakeDF(rows)
 
     count = run_pipeline.ingest_to_bronze(
-        FakeSpark(), "cat.sch.wiz_sca_findings_raw", "scan-1", "2026-07-01T00:00:00Z", "sca"
+        FakeSpark(), "cat.sch.wiz_findings_raw", "scan-1", "2026-07-01T00:00:00Z", "sca"
     )
 
     assert count == 1
     assert seen["scope"] == "sca"  # the population, not "wiz"
-    assert written["rows"][0][2] == "sca"  # and the same value lands in bronze
-    assert written["table"] == "cat.sch.wiz_sca_findings_raw"
+    # And the same value lands in bronze -- the only place the scope is recorded now that the
+    # table name no longer carries it.
+    assert written["rows"][0][2] == "sca"
+    assert written["table"] == "cat.sch.wiz_findings_raw"
 
 
 def test_dbutils_accessors_are_quiet_off_cluster():
@@ -649,18 +663,18 @@ def test_data_path_produces_delta_path_references(monkeypatch):
     """A path-backed table is named `delta.`<root>/<prefix><name>`` -- valid anywhere Spark
     wants a table, which is what lets one `Tables` serve both modes."""
     monkeypatch.setattr(dbx, "widget", lambda name: "")
-    tables = run_pipeline.resolve_tables("", "sca", argv=[], data_path="/Volumes/c/s/v/code")
-    assert tables.bronze == "delta.`/Volumes/c/s/v/code/wiz_sca_findings_raw`"
-    assert tables.ledger == "delta.`/Volumes/c/s/v/code/wiz_sca_vuln_ledger`"
+    tables = run_pipeline.resolve_tables("", argv=[], data_path="/Volumes/c/s/v/code")
+    assert tables.bronze == "delta.`/Volumes/c/s/v/code/wiz_findings_raw`"
+    assert tables.ledger == "delta.`/Volumes/c/s/v/code/wiz_vuln_ledger`"
     # The directory names match what a catalog run would call the tables, so the README's
     # CREATE TABLE ... LOCATION recipe is one statement per directory with nothing renamed.
-    assert tables.metrics.endswith("/wiz_sca_metrics`")
+    assert tables.metrics.endswith("/wiz_metrics`")
 
 
 def test_as_path_recovers_the_path_and_leaves_catalog_names_alone():
     """The whole storage abstraction: a reference carries its own path."""
-    assert run_pipeline.as_path("delta.`/mnt/code/wiz_sca_scans`") == "/mnt/code/wiz_sca_scans"
-    assert run_pipeline.as_path("cat.sch.wiz_sca_scans") is None
+    assert run_pipeline.as_path("delta.`/mnt/code/wiz_metrics`") == "/mnt/code/wiz_metrics"
+    assert run_pipeline.as_path("cat.sch.wiz_metrics") is None
 
 
 def test_data_path_is_optional_and_empty_means_catalog_mode(monkeypatch):

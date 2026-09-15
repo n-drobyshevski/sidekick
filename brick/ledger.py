@@ -298,11 +298,17 @@ def _refuse_foreign_scope(prior: DataFrame, current: DataFrame, scope: str) -> N
     whole prior remediated, with real resolution dates and a plausible-looking delta. The failure
     is not an error, it is a remediation programme that never happened.
 
-    Today each scope writes its own tables (``default_table_prefix``), so the prior is per-scope
-    by construction and this can only fire on a caller that hand-assembles frames. That is the
-    point. ``gas_devsecops`` keeps three scopes in ONE tab and had to filter the prior itself; the
-    lesson it wrote down is that reconcile must not trust a calling convention for this, because
-    the convention is invisible at the call site and its violation is silent.
+    **This is now the proof that the caller's filter was applied, not a can't-happen.** It used
+    to be the latter: each scope wrote its own tables, so the prior was per-scope by
+    construction and nothing but a hand-assembled frame could trip this. Every scope shares one
+    ledger now, so ``run_pipeline.reconcile_scan`` narrows the prior with
+    ``.where(scope == ...)`` before handing it over -- one line, in one place, whose absence
+    resolves two whole registers -- and this is what stands between that line being deleted as
+    redundant and the failure landing in the data. ``gas_devsecops`` reached the same
+    arrangement from the other direction: three scopes in one tab, ``reconcile`` filtering the
+    prior itself rather than trusting a calling convention, because the convention is invisible
+    at the call site and its violation is silent. Its measured price for the missing filter was
+    19,949 findings resolving as remediated.
 
     NULL is not foreign, and neither is silence: the golden ``reconcile.json`` prior states no
     scope, and a frame with no ``scope`` column at all is making no claim about its population.
@@ -351,7 +357,8 @@ def reconcile(
         prior: the existing ledger (may be empty, but must have the ledger schema).
         current: this scan's findings from ``observed()`` -- one row per ``vuln_key``.
         scan_id / scan_ts: identity and timestamp of this scan.
-        scope: the vulnerability population (``os`` / ``all``), stamped on every row so it stays
+        scope: the vulnerability population (``os`` / ``sca`` / ``sast``), stamped on every
+            row -- it is half of the ledger's MERGE key, not a label -- so it stays
             self-describing after a UNION -- and refused, rather than assumed, when the prior or
             the observations state a different one (``_refuse_foreign_scope``).
         prev_scan_id: the immediately-previous scan, or None for the very first scan (in which

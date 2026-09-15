@@ -11,11 +11,19 @@ These are plain top-level modules, not a package: the directory holding them goe
 ``sys.path`` and they import each other by bare name. That keeps the Databricks side a flat
 folder of files with no ``__init__.py`` and no nesting to reproduce by hand.
 
-Tables written. ``<p>`` is the table prefix, ``wiz_<scope>_`` by default:
+Tables written. ``<p>`` is the table prefix, ``wiz_`` by default -- **the same three tables
+for every scope**, with ``scope`` a column in each of them rather than a fragment of their
+names:
 
     <catalog>.<schema>.<p>findings_raw   bronze   scan_id, scan_ts, scope, seq, node_json
-    <catalog>.<schema>.<p>vuln_ledger    base     one row per vuln_key -- MERGEd, not appended
+    <catalog>.<schema>.<p>vuln_ledger    base     one row per (scope, vuln_key) -- MERGEd
     <catalog>.<schema>.<p>metrics        gold     every published row, told apart by ``family``
+
+``scope`` is part of the ledger's key, not merely a label on it: the same CVE reaching a host
+through a package and reaching a service through a dependency is two findings with two clocks,
+and one row could only carry one of them. It is also part of every read of the ledger as a
+prior -- see ``reconcile_scan`` -- because disappearance-resolution reads absence as
+remediation, and every row of another scope is absent from this scope's scan by construction.
 
 ``metrics`` is one table holding what used to be the scan log and every gold table -- except
 the sensitivity family, which is not published at all any more (`panels.rule_sweep` recomputes
@@ -262,14 +270,19 @@ def _check_one_directory() -> None:
     )
 
 # These tables usually land in a schema shared with other teams, where bare names like
-# `findings_raw` and `metrics` are an obvious collision risk -- `metrics` especially, now that
-# it is the name of the whole published register. The default prefix also carries the scope --
-# `wiz_sca_metrics` -- so the library register and the static-analysis
-# register land in separate tables and can never be blended by accident. They measure
-# populations with different positive classes, so blending them would be meaningless as well as
-# wrong. Pass --table_prefix= (empty) to opt out.
-def default_table_prefix(scope: str) -> str:
-    return f"wiz_{scope}_"
+# `findings_raw` and `metrics` are an obvious collision risk -- `metrics` especially, since it
+# is the name of the whole published register. Hence a prefix. Pass --table_prefix= (empty) to
+# opt out.
+#
+# **It no longer carries the scope.** It used to -- `wiz_sca_metrics` -- so that each scope
+# landed in its own table set and the registers could never be blended by accident. Three
+# scopes meant nine tables to grant, optimise and document, and the separation they bought is
+# the separation a `scope` column buys anyway: the ledger is keyed on `(scope, vuln_key)`, the
+# MERGE joins on both, and every read of it as a prior filters `scope`. The populations still
+# have different positive classes and still must not be blended -- what changed is that the
+# thing stopping it is a predicate rather than a table name, and a predicate is testable
+# (`test_scope_isolation.py`) where a naming convention was only ever conventional.
+DEFAULT_TABLE_PREFIX = "wiz_"
 
 # Catalog, schema and prefix are interpolated straight into SQL, so they are checked rather
 # than trusted. They come from an operator, not an attacker -- but `--schema=wiz;DROP ...`
@@ -427,9 +440,13 @@ def parse_severities(text) -> Optional[list]:
     return [s for s in SEVERITY_ORDER if s in chosen] or None
 
 
-# The clustering key for each table that has one, and whether it carries deletion vectors.
+# The clustering columns for each table that has one, and whether it carries deletion vectors.
 #
-# `vuln_key` is the MERGE's ON key and `scan_id` is what every read of bronze filters on.
+# `(scope, vuln_key)` is the MERGE's ON key, both columns of it, and `(scope, scan_id)` is what
+# every read of bronze filters on -- `panels._silver_frame` and `rebuild_ledger` both narrow to
+# one scope before they narrow to one scan. `scope` leads in both because it is the coarser
+# predicate and the one every read applies: with three scopes in one table set, a scan that
+# does not filter it reads three registers.
 # `metrics` is deliberately absent, and that absence is a decision rather than an omission: a
 # scan appends 9-150 rows to it -- a handful per family -- orders of magnitude under the size at
 # which a write clusters anything. Clustering it would buy a protocol bump and nothing else, and
@@ -454,8 +471,8 @@ def parse_severities(text) -> Optional[list]:
 # and leaving them off keeps it at reader version 1. Only DVs push the reader version to 3;
 # clustering alone needs writer 7 and leaves readers alone.
 CLUSTERING = {
-    "ledger": ("vuln_key", True),
-    "bronze": ("scan_id", False),
+    "ledger": (("scope", "vuln_key"), True),
+    "bronze": (("scope", "scan_id"), False),
 }
 
 
@@ -491,7 +508,7 @@ def create_clustered(spark: SparkSession, table: str, schema, attr: str) -> None
     builder = builder.location(path) if path else builder.tableName(table)
     (
         builder.addColumns(schema)
-        .clusterBy(cluster_by)
+        .clusterBy(*cluster_by)
         .property("delta.enableDeletionVectors", "true" if deletion_vectors else "false")
         .execute()
     )
@@ -516,6 +533,13 @@ def ensure_tables(spark: SparkSession, tables: Tables) -> None:
     scanned does not acquire an empty bronze and start looking as though it has.
     ``rebuild_ledger`` depends on that distinction: "there is no bronze" is how it knows there
     is no history to replay.
+
+    **Every scope calls this against the same two tables**, so the second scope's first run
+    finds both already there and creates nothing: ``create_clustered`` returns on
+    ``table_exists`` and the ``metrics`` write is behind the same check. That is what makes it
+    safe for three chained tasks to each call it, and it is also why neither branch may grow a
+    "and it has the right columns" condition -- by the second scope's first run the table
+    legitimately has gold columns this schema does not declare.
     """
     create_clustered(spark, tables.ledger, ledger_mod.LEDGER_SCHEMA, "ledger")
     if not table_exists(spark, tables.metrics):
@@ -550,7 +574,9 @@ def write_append(df, table: str) -> None:
     writer.save(path) if path else writer.saveAsTable(table)
 
 
-def recorded_scan(spark: SparkSession, tables: Tables, scan_id: str) -> Optional[dict]:
+def recorded_scan(
+    spark: SparkSession, tables: Tables, scan_id: str, scope: str
+) -> Optional[dict]:
     """The stored deltas if this exact scan is already logged, else ``None``.
 
     The idempotency guard. A Databricks job retries a failed task in the same run, so passing
@@ -563,10 +589,19 @@ def recorded_scan(spark: SparkSession, tables: Tables, scan_id: str) -> Optional
     projection is ``SCANS_COLUMNS`` for a smaller reason: the table also carries every gold
     column, and a caller reading this dict wants the commit record, not a row of NULLs from
     four other grains.
+
+    ``scope`` is part of the question for the same reason ``family`` is: one table holds every
+    scope's commit records, and answering "yes, recorded" from another scope's row would send
+    a scan that has never run down the resume branch -- or, worse, past it, because the deltas
+    it read back describe a different population.
     """
     rows = (
         spark.table(tables.metrics)
-        .filter((F.col("family") == FAMILY_SCAN) & (F.col("scan_id") == scan_id))
+        .filter(
+            (F.col("family") == FAMILY_SCAN)
+            & (F.col("scan_id") == scan_id)
+            & (F.col("scope") == scope)
+        )
         .select(*SCANS_COLUMNS)
         .limit(1)
         .collect()
@@ -574,7 +609,9 @@ def recorded_scan(spark: SparkSession, tables: Tables, scan_id: str) -> Optional
     return rows[0].asDict() if rows else None
 
 
-def ledger_already_merged(spark: SparkSession, tables: Tables, scan_id: str) -> bool:
+def ledger_already_merged(
+    spark: SparkSession, tables: Tables, scan_id: str, scope: str
+) -> bool:
     """Whether the ledger already carries this scan's effect.
 
     Torn-write detection. The MERGE and the commit record are two commits, so a run can die
@@ -582,17 +619,25 @@ def ledger_already_merged(spark: SparkSession, tables: Tables, scan_id: str) -> 
     would then reconcile the same findings against a ledger that has already moved: every
     finding would look unchanged, and every finding absent from the retry would be resolved a
     second time. Asking the ledger directly is cheap and unambiguous.
+
+    Scoped, because the ledger holds every scope. A scan id is unique across scopes (see
+    ``clear_scan``), so an unscoped read would today give the same answer -- but "today the ids
+    happen not to collide" is a calling convention, and this is the guard that stands between a
+    torn write and a double-counted register. It filters what it means.
     """
     return (
         spark.table(tables.ledger)
-        .filter((F.col("last_scan_id") == scan_id) | (F.col("first_scan_id") == scan_id))
+        .filter(
+            (F.col("scope") == scope)
+            & ((F.col("last_scan_id") == scan_id) | (F.col("first_scan_id") == scan_id))
+        )
         .limit(1)
         .count()
         > 0
     )
 
 
-def gold_missing(spark: SparkSession, tables: Tables, scan_id: str) -> bool:
+def gold_missing(spark: SparkSession, tables: Tables, scan_id: str, scope: str) -> bool:
     """Whether this scan's commit record stands with no gold rows beside it.
 
     The recoverable half of the two-commit window. ``record_scan`` lands one statement after the
@@ -604,24 +649,38 @@ def gold_missing(spark: SparkSession, tables: Tables, scan_id: str) -> bool:
     republish it rather than to skip the scan.
 
     Asking about one family answers for all of them: gold is a single append of the union, so
-    either every family for this ``scan_id`` committed or none did.
+    either every family for this ``scan_id`` committed or none did. It does not answer for all
+    of them across scopes, which is why ``scope`` is here: another scope's ``mttr`` rows under
+    the same id would say this scan's gold landed when nothing of it did, and the retry would
+    take the "nothing to do" branch and leave the scan permanently absent from every metric.
     """
     return (
         spark.table(tables.metrics)
-        .filter((F.col("family") == FAMILY_MTTR) & (F.col("scan_id") == scan_id))
+        .filter(
+            (F.col("family") == FAMILY_MTTR)
+            & (F.col("scan_id") == scan_id)
+            & (F.col("scope") == scope)
+        )
         .limit(1)
         .count()
         == 0
     )
 
 
-def scan_log_desc(spark: SparkSession, tables: Tables) -> list:
-    """The whole scan log, most recent first.
+def scan_log_desc(spark: SparkSession, tables: Tables, scope: str) -> list:
+    """**This scope's** scan log, most recent first.
 
     Every reader below wants the same rows in the same order, and a reconcile needs all of
     them. The log has one row per scan ever run, so collecting it is cheap -- what is not cheap
     is doing it repeatedly, because each `collect()` is its own Spark job however few rows come
     back.
+
+    Scoped, and this is the filter the disappearance guard rests on. ``previous_scan`` and
+    ``prev_scan_id_by_severity`` both read this list, and what they answer is "what did the last
+    scan OF THIS POPULATION see". Hand them another scope's scans and every row of this scope is
+    absent from that scan by construction, which is what resolution-by-disappearance reads as a
+    fix. The three scopes interleave in this table -- an `sca` scan runs between two `os` scans
+    on every chained job -- so unscoped is not a rare mistake here, it is the normal case.
 
     ``resolved_count`` rides along for ``closed_observed``, which counts this register's
     resolutions per month from these rows instead of reading the table back after its own
@@ -629,7 +688,7 @@ def scan_log_desc(spark: SparkSession, tables: Tables) -> list:
     """
     return (
         spark.table(tables.metrics)
-        .filter(F.col("family") == FAMILY_SCAN)
+        .filter((F.col("family") == FAMILY_SCAN) & (F.col("scope") == scope))
         .select("scan_id", "scan_ts", "severities", "resolved_count")
         .orderBy(F.col("scan_ts").desc(), F.col("scan_id").desc())
         .collect()
@@ -637,30 +696,38 @@ def scan_log_desc(spark: SparkSession, tables: Tables) -> list:
 
 
 def previous_scan(
-    spark: SparkSession, tables: Tables, rows: Optional[list] = None
+    spark: SparkSession, tables: Tables, scope: str, rows: Optional[list] = None
 ) -> Optional[tuple]:
-    """``(scan_id, scan_ts)`` of the most recent logged scan, or ``None`` for a fresh register.
+    """``(scan_id, scan_ts)`` of this scope's most recent logged scan, or ``None`` if it has
+    never been scanned.
 
-    ``rows`` is an already-collected ``scan_log_desc``, for a caller that needs it anyway.
+    ``rows`` is an already-collected ``scan_log_desc`` **for this same scope**, for a caller
+    that needs it anyway. ``scope`` is still required in that case: it is what the argument has
+    to have been filtered by, and taking it here is what stops the filtering being a convention
+    the call site cannot show.
     """
     if rows is None:
-        rows = scan_log_desc(spark, tables)
+        rows = scan_log_desc(spark, tables, scope)
     return (rows[0]["scan_id"], rows[0]["scan_ts"]) if rows else None
 
 
 def prev_scan_id_by_severity(
-    spark: SparkSession, tables: Tables, rows: Optional[list] = None
+    spark: SparkSession, tables: Tables, scope: str, rows: Optional[list] = None
 ) -> dict:
-    """``{severity: scan_id}`` of the most recent prior scan whose scope covered each severity.
+    """``{severity: scan_id}`` of this scope's most recent prior scan covering each severity.
 
     Port of ``gas/src/domain/ledgerCore.ts::prevScanIdBySeverity``. Feeds ``reconcile``'s
     disappearance guard so a finding that vanished while its severity went unscanned still
     resolves on the first scan that covers it again, instead of being stranded open forever.
+
+    "Severity scope" and "population scope" are two different scopes and this function is about
+    both: it answers per severity, over one population. A row from another population would
+    mark a severity covered by a scan that never looked at this register at all.
     """
     remaining = set(SEVERITY_ORDER)
     mapping = {}
     if rows is None:
-        rows = scan_log_desc(spark, tables)
+        rows = scan_log_desc(spark, tables, scope)
     for row in rows:
         scope = parse_severities(row["severities"])
         covered = set(remaining) if scope is None else remaining & set(scope)
@@ -674,6 +741,19 @@ def prev_scan_id_by_severity(
 
 def merge_ledger(spark: SparkSession, tables: Tables, touched) -> dict:
     """MERGE this scan's touched rows into the durable ledger. Returns the scan deltas.
+
+    **The key is ``(scope, vuln_key)``, not ``vuln_key``.** Every scope writes into this one
+    ledger now, and the same key genuinely occurs under two of them: the same CVE reaching a
+    host through an OS package and reaching a service through a library dependency is two
+    findings with two clocks, two owners and two fixes, and a row can carry only one
+    ``first_seen``. Joining on ``vuln_key`` alone would fold them into one row whose dates are
+    whichever scope scanned last -- not a missing row, a wrong one, and one no count would
+    show: the register would simply look smaller.
+
+    The hash fallback is the second reason. ``ledger.vuln_key`` prefers the Wiz id and falls
+    back to a hash of name + asset + component when there is none; that basis carries nothing
+    about the population it was computed in, so two scopes can collide there without either
+    having done anything unusual.
 
     ``touched`` is a query over the ledger table itself, so it is checkpointed first. That
     truncates the lineage, which means the MERGE's source is a materialized set of rows rather
@@ -696,12 +776,19 @@ def merge_ledger(spark: SparkSession, tables: Tables, touched) -> dict:
         f"""
         MERGE INTO {tables.ledger} AS target
         USING {view} AS source
-          ON target.vuln_key = source.vuln_key
+          ON target.vuln_key = source.vuln_key AND target.scope = source.scope
         WHEN MATCHED THEN UPDATE SET *
         WHEN NOT MATCHED THEN INSERT *
         """
     )
     spark.catalog.dropTempView(view)
+    # The checkpoint is done its two jobs -- the deltas above and the MERGE's source -- so its
+    # blocks are released here rather than left for the JVM's context cleaner. The cleaner only
+    # runs when garbage collection happens to reach the Python proxy, and a long-lived session
+    # replaying or testing hundreds of scans accumulated one eagerly materialized frame per
+    # scan until the driver heap ran out (measured: a 2g xdist worker died with
+    # `java.lang.OutOfMemoryError: Java heap space` at stage ~10,900 of the 3.0 suite).
+    materialized.unpersist()
     return deltas
 
 
@@ -741,13 +828,23 @@ def record_scan(
     )
 
 
-def clear_scan(spark: SparkSession, tables: Tables, scan_id: str) -> None:
+def clear_scan(spark: SparkSession, tables: Tables, scan_id: str, scope: str) -> None:
     """Delete a scan's rows from the two append-only tables: bronze and metrics.
 
+    **A scan id is unique across scopes, so the id alone would be enough.** A Databricks run
+    supplies ``--scan_id={{job.run_id}}-<scope>`` -- the bundle appends the scope precisely so
+    the three chained tasks of one job cannot share an id -- and a self-generated id is a uuid
+    nothing else has ever written under. ``scope`` is still in the predicate because it is one
+    more conjunct in a statement that already has one, and because the alternative is trusting
+    a naming convention held in a YAML file two directories away: if that suffix is ever
+    dropped, this DELETE would take another scope's bronze rows and its commit record with it,
+    and the next scan of that scope would meet its own findings as NEW with their real ages
+    gone.
+
     Only ever called on the retry path, where a previous attempt may have written some of them
-    before failing. The ledger is deliberately not touched here: it is keyed by ``vuln_key``, so
-    there is nothing scan-shaped to delete, and its correctness comes from
-    ``ledger_already_merged`` instead.
+    before failing. The ledger is deliberately not touched here: it is keyed by
+    ``(scope, vuln_key)``, so there is nothing scan-shaped to delete, and its correctness comes
+    from ``ledger_already_merged`` instead.
 
     It deletes that scan's commit record along with everything else the attempt wrote, which
     reads alarming and is not: the only caller runs it after ``recorded_scan`` came back empty,
@@ -757,7 +854,9 @@ def clear_scan(spark: SparkSession, tables: Tables, scan_id: str) -> None:
     for name in APPEND_TABLES:
         table = getattr(tables, APPEND_TABLE_ATTRS[name])
         if table_exists(spark, table):
-            spark.sql(f"DELETE FROM {table} WHERE scan_id = '{scan_id}'")
+            spark.sql(
+                f"DELETE FROM {table} WHERE scan_id = '{scan_id}' AND scope = '{scope}'"
+            )
 
 
 BRONZE_SCHEMA = "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
@@ -886,14 +985,20 @@ def reconcile_scan(
     hand. ``None`` means "count it" -- the replay path, which never ingested anything.
     """
     if scan_log is None:
-        scan_log = scan_log_desc(spark, tables)
-    prev = previous_scan(spark, tables, scan_log)
+        scan_log = scan_log_desc(spark, tables, scope)
+    prev = previous_scan(spark, tables, scope, scan_log)
     prev_scan_id = prev[0] if prev else None
     prev_scan_ts = prev[1].strftime("%Y-%m-%dT%H:%M:%SZ") if prev and prev[1] else None
-    by_severity = prev_scan_id_by_severity(spark, tables, scan_log) if prev else None
+    by_severity = prev_scan_id_by_severity(spark, tables, scope, scan_log) if prev else None
 
+    # **The prior is THIS SCOPE'S ledger rows and nothing else.** One ledger holds every scope,
+    # and `reconcile` resolves by absence: every `sca` row is missing from an `os` scan by
+    # construction, so an unfiltered prior would date the whole of the other two registers as
+    # remediated by this scan, with real-looking resolution dates and a plausible delta. The
+    # sibling that had to learn this priced the mutation at 19,949 findings
+    # (CLAUDE.md, gas_devsecops). `ledger._refuse_foreign_scope` is the proof this line ran.
     touched = ledger_mod.reconcile(
-        spark.table(tables.ledger),
+        spark.table(tables.ledger).where(F.col("scope") == scope),
         ledger_mod.observed(silver),
         scan_id=scan_id,
         scan_ts=scan_ts,
@@ -1006,7 +1111,11 @@ def build_metrics(
     # a default argument: the default would have to name one rule, and naming the wrong one is a
     # full page of plausible numbers rather than an error. See config.rule_for_scope.
     rule = rule or rule_for_scope(scope)
-    bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
+    # Scoped as well as pinned: bronze holds every scope's findings under its own scan ids, and
+    # a scan id that ever collided across scopes would silently widen this scan's population.
+    bronze = spark.table(tables.bronze).filter(
+        f"scan_id = '{scan_id}' AND scope = '{scope}'"
+    )
     silver = metrics.classify_risk(metrics.silver_findings(bronze, scope), rule).cache()
 
     # Collected once, here, and used three times: the reconciler needs the previous scan and its
@@ -1014,7 +1123,7 @@ def build_metrics(
     # resolutions per month. Reading the same small table three times is three Spark jobs for
     # one answer. Collected BEFORE the reconcile, so it does not contain this scan -- which is
     # what both `observation_start` and `closed_observed` assume of it.
-    scan_log = scan_log_desc(spark, tables)
+    scan_log = scan_log_desc(spark, tables, scope)
     deltas = reconcile_scan(
         spark, tables, silver, scan_id=scan_id, scan_ts=scan_ts, scope=scope,
         severities=severities, disappearance=disappearance, scan_log=scan_log, total=total,
@@ -1060,8 +1169,14 @@ def publish_gold(
     # Gold comes from the ledger, not from the snapshot. This is the whole of v2 in one line:
     # every finding the register has ever seen, with the dates we actually observed, including
     # the ones the API has long since stopped returning.
+    # Scoped for the same reason the reconcile's prior is, with a quieter failure: gold that
+    # blended three populations would publish one MTTR curve over host CVEs, library CVEs and
+    # source findings at once. Nothing would error and every count would simply be wrong.
     lifecycles = metrics.classify_risk(
-        ledger_mod.lifecycle_frame(spark.table(tables.ledger), scan_ts), rule
+        ledger_mod.lifecycle_frame(
+            spark.table(tables.ledger).where(F.col("scope") == scope), scan_ts
+        ),
+        rule,
     ).cache()
 
     # `summarize` reads the gold frames back. They are lazy, so without this each of its
@@ -1303,6 +1418,13 @@ def resolve_data_path(argv: Optional[list] = None, csv_register: str = "") -> st
         # `dbfs:/tmp` rather than `/tmp`: the latter is per-node local disk, and every write
         # here is distributed, so executors would write to whichever machine they landed on.
         # A workspace with no DBFS root should pass `--data_path` pointing at a volume.
+        #
+        # This one keeps the scope in its name even though the tables no longer do, and the
+        # difference is what the directory IS: per-run scratch, not the register. Two scopes
+        # scanning concurrently in CSV-register mode each want their own disposable Delta side
+        # -- they are separate runs writing separate CSV registers, not one register two runs
+        # share -- and a shared scratch directory would have them MERGE into each other's
+        # ledger for the length of a run. The register itself is one table set; this is not it.
         return f"dbfs:/tmp/wiz_scratch_{param('scope', DEFAULT_SCOPE, argv=argv) or DEFAULT_SCOPE}"
     if not path:
         return ""
@@ -1336,16 +1458,21 @@ def resolve_data_path(argv: Optional[list] = None, csv_register: str = "") -> st
 
 
 def resolve_tables(
-    namespace: str, scope: str, argv: Optional[list] = None, data_path: str = ""
+    namespace: str, argv: Optional[list] = None, data_path: str = ""
 ) -> Tables:
     """The three table references, prefixed so they can share a schema with other teams' tables.
+
+    **No ``scope``.** Every scope resolves the same three tables; which population a row belongs
+    to is the ``scope`` column, which is part of the ledger's key and part of every read of it.
+    The parameter used to be here because the prefix carried the scope -- see
+    ``DEFAULT_TABLE_PREFIX`` for why it no longer does.
 
     With ``data_path`` set, each is ``delta.`<path>/<prefix><name>``` -- a directory per table
     under one root, named identically to the tables a catalog-backed run would create, so the
     migration recipe in the README is a `CREATE TABLE ... LOCATION` per directory and nothing
     has to be renamed.
     """
-    prefix = param("table_prefix", default_table_prefix(scope), argv=argv)
+    prefix = param("table_prefix", DEFAULT_TABLE_PREFIX, argv=argv)
     if not PREFIX.match(prefix):
         raise RuntimeError(f"table_prefix {prefix!r} is not a valid identifier fragment")
 
@@ -1438,6 +1565,14 @@ def rebuild_ledger(
     severity scope, and it is the only way to put back the gold of a scan that a later scan has
     already moved the ledger past (see ``main``'s resume guard, which now points here).
 
+    **It rebuilds ONE scope and leaves the other two alone.** Bronze, the ledger and the
+    metrics table are shared by every scope, so every statement below names ``scope``: the
+    replay reads only this scope's bronze scans, deletes only this scope's ledger rows, and
+    deletes only this scope's commit records and gold. An unscoped DELETE here would empty two
+    registers that have nothing to do with the recovery being attempted, and only the bronze of
+    the scope being replayed would be read back -- so the other two would come back as empty
+    registers, not as wrong ones. That is the single most destructive statement in this file.
+
     It costs what it says: the gold computation runs once per replayed scan rather than once,
     so a rebuild over a long history is a long job. It is a recovery operation and is not on any
     schedule.
@@ -1449,24 +1584,28 @@ def rebuild_ledger(
     scans = [
         (r["scan_id"], r["scan_ts"])
         for r in spark.table(tables.bronze)
+        .where(F.col("scope") == scope)
         .select("scan_id", "scan_ts")
         .distinct()
         .orderBy(F.col("scan_ts").asc(), F.col("scan_id").asc())
         .collect()
     ]
     if not scans:
-        print("[rebuild] bronze holds no scans; nothing to replay")
+        print(f"[rebuild] bronze holds no {scope} scans; nothing to replay")
         return 0
 
-    print(f"[rebuild] replaying {len(scans)} scans from {tables.bronze}")
-    spark.sql(f"DELETE FROM {tables.ledger}")
-    # The WHOLE metrics table, not the replayed scan_ids. Simpler, and it is also the only
-    # choice that cannot leave the table inconsistent: the commit-record delete was already
-    # unconditional, so scoping the gold delete to the replayed ids would leave gold rows for a
-    # scan whose bronze has since been pruned, with no commit record beside them -- precisely
-    # the half-written state `gold_missing` exists to detect. Everything here is re-derived
-    # below from bronze, which is the table that must survive.
-    spark.sql(f"DELETE FROM {tables.metrics}")
+    print(f"[rebuild] replaying {len(scans)} {scope} scans from {tables.bronze}")
+    spark.sql(f"DELETE FROM {tables.ledger} WHERE scope = '{scope}'")
+    # This scope's WHOLE share of the metrics table -- every family, not the replayed scan_ids.
+    # Two predicates doing two different jobs. `scope` is the isolation one: the other two
+    # registers are not being rebuilt and must not be emptied. Within the scope it is still
+    # unconditional across families and ids, and that is deliberate for the reason it always
+    # was: the commit-record delete is unconditional, so scoping the gold delete to the
+    # replayed ids would leave gold rows for a scan whose bronze has since been pruned, with no
+    # commit record beside them -- precisely the half-written state `gold_missing` detects.
+    # Everything deleted here is re-derived below from this scope's bronze, which is the table
+    # that must survive.
+    spark.sql(f"DELETE FROM {tables.metrics} WHERE scope = '{scope}'")
 
     # The scan log was just emptied, so it starts empty and this loop is the only thing that
     # adds to it. Collecting it once and extending it here is what stops the replay re-reading
@@ -1475,7 +1614,9 @@ def rebuild_ledger(
     scan_log: list = []
     for index, (scan_id, scan_ts) in enumerate(scans, start=1):
         ts_iso = scan_ts.strftime("%Y-%m-%dT%H:%M:%SZ")
-        bronze = spark.table(tables.bronze).filter(F.col("scan_id") == scan_id)
+        bronze = spark.table(tables.bronze).filter(
+            (F.col("scan_id") == scan_id) & (F.col("scope") == scope)
+        )
         # Cached because it has three consumers -- `observed`, the row count in
         # `reconcile_scan`, and the snapshot columns in `publish_gold` -- and without this each
         # one re-reads bronze and re-parses every node_json. The live path caches for the same
@@ -1531,6 +1672,12 @@ def maintain(spark: SparkSession, tables: Tables) -> list:
     **Deliberately not part of the daily run.** OPTIMIZE is an unbounded rewrite over the whole
     register, and the job that has to finish before anyone can read this morning's number should
     not be waiting behind it. Weekly, as its own Job, is the shape this is built for.
+
+    **Once, not once per scope.** It takes no ``scope`` and filters none: OPTIMIZE lays out a
+    whole table, and there is one table set now rather than one per scope, so a second run of
+    this would rewrite the same two tables a second time for nothing. The bundle schedules one
+    maintain job, not three -- clustering on ``(scope, vuln_key)`` is what makes one layout
+    serve all three registers.
 
     Also deliberately not ``VACUUM``: that deletes files that time travel and any in-flight
     reader still depend on, and choosing a retention window is a decision nobody has made here.
@@ -1621,7 +1768,7 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     # `resolve_namespace()` here is exactly how a run that was meant to write CSV creates two
     # empty Delta tables in a production catalog instead. See `resolve_data_path`.
     namespace = "" if (data_path or csv_register) else resolve_namespace()
-    tables = resolve_tables(namespace, scope, data_path=data_path)
+    tables = resolve_tables(namespace, data_path=data_path)
     disappearance = resolve_disappearance()
     severities = resolve_severities(scope)
 
@@ -1640,7 +1787,7 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
 
         csvstore.restore(
             spark, csv_register, tables,
-            prefix=param("table_prefix", default_table_prefix(scope)),
+            prefix=param("table_prefix", DEFAULT_TABLE_PREFIX),
             missing_ok=True,
         )
     ensure_tables(spark, tables)
@@ -1668,7 +1815,7 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
         import csvstore
 
         csvstore.restore(
-            spark, restore_from, tables, prefix=param("table_prefix", default_table_prefix(scope))
+            spark, restore_from, tables, prefix=param("table_prefix", DEFAULT_TABLE_PREFIX)
         )
         return None
 
@@ -1688,7 +1835,7 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
         replayed = rebuild_ledger(spark, tables, scope, severities, disappearance)
         if not replayed:
             return None
-        latest = previous_scan(spark, tables)
+        latest = previous_scan(spark, tables, scope)
         return RunResult(
             tables=tables, scan_id=latest[0],
             scan_ts=latest[1].strftime("%Y-%m-%dT%H:%M:%SZ"), scope=scope,
@@ -1700,14 +1847,14 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
 
     # Idempotency. A Job retry arrives with the same --scan_id={{job.run_id}} as the attempt it
     # is retrying, and reconciling one scan twice would advance every lifecycle a second time.
-    logged = recorded_scan(spark, tables, scan_id)
+    logged = recorded_scan(spark, tables, scan_id, scope)
     if logged is not None:
         # The scan's own timestamp, not this attempt's wall clock: every row already written
         # under this scan_id carries the recorded one, and gold republished below has to land
         # on the same instant or the scan would describe two different moments.
         if logged["scan_ts"] is not None:
             scan_ts = logged["scan_ts"].strftime("%Y-%m-%dT%H:%M:%SZ")
-        if gold_missing(spark, tables, scan_id):
+        if gold_missing(spark, tables, scan_id, scope):
             # The commit record landed and the gold append did not. Gold is re-derivable, so
             # this republishes it instead of skipping the scan -- which is what used to happen,
             # leaving a scan permanently in the ledger and permanently absent from every metric
@@ -1716,7 +1863,9 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
             # The log WITHOUT this scan's own row. `observation_start` and `closed_observed`
             # both add this scan themselves, and this time its commit record IS in the table --
             # left in, it would count this scan's resolutions twice.
-            scan_log = [r for r in scan_log_desc(spark, tables) if r["scan_id"] != scan_id]
+            scan_log = [
+                r for r in scan_log_desc(spark, tables, scope) if r["scan_id"] != scan_id
+            ]
 
             # **Only the newest scan's gold can be resumed.** Gold describes the ledger AS OF a
             # scan, and the ledger only ever stands at one scan at a time: the rows in it now
@@ -1761,7 +1910,9 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
             # Silver from bronze, the same projection `panels._silver_frame` derives and the
             # same one the original attempt built -- bronze still holds this scan's findings
             # under this scan_id.
-            bronze = spark.table(tables.bronze).filter(f"scan_id = '{scan_id}'")
+            bronze = spark.table(tables.bronze).filter(
+                f"scan_id = '{scan_id}' AND scope = '{scope}'"
+            )
             silver = metrics.classify_risk(metrics.silver_findings(bronze, scope), rule)
             publish_gold(
                 spark, tables, scan_id=scan_id, scan_ts=scan_ts, scope=scope,
@@ -1783,7 +1934,7 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
 
     # Torn write: the MERGE committed but the scan log did not. Reconciling again would resolve
     # by disappearance everything already accounted for, so refuse rather than corrupt.
-    if ledger_already_merged(spark, tables, scan_id):
+    if ledger_already_merged(spark, tables, scan_id, scope):
         raise RuntimeError(
             f"scan {scan_id} is already reflected in {tables.ledger} but has no "
             f"family='{FAMILY_SCAN}' row in {tables.metrics}: a previous run committed the "
@@ -1796,7 +1947,7 @@ def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     # came from outside can be a retry: a self-generated one is a fresh uuid nothing has ever
     # written under, so the two DELETEs would be two Delta statements matching nothing.
     if supplied_scan_id:
-        clear_scan(spark, tables, scan_id)
+        clear_scan(spark, tables, scan_id, scope)
 
     count = ingest_to_bronze(spark, tables.bronze, scan_id, scan_ts, scope, severities)
     if not count:

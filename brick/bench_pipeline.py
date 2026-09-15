@@ -282,7 +282,7 @@ def run(args) -> dict:
     schema = "bench"
     spark.sql(f"DROP DATABASE IF EXISTS {schema} CASCADE")
     spark.sql(f"CREATE DATABASE {schema}")
-    tables = run_pipeline.resolve_tables(schema, "os", argv=[])
+    tables = run_pipeline.resolve_tables(schema, argv=[])
     run_pipeline.ensure_tables(spark, tables)
 
     payloads = [
