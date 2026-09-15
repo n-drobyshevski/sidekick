@@ -110,7 +110,7 @@ export { tokenList } from "./tokenList.js";
 export { openPopover, popoverDismiss, positionPopover } from "./popover.js";
 export { portalsOpen } from "./portals.js";
 export { codeBlock, copyButton, copyText } from "./code.js";
-export { UI_ICON_NAMES, missingUiIcons, resetMissingUiIcons, uiIcon } from "./uiIcons.js";
+export { UI_ICON_NAMES, missingUiIcons, uiIcon } from "./uiIcons.js";
 export { brandMark } from "./brandMark.js";
 export { pointRail, railScale } from "./rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./timing.js";

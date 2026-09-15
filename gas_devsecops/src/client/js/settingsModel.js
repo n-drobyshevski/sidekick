@@ -54,8 +54,6 @@ export const SETTING_FIELDS = {
   retentionDays: { tab: "system", label: "retention window" },
 };
 
-export const SETTING_KEYS = Object.keys(SETTING_FIELDS);
-
 const kernel = settingsForm({ tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB });
 
 /**

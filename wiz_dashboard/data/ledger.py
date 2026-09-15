@@ -669,11 +669,6 @@ def _reinsert_scan_row(db_path, row):
         conn.close()
 
 
-def delete_scan(scan_id, db_path=None) -> dict:
-    """Delete one scan (convenience wrapper over ``delete_scans``)."""
-    return delete_scans([scan_id], db_path=db_path)
-
-
 def delete_scans(scan_ids, db_path=None) -> dict:
     """Delete saved scans and rebuild the derived ledger by replaying the survivors.
 

@@ -68,7 +68,7 @@ import {
   registerRowsSlice,
   scanRowsSlice,
 } from "../domain/pagePayload";
-import { BUILD_ID } from "./buildInfo";
+import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
 import { getProp, hasWizCredentials, projectScope, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";
 import { cached } from "./serverCache";

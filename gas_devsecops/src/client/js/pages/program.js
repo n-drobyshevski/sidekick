@@ -27,7 +27,7 @@
 // published beside it so the sample can be checked.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 // `fmtPct`, `denominatorNode`, `rateCell` and `scopeParam` used to be DEFINED here — see
 // `./_rates.js`'s header for why one copy now serves this page and mttr.js both.
 import { denominatorNode, fmtPct, rateCell, scopeParam } from "./_rates.js";

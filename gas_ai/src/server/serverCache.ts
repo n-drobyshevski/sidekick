@@ -11,8 +11,8 @@
 // chunks stored under `<key>:0..n-1` with a `<key>:m` chunk-count entry; any missing
 // chunk reads as a miss. Everything degrades to compute() on any cache failure.
 
-import { sha1Hex } from "../domain/sha1";
-import { BUILD_ID } from "./buildInfo";
+import { sha1Hex } from "../../../gas_shared/domain/sha1";
+import { BUILD_ID } from "../../../gas_shared/server/buildInfo";
 import { domainTagKey, getProp, PROP_KEYS, setProp } from "./props";
 
 const VERSION_PROP = "DATA_VERSION";

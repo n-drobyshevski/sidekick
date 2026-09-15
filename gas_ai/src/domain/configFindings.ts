@@ -30,7 +30,6 @@ export const DEFAULT_CONFIG_SORT_DIR: Record<ConfigSort, SortDir> = {
   // Phase 5: the problem tree's outcome, worst (ACT) first — same convention as severity.
 };
 
-export const CONFIG_PAGE_SIZES = [25, 50, 100, 250];
 export const DEFAULT_CONFIG_PAGE_SIZE = 50;
 export const MAX_CONFIG_PAGE_SIZE = 500;
 

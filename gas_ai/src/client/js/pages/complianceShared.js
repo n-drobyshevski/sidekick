@@ -19,7 +19,7 @@ import {
   scopeNote, sevBadge,
 } from "../ui.js";
 
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import { lookupGap } from "../codebook.js";
 import { complianceTrendView } from "../complianceTrendModel.js";
 import { seriesData } from "../postureTrendModel.js";

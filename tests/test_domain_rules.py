@@ -8,7 +8,6 @@ between the per-record and the two vectorized evaluation paths.
 import json
 
 import pandas as pd
-import pytest
 
 from wiz_dashboard.data.transform import nodes_to_dataframe
 from wiz_dashboard.domain import domain_rules as dr

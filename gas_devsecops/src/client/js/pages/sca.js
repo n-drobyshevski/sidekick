@@ -26,7 +26,7 @@
 // a column of dashes that would let a reader think the tenant is missing the data.
 
 import { bootstrapCached, listJoin, listSplit, navigate, swrCall } from "../../../../../gas_shared/store.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import { PROVENANCE_LABEL, populationLine, provenance } from "./registerModel.js";
 import { findingRowLabel, openFindingSheet } from "./findingSheet.js";
 import {

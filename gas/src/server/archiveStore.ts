@@ -410,12 +410,6 @@ export function trashNamed(folder: Subfolder, name: string): void {
   while (files.hasNext()) files.next().setTrashed(true);
 }
 
-/** Drop every durable read-model file. A reset bumps DATA_VERSION so they are already
- *  unreachable, but reset should mean reset rather than "unreachable and still on disk". */
-export function trashReadModels(): void {
-  for (const name of listNames("readmodels")) trashNamed("readmodels", name);
-}
-
 export function trashLedgerSnapshot(): void {
   const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
   while (files.hasNext()) files.next().setTrashed(true);

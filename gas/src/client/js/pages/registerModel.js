@@ -186,9 +186,6 @@ export function fixLabel(v) {
 export const REGISTER_STATUSES = ["open", "resolved", "all"];
 export const REGISTER_FIX_MODES = ["all", "fixable", "awaiting"];
 
-/** The largest page the shared pager can ask for — `REGISTER_ROWS_PAGE_SIZE_CAP`. */
-export const REGISTER_PAGE_SIZE_CAP = 250;
-
 /**
  * The register's filter state, read out of the URL hash and NORMALIZED.
  *
