@@ -105,3 +105,57 @@ scale, the whisper-or-lift elevation rule, and the motion durations.
 `#ffcb13` is literally `gas_ai`'s `--rank-2-solid`. Separate apps, so there is no collision
 today. If this register ever grows a maturity or posture ramp, the brand colour will equal
 tier 2 of 4 — and at that point the **ramp moves, not the brand**.
+
+## Measuring a page, and what the unit-chart round moved
+
+`npm run density` runs this app's own walker (`dev/density.mjs --root . --port 8787`) over its
+eleven routes and prints, per route: words, prose blocks and their word count, bare numeric
+tokens, table cells, pictures by kind, visible definition triggers, and horizontal overflow at
+1280/640/360px. `--diff before.json after.json` compares two runs. This register owns the
+walker; until the unit-chart round it was the only one of the three with no `density` script of
+its own, which is a gap worth not reintroducing.
+
+**Unit-chart round (2026-09-15), at 1280px, seeded.** Each cell reads
+`words / proseBlocks / proseWords / numbers / tableCells / visuals / tips`.
+
+| route | before | after |
+|---|---|---|
+| executive | 293 / 2 / 33 / 80 / 12 / 4 / 11 | **unchanged — and that is the pass condition** |
+| mttr | 328 / 5 / 91 / 138 / 75 / 29 / 22 | unchanged |
+| program | 251 / 2 / 38 / 57 / 29 / 9 / 17 | unchanged |
+| sca | 274 / 1 / 27 / 337 / 388 / 13 / 19 | unchanged |
+| sast | 254 / 0 / 0 / 284 / 345 / 11 / 16 | unchanged |
+| secrets | 429 / 3 / 83 / 353 / 397 / 19 / 42 | unchanged |
+| repos | 210 / 3 / 105 / **211** / 178 / **36** / 20 | **243** / 3 / 105 / **221** / 178 / **37** / 20 |
+| history | 230 / 0 / 0 / 159 / 81 / 7 / 6 | unchanged |
+| data | 119 / 1 / 23 / 71 / 54 / 0 / 6 | unchanged |
+| help | 2354 / 81 / 1962 / 20 / 0 / 0 / 0 | unchanged |
+| settings | 284 / 6 / 188 / 39 / 0 / 0 / 2 | unchanged |
+
+**`executive` moving on NOT ONE metric is the finding this round wanted.** The open-backlog
+isotype left this page for `gas_shared/ui/unitChart.js`, and a promotion that moves a pixel is a
+promotion that changed a shipped picture. The walker's `isotype` bucket for this route reads 4
+before and 4 after. Everywhere else in this repo a route that moves on no metric is a finding
+under CLAUDE.md's rule; here it is the assertion, and that inversion is why it is written down
+rather than left to a reader to infer from a table of zeros.
+
+**`repos` gained 33 words, 10 numbers and one picture, and the words are the honest part.** The
+cold-zone census (`coldCensusModel`, `renderColdCensus`) draws the five verdicts as one
+part-to-whole with `unitKeyRow` beneath it, and that key row is new SURFACE information rather
+than a restatement: `warm`, `clear`, `watching` and `unobserved` counts were only reachable in
+tables further down the page, while the four figure cards above speak for cold repositories and
+cold backlog against three different denominators. The key row is also what lets the lattice owe
+no `chartTable` disclosure — see `gas_shared/README.md` on why that argument is stronger here
+than for a canvas.
+
+**Two of the five verdicts are hatched, and that is the section's own claim in picture form.**
+`watching` is a repository with open findings whose idle time could not be measured at all;
+`unobserved` is one the scanner has lost sight of. The section spends most of its prose
+insisting neither is warm — `--hatch` means "this part is not a measurement" and says it where
+the reader is already looking. `clear` is a ring rather than a fill: measured, and fine.
+
+**The six `denomNote` paragraphs on this page stay.** They were the obvious prose to remove and
+they are not restatements — `coldModeCaption` says which line drew the zone, `boundOnlySentence`
+says idle time was never measured and the figure is a lower bound, and the repository-list note
+says what the list excludes. Those are honesty statements, and this register's own rule puts an
+honesty statement on the surface and only an explanation one level down.

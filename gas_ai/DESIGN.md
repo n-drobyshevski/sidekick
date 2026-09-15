@@ -707,3 +707,37 @@ evidence pass runs on the dry run). The 90-load screenshot sweep at `eeab75f` (1
 including five Settings tabs, at 1280/640/360, seeded and unsynced) found 0 console errors, 0
 overflow and 0 visible alerts — the wave close's own sweep had recorded one transient console
 error, a dev-server rebuild collision on a single load, that did not reproduce here.
+
+### Unit-chart round (2026-09-15)
+
+A second before/after against the same command, same seed, same `--experimental` flag. Only one
+route moved, and only on pictures:
+
+| route | before | after |
+|---|---|---|
+| scans | 462 / 7 / 190 / 138 / 126 / **10** / 16 | 462 / 7 / 190 / 138 / 126 / **11** / 16 |
+
+Every other route is byte-identical on all ten metrics, and no route overflows at 1280, 640 or
+360px (`settings` reads 361px before and after — a pre-existing 1px, untouched here).
+
+**What changed is `coverageBar`.** It was a flex-grow proportional bar over a dozen scan areas,
+`aria-hidden`, with `coverageKeys` carrying the figures; it is `unitGrid` in `cells: "exact"`
+mode now — one cell per area, no rounding to explain, and a reader counts "three reporting, two
+partial, seven not scanned" instead of judging three widths. The keys are untouched and are
+still the text carrier, so the wrapper stays `aria-hidden`.
+
+**Nothing about the vocabulary was invented.** `COVERAGE[state].pill` is already `ok` / `warn` /
+`neutral`, which is the tone set `unitChartModel` accepts unchanged, and the keys' own glyphs
+(● ◐ ○) are already the solid / partial / ring progression the `fill` channel draws. `.cov-bar`
+and `.cov-bar-seg` leave `styles/scans.css` with it.
+
+**The picture count moved by exactly one, which is the whole story.** `.cov-bar` was never in
+the walker's `NAMED_VISUAL_CLASSES`, so the page has always had a picture the instrument could
+not see; `.isotype` is in that list, so the swap is one bar out and one counted lattice in. A
+route whose `visuals` jumped by more than one here would have meant the module drew something
+nobody asked for.
+
+**`pages/scans.js`'s `kindSummaryText` was examined and left alone.** It reads like a sentence
+restating the table under it, and it is — but it is already passed as a `sectionLabel(..., {
+lines })`, which is a tip. It is one level down, which is where this register's ladder already
+puts an explanation, and it costs the surface nothing.

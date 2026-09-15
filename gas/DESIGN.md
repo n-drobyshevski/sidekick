@@ -155,3 +155,60 @@ place). The
 diverge, unlike `gas_ai`'s accent-filled button. Also unchanged: the neutrals, the type scale
 and its tabular figures, the spacing ramp, the radius scale, the whisper-or-lift elevation
 rule, and the motion durations.
+
+## 9. Measuring a page, and what the unit-chart round moved
+
+`npm run density -- --port 8787 --playwright <path to a playwright package>` runs
+gas_devsecops's rendered-page walker (`../gas_devsecops/dev/density.mjs --root .`) over this
+app's own nine routes and prints, per route: words, prose blocks and their word count, bare
+numeric tokens, table cells, pictures by kind (meter, sevbar, axis-bar, isotype, quad,
+sparkline, canvas, svg), visible definition triggers, and horizontal overflow at 1280/640/360px.
+`--diff before.json after.json` compares two runs metric by metric. `README.md`'s dev section
+has the standing hazards; the one worth repeating is that two Playwright clients against one
+`dev/serve.mjs` can each be served the other's half-built bundle.
+
+**Unit-chart round (2026-09-15), at 1280px, seeded.** Each cell reads
+`words / proseBlocks / proseWords / numbers / tableCells / visuals / tips`. Both columns are one
+run's output of the same command against the same seed — derived, not typed.
+
+| route | before | after |
+|---|---|---|
+| executive | 276 / 9 / 149 / 99 / 21 / **1** / 11 | 276 / 9 / 149 / 99 / 21 / **4** / 11 |
+| mttr | 307 / 5 / 119 / 103 / 68 / 20 / 35 | unchanged |
+| program | 416 / 8 / 269 / 121 / 76 / 9 / 24 | unchanged |
+| overview | 556 / 8 / 195 / 201 / 210 / 10 / 11 | unchanged |
+| data | 458 / 7 / 283 / 65 / 46 / 0 / 3 | unchanged |
+| history | 204 / 2 / 50 / 108 / 64 / 7 / 11 | unchanged |
+| attribution | 163 / 3 / 65 / 57 / 52 / 0 / 8 | unchanged |
+| help | 2693 / 98 / 2359 / 8 / 0 / 0 / 0 | unchanged |
+| settings | 227 / 3 / 84 / 26 / 0 / 0 / 0 | unchanged |
+
+**Only `executive` moved, and only on pictures.** The movement strip's six severity rows each
+gained a `unitRow` tally at one unit for the strip; the counts and the pairs beside them are
+untouched, which is why `words` did not move and is the point rather than a shortfall — the
+marks are a second encoding of a figure already in words. Three of the six severities have open
+findings in the seed, hence +3.
+
+**This page's tally is the only picture the front door may have.** `test/executiveFixNext.test.js`
+asserts no canvas anywhere in `executive.js`; `unitRow` is DOM and CSS, so the rule stands
+unbent. That is also why the swap landed here first rather than on a page with a chart budget.
+
+**The 360px overflow is a measured near-miss, recorded because it nearly shipped.** The first
+after-run read `executive (404px)` against a pre-existing 364px on every route — a 27-mark tally
+is ~270px and cannot fit a phone. `gas_shared/styles/components.css` hides
+`.movement-row .isotype` below 640px, and it MAY be hidden: the count and the pair are still in
+words, so a narrow reader loses the comparison at a glance and no figure at all. The re-run is
+back at 364px.
+
+**Three sites examined and rejected, with reasons, so the next round does not re-litigate them:**
+
+- `pages/data.js`'s `bySeverityLine` — it feeds destructive-action confirmation copy, and that
+  section's own rule is that nothing offers a button before it can say what the button would
+  remove. A picture cannot carry that.
+- `pages/overview.js`'s tier card — `TIER_COLORS` is shared with the canvas small multiples
+  beside it, and `unitChart`'s four-tone vocabulary cannot carry a five-step ordinal scale
+  without either recolouring that chart or lying about the order.
+- `pages/overview.js`'s triage funnel — the rungs span two orders of magnitude and the existing
+  bar has a deliberate minimum-width floor for it. At the strip's own unit a small rung rounds
+  to zero tenths and `unitRow` correctly draws nothing; the module refuses a `minMark` option
+  for exactly this reason. The prose under each rung is the thing to move, onto the label's tip.

@@ -1685,6 +1685,16 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
 /* The tally's own right margin is for a table cell, where it sits before a figure with no
    gap of its own; this row is a flex box that already spaces its children. */
 .movement-row .isotype { margin-right: 0; }
+
+/* THE TALLY IS THE FIRST THING TO GO AT PHONE WIDTH, and it may go because it is a SECOND
+   encoding: the count and the pair are still in words beside it, so a reader loses the
+   comparison at a glance and no figure at all. It is not allowed to wrap instead — a row
+   of 27 marks is ~270px and cannot fit 360px, and the shipped measurement of this page
+   went from 364px to 404px of horizontal overflow the moment it was added without this
+   rule. Overflow on a register is a bug whatever it is carrying. */
+@media (max-width: 640px) {
+  .movement-row .isotype { display: none; }
+}
 .movement-block { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
 
 /* `.chart-row` (tables.css) is `repeat(auto-fit, minmax(420px, 1fr))` — right for a page's two
