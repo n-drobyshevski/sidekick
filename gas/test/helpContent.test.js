@@ -33,6 +33,12 @@ const EXPECTED_IDS = [
   // of; "Remediation capacity" is the one figure on Program that is a COMPARISON (close rate
   // against arrival rate) rather than a count, which is exactly the thing a reader gets wrong.
   "sla-band", "capacity",
+  // `closed-per-month` is the figure that says how much work that comparison is ABOUT: "one
+  // in ten a month" is four findings on a small register and four hundred on a large one, and
+  // the rate alone cannot tell them apart. Its own entry rather than a third line on
+  // `capacity`, because the tip card renders only the first two — folding it in would have
+  // pushed the verdict's own definition off the surface that defines the verdict.
+  "closed-per-month",
   // FIVE MORE, ADDITIVE, WITH THE EXECUTIVE REWRITE. Each is a word that page now uses in a
   // way a reader could get wrong, and each is reached from a real trigger on it: the hero
   // label (`half-life`), the "Still open" stat row (`censoring`), the "Fix next" heading —

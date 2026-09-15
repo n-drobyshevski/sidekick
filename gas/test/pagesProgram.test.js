@@ -21,8 +21,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  boundedRateView, confusionSeverityRows, confusionView, programHeroView,
+  boundedRateView, closedPerMonthText, confusionSeverityRows, confusionView, programHeroView,
 } from "../src/client/js/pages/program.js";
+import { absentText, num } from "../../gas_shared/ui/figures.js";
 
 function matrixFixture(over) {
   return {
@@ -247,5 +248,44 @@ describe("programHeroView", () => {
     expect(view.coverage.measured).toBe(false);
     expect(view.efficiency.measured).toBe(false);
     expect(view.beatsRandom).toBeNull();
+  });
+});
+
+// ------------------------------------------------------- the capacity headline's other half
+
+describe("closedPerMonthText", () => {
+  it("prints the em dash for a figure that was never measured", () => {
+    // Every shape `num`'s allowlist refuses, not just null by identity: a payload written
+    // before this field existed carries `undefined`, and a hand-edited sheet cell carries "".
+    for (const v of [null, undefined, "", [], false]) {
+      expect(closedPerMonthText(v)).toBe(absentText);
+    }
+  });
+
+  it("prints a measured zero as a zero, because nothing closing IS a measurement", () => {
+    expect(closedPerMonthText(0)).toBe("0");
+  });
+
+  it("keeps the tenth below ten, so a barely-moving programme is not drawn as a stopped one", () => {
+    // THE DEFECT THE GRAIN EXISTS FOR. A register closing two findings every five months has
+    // a mean of 0.4; rounded flat that reads "0 closed per month" — "we close nothing" —
+    // directly above a table listing the closures. The two claims cannot both be on screen.
+    expect(closedPerMonthText(0.4)).toBe("0.4");
+    expect(closedPerMonthText(9.4)).toBe("9.4");
+  });
+
+  it("drops to whole findings at ten, where a tenth is false precision", () => {
+    // The boundary is stated rather than implied: 9.96 rounds to 10 at the tenth grain and
+    // crosses no branch, so both sides of the shift are pinned by value.
+    expect(closedPerMonthText(9.96)).toBe("10");
+    expect(closedPerMonthText(12.4)).toBe("12");
+    expect(closedPerMonthText(1234.6)).toBe("1,235");
+  });
+
+  // PERTURBATION: the obvious rewrite, shown failing rather than asserted from a comment.
+  it("the flat-rounding rewrite this refuses would report a working programme as stopped", () => {
+    const flat = (v) => String(Math.round(num(v)));
+    expect(flat(0.4)).toBe("0");
+    expect(closedPerMonthText(0.4)).not.toBe(flat(0.4));
   });
 });

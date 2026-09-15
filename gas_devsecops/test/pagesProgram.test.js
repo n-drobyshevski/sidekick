@@ -40,6 +40,7 @@ import {
   boundedRateView, capacityView, confusionView, coverageEfficiencyView, sensitivityView,
   signalBreakdownView,
 } from "../src/client/js/pages/program.js";
+import { absentText } from "../../gas_shared/ui/figures.js";
 
 const SRC = {
   executive: readFileSync(new URL("../src/client/js/pages/executive.js", import.meta.url), "utf8"),
@@ -212,6 +213,9 @@ function capacityFixture() {
     ],
     mmcrMean: 30,
     oneInN: 3.33,
+    // The one fully observed month (2025-12) closed 12, so the count headline and the rate
+    // headline describe the same single month — which is the invariant the page relies on.
+    closedPerMonthMean: 12,
     netTotal: -54,
     verdict: "gaining",
     monthsCounted: 1,
@@ -566,6 +570,30 @@ describe("monthly capacity", () => {
   it("carries each month's verdict as words, not as a colour", () => {
     expect(month("2026-01").verdictLabel).toBe("Falling behind");
     expect(month("2025-12").verdictLabel).toBe("Gaining");
+  });
+
+  it("publishes the close rate as a count too, over the same months", () => {
+    // "About one in 3.33 a month" is 12 findings on this register and would be 1,200 on a
+    // bigger one. The count is what a reader staffs against, and it is only readable beside
+    // the rate because both are averaged over `monthsCounted` — the same single month here.
+    expect(view.closedPerMonthMean).toBe(12);
+    expect(view.closedPerMonthText).toBe("12");
+    expect(view.monthsCounted).toBe(1);
+  });
+
+  it("keeps the tenth below ten, so a barely-moving register is not drawn as a stopped one", () => {
+    const slow = capacityView({ ...capacityFixture(), closedPerMonthMean: 0.4 });
+    expect(slow.closedPerMonthText).toBe("0.4");
+    const fast = capacityView({ ...capacityFixture(), closedPerMonthMean: 1234.56 });
+    expect(fast.closedPerMonthText).toBe("1,235");
+  });
+
+  it("refuses the count when no month was fully observed, rather than printing a zero", () => {
+    const unwatched = capacityView({
+      ...capacityFixture(), closedPerMonthMean: null, mmcrMean: null, monthsCounted: 0,
+    });
+    expect(unwatched.closedPerMonthMean).toBeNull();
+    expect(unwatched.closedPerMonthText).toBe(absentText);
   });
 });
 

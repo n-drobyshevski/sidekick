@@ -257,6 +257,20 @@ const ENTRIES = [
       "Gaining ground, keeping up and falling behind are the three readings of that comparison, with a dead band so a flat month is not a verdict.",
     ],
   },
+  {
+    // pages/program.js's "Closed per month" hero mini.
+    //
+    // ITS OWN ENTRY RATHER THAN A THIRD LINE ON `capacity` ABOVE, and the tip card is why: it
+    // renders the first TWO lines, so folding this in would have pushed the verdict's own
+    // definition off the surface the verdict is defined on. The same reason gas_devsecops
+    // keeps `mmcr` apart from `capacity`.
+    id: "closed-per-month",
+    term: "Findings closed per month",
+    lines: [
+      "The mean number of findings closed in a calendar month, averaged over exactly the months the close rate is averaged over.",
+      "The close rate's absolute half: one in ten a month is four findings on a small register and four hundred on a large one, and the rate alone cannot tell them apart.",
+    ],
+  },
   // ---------------------------------------------------------------- the Executive front door
   //
   // FIVE ENTRIES PORTED FROM gas_devsecops, WITH ONE WORD CHANGED THROUGHOUT. That register

@@ -188,6 +188,18 @@ const ENTRIES = [
       "Not closings over new arrivals, and not closings over the whole register: the denominator is that month's starting backlog.",
     ],
   },
+  {
+    // ITS OWN ENTRY, NEXT TO `mmcr` AND FOR THE SAME REASON THAT ONE IS NOT PART OF
+    // `capacity`: the tip card renders an entry's first two lines, so a figure folded in as a
+    // third line is defined nowhere a reader can reach. This one is also a different KIND of
+    // figure from the verdict `capacity` defines — a count, not a comparison.
+    id: "closed-per-month",
+    term: "Findings closed per month",
+    lines: [
+      "The mean number of findings closed in a calendar month, averaged over exactly the months the closure rate is averaged over.",
+      "The rate's absolute half: one in ten a month is four findings on a small register and four hundred on a large one, and the rate alone cannot tell them apart.",
+    ],
+  },
   // THE THREE EXPLOITATION SIGNALS, one entry each. They used to share the "sca" entry — the
   // definition of the REGISTER — so hovering "CISA KEV", "Known exploit", "EPSS score" or the
   // breakdown tables' "On KEV" column all answered "Software composition analysis: a known CVE
