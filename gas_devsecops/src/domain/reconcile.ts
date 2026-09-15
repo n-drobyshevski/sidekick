@@ -1,6 +1,6 @@
 // Pure cross-scan reconciliation for the three-scope code register.
 //
-// A TS -> TS port of gas/src/domain/reconcile.ts, with brick/devsecops/ledger.py::reconcile
+// A TS -> TS port of gas/src/domain/reconcile.ts, with brick/ledger.py::reconcile
 // as the second oracle (brick pins the same test/fixtures/reconcile.json in
 // brick/tests/test_ledger.py::test_matches_the_gas_reconcile_fixture). Where the two
 // disagree the divergence is called out in a comment rather than papered over; there are
@@ -430,11 +430,11 @@ function attributes(rec: Rec, scope: Scope): Attributes {
     const parts = splitRepoBranch(str(rec, "resource.name"), str(rec, "resource.type"));
     return {
       ...empty,
-      // brick/devsecops/metrics.py:365 puts the weakness TITLE here ("SQL Injection"), not
+      // brick/metrics.py:365 puts the weakness TITLE here ("SQL Injection"), not
       // an identifier — it is what every panel groups on to answer "what kind of thing is
       // this". The identifier-shaped value lives in `cwe`.
       identifier: (clean(rec["name"]) as string | null) ?? null,
-      // DIVERGENCE (brick): brick/devsecops/metrics.py:362 aliases `filePath` as `component`
+      // DIVERGENCE (brick): brick/metrics.py:362 aliases `filePath` as `component`
       // for SAST. This register has a dedicated `file_path` column, so writing the path into
       // both would store the same string twice under two names; `component` stays null for
       // sast and secrets per the D2 brief. Reported, not papered over.
@@ -483,7 +483,7 @@ function attributes(rec: Rec, scope: Scope): Attributes {
   return {
     ...empty,
     identifier: (clean(rec["name"]) as string | null) ?? null,
-    // The package, per brick/devsecops/metrics.py:269 — `detailedName` is "braces" on the
+    // The package, per brick/metrics.py:269 — `detailedName` is "braces" on the
     // live probe sample where `name` is "CVE-2024-4068".
     component: str(rec, "detailedName"),
     repo_id: str(rec, "vulnerableAsset.id"),
@@ -872,7 +872,7 @@ export function reconcile(
     seen.add(key);
 
     // SAST's severity falls back to `originalSeverity`, the scanner's own call before any Wiz
-    // policy adjusted it (brick/devsecops/metrics.py:365-368). `severity` is the primary
+    // policy adjusted it (brick/metrics.py:365-368). `severity` is the primary
     // because the register should read the severity the programme is actually managing to;
     // Q_SAST selects both for exactly this, and the live sample carries
     // `severity: "HIGH", originalSeverity: null`.
@@ -888,7 +888,7 @@ export function reconcile(
     // reason SAST gets a genuine MTTR rather than an age metric. Falling through to the scan
     // ts below is what dates a finding the API gave no birth date for.
     //
-    // DIVERGENCE (brick): brick/devsecops/metrics.py:371 hard-codes `null_ts` for SAST's
+    // DIVERGENCE (brick): brick/metrics.py:371 hard-codes `null_ts` for SAST's
     // first_detected_at, so its SAST rows are dated from OBSERVATION alone — a leftover from
     // when its SAST query selected no timestamps (the claim at brick's ingest.py:206 that
     // silver_sast already reads the column is not true of the code). The live probe
@@ -969,7 +969,7 @@ export function reconcile(
     // Latest observation wins for the display attributes...
     row.severity = sev;
     row.identifier = attrs.identifier;
-    // DIVERGENCE (brick): brick/devsecops/ledger.py:499 merges component with `_keep`, i.e.
+    // DIVERGENCE (brick): brick/ledger.py:499 merges component with `_keep`, i.e.
     // never-erased. The D2 brief puts it in the latest-wins group beside identifier, which is
     // also what gas/ does with `cve` — so a scan that stops reporting a package clears the
     // column rather than leaving a stale one. Following the brief; reported, not papered over.

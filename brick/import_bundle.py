@@ -1,8 +1,9 @@
 """Seed the ledger from a GAS migration bundle -- the one-shot import that carries an
 existing deployment's history into Delta.
 
-Ported from ``brick/import_bundle.py`` when this fork absorbed the ``os`` scope (S2): the
-problem it exists for is unchanged -- ``gas/`` has been reconciling a daily OS-patching scan
+Ported from the OS register's own copy -- ``git show ef22b05^:brick/import_bundle.py``, that
+directory having been retired at ``ef22b05`` -- when this tree absorbed the ``os`` scope (S2).
+The problem it exists for is unchanged: ``gas/`` has been reconciling a daily OS-patching scan
 for months and holds the only record of when each finding was first seen and when it stopped
 being returned, and starting this register's ``os`` scope from an empty ledger does not merely
 lack a chart, it is *wrong*. Every ``first_seen`` collapses to today, so Kaplan-Meier reads near
@@ -35,9 +36,9 @@ next ordinary run from the ledger this seeds.
 ``gas/src/domain/reconcile.ts``'s list, so 23 of GAS's 24 columns land 1:1. The three
 differences are stated in config.py and handled here: ``scope`` is stamped from the run,
 ``component`` has no GAS source (see ``h:`` below), and ``tags_json`` is dropped because
-brick's ingest selects no asset tags and nothing downstream would read it. This fork's ledger
-carries three more columns than GAS's -- ``cwe``, ``language``, ``ai_verdict`` -- and GAS has no
-source for any of them either, being an OS-vulnerability register with no static-analysis
+brick's ingest selects no asset tags and nothing downstream would read it. This register's
+ledger carries three more columns than GAS's -- ``cwe``, ``language``, ``ai_verdict`` -- and GAS
+has no source for any of them either, being an OS-vulnerability register with no static-analysis
 inputs: every imported row gets all three as NULL, the same "never captured" state
 ``has_kev``/``has_exploit``/``epss`` already use for a signal nobody measured.
 
@@ -85,7 +86,7 @@ import run_pipeline
 from config import STATUS_OPEN, STATUS_RESOLVED
 
 # See config.PIPELINE_VERSION: every module in the folder must report the same version.
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 # The interchange contract, shared with gas/src/domain/importMerge.ts and
 # wiz_dashboard/data/migrate.py. Bumping either of these is a coordinated change across
@@ -766,9 +767,9 @@ def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
             f"with a Wiz id are unaffected."
         )
     print(
-        f"[import] next: run the pipeline with the SAME --severities as GAS was scanning, and "
-        f"--project_id matching WIZ_PROJECT_ID_V2. A first run that resolves most of the "
-        f"register means the populations disagree -- re-import rather than accept it."
+        "[import] next: run the pipeline with the SAME --severities as GAS was scanning, and "
+        "--project_id matching WIZ_PROJECT_ID_V2. A first run that resolves most of the "
+        "register means the populations disagree -- re-import rather than accept it."
     )
 
 

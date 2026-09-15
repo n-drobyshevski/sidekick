@@ -41,7 +41,7 @@ describe("LEDGER_COLUMNS — set-equal to TAB_HEADERS[TABS.ledger]", () => {
 });
 
 describe("CWE_TOP_25_2024", () => {
-  it("carries exactly 25 entries — MITRE's 2024 Top 25 list, copied from brick/devsecops/config.py", () => {
+  it("carries exactly 25 entries — MITRE's 2024 Top 25 list, copied from brick/config.py", () => {
     expect(CWE_TOP_25_2024.length).toBe(25);
   });
 

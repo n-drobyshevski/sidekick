@@ -6,10 +6,10 @@
 // the probe stops being evidence about the battery. gas_ai keeps the same rule for the same
 // reason.
 //
-// PROVENANCE. The two documents below are transcribed from brick/devsecops/ingest.py, which
-// is tenant-verified: brick/devsecops/sast_response.json is a live capture of the SAST one
-// (40 nodes, totalCount 11,406) and sca_response.json captures the grouped SCA shape. The
-// selections and the filter spellings are theirs, not guesses.
+// PROVENANCE. The two documents below are transcribed from brick/ingest.py, which
+// is tenant-verified: brick/fixtures/sast_response.json is a live capture of the SAST one
+// (40 nodes, totalCount 11,406) and brick/fixtures/sca_response.json captures the grouped SCA
+// shape. The selections and the filter spellings are theirs, not guesses.
 //
 // INLINE LITERALS DO NOT SURVIVE THIS GATEWAY. Filters go through $filterBy as variables,
 // never interpolated into the document. gas_ai learned that twice.
@@ -35,7 +35,7 @@ export const MAX_PAGES = 1000;
  *
  * NOTE WHAT IS NOT HERE: any timestamp. Not firstDetectedAt, not resolvedAt, not fixDate.
  * That is not an omission — the documented selection set offers none, which is why this
- * register dates SAST from observation and why brick/devsecops refuses to fetch resolved
+ * register dates SAST from observation and why brick/ refuses to fetch resolved
  * SAST rows at all (they would be born and closed in the same instant, giving a real
  * mttr_days == 0.0 that drags the median to the floor).
  *
@@ -423,7 +423,7 @@ function shapeBase(scope: Scope, base: Record<string, unknown>): Record<string, 
  * resolution by DISAPPEARANCE when the API will not: `first_seen` prefers the API's
  * `createdAt` over the observation date, `resolved_at` becomes the scan that noticed the
  * absence, and `mttr_days` is the subtraction of the two with no guard on how the
- * resolution was learned (brick/devsecops/ledger.py, pinned by
+ * resolution was learned (brick/ledger.py, pinned by
  * test_mttr_is_measured_from_the_ledgers_own_dates). So SAST gets a genuine MTTR from
  * `createdAt` + disappearance — not merely an age metric — once two scans exist.
  *
@@ -523,8 +523,11 @@ export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<stri
 
   if (opts.projectId) {
     // The two filter types spell the project restriction differently, and the tenant's own
-    // exported reference scripts are the evidence for each: sast_request.py passes a bare
-    // `projectId: [...]`, sca_request.py passes `projectIdV2: {equals: [...]}`.
+    // Wiz console exports are the evidence for each: the SAST export passed a bare
+    // `projectId: [...]`, the SCA export passed `projectIdV2: {equals: [...]}`. Those exports
+    // are deleted from brick/; brick/fixtures/sast_response.json and
+    // brick/fixtures/sca_response.json are the captures they produced, and `git show
+    // ef22b05^:brick/devsecops/sca_request.py` still holds the requests themselves.
     // SAST and secrets spell it `projectId`, SCA spells it `projectIdV2`. The SHAPE each
     // wants comes from the same table every other list-valued key goes through, rather than
     // being written inline here — an inline literal is exactly how codeToCloudPipelineStage

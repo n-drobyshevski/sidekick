@@ -38,7 +38,7 @@ export const TABS = {
 
 export const TAB_HEADERS: Record<string, string[]> = {
   // Three update disciplines coexist here and they are NOT interchangeable — the same
-  // split brick/devsecops arrived at, and the reason its ledger tests read the way they do:
+  // split brick/ arrived at, and the reason its ledger tests read the way they do:
   //   latest-wins            severity, status, the asset columns
   //   sticky-first-wins      fix_date / fix_observed_at, reset only by a reopen
   //   monotone, never reset  has_kev / has_exploit (null -> false -> true), epss keeps the peak

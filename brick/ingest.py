@@ -4,10 +4,16 @@ Plain ``requests`` rather than ``wiz_sdk``: the SDK is not on a stock Databricks
 all this needs is an OAuth token and a paginated POST.
 
 **Two sources, one pager.** ``sca`` reads ``vulnerabilityFindings`` and ``sast`` reads
-``sastFindings``; ``config.SOURCES`` says which, and ``query_for`` picks the document. The two
-reference scripts beside this file -- ``sca_request.py`` and ``sast_request.py`` -- are the Wiz
-console's own exports and are the only evidence available that a given selection validates, so
-the queries below are trimmed from them rather than written from the schema.
+``sastFindings``; ``config.SOURCES`` says which, and ``query_for`` picks the document. The
+queries below are *trims* of the Wiz console's own "Export to Python" output rather than
+documents written from the schema -- the console exports only a selection it has just run, so
+that export was the only evidence available that a given selection validates against the tenant.
+The two export scripts have since been deleted from this directory; the committed captures they
+produced, ``brick/fixtures/sca_response.json`` and ``brick/fixtures/sast_response.json``, are the
+surviving evidence, and a response is the stronger of the two because it proves the request
+actually ran. The requests themselves are still readable at ``git show
+ef22b05^:brick/devsecops/sca_request.py`` (and ``...sast_request.py``) -- that revision predates
+both the move to ``brick/`` and the deletion on this branch.
 
 Nothing here touches Spark -- ``fetch_findings`` yields raw node dicts and the caller decides
 what to do with them. That keeps the network half testable on its own.
@@ -37,7 +43,7 @@ from config import (
 
 # Wiz's shared auth endpoint. Tenants on a dedicated region override it via a job parameter.
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 DEFAULT_AUTH_URL = "https://auth.app.wiz.io/oauth/token"
 AUDIENCE = "wiz-api"
@@ -60,7 +66,7 @@ RETRY_STATUS = {429, 500, 502, 503, 504}
 # The member list and the per-member field availability are both taken from a live query known
 # to work. Two members genuinely lack some of the fields; asking anyway would 400 again.
 #
-# In this fork only two of them are ever asked for -- see ``config.SCOPE_ASSET_MEMBERS``. The
+# In this register only two of them are ever asked for -- see ``config.SCOPE_ASSET_MEMBERS``. The
 # rest are kept because the list is a record of what the union HAS, and narrowing it by deletion
 # would lose the information that makes the narrowing safe to reason about.
 _ASSET_FIELDS = (
@@ -120,7 +126,9 @@ def _asset_selection(indent: str = " " * 6, members: Sequence[str] = _ASSET_MEMB
     return f"{indent}vulnerableAsset {{\n" + "".join(blocks) + f"{indent}}}"
 
 
-# Trimmed from ``sca_request.py`` -- only the fields the metrics actually consume.
+# Trimmed from the Wiz console's own SCA export -- only the fields the metrics actually consume.
+# That export script is deleted; ``brick/fixtures/sca_response.json`` is the capture it produced
+# (this module's docstring carries the git pointer to the request itself).
 #
 # The three exploit-intelligence fields are load-bearing and easy to overlook: hasCisaKevExploit,
 # hasExploit and epssProbability are what make coverage and efficiency computable at all. Drop
@@ -190,10 +198,12 @@ def build_query(with_assets: bool = FETCH_ASSET_FIELDS, *, scope: str = DEFAULT_
 QUERY = build_query()
 
 
-# The static-analysis query. Trimmed from ``sast_request.py`` to the fields the
-# metrics consume, and otherwise left exactly as that reference script has it -- which matters
-# more here than it does for the query above, because this one is the only evidence available
-# that a given selection actually validates against the tenant.
+# The static-analysis query. Trimmed from the Wiz console's own SAST export to the fields the
+# metrics consume, and otherwise left exactly as that export had it -- which matters more here
+# than it does for the query above, because the capture that export produced,
+# ``brick/fixtures/sast_response.json``, is the only evidence available that a given selection
+# actually validates against the tenant. The export script itself is deleted; this module's
+# docstring carries the git pointer to it.
 #
 # **A SAST finding has a birth date and no death date, and that is enough.** This comment used
 # to read "there are no timestamps in it, and that is not an oversight", on the reasoning that
@@ -441,7 +451,7 @@ def _shape_base(scope: str, filter_by: Dict[str, Any]) -> Dict[str, Any]:
 
     ``config.SCOPES`` is written in one convention -- plain lists -- and the shape table decides
     what goes on the wire. Without this pass a literal in ``SCOPES`` bypasses the table
-    completely, which is exactly how the sibling register shipped `codeToCloudPipelineStage`
+    completely, which is exactly how `gas_devsecops/` shipped `codeToCloudPipelineStage`
     as a bare list while its table said it was an object: adding the key to the table changed
     nothing, because the value never went through the shaping function. **A shape table that
     covers only part of the filter is worse than none**, because it reads as though it covers
@@ -488,9 +498,12 @@ def build_filter(
     if api_severities and source.severity_filter:
         filter_by["severity"] = _list_filter(scope, "severity", api_severities)
     if project_id:
-        # The two filter types spell the project restriction differently, and the reference
-        # scripts are the evidence for each: sca_request.py passes
-        # `projectIdV2: {equals: [...]}` and sast_request.py passes a bare `projectId: [...]`.
+        # The two filter types spell the project restriction differently, and the tenant's own
+        # Wiz console exports are the evidence for each: the SCA export passed
+        # `projectIdV2: {equals: [...]}` and the SAST export passed a bare `projectId: [...]`.
+        # Those exports are deleted; brick/fixtures/sca_response.json and
+        # brick/fixtures/sast_response.json are the captures they produced, and `git show
+        # ef22b05^:brick/devsecops/sca_request.py` still holds the requests themselves.
         # The NAME is chosen here; the SHAPE comes from the same table every other list-valued
         # key goes through, because an inline literal is how a key bypasses the table.
         key = "projectId" if source.kind == "sast" else "projectIdV2"
@@ -586,7 +599,7 @@ def extract_nodes(payload: Any) -> List[Dict[str, Any]]:
     """Pull finding nodes out of a saved GraphQL response envelope.
 
     Mirrors ``wiz_dashboard.data.transform.extract_nodes`` so the committed captures
-    (``sca_response.json`` / ``sast_response.json``) can be replayed through this pipeline
+    (``fixtures/sca_response.json`` / ``fixtures/sast_response.json``) can be replayed through this pipeline
     without a network call -- which is how the end-to-end tests run.
 
     The fallback to "any connection under ``data``" is what makes a second source free: it

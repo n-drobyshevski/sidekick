@@ -3,17 +3,19 @@
 ``databricks bundle validate`` is the real gate and it cannot run in this repo: it resolves a
 workspace and the current user, and there is neither. So this module checks the half that needs
 no workspace -- that every path the bundle names exists, that every scope it passes is a scope
-the fork it points at actually has, and that the two guards which make a scheduled run safe are
+the tree it points at actually has, and that the two guards which make a scheduled run safe are
 present on every scan task.
 
-Ported from ``brick/devsecops/tests/test_bundle.py`` when the fork that used to live beside
-this one was retired (S2): every job in ``brick/databricks.yml`` points at ``brick/run_pipeline.py``
-now that there is only one tree, so ``FORK_OF`` -- which used to map two entry points to two
-forks' ``config.py`` -- collapses to the one entry it was already heading toward. The scope
-check this module exists for stays live even with nothing left to mix up with: a typo could
-still point a job's ``python_file`` at some other path, and
-``test_every_scope_belongs_to_the_fork_the_job_points_at`` would refuse it, because ``FORK_OF``
-only recognises the one path the bundle is supposed to use.
+Ported from the OS register's own ``brick/tests/test_bundle.py`` -- ``git show
+ef22b05^:brick/tests/test_bundle.py`` -- when the fork that lived beside it absorbed the ``os``
+scope (S2); this file is that fork's copy, moved up from ``brick/devsecops/tests/`` when that
+directory was retired at ``ef22b05``. Every job in ``brick/databricks.yml`` points at
+``brick/run_pipeline.py`` now that there is only one tree, so ``CONFIG_FOR`` -- which used to
+map two entry points to two forks' ``config.py`` -- collapses to the one entry it was already
+heading toward. The scope check this module exists for stays live even with nothing left to mix
+up with: a typo could still point a job's ``python_file`` at some other path, and
+``test_every_scope_belongs_to_the_tree_the_job_points_at`` would refuse it, because
+``CONFIG_FOR`` only recognises the one path the bundle is supposed to use.
 
 Step 3 collapsed the three single-task scan jobs into one ``wiz_scan`` job with three chained
 tasks (``scan_os -> scan_sca -> scan_sast``), because every scope now writes the same three
@@ -43,7 +45,7 @@ BUNDLE = BRICK_DIR / "databricks.yml"
 
 #: Which tree each entry point belongs to, and therefore whose ``SCOPES`` its ``--scope`` is
 #: checked against. One entry: every job in the bundle points at this tree's ``run_pipeline.py``.
-FORK_OF = {
+CONFIG_FOR = {
     "brick/run_pipeline.py": BRICK_DIR / "config.py",
 }
 
@@ -51,7 +53,7 @@ VAR_REF = re.compile(r"\$\{var\.([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def scopes_of(config_path: Path) -> set:
-    """The keys of that fork's ``SCOPES``, read without importing it."""
+    """The keys of that tree's ``SCOPES``, read without importing it."""
     tree = ast.parse(config_path.read_text())
     for node in ast.walk(tree):
         if isinstance(node, ast.Assign) and any(
@@ -110,7 +112,7 @@ def test_the_scan_job_has_exactly_three_tasks(bundle):
     assert task_keys == ["scan_os", "scan_sca", "scan_sast"]
 
 
-def test_every_scan_task_names_a_scope_the_fork_has(bundle):
+def test_every_scan_task_names_a_scope_the_tree_has(bundle):
     scan_job = jobs(bundle)["wiz_scan"]
     scopes = {
         task["task_key"]: flag(task["spark_python_task"]["parameters"], "scope")
@@ -118,7 +120,7 @@ def test_every_scan_task_names_a_scope_the_fork_has(bundle):
     }
     assert all(scopes.values()), f"a task names no scope: {scopes}"
     assert set(scopes.values()) == {"os", "sca", "sast"}
-    available = scopes_of(FORK_OF["brick/run_pipeline.py"])
+    available = scopes_of(CONFIG_FOR["brick/run_pipeline.py"])
     missing = set(scopes.values()) - available
     assert not missing, f"{missing} not in config.SCOPES ({sorted(available)})"
 
@@ -166,7 +168,7 @@ def test_every_python_file_exists(bundle):
             assert (REPO_ROOT / path).is_file(), f"{name}/{task['task_key']} points at a missing {path}"
 
 
-def test_every_scope_belongs_to_the_fork_the_job_points_at(bundle):
+def test_every_scope_belongs_to_the_tree_the_job_points_at(bundle):
     """The check that catches a task wired to an entry point whose config does not have the
     scope it was given -- the one-tree survivor of a check that used to catch two forks'
     identically-named entry points instead."""
@@ -175,8 +177,10 @@ def test_every_scope_belongs_to_the_fork_the_job_points_at(bundle):
             path = task["spark_python_task"]["python_file"]
             scope = flag(task["spark_python_task"]["parameters"], "scope")
             assert scope is not None, f"{name}/{task['task_key']} names no scope"
-            assert path in FORK_OF, f"{name}/{task['task_key']} runs an unknown entry point {path}"
-            available = scopes_of(FORK_OF[path])
+            assert path in CONFIG_FOR, (
+                f"{name}/{task['task_key']} runs an unknown entry point {path}"
+            )
+            available = scopes_of(CONFIG_FOR[path])
             assert scope in available, (
                 f"{name}/{task['task_key']}: {path} has no scope {scope!r}, "
                 f"only {sorted(available)}"

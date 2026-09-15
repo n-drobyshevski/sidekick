@@ -4,8 +4,8 @@ The register is one ledger, one bronze and one metrics table now, with ``scope``
 each rather than a fragment of their names. That makes every scope's rows present in every
 other scope's reads unless something filters them out -- and disappearance-resolution reads
 absence as remediation, so a missing filter is not a mislabelled input but a remediation
-programme that never happened. The sibling that learned this the other way round priced the
-mutation at 19,949 findings (CLAUDE.md, ``gas_devsecops``).
+programme that never happened. ``gas_devsecops/``, which learned this the other way round,
+priced the mutation at 19,949 findings.
 
 There are FOUR independent things holding the three registers apart, and this module perturbs
 each of them separately because they do not fail in the same way and they do not all fail
@@ -494,7 +494,8 @@ def test_one_key_two_scopes_two_rows(spark, register, monkeypatch):
 
     ``ledger.vuln_key`` prefers the Wiz finding id, so writing bronze nodes carrying the same
     ``id`` under ``os`` and under ``sca`` is what actually produces one key in two populations
-    -- the case the README describes as the same CVE reaching a host through an OS package and
+    -- the case ``brick/docs/register.md`` describes as the same CVE reaching a host through an
+    OS package and
     a service through a library dependency. The dates are deliberately different so the two
     rows can be told apart by more than their ``scope`` column.
 

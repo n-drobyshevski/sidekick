@@ -62,7 +62,7 @@ from config import (
 )
 
 # See config.PIPELINE_VERSION: every module in a deployment must come from the same upload.
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 SEVERITIES: Tuple[str, ...] = tuple(SEVERITY_ORDER)
 
@@ -263,7 +263,7 @@ def context(
     someone doing a scan.
 
     ``tables`` is the local-test route and nothing else: a local SparkSession cannot write a
-    three-level name at all (see the README's "Running it locally").
+    three-level name at all (see ``brick/docs/storage.md``, "Running it locally").
 
     ``namespace`` is the same route, plus one real notebook use: **overriding a stale widget.**
     Databricks keeps a widget's value once it exists, so a notebook that was run before
@@ -304,7 +304,7 @@ def context(
     elif tables is None:
         # `data_path` selects the storage mode for the pages exactly as it does for a run: set,
         # the register lives in a directory and there is no catalog to resolve. See
-        # `run_pipeline.resolve_data_path` and the README's PoC storage section.
+        # `run_pipeline.resolve_data_path` and `brick/docs/storage.md`, Fallback storage.
         data_path = run_pipeline.resolve_data_path(argv=argv)
         namespace = "" if data_path else (namespace or run_pipeline.resolve_namespace(argv=argv))
         tables = run_pipeline.resolve_tables(namespace, argv=argv, data_path=data_path)
@@ -1072,8 +1072,9 @@ def open_past_sla_trend(spark: SparkSession, ctx: Ctx) -> DataFrame:
     Off the per-scan findings snapshot, because the API rows of a scan are the only per-scan
     population the register keeps -- so this counts the findings the API *returned* that day,
     while the tile above it counts ledger lifecycles, which include everything that has since
-    disappeared. The two will not agree, and the gap is exactly what the README calls "the size
-    of what v1 was missing". The caption says so; do not quietly reconcile them.
+    disappeared. The two will not agree, and the gap is exactly what ``brick/docs/register.md``
+    calls "the size of what the snapshot-only version was missing". The caption says so; do
+    not quietly reconcile them.
 
     Rows with no SLA target leave both sides.
     """
@@ -1339,7 +1340,8 @@ def asset_footholds(spark: SparkSession, ctx: Ctx) -> DataFrame:
     v5's own framing, and the reason this is a headline rather than a column: "it's often said
     that just one opening is needed to successfully compromise a system". 70% of Windows
     systems and 40% of Linux systems cleared that bar in their sample. The number here is not
-    comparable to theirs -- different population, different positive class, see the README --
+    comparable to theirs -- different population, different positive class, see
+    ``brick/docs/reading-the-numbers.md`` --
     but the question is the same one.
     """
     return spark.sql(

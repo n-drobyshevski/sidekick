@@ -2,7 +2,7 @@
 // wrong key here is not an error — it is a plausible-looking number about the wrong thing.
 //
 // THE VECTORS BELOW WERE WRONG ABOUT SAST UNTIL 2026-08-27, and how they got that way is
-// worth keeping. They were produced by running brick/devsecops/ingest.py::build_filter and
+// worth keeping. They were produced by running brick/ingest.py::build_filter and
 // pinned verbatim — but brick's helper builds one shape for both scopes, and that shape is
 // only correct for SCA. So this file pinned `severity: ["CRITICAL","HIGH"]` for SAST, which
 // the live tenant refuses with HTTP 400 VALIDATION_INVALID_TYPE_VARIABLE: SASTFindingFilters
@@ -25,7 +25,7 @@ import { TABS, TAB_HEADERS } from "../src/server/sheetsDb";
 const SEV = ["CRITICAL", "HIGH"];
 const PROJECT = "1dfea0cf-834f-5522-b797-bee5aaf09251";
 
-describe("buildFilter matches brick/devsecops::build_filter", () => {
+describe("buildFilter matches brick/ingest.py::build_filter", () => {
   it("scopes SCA to code-stage findings on the default branch that have a fix", () => {
     expect(buildFilter("sca", { severities: SEV })).toEqual({
       status: ["OPEN", "RESOLVED"],

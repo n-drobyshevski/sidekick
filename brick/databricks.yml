@@ -1,11 +1,11 @@
 # Three scopes, ONE pipeline, as Databricks Jobs deployed with Databricks Asset Bundles.
 #
 # `brick/` is the deployment unit for every scope, including `os` -- the fork split that used to
-# put `os` in one directory and `sca`/`sast` in another (`brick/devsecops/`) is gone: S2 merged
-# the `os` scope's config into the surviving tree and moved that tree up to `brick/`, so every
-# job below points at `brick/run_pipeline.py`. `run_pipeline.check_deployment()` still requires
-# every runtime module to come from ONE flat folder, and the git_source below hands the
-# workspace exactly that folder, `brick/`.
+# put `os` in one directory and `sca`/`sast` in another (`brick/devsecops/`, retired at `ef22b05`)
+# is gone: S2 merged the `os` scope's config into the surviving tree and moved that tree up to
+# `brick/`, so every job below points at `brick/run_pipeline.py`.
+# `run_pipeline.check_deployment()` still requires every runtime module to come from ONE flat
+# folder, and the git_source below hands the workspace exactly that folder, `brick/`.
 #
 # ONE scan job, THREE chained tasks -- scan_os -> scan_sca -> scan_sast -- not three separate
 # jobs. Step 3 put every scope's rows into the SAME three tables (`wiz_findings_raw`,

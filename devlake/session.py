@@ -11,13 +11,13 @@ Two things a Databricks cluster does for free and a laptop has to do by hand:
 * **Only ``brick/``'s flat module directory may be on ``sys.path``.** There used to be a second
   tree here (``brick/devsecops/``, a fork defining the same module names -- ``config``,
   ``run_pipeline``, and so on) that a stray ``sys.path`` entry could resolve a bare
-  ``import config`` against instead of ``brick/``'s own copy, silently. That fork is retired
-  (S2-T4/T5): one tree, four scopes. What is still real on a flat Databricks workspace folder
-  is a STALE IMPORT -- a ``sys.modules`` entry left behind from some other directory entirely
-  (a prior test module, a notebook cell, an old checkout on ``sys.path`` ahead of this one) --
-  and :func:`put_brick_on_path` still refuses that outright; see its docstring, and
-  ``brick/tests/test_deployment_integrity.py`` for the same class of guard enforced again, at
-  runtime, inside ``run_pipeline.check_deployment()``.
+  ``import config`` against instead of ``brick/``'s own copy, silently. That fork was retired at
+  ``ef22b05`` (S2-T4/T5): one tree, three scopes. What is still real on a flat Databricks
+  workspace folder is a STALE IMPORT -- a ``sys.modules`` entry left behind from some other
+  directory entirely (a prior test module, a notebook cell, an old checkout on ``sys.path``
+  ahead of this one) -- and :func:`put_brick_on_path` still refuses that outright; see its
+  docstring, and ``brick/tests/test_deployment_integrity.py`` for the same class of guard
+  enforced again, at runtime, inside ``run_pipeline.check_deployment()``.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 
 #: The one tree this package runs: a flat module folder with no ``__init__.py``, imported by
 #: putting the directory itself on ``sys.path``. There used to be a second fork here
-#: (``brick/devsecops/``); it is retired -- see this module's own docstring.
+#: (``brick/devsecops/``); it was retired at ``ef22b05`` -- see this module's own docstring.
 BRICK_DIR = REPO_ROOT / "brick"
 
 #: Every top-level module name ``brick/`` defines. A stale ``sys.modules`` entry under one of

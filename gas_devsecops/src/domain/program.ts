@@ -24,7 +24,7 @@
 // PORT PROVENANCE, because this module has two upstreams and they do not agree everywhere:
 //   gas/src/domain/program.ts   the TypeScript shape — export names, the Rate bracket, the
 //                               scan-delta cross-check, `maxMonths`.
-//   brick/devsecops/metrics.py  the BEHAVIOURAL SPEC for this register (CLAUDE.md), and the
+//   brick/metrics.py            the BEHAVIOURAL SPEC for this register (CLAUDE.md), and the
 //                               only source for the static-analysis rule, the six-signal
 //                               breakdown, `cwe_unmapped`, and the `observed_from` /
 //                               `closed_observed` capacity parameters.
@@ -81,7 +81,7 @@ export function isSastRule(rule: AnyRiskRule): rule is SastRiskRule {
 
 /**
  * Every signal either rule can carry, in the order the breakdown reports them.
- * brick/devsecops/metrics.py's `SIGNAL_NAMES`, and fixed for the same reason: a disabled
+ * brick/metrics.py's `SIGNAL_NAMES`, and fixed for the same reason: a disabled
  * clause reports 0, never a missing field, so the shape does not change when an operator
  * turns a clause off.
  */
@@ -101,7 +101,7 @@ export function ruleIsEmpty(rule: AnyRiskRule): boolean {
 /**
  * The rule as a sentence, for the page and the CSV header — a classifier you cannot read is
  * one you cannot audit. Byte-identical to `RiskRule.sentence()` / `SastRiskRule.sentence()`
- * in brick/devsecops/config.py, which the `rule_sentence` column of confusion.json pins.
+ * in brick/config.py, which the `rule_sentence` column of confusion.json pins.
  */
 export function ruleSentence(rule: AnyRiskRule): string {
   const parts: string[] = [];
@@ -603,7 +603,7 @@ export interface RuleSensitivityPoint {
  * The seven non-empty signal subsets of the CVE rule.
  *
  * DIVERGENCE from gas/: the single-signal labels read "KEV only" / "Exploit only" /
- * "EPSS only" where gas/ says "KEV" / "Exploit" / "EPSS". brick/devsecops/metrics.py's
+ * "EPSS only" where gas/ says "KEV" / "Exploit" / "EPSS". brick/metrics.py's
  * `RULE_SUBSETS` states the difference in its own comment and its notebook layer walks this
  * exact tuple, so the labels are part of what confusion.json pins. brick is this register's
  * behavioural spec (CLAUDE.md), and "KEV only" is the clearer wording besides — a bare "KEV"

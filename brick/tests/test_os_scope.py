@@ -1,11 +1,11 @@
-"""The host register, after this fork absorbed it.
+"""The host register, after this tree absorbed it.
 
-``brick/`` measured OS-package CVEs on virtual machines under scopes ``os`` and ``all``; this
-fork now measures ``os`` (``all`` is not ported -- it overlapped ``os``, was never scheduled,
-and nothing read it) alongside ``sca`` and ``sast``. The absorption added no branch anywhere:
-``os`` reads the same GraphQL connection behind the same filter type ``sca`` does, so it is
-four table entries and a default, and every dispatch site resolves it by looking the scope up
-rather than by knowing its name.
+The OS register -- ``brick/`` as it stood before ``ef22b05`` -- measured OS-package CVEs on
+virtual machines under scopes ``os`` and ``all``; this tree now measures ``os`` (``all`` is not
+ported -- it overlapped ``os``, was never scheduled, and nothing read it) alongside ``sca`` and
+``sast``. The absorption added no branch anywhere: ``os`` reads the same GraphQL connection behind
+the same filter type ``sca`` does, so it is four table entries and a default, and every dispatch
+site resolves it by looking the scope up rather than by knowing its name.
 
 **Which is exactly why it needs its own tests.** A scope that fits without a branch also fails
 without one. Each of the four ways this could have gone wrong produces a plausible number
@@ -16,7 +16,7 @@ rather than an error:
 * ``os`` classified under ``SastRiskRule`` -- 100% unclassified on a register full of CVEs;
 * ``os`` losing the ``hasFix`` pin -- a blank fix clock stops meaning "the fix predates us"
   and every such row lands in the awaiting-vendor bucket;
-* the severity gate inherited from somewhere instead of stated -- the sibling register shipped
+* the severity gate inherited from somewhere instead of stated -- `gas_devsecops/` shipped
   a secrets population with no passwords in it that way.
 
 No ``pyspark`` import guard: nothing here touches Spark. These are pure config and pure
@@ -46,13 +46,14 @@ import ingest  # noqa: E402
 # `DEFAULT_FETCH_SEVERITIES = ("CRITICAL", "HIGH")`, and `projectIdV2` written inline as
 # `{"equals": [project_id]}` because `VulnerabilityFindingProjectFilter` is an object.
 #
-# A literal on purpose: `brick/` is deleted later in this same step, so a test that imported it
-# would be deleted with it -- and this is the assertion that must OUTLIVE the fork, because
-# after the deletion nothing else in the repo remembers what the host register's population
-# was. It was verified byte-equal against the live `brick/ingest.build_filter` when it was
-# written (and `test_fork_integrity.py` re-checks it against upstream for as long as upstream
-# exists); from here on it stands on its own, and a diff against it is a population change that
-# somebody has to justify rather than accept.
+# A literal on purpose: the OS register's own copy was deleted later in that same step, so a
+# test that imported it would have been deleted with it -- and this is the assertion that had to
+# OUTLIVE the fork, because after the deletion nothing else in the repo remembers what the host
+# register's population was. It was verified byte-equal against the then-live
+# `brick/ingest.build_filter` when it was written (and `test_fork_integrity.py`, since renamed
+# to `test_deployment_integrity.py` at `ef22b05`, re-checked it against upstream for as long as
+# that upstream existed); from here on it stands on its own, and a diff against it is a
+# population change that somebody has to justify rather than accept.
 BRICK_OS_FILTER = {
     "status": ["OPEN", "RESOLVED"],
     "hasFix": True,
@@ -129,12 +130,12 @@ def test_the_wire_shape_is_one_the_fake_tenant_would_accept():
     the list-vs-object convention -- a scalar, a `{"notEquals": [...]}` -- is untouched by
     either half.
 
-    Restated rather than imported: these tests run with only this fork's directory on
-    `sys.path`, and a fork test that imported the harness would make the harness a dependency
-    of the deployment's own suite.
+    Restated rather than imported: these tests run with only this tree's directory on
+    `sys.path`, and a deployment test that imported the harness would make the harness a
+    dependency of the deployment's own suite.
 
     **What neither this nor the fake can catch**, measured: the fake reads `OBJECT_FILTERS`
-    off the fork's own `ingest` module, so a table that disagrees with the SCHEMA is a table
+    off this tree's own `ingest` module, so a table that disagrees with the SCHEMA is a table
     both halves agree on and the fake accepts happily. It catches a filter that BYPASSED the
     table, never a wrong table. The only check on the table itself is the oracle above --
     brick's emitted shape, transcribed -- and, ultimately, the live tenant's 400.
@@ -254,7 +255,7 @@ def test_the_os_gate_is_stated_rather_than_inherited():
     """`("CRITICAL", "HIGH")` -- brick's retired flat default, keyed rather than flattened.
 
     The keying is the point. A single shared list is a volume control every future population
-    inherits without anybody choosing it for them, which is how the sibling register published
+    inherits without anybody choosing it for them, which is how `gas_devsecops/` published
     a secrets register with no passwords in it. So each scope names its own, and an unknown
     scope is refused rather than handed somebody else's.
     """

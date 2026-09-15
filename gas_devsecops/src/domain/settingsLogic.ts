@@ -341,7 +341,7 @@ export function withDomainView(current: Settings, domainView: unknown): Settings
  * with whatever the operator saved on the Deadlines tab layered on top.
  *
  * WHY THE CONSTANT STAYS THE BASELINE. `config.ts`'s `SLA_TARGETS` is deliberately
- * byte-identical to gas/'s and brick/devsecops/'s own tables — its own docstring says so — so
+ * byte-identical to gas/'s and brick/'s own tables — its own docstring says so — so
  * a CRITICAL finding carries the same seven-day window whichever of the four surfaces is
  * asked: "the four surfaces cannot report different SLA attainment for the same estate". That
  * invariant is real, and it is what this function returns for every severity nobody has

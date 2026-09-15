@@ -12,7 +12,7 @@
 // the identity `sum(perSev) + unaged === open` is asserted below rather than assumed.
 //
 // GAS-first, hand-written fixtures. No Python parity: the Streamlit side is discontinued and
-// `brick/devsecops/` has no aging-against-SLA equivalent to port from.
+// `brick/` has no aging-against-SLA equivalent to port from.
 
 import { describe, expect, it } from "vitest";
 

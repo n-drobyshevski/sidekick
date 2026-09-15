@@ -72,7 +72,7 @@ from metrics import SECONDS_PER_DAY
 # Delta has a real timestamp type, metrics.py already does its arithmetic in
 # ``unix_timestamp`` seconds, and a stored string would mean re-parsing on every read.
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 LEDGER_SCHEMA = StructType(
     [
@@ -284,8 +284,8 @@ def _merge_peak(new: Column, old: Column) -> Column:
 
 
 #: How many offending rows the guard collects before it names them. A refusal has to say WHICH
-#: population it was handed, and one row can only name one scope; three names every scope either
-#: fork has while keeping the check a LIMIT -- no shuffle, no full scan, no aggregate.
+#: population it was handed, and one row can only name one scope; three names every scope this
+#: register has while keeping the check a LIMIT -- no shuffle, no full scan, no aggregate.
 _FOREIGN_SCOPE_SAMPLE = 3
 
 

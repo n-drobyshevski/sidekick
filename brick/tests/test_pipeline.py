@@ -1,4 +1,4 @@
-"""Wiring tests for the devsecops entry point.
+"""Wiring tests for ``run_pipeline``, the register's one entry point.
 
 These guard the parts that only fail on a cluster: parameter resolution across the three
 places Databricks can supply them from, and the ``dbutils`` accessors degrading quietly when
@@ -8,6 +8,7 @@ does nothing useful.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -23,6 +24,7 @@ pytest.importorskip(
 # The modules are plain top-level files, so their own directory goes on the path -- the same
 # arrangement the Databricks side uses.
 BRICK_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
 import dbx  # noqa: E402
@@ -135,9 +137,9 @@ def test_scope_defaults_to_os_and_rejects_unknown_values(monkeypatch):
     """`os` -- the oldest, largest and most read population here, and what the notebooks open on.
 
     **This test used to assert `sca`, and to assert that `os` was REFUSED.** The claim it
-    encoded was "this fork does not measure hosts, so silently accepting the scope name would
-    write `wiz_os_*` tables full of code findings". That claim is gone by decision, not by
-    accident: this fork absorbed the host register, `os` is a real scope with brick's own
+    encoded was "this register does not measure hosts, so silently accepting the scope name
+    would write `wiz_os_*` tables full of code findings". That claim is gone by decision, not by
+    accident: this tree absorbed the host register, `os` is a real scope with the OS register's
     filter behind it, and host findings in the register is now the correct outcome. (The
     `wiz_os_*` tables themselves are gone too -- every scope shares `wiz_*` now, with `scope`
     a column -- but that is a later change and not why this one flipped.)
@@ -168,11 +170,11 @@ def test_both_scopes_default_to_the_same_gate_and_the_shape_says_they_need_not(m
     a single tuple produced. What the shape buys is the next scope: it has to state its own
     gate rather than inherit a volume control chosen for a different population.
 
-    The sibling register is the evidence that the inheritance is not hypothetical.
-    `gas_devsecops` gave `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted
-    `PASSWORD` 209 -> 0 and `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and
-    shipped a secrets register with no passwords in it. Nothing errored; the gate was simply
-    the right answer to a question nobody had asked about that population.
+    `gas_devsecops/` is the evidence that the inheritance is not hypothetical. It gave `secrets`
+    the vulnerability registers' CRITICAL,HIGH, which deleted `PASSWORD` 209 -> 0 and
+    `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and shipped a secrets register
+    with no passwords in it. Nothing errored; the gate was simply the right answer to a question
+    nobody had asked about that population.
     """
     from config import DEFAULT_FETCH_SEVERITIES, default_fetch_severities
 
@@ -339,8 +341,13 @@ def test_severity_filter_maps_info_to_the_api_spelling():
 
 
 def test_sca_scope_matches_the_reference_query():
-    """Parity with `sca_request.py`'s filterBy, which is the Wiz console's own export and the
-    only evidence available that this selection validates.
+    """Parity with the filterBy of the Wiz console's own SCA export, which was the only
+    evidence available that this selection validates.
+
+    That export script is deleted, so the literal asserted below is now the surviving
+    transcription of the console's filterBy. The capture it produced,
+    `brick/fixtures/sca_response.json`, is the evidence the selection actually ran against the
+    tenant, and `git show ef22b05^:brick/devsecops/sca_request.py` still holds the request.
 
     Both clauses earn their place. Without `codeToCloudPipelineStage: CODE` a dependency is
     counted once in the repository and again in every container image built from it; without
@@ -352,7 +359,7 @@ def test_sca_scope_matches_the_reference_query():
     assert got["isDefaultBranch"] == {"equals": True}
     assert got["hasFix"] is True
     assert got["severity"] == ["CRITICAL"]
-    # This fork measures code, so none of the host-register restrictions apply.
+    # `sca` measures code, so none of the host-register restrictions apply.
     assert "detectionMethod" not in got
     assert "assetType" not in got
 
@@ -383,7 +390,7 @@ def test_sast_does_not_ask_for_resolved_findings_yet():
     `first_seen = createdAt` and `resolved_at = now` -- reporting its AGE as its MTTR, which is
     worse than the flat 0 that arithmetic used to give because it looks like a measurement. See
     `config.SAST_FETCH_RESOLVED` for the trace, and
-    `test_devsecops.test_asking_sast_for_resolved_findings_would_report_its_age_as_its_mttr`
+    `test_code_scopes.test_asking_sast_for_resolved_findings_would_report_its_age_as_its_mttr`
     for the measurement.
 
     `hasFix` is a separate matter and simply meaningless for a weakness in first-party code.
@@ -418,7 +425,8 @@ def test_project_id_is_opt_in():
     run to that project."""
     assert "projectIdV2" not in build_filter("sca")
     assert build_filter("sca", project_id="p-1")["projectIdV2"] == {"equals": ["p-1"]}
-    # The two filter types spell it differently -- sast_request.py passes a bare list.
+    # The two filter types spell it differently -- the Wiz console's SAST export passed a bare
+    # list (its capture is brick/fixtures/sast_response.json).
     assert build_filter("sast", project_id="p-1")["projectId"] == ["p-1"]
 
 
@@ -437,16 +445,17 @@ def test_unknown_scope_is_rejected():
 
 
 def test_the_sca_query_asks_for_exactly_two_asset_members():
-    """The inversion of brick's rule, and the reason this fork can compute P2P v5 at all.
+    """The inversion of the OS register's rule, and the reason this tree can compute P2P v5
+    at all.
 
     A union fails as a whole, so one member the tenant no longer has costs the entire request
     -- which is why `FETCH_ASSET_FIELDS` is off for a register that would have to ask for all
     thirteen. `sca` returns REPOSITORY_BRANCH and nothing else, so it asks for the two members
-    it needs and gets its asset columns. `sca_response.json` is the evidence.
+    it needs and gets its asset columns. `brick/fixtures/sca_response.json` is the evidence.
 
     Reads `build_query(scope="sca")` rather than the module-level `QUERY`, which used to be the
     same document and is not any more: `QUERY` is `build_query()`, so it follows
-    `config.DEFAULT_SCOPE`, and that became `os` when this fork absorbed the host register.
+    `config.DEFAULT_SCOPE`, and that became `os` when this tree absorbed the host register.
     Nothing about the `sca` document changed -- see the test below for what `QUERY` now holds.
     """
     sca_query = ingest.build_query(scope="sca")
@@ -560,18 +569,21 @@ def test_unparseable_error_body_still_says_something():
 
 # ------------------------------------------------------------- deployment consistency
 #
-# v2 added a sixth runtime module, ledger.py, and shipped with a README whose deployment tree
-# still listed five. Following it produced a workspace holding v2's metrics.py and v1's
+# v2 added a sixth runtime module, ledger.py, and shipped with a deployment tree that still
+# listed five. Following it produced a workspace holding v2's metrics.py and v1's
 # run_pipeline.py, which imports cleanly and then dies at the silver write -- 137,870 findings
 # into the first real run, as "A schema mismatch detected when writing to the Delta table".
 # These tests exist so that specific mistake cannot be made silently again.
+#
+# The tree lives in brick/docs/deploy.md since the README was split by reader; README.md is the
+# map, and "2. Get the code onto the workspace" is where the procedure actually is.
 
-README = BRICK_DIR / "README.md"
+DEPLOY_DOC = BRICK_DIR / "docs" / "deploy.md"
 
 
-def _readme_module_tree() -> set:
-    """The `.py` filenames in the README's deployment file tree."""
-    lines = README.read_text(encoding="utf-8").splitlines()
+def _deploy_doc_module_tree() -> set:
+    """The `.py` filenames in the deployment doc's file tree."""
+    lines = DEPLOY_DOC.read_text(encoding="utf-8").splitlines()
     start = next(i for i, line in enumerate(lines) if "this path goes on sys.path" in line)
     names = set()
     for line in lines[start + 1:]:
@@ -583,29 +595,140 @@ def _readme_module_tree() -> set:
     return names
 
 
-def test_readme_deployment_tree_matches_the_real_import_graph():
+def test_deploy_doc_tree_matches_the_real_import_graph():
     """The deployment instructions cannot drift from what the code actually needs.
 
     This is the test that would have caught the v2 release: adding a module without adding it
     to the tree now fails here rather than on someone's cluster.
     """
-    documented = _readme_module_tree()
-    assert documented, "could not find the deployment file tree in README.md"
+    documented = _deploy_doc_module_tree()
+    assert documented, "could not find the deployment file tree in docs/deploy.md"
     expected = {f"{name}.py" for name in run_pipeline.RUNTIME_MODULES}
     assert documented == expected, (
-        f"README deployment tree and RUNTIME_MODULES disagree: "
-        f"only in README {sorted(documented - expected)}, "
+        f"docs/deploy.md deployment tree and RUNTIME_MODULES disagree: "
+        f"only in the doc {sorted(documented - expected)}, "
         f"only in code {sorted(expected - documented)}"
     )
 
 
-def test_readme_does_not_still_say_five_modules():
+def test_deploy_doc_does_not_still_say_five_modules():
     """The prose carried the count too, and prose does not fail a schema check."""
-    text = README.read_text(encoding="utf-8")
+    text = DEPLOY_DOC.read_text(encoding="utf-8")
     assert "five `.py` modules" not in text
     assert "ledger.py" in text
-    # And the one thing a fork's README must say out loud.
+    # And the one thing the deployment procedure must say out loud.
     assert "sys.path" in text
+
+
+# ------------------------------------------------------------ the committed captures' location
+#
+# Six brick test modules (conftest.py, test_ledger.py, test_catalog_mode.py,
+# test_import_bundle.py, test_csvstore.py, test_metrics.py, test_code_scopes.py) and
+# devlake/run.py each build a path to one of the three committed Wiz captures. Only the brick
+# ones run in this suite, and all of them need Spark -- so a fixture move that updated the six
+# brick readers but missed devlake/run.py would pass every brick test and still break
+# ``python -m devlake.run`` silently. Catching that by running devlake was a thirty-minute round
+# trip (~10-12 minutes of the fixture-reading Spark subset, plus noticing devlake was never
+# actually run). This test is two seconds and JVM-free -- it never imports pyspark's
+# SparkSession -- so it belongs here, not in a Spark-backed module.
+_COMMITTED_CAPTURES = (
+    "sca_findings_example.json",
+    "sast_response.json",
+    "sca_response.json",
+)
+
+
+def test_every_committed_capture_is_where_its_readers_look():
+    """The three captures live under ``brick/fixtures/``, and nothing under ``brick/`` or
+    ``devlake/`` builds a path to one of their basenames without a ``fixtures`` path component.
+
+    See the section banner above for why this specific, cheap check exists.
+    """
+    for name in _COMMITTED_CAPTURES:
+        assert (BRICK_DIR / "fixtures" / name).is_file(), (
+            f"{name} is not committed at brick/fixtures/{name}"
+        )
+
+    offenders = []
+    for root in (BRICK_DIR, REPO_ROOT / "devlake"):
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            offenders.extend(_paths_missing_fixtures_component(path))
+
+    assert not offenders, "path(s) built to a committed capture without a fixtures/ component:\n" + "\n".join(
+        offenders
+    )
+
+
+def _paths_missing_fixtures_component(path):
+    """AST-walk ``path`` for every maximal ``a / b / ...`` join whose resolved components
+    include one of the three captures' basenames, and flag any where ``"fixtures"`` is not
+    also among those components.
+
+    Deliberately narrow: it only understands ``Path``-style ``/`` joins (what every reader in
+    this repo actually uses), tracing simple ``NAME = <expr>`` assignments so an indirection
+    like ``FIXTURE_DIR / LIVE_FIXTURE`` resolves through both ``FIXTURE_DIR`` and
+    ``LIVE_FIXTURE``. A label like ``LIVE_FIXTURE = "sca_findings_example.json"`` is not itself
+    flagged -- only an actual join is -- so naming a fixture file for later joining is fine, and
+    only the join site is where the ``fixtures`` component is required.
+    """
+    text = path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(text, filename=str(path))
+    except SyntaxError:
+        return []
+
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    assigns = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                assigns[target.id] = node.value
+
+    def resolve(node, seen):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        if isinstance(node, ast.Name):
+            if node.id in seen or node.id not in assigns:
+                return ["?"]
+            return resolve(assigns[node.id], seen | {node.id})
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            left, right = resolve(node.left, seen), resolve(node.right, seen)
+            return None if left is None or right is None else left + right
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            return resolve(node.value, seen)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                return resolve(node.func.value, seen)
+            if isinstance(node.func, ast.Name) and node.args:
+                return resolve(node.args[0], seen)
+            return ["?"]
+        return None
+
+    def is_maximal_join(node):
+        parent = parents.get(node)
+        return not (isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Div))
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
+            continue
+        if not is_maximal_join(node):
+            continue
+        components = resolve(node, frozenset())
+        if components is None:
+            continue
+        hit = next((c for c in _COMMITTED_CAPTURES if c in components), None)
+        if hit and "fixtures" not in components:
+            rel = path.relative_to(REPO_ROOT)
+            offenders.append(f"{rel}:{node.lineno}: joins to {hit!r} without a fixtures/ component")
+    return offenders
 
 
 def test_every_runtime_module_declares_a_version():
@@ -627,7 +750,7 @@ def test_check_deployment_rejects_a_stale_module(monkeypatch):
     """The v1-alongside-v2 case, which imports fine and only fails at the write."""
     stale = types.SimpleNamespace(MODULE_VERSION="1.0")
     monkeypatch.setitem(sys.modules, "metrics", stale)
-    with pytest.raises(RuntimeError, match="Mixed devsecops deployment") as exc:
+    with pytest.raises(RuntimeError, match="Mixed brick deployment") as exc:
         run_pipeline.check_deployment()
     assert "metrics=1.0" in str(exc.value)
     assert "restartPython" in str(exc.value)
@@ -637,7 +760,7 @@ def test_check_deployment_rejects_a_module_with_no_version(monkeypatch):
     """A genuine v1 file has no MODULE_VERSION at all; getattr must not raise AttributeError."""
     ancient = types.SimpleNamespace()  # no MODULE_VERSION
     monkeypatch.setitem(sys.modules, "config", ancient)
-    with pytest.raises(RuntimeError, match="Mixed devsecops deployment") as exc:
+    with pytest.raises(RuntimeError, match="Mixed brick deployment") as exc:
         run_pipeline.check_deployment()
     assert "config=absent" in str(exc.value)
 
@@ -666,8 +789,9 @@ def test_data_path_produces_delta_path_references(monkeypatch):
     tables = run_pipeline.resolve_tables("", argv=[], data_path="/Volumes/c/s/v/code")
     assert tables.bronze == "delta.`/Volumes/c/s/v/code/wiz_findings_raw`"
     assert tables.ledger == "delta.`/Volumes/c/s/v/code/wiz_vuln_ledger`"
-    # The directory names match what a catalog run would call the tables, so the README's
-    # CREATE TABLE ... LOCATION recipe is one statement per directory with nothing renamed.
+    # The directory names match what a catalog run would call the tables, so the
+    # CREATE TABLE ... LOCATION recipe in docs/storage.md is one statement per directory with
+    # nothing renamed.
     assert tables.metrics.endswith("/wiz_metrics`")
 
 

@@ -42,8 +42,8 @@ BRICK = REPO_ROOT / "brick"
 #: scan-2 slicing rule that goes with each one.
 FIXTURES = {
     "os": REPO_ROOT / "os_vulns_response_exemple.json",
-    "sca": BRICK / "sca_findings_example.json",
-    "sast": BRICK / "sast_response.json",
+    "sca": BRICK / "fixtures" / "sca_findings_example.json",
+    "sast": BRICK / "fixtures" / "sast_response.json",
 }
 
 
@@ -135,11 +135,11 @@ def default_fixture(scope: str):
     CRITICAL is inside the default scan scope, so its disappearance is exactly what the guard
     is for, and it is the case this harness's end-to-end test asserts on.
 
-    **sca** (``sca_findings_example.json``, 54 findings): a plain first-half truncation already
-    fires disappearance here -- measured, the dropped half carries 14 HIGH/OPEN and 7
+    **sca** (``fixtures/sca_findings_example.json``, 54 findings): a plain first-half truncation
+    already fires disappearance here -- measured, the dropped half carries 14 HIGH/OPEN and 7
     CRITICAL/OPEN findings, both inside the default scan scope -- so no special slice is needed.
 
-    **sast** (``sast_response.json``, 40 findings, all HIGH/OPEN, no ``createdAt`` -- the
+    **sast** (``fixtures/sast_response.json``, 40 findings, all HIGH/OPEN, no ``createdAt`` -- the
     capture predates that column): scan 2 here is the same 40 nodes again, which resolves and
     reopens nothing; the payoff this harness exists to demonstrate for SAST is the birth-date
     column, not the disappearance guard (the sca and os cases already cover that), so

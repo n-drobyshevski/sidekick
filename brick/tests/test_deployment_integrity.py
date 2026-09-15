@@ -1,12 +1,13 @@
 """The invariant a flat module folder needs even with no fork left to mix with.
 
-``brick/devsecops/`` used to be a copy of ``brick/`` with the same module names -- two
-directories on ``sys.path`` at once, each answering to ``config``, ``metrics``, and so on. That
-fork is gone (S2 merged the OS scope's config in; S2-T4/T5 deleted ``brick/``'s copies and moved
-this directory up to ``brick/``), so there is no more upstream to drift from and the fifteen
-shared-constant comparisons, the ledger-schema-superset check, the project-filter-shape check,
-the vendor-fix-asymmetry check and the three-populations check that used to load
-``brick/config.py`` (etc.) "as upstream" are deleted with it -- there is nothing left to load.
+``brick/devsecops/`` used to be a copy of ``brick/`` with the same module names -- two directories
+on ``sys.path`` at once, each answering to ``config``, ``metrics``, and so on. That fork was
+retired at ``ef22b05`` (S2 merged the OS scope's config in; S2-T4/T5 deleted the OS register's
+copies and moved that directory up to ``brick/``), so there is no more upstream to drift from and
+the fifteen shared-constant comparisons, the ledger-schema-superset check, the
+project-filter-shape check, the vendor-fix-asymmetry check and the three-populations check that
+used to load ``brick/config.py`` (etc.) "as upstream" are deleted with it -- there is nothing left
+to load.
 
 What is still real on a flat Databricks workspace folder: a stale ``sys.modules`` entry from a
 previous run, or a module imported from some OTHER directory on ``sys.path``, resolves silently
@@ -31,9 +32,9 @@ import config  # noqa: E402
 import run_pipeline  # noqa: E402
 
 
-def test_the_pipeline_version_is_3_0_devsecops():
+def test_the_pipeline_version_is_3_0():
     """No upstream to disagree with any more -- just the literal the deployment reports."""
-    assert config.PIPELINE_VERSION == "3.0-devsecops"
+    assert config.PIPELINE_VERSION == "3.0"
 
 
 def test_every_module_must_come_from_this_directory(monkeypatch):

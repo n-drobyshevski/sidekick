@@ -213,7 +213,7 @@ export function draftWarnings(saved, draft, ctx) {
 
   // ---- diverging from the other three sidekicks
   //
-  // SLA_TARGETS is byte-identical across gas/, gas_ai/, brick/devsecops and this register, and
+  // SLA_TARGETS is byte-identical across gas/, gas_ai/, brick/ and this register, and
   // that is a decision rather than an accident: a CRITICAL finding gets the same window whether
   // it is a host CVE, a dependency CVE or a hardcoded secret, so the four surfaces cannot
   // report different SLA attainment for the same estate.

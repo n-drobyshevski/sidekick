@@ -2,8 +2,8 @@
 
 This directory carries its own copy of every runtime module and depends on nothing outside
 itself -- a plain top-level Python folder, deployable as one flat Databricks Workspace folder
-with no package prefix and no `sys.path` entry but its own. ``README.md`` is where that layout
-and its cost are written down.
+with no package prefix and no `sys.path` entry but its own. ``docs/internals.md``, Layout, is
+where that layout and its cost are written down.
 
 The sources of truth these constants mirror, in order of authority:
 
@@ -31,12 +31,14 @@ from typing import Dict, Tuple
 # them before the run touches Spark. Bump this whenever the modules stop being
 # mix-and-matchable with the previous release -- which is nearly always.
 #
-# The suffix is load-bearing. These module names -- `config`, `metrics`, `ledger` -- are the
-# same ones `brick/` uses, so a sys.path holding both directories resolves each import to
-# whichever came first and you get half of one pipeline and half of the other. A version
-# string that cannot collide turns that into a refusal instead of a wrong number, and
-# `check_deployment` additionally requires every module to come from THIS directory.
-PIPELINE_VERSION = "3.0-devsecops"
+# This string used to carry a `-devsecops` suffix, back when `brick/devsecops/` was a separate
+# fork defining these same module names -- `config`, `metrics`, `ledger`: a sys.path holding
+# both directories resolved each import to whichever came first and you got half of one
+# pipeline and half of the other, so a version string that could not collide turned that into
+# a refusal instead of a wrong number. That fork was retired at `ef22b05` and the suffix came
+# off with it; the collision it guarded is now covered by `check_deployment` requiring every
+# module to come from THIS directory as well as to agree on this version.
+PIPELINE_VERSION = "3.0"
 MODULE_VERSION = PIPELINE_VERSION
 
 # ---- Severity taxonomy ----
@@ -79,15 +81,15 @@ API_SEVERITY_VALUES = {
 # the same thing, deliberately.
 #
 # A single list is a volume control that every future population inherits without anybody
-# choosing it for them, and the sibling register made exactly that mistake in production:
-# `gas_devsecops` gave `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted
-# `PASSWORD` 209 -> 0 and `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and
-# published a secrets register with no passwords in it. Nothing was wrong with the number; it
-# was the right answer to a question nobody had asked about that population.
+# choosing it for them, and `gas_devsecops/` made exactly that mistake in production: it gave
+# `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted `PASSWORD` 209 -> 0 and
+# `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and published a secrets
+# register with no passwords in it. Nothing was wrong with the number; it was the right answer
+# to a question nobody had asked about that population.
 #
 # All three scopes here are CVE- or weakness-bearing volume registers whose severities mean the
 # same thing, so they agree, and this changes no figure today. What it changes is what happens
-# next: a fourth scope has to state its own gate rather than inherit one -- the sibling's
+# next: a fourth scope has to state its own gate rather than inherit one -- `gas_devsecops/`'s
 # `secrets` register is the population where the inherited gate was wrong. See
 # `default_fetch_severities`.
 #
@@ -139,7 +141,8 @@ SCOPES = {
     # Mirrors os_vulns.VARIABLES["filterBy"], minus its hardcoded projectIdV2 -- that is one
     # tenant's project and is exposed here as an opt-in `project_id` parameter instead.
     #
-    # Copied verbatim from `brick/config.py` when this fork absorbed the host register (S2).
+    # Copied verbatim from the OS register's own copy -- `git show ef22b05^:brick/config.py`,
+    # that directory having been retired at `ef22b05` -- when this tree absorbed it (S2).
     # It is OS-VIEW POLICY, not incidental: `detectionMethod` and `assetType` say what a host
     # finding is, `assetIsRepresentativeResource: False` drops the duplicate the API attaches
     # to a representative resource, and the `detailedNameV2` exclusions are three packages the
@@ -153,7 +156,10 @@ SCOPES = {
         "detailedNameV2": {"notEquals": ["openssl", "python", "vim"]},
     },
     # Software composition analysis: CVEs in the libraries a repository depends on. Mirrors
-    # sca_request.py's filterBy, minus its hardcoded projectIdV2.
+    # the filterBy of the Wiz console's own SCA export, minus its hardcoded projectIdV2. That
+    # export script is deleted -- `git show ef22b05^:brick/devsecops/sca_request.py` still holds
+    # it, brick/fixtures/sca_response.json is the capture it produced, and
+    # test_pipeline.py::test_sca_scope_matches_the_reference_query transcribes the filterBy.
     #
     # This reads the same GraphQL connection the `os` scope above does --
     # `vulnerabilityFindings`, filtered to the code stage of the pipeline -- which is why it
@@ -207,7 +213,7 @@ SCOPES = {
 # Kaplan-Meier median would be dragged up by the register's own start date instead of down by
 # it. Every historical resolved finding is priced by when we happened to look. `first_seen` is
 # real, `resolved_at` is fabricated, and their difference measures neither.
-# `tests/test_devsecops.py` pins that arithmetic so nobody flips this without meeting it.
+# `tests/test_code_scopes.py` pins that arithmetic so nobody flips this without meeting it.
 #
 # The `sca` scope takes `status: [OPEN, RESOLVED]` safely because it has BOTH dates:
 # `firstDetectedAt` and `resolvedAt`, so the subtraction has two measured ends.
@@ -221,7 +227,7 @@ SAST_FETCH_RESOLVED = False
 if SAST_FETCH_RESOLVED:
     SCOPES["sast"]["status"] = ["OPEN", "RESOLVED"]
 
-# `os` since this fork absorbed the host register (S2): it is the oldest, largest and most
+# `os` since this tree absorbed the host register (S2): it is the oldest, largest and most
 # read population here, it is what the OS register and the GAS app both measure, and
 # it is the scope the notebooks open on. The property that made `sca` the default before it
 # still holds of `os` and is the real requirement -- a reader who runs this pipeline without
@@ -256,12 +262,13 @@ DEFAULT_SCOPE = "os"
 #: definition "open with no fix available" is true of EVERY SAST finding, forever. Without the
 #: guard every open SAST row would read as awaiting a vendor: out of every actionable clock,
 #: still in every exposure count, so the two halves of a page disagree and the gap looks like
-#: broken arithmetic rather than the category error it is. The sibling register measured the
-#: cost on live data -- 2,085 rows (127 SAST + 1,958 secrets) sitting in that state
-#: permanently -- and `tests/test_ledger.py` prices it here as a mutation.
+#: broken arithmetic rather than the category error it is. `gas_devsecops/` measured the cost
+#: on live data -- 2,085 rows (127 SAST + 1,958 secrets) sitting in that state permanently --
+#: and `tests/test_ledger.py` prices it here as a mutation.
 #:
-#: `os` joined `sca` here when this fork absorbed the host register (S2); brick's retired copy
-#: said {"os", "all"} and `all` is not ported. Adding a scope to `SCOPES` does NOT add it here
+#: `os` joined `sca` here when this tree absorbed the host register (S2); the OS register's own
+#: copy -- `git show ef22b05^:brick/config.py` -- said {"os", "all"}, and `all` is not ported.
+#: Adding a scope to `SCOPES` does NOT add it here
 #: -- this set is declared rather than derived, because "is there a vendor" is not visible in
 #: a filter. `SCOPES_PINNING_HAS_FIX` below is the derived one, and they answer different
 #: questions: a scope can have a vendor and not pin `hasFix`, and (in principle) the reverse.
@@ -362,7 +369,7 @@ SAST_SOURCE = Source(kind="sast", connection="sastFindings")
 
 SOURCES = {
     # `os` reads the same connection behind the same filter type `sca` does -- which is the
-    # whole reason the host register fitted into this fork with no new branch: one more entry
+    # whole reason the host register fitted into this tree with no new branch: one more entry
     # here, and `query_for`, `build_filter`, `_shape_base` and `metrics.silver_findings` all
     # route it exactly as they route `sca`.
     "os": VULN_SOURCE,
@@ -382,11 +389,10 @@ SOURCES = {
 #   SASTFindingFilters.status                 SASTStatusFilter                     {equals:[..]}
 #   SASTFindingFilters.projectId              [String!]                            a bare list
 #
-# This asymmetry has cost the sibling register (`gas_devsecops/`) its whole SAST population
-# once, and it cost this fork the same way until now: ``build_filter`` applied the SCA
-# convention to both scopes, so every SAST run would be refused with HTTP 400
-# `VALIDATION_INVALID_TYPE_VARIABLE` and fetch **zero rows** -- which does not read as an error,
-# it reads as an empty register.
+# This asymmetry has cost `gas_devsecops/` its whole SAST population once, and it cost this tree
+# the same way until now: ``build_filter`` applied the SCA convention to both scopes, so every
+# SAST run would be refused with HTTP 400 `VALIDATION_INVALID_TYPE_VARIABLE` and fetch **zero
+# rows** -- which does not read as an error, it reads as an empty register.
 #
 # DO NOT "TIDY" THIS INTO ONE CONVENTION. Applying SAST's object form to SCA breaks SCA, which
 # works today; the type names above are the evidence. And note `projectId` on SAST is a *bare*
@@ -452,7 +458,7 @@ FETCH_ASSET_FIELDS = False
 # longer has costs the entire request. That is an argument for asking for fewer members, not for
 # asking for none -- and which members a scope actually returns is knowable.
 #
-# `sca` returns REPOSITORY_BRANCH and nothing else, and `sca_response.json` is the
+# `sca` returns REPOSITORY_BRANCH and nothing else, and `fixtures/sca_response.json` is the
 # evidence: every node in that captured response carries a `vulnerableAsset` with `id`, `type`,
 # `name`, `cloudPlatform`, `repositoryId` and `repositoryName` populated. So `sca` asks
 # for exactly the two members it needs and gets its asset columns, where the `os` host
@@ -622,7 +628,7 @@ CWE_TOP_25_2024 = (
 EXPLOITED_CWES = frozenset(CWE_TOP_25_2024)
 
 # **The hierarchy problem, which is the weakest joint in this rule.** CWE is a tree, scanners
-# report leaves, and the Top 25 is mostly interior nodes. sast_response.json
+# report leaves, and the Top 25 is mostly interior nodes. fixtures/sast_response.json
 # shows it immediately: it contains CWE-23 (Relative Path Traversal), which is a child of
 # Top-25 member CWE-22 and would not match by id. P2P vol. 9 names this exact difficulty --
 # "the hierarchical nature of CWEs" -- as a reason it does not categorise this way.

@@ -446,7 +446,7 @@ export function severityBar(canvas, counts, palette, onClickSeverity) {
  *
  * NOTHING IN THIS PACKAGE CALLS IT YET. `stackedAgeBar` below accepts an optional
  * `palette.fills(canvas, key)` hook exactly like gas/'s does, so a future palette builder
- * (e.g. the verdict-hatched capacity split in `brick/devsecops/figures.py::capacity_split`,
+ * (e.g. the verdict-hatched capacity split in `brick/figures.py::capacity_split`,
  * not yet ported) can reach for this instead of re-deriving it. Kept private and unexported,
  * same as gas/ keeps it, so it stays an implementation detail of whichever palette adopts it.
  */

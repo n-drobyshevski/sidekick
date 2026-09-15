@@ -3,7 +3,7 @@
 // Every route in PAGES resolves, renders its own heading, and says plainly what is not
 // wired yet. That is deliberate and it is the honest state (PRODUCT.md, principle 5): the
 // interface base and the page composition are the deliverable for this phase, and the
-// domain layer arrives in Phase 2 as a port of brick/devsecops. A page that drew a
+// domain layer arrives in Phase 2 as a port of brick/. A page that drew a
 // plausible-looking empty chart instead would be claiming a pipeline that does not exist.
 //
 // Each stub names the metrics its page will own, so the composition can be reviewed on its
@@ -43,7 +43,7 @@ export function renderStub(host, spec) {
   card.append(el(
     "p",
     { class: "stub-status" },
-    "No data connected — the domain layer ports from brick/devsecops in Phase 2.",
+    "No data connected — the domain layer ports from brick/ in Phase 2.",
   ));
   host.append(card);
 }

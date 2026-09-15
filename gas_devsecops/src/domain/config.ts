@@ -55,7 +55,7 @@ export const SEVERITY_GLYPHS: Record<string, string> = {
 /**
  * Remediation windows in days.
  *
- * Identical to gas/ and to brick/devsecops/config.py, and that is a decision rather than an
+ * Identical to gas/ and to brick/config.py, and that is a decision rather than an
  * accident: a CRITICAL finding gets seven days whether it is a host CVE, a dependency CVE
  * or a hardcoded secret, so the four surfaces cannot report different SLA attainment for
  * the same estate. In SLA means resolved ON OR BEFORE the target — the comparison is
@@ -97,7 +97,7 @@ export type Scope = (typeof SCOPES)[number];
  * The severities a sync requests by default, PER SCOPE — because one list cannot serve
  * three registers that mean different things by the word.
  *
- * `sca` and `sast` keep CRITICAL/HIGH, which is brick/devsecops's default and is not a claim
+ * `sca` and `sast` keep CRITICAL/HIGH, which is brick/'s default and is not a claim
  * about what matters: it is what keeps a first sync inside one execution budget on an estate
  * where a single repository carries ~6,900 SCA findings.
  *
@@ -142,7 +142,7 @@ export const SCOPE_LABELS: Record<Scope, string> = {
 
 
 
-/** Statuses that mean "not open". Mirrors brick/devsecops/config.py RESOLVED_STATUSES. */
+/** Statuses that mean "not open". Mirrors brick/config.py RESOLVED_STATUSES. */
 export const RESOLVED_STATUSES = new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
 
 export const STATUS_OPEN = "OPEN";
@@ -168,14 +168,14 @@ export const EPSS_PRIORITY_THRESHOLD = 0.1;
 export const DERIVATION_VERSION = 2;
 
 // --------------------------------------------------------------------------------------- //
-//  Risk classification — Prioritization to Prediction (P2P). brick/devsecops/config.py is
+//  Risk classification — Prioritization to Prediction (P2P). brick/config.py is
 //  the source for everything below through ruleForScope, unless a comment says otherwise.
 // --------------------------------------------------------------------------------------- //
 
 /**
  * The high-risk classifier for CVE-bearing findings (sca): an any-of over the exploit
  * signals Wiz attaches. Mirrors gas/src/domain/program.ts's `RiskRule` / `DEFAULT_RISK_RULE`
- * — itself the TS shape of brick's `RiskRule` dataclass, brick/devsecops/config.py:279-312.
+ * — itself the TS shape of brick's `RiskRule` dataclass, brick/config.py:279-312.
  *
  * THIS IS THE ONLY DEFINITION IN THE TREE. gas/ declares `RiskRule` inside its program.ts;
  * here it stays in config.ts, because `ruleForScope` below has to live beside the scope
@@ -200,7 +200,7 @@ export const DEFAULT_RISK_RULE: RiskRule = {
 /**
  * The high-risk classifier for static-analysis findings (sast), where none of RiskRule's
  * three signals exist — a weakness in first-party code has no CVE, so no KEV entry, no
- * published exploit and no EPSS score. brick/devsecops/config.py:337-370 (`SastRiskRule` /
+ * published exploit and no EPSS score. brick/config.py:337-370 (`SastRiskRule` /
  * `DEFAULT_SAST_RISK_RULE`). Any-of over three signals that each answer a different question:
  *   cwe        is this a KIND of weakness that gets exploited? (external evidence — see
  *              CWE_TOP_25_2024 below)
@@ -222,7 +222,7 @@ export const DEFAULT_SAST_RISK_RULE: SastRiskRule = {
 
 /**
  * MITRE's CWE Top 25 Most Dangerous Software Weaknesses, 2024 edition.
- * brick/devsecops/config.py:382-408 (`CWE_TOP_25_2024`), copied verbatim — 25 entries,
+ * brick/config.py:382-408 (`CWE_TOP_25_2024`), copied verbatim — 25 entries,
  * asserted by test/ledgerTypes.test.ts. A snapshot that ages: re-derive against the current
  * year's publication rather than trusting this list indefinitely.
  */
@@ -236,7 +236,7 @@ export const CWE_TOP_25_2024: readonly string[] = [
 
 /**
  * CWE is a tree; scanners report leaves and the Top 25 above is mostly interior nodes, so a
- * child is matched through its Top-25 ancestor. brick/devsecops/config.py:424-441
+ * child is matched through its Top-25 ancestor. brick/config.py:424-441
  * (`CWE_ANCESTORS`), copied verbatim — deliberately incomplete (only children actually seen
  * in the tenant's findings), never a transcription of the full CWE tree. An unmapped child
  * classifies `low` rather than `high`, which is a coverage gap to publish, not paper over.
@@ -261,7 +261,7 @@ export const CWE_ANCESTORS: Record<string, string> = {
 };
 
 /**
- * `aiAnalysis.verdict` values that count as the AI triage firing. brick/devsecops/config.py:450
+ * `aiAnalysis.verdict` values that count as the AI triage firing. brick/config.py:450
  * (`AI_VERDICTS_HIGH`). UNVERIFIED against the live tenant — every node in the captured SAST
  * response has `aiAnalysis: null` (brick's comment), so this is a guess at the vocabulary and
  * will not fire until corrected against real data.
@@ -271,9 +271,9 @@ export const AI_VERDICTS_HIGH: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * The high-risk rule a scope is classified under. brick/devsecops/config.py:453-461
+ * The high-risk rule a scope is classified under. brick/config.py:453-461
  * (`rule_for_scope`), extended to all three scopes rather than brick's CVE-register-or-SAST
- * dispatch — secrets never existed in brick/devsecops, so brick had nothing to say about it.
+ * dispatch — secrets never existed in brick/, so brick had nothing to say about it.
  *
  * `secrets` returns null: there is no exploit intelligence for a hardcoded string the way
  * there is for a CVE, and severity here grades a DETECTION (how confident the scanner is
@@ -294,31 +294,31 @@ export function ruleForScope(scope: Scope): RiskRule | SastRiskRule | null {
 
 /**
  * The dead band (percentage points) around zero net flow that still counts as "keeping up".
- * brick/devsecops/config.py:467 (`NET_CAPACITY_BAND_PCT`). P2P v3 Fig. 22 splits firms into
+ * brick/config.py:467 (`NET_CAPACITY_BAND_PCT`). P2P v3 Fig. 22 splits firms into
  * falling behind / maintaining / gaining ground without a sharp cut; a one-finding swing
  * should not flip a monthly verdict.
  */
 export const NET_CAPACITY_BAND_PCT = 2;
 
-/** The row label used for the all-severities aggregate in gold tables. brick/devsecops/config.py:470. */
+/** The row label used for the all-severities aggregate in gold tables. brick/config.py:470. */
 export const OVERALL = "OVERALL";
 
 /**
  * Which population a capacity row describes — every finding vs. high-risk lifecycles only.
- * brick/devsecops/config.py:482-483 (`POPULATION_ALL` / `POPULATION_HIGH_RISK`).
+ * brick/config.py:482-483 (`POPULATION_ALL` / `POPULATION_HIGH_RISK`).
  */
 export const POPULATION_ALL = "all";
 export const POPULATION_HIGH_RISK = "high_risk";
 
 /**
  * The asset-category fallback for a scope with no language/ecosystem to group on.
- * brick/devsecops/config.py:272 (`ASSET_GROUP_UNKNOWN`).
+ * brick/config.py:272 (`ASSET_GROUP_UNKNOWN`).
  */
 export const ASSET_GROUP_UNKNOWN = "UNKNOWN";
 
 /**
  * Disappearance-resolution timestamping default: "scan_ts" (conservative) or "midpoint".
- * gas/src/domain/config.ts:81 (`DISAPPEARANCE_RESOLUTION`); brick/devsecops/config.py:501
+ * gas/src/domain/config.ts:81 (`DISAPPEARANCE_RESOLUTION`); brick/config.py:501
  * mirrors the same value for the same reason.
  */
 export const DISAPPEARANCE_RESOLUTION = "scan_ts";

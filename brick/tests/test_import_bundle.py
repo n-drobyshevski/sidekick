@@ -1,8 +1,9 @@
 """The GAS -> brick seed: the column mapping, and the handoff to the first ordinary scan.
 
-Ported from ``brick/tests/test_import_bundle.py`` when this fork absorbed the ``os`` scope
-(S2): the GAS app is the OS-patching register, so ``SCOPE`` below is ``"os"``, unchanged from
-upstream, and every assertion carries over untouched.
+Ported from the OS register's own ``brick/tests/test_import_bundle.py`` -- ``git show
+ef22b05^:brick/tests/test_import_bundle.py``, that directory having been retired at ``ef22b05`` --
+when this tree absorbed the ``os`` scope (S2): the GAS app is the OS-patching register, so
+``SCOPE`` below is ``"os"``, unchanged from upstream, and every assertion carries over untouched.
 
 Two halves. The first pins the mapping's four silent failure modes -- a NULL risk signal
 coerced to false, the severity-scope serialization, episodes dropped on the floor, and a
@@ -607,7 +608,7 @@ class TestHandoffToTheFirstScan:
 #
 # The perturbation below is the one line that does it, reproduced inline rather than described.
 
-SCA_FIXTURE = BRICK_DIR / "sca_findings_example.json"
+SCA_FIXTURE = BRICK_DIR / "fixtures" / "sca_findings_example.json"
 
 
 def seed_a_sca_register(spark, tables):

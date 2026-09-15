@@ -1136,11 +1136,11 @@ var Server = (() => {
       const parts2 = splitRepoBranch(str(rec, "resource.name"), str(rec, "resource.type"));
       return {
         ...empty,
-        // brick/devsecops/metrics.py:365 puts the weakness TITLE here ("SQL Injection"), not
+        // brick/metrics.py:365 puts the weakness TITLE here ("SQL Injection"), not
         // an identifier — it is what every panel groups on to answer "what kind of thing is
         // this". The identifier-shaped value lives in `cwe`.
         identifier: (_b = clean(rec["name"])) != null ? _b : null,
-        // DIVERGENCE (brick): brick/devsecops/metrics.py:362 aliases `filePath` as `component`
+        // DIVERGENCE (brick): brick/metrics.py:362 aliases `filePath` as `component`
         // for SAST. This register has a dedicated `file_path` column, so writing the path into
         // both would store the same string twice under two names; `component` stays null for
         // sast and secrets per the D2 brief. Reported, not papered over.
@@ -1186,7 +1186,7 @@ var Server = (() => {
     return {
       ...empty,
       identifier: (_f = clean(rec["name"])) != null ? _f : null,
-      // The package, per brick/devsecops/metrics.py:269 — `detailedName` is "braces" on the
+      // The package, per brick/metrics.py:269 — `detailedName` is "braces" on the
       // live probe sample where `name` is "CVE-2024-4068".
       component: str(rec, "detailedName"),
       repo_id: str(rec, "vulnerableAsset.id"),
@@ -3488,7 +3488,7 @@ var Server = (() => {
   };
   var TAB_HEADERS = {
     // Three update disciplines coexist here and they are NOT interchangeable — the same
-    // split brick/devsecops arrived at, and the reason its ledger tests read the way they do:
+    // split brick/ arrived at, and the reason its ledger tests read the way they do:
     //   latest-wins            severity, status, the asset columns
     //   sticky-first-wins      fix_date / fix_observed_at, reset only by a reopen
     //   monotone, never reset  has_kev / has_exploit (null -> false -> true), epss keeps the peak

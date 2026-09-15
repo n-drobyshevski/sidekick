@@ -48,7 +48,7 @@ import plotly.graph_objects as go
 from config import SEVERITY_ORDER
 
 # See config.PIPELINE_VERSION: every module in a deployment must come from the same upload.
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 # ------------------------------------------------------------------------------- tokens
 #

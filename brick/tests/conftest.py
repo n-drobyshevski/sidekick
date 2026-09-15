@@ -29,6 +29,7 @@ BRICK_DIR = Path(__file__).resolve().parents[1]
 #: brick/ is one hop below the repo root. Only the GAS golden fixture is read from there --
 #: everything else is beside these tests.
 REPO_ROOT = BRICK_DIR.parent
+FIXTURE_DIR = BRICK_DIR / "fixtures"
 sys.path.insert(0, str(BRICK_DIR))
 
 # 3.3 rather than 3.2, and the reason is `run_pipeline.maintain`. The open-source OPTIMIZE path
@@ -277,7 +278,7 @@ def live_tables(spark):
     import run_pipeline
     from ingest import extract_nodes
 
-    nodes = extract_nodes(json.loads((BRICK_DIR / LIVE_FIXTURE).read_text()))
+    nodes = extract_nodes(json.loads((FIXTURE_DIR / LIVE_FIXTURE).read_text()))
     spark.sql(f"DROP DATABASE IF EXISTS {LIVE_SCHEMA} CASCADE")
     spark.sql(f"CREATE DATABASE {LIVE_SCHEMA}")
     tables = run_pipeline.resolve_tables(LIVE_SCHEMA, argv=[])

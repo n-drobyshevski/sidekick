@@ -9,10 +9,10 @@ time. This test pins the fix rather than the failure: the ``delta-spark`` floor 
 ``requirements.txt`` must equal the jar version in ``conftest.py``, and ``pyspark`` must carry
 an upper bound below 3.6 so a future ``pip install`` cannot silently drift back onto 4.x.
 
-One directory's worth of checks, no parametrisation: this used to also parametrise over a
-sibling fork's own ``requirements.txt``/``conftest.py`` pair, back when ``brick/`` and
-``brick/devsecops/`` were two directories each pinning their own jar. There is one tree now, so
-one pair of files is all there is to check.
+One directory's worth of checks, no parametrisation: this used to also parametrise over a sibling
+fork's own ``requirements.txt``/``conftest.py`` pair, back when ``brick/`` and
+``brick/devsecops/`` were two directories each pinning their own jar. The second was retired at
+``ef22b05``; there is one tree now, so one pair of files is all there is to check.
 """
 
 from __future__ import annotations

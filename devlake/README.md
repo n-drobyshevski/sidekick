@@ -14,16 +14,16 @@ earlier process created, and (in later steps) a fake Wiz transport and IPython/`
 
 ## One tree, and the failure that is still real
 
-`brick/` used to have a sibling fork (`brick/devsecops/`) defining the same module names
-(`config`, `ingest`, `run_pipeline`, ...) in different files — a `sys.path` holding both
-directories would resolve a bare `import config` to whichever came first, half of one pipeline
-and half of the other, with no error. That fork is retired: one tree, four scopes. What is
-still real on a flat Databricks workspace folder is a STALE IMPORT — a `sys.modules` entry left
-behind from some other directory entirely (a prior test module, a notebook cell, an old
-checkout on `sys.path` ahead of this one) — and `devlake.session.put_brick_on_path` still
-refuses that outright, checking every module name it defines against the directory it was
-actually loaded from. `devlake` itself has to live at the repo root rather than inside `brick/`
-for exactly this reason — a fork directory can only ever host that one tree.
+`brick/` used to have a sibling fork (`brick/devsecops/`, retired at `ef22b05`) defining the same
+module names (`config`, `ingest`, `run_pipeline`, ...) in different files — a `sys.path` holding
+both directories would resolve a bare `import config` to whichever came first, half of one
+pipeline and half of the other, with no error. That fork is retired: one tree, three scopes. What
+is still real on a flat Databricks workspace folder is a STALE IMPORT — a `sys.modules` entry left
+behind from some other directory entirely (a prior test module, a notebook cell, an old checkout
+on `sys.path` ahead of this one) — and `devlake.session.put_brick_on_path` still refuses that
+outright, checking every module name it defines against the directory it was actually loaded from.
+`devlake` itself has to live at the repo root rather than inside `brick/` for exactly this reason
+— a fork directory can only ever host that one tree.
 
 ## The jar pin
 
@@ -65,7 +65,7 @@ Spark's in-memory catalog (no `enableHiveSupport()`) lives and dies with the `Sp
 A table created in one process is, to a fresh process pointed at the same warehouse directory,
 just a directory again — the Delta log on disk still has every commit, but nothing in the new
 catalog knows the name. `devlake.lake.reregister` runs the same
-`CREATE TABLE ... USING DELTA LOCATION` recipe `brick/README.md` documents for moving a
+`CREATE TABLE ... USING DELTA LOCATION` recipe `brick/docs/storage.md` documents for moving a
 register into a real catalog, on every local boot.
 
 The first `CREATE TABLE` a lake ever does (no restart yet) makes a table *managed* — no

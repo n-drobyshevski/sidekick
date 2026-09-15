@@ -6,7 +6,7 @@ and dies with the ``SparkSession`` -- so a table that was ``CREATE TABLE``-d und
 ``spark_catalog.wiz.wiz_os_vuln_ledger`` in one process is, to a fresh process pointed at the
 same warehouse directory, just a directory again: the Delta log on disk still has every commit,
 but nothing in the new session's catalog knows the name. :func:`reregister` is exactly the
-migration recipe ``brick/README.md`` ("Moving it into the lake later") already documents for
+migration recipe ``brick/docs/storage.md`` ("Moving it into the lake later") already documents for
 moving a register into a *real* catalog -- ``CREATE TABLE ... USING DELTA LOCATION`` -- run here
 on every local boot instead of once, because a local session has no catalog that persists any
 other way.

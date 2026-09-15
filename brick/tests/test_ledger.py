@@ -176,7 +176,7 @@ def test_vuln_key_matches_the_reference_implementation(spark):
         reason="cross-check needs the repo root importable",
     )
     payload = json.loads(
-        (BRICK_DIR / "sca_findings_example.json").read_text(encoding="utf-8")
+        (BRICK_DIR / "fixtures" / "sca_findings_example.json").read_text(encoding="utf-8")
     )
     from ingest import extract_nodes
 
@@ -628,7 +628,7 @@ def test_untouched_rows_are_not_republished(spark):
 # reconcile for exactly this; the lesson it wrote down is that reconcile must not trust its
 # caller for this, because the violation is silent and arrives dressed as remediation.
 
-FOREIGN_SCOPE = "sast"  # this fork's other register: same ledger schema, different population
+FOREIGN_SCOPE = "sast"  # this tree's other register: same ledger schema, different population
 NATIVE_SCOPE = "sca"
 #: How many OPEN rows the foreign prior holds -- the price of the missing guard, in rows.
 FOREIGN_PRIOR_ROWS = 6
@@ -640,7 +640,7 @@ def foreign_prior(spark, *, scope=FOREIGN_SCOPE, count=FOREIGN_PRIOR_ROWS):
     Built through the real parse and reconcile path, so the rows are a genuine ledger of that
     scope rather than hand-written ones that might not satisfy the disappearance conditions.
     The payloads are SCA-shaped and merely STAMPED ``sast``: what reconcile reads is the stamp,
-    and a genuinely SAST-shaped ledger is exercised in ``test_devsecops.py``.
+    and a genuinely SAST-shaped ledger is exercised in ``test_code_scopes.py``.
     """
     touched = ledger.reconcile(
         ledger.empty_ledger(spark),

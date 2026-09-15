@@ -78,7 +78,7 @@ from typing import Optional
 from pyspark.sql import Row, SparkSession
 from pyspark.sql import functions as F
 
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 # The six runtime modules move in lockstep, and the documented way to deploy them is pasting
 # files into a Workspace folder one at a time -- so a half-updated folder is the likely failure,
@@ -114,9 +114,10 @@ except ImportError as exc:
         f"ledger.py, which v2 added.\n"
         f"Fix: copy ALL SIX of config.py, dbx.py, ingest.py, ledger.py, metrics.py and "
         f"run_pipeline.py into the folder, then run dbutils.library.restartPython(). "
-        f"See brick/README.md section 2."
+        f"See brick/docs/deploy.md, section 2."
     ) from exc
 
+# ------------------------------------- the register's tables, families and module manifest
 BRONZE_TABLE = "findings_raw"
 LEDGER_TABLE = "vuln_ledger"
 METRICS_TABLE = "metrics"
@@ -150,8 +151,9 @@ APPEND_TABLE_ATTRS = {BRONZE_TABLE: "bronze", METRICS_TABLE: "metrics"}
 # forgotten in an export is a name error at import rather than a gap in a backup.
 TABLE_ATTRS = ("metrics", "ledger", "bronze")
 
-# Every module that has to be deployed for a run, including this one. The README's file tree
-# is checked against this list by the test suite, so the deployment instructions cannot drift
+# Every module that has to be deployed for a run, including this one. The deployment file tree
+# in brick/docs/deploy.md is checked against this list by the test suite, so the instructions
+# cannot drift
 # away from what the code actually imports -- which is exactly how v2 shipped with a five-file
 # tree after adding a sixth module.
 RUNTIME_MODULES = ("config", "dbx", "ingest", "ledger", "metrics", "run_pipeline")
@@ -170,10 +172,11 @@ NOTEBOOK_MODULES = ("panels", "figures", "tiles")
 # because a module it does not import is missing from the folder. Absent is fine; present and
 # disagreeing is not.
 #
-# `import_bundle` ported from `brick/import_bundle.py` when this fork absorbed the `os` scope
-# (S2): the GAS app it seeds from is the OS-patching register, so the importer is only ever run
-# with `--scope=os`, but it is deployment tooling like `csvstore`, not scope-specific code, and
-# lives here rather than behind a scope check.
+# `import_bundle` ported from the OS register's own copy -- `git show
+# ef22b05^:brick/import_bundle.py`, that directory having been retired at `ef22b05` -- when this
+# tree absorbed the `os` scope (S2): the GAS app it seeds from is the OS-patching register, so the
+# importer is only ever run with `--scope=os`, but it is deployment tooling like `csvstore`, not
+# scope-specific code, and lives here rather than behind a scope check.
 #
 # Neither is imported by this module at module scope -- `csvstore` is reached lazily from
 # `export_csv`, and `import_bundle` imports `run_pipeline` (not the other way around) and calls
@@ -185,6 +188,7 @@ MIGRATION_MODULES = ("import_bundle", "csvstore")
 OPTIONAL_MODULES = NOTEBOOK_MODULES + MIGRATION_MODULES
 
 
+# -------------------------------------------------------------------- the deployment guard
 def check_deployment() -> None:
     """Refuse to run against a folder holding a mix of versions.
 
@@ -229,7 +233,7 @@ def check_deployment() -> None:
 
     detail = ", ".join(f"{name}={versions[name] or 'absent'}" for name in stale)
     raise RuntimeError(
-        f"Mixed devsecops deployment: {detail} (expected {PIPELINE_VERSION}). These modules "
+        f"Mixed brick deployment: {detail} (expected {PIPELINE_VERSION}). These modules "
         f"must all come from the same version, and a mismatch is usually one of two things: a "
         f"half-updated folder, or a stale sys.modules entry left over from an earlier import in "
         f"the same long-lived process.\n"
@@ -269,6 +273,7 @@ def _check_one_directory() -> None:
         f"reloading, and see brick/README.md."
     )
 
+# ---------------------------------------------- table references, and where they may point
 # These tables usually land in a schema shared with other teams, where bare names like
 # `findings_raw` and `metrics` are an obvious collision risk -- `metrics` especially, since it
 # is the name of the whole published register. Hence a prefix. Pass --table_prefix= (empty) to
@@ -313,7 +318,7 @@ PERSISTENT_PATHS = (
     "/Volumes/<catalog>/<schema>/<volume>/... (a Unity Catalog volume is a much smaller ask "
     "than a schema to create tables in), dbfs:/... where DBFS root still exists, or a storage "
     "URI you already hold credentials for (s3://..., abfss://...). "
-    "See brick/README.md, PoC storage."
+    "See brick/docs/storage.md, Fallback storage."
 )
 
 
@@ -356,6 +361,7 @@ def table_exists(spark: SparkSession, table: str) -> bool:
     return DeltaTable.isDeltaTable(spark, path)
 
 
+# --------------------------------------- the run's result, its parameters, and the session
 @dataclass(frozen=True)
 class RunResult:
     """What a run produced. Returned by ``main()`` so a notebook has a handle on the tables it
@@ -383,10 +389,10 @@ def utc_now_iso() -> str:
 
 # 0 means "do not set spark.sql.shuffle.partitions at all".
 #
-# A run is a handful of aggregations over one scan and the README's own deployment note says "a
+# A run is a handful of aggregations over one scan and brick/docs/deploy.md's own note says "a
 # single-node cluster is plenty", so Spark's 200 default does look oversized -- most of the
 # shuffles here schedule 200 tasks to move a few rows. The obvious move is to ship a smaller
-# default, and `brick/bench_pipeline.py` does not support one: over three runs a side at 20,000
+# default, and `brick/tools/bench_pipeline.py` does not support one: over three runs a side at 20,000
 # findings, 64 had the fastest single run and the tightest spread but a *worse* median than 200.
 # That is a measurement saying "it depends on the cluster", so the number is left to whoever has
 # one, and the knob is here to turn.
@@ -418,7 +424,7 @@ def get_spark(shuffle_partitions: Optional[int] = None) -> SparkSession:
     return spark
 
 
-# --------------------------------------------------------------- the scan log + the ledger
+# ------------------------------------------ the tables, the scan log, and the ledger MERGE
 
 
 def serialize_severities(severities) -> Optional[str]:
@@ -463,7 +469,7 @@ def parse_severities(text) -> Optional[list]:
 # **Measured, they cost rather than pay** -- ~5% for the clustering and ~12% more for the DVs,
 # on a ledger of ~25k rows. That is the scale, not the idea: rewriting a few-megabyte file is
 # nearly free, so there is no amplification to avoid and the DV bookkeeping is all cost. The
-# README's "What this measured" section has the numbers and the condition under which it
+# brick/docs/register.md's "What this measured" section has the numbers and the condition it
 # inverts. Turning DVs off here is one word, and on a small register it is the right word.
 #
 # Off for bronze on purpose. It is append-only -- no MERGE, no UPDATE, one
@@ -489,7 +495,8 @@ def create_clustered(spark: SparkSession, table: str, schema, attr: str) -> None
 
     **Existing registers are not migrated.** This only fires when the table is absent, so a
     deployment that already has these tables keeps its unclustered layout until someone runs
-    the ALTER TABLE recipe in the README. Enabling clustering on an existing table is an
+    the ALTER TABLE recipe in ``brick/docs/migrating.md``. Enabling clustering on an existing
+    table is an
     owner-level operation and not one to perform silently on the next scheduled run.
     """
     if table_exists(spark, table):
@@ -859,6 +866,7 @@ def clear_scan(spark: SparkSession, tables: Tables, scan_id: str, scope: str) ->
             )
 
 
+# ---------------------------------------------------------------- bronze: ingest and write
 BRONZE_SCHEMA = "scan_id STRING, scan_ts STRING, scope STRING, seq LONG, node_json STRING"
 
 # The same columns as they are *stored*. `scan_ts` arrives as a string and is cast on the way in
@@ -956,6 +964,7 @@ def ingest_to_bronze(
     return total
 
 
+# --------------------------------------------------- reconciling a scan against the ledger
 def reconcile_scan(
     spark: SparkSession,
     tables: Tables,
@@ -994,9 +1003,9 @@ def reconcile_scan(
     # **The prior is THIS SCOPE'S ledger rows and nothing else.** One ledger holds every scope,
     # and `reconcile` resolves by absence: every `sca` row is missing from an `os` scan by
     # construction, so an unfiltered prior would date the whole of the other two registers as
-    # remediated by this scan, with real-looking resolution dates and a plausible delta. The
-    # sibling that had to learn this priced the mutation at 19,949 findings
-    # (CLAUDE.md, gas_devsecops). `ledger._refuse_foreign_scope` is the proof this line ran.
+    # remediated by this scan, with real-looking resolution dates and a plausible delta.
+    # `gas_devsecops/`, which had to learn this, priced the mutation at 19,949 findings.
+    # `ledger._refuse_foreign_scope` is the proof this line ran.
     touched = ledger_mod.reconcile(
         spark.table(tables.ledger).where(F.col("scope") == scope),
         ledger_mod.observed(silver),
@@ -1072,6 +1081,7 @@ def closed_observed(spark: SparkSession, scan_log: list, scan_ts: str, deltas: d
     )
 
 
+# --------------------------------------------- gold: build and publish the metric families
 # The snapshot-sourced columns republished beside the ledger-sourced ones. Kept deliberately
 # short: enough to see how far v1 was off, not a second copy of the whole table.
 SNAPSHOT_COLUMNS = ["km_median", "mttr_median", "resolved", "open"]
@@ -1095,7 +1105,7 @@ def build_metrics(
     Silver is computed and never stored. It is a pure per-scan projection of bronze -- the
     snapshot columns read the frame in memory, and `panels._silver_frame` rebuilds it from
     bronze the same way -- so a table would be a second copy of data the register already holds.
-    Bronze is what must survive; see the README's PoC storage section.
+    Bronze is what must survive; see ``brick/docs/storage.md``, Fallback storage.
 
     ``summary=False`` skips the printed report. The report is the only reason the gold frames
     are cached, so a caller that does not want the printing does not want the caching either --
@@ -1269,6 +1279,7 @@ def with_snapshot_columns(ledger_mttr, snapshot_mttr):
     return ledger_mttr.join(snap, "severity", "left")
 
 
+# ---------------------------------------------------------------- the run summary, printed
 def summarize(
     scan_id, scope, rule, deltas, mttr, program, capacity, assets=None, *, severities=None
 ) -> None:
@@ -1344,6 +1355,7 @@ def _show_capacity(capacity, population: str) -> None:
     ).orderBy(F.col("month").desc()).show(6, truncate=False)
 
 
+# -------------------------------------------------------------------- parameter resolution
 def resolve_namespace(argv: Optional[list] = None) -> str:
     """``<catalog>.<schema>``, with the catalog required -- there is no safe default for it.
 
@@ -1406,7 +1418,7 @@ def resolve_data_path(argv: Optional[list] = None, csv_register: str = "") -> st
     executor, and then fail the moment the cluster is scaled. Workspace file permissions also
     expire (36 hours interactive, 30 days for jobs), which disqualifies it as somewhere data
     lives. Refused for the same reason as the ephemeral paths: the failure is late, confusing,
-    and lands on the data. See brick/README.md, PoC storage.
+    and lands on the data. See brick/docs/storage.md, Fallback storage.
     """
     path = param("data_path", argv=argv).strip().rstrip("/")
     if not path and csv_register:
@@ -1469,7 +1481,8 @@ def resolve_tables(
 
     With ``data_path`` set, each is ``delta.`<path>/<prefix><name>``` -- a directory per table
     under one root, named identically to the tables a catalog-backed run would create, so the
-    migration recipe in the README is a `CREATE TABLE ... LOCATION` per directory and nothing
+    migration recipe in ``brick/docs/storage.md`` is a `CREATE TABLE ... LOCATION` per directory
+    and nothing
     has to be renamed.
     """
     prefix = param("table_prefix", DEFAULT_TABLE_PREFIX, argv=argv)
@@ -1533,6 +1546,7 @@ def truthy(value: str) -> bool:
     return str(value).strip().lower() in {"1", "true", "yes", "on"}
 
 
+# ------------------------------------ operations: rebuild, maintain, export, ensure schema
 def rebuild_ledger(
     spark: SparkSession,
     tables: Tables,
@@ -1713,7 +1727,8 @@ def export_csv(
 
     Still not how you *migrate* between registers: what you migrate is the Delta directory,
     ``CREATE TABLE ... USING DELTA LOCATION``, which keeps the clustering and the history too.
-    See the README's PoC storage section. ``csvstore.restore`` is for rebuilding a register
+    See ``brick/docs/storage.md``, Fallback storage. ``csvstore.restore`` is for rebuilding a
+    register
     whose Delta side was lost, which is a different job from moving one that is intact.
 
     ``include_bronze`` opts into the one table the default skips -- see ``csvstore.DEFAULT_ATTRS``.
@@ -1751,6 +1766,7 @@ def ensure_schema(spark: SparkSession, namespace: str) -> None:
         ) from exc
 
 
+# ------------------------------------------------------------------------------------ main
 def main(scan_id: Optional[str] = None) -> Optional[RunResult]:
     """Run the pipeline. Returns what it wrote, or ``None`` when there was nothing to do."""
     # A half-updated workspace folder is the cheapest failure to detect and the most expensive

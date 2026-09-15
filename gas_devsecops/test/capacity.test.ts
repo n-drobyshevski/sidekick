@@ -14,7 +14,7 @@
 //
 // Sources, same two oracles as program.test.ts:
 //   gas/test/program.test.ts::capacityByMonth  — hand-worked months, scan-delta cross-check
-//   test/fixtures/brick/capacity.json          — brick/devsecops/metrics.py's PySpark output
+//   test/fixtures/brick/capacity.json          — brick/metrics.py's PySpark output
 
 import { describe, expect, it } from "vitest";
 import {
@@ -256,7 +256,7 @@ describe("observationWindowDays", () => {
 });
 
 // =======================================================================================
-//  brick/devsecops parity — capacity.json
+//  brick/ parity — capacity.json
 // =======================================================================================
 //
 // NAME MAPPING, brick snake_case -> this module's camelCase:
