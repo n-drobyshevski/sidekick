@@ -13,18 +13,19 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  AUTO_COMPACT_OFF_NOTE, BATCHED_KEYS, DEFAULT_SYNC_HOUR, DEFAULT_TAB, FIELD_TABS,
-  RETENTION_FLOOR_DAYS, SCOPE_LABELS, SETTINGS_KEYS, TABS,
-  accessFieldView, changeCountText, changeSummary, changedFields, draftFromSettings,
-  maintenanceFieldView, normalizeTab, registerFieldView, retentionFieldView,
+  AUTO_COMPACT_OFF_NOTE, BATCHED_KEYS, COLD_WINDOW_MAX_DAYS, COLD_WINDOW_MIN_DAYS,
+  DEFAULT_COLD_AFTER_DAYS as PAGE_DEFAULT_COLD_AFTER_DAYS, DEFAULT_SYNC_HOUR, DEFAULT_TAB,
+  FIELD_TABS, RETENTION_FLOOR_DAYS, SCOPE_LABELS, SETTINGS_KEYS, TABS,
+  accessFieldView, changeCountText, changeSummary, changedFields, coldWindowFieldView,
+  draftFromSettings, maintenanceFieldView, normalizeTab, registerFieldView, retentionFieldView,
   saveReconciliation, slaFieldRows,
 } from "../src/client/js/pages/settings.js";
 import {
   DEFAULT_SETTINGS, cleanSettings, validateSettings, withSettings,
 } from "../src/domain/settingsLogic";
 import {
-  DEFAULT_FETCH_SEVERITIES, SCOPES, SCOPE_LABELS as DOMAIN_SCOPE_LABELS, SEVERITY_ORDER,
-  SLA_TARGETS,
+  COLD_AFTER_DAYS_MAX, COLD_AFTER_DAYS_MIN, DEFAULT_COLD_AFTER_DAYS, DEFAULT_FETCH_SEVERITIES,
+  SCOPES, SCOPE_LABELS as DOMAIN_SCOPE_LABELS, SEVERITY_ORDER, SLA_TARGETS,
 } from "../src/domain/config";
 import { RETENTION_MIN_DAYS } from "../src/domain/maintenance";
 import { code } from "../../gas_shared/test/contracts/emptyStates.js";
@@ -75,20 +76,31 @@ describe("the locally-duplicated constants match the domain values they mirror",
   it("DEFAULT_SYNC_HOUR matches domain/settingsLogic.ts's DEFAULT_SYNC_HOUR default", () => {
     expect(DEFAULT_SYNC_HOUR).toBe(DEFAULT_SETTINGS.syncSchedule);
   });
+
+  it("the three cold-window constants match domain/config.ts", () => {
+    // The page paints its hint and its clamp warning from these three; the server clamps from
+    // the domain's own. Two literals for one range is exactly the drift this file exists to
+    // catch — a page warning "outside 7–365" over a server that stores 30 is worse than no
+    // warning at all.
+    expect(PAGE_DEFAULT_COLD_AFTER_DAYS).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(PAGE_DEFAULT_COLD_AFTER_DAYS).toBe(DEFAULT_SETTINGS.coldAfterDays);
+    expect(COLD_WINDOW_MIN_DAYS).toBe(COLD_AFTER_DAYS_MIN);
+    expect(COLD_WINDOW_MAX_DAYS).toBe(COLD_AFTER_DAYS_MAX);
+  });
 });
 
 // =========================================================================================
-//  2. draftFromSettings carries the full seven-key contract
+//  2. draftFromSettings carries the full eight-key contract
 // =========================================================================================
 
-describe("draftFromSettings never drops one of the seven Settings fields", () => {
+describe("draftFromSettings never drops one of the eight page-editable Settings fields", () => {
   // The two VIEW SCOPES this page does not own. Both are app-header chrome written through
   // their own endpoints (`api_setProjectView` / `api_setDomainView`), one field at a time —
   // see the module header just above SETTINGS_KEYS in pages/settings.js. So the exact-set
   // check below is "every Settings key EXCEPT the two this page does not own".
   const VIEW_SCOPES = ["projectView", "domainView"];
 
-  it("SETTINGS_KEYS names exactly the seven PAGE-EDITABLE fields Settings declares", () => {
+  it("SETTINGS_KEYS names exactly the eight PAGE-EDITABLE fields Settings declares", () => {
     const pageEditable = Object.keys(DEFAULT_SETTINGS)
       .filter((k) => VIEW_SCOPES.indexOf(k) < 0);
     expect([...SETTINGS_KEYS].sort()).toEqual(pageEditable.sort());
@@ -108,11 +120,11 @@ describe("draftFromSettings never drops one of the seven Settings fields", () =>
     },
   );
 
-  it("produces exactly those seven keys from a real Settings object", () => {
+  it("produces exactly those eight keys from a real Settings object", () => {
     expect(Object.keys(draftFromSettings(DEFAULT_SETTINGS)).sort()).toEqual([...SETTINGS_KEYS].sort());
   });
 
-  it("produces exactly those seven keys from nothing at all", () => {
+  it("produces exactly those eight keys from nothing at all", () => {
     expect(Object.keys(draftFromSettings(null)).sort()).toEqual([...SETTINGS_KEYS].sort());
     expect(Object.keys(draftFromSettings(undefined)).sort()).toEqual([...SETTINGS_KEYS].sort());
     expect(Object.keys(draftFromSettings({})).sort()).toEqual([...SETTINGS_KEYS].sort());
@@ -277,6 +289,67 @@ describe("a retentionDays below the floor is shown as the floor, not the typed v
 });
 
 // =========================================================================================
+//  5b. The cold-zone window is bounded at BOTH ends, and says so honestly
+// =========================================================================================
+
+describe("a cold-zone window outside the range is reported, not silently redrawn", () => {
+  it("lifts through draftFromSettings, and falls back to the default for junk", () => {
+    expect(draftFromSettings(DEFAULT_SETTINGS).coldAfterDays).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(draftFromSettings({}).coldAfterDays).toBe(PAGE_DEFAULT_COLD_AFTER_DAYS);
+    expect(draftFromSettings({ coldAfterDays: "soon" }).coldAfterDays).toBe(PAGE_DEFAULT_COLD_AFTER_DAYS);
+    expect(draftFromSettings({ coldAfterDays: 120 }).coldAfterDays).toBe(120);
+  });
+
+  it("an in-range value is shown as typed, with no flag at either end", () => {
+    const v = coldWindowFieldView(120);
+    expect(v.belowFloor).toBe(false);
+    expect(v.aboveCeiling).toBe(false);
+    expect(v.outOfRange).toBe(false);
+    expect(v.displayValue).toBe(120);
+  });
+
+  it("a below-floor value is flagged and displayed at the floor, raw value kept", () => {
+    const v = coldWindowFieldView(3);
+    expect(v.belowFloor).toBe(true);
+    expect(v.outOfRange).toBe(true);
+    expect(v.displayValue).toBe(COLD_WINDOW_MIN_DAYS);
+    expect(v.value).toBe(3); // so the caller can tell "typed 3" from "will store 7"
+  });
+
+  it("an above-ceiling value is flagged the same way — the range has two ends", () => {
+    const v = coldWindowFieldView(400);
+    expect(v.aboveCeiling).toBe(true);
+    expect(v.outOfRange).toBe(true);
+    expect(v.displayValue).toBe(COLD_WINDOW_MAX_DAYS);
+    expect(v.value).toBe(400);
+  });
+
+  it("both ends are INCLUSIVE, matching the server's own clamp", () => {
+    for (const edge of [COLD_WINDOW_MIN_DAYS, COLD_WINDOW_MAX_DAYS]) {
+      expect(coldWindowFieldView(edge).outOfRange).toBe(false);
+      expect(coldWindowFieldView(edge).displayValue).toBe(edge);
+    }
+  });
+
+  it("matches the server's own clamp for the same inputs (cross-check against settingsLogic)", () => {
+    for (const bad of [1, 0, -50, 400, 10_000]) {
+      expect(coldWindowFieldView(bad).displayValue)
+        .toBe(cleanSettings({ coldAfterDays: bad }).coldAfterDays);
+    }
+  });
+
+  it("saveReconciliation reports the server's clamp, from its own response", () => {
+    const notes = saveReconciliation({ coldAfterDays: 400 }, { coldAfterDays: COLD_WINDOW_MAX_DAYS });
+    expect(notes.join(" ")).toMatch(/Cold-zone window saved as 365 days/);
+    expect(notes.join(" ")).toMatch(/clamped into the 7–365 range/);
+  });
+
+  it("saveReconciliation reports nothing when the server stored exactly what was sent", () => {
+    expect(saveReconciliation({ coldAfterDays: 120 }, { coldAfterDays: 120 })).toEqual([]);
+  });
+});
+
+// =========================================================================================
 //  6. canEditAccess: false yields no editing affordance
 // =========================================================================================
 
@@ -374,9 +447,12 @@ describe("tab plumbing", () => {
     expect(normalizeTab(null)).toBe(DEFAULT_TAB);
   });
 
-  it("BATCHED_KEYS is six of the seven fields — showExperimental is deliberately excluded", () => {
+  it("BATCHED_KEYS is seven of the eight fields — showExperimental is deliberately excluded", () => {
     expect(BATCHED_KEYS.sort()).toEqual(
-      ["scopes", "fetchSeverities", "slaTargets", "syncSchedule", "autoCompact", "retentionDays"].sort(),
+      [
+        "scopes", "fetchSeverities", "slaTargets", "coldAfterDays",
+        "syncSchedule", "autoCompact", "retentionDays",
+      ].sort(),
     );
     expect(BATCHED_KEYS).not.toContain("showExperimental");
   });

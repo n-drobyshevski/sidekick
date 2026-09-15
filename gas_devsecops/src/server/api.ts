@@ -709,6 +709,13 @@ export function getExecutivePage(p?: unknown): ApiResult {
       // page does not draw.
       fixNext: exec["fixNext"],
       movement: exec["movement"],
+      // The cold zone, already the HEADLINE rather than the profile — `executiveModel` calls
+      // `coldZoneHeadline`, so the per-repository and per-project arrays never enter this
+      // payload and there is nothing here to slice. `coldZoneAsOfSource` travels with it
+      // because this is the one block on the page dated by the LEDGER's clock rather than by
+      // `asOf` above, and a figure that is measured on a different clock has to say so.
+      coldZone: exec["coldZone"],
+      coldZoneAsOfSource: exec["coldZoneAsOfSource"],
       tiers: exec["tiers"],
       signalCoverage: exec["signalCoverage"],
     };

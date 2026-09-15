@@ -21,7 +21,9 @@
 // would be deleting real behaviour for having no caller yet, not deleting dead code.
 
 import { describe, expect, it } from "vitest";
-import { draftWarnings, settingsDraft, validateDraft } from "../src/client/js/settingsModel.js";
+import {
+  SETTING_FIELDS, TAB_FIELDS, draftWarnings, settingsDraft, tabStatus, validateDraft,
+} from "../src/client/js/settingsModel.js";
 import { SCOPES, SCOPE_LABELS, SEVERITY_ORDER, SLA_TARGETS } from "../src/domain/config";
 
 /** What api_bootstrap ships, which is where a future caller would get these rather than
@@ -184,5 +186,33 @@ describe("the three consequences worth a confirm", () => {
 
   it("survives no context at all rather than throwing mid-save", () => {
     expect(draftWarnings(saved, draftOf({ scopes: ["sca"] }), null)).toHaveLength(1);
+  });
+});
+
+// =========================================================================================
+//  The registry itself: where a field lives, and which tab goes dirty when it moves
+// =========================================================================================
+//
+// `SETTING_FIELDS` is the one registry both this module and `pages/settings.js` read (see the
+// module header). `test/settingsLogic.test.js` holds the whole-map claims — every key is a real
+// Settings field, every tab is a real tab, and the set matches the page's own BATCHED_KEYS. What
+// is pinned here is the one field whose HOME is a judgement call rather than an obvious one.
+describe("coldAfterDays lives on Deadlines", () => {
+  it("is registered under the deadlines tab, with a reader-facing label", () => {
+    // Deadlines, not System: it is a threshold a reader SETS, like the SLA windows beside it,
+    // not a maintenance knob like the retention window. A registry entry under the wrong tab
+    // is invisible in the worst way — the save bar offers "jump to" a tab the control is not on.
+    expect(SETTING_FIELDS.coldAfterDays.tab).toBe("deadlines");
+    expect(SETTING_FIELDS.coldAfterDays.label).toBe("cold-zone window");
+  });
+
+  it("marks ONLY Deadlines dirty when it is the one field that moved", () => {
+    const saved = { slaTargets: { ...SLA_TARGETS }, coldAfterDays: 90, retentionDays: 180 };
+    const draft = { ...saved, coldAfterDays: 120 };
+    const status = tabStatus(draft, saved, {}, TAB_FIELDS);
+    expect(status.deadlines.dirty).toBe(true);
+    expect(status.system.dirty).toBe(false);
+    expect(status.register.dirty).toBe(false);
+    for (const tab of Object.keys(status)) expect(status[tab].invalid).toBe(false);
   });
 });

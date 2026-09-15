@@ -88,6 +88,15 @@ const LOCAL_SCOPES = ["sca", "sast", "secrets"]; // mirrors domain/config.ts SCO
 export const RETENTION_FLOOR_DAYS = 30; // domain/maintenance.ts::RETENTION_MIN_DAYS
 export const DEFAULT_SYNC_HOUR = 5; // domain/settingsLogic.ts::DEFAULT_SYNC_HOUR
 
+// domain/config.ts::DEFAULT_COLD_AFTER_DAYS / COLD_AFTER_DAYS_MIN / COLD_AFTER_DAYS_MAX,
+// mirrored here for the same reason the two constants above are (the client never imports
+// domain/*.ts — see the module header) and held equal to them by test/pagesSettings.test.js.
+// They paint a hint BEFORE a save; what the server actually stored, clamp included, is what
+// `saveReconciliation` reports from api_putSettings's own response.
+export const DEFAULT_COLD_AFTER_DAYS = 90;
+export const COLD_WINDOW_MIN_DAYS = 7;
+export const COLD_WINDOW_MAX_DAYS = 365;
+
 // Settings also carries `projectView` — the VIEW scope, which project the pages SHOW —
 // and it is DELIBERATELY ABSENT from SETTINGS_KEYS, from FIELD_TABS, from BATCHED_KEYS and
 // from draftFromSettings below. It is app-header chrome, not a settings-page field: a later
@@ -101,7 +110,7 @@ export const DEFAULT_SYNC_HOUR = 5; // domain/settingsLogic.ts::DEFAULT_SYNC_HOU
 // would have no source at all to forward and would silently save back whatever stale value
 // this page happened to load with. `test/pagesSettings.test.js` pins the exclusion.
 export const SETTINGS_KEYS = [
-  "scopes", "fetchSeverities", "slaTargets", "showExperimental",
+  "scopes", "fetchSeverities", "slaTargets", "coldAfterDays", "showExperimental",
   "syncSchedule", "autoCompact", "retentionDays",
 ];
 
@@ -126,8 +135,8 @@ export { DEFAULT_TAB, changeCountText, changeSummary, changedFields, normalizeTa
 // ============================================================================ pure view model
 
 /**
- * Lift api_getSettings's payload into a flat draft over exactly the seven Settings fields,
- * defensively — a malformed cell must not crash the page (the server's own `cleanSettings`
+ * Lift api_getSettings's payload into a flat draft over exactly the eight page-editable
+ * Settings fields, defensively — a malformed cell must not crash the page (the server's own `cleanSettings`
  * carries the same never-throw contract; this is its client-side mirror, not a replacement
  * for it). Arrays and per-scope records are copied, never aliased, so editing the draft can
  * never mutate a payload a background revalidation is still holding.
@@ -142,6 +151,13 @@ export function draftFromSettings(settings) {
       LOCAL_SCOPES.map((scope) => [scope, Array.isArray(fs[scope]) ? [...fs[scope]] : []]),
     ),
     slaTargets: { ...sla },
+    // Defensively, exactly like the two scalars below it: a settings cell holding a string, an
+    // object or nothing at all must paint the default rather than put NaN in a number input.
+    // The server's own `cleanColdAfterDays` is what CLAMPS a real out-of-range number into
+    // [7, 365] — this fallback only covers "not a number at all".
+    coldAfterDays: Number.isFinite(Number(s.coldAfterDays))
+      ? Number(s.coldAfterDays)
+      : DEFAULT_COLD_AFTER_DAYS,
     showExperimental: s.showExperimental === true,
     syncSchedule: Number.isFinite(Number(s.syncSchedule)) ? Number(s.syncSchedule) : DEFAULT_SYNC_HOUR,
     autoCompact: s.autoCompact === true,
@@ -219,6 +235,32 @@ export function retentionFieldView(days) {
   };
 }
 
+/**
+ * The cold-zone window, read the same honest way `retentionFieldView` reads the retention
+ * floor — and BOUNDED AT BOTH ENDS, which is the one difference. The retention window has a
+ * floor and no ceiling; this one has both, so a value outside the range is reported as
+ * `belowFloor` or `aboveCeiling` (with `outOfRange` for the callers that only need to know
+ * that something will move) and `displayValue` is what a save would actually store.
+ *
+ * The RAW typed value is always carried beside them, so a caller can tell "the reader typed
+ * 400" from "the register will use 365" — the same distinction the retention view keeps.
+ */
+export function coldWindowFieldView(days) {
+  const n = Number(days);
+  const value = Number.isFinite(n) ? n : DEFAULT_COLD_AFTER_DAYS;
+  const belowFloor = value < COLD_WINDOW_MIN_DAYS;
+  const aboveCeiling = value > COLD_WINDOW_MAX_DAYS;
+  return {
+    value,
+    floor: COLD_WINDOW_MIN_DAYS,
+    ceiling: COLD_WINDOW_MAX_DAYS,
+    belowFloor,
+    aboveCeiling,
+    outOfRange: belowFloor || aboveCeiling,
+    displayValue: Math.min(COLD_WINDOW_MAX_DAYS, Math.max(COLD_WINDOW_MIN_DAYS, value)),
+  };
+}
+
 export const AUTO_COMPACT_OFF_NOTE =
   "Off by default. This preserves the behaviour that shipped before this setting existed — "
   + "turning it on is a choice this page leaves to you, not one it steers you toward.";
@@ -246,6 +288,15 @@ export function saveReconciliation(sent, saved) {
   if (Number.isFinite(Number(s.retentionDays)) && Number(s.retentionDays) !== Number(r.retentionDays)) {
     notes.push(
       `Retention window saved as ${r.retentionDays} day(s) — raised to the ${RETENTION_FLOOR_DAYS}-day floor.`,
+    );
+  }
+  // The cold-zone window is the third field the server may silently rewrite, and it is CLAMPED
+  // (into a range, at either end) rather than defaulted — so the note names the range and the
+  // stored value, never "it was rejected".
+  if (Number.isFinite(Number(s.coldAfterDays)) && Number(s.coldAfterDays) !== Number(r.coldAfterDays)) {
+    notes.push(
+      `Cold-zone window saved as ${r.coldAfterDays} days — clamped into the `
+      + `${COLD_WINDOW_MIN_DAYS}–${COLD_WINDOW_MAX_DAYS} range.`,
     );
   }
   if (Number.isFinite(Number(s.syncSchedule)) && Number(s.syncSchedule) !== Number(r.syncSchedule)) {
@@ -750,6 +801,61 @@ export async function renderSettings(host, params, ctx) {
       const cutline = slaCutlines[r.sev];
       return el("div", {}, row, divergenceEl, cutline ? cutline.node : null);
     });
+
+    // ---- the cold-zone window, AFTER the per-severity rows and inside the same panel.
+    //
+    // Same tab, not the same kind of deadline: the rows above promise a window for ONE
+    // finding, this one sets how long a whole repository may go with nothing closing before
+    // the Repositories page calls it cold. It is last because it is the coarser reading, and
+    // it is here rather than on System because it is a deadline a reader sets, not a
+    // maintenance knob.
+    //
+    // TODO(cold-zone tip): the label is plain text because the `cold-zone` glossary entry is
+    // being added by the client work package. Once `helpContent.js` defines it, this becomes
+    // `glossaryTip("Cold-zone window", "cold-zone")` — until then a tip pointing at an
+    // undefined id would be a help link that opens nothing (test/pagesSettings.test.js and
+    // pagesLit gate 6/7 both hold that rule).
+    const coldId = "settings-cold-after-days";
+    const coldErrorId = `${coldId}-error`;
+    const coldWarn = el("span", { class: "small settings-retention-warn", hidden: true });
+    const coldError = el(
+      "span", { id: coldErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+      "Enter a number of days.",
+    );
+    const coldInput = el("input", {
+      type: "number", id: coldId, min: String(COLD_WINDOW_MIN_DAYS), max: String(COLD_WINDOW_MAX_DAYS),
+      step: "1", value: String(draft.coldAfterDays), "aria-describedby": coldErrorId,
+      oninput: (ev) => {
+        const raw = ev.target.value;
+        // The same "Number('') is 0, and 0 is finite" trap the two System handlers guard: a
+        // blank field is NO INPUT, never "cold immediately", so it is refused before the cast.
+        const blank = raw.trim() === "";
+        const n = Number(raw);
+        const ok = !blank && Number.isFinite(n);
+        // Out-of-range-but-real is a WARN, not an error — the server clamps it into the range
+        // on save, exactly as a below-floor retention window is clamped up. Only a value that
+        // does not parse as a number at all is invalid.
+        if (ok) {
+          draft.coldAfterDays = Math.floor(n);
+          const v = coldWindowFieldView(draft.coldAfterDays);
+          coldWarn.hidden = !v.outOfRange;
+          coldWarn.textContent = v.outOfRange
+            ? `Outside the ${v.floor}–${v.ceiling}-day range — saving will store ${v.displayValue}.`
+            : "";
+        }
+        coldInput.setAttribute("aria-invalid", ok ? "false" : "true");
+        coldError.hidden = ok;
+        setFieldError("coldAfterDays", ok ? null : "The cold-zone window must be a number.");
+        syncDirty();
+      },
+    });
+    body.push(settingRow({
+      label: "Cold-zone window", htmlFor: coldId,
+      description: "Days a repository may sit with open findings and no remediation movement "
+        + "before it is called cold. Movement is any finding resolved, removed or rotated.",
+      control: el("div", {}, coldInput, coldWarn, coldError),
+    }));
+
     const panel = settingsPanel({
       title: glossaryTip("Remediation windows", "sla-target"),
       description: "The same window applies to every register: a CRITICAL finding gets the "

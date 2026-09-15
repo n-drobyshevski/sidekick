@@ -33,8 +33,8 @@ export const SETTINGS_TABS = [
 export const DEFAULT_TAB = "register";
 
 /**
- * Every knob the page-level save bar batches, and where it lives. Deliberately six of the
- * seven Settings fields `pages/settings.js`'s `draftFromSettings` lifts: `showExperimental` is
+ * Every knob the page-level save bar batches, and where it lives. Deliberately seven of the
+ * eight Settings fields `pages/settings.js`'s `draftFromSettings` lifts: `showExperimental` is
  * a real Settings field but saves itself the moment its switch is flipped (see that page's own
  * module header), so it carries no tab here and never goes dirty. `projectView` is a real
  * Settings key too and is not in this registry at all — it is view-scope chrome with its own
@@ -49,6 +49,10 @@ export const SETTING_FIELDS = {
   scopes: { tab: "register", label: "registers collected" },
   fetchSeverities: { tab: "register", label: "severities requested" },
   slaTargets: { tab: "deadlines", label: "remediation windows" },
+  // On Deadlines beside the SLA windows, and not one of them: an SLA window is a promise about
+  // one finding, this is a threshold on a whole repository's silence. See Settings.coldAfterDays
+  // in domain/settingsLogic.ts for why they share a tab and nothing else.
+  coldAfterDays: { tab: "deadlines", label: "cold-zone window" },
   syncSchedule: { tab: "system", label: "sync hour" },
   autoCompact: { tab: "system", label: "automatic compaction" },
   retentionDays: { tab: "system", label: "retention window" },

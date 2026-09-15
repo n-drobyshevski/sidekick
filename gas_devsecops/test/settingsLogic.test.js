@@ -9,11 +9,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_SETTINGS, DEFAULT_SYNC_HOUR, cleanSettings, effectiveSlaTargets, validateSettings,
-  withSettings,
+  DEFAULT_SETTINGS, DEFAULT_SYNC_HOUR, cleanSettings, effectiveColdAfterDays, effectiveSlaTargets,
+  validateSettings, withSettings,
 } from "../src/domain/settingsLogic";
 import {
-  DEFAULT_FETCH_SEVERITIES, DEFAULT_RETENTION_DAYS, SCOPES, SLA_TARGETS,
+  COLD_AFTER_DAYS_MAX, COLD_AFTER_DAYS_MIN, DEFAULT_COLD_AFTER_DAYS, DEFAULT_FETCH_SEVERITIES,
+  DEFAULT_RETENTION_DAYS, SCOPES, SLA_TARGETS,
 } from "../src/domain/config";
 import { RETENTION_MIN_DAYS } from "../src/domain/maintenance";
 import { TAB_FIELDS, tabStatus } from "../src/client/js/settingsModel";
@@ -276,6 +277,79 @@ describe("the S6 battery settings", () => {
   });
 });
 
+// =========================================================================================
+//  coldAfterDays: the cold-zone window
+// =========================================================================================
+//
+// The one setting whose stage-one coercion is bounded at BOTH ends. `domain/coldZone.ts`
+// derives its four idle buckets as thirds of this number and REFUSES a non-positive one, so a
+// value that gets past `cleanSettings` reaches a function that throws on it — which makes the
+// clamp below the thing standing between a typo and a Repositories page that will not draw.
+describe("the cold-zone window", () => {
+  it("defaults to config.ts's DEFAULT_COLD_AFTER_DAYS", () => {
+    expect(DEFAULT_SETTINGS.coldAfterDays).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(DEFAULT_COLD_AFTER_DAYS).toBe(90);
+  });
+
+  it("coerces junk to the default rather than throwing", () => {
+    for (const junk of [null, undefined, "ninety", NaN, {}, [], ""]) {
+      expect(cleanSettings({ coldAfterDays: junk }).coldAfterDays).toBe(DEFAULT_COLD_AFTER_DAYS);
+    }
+  });
+
+  it("CLAMPS a real out-of-range number instead of defaulting it, at either end", () => {
+    // The same distinction cleanRetentionDays draws between "missing" and "typed something
+    // out of range": an operator who typed 3 asked for the shortest window they could, not
+    // for 90, and one who typed 400 asked for the longest.
+    expect(cleanSettings({ coldAfterDays: 3 }).coldAfterDays).toBe(COLD_AFTER_DAYS_MIN);
+    expect(cleanSettings({ coldAfterDays: 0 }).coldAfterDays).toBe(COLD_AFTER_DAYS_MIN);
+    expect(cleanSettings({ coldAfterDays: -50 }).coldAfterDays).toBe(COLD_AFTER_DAYS_MIN);
+    expect(cleanSettings({ coldAfterDays: 400 }).coldAfterDays).toBe(COLD_AFTER_DAYS_MAX);
+    // and both ends are inclusive — "at least 7", "at most 365", never ">"
+    expect(cleanSettings({ coldAfterDays: COLD_AFTER_DAYS_MIN }).coldAfterDays).toBe(COLD_AFTER_DAYS_MIN);
+    expect(cleanSettings({ coldAfterDays: COLD_AFTER_DAYS_MAX }).coldAfterDays).toBe(COLD_AFTER_DAYS_MAX);
+  });
+
+  it("floors a fraction, the same rule slaTargets and retentionDays already apply", () => {
+    expect(cleanSettings({ coldAfterDays: 45.9 }).coldAfterDays).toBe(45);
+  });
+
+  it("round-trips through withSettings, and a second clean is a no-op", () => {
+    const s = withSettings(DEFAULT_SETTINGS, { coldAfterDays: 120 });
+    expect(s.coldAfterDays).toBe(120);
+    expect(cleanSettings(s)).toEqual(s);
+  });
+
+  it("validateSettings rejects an out-of-range window it did not clean", () => {
+    // PINNED CHOICE, same as retentionDays: cleanSettings clamps and never throws;
+    // validateSettings — which never repairs — is what rejects a hand-built Settings that
+    // skipped stage one.
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldAfterDays: COLD_AFTER_DAYS_MIN - 1 }).join(" "))
+      .toMatch(/cold-zone window/i);
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldAfterDays: COLD_AFTER_DAYS_MAX + 1 }).join(" "))
+      .toMatch(/cold-zone window/i);
+    expect(validateSettings({ ...DEFAULT_SETTINGS, coldAfterDays: NaN }).join(" "))
+      .toMatch(/cold-zone window/i);
+    // ...and says it the inclusive way the README's bound rule requires.
+    const msg = validateSettings({ ...DEFAULT_SETTINGS, coldAfterDays: 1 }).join(" ");
+    expect(msg).toMatch(/at least 7 days/);
+    expect(msg).not.toMatch(/>/);
+  });
+
+  it("effectiveColdAfterDays degrades a PARTIAL settings object to the default", () => {
+    // Why this function exists at all: `server/readModels.ts`'s `norm()` reads it off
+    // `loadSettings()`, and a settings row (or a test mock) that never went through
+    // cleanSettings would otherwise hand `coldZoneProfile` an undefined it refuses.
+    expect(effectiveColdAfterDays(undefined)).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(effectiveColdAfterDays(null)).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(effectiveColdAfterDays({})).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(effectiveColdAfterDays({ coldAfterDays: "junk" })).toBe(DEFAULT_COLD_AFTER_DAYS);
+    // a saved value wins, and is clamped by the same coercion cleanSettings uses
+    expect(effectiveColdAfterDays({ coldAfterDays: 120 })).toBe(120);
+    expect(effectiveColdAfterDays({ coldAfterDays: 400 })).toBe(COLD_AFTER_DAYS_MAX);
+  });
+});
+
 // projectView: the VIEW scope — which project the pages SHOW, distinct from WIZ_PROJECT_ID_V2
 // (the FETCH scope, which stays a Script Property and is never added here — see
 // settingsLogic.ts's own header). "" means no scope: show the whole register.
@@ -344,7 +418,7 @@ describe("projectView, the view scope", () => {
 describe("tabStatus: per-tab dirty and invalid state", () => {
   const saved = draftFromSettings(DEFAULT_SETTINGS);
 
-  it("TAB_FIELDS names exactly the six real batched fields, and only real tab keys", () => {
+  it("TAB_FIELDS names exactly the seven real batched fields, and only real tab keys", () => {
     // The "cannot drift" claim, checked as data rather than assumed: the pure module's map
     // and the DOM half's own BATCHED_KEYS (pages/settings.js's Object.keys(FIELD_TABS), which
     // is now `= TAB_FIELDS`) must name the exact same field set.
@@ -411,11 +485,12 @@ describe("tabStatus: per-tab dirty and invalid state", () => {
     // TAB_FIELDS` (the same object, not a copy), so a field dropped from TAB_FIELDS drops
     // out of BATCHED_KEYS in lockstep and a TAB_FIELDS-vs-BATCHED_KEYS comparison can never
     // catch that removal — a guard that fires on nothing. Grepping the DOM half's own
-    // `draft.<field>` reads/writes is independent of TAB_FIELDS's own definition: the six
+    // `draft.<field>` reads/writes is independent of TAB_FIELDS's own definition: the seven
     // fields below are how each panel builder actually reads and mutates the draft, and stay
     // in the source even if TAB_FIELDS is edited.
     const fieldsSourceActuallyDrivesTheDraftFor = [
-      "scopes", "fetchSeverities", "slaTargets", "syncSchedule", "autoCompact", "retentionDays",
+      "scopes", "fetchSeverities", "slaTargets", "coldAfterDays",
+      "syncSchedule", "autoCompact", "retentionDays",
     ];
     for (const field of fieldsSourceActuallyDrivesTheDraftFor) {
       const re = new RegExp(`draft\\.${field}\\b`);

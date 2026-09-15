@@ -840,6 +840,37 @@ describe("each read model reaches its slice", () => {
     expect(Object.keys(row).sort()).toEqual(["group", "kmMedian", "open"]);
   });
 
+  it("getExecutivePage: the cold zone ships as the headline, arrays and all left behind", async () => {
+    // There is no slice for this one, and there must not be: `executiveModel` calls
+    // `coldZoneHeadline` so the per-repository and per-project arrays never enter the payload
+    // at all. The exact key set is what pins that — a `repos` key appearing here would mean
+    // every repository name in the estate travelling to draw one percentage.
+    const { api } = await syncedRegister();
+    const d = (api.getExecutivePage({}) as unknown as Rec)["data"] as Rec;
+    const cold = d["coldZone"] as Rec;
+    expect(Object.keys(cold).sort()).toEqual([
+      "as_of", "cold_after_days", "dropped_no_repo", "measurable", "observed_from", "row_count",
+      "scopes_without_scan", "totals", "unclassified_secrets",
+    ]);
+    // The clock this block was measured on, published beside it: it is the LEDGER's, not the
+    // `asOf` every other figure on this page carries.
+    expect(["scan", "wallClock"]).toContain(d["coldZoneAsOfSource"]);
+  });
+
+  it("getReposPage: the whole profile ships, teams included — the page draws the tables", async () => {
+    // The mirror of the case above, and the reason no slice was needed at either end: this
+    // page IS the cold zone's page, so it gets `repos` and `teams`, which is also the only
+    // route by which `owner_project` reaches it.
+    const { api } = await syncedRegister();
+    const d = (api.getReposPage({}) as unknown as Rec)["data"] as Rec;
+    const cold = d["coldZone"] as Rec;
+    expect(cold["measurable"]).toBe(true);
+    expect(Array.isArray(cold["teams"])).toBe(true);
+    expect(Array.isArray(cold["repos"])).toBe(true);
+    expect((cold["teams"] as Rec[]).length).toBeGreaterThan(0);
+    for (const t of cold["teams"] as Rec[]) expect(t).toHaveProperty("label");
+  });
+
   it("getMttrPage: historyModel -> mttrPageTrendSlice, keeping `history`", async () => {
     const { api } = await syncedRegister();
     const d = (api.getMttrPage({}) as unknown as Rec)["data"] as Rec;

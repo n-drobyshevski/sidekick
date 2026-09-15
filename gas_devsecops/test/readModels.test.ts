@@ -51,6 +51,12 @@ const H = vi.hoisted(() => ({
    *  `effectiveSlaTargets` degrades to the shared `SLA_TARGETS` constant — the same figure
    *  every test above this harness addition already measured against. */
   slaTargets: undefined as Record<string, number> | undefined,
+  /** `settingsStore.loadSettings().coldAfterDays` — `norm()` reads it through
+   *  `settingsLogic.effectiveColdAfterDays`. `undefined` (the default) is "nothing saved",
+   *  which degrades to `config.DEFAULT_COLD_AFTER_DAYS` (90). Its whole purpose here is that
+   *  the mock below returns a PARTIAL settings object: without that degradation
+   *  `coldZoneProfile` would be handed an `undefined` threshold, which it refuses. */
+  coldAfterDays: undefined as number | undefined,
   /** `historyStore`'s per-UTC-day blobs, ascending — one file per day, latest write wins.
    *  `secretsModel` reads its twin fold off the NEWEST one; `historyModel` ships the array. */
   history: [] as { date: string; stats: unknown }[],
@@ -138,7 +144,9 @@ vi.mock("../src/server/jobsStore", () => ({
 // -> `SpreadsheetApp` — a GAS global nothing in this file's harness defines. See
 // `test/projectView.test.ts` for the same knob exercised over a real booted server.
 vi.mock("../src/server/settingsStore", () => ({
-  loadSettings: () => ({ projectView: H.projectView, slaTargets: H.slaTargets }),
+  loadSettings: () => ({
+    projectView: H.projectView, slaTargets: H.slaTargets, coldAfterDays: H.coldAfterDays,
+  }),
 }));
 
 vi.mock("../src/server/sheetsDb", async (orig) => {
@@ -335,6 +343,7 @@ beforeEach(() => {
   H.computeDepths.length = 0;
   H.projectView = "";
   H.slaTargets = undefined;
+  H.coldAfterDays = undefined;
   H.history = [{ date: "2026-03-01", stats: { open: 5 } }];
   H.historyReads.length = 0;
   seed();
@@ -390,7 +399,12 @@ describe("the caching audit is per model, and the header states it", () => {
     // namespace carries no such field and the capacity strip would draw the absent mark
     // beside a live close rate, with nothing to age it out but the next commit.
     expect(layerOf("dsProgram2")).toEqual(["durablyCached"]);
-    expect(layerOf("dsRepos1")).toEqual(["durablyCached"]);
+    // "dsRepos1" -> "dsRepos2": the namespace was bumped when the payload gained its
+    // `coldZone` block. The CLAIM this line encodes is the LAYER the model caches in, not the
+    // spelling of its namespace, and that is unchanged — a durable entry from the old
+    // namespace carries no cold zone at all, and the page's first section would be missing
+    // entirely, which reads as an estate where nothing has gone quiet.
+    expect(layerOf("dsRepos2")).toEqual(["durablyCached"]);
     // "dsHistory1" -> "dsHistory2": the namespace was bumped when the payload gained its
     // per-register `movement` / `movementNote` blocks. The CLAIM this line encodes is the
     // LAYER the model caches in, not the spelling of its namespace, and that is unchanged — a
@@ -1062,12 +1076,68 @@ describe("reposModel", () => {
 
   // The half-life column reads `age_days`, which is a wall-clock read as loaded. Re-censoring
   // at the ledger clock is what keeps the durable copy true.
+  //
+  // THE COLD ZONE IS THE SECOND HALF OF THIS CLAIM, and the more fragile one: every figure in
+  // it is "how long since something happened". Measured against `Date.now()` the idle days —
+  // and therefore the verdicts, the buckets and the cold count — would grow every time this
+  // durable file was rebuilt, with no new observation behind the change. The whole-payload
+  // re-stringify below already covers it; `as_of` and the verdict table are named explicitly
+  // so a future edit that starts dating the block by the wall clock fails HERE, with the
+  // reason spelled out, rather than as an opaque string diff.
   it("is stable across a moving wall clock", () => {
-    const before = JSON.stringify(reposModel(ALL));
+    const first = reposModel(ALL) as any;
+    const before = JSON.stringify(first);
+    const coldBefore = JSON.stringify(first.coldZone);
     vi.setSystemTime(NOW + 30 * DAY);
     H.store.clear();
     __resetModelMemosForTest();
-    expect(JSON.stringify(reposModel(ALL))).toBe(before);
+    const after = reposModel(ALL) as any;
+    expect(JSON.stringify(after)).toBe(before);
+    expect(JSON.stringify(after.coldZone)).toBe(coldBefore);
+    expect(after.coldZone.as_of).toBe("2026-03-01T00:00:00Z"); // the newest scan, not today
+  });
+
+  it("carries the cold zone, measured at the ledger clock and rolled up per project", () => {
+    const m = reposModel(ALL) as any;
+    const cz = m.coldZone;
+    // Measurable because there is a scan on record to say when we started watching.
+    expect(cz.measurable).toBe(true);
+    expect(cz.observed_from).toBe("2026-01-01T00:00:00Z");
+    expect(cz.cold_after_days).toBe(90);
+    // The tables the Repositories page draws, and the totals beneath them.
+    expect(Array.isArray(cz.repos)).toBe(true);
+    expect(Array.isArray(cz.teams)).toBe(true);
+    expect(cz.totals.repos).toBe(cz.repos.length);
+    // Three repositories, one project — `owner_project` reaches this page for the first time
+    // through exactly this block.
+    expect(cz.repos.map((r: any) => r.repo_id).sort()).toEqual(["r1", "r2", "r3"]);
+    expect(cz.teams.map((t: any) => t.label)).toEqual(["proj-a"]);
+    // Every row reaches the newest scan of its scope (`last_scan_id: "sync-2"`), so nothing is
+    // unobserved and no scope is undecidable.
+    expect(cz.totals.repos_unobserved).toBe(0);
+    expect(cz.scopes_without_scan).toEqual([]);
+    // Nothing is cold at the 90-day default: the newest movement on every repository is
+    // inside the window as measured from the newest scan.
+    expect(cz.totals.cold_repos).toBe(0);
+  });
+
+  it("re-reads the operator's window rather than serving the previous threshold's verdicts", () => {
+    // The `slaTargets` rule, one block later: a param the compute READS has to be in the key.
+    // r1's last movement is 2026-01-08 and the ledger clock is 2026-03-01 — 52 days of
+    // silence, warm at 90 and cold at 7.
+    const before = reposModel(ALL) as any;
+    expect(before.coldZone.totals.cold_repos).toBe(0);
+
+    H.coldAfterDays = 7;
+    __resetModelMemosForTest();
+    const after = reposModel(ALL) as any;
+    expect(after.coldZone.cold_after_days).toBe(7);
+    expect(after.coldZone.totals.cold_repos).toBeGreaterThan(0);
+
+    // ...and it is a DIFFERENT cache entry that answered, not the same one re-computed: the
+    // durable layer has no TTL, so a key without the threshold would have kept the old file.
+    const keys = H.cacheCalls.filter((c) => c.name === "dsRepos2").map((c) => JSON.stringify(c.params));
+    expect(new Set(keys).size).toBe(2);
   });
 
   it("publishes the window it rests on, or null when there is none", () => {
@@ -1298,6 +1368,57 @@ describe("executiveModel", () => {
     expect(m.tiers.excludedSecrets).toBe(2);
     expect(typeof m.tiers.unclassified).toBe("number");
   });
+
+  it("ships the cold zone as the HEADLINE — the totals and the clock, never the arrays", () => {
+    const m = executiveModel(ALL) as any;
+    // `coldZoneHeadline`'s exact shape. Spelled out rather than spot-checked, because the
+    // failure it guards against is the payload QUIETLY growing the per-repository array: this
+    // page draws one number out of the totals, and shipping every repository name in the
+    // estate to draw it is the "cap in the model, no slice at the edge" rule being lost.
+    expect(Object.keys(m.coldZone).sort()).toEqual([
+      "as_of", "cold_after_days", "dropped_no_repo", "measurable", "observed_from", "row_count",
+      "scopes_without_scan", "totals", "unclassified_secrets",
+    ]);
+    expect(m.coldZone).not.toHaveProperty("repos");
+    expect(m.coldZone).not.toHaveProperty("teams");
+    expect(typeof m.coldZone.totals.cold_repos).toBe("number");
+  });
+
+  it("dates the cold zone by the ledger clock, not by `asOf`, and says which clock that was", () => {
+    // Everything else on this page is measured at `snap.now` (the wall clock) and is allowed
+    // to be: it is a count of what is open. An idle time is not — dated by the wall clock it
+    // would grow by an hour every time this 1 h entry was rebuilt, and a register nobody had
+    // synced would drift into the cold zone with no new observation behind the change.
+    const m = executiveModel(ALL) as any;
+    expect(m.coldZone.as_of).toBe("2026-03-01T00:00:00Z"); // the newest scan
+    expect(m.asOf).toBe(NOW);                                  // …which `asOf` is not
+    expect(m.coldZoneAsOfSource).toBe("scan");
+  });
+
+  it("falls back to the wall clock when there is no scan, and publishes that it did", () => {
+    H.scans = [];
+    __resetModelMemosForTest();
+    const m = executiveModel(ALL) as any;
+    expect(m.coldZoneAsOfSource).toBe("wallClock");
+    // No scan means no origin for the durations, so the block refuses every derived figure
+    // rather than reporting zeros — `row_count` still reports, so an empty section can prove
+    // it looked.
+    expect(m.coldZone.measurable).toBe(false);
+    expect(m.coldZone.totals).toBeNull();
+    expect(m.coldZone.row_count).toBe(8);
+  });
+
+  it("puts coldAfterDays in the key, so a changed window invalidates the cache", () => {
+    executiveModel(ALL);
+    H.coldAfterDays = 7;
+    __resetModelMemosForTest();
+    const after = executiveModel(ALL) as any;
+    expect(after.coldZone.cold_after_days).toBe(7);
+    const keys = H.cacheCalls
+      .filter((c) => c.name === "dsExecutive1")
+      .map((c) => JSON.stringify(c.params));
+    expect(new Set(keys).size).toBe(2);
+  });
 });
 
 // --------------------------------------------------------------------------------------- //
@@ -1312,7 +1433,7 @@ describe("warmReadModels", () => {
     expect(report.skipped).toBe(0);
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
-      "dsHistory2", "dsProgram2", "dsRepos1", "dsStorage1",
+      "dsHistory2", "dsProgram2", "dsRepos2", "dsStorage1",
       "dsExecutive1", "dsMttr2", "dsSecrets1", "dsRegister2",
     ]));
   });

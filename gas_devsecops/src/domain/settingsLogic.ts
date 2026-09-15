@@ -6,7 +6,8 @@
 // with nothing behind it is the thing this product does not do.
 
 import {
-  DEFAULT_FETCH_SEVERITIES, DEFAULT_RETENTION_DAYS, SCOPES, SEVERITY_ORDER, SLA_TARGETS,
+  COLD_AFTER_DAYS_MAX, COLD_AFTER_DAYS_MIN, DEFAULT_COLD_AFTER_DAYS, DEFAULT_FETCH_SEVERITIES,
+  DEFAULT_RETENTION_DAYS, SCOPES, SEVERITY_ORDER, SLA_TARGETS,
   type Scope,
 } from "./config";
 import { RETENTION_MIN_DAYS } from "./maintenance";
@@ -50,6 +51,24 @@ export interface Settings {
   fetchSeverities: Record<Scope, string[]>;
   /** Remediation windows, in days, by severity. */
   slaTargets: Record<string, number>;
+  /**
+   * How long a repository may sit with open findings and no remediation movement before the
+   * cold zone calls it cold, in days.
+   *
+   * ON THE DEADLINES TAB BESIDE THE SLA WINDOWS, AND IT IS NOT ONE OF THEM. An SLA window is a
+   * promise about a single finding ("this CRITICAL is remediated within seven days"); this is
+   * a threshold on a SILENCE across a whole repository ("nothing at all has closed here for
+   * ninety days"). They share a tab because both are deadlines a reader sets, and they share
+   * nothing else: this one has no per-severity grain, it is never compared against
+   * `SLA_TARGETS`, and `draftWarnings`'s divergence prompt does not apply to it — the other
+   * three sidekicks have no cold zone to disagree with.
+   *
+   * CLAMPED, NEVER DEFAULTED, WHEN IT IS A REAL NUMBER (`cleanColdAfterDays` below), because
+   * `domain/coldZone.ts` derives its four idle buckets as thirds of this value and THROWS on a
+   * non-positive one — the clamp here is the only thing standing between an operator's typo
+   * and a page on which every repository is cold.
+   */
+  coldAfterDays: number;
   /** Show routes flagged experimental in the nav. */
   showExperimental: boolean;
   /**
@@ -123,6 +142,7 @@ export const DEFAULT_SETTINGS: Settings = {
     secrets: [...DEFAULT_FETCH_SEVERITIES.secrets],
   },
   slaTargets: { ...SLA_TARGETS },
+  coldAfterDays: DEFAULT_COLD_AFTER_DAYS,
   showExperimental: false,
   syncSchedule: DEFAULT_SYNC_HOUR,
   autoCompact: false,
@@ -209,6 +229,27 @@ function cleanRetentionDays(v: unknown): number {
 }
 
 /**
+ * Coerce a cold-zone window into `[COLD_AFTER_DAYS_MIN, COLD_AFTER_DAYS_MAX]`, floored.
+ *
+ * THE SAME TWO-WAY SPLIT `cleanRetentionDays` DRAWS, for the same reason: junk — anything that
+ * is not a number at all — falls back to the default, while a REAL number outside the range is
+ * CLAMPED rather than defaulted. An operator who typed 3 asked for the shortest window they
+ * could, not for 90, and one who typed 400 asked for the longest; throwing either answer away
+ * and silently restoring the default would tell them nothing and lose what they meant.
+ *
+ * BOUNDED AT BOTH ENDS, unlike retention's one-sided floor. The floor is what stops the buckets
+ * (thirds of this number — `domain/coldZone.ts`) from collapsing into noise, and stops a window
+ * shorter than the gap between two syncs from calling every repository cold the moment it is
+ * saved. The ceiling is what stops a window longer than this register has been watching, which
+ * would make the block permanently unmeasurable while looking configured.
+ */
+function cleanColdAfterDays(v: unknown): number {
+  const n = numericOrNull(v);
+  if (n === null) return DEFAULT_COLD_AFTER_DAYS;
+  return Math.min(COLD_AFTER_DAYS_MAX, Math.max(COLD_AFTER_DAYS_MIN, Math.floor(n)));
+}
+
+/**
  * Coerce a stored view scope — a project slug or a domain tag value — into a trimmed string,
  * refusing anything that is not ALREADY a string BEFORE any cast runs. The same trap
  * `numericOrNull` above guards against, on the string side of it: `String(null)` is `"null"`,
@@ -269,6 +310,7 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     scopes: scopes.length ? scopes : [...SCOPES],
     fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
     slaTargets: { ...SLA_TARGETS, ...cleanSlaTargets(r.slaTargets) },
+    coldAfterDays: cleanColdAfterDays(r.coldAfterDays),
     showExperimental: r.showExperimental === true,
     syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
     // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
@@ -296,6 +338,19 @@ export function validateSettings(s: Settings): string[] {
     if (!Number.isFinite(days) || days <= 0) {
       errs.push(`The SLA target for ${sev} must be a positive number of days.`);
     }
+  }
+  // Same relationship with stage one as the retention floor below: `cleanColdAfterDays` clamps,
+  // so this branch only fires on a hand-built Settings that skipped it. Worded as a range with
+  // both ends inclusive ("at least N", never ">") — README's bound rule.
+  if (
+    !Number.isFinite(s.coldAfterDays)
+    || s.coldAfterDays < COLD_AFTER_DAYS_MIN
+    || s.coldAfterDays > COLD_AFTER_DAYS_MAX
+  ) {
+    errs.push(
+      `The cold-zone window must be at least ${COLD_AFTER_DAYS_MIN} days and at most `
+      + `${COLD_AFTER_DAYS_MAX} days.`,
+    );
   }
   if (!Number.isInteger(s.syncSchedule) || s.syncSchedule < 0 || s.syncSchedule > 23) {
     errs.push("The sync schedule hour must be a whole number between 0 and 23.");
@@ -371,4 +426,23 @@ export function effectiveSlaTargets(
   settings: Pick<Settings, "slaTargets"> | null | undefined,
 ): Record<string, number> {
   return { ...SLA_TARGETS, ...cleanSlaTargets(settings?.slaTargets) };
+}
+
+/**
+ * The cold-zone window actually in force: whatever the operator saved on the Deadlines tab,
+ * cleaned, or the shared default when they never touched it.
+ *
+ * `effectiveSlaTargets`'S TWIN, AND IT EXISTS FOR THE SAME REASON RATHER THAN FOR SYMMETRY.
+ * `server/readModels.ts`'s `norm()` reads this off `settingsStore.loadSettings()`, and a
+ * `Settings`-shaped value that never went through `cleanSettings` — a hand-built fixture, a
+ * partial mock, a bootstrap payload trimmed to one field — would otherwise hand
+ * `coldZoneProfile` an `undefined` it REFUSES (it throws on a non-positive threshold by
+ * design). Reusing `cleanColdAfterDays`, the exact coercion `cleanSettings` applies, rather
+ * than a second copy of "junk to the default, a real number clamped", is what keeps the figure
+ * the page publishes and the figure the settings row displays from ever disagreeing.
+ */
+export function effectiveColdAfterDays(
+  settings: Pick<Settings, "coldAfterDays"> | null | undefined,
+): number {
+  return cleanColdAfterDays(settings?.coldAfterDays);
 }
