@@ -166,27 +166,45 @@ difference is under 24 hours.
 Bronze and metrics are appended, never overwritten — every row carries `scan_id` / `scan_ts`, so
 repeated runs accumulate into a trend instead of clobbering the last one. The ledger is the
 exception: it is `MERGE`d, so a finding keeps one row and one history no matter how many times
-it is scanned. Three tables **per scope**:
+it is scanned. **Three tables, shared by every scope:**
 
 | Table | Grain | Contents |
 | --- | --- | --- |
-| `wiz_<scope>_findings_raw` | scan × finding | bronze: `node_json` as a string, plus `seq` (API order) |
-| **`wiz_<scope>_vuln_ledger`** | **one row per `vuln_key`** | **the durable base: `first_seen`, `last_seen`, `status`, `resolved_at`, `resolution_src`, `reopened_count`, the fix clock and the exploit signals** |
-| **`wiz_<scope>_metrics`** | **wide, told apart by `family`** | **the commit record and every gold family, appended together — see the legend below** |
+| `wiz_findings_raw` | scan × finding | bronze: `node_json` as a string, plus `seq` (API order) |
+| **`wiz_vuln_ledger`** | **one row per `(scope, vuln_key)`** | **the durable base: `scope`, `first_seen`, `last_seen`, `status`, `resolved_at`, `resolution_src`, `reopened_count`, the fix clock and the exploit signals** |
+| **`wiz_metrics`** | **wide, told apart by `family`** | **the commit record and every gold family, appended together — see the legend below** |
 
-Each of the three scopes writes its own set — `wiz_os_*`, `wiz_sca_*`, `wiz_sast_*` — and they
-are never blended: `--scope` drives both the API filter and the table names from one parameter,
-so a table can never disagree with what is inside it, and every row also carries a `scope`
-column, so a `UNION` across the three stays self-describing. A later step of this project folds
-the three sets into one shared table set keyed on `(vuln_key, scope)`; that has not happened
-yet, so today comparing scopes still means a `UNION ALL` across separate tables — see
-[Scopes](#scopes) for the query.
+`os`, `sca` and `sast` write into this **same** table set — there used to be one set per scope
+(`wiz_os_*`, `wiz_sca_*`, `wiz_sast_*`, nine tables to grant, optimise and document across the
+three scopes), and that separation bought nothing a `scope` column does not buy on its own, at
+the cost of tripling the estate. **`scope` is part of the ledger's key, not merely a label on
+it**: the same CVE reaching a host through an OS package and reaching a service through a
+library dependency is two findings with two clocks, two owners and two fixes, and one row can
+carry only one `first_seen` — so the `MERGE` joins `ON target.vuln_key = source.vuln_key AND
+target.scope = source.scope` (`run_pipeline.merge_ledger`), not on `vuln_key` alone. The hash
+fallback is the second reason `vuln_key` alone would not do: `ledger.vuln_key` prefers the Wiz
+finding id and falls back to a hash of name + asset + type + cloud + component when there is
+none, and that basis carries nothing about the population it was computed in — two scopes can
+collide there without either having done anything unusual.
 
-`ledger.reconcile` does not merely rely on the separation: a prior row or an observation stating
-a scope other than the one it was asked for raises rather than being reconciled. Absence is
-remediation here, so a foreign prior is not a mislabelled input — every one of its rows is
-missing from this scan *by construction*, and all of them would close as remediated, with real
-resolution dates and a delta that reads like a good week.
+**The `scope` predicate is now the only thing separating the three registers, and it is
+checked, not merely stated.** Every read of the ledger as a *prior* — `reconcile_scan`'s own
+prior, `ledger_already_merged`, the lifecycles behind gold, `rebuild_ledger`'s deletes and
+replay — filters `scope` first, because `ledger.reconcile` resolves by **absence**: a row of
+another scope is missing from this scan *by construction*, and an unfiltered prior would close
+the whole of it as remediated, with real resolution dates and a delta that reads like a good
+week. `ledger._refuse_foreign_scope` is what makes that a checked claim rather than a hopeful
+one: it inspects the prior and the observation frame handed to `reconcile` and raises if either
+carries a stated scope other than the one it was asked for. It used to be a can't-happen — each
+scope wrote its own tables, so the prior was per-scope by construction and nothing but a
+hand-assembled frame could trip it. With one table set it is the live proof that the `.where
+(scope == …)` line above it actually ran: measured on a shared register scanned in the chained
+job's order (`sca`, then `os`, then `sca` again), an unfiltered prior makes the guard raise
+immediately; stub the guard too and the disappearance clock — fed by the scope-filtered scan
+log below — still refuses to resolve the other scope's rows; only removing *both* filters lets 6
+phantom rows appear in the wrong scope while the 5 real `sca` remediations go unrecorded. See
+[The scan record is load-bearing](#the-scan-record-is-load-bearing) for the second, independent
+filter this rests on, and its own measured cost when it alone is missing.
 
 Silver — the typed projection of bronze — is **not** a table, in any storage mode. It is computed
 in memory for the scan being built and re-derived from bronze by anything that needs it later
@@ -265,6 +283,25 @@ remediation. The same rows are the idempotency guard (`recorded_scan`) and the t
 detector (`ledger_already_merged`), and the earliest one is the observation horizon that
 `reconstructed` is measured against.
 
+**Every read of it is scope-filtered, and that is now a second, independent guard beside the one
+on [Tables](#tables) above.** `recorded_scan`, `scan_log_desc`, `previous_scan`,
+`prev_scan_id_by_severity` and `gold_missing` all take and apply `scope` — because with one
+shared `metrics` table, "what did the last scan see" and "is this scan's commit record already
+here" both have to be asked of *this register's* commit records, never of whichever scope's scan
+happened to run last in the chained job. **The two filters guard different things and neither
+substitutes for the other.** Measured on a shared register scanned in the chained job's order
+(`sca`, `os`, `sca` again): as shipped — both filters in place — the `os` rows are untouched and
+the `sca` scan resolves 5 findings. With the ledger prior's scope filter removed,
+`_refuse_foreign_scope` raises (see [Tables](#tables)). With that guard also stubbed out, the
+disappearance clock still refuses to resolve the wrong scope's rows, because it is fed by this
+scope-filtered scan log — a second, independent line of defence. Only with the scan-log filter
+*also* removed do 6 phantom rows appear in the other scope while the 5 real `sca` remediations
+go unrecorded. **The scan-log filter failing alone is the silent one**: removing it by itself,
+with the ledger-prior filter still in place, makes a real resolved count read `0` instead of `5`
+— no error, no raise, just a wrong and smaller number where a right one belonged. The composite
+key contains the blast radius; these two filters are what keep a read from ever reaching outside
+it.
+
 **Write order per scan, and what each gap costs.** The ledger `MERGE` commits first; the
 `family='scan'` commit record lands one statement later, closing the window a crash can leave
 disagreeing to one statement wide; the `mttr`/`program`/`capacity`/`assets` families land after
@@ -287,11 +324,15 @@ retry refuses by name in that case, and points at `--rebuild_ledger`, which rege
 replayed scan (not only the ledger) — the only way to put a stale scan's gold back once a later
 scan has moved on.
 
-Fully qualified as `<catalog>.<schema>.<prefix><name>`, where the prefix defaults to
-`wiz_<scope>_`. Two reasons: these usually land in a schema shared with other teams, where a
-bare `findings` or `metrics` would be a collision waiting to happen; and the scope in the name
-keeps an `os` run, an `sca` run and a `sast` run in separate tables. `--table_prefix` overrides
-it (empty opts out entirely).
+Fully qualified as `<catalog>.<schema>.<prefix><name>`, where the prefix defaults to `wiz_`. One
+reason now, not two: these usually land in a schema shared with other teams, where a bare
+`findings_raw` or `metrics` would be a collision waiting to happen. **It no longer carries the
+scope.** It used to (`wiz_os_`, `wiz_sca_`, `wiz_sast_`), so each scope landed in its own table
+set and the registers could never be blended by accident — but that separation is what a `scope`
+column buys anyway, for a third of the tables to grant, optimise and document. What changed is
+that the thing stopping a blend is a predicate rather than a table name, and a predicate is
+testable (`brick/tests/test_scope_isolation.py`) where a naming convention was only ever
+conventional. `--table_prefix` overrides the default (empty opts out entirely).
 
 ### Table layout
 
@@ -300,9 +341,16 @@ rows per scan across every family — is left alone: there is nothing there wort
 
 | Table | `CLUSTER BY` | Deletion vectors | Why |
 | --- | --- | --- | --- |
-| `…vuln_ledger` | `vuln_key` | **on** | `vuln_key` is the MERGE's `ON` key |
-| `…findings_raw` | `scan_id` | off | every read of bronze filters on `scan_id` |
+| `…vuln_ledger` | `(scope, vuln_key)` | **on** | `(scope, vuln_key)` is the MERGE's `ON` key |
+| `…findings_raw` | `(scope, scan_id)` | off | every read of bronze filters on `scope` first, then `scan_id` |
 | `…metrics` | — | — | unclustered; every read already filters on `family` and the scan pin |
+
+**Both keys carry `scope` now, and it leads.** With one table set holding every scope, `scope`
+is the coarser predicate and the one every read applies first — `panels._silver_frame` and
+`rebuild_ledger` both narrow to one scope before they narrow to one scan id, so a scan that does
+not filter it would read three registers instead of one. `run_pipeline.CLUSTERING` holds the
+two column tuples plus the deletion-vector flag; `create_clustered` unpacks the tuple into
+`clusterBy(*cols)`.
 
 **Deletion vectors are the half that pays.** Without them a `MERGE` that matches a row rewrites
 the entire file containing it, so the daily reconcile — which touches every finding the scan
@@ -318,18 +366,25 @@ clustered table, open-source Delta does not — and a cluster configured unlike 
 how a number stops being reproducible. `metrics` declares no clustering at all, so the question
 does not arise for it.
 
-**Clustering `vuln_key` is not what makes the MERGE fast, and it is worth knowing why.** A
-`vuln_key` is `id:<wiz-finding-id>` or `h:<sha>`; both are effectively random. Clustering gives
-files non-overlapping *ranges*, and a source holding every finding this scan saw spans the whole
-range — so almost no file can be pruned. Random keys are the worst case for range-based
-skipping. It is still the right key (it is the only one the MERGE joins on, and point lookups do
-benefit), but the reason the reconcile gets cheaper is the deletion vectors.
+**Clustering on `(scope, vuln_key)` is not what makes the MERGE fast, and it is worth knowing
+why.** `vuln_key` is `id:<wiz-finding-id>` or `h:<sha>`; both are effectively random, and adding
+`scope` in front of a random key still leaves the register clustered into at most three wide
+ranges internally — `os`, `sca` and `sast` files can be pruned against each other, but a MERGE
+source holding every finding *this scan* saw is already narrowed to one scope, so that pruning
+buys nothing on the write path. Clustering gives files non-overlapping *ranges*, and a source
+spanning the whole of one scope's range still leaves almost no file prunable within it — random
+keys are the worst case for range-based skipping. It is still the right key (it is the only one
+the MERGE joins on, and point lookups do benefit, including a lookup scoped to one register), but
+the reason the reconcile gets cheaper is the deletion vectors.
 
-`scan_id` on bronze is different: that read genuinely does prune. Note that it already skipped
-perfectly **by accident** — each run appends only its own scan, so every file had
-`min(scan_id) == max(scan_id)`. The first `OPTIMIZE` that packs two scans into one file would
-have destroyed that. `CLUSTER BY (scan_id)` makes it a property of the table instead of a lucky
-consequence of the write pattern, which is what makes running `--maintain` safe.
+`(scope, scan_id)` on bronze is different: that read genuinely does prune, on both columns.
+`scan_id` already skipped perfectly **by accident** — each run appends only its own scan, so
+every file had `min(scan_id) == max(scan_id)`. The first `OPTIMIZE` that packs two scans into
+one file would have destroyed that. `CLUSTER BY (scope, scan_id)` makes it a property of the
+table instead of a lucky consequence of the write pattern, which is what makes running
+`--maintain` safe — and with three scopes' scans now interleaved in one table (`sca` runs
+between two `os` scans in the chained job), the `scope` column is what keeps that pruning working
+at all once a scan of each scope has landed.
 
 **The protocol bump, and its blast radius.** Clustering raises a table to Delta **writer version
 7**; deletion vectors raise the **reader to version 3**. Protocol versions cannot be downgraded.
@@ -383,9 +438,14 @@ accidental skipping above), and the layout is declared rather than emergent.
 
 ## Scopes
 
-`--scope` decides which population a run measures, and drives **both** the API filter and the
-table names — one parameter, so a table can never disagree with what is inside it. Every row also
-carries a `scope` column, so it stays self-describing after a `UNION`.
+`--scope` decides which population a run measures, and drives the API filter. It no longer
+drives table names — `os`, `sca` and `sast` write into the same `wiz_findings_raw` /
+`wiz_vuln_ledger` / `wiz_metrics`, and every row carries a `scope` column instead, which is the
+**only** thing that keeps the three registers from being blended: see
+[Tables](#tables) for the composite ledger key this rests on and
+[Running on Databricks](#3b-as-a-databricks-asset-bundle) for how a single `--scan_id` stays
+distinct per scope when three scopes now share one commit-record table
+(`--scan_id={{job.run_id}}-<scope>`).
 
 | Scope | Population | Vendor fix? | Default severity gate |
 | --- | --- | --- | --- |
@@ -598,6 +658,29 @@ PERMISSION_DENIED against a schema that already exists and is perfectly writable
 organisation catalog, have a platform admin create the schema once and grant `CREATE TABLE` on
 it; the job then never needs catalog-level rights.
 
+**Per-register grants are now row filters, not table grants — and this is documented, not
+implemented or measured.** The `GRANT ... SELECT` above hands a reader every scope's rows,
+because `os`, `sca` and `sast` now sit in the *same* three tables — that used to be a table-level
+grant per scope (`GRANT SELECT ON wiz_os_vuln_ledger TO ...`), and there is no table left to grant
+on for one register alone. Unity Catalog row-level security is the documented replacement, not
+run against a live workspace here:
+
+```sql
+CREATE FUNCTION <catalog>.<schema>.only_scope(scope STRING)
+  RETURN scope = current_user_scope();  -- current_user_scope(): however the deployment maps
+                                          -- a principal to the one scope it may read, e.g. a
+                                          -- lookup table keyed on is_account_group_member()
+
+ALTER TABLE <catalog>.<schema>.wiz_vuln_ledger
+  SET ROW FILTER <catalog>.<schema>.only_scope ON (scope);
+```
+
+or, simpler and more explicit for a fixed roster, one filter function per scope
+(`only_os_scope() RETURN scope = 'os' OR is_account_group_member('security-leads')`) applied per
+reader group. Either shape restricts a reader to one scope's rows of a table three registers
+share; neither has been run against a workspace, and this is a recipe to adapt, not a script to
+paste.
+
 ### 2. Get the code onto the workspace
 
 **Six** `.py` modules are needed to run any scope — skip `tests/`, `README.md` and
@@ -740,39 +823,60 @@ databricks bundle deploy -t prod --var="catalog=<your-catalog>" \
   --var="node_type_id=<cloud-specific instance type>"
 ```
 
-**Four jobs today**, every one of them a `spark_python_task` against `brick/run_pipeline.py`:
+**Two jobs**: one scan job with three chained tasks, and one maintenance job. Every task is a
+`spark_python_task` against `brick/run_pipeline.py`.
 
-| Job | Cron (UTC) | `--scope` | What it does |
+| Job | Cron (UTC) | Tasks | What it does |
 | --- | --- | --- | --- |
-| `wiz-os-scan` | daily 06:00 | `os` | the host register — the oldest, largest, and the one both the Streamlit dashboard and `gas/` also measure |
-| `wiz-sca-scan` | daily 06:30 | `sca` | library CVEs |
-| `wiz-sast-scan` | daily 07:00 | `sast` | static-analysis weaknesses |
-| `wiz-os-maintain` | weekly, Sun 03:00 | `os` | `OPTIMIZE` over the clustered tables, ingesting nothing — see [Maintenance](#maintenance) |
+| `wiz-scan` | daily 06:00 | `scan_os` → `scan_sca` → `scan_sast` | all three registers, one scan each |
+| `wiz-maintain` | weekly, Sun 03:00 | `maintain` | `OPTIMIZE` over the two clustered tables, ingesting nothing — see [Maintenance](#maintenance) |
 
-That cron cadence is the one the ledger is built for: it advances once a day, so a disappearance
-is dated to within 24 hours of when it happened. Scan more often and the dating gets tighter;
-scan less often and `scan_ts` resolution gets coarser (or switch to `--disappearance=midpoint`).
-A single-node cluster (`num_workers: 0`, the `singleNode` profile) is plenty for every job — the
-driver does the API paging and the Spark work is a handful of aggregations over one scan.
+**One scan job, three chained tasks — not three separate jobs.** Every scope now writes into the
+*same* `wiz_findings_raw` / `wiz_vuln_ledger` / `wiz_metrics`, and the ledger `MERGE` is not safe
+to run concurrently against one target: two writers racing the same Delta table can each build a
+plan against the other's not-yet-committed state. A job's own tasks run in `depends_on` order by
+construction, so chaining the three scopes as tasks of one job — `scan_sca` `depends_on:
+[scan_os]`, `scan_sast` `depends_on: [scan_sca]` — is what keeps the three `MERGE`s from ever
+overlapping; `max_concurrent_runs: 1` on the job is the separate guard that keeps two *runs* of
+that same chain from overlapping each other.
 
-They are three separate Jobs rather than three tasks of one, on purpose: a scope's scan has to
-be able to fail, retry and be re-run without dragging the other two through it, and a scope
-drives both the API filter and the table names, so two scopes sharing a job risks writing each
-other's tables the moment the task definitions drift. The bundle's own header comment names the
-one thing this leaves for later: chaining the three into one job with `depends_on` and
-`run_if: ALL_DONE`, so three concurrent `MERGE`s into one ledger cannot collide, needs the
-composite `(vuln_key, scope)` ledger key this pipeline does not have yet — not this change.
+`run_if: ALL_DONE` on `scan_sca` and `scan_sast` — not the default `ALL_SUCCESS` — is what keeps
+a failing scope from taking the other two down with it and from being blocked by one that failed
+before it: the chain exists only to serialize the `MERGE`s, not to make one scope's health a
+precondition for another's. If `scan_os` fails, `scan_sca` still runs; if `scan_sca` then also
+fails, `scan_sast` still runs after it.
 
-`--scan_id={{job.run_id}}` and `max_concurrent_runs: 1` are what make a retry safe — see
-[Retries](#retries-are-safe-if-you-pass-scan_id). Only `wiz-os-maintain` exists today; `sca` and
-`sast` want the same weekly `OPTIMIZE` once their registers are large enough for
-[table layout](#table-layout) to matter — copy the job and swap `--scope`.
+**`--scan_id={{job.run_id}}-<scope>`, not the bare `{{job.run_id}}` three separate jobs used to
+pass.** `{{job.run_id}}` is the same value across all three tasks of one run — it names the
+*job* run, not the task — so passing it unqualified would make `scan_sca`'s commit row in the
+shared `wiz_metrics` collide with `scan_os`'s from the same run. `{{task.run_id}}` is
+scope-distinct but changes on every *retry* of that task (it names the task run), which breaks
+the idempotency guard in `recorded_scan`: a retried task would arrive with a new id, find no row
+for it, and reconcile the same scan a second time. `{{job.run_id}}-<scope>` is both retry-stable
+(constant across retries of a given task, exactly like the bare form it replaces) and
+scope-distinct (one commit row per scope per job run) — see CLAUDE.md, "`{{task.run_id}}`
+changes on a task retry".
+
+A single-node cluster (`num_workers: 0`, the `singleNode` profile) is plenty for every task — the
+driver does the API paging and the Spark work is a handful of aggregations over one scan. That
+cron cadence is the one the ledger is built for: it advances once a day, so a disappearance is
+dated to within 24 hours of when it happened. Scan more often and the dating gets tighter; scan
+less often and `scan_ts` resolution gets coarser (or switch to `--disappearance=midpoint`).
+
+**`wiz-maintain` runs once, not once per scope.** `maintain()` takes no `scope` and filters
+none — `OPTIMIZE` lays out a whole table, and there is one table set now rather than three, so a
+second run of the same job would rewrite the same two tables a second time for nothing. It still
+requires `--scope=os` as a parameter, because `main()` resolves `--catalog`/`--schema` into
+`Tables` before it ever checks `--maintain`, and `resolve_tables` needs *a* valid scope to
+resolve against — `os` here is an arbitrary valid scope, not "the os register": the three tables
+it names (`wiz_findings_raw`, `wiz_vuln_ledger`, `wiz_metrics`) are the same ones `--scope=sca`
+or `--scope=sast` would name.
 
 **Not validated here.** `databricks bundle validate` resolves a workspace and the current user,
-so it cannot run in this repo's test environment; `tests/test_bundle.py` checks the parts that
-are checkable without one — every `python_file` and every `--scope` actually exists, the
-scan-id parameter is present, and `max_concurrent_runs` is 1 on every job. Run the real
-`validate` before deploying.
+so it cannot run in this repo's test environment; `brick/tests/test_bundle.py` checks the parts
+that are checkable without one — the guards above (the chain, `ALL_DONE`, `max_concurrent_runs`,
+the scope-suffixed scan id), and that every `python_file` and every `--scope` actually exists.
+Run the real `validate` before deploying.
 
 ### Parameters
 
@@ -785,13 +889,13 @@ and a laptop.
 | `catalog` | — | **required**, no default; `hive_metastore` on a workspace without Unity Catalog |
 | `schema` | `wiz` | created only if it does not already exist |
 | `scope` | `os` | `os`, `sca` or `sast` — see [Scopes](#scopes) |
-| `table_prefix` | `wiz_<scope>_` | pass empty to use bare table names |
+| `table_prefix` | `wiz_` | pass empty to use bare table names |
 | `project_id` | — | optional project restriction (`projectIdV2` / `projectId`, per scope) |
 | `wiz_api_url` | — | **required**, `https://api.<region>.app.wiz.io/graphql` |
 | `wiz_auth_url` | `https://auth.app.wiz.io/oauth/token` | override for a dedicated tenant |
 | `secret_scope` | — | scope holding `wiz-client-id` / `wiz-client-secret` |
 | `severities` | `CRITICAL,HIGH` | comma-separated; also recorded per scan and used by the disappearance guard |
-| `scan_id` | a random id | pass `{{job.run_id}}` on a scheduled Job — see [Retries](#retries-are-safe-if-you-pass-scan_id) |
+| `scan_id` | a random id | pass `{{job.run_id}}-<scope>` on a scheduled Job, distinct per scope — see [Retries](#retries-are-safe-if-you-pass-scan_id) |
 | `disappearance` | `scan_ts` | `scan_ts` or `midpoint` |
 | `rebuild_ledger` | `false` | replay bronze and rebuild the ledger from scratch — see [Backfill](#backfilling-from-existing-bronze) |
 | `shuffle_partitions` | `0` | `spark.sql.shuffle.partitions` for the run; `0` leaves the cluster's own setting alone |
@@ -814,13 +918,16 @@ side at 20,000 findings, `64` produced the fastest single run and the tightest s
 
 Reconciling one scan twice would advance every lifecycle a second time, so a retry must be
 recognisable as a retry. Databricks retries a failed task **within the same run**, so
-`--scan_id={{job.run_id}}` makes the second attempt arrive with the id the first one used. The
-run then finds its own `family='scan'` row in `…metrics` (`recorded_scan`) and — unless that
-scan's gold went missing, in which case it republishes just that, see
+`--scan_id={{job.run_id}}-<scope>` makes the second attempt arrive with the id the first one
+used — `{{job.run_id}}` is retry-stable and the `-<scope>` suffix is what keeps three scopes'
+commit rows from colliding in the shared `…metrics`, now that they share one job run and one
+table; see [3b. As a Databricks Asset Bundle](#3b-as-a-databricks-asset-bundle). The run then
+finds its own `family='scan'` row in `…metrics` (`recorded_scan`, itself filtered to this
+`scope`) and — unless that scan's gold went missing, in which case it republishes just that, see
 [The scan record is load-bearing](#the-scan-record-is-load-bearing) — does nothing further.
 
 Without it, `scan_id` is random and a retry looks like a brand-new scan. Also set
-`"max_concurrent_runs": 1` so two runs of the same scope cannot reconcile against each other.
+`"max_concurrent_runs": 1` so two runs of the same chain cannot reconcile against each other.
 
 If a run dies *between* the ledger MERGE and the commit record, the next run detects it — the
 ledger carries the scan id, `metrics` does not — and **refuses rather than double-counting**.
@@ -842,18 +949,21 @@ python brick/run_pipeline.py --catalog=<catalog> --scope=os --maintain=true \
   --wiz_api_url=https://api.<region>.app.wiz.io/graphql
 ```
 
-`--maintain` runs `OPTIMIZE` over the two [clustered tables](#table-layout) of the named scope
-and exits without ingesting anything. It is what actually applies the clustering: a table
-declares its layout at creation, but a write only *lays data out* above a size threshold no
+`--maintain` runs `OPTIMIZE` over the two [clustered tables](#table-layout) — shared by every
+scope now — and exits without ingesting anything. It is what actually applies the clustering: a
+table declares its layout at creation, but a write only *lays data out* above a size threshold no
 single scan here reaches, so without this the spec is a promise nothing keeps. On a clustered
 table `OPTIMIZE` clusters incrementally — it rewrites what is not already in place, not the
 whole table.
 
-**Run it as its own Job, weekly, per scope.** It is deliberately not part of the daily scan:
-`OPTIMIZE` is an unbounded rewrite over the whole register, and the job that has to finish
-before anyone can read this morning's number should not be queued behind it. `wiz-os-maintain`
-in the bundle above does it for `os`; copy it with `--scope=sca` / `--scope=sast` once those
-registers are large enough for the rewrite to matter.
+**Run it as its own Job, weekly, once — not once per scope.** It is deliberately not part of the
+daily scan: `OPTIMIZE` is an unbounded rewrite over the whole register, and the job that has to
+finish before anyone can read this morning's number should not be queued behind it. It is also
+deliberately not one job per scope any more: `maintain()` takes no `scope` and filters
+none — there is one `wiz_vuln_ledger` and one `wiz_findings_raw` for all three registers, so a
+second run of this job would rewrite the same two tables a second time for nothing. `wiz-maintain`
+in the bundle above is that one job; `--scope=os` is still passed as a required parameter (see
+[3b. As a Databricks Asset Bundle](#3b-as-a-databricks-asset-bundle)), not as a selector.
 
 It does **not** `VACUUM`. That deletes the files time travel and any in-flight reader still
 depend on, and choosing a retention window is a decision nobody has made here — see
@@ -874,17 +984,22 @@ layout, so there is nothing to `ALTER` on it. Run them once, from a notebook or 
 with the pipeline stopped:
 
 ```sql
-ALTER TABLE <catalog>.<schema>.wiz_os_vuln_ledger CLUSTER BY (vuln_key);
-ALTER TABLE <catalog>.<schema>.wiz_os_vuln_ledger
+ALTER TABLE <catalog>.<schema>.wiz_vuln_ledger CLUSTER BY (scope, vuln_key);
+ALTER TABLE <catalog>.<schema>.wiz_vuln_ledger
   SET TBLPROPERTIES ('delta.enableDeletionVectors' = 'true');
 
-ALTER TABLE <catalog>.<schema>.wiz_os_findings_raw CLUSTER BY (scan_id);
+ALTER TABLE <catalog>.<schema>.wiz_findings_raw CLUSTER BY (scope, scan_id);
 
-OPTIMIZE <catalog>.<schema>.wiz_os_vuln_ledger;
-OPTIMIZE <catalog>.<schema>.wiz_os_findings_raw;
+OPTIMIZE <catalog>.<schema>.wiz_vuln_ledger;
+OPTIMIZE <catalog>.<schema>.wiz_findings_raw;
 ```
 
-Repeat with the `wiz_sca_` / `wiz_sast_` prefixes for the other two registers.
+One statement each now, not one per scope — the register is one shared table set, so there is
+one `wiz_vuln_ledger` and one `wiz_findings_raw` to migrate, not three.
+`run_pipeline.CLUSTERING`'s two-column tuples are exactly these `CLUSTER BY` lists.
+**This recipe is documented, not measured**: no register ever ran the earlier per-scope table
+layout (`wiz_os_vuln_ledger`, `wiz_sca_vuln_ledger`, …) against live data, so there is nothing
+to migrate *from* in practice and this ALTER has never been run against a populated table.
 
 Three things to know before you do:
 
@@ -902,9 +1017,14 @@ bronze into new, correctly-clustered tables — see below.
 ### Backfilling from existing bronze
 
 If a register has been running against an older flat-snapshot version of this pipeline, bronze
-already holds months of scans. `--rebuild_ledger` deletes the *whole* `metrics` table (commit
-records and every gold family, not only the replayed `scan_id`s) along with the ledger, then
-replays every bronze scan oldest-first through the same reconciler the live path uses:
+already holds months of scans. `--rebuild_ledger` rebuilds **one scope** — the one named by
+`--scope` — and leaves the other two untouched: it deletes that scope's rows of `metrics` (the
+commit record and every gold family, not only the replayed `scan_id`s) along with that scope's
+ledger rows, then replays that scope's bronze scans oldest-first through the same reconciler the
+live path uses. Every statement it issues names `scope` for exactly the reason `reconcile_scan`'s
+prior does — the ledger, bronze and `metrics` are shared by every register now, and an unscoped
+`--rebuild_ledger` would be the single most destructive statement in this file, emptying two
+registers that have nothing to do with the recovery being attempted:
 
 ```bash
 python brick/run_pipeline.py --catalog=<catalog> --scope=os --rebuild_ledger=true \
@@ -952,7 +1072,7 @@ give one a history to import.
 ```
 GAS  Data → Migration bundle (Drive)        →  migration-<ts>.json.gz
      upload to a Unity Catalog volume       →  /Volumes/<cat>/<schema>/<vol>/migration-….json.gz
-brick 07_import_gas  (or the CLI below)     →  <p>vuln_ledger + the family='scan' rows of <p>metrics
+brick 07_import_gas  (or the CLI below)     →  wiz_vuln_ledger + the family='scan' rows of wiz_metrics
      06_run_and_verify, one scan            →  the gold families, from real lifetimes
 ```
 
@@ -961,18 +1081,24 @@ python brick/import_bundle.py --catalog=<catalog> --schema=<schema> --scope=os \
   --bundle_path=/Volumes/<catalog>/<schema>/<volume>/migration-20260811T000000Z.json.gz
 ```
 
-It seeds an **empty** register and refuses one that holds anything — the ledger, or any row of
-`metrics`, commit record or gold alike. Merging a seed into a register that has already scanned
-would re-open lifecycles it has since resolved, and appending an older scan log beside this
-pipeline's own would hand the disappearance guard the wrong previous scan.
+**A bundle is one scope's register**, and the import is scoped to it. `wiz_vuln_ledger`,
+`wiz_findings_raw` and `wiz_metrics` are shared by every scope now, so the importer reads and
+writes only the rows carrying `--scope`'s value: it seeds an **empty** register (this scope
+holding nothing — the ledger, or any row of `metrics`, commit record or gold alike) and refuses
+otherwise. Merging a seed into a register that has already scanned would re-open lifecycles it
+has since resolved, and appending an older scan log beside this pipeline's own would hand the
+disappearance guard the wrong previous scan — and with three scopes in one table set, an
+unscoped refusal check or an unscoped delete would answer for, or empty, registers that have
+nothing to do with the import being run.
 
-`--force_import=true` **replaces the register**, not merely the ledger. Gold is why: it is
-appended per scan and computed from the ledger *as it stood at that scan*, so gold rows written
-before a seed were derived from a ledger that started empty. Left in place they sit in
-`04_scan_history` as a run whose MTTR reads near zero, beside seeded runs where it does not — a
-contradiction with nothing on the page to explain it. So a forced import empties bronze and the
-*whole* `metrics` table — the scan log and every gold family together, since they now share one
-table — and the register genuinely restarts from the imported history. Re-scan to repopulate
+`--force_import=true` **replaces this scope's register**, not merely its ledger, and never
+touches the other two scopes' rows. Gold is why: it is appended per scan and computed from the
+ledger *as it stood at that scan*, so gold rows written before a seed were derived from a ledger
+that started empty. Left in place they sit in `04_scan_history` as a run whose MTTR reads near
+zero, beside seeded runs where it does not — a contradiction with nothing on the page to explain
+it. So a forced import empties this scope's bronze and this scope's share of the *whole*
+`metrics` table — the scan log and every gold family together, since they now share one table —
+and this scope's register genuinely restarts from the imported history. Re-scan to repopulate
 them.
 
 They are emptied rather than dropped: `DELETE` needs only `MODIFY` and keeps each table's
@@ -1017,7 +1143,7 @@ coverage and MTTR are computed over, so importing only the live ledger would shr
 | --- | --- |
 | `tags_json` | ingest selects no asset tags, so nothing downstream would read it — and domain triage is unavailable here either way |
 | a back-dated actionable clock | `fix_date` / `fix_observed_at` arrive and are read (see [The actionable clock](#the-actionable-clock)), but the bundle carries no fix history beyond what each lifecycle's last observation held |
-| bronze, and therefore a back-dated gold trend | the bundle holds reconciled lifecycles, not raw findings. The `family='scan'` rows of `<p>metrics` show the imported runs; the gold families begin accumulating from the first live run |
+| bronze, and therefore a back-dated gold trend | the bundle holds reconciled lifecycles, not raw findings. The `family='scan'` rows of `wiz_metrics`, filtered to this scope, show the imported runs; the gold families begin accumulating from the first live run |
 | `mttr_history` | GAS's precomputed daily KPI series. It rides in the bundle and this pipeline has no table for it |
 | several episodes for one `vuln_key` | this ledger is one row per key, so the most recently resolved wins; the import counts the rest |
 
@@ -1038,13 +1164,22 @@ radius, and it is usually zero.
 
 ```sql
 SELECT severity, coverage_pct, efficiency_pct, prevalence_pct, signal_coverage_pct
-FROM   <catalog>.<schema>.wiz_os_metrics
-WHERE  family  = 'program'
+FROM   <catalog>.<schema>.wiz_metrics
+WHERE  scope   = 'os'
+AND    family  = 'program'
 AND    scan_id = (
-  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_os_metrics WHERE family = 'program'
+  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_metrics
+  WHERE scope = 'os' AND family = 'program'
 )
 ORDER BY severity;
 ```
+
+`scope = 'os'` is not optional here: `wiz_metrics` is shared by every register now, and a query
+that drops it sums three populations' `program` rows into one plausible-looking answer instead
+of raising. Every recipe in this README that means to read *one* register against `wiz_metrics`,
+`wiz_vuln_ledger` or `wiz_findings_raw` carries this predicate for that reason — the one
+exception is the multi-scope comparison directly below, which deliberately groups by `scope`
+instead of filtering it.
 
 Read that against `prevalence_pct` on the same row, not against the P2P baselines — see
 [Reading coverage and efficiency](#reading-coverage-and-efficiency). How much of it is the rule
@@ -1059,17 +1194,19 @@ efficiency with the rule-sensitivity sweep beside them (recomputed, not read bac
 
 To read the numbers rather than query them, open the [notebooks](#notebooks).
 
-Once more than one scope is running, compare them on the `scope` column:
+Once more than one scope is running, compare them on the `scope` column — one shared table, no
+`UNION ALL` needed, because every scope's rows already sit side by side in it, each of the
+scan's own `scope`:
 
 ```sql
 SELECT scope, coverage_pct, efficiency_pct
-FROM   <catalog>.<schema>.wiz_os_metrics  WHERE family = 'program' AND severity = 'OVERALL'
-UNION ALL
-SELECT scope, coverage_pct, efficiency_pct
-FROM   <catalog>.<schema>.wiz_sca_metrics WHERE family = 'program' AND severity = 'OVERALL'
-UNION ALL
-SELECT scope, coverage_pct, efficiency_pct
-FROM   <catalog>.<schema>.wiz_sast_metrics WHERE family = 'program' AND severity = 'OVERALL';
+FROM   <catalog>.<schema>.wiz_metrics
+WHERE  family = 'program' AND severity = 'OVERALL'
+AND    scan_id IN (
+  SELECT max_by(scan_id, scan_ts) FROM <catalog>.<schema>.wiz_metrics
+  WHERE family = 'program' GROUP BY scope
+)
+ORDER BY scope;
 ```
 
 Start with `--severities=CRITICAL` on the first run: it is the fastest way to confirm the tables
@@ -1139,9 +1276,13 @@ and all (measured on duckdb 1.5.5, row counts equal to Spark's):
 ```sql
 INSTALL delta; LOAD delta;
 SELECT severity, km_median, mttr_actionable_median
-FROM   delta_scan('file:///tmp/lakecheck/wiz.db/wiz_os_metrics')
-WHERE  family = 'mttr';
+FROM   delta_scan('file:///tmp/lakecheck/wiz.db/wiz_metrics')
+WHERE  scope = 'os' AND family = 'mttr';
 ```
+
+`wiz_metrics` is the one table all three `devlake.run` invocations above wrote into — `scope`
+picks the register out of it, the same predicate every SQL recipe in this README carries against
+the shared tables.
 
 To open the notebooks, `jupyter lab` from `notebooks/` with `devlake/kernel_startup.py` on
 `IPYTHONDIR` — it supplies `dbutils`, `spark`, `display`, `displayHTML` and the `%sql` cell
@@ -1166,8 +1307,10 @@ python brick/run_pipeline.py --scope=os \
 
 `--catalog` is not required in this mode; that is the point of it. Each table becomes a
 directory under the root, named exactly as the catalog-backed table would be
-(`brick/wiz_os_vuln_ledger`, `brick/wiz_os_findings_raw`, …), and every reference the code
-passes to Spark becomes ``delta.`<root>/<name>` ``, which is valid anywhere a table name is.
+(`brick/wiz_vuln_ledger`, `brick/wiz_findings_raw`, …) — shared by every scope, exactly as the
+catalog-backed tables are, with `scope` still the column that separates the registers — and
+every reference the code passes to Spark becomes ``delta.`<root>/<name>` ``, which is valid
+anywhere a table name is.
 
 Set the same value in the `data_path` widget and notebooks 00–05 read the register from there.
 
@@ -1215,19 +1358,21 @@ lost by not being on a cluster. See [Running it locally](#running-it-locally).
 
 ### Moving it into the lake later
 
-When a real catalog arrives, register each directory as an external table. No copy, no replay:
+When a real catalog arrives, register each directory as an external table. No copy, no replay —
+**three statements total, not three per scope**, because a `--data_path` directory holds one
+shared table set for every scope exactly as a catalog does:
 
 ```sql
-CREATE TABLE <catalog>.<schema>.wiz_os_vuln_ledger  USING DELTA LOCATION '<root>/wiz_os_vuln_ledger';
-CREATE TABLE <catalog>.<schema>.wiz_os_findings_raw USING DELTA LOCATION '<root>/wiz_os_findings_raw';
-CREATE TABLE <catalog>.<schema>.wiz_os_metrics      USING DELTA LOCATION '<root>/wiz_os_metrics';
+CREATE TABLE <catalog>.<schema>.wiz_vuln_ledger  USING DELTA LOCATION '<root>/wiz_vuln_ledger';
+CREATE TABLE <catalog>.<schema>.wiz_findings_raw USING DELTA LOCATION '<root>/wiz_findings_raw';
+CREATE TABLE <catalog>.<schema>.wiz_metrics      USING DELTA LOCATION '<root>/wiz_metrics';
 ```
 
-Then drop `--data_path`, pass `--catalog` and `--schema`, and the next scan continues the same
-ledger. The rows, the clustering columns, the deletion-vector property and the full history all
-come across, because they live in the Delta log rather than in the metastore —
-`test_the_register_migrates_into_a_catalog_without_losing_anything` is that paragraph as a test,
-including that the migrated ledger still accepts a `MERGE`.
+Then drop `--data_path`, pass `--catalog` and `--schema`, and the next scan of any scope
+continues the same ledger. The rows, the clustering columns, the deletion-vector property and
+the full history all come across, because they live in the Delta log rather than in the
+metastore — `test_the_register_migrates_into_a_catalog_without_losing_anything` is that
+paragraph as a test, including that the migrated ledger still accepts a `MERGE`.
 
 Silver has no directory to register — it is never stored, in any mode.
 
@@ -1260,6 +1405,15 @@ That is the whole of the reader's side: `csvstore.load` registers each table as 
 view named exactly as the table would be, and a temp view is valid anywhere Spark wants a table
 — the same trick `` delta.`<path>` `` plays — so every view, every panel and every `%sql` cell
 works untouched.
+
+**One CSV directory carries every scope's register, same as a shared Delta table does.**
+`csvstore.export`/`csvstore.load` write and read `wiz_findings_raw` / `wiz_vuln_ledger` /
+`wiz_metrics` whole, with no scope filter of their own — so an `os` scan and an `sca` scan
+pointed at the same `--csv_path` both land in the one export, and `panels.context()` filters
+`scope` on the loaded views exactly as it does against Delta. Only the **scratch** Delta side
+underneath a given run stays per-scope (`dbfs:/tmp/wiz_scratch_<scope>` by default): two scopes
+scanning at once each need their own disposable Delta to `MERGE` into, but restore/export still
+round-trips the one shared CSV register between them.
 
 **Why it is not `spark.read.csv`.** Every write Spark does is distributed, and *executors cannot
 write to workspace files* — which is also why `--data_path` refuses `/Workspace` outright. So
@@ -1386,7 +1540,8 @@ A worker is a whole JVM, not a thread, and a `local[1]` Spark session still runs
 listener bus and its own garbage collector — so it wants appreciably more than one core, and
 `-n auto` oversubscribes a small machine. On a four-core box `-n 3` measured faster than
 `-n auto`; on a larger one `auto` is fine. The heap is sized for this too: `conftest.py` asks
-for 4g when it is the only session and 2g per worker when it is not, because four workers at 4g
+for 4g when it is the only session and 3g per worker when it is not (2g ran out of Java heap on the
+3.0 suite around stage 11,000; 3g finishes clean), because four workers at 4g
 want 16g and the swapping costs more than the parallelism returns.
 
 The one thing that does not parallelise is the first-ever run after `DELTA_PACKAGE` in
@@ -1558,9 +1713,19 @@ cell and hope, the first cell of every notebook calls `panels.context(spark)`, w
 session temp views that are already pinned, scope-filtered and severity-filtered:
 
 ```
-v_mttr  v_program  v_capacity  v_findings  v_scans  v_lifecycles     ← one scan
-v_mttr_all  v_program_all  v_findings_all                            ← deliberately not
+v_mttr  v_program  v_capacity  v_assets  v_findings  v_scans  v_lifecycles   ← one scan
+v_mttr_all  v_program_all  v_findings_all                                    ← deliberately not
 ```
+
+**The `scope` widget is what picks the register, and it now does the whole of that job.**
+Before the three scopes shared one table set, the widget mainly drove the API filter; which
+*table* you were reading was mostly settled by `table_prefix`. With `wiz_findings_raw` /
+`wiz_vuln_ledger` / `wiz_metrics` shared by every scope, `ctx.scope` (resolved from the widget by
+`run_pipeline.resolve_scope`) is the **only** thing that turns the shared tables into one
+register — every view above filters `scope = ctx.scope`, `panels.register_views`'s own
+docstring says so is "now the only thing separating the three registers", and changing the
+widget and re-running is how a reader moves from `os` to `sca` to `sast`, not a different
+notebook path or a different table name.
 
 `max_by(scan_id, scan_ts)` is written in exactly one function in the whole repo. The three
 `_all` views are the only unpinned surface and are named so a reader can see it. The consequence
@@ -1880,6 +2045,11 @@ asserting a fix that is no longer guaranteed.
 - **Two SAST-specific gaps live in [Scopes](#scopes) rather than here**, because they are
   properties of the *rule*, not the pipeline: `config.CWE_ANCESTORS` is measured-incomplete, and
   `aiAnalysis.verdict`'s enum spelling is unverified against the live tenant.
+- **No per-register row-level security.** `os`, `sca` and `sast` share one table set, so a
+  `GRANT SELECT` on it hands a reader every scope's rows; restricting a reader to one register
+  needs a Unity Catalog row filter keyed on `scope`, and that recipe is documented in
+  [1. Store the credentials](#1-store-the-credentials) rather than implemented or measured
+  against a live workspace.
 
 Two entries left this list with the notebooks. The **Kaplan–Meier survival curve** is now
 `metrics.km_curve`, which `kaplan_meier` itself consumes — one implementation, so the staircase

@@ -199,11 +199,14 @@ because they are in this file.
 
 `brick/` (OS-package CVEs, CVEs in a repository's dependencies, and static-analysis weaknesses
 in first-party code — scopes `os`/`sca`/`sast`) is one PySpark + Delta pipeline over all three
-registers: three tables per scope — `<p>findings_raw` (bronze), `<p>vuln_ledger` (`MERGE`d), and
-one `<p>metrics` table holding the commit record and every gold family together, told apart by a
-`family` column (`scan`, `mttr`, `program`, `capacity`, plus `assets` on `sca`). Silver is never
-a table: it is a per-scan projection of bronze computed in memory and re-derived wherever it is
-needed. `brick/` used to be two directories — `brick/` measuring only `os` and
+registers: **one table set for every scope** — `wiz_findings_raw` (bronze), `wiz_vuln_ledger`
+(`MERGE`d), and one `wiz_metrics` table holding the commit record and every gold family
+together, told apart by a `family` column (`scan`, `mttr`, `program`, `capacity`, plus `assets`
+on `sca`). `scope` is a column in every one of them rather than a fragment of their names — see
+the two bullets below — and it is what separates the three registers now that they share one
+table set. Silver is never a table: it is a per-scan projection of bronze computed in memory and
+re-derived wherever it is needed. `brick/` used to be two directories — `brick/` measuring only
+`os` and
 `brick/devsecops/` measuring `sca`/`sast` as a self-contained fork with identical module names,
 deployable on its own — and the two have since merged into this one tree. What survives the
 merge is narrower than "exactly one fork may be on `sys.path`": a plain flat module folder, and
@@ -277,6 +280,31 @@ laptop; it is never deployed.
   ledger still stands where that scan left it — once a later scan has merged, only
   `--rebuild_ledger` can put the older scan's gold back, and it now regenerates gold per replayed
   scan rather than only the ledger, for exactly that reason.
+- **The ledger key is `(vuln_key, scope)`, and two INDEPENDENT filters guard the blast radius a
+  missing one would open up.** The same CVE reaching a host through a package and a service
+  through a dependency is two findings with two clocks, so the `MERGE` joins on both columns, not
+  `vuln_key` alone — the hash fallback of `vuln_key` carries nothing about the population it was
+  computed in, so it can collide across scopes on its own. Measured on a shared register in the
+  chained job's order (`sca`, `os`, `sca` again): as shipped the `os` rows are untouched and the
+  `sca` scan resolves 5. Unfilter the ledger prior read and `_refuse_foreign_scope` raises. Stub
+  that guard too and the disappearance clock — fed by the scope-filtered scan log — still refuses
+  to resolve the wrong scope's rows. Only unfiltering the scan-log read as well lets 6 phantom
+  rows appear in the other scope while the 5 real remediations go unrecorded. Reduce the `MERGE`
+  key to `vuln_key` alone and the `os` scope is erased from the ledger outright. **The scan-log
+  filter is the silent one**: removed by itself, with the ledger-prior filter still in place, a
+  real resolved count reads `0` instead of `5` — no raise, just a wrong smaller number.
+- **One scan job, three chained tasks — not three jobs, and not `{{task.run_id}}`.** Three
+  scopes writing into the *same* `wiz_vuln_ledger` means their `MERGE`s are not safe to run
+  concurrently: two writers racing one Delta table can each build a plan against the other's
+  not-yet-committed state. Three separate Jobs would race exactly that way, so
+  `brick/databricks.yml` chains `scan_os → scan_sca → scan_sast` as tasks of one job
+  (`depends_on` order is enforced by construction) with `run_if: ALL_DONE`, so a failing scope
+  neither blocks nor is blocked by the others — the chain exists only to serialize the writes.
+  Each task passes `--scan_id={{job.run_id}}-<scope>`: `{{job.run_id}}` is the same across all
+  three tasks of one run, so the bare form would collide two scopes' commit rows in the shared
+  `wiz_metrics`; `{{task.run_id}}` is scope-distinct but changes on every retry of that task,
+  which breaks `recorded_scan`'s idempotency guard — a retried task would arrive with a new id,
+  find no row for it, and reconcile the same scan twice.
 
 ## gas_devsecops — the code register
 
