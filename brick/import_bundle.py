@@ -1,13 +1,21 @@
 """Seed the ledger from a GAS migration bundle -- the one-shot import that carries an
 existing deployment's history into Delta.
 
-The problem this exists for: `gas/` has been reconciling a daily scan for months and holds
-the only record of when each finding was first seen and when it stopped being returned.
-brick starting from an empty ledger does not merely lack a chart -- it is *wrong*. Every
-``first_seen`` collapses to today, so Kaplan-Meier reads near zero, the capacity grid marks
-everything before today as ``reconstructed``, and the confusion matrix is computed over a
-population one scan deep. ``--rebuild_ledger`` cannot help: it replays bronze, and a fresh
-deployment's bronze is empty.
+Ported from ``brick/import_bundle.py`` when this fork absorbed the ``os`` scope (S2): the
+problem it exists for is unchanged -- ``gas/`` has been reconciling a daily OS-patching scan
+for months and holds the only record of when each finding was first seen and when it stopped
+being returned, and starting this register's ``os`` scope from an empty ledger does not merely
+lack a chart, it is *wrong*. Every ``first_seen`` collapses to today, so Kaplan-Meier reads near
+zero, the capacity grid marks everything before today as ``reconstructed``, and the confusion
+matrix is computed over a population one scan deep. ``--rebuild_ledger`` cannot help: it
+replays bronze, and a fresh deployment's bronze is empty.
+
+There is no equivalent history for ``sca`` or ``sast``: no prior GAS deployment scanned those
+populations, so a bundle only ever exists for ``--scope=os``. Nothing here enforces that --
+``scope`` is stamped from the run the same way ``run_pipeline`` stamps every other write, and
+refusing a non-``os`` scope would be a policy this module has no way to verify -- but it is why
+this stays deployment tooling (``MIGRATION_MODULES`` in ``run_pipeline.py``) rather than
+scope-specific code.
 
 **What this reads.** The ``wiz-sidekick-migration`` bundle written by
 ``gas/src/domain/exportBundle.ts`` (Data -> Migration bundle), which is the same format
@@ -17,15 +25,21 @@ optionally gzipped:
     {"kind": "wiz-sidekick-migration", "version": 1, "exported_at": ...,
      "scans": [...], "ledger": [...], "episodes": [...], "mttr_history": [...]}
 
-**What it writes.** ``<prefix>vuln_ledger`` and ``<prefix>scans``. Nothing else: bronze and
-silver stay empty, because the bundle carries reconciled lifecycles rather than raw findings,
-and the gold tables are produced by the next ordinary run from the ledger this seeds.
+**What it writes.** ``<prefix>vuln_ledger``, and the ``family='scan'`` rows of
+``<prefix>metrics`` -- the same commit-record shape ``run_pipeline.record_scan`` writes on an
+ordinary run. Nothing else: bronze stays empty and no gold family is written, because the
+bundle carries reconciled lifecycles rather than raw findings, and gold is produced by the
+next ordinary run from the ledger this seeds.
 
 **Why the mapping is nearly free.** ``config.LEDGER_COLUMNS`` was written to mirror
 ``gas/src/domain/reconcile.ts``'s list, so 23 of GAS's 24 columns land 1:1. The three
 differences are stated in config.py and handled here: ``scope`` is stamped from the run,
 ``component`` has no GAS source (see ``h:`` below), and ``tags_json`` is dropped because
-brick's ingest selects no asset tags and nothing downstream would read it.
+brick's ingest selects no asset tags and nothing downstream would read it. This fork's ledger
+carries three more columns than GAS's -- ``cwe``, ``language``, ``ai_verdict`` -- and GAS has no
+source for any of them either, being an OS-vulnerability register with no static-analysis
+inputs: every imported row gets all three as NULL, the same "never captured" state
+``has_kev``/``has_exploit``/``epss`` already use for a signal nobody measured.
 
 Four places where a plausible-looking mapping is silently wrong, each with a test:
 
@@ -34,10 +48,10 @@ Four places where a plausible-looking mapping is silently wrong, each with a tes
     metrics.py. Coercing an uncaptured signal to false inflates efficiency and deflates
     coverage at the same time, and nothing in the output says so.
   * **``severities`` is serialized differently on the two sides.** GAS writes JSON array
-    text (``["CRITICAL", "HIGH"]``, gas/src/domain/compaction.ts) and brick writes sorted
-    comma-joined text (``CRITICAL,HIGH``, run_pipeline.serialize_severities). Copied
-    verbatim, ``run_pipeline.parse_severities`` returns None for it, which brick reads as
-    *unscoped* -- the exact state the disappearance scope guard exists to prevent.
+    text (``["CRITICAL", "HIGH"]``, gas/src/domain/compaction.ts) and this pipeline writes
+    sorted comma-joined text (``CRITICAL,HIGH``, run_pipeline.serialize_severities). Copied
+    verbatim, ``run_pipeline.parse_severities`` returns None for it, which the disappearance
+    guard reads as *unscoped* -- the exact state it exists to prevent.
   * **A settled lifecycle can live in ``episodes`` rather than ``ledger``.** GAS compaction
     moves resolved rows out of the live table, and ``ledgerCore.baseRows`` unions the two --
     so the population GAS's own coverage and MTTR are computed over is ledger + episodes.
@@ -49,8 +63,8 @@ Four places where a plausible-looking mapping is silently wrong, each with a tes
 
 **The ``h:`` caveat, stated once.** ``vuln_key`` is ``id:<wiz finding id>`` when the API
 gave one and a hash otherwise, and the hash basis includes ``component``, which GAS never
-persisted. An imported ``h:`` row will therefore be re-hashed differently by the next brick
-scan and start a second lifecycle. Only findings with no Wiz id are affected, which is why
+persisted. An imported ``h:`` row will therefore be re-hashed differently by the next scan
+and start a second lifecycle. Only findings with no Wiz id are affected, which is why
 the summary prints the ``h:`` count -- that number is the blast radius, and it is usually
 zero.
 """
@@ -71,7 +85,7 @@ import run_pipeline
 from config import STATUS_OPEN, STATUS_RESOLVED
 
 # See config.PIPELINE_VERSION: every module in the folder must report the same version.
-MODULE_VERSION = "2.3"
+MODULE_VERSION = "3.0-devsecops"
 
 # The interchange contract, shared with gas/src/domain/importMerge.ts and
 # wiz_dashboard/data/migrate.py. Bumping either of these is a coordinated change across
@@ -81,7 +95,7 @@ BUNDLE_VERSION = 1
 
 # The deep-history half of a windowed export (migrate.ARCHIVE_KIND). GAS refuses it as a
 # live import and so does this: it carries no scans, so seeding from it would leave every
-# imported row with a last_scan_id that names no scan brick knows about, and the
+# imported row with a last_scan_id that names no scan this pipeline knows about, and the
 # disappearance guard would never fire for any of them.
 ARCHIVE_KIND = "wiz-sidekick-migration-archive"
 
@@ -156,14 +170,14 @@ def _status(value: Any) -> str:
 
 
 def gas_severities(text: Any) -> Optional[str]:
-    """GAS's ``scans.severities`` text in brick's serialization.
+    """GAS's ``scans.severities`` text in this pipeline's serialization.
 
-    GAS writes ``'["CRITICAL", "HIGH"]'`` (gas/src/domain/compaction.ts:24-38); brick writes
-    ``'CRITICAL,HIGH'`` (run_pipeline.serialize_severities). NULL means *unscoped* on both
-    sides and passes straight through -- getting that one backwards would either freeze every
-    lifecycle or mass-resolve the register.
+    GAS writes ``'["CRITICAL", "HIGH"]'`` (gas/src/domain/compaction.ts:24-38); this pipeline
+    writes ``'CRITICAL,HIGH'`` (run_pipeline.serialize_severities). NULL means *unscoped* on
+    both sides and passes straight through -- getting that one backwards would either freeze
+    every lifecycle or mass-resolve the register.
 
-    A value that is already in brick's form is accepted too, so a bundle that has been
+    A value that is already in this pipeline's form is accepted too, so a bundle that has been
     through a converter twice is not corrupted by the second pass.
     """
     if text is None or str(text).strip() == "":
@@ -220,8 +234,9 @@ def validate_bundle(data: Any) -> dict:
     if kind == ARCHIVE_KIND:
         raise BundleError(
             "This is the deep-history archive half of a split export, which carries no scans "
-            "-- importing it would leave every row pointing at a scan brick has never seen, "
-            "and none of them could ever resolve by disappearance. Import the live bundle."
+            "-- importing it would leave every row pointing at a scan this pipeline has never "
+            "seen, and none of them could ever resolve by disappearance. Import the live "
+            "bundle."
         )
     if kind != BUNDLE_KIND:
         raise BundleError(f"Not a migration bundle (kind {kind!r}).")
@@ -267,7 +282,7 @@ def _ledger_row(row: dict, *, scope: str) -> tuple:
         str(row["vuln_key"]),
         scope,
         _str(row.get("cve")),
-        # No GAS source: the column is brick's, and reconcile.ts never persisted it.
+        # No GAS source: the column is this pipeline's, and reconcile.ts never persisted it.
         None,
         _str(row.get("severity")),
         _str(row.get("asset_id")),
@@ -290,6 +305,11 @@ def _ledger_row(row: dict, *, scope: str) -> tuple:
         _bool(row.get("has_exploit")),
         _float(row.get("epss")),
         _str(row.get("risk_observed_at")),
+        # cwe, language, ai_verdict: static-analysis-only columns. GAS is the OS-patching
+        # register and has no source for any of them -- see the module docstring.
+        None,
+        None,
+        None,
     )
 
 
@@ -297,8 +317,9 @@ def _episode_row(row: dict, *, scope: str) -> tuple:
     """A sealed episode as a ledger row.
 
     An episode is a completed lifecycle: GAS compaction moved it out of the live table and
-    ``ledgerCore.baseRows`` unions it back in at read time. brick has no episodes table, so it
-    lands as an ordinary RESOLVED row -- which is what every metric treats it as anyway.
+    ``ledgerCore.baseRows`` unions it back in at read time. This pipeline has no episodes
+    table, so it lands as an ordinary RESOLVED row -- which is what every metric treats it as
+    anyway.
 
     ``last_seen`` takes ``resolved_at`` because that is the last moment the lifecycle was
     known to be real; the scan ids are NULL because the scans that saw it were sealed and
@@ -327,6 +348,10 @@ def _episode_row(row: dict, *, scope: str) -> tuple:
         _bool(row.get("has_exploit")),
         _float(row.get("epss")),
         _str(row.get("risk_observed_at")),
+        # cwe, language, ai_verdict: see _ledger_row.
+        None,
+        None,
+        None,
     )
 
 
@@ -337,8 +362,8 @@ def selectable_episodes(bundle: dict) -> tuple:
 
       * ``superseded_by_scan`` set means a later scan took the lifecycle over, so the live
         ledger row already tells its story. Same predicate ``baseRows`` applies.
-      * a ``vuln_key`` that also has a live row keeps the live row. brick's ledger is one row
-        per key by construction, and a reopen there overwrites rather than archives.
+      * a ``vuln_key`` that also has a live row keeps the live row. This pipeline's ledger is
+        one row per key by construction, and a reopen there overwrites rather than archives.
       * successive compactions can leave several episodes for one key. Only one can be
         represented, so the most recently resolved wins and the rest are counted as
         ``collapsed`` -- lost remediation events that would otherwise vanish unremarked.
@@ -393,16 +418,24 @@ _RAW_SCANS_SCHEMA = StructType(
         StructField("new_count", LongType()),
         StructField("resolved_count", LongType()),
         StructField("reopened_count", LongType()),
+        StructField("family", StringType()),
     ]
 )
 
 
 def scans_frame(spark: SparkSession, bundle: dict, *, scope: str) -> DataFrame:
-    """The bundle's run log as a frame matching ``run_pipeline.SCANS_SCHEMA``.
+    """The bundle's run log as a frame matching ``run_pipeline.METRICS_BASE_SCHEMA``.
 
     ``mode``, ``shape``, ``raw_ref``, ``obs_ref`` and ``sealed`` are dropped: the first two are
     GAS scan-job bookkeeping, the refs are Drive ids meaningless off that deployment, and
-    brick has no compaction for ``sealed`` to describe.
+    this pipeline has no compaction for ``sealed`` to describe.
+
+    Every row is stamped ``family=run_pipeline.FAMILY_SCAN``: this frame is written into
+    ``tables.metrics`` now, the one table that also carries the gold families, and ``family``
+    is what makes a bundle-seeded commit record readable by ``recorded_scan`` /
+    ``scan_log_desc`` the same way ``record_scan``'s own rows are. The final ``select`` pins
+    the column set (and order) to exactly ``SCANS_COLUMNS + ["family"]``, which is
+    ``METRICS_BASE_SCHEMA``'s own column list.
     """
     rows = [
         (
@@ -414,18 +447,24 @@ def scans_frame(spark: SparkSession, bundle: dict, *, scope: str) -> DataFrame:
             _int(r.get("new_count")),
             _int(r.get("resolved_count")),
             _int(r.get("reopened_count")),
+            run_pipeline.FAMILY_SCAN,
         )
         for r in _rows(bundle, "scans")
     ]
     raw = spark.createDataFrame(rows, _RAW_SCANS_SCHEMA)
-    return raw.withColumn("scan_ts", F.col("scan_ts").cast("timestamp"))
+    return raw.withColumn("scan_ts", F.col("scan_ts").cast("timestamp")).select(
+        *run_pipeline.SCANS_COLUMNS, "family"
+    )
 
 
 # --------------------------------------------------------------------------------- the write
 
-#: Every table the pipeline writes, as attributes of ``run_pipeline.Tables``. The lifecycle
-#: pair first, because they are the ones this module replaces outright.
-REGISTER_ATTRS = ("ledger", "scans") + tuple(run_pipeline.APPEND_TABLE_ATTRS.values())
+#: Every table the pipeline writes, as attributes of ``run_pipeline.Tables``. ``ledger`` and
+#: ``metrics`` first, because they are the two this module replaces outright -- the ledger with
+#: the bundle's lifecycles, ``metrics`` with the bundle's scan log (which empties whatever gold
+#: was sitting beside it, same as ``force`` already promised). ``bronze`` last: this module
+#: never writes it, only clears it on a forced import.
+REGISTER_ATTRS = ("ledger", "metrics", "bronze")
 
 
 def require_write_access(spark: SparkSession, table: str) -> None:
@@ -450,7 +489,8 @@ def require_write_access(spark: SparkSession, table: str) -> None:
             f"ownership or MANAGE, a strictly higher bar. Overwriting instead will not get "
             f"past this.\n\n"
             f"Ask an owner or metastore admin for the schema-level grant, which is also what "
-            f"the first scan after this import needs (it creates six more tables):\n"
+            f"the first scan after this import needs (it creates the one remaining table, "
+            f"bronze):\n"
             f"    GRANT USE SCHEMA, SELECT, MODIFY, CREATE TABLE\n"
             f"      ON SCHEMA <catalog>.<schema> TO `<principal>`;\n\n"
             f"Or point --catalog / --schema / --table_prefix somewhere you own and seed there; "
@@ -459,29 +499,87 @@ def require_write_access(spark: SparkSession, table: str) -> None:
         ) from exc
 
 
-def _replace(spark: SparkSession, df: DataFrame, table: str) -> None:
-    """Replace a table's contents: empty it, then append.
+def _replace(spark: SparkSession, df: DataFrame, table: str, scope: str) -> None:
+    """Replace **this scope's** rows in a table: delete them, then append the bundle's.
+
+    ``WHERE scope = '<scope>'`` and never the bare ``DELETE FROM {table}`` this used to issue.
+    Every scope shares one table set now (``run_pipeline.DEFAULT_TABLE_PREFIX``), so the
+    unqualified statement emptied two registers that have nothing to do with the bundle being
+    imported -- and emptied them into a shape no rebuild could recover, because
+    ``rebuild_ledger`` replays bronze and this same function had just deleted that too. The
+    predicate matches the one ``run_pipeline.rebuild_ledger`` uses for the same reason.
+
+    On ``metrics`` it is deliberately every FAMILY of this scope, gold included, and not just
+    ``family='scan'``: gold rows written before a seed were computed from a ledger that started
+    empty, so leaving them would put a near-zero-MTTR run in the trend beside seeded ones with
+    nothing on the page to say why. That is what ``force`` has always promised; what changed is
+    that it now promises it about one register instead of about the whole estate.
 
     Not ``mode("overwrite")``. That resolves through Delta's DataSource V2 catalog, which
     answers *"Table … does not support truncate in batch mode"* -- so the tidier-looking
     single-commit version is one this suite cannot run and a cluster might. DELETE-then-append
     is what ``run_pipeline.rebuild_ledger`` already does to the same two tables, needs the same
-    MODIFY privilege, and is exercised by every test below.
+    MODIFY privilege, and is exercised by every test below. It is also the only form that can
+    carry a predicate at all, which is now a second reason rather than a cost.
 
-    The cost is a window between the two statements in which the table is empty. Acceptable
-    here and nowhere else: this runs once, before the register has any readers.
+    The cost is a window between the two statements in which this scope's rows are gone.
+    Acceptable here and nowhere else: this runs once, before the register has any readers.
     """
-    spark.sql(f"DELETE FROM {table}")
+    spark.sql(f"DELETE FROM {table} WHERE scope = '{scope}'")
     run_pipeline.write_append(df, table)
 
 
-def occupied_tables(spark: SparkSession, tables: run_pipeline.Tables) -> dict:
-    """``{table: rows}`` for every pipeline table that exists and is not empty."""
+def refuse_a_frame_of_another_scope(scope: str, **frames: DataFrame) -> None:
+    """Refuse any frame about to be written whose ``scope`` is not the one being imported.
+
+    **This is not a check on the bundle.** ``_ledger_row`` / ``_episode_row`` / ``scans_frame``
+    stamp ``scope`` from the parameter, and the interchange contract (``BUNDLE_KIND`` v1) has
+    no scope field at all -- GAS is the OS-patching register and says so by carrying no
+    ``cwe`` / ``language`` / ``ai_verdict`` source. So there is no bundle-stated scope here to
+    disagree with, and a guard asserting ``F.lit(scope) == scope`` would fire on nothing.
+
+    What it actually holds is the tie between the WRITE and the DELETE. ``_replace`` clears
+    ``WHERE scope = '<scope>'`` and then appends these frames; if a frame ever carried a
+    different scope -- a future bundle that states one, a caller that builds the frames itself,
+    a mapping change that reads the scope off a row -- the append would land rows the clearing
+    statement cannot reach, and ``force`` would stop meaning "replace this register". That is a
+    half-replaced register, which is the failure of absence this module exists to avoid,
+    arriving from the one direction ``occupied_tables`` cannot see.
+
+    Cheap enough to be unconditional: a ``distinct()`` over two frames of a few thousand rows.
+    """
+    for name, frame in frames.items():
+        found = sorted(
+            str(r["scope"])
+            for r in frame.select("scope").distinct().collect()
+            if r["scope"] is not None
+        )
+        if found != [scope]:
+            raise BundleError(
+                f"The {name} frame carries scope {found or ['(none)']} but this import is for "
+                f"scope {scope!r}. Every row written here is cleared by a "
+                f"DELETE ... WHERE scope = '{scope}', so a row of another scope would be "
+                f"appended to a register that was never emptied -- and would sit inside "
+                f"whichever register it names, dated by this bundle's history. Import the "
+                f"bundle under the scope it was exported from."
+            )
+
+
+def occupied_tables(spark: SparkSession, tables: run_pipeline.Tables, scope: str) -> dict:
+    """``{table: rows}`` for every pipeline table holding rows **of this scope**.
+
+    Scoped, and the question it asks is the one the refusal below acts on: "is the register I
+    am about to replace already in use". With one table set per deployment, an unscoped count
+    answers a different question -- "is any register in use" -- and answers it wrongly in both
+    directions. A first-ever ``os`` import into a deployment already scanning ``sca`` would be
+    refused as a non-empty register it has no business reading; and a forced import would then
+    report the *other* registers' row counts as what it replaced.
+    """
     counts = {}
     for attr in REGISTER_ATTRS:
         table = getattr(tables, attr)
         if run_pipeline.table_exists(spark, table):
-            rows = spark.table(table).count()
+            rows = spark.table(table).where(F.col("scope") == scope).count()
             if rows:
                 counts[table] = rows
     return counts
@@ -495,62 +593,92 @@ def import_bundle(
     scope: str,
     force: bool = False,
 ) -> dict:
-    """Seed ``tables.ledger`` and ``tables.scans`` from the bundle. Returns a summary.
+    """Seed ``tables.ledger`` and the ``family='scan'`` rows of ``tables.metrics`` from the
+    bundle. Returns a summary.
 
     Refuses a register that already holds anything, because the two ways it could go wrong are
-    both silent. Merging a seed into a ledger brick has already advanced would re-open
-    lifecycles it has since resolved; appending the seed's scan log beside brick's own would
+    both silent. Merging a seed into a ledger this pipeline has already advanced would re-open
+    lifecycles it has since resolved; appending the seed's scan log beside its own would
     put an older scan after a newer one and hand the disappearance guard the wrong previous
     scan.
 
-    ``force`` means **replace the register**, not merely the two tables. The gold tables are
-    the reason: they are appended per scan and computed from the ledger *as it stood at that
-    scan*, so rows written before the seed were derived from a ledger that started empty. Left
-    in place they would sit in `04_scan_history` as a run whose MTTR reads near zero, beside
-    seeded runs where it does not -- a contradiction with no visible cause. So a forced import
-    empties bronze, silver and all four gold tables too, and the register genuinely restarts
-    from the imported history.
+    ``force`` means **replace the register**, not merely the ledger. Gold is the reason: it is
+    appended per scan and computed from the ledger *as it stood at that scan*, so gold rows
+    written before the seed were derived from a ledger that started empty. Left in place they
+    would sit beside seeded runs where MTTR does not read near zero -- a contradiction with no
+    visible cause. So a forced import empties this scope's bronze and this scope's whole share
+    of ``metrics`` -- the scan log and every gold family together, since they now share one
+    table -- and the register genuinely restarts from the imported history. ``_replace`` on
+    ``metrics`` is what does that emptying: it DELETEs this scope's rows before appending the
+    bundle's scan rows, so the gold rows a prior run wrote never survive it.
+
+    **"The register" is ONE SCOPE'S register, and every statement below says so.** A GAS bundle
+    is the Apps Script app's own history and that app scans hosts, so an import is an ``os``
+    import; the three scopes share one table set (``run_pipeline.DEFAULT_TABLE_PREFIX``), and
+    until this was scoped a ``--force_import`` emptied the ledger, the metrics table and bronze
+    outright -- taking the ``sca`` and ``sast`` registers with it, unrecoverably, since the
+    bronze that ``--rebuild_ledger`` would replay went in the same statement. Measured by
+    reproducing that one statement inline
+    (``test_import_bundle.py::TestAnImportTouchesOneScope``): on a register holding the
+    committed ``sca`` capture, an ``os`` import that names no other scope takes all 54 ``sca``
+    lifecycles and every published ``sca`` metrics row to zero, and prints a summary that looks
+    exactly like a successful seed.
 
     They are emptied rather than dropped: DELETE needs only MODIFY and keeps the tables' grants,
     where DROP needs ownership and would silently take the grants with it.
+
+    **Order matters.** The ledger is replaced first. Then bronze -- never written by this
+    module, only ever cleared -- is cleared on its own, before ``metrics`` is touched: clearing
+    it as part of one loop over ``metrics`` and ``bronze`` together would run at the same time
+    as (or after) ``_replace`` writing ``metrics``, and the two are not safe to interleave.
+    ``metrics`` itself is replaced last, by ``_replace``, which is what empties whatever gold
+    was there.
     """
     run_pipeline.ensure_tables(spark, tables)
     # Before the expensive part, and before anything is written.
     require_write_access(spark, tables.ledger)
-    require_write_access(spark, tables.scans)
+    require_write_access(spark, tables.metrics)
 
-    occupied = occupied_tables(spark, tables)
+    occupied = occupied_tables(spark, tables, scope)
     if occupied and not force:
-        listed = "\n".join(f"    {t}: {n} row(s)" for t, n in occupied.items())
+        listed = "\n".join(f"    {t}: {n} {scope} row(s)" for t, n in occupied.items())
         raise BundleError(
-            f"This register is not empty:\n{listed}\n\n"
+            f"The {scope!r} register is not empty:\n{listed}\n\n"
             f"An import seeds an empty register. Merging into one that has already scanned "
             f"would re-open resolved lifecycles and mis-order the scan log, and any gold rows "
             f"already written were computed from a ledger that started empty.\n"
-            f"Pass --force_import=true to REPLACE the register -- it overwrites the ledger and "
-            f"the scan log and empties bronze, silver and the four gold tables."
+            f"Pass --force_import=true to REPLACE the {scope!r} register -- it overwrites that "
+            f"scope's ledger rows and empties its bronze and its share of the metrics table "
+            f"(the scan log together with every gold family). The other scopes' rows in these "
+            f"same tables are not read and not touched."
         )
 
     episodes, collapsed = selectable_episodes(bundle)
     rows = ledger_frame(spark, bundle, scope=scope).localCheckpoint(eager=True)
     scans = scans_frame(spark, bundle, scope=scope)
+    # Before the first DELETE: what is written and what is cleared have to be the same scope,
+    # or `force` stops replacing what it says it replaces. See the function's own header.
+    refuse_a_frame_of_another_scope(scope, ledger=rows, scans=scans)
 
-    _replace(spark, rows, tables.ledger)
-    _replace(spark, scans, tables.scans)
+    _replace(spark, rows, tables.ledger, scope)
 
+    # bronze only, and before metrics: see "Order matters" above.
     cleared = {}
-    for attr in run_pipeline.APPEND_TABLE_ATTRS.values():
-        table = getattr(tables, attr)
-        if table in occupied:
-            spark.sql(f"DELETE FROM {table}")
-            cleared[table] = occupied[table]
+    if tables.bronze in occupied:
+        spark.sql(f"DELETE FROM {tables.bronze} WHERE scope = '{scope}'")
+        cleared[tables.bronze] = occupied[tables.bronze]
+
+    _replace(spark, scans, tables.metrics, scope)
+    if tables.metrics in occupied:
+        cleared[tables.metrics] = occupied[tables.metrics]
 
     hashed = rows.filter(F.col("vuln_key").startswith("h:")).count()
     span = rows.agg(
         F.min("first_seen").alias("first_seen"), F.max("last_seen").alias("last_seen")
     ).collect()[0]
-    latest = run_pipeline.previous_scan(spark, tables)
+    latest = run_pipeline.previous_scan(spark, tables, scope)
     return {
+        "scope": scope,
         "ledger_rows": rows.count(),
         "episodes_folded": len(episodes),
         "episodes_collapsed": collapsed,
@@ -565,16 +693,25 @@ def import_bundle(
     }
 
 
-def seeded_overview(spark: SparkSession, tables: run_pipeline.Tables) -> DataFrame:
-    """What landed, by status: the read-back an operator checks the import against.
+def seeded_overview(
+    spark: SparkSession, tables: run_pipeline.Tables, scope: str
+) -> DataFrame:
+    """What landed **for this scope**, by status: the read-back an operator checks against.
 
     Lives here rather than in the notebook for the same reason every other aggregate does --
     a number computed in a cell is a number no test can reach. ``earliest_first_seen`` is the
     one to look at: if it reads today, the seed did not take and every MTTR below it is
     measuring the import rather than the register.
+
+    Scoped, or the check does not check the import: the ledger holds every scope, so an
+    unfiltered ``min(first_seen)`` would answer with whichever register happens to have the
+    oldest row -- and a seed that did not take would read as though it had, because some other
+    scope's history supplied the old date. It would fail in the safe-looking direction, which
+    is the direction a read-back must never fail in.
     """
     return (
         spark.table(tables.ledger)
+        .where(F.col("scope") == scope)
         .groupBy("status")
         .agg(
             F.count("*").alias("lifecycles"),
@@ -588,7 +725,11 @@ def seeded_overview(spark: SparkSession, tables: run_pipeline.Tables) -> DataFra
 
 
 def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
-    print(f"[import] {summary['ledger_rows']} lifecycle(s) -> {tables.ledger}")
+    """Every line names the scope. These tables hold three registers, and a line reading
+    "REPLACED a non-empty register: wiz_vuln_ledger (54)" without one is a sentence an operator
+    would reasonably read as "the register", i.e. all of it."""
+    scope = summary["scope"]
+    print(f"[import] {summary['ledger_rows']} {scope} lifecycle(s) -> {tables.ledger}")
     print(
         f"[import]   {summary['episodes_folded']} sealed episode(s) folded in"
         + (
@@ -597,16 +738,21 @@ def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
             else ""
         )
     )
-    print(f"[import] {summary['scans']} scan(s) -> {tables.scans}")
+    print(f"[import] {summary['scans']} {scope} scan(s) -> {tables.metrics}")
     if summary["replaced"]:
         print(
-            f"[import] REPLACED a non-empty register: "
-            + ", ".join(f"{t.split('.')[-1]} ({n})" for t, n in summary["replaced"].items())
+            f"[import] REPLACED a non-empty {scope!r} register: "
+            + ", ".join(
+                f"{t.split('.')[-1]} ({n} {scope} row(s))"
+                for t, n in summary["replaced"].items()
+            )
         )
+        print("[import]   rows of the other scopes in those tables were not touched")
     if summary["cleared"]:
         print(
-            f"[import]   emptied {len(summary['cleared'])} derived table(s) -- their rows were "
-            f"computed from a ledger that started empty, so re-scan to repopulate them"
+            f"[import]   emptied the {scope} rows of {len(summary['cleared'])} derived "
+            f"table(s) -- they were computed from a ledger that started empty, so re-scan to "
+            f"repopulate them"
         )
     print(
         f"[import] observed {summary['earliest_first_seen']} .. {summary['latest_last_seen']}, "
@@ -615,8 +761,8 @@ def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
     if summary["hashed_keys"]:
         print(
             f"[import] WARNING {summary['hashed_keys']} row(s) carry a hashed (h:) vuln_key. "
-            f"GAS never persisted `component`, which is part of brick's hash basis, so the "
-            f"next scan will re-key these and start a second lifecycle for each. Findings "
+            f"GAS never persisted `component`, which is part of this pipeline's hash basis, so "
+            f"the next scan will re-key these and start a second lifecycle for each. Findings "
             f"with a Wiz id are unaffected."
         )
     print(
@@ -634,7 +780,7 @@ def main() -> Optional[dict]:
     data_path = run_pipeline.resolve_data_path()
     namespace = "" if data_path else run_pipeline.resolve_namespace()
     scope = run_pipeline.resolve_scope()
-    tables = run_pipeline.resolve_tables(namespace, scope, data_path=data_path)
+    tables = run_pipeline.resolve_tables(namespace, data_path=data_path)
     path = run_pipeline.param("bundle_path")
     if not path:
         raise BundleError(

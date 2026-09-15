@@ -14,7 +14,7 @@ Three things are being pinned here, and they fail differently:
   gap and the never-captured-is-not-negative rule both have their own tests, because both fail
   as confident numbers rather than as exceptions.
 
-The fixtures are the committed captures in ``brick/devsecops/``, which are this tenant's real
+The fixtures are the committed captures beside these tests, which are this tenant's real
 responses -- so the shapes here are the shapes the API actually returns.
 """
 

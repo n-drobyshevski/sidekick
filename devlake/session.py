@@ -6,15 +6,18 @@ Two things a Databricks cluster does for free and a laptop has to do by hand:
   are one release -- the Python wheel and the Ivy coordinate ship together -- so the coordinate
   is *derived* from whatever ``delta-spark`` pip installed (:func:`jar_coordinate`) rather than
   hardcoded. A lagging hardcoded pin is exactly what broke ``csvstore`` restore under Spark
-  3.5.9 (see the fork conftests' own comments); deriving it makes that class of drift
+  3.5.9 (see ``brick/tests/conftest.py``'s own comments); deriving it makes that class of drift
   impossible rather than merely documented.
-* **Exactly one fork's flat module directory may be on ``sys.path``.** ``brick/`` and
-  ``brick/devsecops/`` both define ``config``, ``ingest``, ``run_pipeline``, and so on -- the
-  same names, different files. Whichever directory a bare ``import run_pipeline`` resolves
-  against first decides which pipeline runs, silently. :func:`put_fork_on_path` refuses to
-  create that situation; see its docstring, and
-  ``brick/devsecops/tests/test_fork_integrity.py`` for the same guard enforced the other way
-  (both fork *conftests* insert their own directory and never the other's).
+* **Only ``brick/``'s flat module directory may be on ``sys.path``.** There used to be a second
+  tree here (``brick/devsecops/``, a fork defining the same module names -- ``config``,
+  ``run_pipeline``, and so on) that a stray ``sys.path`` entry could resolve a bare
+  ``import config`` against instead of ``brick/``'s own copy, silently. That fork is retired
+  (S2-T4/T5): one tree, four scopes. What is still real on a flat Databricks workspace folder
+  is a STALE IMPORT -- a ``sys.modules`` entry left behind from some other directory entirely
+  (a prior test module, a notebook cell, an old checkout on ``sys.path`` ahead of this one) --
+  and :func:`put_brick_on_path` still refuses that outright; see its docstring, and
+  ``brick/tests/test_deployment_integrity.py`` for the same class of guard enforced again, at
+  runtime, inside ``run_pipeline.check_deployment()``.
 """
 
 from __future__ import annotations
@@ -31,17 +34,15 @@ if TYPE_CHECKING:
 #: This file lives at ``<repo root>/devlake/session.py``.
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
-#: The two forks that may go on ``sys.path``, by name. Exactly one at a time -- see
-#: ``put_fork_on_path``. Values are directories, not packages: both forks are flat module
-#: folders with no ``__init__.py``, imported by putting the directory itself on ``sys.path``.
-FORKS = {
-    "brick": REPO_ROOT / "brick",
-    "devsecops": REPO_ROOT / "brick" / "devsecops",
-}
+#: The one tree this package runs: a flat module folder with no ``__init__.py``, imported by
+#: putting the directory itself on ``sys.path``. There used to be a second fork here
+#: (``brick/devsecops/``); it is retired -- see this module's own docstring.
+BRICK_DIR = REPO_ROOT / "brick"
 
-#: Every top-level module name a fork defines. Shared between the two forks by construction --
-#: that is what makes mixing them possible and what this list exists to detect.
-FORK_MODULE_NAMES = (
+#: Every top-level module name ``brick/`` defines. A stale ``sys.modules`` entry under one of
+#: these names, pointing at some OTHER directory, resolves a bare ``import config`` (etc.) to
+#: the wrong file with no error -- see :func:`put_brick_on_path`.
+BRICK_MODULE_NAMES = (
     "config",
     "dbx",
     "ingest",
@@ -60,70 +61,49 @@ def jar_coordinate() -> str:
 
     ``delta-spark`` X.Y.Z always pairs with jar ``io.delta:delta-spark_2.12:X.Y.Z`` -- the PyPI
     release and the Maven release are the same release under two package managers. Reading the
-    version off the installed package (rather than restating it as a literal, the way both fork
-    ``conftest.py`` modules still do) is what keeps this file from being the next place a pin
-    goes stale.
+    version off the installed package (rather than restating it as a literal, the way
+    ``brick/tests/conftest.py`` still does) is what keeps this file from being the next place a
+    pin goes stale.
     """
     return f"io.delta:delta-spark_2.12:{importlib.metadata.version('delta-spark')}"
 
 
-def put_fork_on_path(fork: str) -> Path:
-    """Put ``FORKS[fork]`` on ``sys.path`` -- and refuse if that would let two forks mix.
+def put_brick_on_path() -> Path:
+    """Put ``brick/`` on ``sys.path`` -- and refuse if a module name it defines is already
+    imported from somewhere else.
 
-    Two ways a mix happens, and both are checked before anything is inserted:
-
-    1. **The other fork's directory is already on ``sys.path``.** Whichever one comes first in
-       ``sys.path`` order wins a bare ``import config``, and the loser is invisible -- no error,
-       just the wrong pipeline.
-    2. **A fork module is already imported from a different directory.** This catches the case
-       the first check cannot: something imported ``run_pipeline`` from ``brick/`` directly
-       (without going through ``sys.path`` insertion this function controls -- a prior test
-       module, a notebook cell, a stale ``sys.modules`` entry) and this call is now trying to
-       serve ``devsecops``. Once a module is in ``sys.modules`` a plain ``import`` never looks
-       at ``sys.path`` again, so the check has to be on the loaded module's own ``__file__``.
+    With only one tree left there is nothing else on ``sys.path`` to mix it with, but a stale
+    ``sys.modules`` entry is still a real failure mode: something imported ``run_pipeline`` (or
+    ``config``, ``ledger``, ...) from a directory that is not ``brick/`` -- a prior test module
+    loading a file by path, a notebook cell, an old checkout still on ``sys.path`` -- and once a
+    module name is in ``sys.modules`` a plain ``import`` never looks at ``sys.path`` again, so
+    the check has to be on the loaded module's own ``__file__``.
 
     Repo root is *appended* (never inserted) once this succeeds, so ``devlake`` itself stays
-    importable without ever outranking either fork's directory for a bare module name.
+    importable without ever outranking ``brick/``'s directory for a bare module name.
     """
-    if fork not in FORKS:
-        raise RuntimeError(f"unknown fork {fork!r} -- expected one of {sorted(FORKS)}")
-    fork_dir = FORKS[fork].resolve()
-    other_forks = {name: path.resolve() for name, path in FORKS.items() if name != fork}
+    brick_dir = BRICK_DIR.resolve()
 
-    for entry in sys.path:
-        if not entry:
-            continue
-        entry_resolved = Path(entry).resolve()
-        for other_name, other_dir in other_forks.items():
-            if entry_resolved == other_dir:
-                raise RuntimeError(
-                    f"refusing to put {fork!r} ({fork_dir}) on sys.path: {other_name!r}'s "
-                    f"directory ({other_dir}) is already on it. A sys.path holding both forks "
-                    f"resolves a bare `import config` (or run_pipeline, ledger, ...) to "
-                    f"whichever came first -- half of one pipeline and half of the other, with "
-                    f"no error. See brick/devsecops/tests/test_fork_integrity.py, 'the two can "
-                    f"be mixed'."
-                )
-
-    for name in FORK_MODULE_NAMES:
+    for name in BRICK_MODULE_NAMES:
         module = sys.modules.get(name)
         module_file = getattr(module, "__file__", None) if module is not None else None
         if module_file is None:
             continue
         module_dir = Path(module_file).resolve().parent
-        if module_dir != fork_dir:
+        if module_dir != brick_dir:
             raise RuntimeError(
-                f"refusing to put {fork!r} on sys.path: module {name!r} is already imported "
-                f"from {module_file}, under {module_dir}, not from {fork_dir}. Once a module "
+                f"refusing to put brick/ on sys.path: module {name!r} is already imported "
+                f"from {module_file}, under {module_dir}, not from {brick_dir}. Once a module "
                 f"name is in sys.modules a bare `import {name}` never consults sys.path again, "
-                f"so the wrong fork would keep serving that one name silently."
+                f"so the wrong file would keep serving that one name silently."
             )
 
-    sys.path.insert(0, str(fork_dir))
+    if str(brick_dir) not in sys.path:
+        sys.path.insert(0, str(brick_dir))
     repo_root = str(REPO_ROOT)
     if repo_root not in sys.path:
         sys.path.append(repo_root)
-    return fork_dir
+    return brick_dir
 
 
 def build(

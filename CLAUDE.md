@@ -19,12 +19,15 @@ and related `wiz_dashboard/{data,models}` modules act as the behavioral spec and
 fixture-export source for parts of the GAS rebuild, especially `gas/`. Treat
 that Python domain layer as maintained shared logic, not dead code.
 
-`brick/` (OS vulnerabilities, scopes `os`/`all`) and `brick/devsecops/`
-(`sca`/`sast`) are the PySpark + Delta surface over the same registers: bronze
-→ silver → a `MERGE`d ledger → the `scans` commit row → gold tables. They are
-deliberate FORKS with identical module names and exactly one may be on
-`sys.path`. `devlake/` at the repo root is the dev-only harness that runs either
-of them on a laptop; it is never deployed.
+`brick/` is the PySpark + Delta pipeline over the same registers, one tree for
+the three scopes `os`, `sca` and `sast`. Every scope writes the same three tables
+— `wiz_findings_raw` (bronze), `wiz_vuln_ledger` (`MERGE`d, keyed on
+`(vuln_key, scope)`) and `wiz_metrics` (the commit record and every gold family,
+told apart by a `family` column) — and `scope` is a column in every one of them.
+`devlake/` at the repo root is the dev-only harness that runs it on a laptop; it
+is never deployed. The measured traps of that pipeline (the resumable gold
+write, the scope filters and what each one costs, the chained scan job) live in
+`brick/README.md`.
 
 ## Root Python usage
 
