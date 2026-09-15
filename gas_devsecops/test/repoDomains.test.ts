@@ -15,6 +15,10 @@ const H = vi.hoisted(() => ({
   calls: [] as { query: string; variables: Rec }[],
   /** The `domain_map` tab. */
   mapRows: [] as Rec[],
+  /** The `repos` tab — one row per repository, what mapHealth joins against. */
+  repoRows: [] as Rec[],
+  /** Set to make reading the repos tab throw, independently of the map's own tab. */
+  reposThrow: false,
   /** Set to make every sheetsDb read throw, as an unreachable spreadsheet does. */
   sheetsThrow: false,
   prop: null as string | null,
@@ -44,7 +48,11 @@ vi.mock("../src/server/sheetsDb", async (orig) => {
       if (H.sheetsThrow) throw new Error("spreadsheet unavailable");
       return null;
     },
-    readAll: () => {
+    readAll: (tab: string) => {
+      if (tab === real.TABS.repos) {
+        if (H.reposThrow) throw new Error("spreadsheet unavailable");
+        return H.repoRows;
+      }
       if (H.sheetsThrow) throw new Error("spreadsheet unavailable");
       return H.mapRows;
     },
@@ -69,7 +77,9 @@ beforeEach(() => {
   H.pages = [];
   H.calls = [];
   H.mapRows = [];
+  H.repoRows = [];
   H.sheetsThrow = false;
+  H.reposThrow = false;
   H.prop = null;
   H.bumped = 0;
   resetDomainMapMemo();
@@ -320,20 +330,70 @@ describe("the persisted map", () => {
   });
 });
 
-describe("mapHealth", () => {
-  it("reports what the register is CURRENTLY joining against, without fetching", () => {
+describe("mapHealth — the three states, and why it measures the join", () => {
+  it("reports zero keys before the first refresh — 'never refreshed', not 'nothing tagged'", () => {
+    expect(mapHealth()).toMatchObject({ keys: 0, domains: 0, placed: 0 });
+    expect(H.calls).toHaveLength(0); // reads the stored map; never touches Wiz
+  });
+
+  it("MEASURES what the map places, not just what it holds", () => {
     H.mapRows = [
       { token: "r-1", domain: "SAP" },
       { token: "ext-1", domain: "SAP" },
       { token: "r-2", domain: "CROSS" },
     ];
+    H.repoRows = [
+      { repo_id: "r-1", repo_name: "svc-api" },
+      { repo_id: "r-2", repo_name: "svc-web" },
+      { repo_id: "r-3", repo_name: "svc-jobs" },
+    ];
+    const h = mapHealth();
     // Three keys, two domains: the map indexes a repository under several tokens, so keys
     // outrunning domains is the healthy shape rather than a sign of anything.
-    expect(mapHealth()).toEqual({ keys: 3, domains: 2, tagKey: "Wiz/Domain" });
+    expect(h).toMatchObject({ keys: 3, domains: 2, tagKey: "Wiz/Domain", repos: 3, placed: 2 });
+    expect(h.sampleUnplaced).toEqual(["svc-jobs"]);
     expect(H.calls).toHaveLength(0);
   });
 
-  it("reports zero keys before the first refresh — 'never refreshed', not 'nothing tagged'", () => {
-    expect(mapHealth()).toMatchObject({ keys: 0, domains: 0 });
+  it("THE STATE A KEY COUNT HIDES: a full map that places nothing", () => {
+    // The failure this register can actually have — the identity a repository ENTITY carries
+    // in Wiz's graph need not be the one a FINDING carries. Reported as keys alone this reads
+    // as perfect health while every domain figure in the app is empty.
+    H.mapRows = [
+      { token: "wiz-vertex-aaa", domain: "SAP" },
+      { token: "wiz-vertex-bbb", domain: "CROSS" },
+    ];
+    H.repoRows = [
+      { repo_id: "r-1", repo_name: "dktunited/svc-api" },
+      { repo_id: "r-2", repo_name: "dktunited/svc-web" },
+    ];
+    const h = mapHealth();
+    expect(h.domains).toBe(2);
+    expect(h.keys).toBe(2);
+    // The figure that tells the truth about it.
+    expect(h.placed).toBe(0);
+    // And BOTH SIDES of the mismatch, so the card can print them side by side.
+    expect(h.sampleTokens).toEqual(["wiz-vertex-aaa", "wiz-vertex-bbb"]);
+    expect(h.sampleUnplaced).toEqual(["dktunited/svc-api", "dktunited/svc-web"]);
+  });
+
+  it("caps both samples rather than carrying a whole tenant back to a settings card", () => {
+    H.mapRows = Array.from({ length: 40 }, (_, i) => ({ token: `t-${i}`, domain: "SAP" }));
+    H.repoRows = Array.from({ length: 40 }, (_, i) => ({ repo_id: `r-${i}`, repo_name: `n-${i}` }));
+    const h = mapHealth();
+    expect(h.keys).toBe(40);
+    expect(h.repos).toBe(40);
+    expect(h.sampleTokens).toHaveLength(5);
+    expect(h.sampleUnplaced).toHaveLength(5);
+  });
+
+  it("reports what it knows when the repos tab is unreadable, rather than throwing", () => {
+    // Same posture as getDomainMap: a diagnostic must not take the Settings page down.
+    H.mapRows = [{ token: "r-1", domain: "SAP" }];
+    H.reposThrow = true;
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const h = mapHealth();
+    expect(h).toMatchObject({ keys: 1, domains: 1, repos: 0, placed: 0 });
+    expect(warn).toHaveBeenCalledOnce();
   });
 });

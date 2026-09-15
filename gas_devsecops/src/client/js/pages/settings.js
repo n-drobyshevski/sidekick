@@ -873,11 +873,24 @@ export async function renderSettings(host, params, ctx) {
    *
    * THREE STATES, AND THE THIRD IS THE ONE WORTH DRAWING A CARD FOR:
    *
-   *   zero keys              never refreshed — press the button
-   *   keys AND domains       the map is loaded; the switcher should be offering these
-   *   keys but no domains    unreachable, or the tag key matches nothing
+   *   zero keys                   never refreshed — press the button
+   *   keys, but places nothing    fetched, and the map reaches none of this register's repos
+   *   keys, and places some       working; the switcher should be offering these domains
    *
-   * The tag key is printed either way, because a map that found nothing and a map built
+   * THE MIDDLE ONE IS WHY THIS CARD REPORTS `placed` RATHER THAN A KEY COUNT. A map can hold
+   * thousands of tokens and three domains and still place zero findings, because the identity
+   * a repository ENTITY carries in Wiz's graph need not be the one a FINDING carries — nothing
+   * in the tree can verify that overlap without the tenant (`repoDomains.recordIdentityTokens`
+   * says so at length). Reported as keys alone, that state reads as perfect health while every
+   * domain figure in the app is empty, which is exactly the confident lie this card exists to
+   * prevent.
+   *
+   * When it happens, the card prints BOTH SIDES OF THE MISMATCH — what the map is keyed on,
+   * and what this register calls its repositories. That is the one thing that turns "the
+   * domains do not appear" into something an operator can act on or report, and it is why the
+   * samples are on screen rather than in an execution log nobody opens.
+   *
+   * The tag key is printed in every state, because a map that found nothing and a map built
    * against the wrong `WIZ_DOMAIN_TAG_KEY` are the same picture with different causes, and the
    * key is the fact that separates them.
    */
@@ -896,15 +909,33 @@ export async function renderSettings(host, params, ctx) {
         const h = state.health;
         const keys = Number(h.keys) || 0;
         const domains = Number(h.domains) || 0;
+        const repos = Number(h.repos) || 0;
+        const placed = Number(h.placed) || 0;
         if (!keys) {
           // NEUTRAL, NOT BAD. Nothing is broken — the map has simply never been fetched, which
           // is every deployment's state until someone presses the button once.
           wrap.append(statusPill("neutral", "Never refreshed"));
         } else if (!domains) {
           wrap.append(statusPill("bad", "No domains found"));
+        } else if (!placed) {
+          // THE STATE THE KEY COUNT USED TO HIDE. The fetch worked and the map is real; it
+          // simply does not reach anything this register holds.
+          wrap.append(
+            statusPill("bad", `${fmtCount(domains)} domain(s), matching none of your repositories`),
+            el("span", { class: "muted small" },
+              "The map was fetched, but the identities Wiz reports on the tagged repositories "
+              + "do not match the ones this register's findings carry, so no finding can be "
+              + "placed in a domain. The two lists below are that mismatch."),
+            el("div", { class: "settings-remedy" },
+              el("div", { class: "muted small" },
+                `Map is keyed on: ${(h.sampleTokens || []).join(", ") || "—"}`),
+              el("div", { class: "muted small" },
+                `This register's repositories: ${(h.sampleUnplaced || []).join(", ") || "—"}`)),
+          );
         } else {
           wrap.append(statusPill("ok",
-            `${fmtCount(domains)} domain(s) across ${fmtCount(keys)} repository key(s)`));
+            `${fmtCount(domains)} domain(s) over ${fmtCount(placed)} of `
+            + `${fmtCount(repos)} repositories`));
         }
         wrap.append(el("span", { class: "muted small" }, `Tag key: ${h.tagKey}`));
       } else {
@@ -918,10 +949,20 @@ export async function renderSettings(host, params, ctx) {
           paint({ pending: true });
           try {
             const res = await call("api_refreshDomains", {});
-            paint({ health: { keys: res.keys, domains: res.domains, tagKey: res.tagKey } });
-            toast(res.repos
-              ? `${fmtCount(res.repos)} tagged repository(s), ${fmtCount(res.domains)} domain(s).`
-              : `No repository carries a ${res.tagKey} tag.`);
+            // Re-read HEALTH rather than painting the refresh stats. `DomainRefresh` says what
+            // the fetch SAW (repositories tagged, domains found); only `mapHealth` says whether
+            // any of it reaches this register — and that is the whole question this card
+            // answers. The toast keeps the fetch's own figures, because "what came back from
+            // Wiz" and "what this register can do with it" are two facts and the card would be
+            // hiding the first if the toast restated the second.
+            const health = await call("api_domainMapHealth", {});
+            paint({ health });
+            toast(!res.repos
+              ? `No repository carries a ${res.tagKey} tag.`
+              : health.placed
+                ? `${fmtCount(res.repos)} tagged repository(s), ${fmtCount(res.domains)} domain(s).`
+                : `${fmtCount(res.repos)} tagged repository(s) fetched, but none match this `
+                  + "register's repositories — see the card.");
             // The map moved, so every domain figure the shell is holding is stale — including
             // the header switcher's own list, which is built from the bootstrap payload.
             invalidateBootstrap();

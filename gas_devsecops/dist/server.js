@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "0855e80d4874" : "dev";
+  var BUILD_ID = true ? "dca6fb7f7c63" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -4970,12 +4970,37 @@ var Server = (() => {
     setDomainMap(map);
     return stats;
   }
+  var SAMPLE = 5;
   function mapHealth() {
+    var _a, _b;
     const map = getDomainMap();
+    const tagKey = configuredDomainTagKey();
+    const keys = Object.keys(map);
+    let repos = 0;
+    let placed = 0;
+    const sampleUnplaced = [];
+    try {
+      for (const row of readAll(TABS.repos)) {
+        repos += 1;
+        if (resolveDomain(row, map, tagKey)) {
+          placed += 1;
+          continue;
+        }
+        if (sampleUnplaced.length < SAMPLE) {
+          sampleUnplaced.push(String((_b = (_a = row["repo_name"]) != null ? _a : row["repo_id"]) != null ? _b : "(blank)"));
+        }
+      }
+    } catch (e) {
+      console.warn(`Repos tab unreadable \u2014 domain map health is partial: ${String(e)}`);
+    }
     return {
-      keys: Object.keys(map).length,
+      keys: keys.length,
       domains: new Set(Object.values(map)).size,
-      tagKey: configuredDomainTagKey()
+      tagKey,
+      repos,
+      placed,
+      sampleTokens: keys.slice(0, SAMPLE),
+      sampleUnplaced
     };
   }
 
