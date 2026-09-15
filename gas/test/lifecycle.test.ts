@@ -14,9 +14,8 @@ describe("sha1Hex", () => {
 describe("vulnKey (fixture parity)", () => {
   const { cases } = fixture("vuln_key");
   cases.forEach((c: any, i: number) => {
-    const result = vulnKey(c.input);
-    it(`case ${i}: ${result}`, () => {
-      expect(result).toMatchSnapshot();
+    it(`case ${i}`, () => {
+      expect(vulnKey(c.input)).toMatchSnapshot();
     });
   });
 });

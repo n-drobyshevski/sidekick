@@ -13,9 +13,8 @@ describe("domain rules (fixture parity)", () => {
   const compiled = compileDomains(fx.items);
 
   fx.records.forEach((rec: any, i: number) => {
-    const result = assignDomain(rec, compiled);
-    it(`record ${i} -> ${result}`, () => {
-      expect(result).toMatchSnapshot();
+    it(`record ${i}`, () => {
+      expect(assignDomain(rec, compiled)).toMatchSnapshot();
     });
   });
 

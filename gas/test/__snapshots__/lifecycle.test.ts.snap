@@ -63,22 +63,22 @@ exports[`mttrFromLedger (fixture parity) > matches the Python summary > perSev 1
 }
 `;
 
-exports[`vulnKey (fixture parity) > case 0: id:abc-123 1`] = `"id:abc-123"`;
+exports[`vulnKey (fixture parity) > case 0 1`] = `"id:abc-123"`;
 
-exports[`vulnKey (fixture parity) > case 1: id:abc-123 1`] = `"id:abc-123"`;
+exports[`vulnKey (fixture parity) > case 1 1`] = `"id:abc-123"`;
 
-exports[`vulnKey (fixture parity) > case 2: h:500fdcc0491c0a59 1`] = `"h:500fdcc0491c0a59"`;
+exports[`vulnKey (fixture parity) > case 2 1`] = `"h:500fdcc0491c0a59"`;
 
-exports[`vulnKey (fixture parity) > case 3: h:5d7da3e3da48262b 1`] = `"h:5d7da3e3da48262b"`;
+exports[`vulnKey (fixture parity) > case 3 1`] = `"h:5d7da3e3da48262b"`;
 
-exports[`vulnKey (fixture parity) > case 4: h:5d7da3e3da48262b 1`] = `"h:5d7da3e3da48262b"`;
+exports[`vulnKey (fixture parity) > case 4 1`] = `"h:5d7da3e3da48262b"`;
 
-exports[`vulnKey (fixture parity) > case 5: h:3b78356f75d15302 1`] = `"h:3b78356f75d15302"`;
+exports[`vulnKey (fixture parity) > case 5 1`] = `"h:3b78356f75d15302"`;
 
-exports[`vulnKey (fixture parity) > case 6: h:5d62996d83503e8a 1`] = `"h:5d62996d83503e8a"`;
+exports[`vulnKey (fixture parity) > case 6 1`] = `"h:5d62996d83503e8a"`;
 
-exports[`vulnKey (fixture parity) > case 7: h:500fdcc0491c0a59 1`] = `"h:500fdcc0491c0a59"`;
+exports[`vulnKey (fixture parity) > case 7 1`] = `"h:500fdcc0491c0a59"`;
 
-exports[`vulnKey (fixture parity) > case 8: h:89222af85ca5a71d 1`] = `"h:89222af85ca5a71d"`;
+exports[`vulnKey (fixture parity) > case 8 1`] = `"h:89222af85ca5a71d"`;
 
-exports[`vulnKey (fixture parity) > case 9: h:243a9d5ac8296892 1`] = `"h:243a9d5ac8296892"`;
+exports[`vulnKey (fixture parity) > case 9 1`] = `"h:243a9d5ac8296892"`;

@@ -12,31 +12,31 @@ exports[`domain rules (fixture parity) > domainNames parity 1`] = `
 ]
 `;
 
-exports[`domain rules (fixture parity) > record 0 -> Payments 1`] = `"Payments"`;
+exports[`domain rules (fixture parity) > record 0 1`] = `"Payments"`;
 
-exports[`domain rules (fixture parity) > record 1 -> Payments 1`] = `"Payments"`;
+exports[`domain rules (fixture parity) > record 1 1`] = `"Payments"`;
 
-exports[`domain rules (fixture parity) > record 2 -> Data Platform 1`] = `"Data Platform"`;
+exports[`domain rules (fixture parity) > record 2 1`] = `"Data Platform"`;
 
-exports[`domain rules (fixture parity) > record 3 -> Unassigned 1`] = `"Unassigned"`;
+exports[`domain rules (fixture parity) > record 3 1`] = `"Unassigned"`;
 
-exports[`domain rules (fixture parity) > record 4 -> Unassigned 1`] = `"Unassigned"`;
+exports[`domain rules (fixture parity) > record 4 1`] = `"Unassigned"`;
 
-exports[`domain rules (fixture parity) > record 5 -> Payments 1`] = `"Payments"`;
+exports[`domain rules (fixture parity) > record 5 1`] = `"Payments"`;
 
-exports[`domain rules (fixture parity) > record 6 -> Unassigned 1`] = `"Unassigned"`;
+exports[`domain rules (fixture parity) > record 6 1`] = `"Unassigned"`;
 
-exports[`domain rules (fixture parity) > record 7 -> Data Platform 1`] = `"Data Platform"`;
+exports[`domain rules (fixture parity) > record 7 1`] = `"Data Platform"`;
 
-exports[`domain rules (fixture parity) > record 8 -> Unassigned 1`] = `"Unassigned"`;
+exports[`domain rules (fixture parity) > record 8 1`] = `"Unassigned"`;
 
-exports[`domain rules (fixture parity) > record 9 -> Supply Monitoring 1`] = `"Supply Monitoring"`;
+exports[`domain rules (fixture parity) > record 9 1`] = `"Supply Monitoring"`;
 
-exports[`domain rules (fixture parity) > record 10 -> Supply Monitoring 1`] = `"Supply Monitoring"`;
+exports[`domain rules (fixture parity) > record 10 1`] = `"Supply Monitoring"`;
 
-exports[`domain rules (fixture parity) > record 11 -> Supply Monitoring 1`] = `"Supply Monitoring"`;
+exports[`domain rules (fixture parity) > record 11 1`] = `"Supply Monitoring"`;
 
-exports[`domain rules (fixture parity) > record 12 -> Unassigned 1`] = `"Unassigned"`;
+exports[`domain rules (fixture parity) > record 12 1`] = `"Unassigned"`;
 
 exports[`validateDomains (fixture parity) > emits the same errors (regex-compile detail excluded) 1`] = `
 [
