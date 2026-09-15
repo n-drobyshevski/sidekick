@@ -4,7 +4,7 @@ Heir to ``brick/tests/test_catalog_mode.py`` as well as this fork's own: when th
 retired its half of this module was folded in here rather than dropped, so the end-to-end
 assertions run **once per scope** -- ``os`` and ``sca``, the two scopes with a committed capture
 to drive them. (``sast`` has none; see ``conftest``'s note on why the grouped captures cannot
-drive a pipeline.) The claim under test is the README ("Running it locally") and
+drive a pipeline.) The claim under test is ``brick/docs/storage.md`` ("Running it locally") and
 ``panels.tables``' docstring: *"saveAsTable against a three-level catalog.schema.table name
 needs Unity Catalog -- a local Spark can only write two-level names."* Every local test in this
 suite builds a two-level namespace on the strength of it, so the catalog-mode path -- the mode
@@ -118,8 +118,9 @@ SCOPE_FIXTURES = {
 }
 
 #: A catalog name with no ``spark.sql.catalog.<name>`` plugin behind it. Two of them, because
-#: the interesting property is "unregistered", not "called hive_metastore" -- the README's own
-#: local-run example passes the first and `resolve_namespace`'s error message recommends it.
+#: the interesting property is "unregistered", not "called hive_metastore" -- the local-run
+#: example in ``brick/docs/storage.md`` passes the first and `resolve_namespace`'s error
+#: message recommends it.
 UNREGISTERED_CATALOGS = ("hive_metastore", "preprod_sec")
 
 
@@ -453,7 +454,8 @@ def test_a_scan_recorded_under_three_level_names_reads_back_through_recorded_sca
 def test_an_unregistered_catalog_is_not_reached_at_all(spark, catalog):
     """A catalog with no ``spark.sql.catalog.<name>`` plugin. Three statements, three voices.
 
-    Recorded exactly, because this is the failure the README should be describing and none of
+    Recorded exactly, because this is the failure ``brick/docs/storage.md`` should be describing
+    and none of
     the three says "catalog not found":
 
     * ``spark.catalog.databaseExists`` **does not raise** -- it returns ``False``, which is why

@@ -2,8 +2,8 @@
 
 This directory carries its own copy of every runtime module and depends on nothing outside
 itself -- a plain top-level Python folder, deployable as one flat Databricks Workspace folder
-with no package prefix and no `sys.path` entry but its own. ``README.md`` is where that layout
-and its cost are written down.
+with no package prefix and no `sys.path` entry but its own. ``docs/internals.md``, Layout, is
+where that layout and its cost are written down.
 
 The sources of truth these constants mirror, in order of authority:
 

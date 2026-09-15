@@ -494,7 +494,8 @@ def test_one_key_two_scopes_two_rows(spark, register, monkeypatch):
 
     ``ledger.vuln_key`` prefers the Wiz finding id, so writing bronze nodes carrying the same
     ``id`` under ``os`` and under ``sca`` is what actually produces one key in two populations
-    -- the case the README describes as the same CVE reaching a host through an OS package and
+    -- the case ``brick/docs/register.md`` describes as the same CVE reaching a host through an
+    OS package and
     a service through a library dependency. The dates are deliberately different so the two
     rows can be told apart by more than their ``scope`` column.
 

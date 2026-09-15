@@ -27,6 +27,8 @@ told apart by a `family` column) — and `scope` is a column in every one of the
 `devlake/` at the repo root is the dev-only harness that runs it on a laptop; it
 is never deployed. The measured traps of that pipeline (the resumable gold
 write, the scope filters and what each one costs, the chained scan job) live in
+`brick/docs/` — `register.md`, `deploy.md`, `migrating.md`, `storage.md`,
+`notebooks.md`, `reading-the-numbers.md` and `internals.md`, mapped from
 `brick/README.md`.
 
 ## Root Python usage

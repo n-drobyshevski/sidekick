@@ -241,7 +241,7 @@ def test_the_boot_cell_handles_both_documented_deployments():
     assert "os.path.dirname(_here)" in body
     assert 'dbutils.widgets.get("module_path")' in body
     assert "sys.path.insert(0, _p)" in body
-    assert "sys.path.append" not in body, "insert, not append -- see README.md, Layout"
+    assert "sys.path.append" not in body, "insert, not append -- see docs/internals.md, Layout"
     assert "README.md" in body, "the failure has to name where the fix is written down"
 
 
@@ -563,12 +563,12 @@ def test_at_least_one_page_ships_an_editable_sql_cell():
 # ---------------------------------------------------------------------------- the tree
 
 
-def test_the_readme_notebook_tree_matches_what_ships():
+def test_the_deploy_doc_notebook_tree_matches_what_ships():
     """The deployment instructions cannot drift from the artifact -- the same rule the pipeline's
     own module tree has had since a stale folder cost 137,870 findings."""
     import run_pipeline
 
-    text = (BRICK_DIR / "README.md").read_text(encoding="utf-8")
+    text = (BRICK_DIR / "docs" / "deploy.md").read_text(encoding="utf-8")
     start = next(
         i for i, line in enumerate(text.splitlines())
         if "these files go on sys.path too" in line
@@ -582,7 +582,8 @@ def test_the_readme_notebook_tree_matches_what_ships():
         f"{m}.py" for m in run_pipeline.NOTEBOOK_MODULES + run_pipeline.MIGRATION_MODULES
     } | {f"{n}.ipynb" for n in EXPECTED}
     assert listed == expected, (
-        f"only in README {sorted(listed - expected)}, only shipped {sorted(expected - listed)}"
+        f"only in docs/deploy.md {sorted(listed - expected)},"
+        f" only shipped {sorted(expected - listed)}"
     )
 
 

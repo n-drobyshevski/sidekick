@@ -568,18 +568,21 @@ def test_unparseable_error_body_still_says_something():
 
 # ------------------------------------------------------------- deployment consistency
 #
-# v2 added a sixth runtime module, ledger.py, and shipped with a README whose deployment tree
-# still listed five. Following it produced a workspace holding v2's metrics.py and v1's
+# v2 added a sixth runtime module, ledger.py, and shipped with a deployment tree that still
+# listed five. Following it produced a workspace holding v2's metrics.py and v1's
 # run_pipeline.py, which imports cleanly and then dies at the silver write -- 137,870 findings
 # into the first real run, as "A schema mismatch detected when writing to the Delta table".
 # These tests exist so that specific mistake cannot be made silently again.
+#
+# The tree lives in brick/docs/deploy.md since the README was split by reader; README.md is the
+# map, and "2. Get the code onto the workspace" is where the procedure actually is.
 
-README = BRICK_DIR / "README.md"
+DEPLOY_DOC = BRICK_DIR / "docs" / "deploy.md"
 
 
-def _readme_module_tree() -> set:
-    """The `.py` filenames in the README's deployment file tree."""
-    lines = README.read_text(encoding="utf-8").splitlines()
+def _deploy_doc_module_tree() -> set:
+    """The `.py` filenames in the deployment doc's file tree."""
+    lines = DEPLOY_DOC.read_text(encoding="utf-8").splitlines()
     start = next(i for i, line in enumerate(lines) if "this path goes on sys.path" in line)
     names = set()
     for line in lines[start + 1:]:
@@ -591,28 +594,28 @@ def _readme_module_tree() -> set:
     return names
 
 
-def test_readme_deployment_tree_matches_the_real_import_graph():
+def test_deploy_doc_tree_matches_the_real_import_graph():
     """The deployment instructions cannot drift from what the code actually needs.
 
     This is the test that would have caught the v2 release: adding a module without adding it
     to the tree now fails here rather than on someone's cluster.
     """
-    documented = _readme_module_tree()
-    assert documented, "could not find the deployment file tree in README.md"
+    documented = _deploy_doc_module_tree()
+    assert documented, "could not find the deployment file tree in docs/deploy.md"
     expected = {f"{name}.py" for name in run_pipeline.RUNTIME_MODULES}
     assert documented == expected, (
-        f"README deployment tree and RUNTIME_MODULES disagree: "
-        f"only in README {sorted(documented - expected)}, "
+        f"docs/deploy.md deployment tree and RUNTIME_MODULES disagree: "
+        f"only in the doc {sorted(documented - expected)}, "
         f"only in code {sorted(expected - documented)}"
     )
 
 
-def test_readme_does_not_still_say_five_modules():
+def test_deploy_doc_does_not_still_say_five_modules():
     """The prose carried the count too, and prose does not fail a schema check."""
-    text = README.read_text(encoding="utf-8")
+    text = DEPLOY_DOC.read_text(encoding="utf-8")
     assert "five `.py` modules" not in text
     assert "ledger.py" in text
-    # And the one thing a fork's README must say out loud.
+    # And the one thing the deployment procedure must say out loud.
     assert "sys.path" in text
 
 
@@ -785,8 +788,9 @@ def test_data_path_produces_delta_path_references(monkeypatch):
     tables = run_pipeline.resolve_tables("", argv=[], data_path="/Volumes/c/s/v/code")
     assert tables.bronze == "delta.`/Volumes/c/s/v/code/wiz_findings_raw`"
     assert tables.ledger == "delta.`/Volumes/c/s/v/code/wiz_vuln_ledger`"
-    # The directory names match what a catalog run would call the tables, so the README's
-    # CREATE TABLE ... LOCATION recipe is one statement per directory with nothing renamed.
+    # The directory names match what a catalog run would call the tables, so the
+    # CREATE TABLE ... LOCATION recipe in docs/storage.md is one statement per directory with
+    # nothing renamed.
     assert tables.metrics.endswith("/wiz_metrics`")
 
 

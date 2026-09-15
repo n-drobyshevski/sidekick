@@ -114,7 +114,7 @@ except ImportError as exc:
         f"ledger.py, which v2 added.\n"
         f"Fix: copy ALL SIX of config.py, dbx.py, ingest.py, ledger.py, metrics.py and "
         f"run_pipeline.py into the folder, then run dbutils.library.restartPython(). "
-        f"See brick/README.md section 2."
+        f"See brick/docs/deploy.md, section 2."
     ) from exc
 
 # ------------------------------------- the register's tables, families and module manifest
@@ -151,8 +151,9 @@ APPEND_TABLE_ATTRS = {BRONZE_TABLE: "bronze", METRICS_TABLE: "metrics"}
 # forgotten in an export is a name error at import rather than a gap in a backup.
 TABLE_ATTRS = ("metrics", "ledger", "bronze")
 
-# Every module that has to be deployed for a run, including this one. The README's file tree
-# is checked against this list by the test suite, so the deployment instructions cannot drift
+# Every module that has to be deployed for a run, including this one. The deployment file tree
+# in brick/docs/deploy.md is checked against this list by the test suite, so the instructions
+# cannot drift
 # away from what the code actually imports -- which is exactly how v2 shipped with a five-file
 # tree after adding a sixth module.
 RUNTIME_MODULES = ("config", "dbx", "ingest", "ledger", "metrics", "run_pipeline")
@@ -316,7 +317,7 @@ PERSISTENT_PATHS = (
     "/Volumes/<catalog>/<schema>/<volume>/... (a Unity Catalog volume is a much smaller ask "
     "than a schema to create tables in), dbfs:/... where DBFS root still exists, or a storage "
     "URI you already hold credentials for (s3://..., abfss://...). "
-    "See brick/README.md, PoC storage."
+    "See brick/docs/storage.md, Fallback storage."
 )
 
 
@@ -387,7 +388,7 @@ def utc_now_iso() -> str:
 
 # 0 means "do not set spark.sql.shuffle.partitions at all".
 #
-# A run is a handful of aggregations over one scan and the README's own deployment note says "a
+# A run is a handful of aggregations over one scan and brick/docs/deploy.md's own note says "a
 # single-node cluster is plenty", so Spark's 200 default does look oversized -- most of the
 # shuffles here schedule 200 tasks to move a few rows. The obvious move is to ship a smaller
 # default, and `brick/tools/bench_pipeline.py` does not support one: over three runs a side at 20,000
@@ -467,7 +468,7 @@ def parse_severities(text) -> Optional[list]:
 # **Measured, they cost rather than pay** -- ~5% for the clustering and ~12% more for the DVs,
 # on a ledger of ~25k rows. That is the scale, not the idea: rewriting a few-megabyte file is
 # nearly free, so there is no amplification to avoid and the DV bookkeeping is all cost. The
-# README's "What this measured" section has the numbers and the condition under which it
+# brick/docs/register.md's "What this measured" section has the numbers and the condition it
 # inverts. Turning DVs off here is one word, and on a small register it is the right word.
 #
 # Off for bronze on purpose. It is append-only -- no MERGE, no UPDATE, one
@@ -493,7 +494,8 @@ def create_clustered(spark: SparkSession, table: str, schema, attr: str) -> None
 
     **Existing registers are not migrated.** This only fires when the table is absent, so a
     deployment that already has these tables keeps its unclustered layout until someone runs
-    the ALTER TABLE recipe in the README. Enabling clustering on an existing table is an
+    the ALTER TABLE recipe in ``brick/docs/migrating.md``. Enabling clustering on an existing
+    table is an
     owner-level operation and not one to perform silently on the next scheduled run.
     """
     if table_exists(spark, table):
@@ -1102,7 +1104,7 @@ def build_metrics(
     Silver is computed and never stored. It is a pure per-scan projection of bronze -- the
     snapshot columns read the frame in memory, and `panels._silver_frame` rebuilds it from
     bronze the same way -- so a table would be a second copy of data the register already holds.
-    Bronze is what must survive; see the README's PoC storage section.
+    Bronze is what must survive; see ``brick/docs/storage.md``, Fallback storage.
 
     ``summary=False`` skips the printed report. The report is the only reason the gold frames
     are cached, so a caller that does not want the printing does not want the caching either --
@@ -1415,7 +1417,7 @@ def resolve_data_path(argv: Optional[list] = None, csv_register: str = "") -> st
     executor, and then fail the moment the cluster is scaled. Workspace file permissions also
     expire (36 hours interactive, 30 days for jobs), which disqualifies it as somewhere data
     lives. Refused for the same reason as the ephemeral paths: the failure is late, confusing,
-    and lands on the data. See brick/README.md, PoC storage.
+    and lands on the data. See brick/docs/storage.md, Fallback storage.
     """
     path = param("data_path", argv=argv).strip().rstrip("/")
     if not path and csv_register:
@@ -1478,7 +1480,8 @@ def resolve_tables(
 
     With ``data_path`` set, each is ``delta.`<path>/<prefix><name>``` -- a directory per table
     under one root, named identically to the tables a catalog-backed run would create, so the
-    migration recipe in the README is a `CREATE TABLE ... LOCATION` per directory and nothing
+    migration recipe in ``brick/docs/storage.md`` is a `CREATE TABLE ... LOCATION` per directory
+    and nothing
     has to be renamed.
     """
     prefix = param("table_prefix", DEFAULT_TABLE_PREFIX, argv=argv)
@@ -1723,7 +1726,8 @@ def export_csv(
 
     Still not how you *migrate* between registers: what you migrate is the Delta directory,
     ``CREATE TABLE ... USING DELTA LOCATION``, which keeps the clustering and the history too.
-    See the README's PoC storage section. ``csvstore.restore`` is for rebuilding a register
+    See ``brick/docs/storage.md``, Fallback storage. ``csvstore.restore`` is for rebuilding a
+    register
     whose Delta side was lost, which is a different job from moving one that is intact.
 
     ``include_bronze`` opts into the one table the default skips -- see ``csvstore.DEFAULT_ATTRS``.

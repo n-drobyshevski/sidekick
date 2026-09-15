@@ -65,7 +65,7 @@ Spark's in-memory catalog (no `enableHiveSupport()`) lives and dies with the `Sp
 A table created in one process is, to a fresh process pointed at the same warehouse directory,
 just a directory again — the Delta log on disk still has every commit, but nothing in the new
 catalog knows the name. `devlake.lake.reregister` runs the same
-`CREATE TABLE ... USING DELTA LOCATION` recipe `brick/README.md` documents for moving a
+`CREATE TABLE ... USING DELTA LOCATION` recipe `brick/docs/storage.md` documents for moving a
 register into a real catalog, on every local boot.
 
 The first `CREATE TABLE` a lake ever does (no restart yet) makes a table *managed* — no

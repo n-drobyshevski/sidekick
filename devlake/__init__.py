@@ -11,7 +11,7 @@ Jupyter or DuckDB.
 ``sys.path`` (see its docstring for the one failure mode left: a stale import). ``lake.py``
 re-registers a lake's
 on-disk Delta tables under the session catalog on every boot, the same
-``CREATE TABLE ... USING DELTA LOCATION`` recipe ``brick/README.md`` documents for moving a
+``CREATE TABLE ... USING DELTA LOCATION`` recipe ``brick/docs/storage.md`` documents for moving a
 register into a real catalog, and works around the one thing a local ``delta-spark`` cannot do:
 parse a three-part name in its Python ``DeltaTable`` builder (see ``lake.precreate_clustered``).
 """
