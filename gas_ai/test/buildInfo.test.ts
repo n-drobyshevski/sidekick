@@ -8,7 +8,7 @@
 // dist/ on every commit. buildStamp.test.mjs pins the stability property that replaced it.
 
 import { describe, expect, it } from "vitest";
-import { BUILD_ID, buildInfo } from "../src/server/buildInfo";
+import { BUILD_ID, buildInfo } from "../../gas_shared/server/buildInfo";
 // @ts-expect-error — client module is plain JS, no d.ts (same as syncProgress.test.ts)
 import { clientBuild, describeBuild } from "../src/client/js/buildInfo.js";
 

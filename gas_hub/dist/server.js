@@ -323,8 +323,8 @@ var Server = (() => {
     saveUrls: () => saveUrls
   });
 
-  // src/server/buildInfo.ts
-  var BUILD_ID = true ? "404e4914215f" : "dev";
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "6a3c4f580561" : "dev";
 
   // src/server/urls.ts
   var TILE_ORDER = ["os", "ai", "devsecops"];

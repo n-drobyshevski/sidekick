@@ -3984,7 +3984,7 @@ var Server = (() => {
     };
   }
 
-  // src/domain/sha1.ts
+  // ../gas_shared/domain/sha1.ts
   function utf8Bytes(s) {
     const out = [];
     for (let i = 0; i < s.length; i++) {
@@ -4060,8 +4060,8 @@ var Server = (() => {
     return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
   }
 
-  // src/server/buildInfo.ts
-  var BUILD_ID = true ? "df59a329a5dd" : "dev";
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "a0cacc795708" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }

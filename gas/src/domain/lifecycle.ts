@@ -1,7 +1,7 @@
 // Cross-scan vulnerability identity and ledger-sourced MTTR — the port of
 // wiz_dashboard/domain/lifecycle.py.
 
-import { sha1Hex } from "./sha1";
+import { sha1Hex } from "../../../gas_shared/domain/sha1";
 import { normalizeSeverity } from "./severity";
 import { summarize, type MttrSummary, type SummaryRow } from "./metrics";
 import { present, parseTs, pyStr, type Rec } from "./util";

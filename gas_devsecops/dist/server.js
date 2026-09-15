@@ -387,7 +387,7 @@ var Server = (() => {
     welcomeHtml: () => welcomeHtml
   });
 
-  // src/domain/sha1.ts
+  // ../gas_shared/domain/sha1.ts
   function utf8Bytes(s2) {
     const out = [];
     for (let i = 0; i < s2.length; i++) {
@@ -463,8 +463,8 @@ var Server = (() => {
     return [h0, h1, h2, h3, h4].map((x) => x.toString(16).padStart(8, "0")).join("");
   }
 
-  // src/server/buildInfo.ts
-  var BUILD_ID = true ? "2ab972b6c458" : "dev";
+  // ../gas_shared/server/buildInfo.ts
+  var BUILD_ID = true ? "0fa31c2acd0c" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";

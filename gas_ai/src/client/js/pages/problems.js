@@ -29,7 +29,7 @@
 
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { dueChip, openConfigFindingSheet, openIssueSheet } from "../detailSheets.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import {
   absent, absentText, chartTable, clear, dataTable, debounce, el, emptyState, errorState,
   fmtCount, fmtDate,

@@ -20,7 +20,7 @@
 import { bootstrap, buildHash, listJoin, navigate, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { SAVED_VIEW_KEYS, readSavedViews } from "../savedViews.js";
 import { openAssetSheet } from "../detailSheets.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import {
   CATEGORY_LABELS, CATEGORY_ORDER, categoryOf, kindIconSvg, kindLabel,
 } from "../../../../../gas_shared/icons.js";

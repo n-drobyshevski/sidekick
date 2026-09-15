@@ -35,7 +35,7 @@
 // chart on this page draws the two Kaplan-Meier markers and no closed-only comparison.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 // The severity palette is READ OFF THE STYLESHEET, never retyped — CLAUDE.md's "byte-identical
 // across all four surfaces" rule. `sevPalette` is defined once in `sca.js`; `sast.js` already
 // imports it from there, and this is the same import rather than a second copy.

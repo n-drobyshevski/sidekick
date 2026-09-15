@@ -187,7 +187,7 @@ import { inProject } from "../domain/prunePlan";
 import { archiveBytes } from "./archiveStore";
 import { activeJob } from "./jobsStore";
 import { LedgerBusyError, recoverIfNeeded, withScriptLock } from "./locks";
-import { buildInfo } from "./buildInfo";
+import { buildInfo } from "../../../gas_shared/server/buildInfo";
 import * as access from "./access";
 import { domainTagKey, hasWizCredentials, projectScope, PROP_KEYS, setProp } from "./props";
 import { readHubUrl, writeHubUrl } from "./hubUrl";

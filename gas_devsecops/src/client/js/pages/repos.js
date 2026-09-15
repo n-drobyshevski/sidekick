@@ -25,7 +25,7 @@
 // prove it looked" applies just as hard to a percentage nobody computed.
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import { pagedTable } from "./sca.js";
 import {
   absentText, boundedDays, chartTable, chartTableModel, clear, days1, denomNote, el,

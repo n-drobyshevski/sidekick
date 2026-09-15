@@ -713,11 +713,11 @@ describe("the three pages are wired", () => {
     const imports = (src) => [...src.matchAll(/^import[\s\S]*?from "([^"]+)";$/gm)].map((m) => m[1]);
     for (const name of ["mttr", "program"]) {
       expect(imports(SRC[name]), name + " does not reach the charts lazily")
-        .toContain("../chartsLoader.js");
+        .toContain("../../../../../gas_shared/ui/chartsLoader.js");
       expect(imports(SRC[name]), name + " imports charts.js eagerly").not.toContain("../charts.js");
     }
     // The landing page draws no chart at all, so the front door never fetches the bundle.
-    expect(imports(SRC.executive)).not.toContain("../chartsLoader.js");
+    expect(imports(SRC.executive)).not.toContain("../../../../../gas_shared/ui/chartsLoader.js");
     expect(imports(SRC.executive)).not.toContain("../charts.js");
   });
 

@@ -344,7 +344,7 @@ var Server = (() => {
     welcomeHtml: () => welcomeHtml
   });
 
-  // src/domain/sha1.ts
+  // ../gas_shared/domain/sha1.ts
   function utf8Bytes(s) {
     const out = [];
     for (let i = 0; i < s.length; i++) {
@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "5b34401b786d" : "dev";
+  var BUILD_ID = true ? "e3e9ffc91753" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {

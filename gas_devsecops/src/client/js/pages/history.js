@@ -50,7 +50,7 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 // but those two needed it), so this page reaches the shared module by path, the same way it
 // already reaches `store.js`.
 import { svgEl } from "../../../../../gas_shared/icons.js";
-import { chartUnavailable, loadCharts } from "../chartsLoader.js";
+import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import { showExperimental, subscribeExperimental } from "../experimental.js";
 import {
   DEFAULT_PAGE_SIZE, absentText, chartTable, chartTableModel, clear, dataTable,
