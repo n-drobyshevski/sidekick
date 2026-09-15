@@ -390,7 +390,7 @@ def utc_now_iso() -> str:
 # A run is a handful of aggregations over one scan and the README's own deployment note says "a
 # single-node cluster is plenty", so Spark's 200 default does look oversized -- most of the
 # shuffles here schedule 200 tasks to move a few rows. The obvious move is to ship a smaller
-# default, and `brick/bench_pipeline.py` does not support one: over three runs a side at 20,000
+# default, and `brick/tools/bench_pipeline.py` does not support one: over three runs a side at 20,000
 # findings, 64 had the fastest single run and the tightest spread but a *worse* median than 200.
 # That is a measurement saying "it depends on the cluster", so the number is left to whoever has
 # one, and the knob is here to turn.

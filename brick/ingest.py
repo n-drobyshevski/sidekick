@@ -599,7 +599,7 @@ def extract_nodes(payload: Any) -> List[Dict[str, Any]]:
     """Pull finding nodes out of a saved GraphQL response envelope.
 
     Mirrors ``wiz_dashboard.data.transform.extract_nodes`` so the committed captures
-    (``sca_response.json`` / ``sast_response.json``) can be replayed through this pipeline
+    (``fixtures/sca_response.json`` / ``fixtures/sast_response.json``) can be replayed through this pipeline
     without a network call -- which is how the end-to-end tests run.
 
     The fallback to "any connection under ``data``" is what makes a second source free: it

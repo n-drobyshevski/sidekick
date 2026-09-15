@@ -8,11 +8,11 @@ measuring instrument for performance work on ``run_pipeline.py``: a change to th
 lands with a before/after number from here, or it does not land.
 
     # baseline, on the branch point
-    python brick/bench_pipeline.py --findings 137870 --scans 3 --out before.json \\
+    python brick/tools/bench_pipeline.py --findings 137870 --scans 3 --out before.json \\
         --dump before/
 
     # after the change
-    python brick/bench_pipeline.py --findings 137870 --scans 3 --out after.json \\
+    python brick/tools/bench_pipeline.py --findings 137870 --scans 3 --out after.json \\
         --dump after/ --compare before.json
     diff -r before/ after/     # must be empty: the numbers are not allowed to move
 
@@ -41,7 +41,7 @@ from inspect import signature
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional
 
-BRICK_DIR = Path(__file__).resolve().parent
+BRICK_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BRICK_DIR))
 
 # Must be set before the JVM starts, exactly as tests/conftest.py explains: --packages is read
@@ -49,7 +49,7 @@ sys.path.insert(0, str(BRICK_DIR))
 # Tracks DELTA_PACKAGE in tests/conftest.py, and for the same reason -- see the comment there.
 # Duplicated rather than imported because this script must stay runnable against a checkout of
 # an older revision, which is the whole point of --compare.
-DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.2"
+DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.3"
 os.environ.setdefault(
     "PYSPARK_SUBMIT_ARGS", f"--packages {DELTA_PACKAGE} --driver-memory 4g pyspark-shell"
 )

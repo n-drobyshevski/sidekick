@@ -8,6 +8,7 @@ does nothing useful.
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import sys
@@ -23,6 +24,7 @@ pytest.importorskip(
 # The modules are plain top-level files, so their own directory goes on the path -- the same
 # arrangement the Databricks side uses.
 BRICK_DIR = Path(__file__).resolve().parents[1]
+REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
 import dbx  # noqa: E402
@@ -448,7 +450,7 @@ def test_the_sca_query_asks_for_exactly_two_asset_members():
     A union fails as a whole, so one member the tenant no longer has costs the entire request
     -- which is why `FETCH_ASSET_FIELDS` is off for a register that would have to ask for all
     thirteen. `sca` returns REPOSITORY_BRANCH and nothing else, so it asks for the two members
-    it needs and gets its asset columns. `sca_response.json` is the evidence.
+    it needs and gets its asset columns. `brick/fixtures/sca_response.json` is the evidence.
 
     Reads `build_query(scope="sca")` rather than the module-level `QUERY`, which used to be the
     same document and is not any more: `QUERY` is `build_query()`, so it follows
@@ -612,6 +614,117 @@ def test_readme_does_not_still_say_five_modules():
     assert "ledger.py" in text
     # And the one thing a fork's README must say out loud.
     assert "sys.path" in text
+
+
+# ------------------------------------------------------------ the committed captures' location
+#
+# Six brick test modules (conftest.py, test_ledger.py, test_catalog_mode.py,
+# test_import_bundle.py, test_csvstore.py, test_metrics.py, test_devsecops.py) and
+# devlake/run.py each build a path to one of the three committed Wiz captures. Only the brick
+# ones run in this suite, and all of them need Spark -- so a fixture move that updated the six
+# brick readers but missed devlake/run.py would pass every brick test and still break
+# ``python -m devlake.run`` silently. Catching that by running devlake was a thirty-minute round
+# trip (~10-12 minutes of the fixture-reading Spark subset, plus noticing devlake was never
+# actually run). This test is two seconds and JVM-free -- it never imports pyspark's
+# SparkSession -- so it belongs here, not in a Spark-backed module.
+_COMMITTED_CAPTURES = (
+    "sca_findings_example.json",
+    "sast_response.json",
+    "sca_response.json",
+)
+
+
+def test_every_committed_capture_is_where_its_readers_look():
+    """The three captures live under ``brick/fixtures/``, and nothing under ``brick/`` or
+    ``devlake/`` builds a path to one of their basenames without a ``fixtures`` path component.
+
+    See the section banner above for why this specific, cheap check exists.
+    """
+    for name in _COMMITTED_CAPTURES:
+        assert (BRICK_DIR / "fixtures" / name).is_file(), (
+            f"{name} is not committed at brick/fixtures/{name}"
+        )
+
+    offenders = []
+    for root in (BRICK_DIR, REPO_ROOT / "devlake"):
+        for path in sorted(root.rglob("*.py")):
+            if "__pycache__" in path.parts:
+                continue
+            offenders.extend(_paths_missing_fixtures_component(path))
+
+    assert not offenders, "path(s) built to a committed capture without a fixtures/ component:\n" + "\n".join(
+        offenders
+    )
+
+
+def _paths_missing_fixtures_component(path):
+    """AST-walk ``path`` for every maximal ``a / b / ...`` join whose resolved components
+    include one of the three captures' basenames, and flag any where ``"fixtures"`` is not
+    also among those components.
+
+    Deliberately narrow: it only understands ``Path``-style ``/`` joins (what every reader in
+    this repo actually uses), tracing simple ``NAME = <expr>`` assignments so an indirection
+    like ``FIXTURE_DIR / LIVE_FIXTURE`` resolves through both ``FIXTURE_DIR`` and
+    ``LIVE_FIXTURE``. A label like ``LIVE_FIXTURE = "sca_findings_example.json"`` is not itself
+    flagged -- only an actual join is -- so naming a fixture file for later joining is fine, and
+    only the join site is where the ``fixtures`` component is required.
+    """
+    text = path.read_text(encoding="utf-8")
+    try:
+        tree = ast.parse(text, filename=str(path))
+    except SyntaxError:
+        return []
+
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    assigns = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            target = node.targets[0]
+            if isinstance(target, ast.Name):
+                assigns[target.id] = node.value
+
+    def resolve(node, seen):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return [node.value]
+        if isinstance(node, ast.Name):
+            if node.id in seen or node.id not in assigns:
+                return ["?"]
+            return resolve(assigns[node.id], seen | {node.id})
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div):
+            left, right = resolve(node.left, seen), resolve(node.right, seen)
+            return None if left is None or right is None else left + right
+        if isinstance(node, (ast.Attribute, ast.Subscript)):
+            return resolve(node.value, seen)
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                return resolve(node.func.value, seen)
+            if isinstance(node.func, ast.Name) and node.args:
+                return resolve(node.args[0], seen)
+            return ["?"]
+        return None
+
+    def is_maximal_join(node):
+        parent = parents.get(node)
+        return not (isinstance(parent, ast.BinOp) and isinstance(parent.op, ast.Div))
+
+    offenders = []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.BinOp) and isinstance(node.op, ast.Div)):
+            continue
+        if not is_maximal_join(node):
+            continue
+        components = resolve(node, frozenset())
+        if components is None:
+            continue
+        hit = next((c for c in _COMMITTED_CAPTURES if c in components), None)
+        if hit and "fixtures" not in components:
+            rel = path.relative_to(REPO_ROOT)
+            offenders.append(f"{rel}:{node.lineno}: joins to {hit!r} without a fixtures/ component")
+    return offenders
 
 
 def test_every_runtime_module_declares_a_version():

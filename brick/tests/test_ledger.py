@@ -176,7 +176,7 @@ def test_vuln_key_matches_the_reference_implementation(spark):
         reason="cross-check needs the repo root importable",
     )
     payload = json.loads(
-        (BRICK_DIR / "sca_findings_example.json").read_text(encoding="utf-8")
+        (BRICK_DIR / "fixtures" / "sca_findings_example.json").read_text(encoding="utf-8")
     )
     from ingest import extract_nodes
 

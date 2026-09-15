@@ -57,7 +57,7 @@ SEVERITIES = ["CRITICAL", "HIGH"]
 def register(spark, tmp_path, request):
     """A small real register in its own database, with two scans so lifecycles are real."""
     nodes = extract_nodes(
-        json.loads((BRICK_DIR / "sca_findings_example.json").read_text())
+        json.loads((BRICK_DIR / "fixtures" / "sca_findings_example.json").read_text())
     )
     database = f"csv_{abs(hash(request.node.name)) % 10**8}"
     spark.sql(f"DROP DATABASE IF EXISTS {database} CASCADE")
@@ -394,7 +394,7 @@ def test_two_scans_reconcile_through_csv_alone(spark, tmp_path, monkeypatch):
     import shutil
 
     nodes = extract_nodes(
-        json.loads((BRICK_DIR / "sca_findings_example.json").read_text())
+        json.loads((BRICK_DIR / "fixtures" / "sca_findings_example.json").read_text())
     )
     register = str(tmp_path / "csv")
     scratch = str(tmp_path / "scratch")

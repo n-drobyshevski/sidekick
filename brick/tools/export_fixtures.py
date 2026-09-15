@@ -22,10 +22,20 @@ carry the mismatch):
     docker run --rm -v <repo>:/repo -w /repo python:3.11-slim sh -c "
       apt-get update -qq && apt-get install -y -qq default-jre-headless >/dev/null &&
       pip install -q 'pyspark>=3.5,<4' pandas &&
-      python brick/export_fixtures.py"
+      python brick/tools/export_fixtures.py"
 
 Regenerate whenever ``brick/metrics.py`` changes; the fixtures are committed so the
 TS tests run without a PySpark toolchain.
+
+This script moved from ``brick/export_fixtures.py`` to ``brick/tools/export_fixtures.py`` and
+its ``generated_by`` strings below now say so. The four fixtures already committed under
+``gas_devsecops/test/fixtures/brick/`` (``capacity.json``, ``confusion.json``,
+``asset_profile.json``, ``km.json``) still carry the older ``brick/devsecops/export_fixtures.py``
+value from before that fork was absorbed -- one fork-name generation further back than this
+move. They are left alone here rather than regenerated to match: doing that needs Docker and a
+local PySpark/JRE toolchain, and CLAUDE.md says never to regenerate a golden fixture without
+reading the diff carefully, which is not a step to take just to freshen a provenance string. They
+will pick up the current value the next time they are regenerated for a reason of their own.
 """
 
 from __future__ import annotations
@@ -36,7 +46,7 @@ import math
 import sys
 from pathlib import Path
 
-BRICK_DIR = Path(__file__).resolve().parent
+BRICK_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BRICK_DIR.parent
 # metrics.py's own `from config import ...` needs this directory on the path.
 sys.path.insert(0, str(BRICK_DIR))
@@ -248,7 +258,7 @@ def export_km(spark):
     dump("km", {
         "version": 1,
         "source": "metrics.kaplan_meier",
-        "generated_by": "brick/export_fixtures.py",
+        "generated_by": "brick/tools/export_fixtures.py",
         "cases": cases,
     })
 
@@ -365,7 +375,7 @@ def export_capacity(spark):
     dump("capacity", {
         "version": 1,
         "source": "metrics.capacity_by_month, metrics.capacity_populations",
-        "generated_by": "brick/export_fixtures.py",
+        "generated_by": "brick/tools/export_fixtures.py",
         "cases": cases,
     })
 
@@ -480,7 +490,7 @@ def export_confusion(spark):
         "version": 1,
         "source": "metrics.confusion_matrix, metrics.signal_breakdown, "
                   "metrics.rule_sensitivity, metrics.classify_risk",
-        "generated_by": "brick/export_fixtures.py",
+        "generated_by": "brick/tools/export_fixtures.py",
         "cases": [cve_case, sast_case],
     })
 
@@ -591,7 +601,7 @@ def export_asset_profile(spark):
         "version": 1,
         "source": "metrics.asset_profile_populations "
                   "(metrics.asset_profile, metrics._asset_half_life)",
-        "generated_by": "brick/export_fixtures.py",
+        "generated_by": "brick/tools/export_fixtures.py",
         "cases": cases,
     })
 

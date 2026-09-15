@@ -1480,7 +1480,7 @@ def asset_profile(
     ``asset_profile_populations`` calls this twice, and each call runs one ``kaplan_meier`` --
     which is a windowed survival scan over the ledger -- plus two grouped aggregations. Like the
     sensitivity sweep it is computed unconditionally rather than behind a flag, for the same
-    reason: a table that can go missing is a table nobody can trend. ``bench_pipeline.py
+    reason: a table that can go missing is a table nobody can trend. ``tools/bench_pipeline.py
     --attribute`` times it separately, which is the way to find out whether it matters on a
     register the size of yours.
     """

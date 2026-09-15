@@ -455,7 +455,7 @@ FETCH_ASSET_FIELDS = False
 # longer has costs the entire request. That is an argument for asking for fewer members, not for
 # asking for none -- and which members a scope actually returns is knowable.
 #
-# `sca` returns REPOSITORY_BRANCH and nothing else, and `sca_response.json` is the
+# `sca` returns REPOSITORY_BRANCH and nothing else, and `fixtures/sca_response.json` is the
 # evidence: every node in that captured response carries a `vulnerableAsset` with `id`, `type`,
 # `name`, `cloudPlatform`, `repositoryId` and `repositoryName` populated. So `sca` asks
 # for exactly the two members it needs and gets its asset columns, where the `os` host
@@ -625,7 +625,7 @@ CWE_TOP_25_2024 = (
 EXPLOITED_CWES = frozenset(CWE_TOP_25_2024)
 
 # **The hierarchy problem, which is the weakest joint in this rule.** CWE is a tree, scanners
-# report leaves, and the Top 25 is mostly interior nodes. sast_response.json
+# report leaves, and the Top 25 is mostly interior nodes. fixtures/sast_response.json
 # shows it immediately: it contains CWE-23 (Relative Path Traversal), which is a child of
 # Top-25 member CWE-22 and would not match by id. P2P vol. 9 names this exact difficulty --
 # "the hierarchical nature of CWEs" -- as a reason it does not categorise this way.

@@ -55,7 +55,6 @@ metrics.py           pure PySpark DataFrame -> DataFrame transforms (no I/O), bo
 run_pipeline.py      the Databricks entry point: bronze -> the ledger -> one metrics table
 
 import_bundle.py     one-shot: seed the `os` ledger from a gas/ migration bundle
-export_fixtures.py   golden-fixture exporter for gas_devsecops/'s TypeScript parity suites
 csvstore.py          the register as typed CSV, for a deployment with no catalog -- see the
                      CSV register
 
@@ -66,8 +65,12 @@ notebooks/           nine .ipynb pages -- see Notebooks
 databricks.yml        the Databricks Asset Bundle: four Jobs, one per scope plus maintenance
 
 tests/               local-SparkSession tests, oracles ported from gas/ and gas_devsecops/
-bench_pipeline.py    a synthetic register, timed through the real entry points -- see
-                     Benchmarking
+fixtures/            the three committed Wiz captures the tests and devlake replay -- see
+                     fixtures/README.md
+tools/               hand-run scripts, not part of any deployment: export_fixtures.py
+                     (golden-fixture exporter for gas_devsecops/'s TypeScript parity suites)
+                     and bench_pipeline.py (a synthetic register, timed through the real
+                     entry points -- see Benchmarking)
 ```
 
 `ledger.py` and `metrics.py` are pure `DataFrame -> DataFrame`; `run_pipeline.py` is the only
@@ -401,7 +404,7 @@ unclustered layout until someone migrates it — see
 
 #### What this measured, which is not what it was supposed to measure
 
-`bench_pipeline.py`, eight scans of 8,000 findings with 30% churn — a register whose ledger
+`tools/bench_pipeline.py`, eight scans of 8,000 findings with 30% churn — a register whose ledger
 reaches ~24,800 rows with 8,000 touched per scan, so a third of it is rewritten daily and there
 is real copy-on-write to avoid. Three runs a side, medians:
 
@@ -426,7 +429,7 @@ So the honest position: **the benefit is argued, not measured, and the cost is m
 argued.** If your register is small, or its ledger is mostly still-open findings that get touched
 every scan anyway, this layout is costing you and `delta.enableDeletionVectors` is one word in
 `run_pipeline.CLUSTERING`. If it holds years of resolved history that no scan touches, the
-arithmetic is the other way round — and the way to find out is to run `bench_pipeline.py` against
+arithmetic is the other way round — and the way to find out is to run `tools/bench_pipeline.py` against
 numbers that look like yours rather than to trust either of us.
 
 Two things this *does* buy unconditionally: `--maintain` becomes safe to run (see bronze's
@@ -487,7 +490,7 @@ register. `sca` restricts it to the code stage of the default branch:
 `sca` is also the reason a code register carries **asset columns** where `os` does not. A
 `vulnerableAsset` union fails as a whole, so one member the tenant no longer has costs the
 entire request — which is why `config.FETCH_ASSET_FIELDS` is off globally. `sca` returns
-`REPOSITORY_BRANCH` and nothing else (`sca_response.json` is the evidence), so
+`REPOSITORY_BRANCH` and nothing else (`fixtures/sca_response.json` is the evidence), so
 `config.SCOPE_ASSET_MEMBERS["sca"]` narrows the selection to the two members that resolve. `os`
 has no narrower list to ask for — a host finding can arrive on any of the thirteen members — so
 it is deliberately absent from that map and falls back to no asset columns at all. That
@@ -911,7 +914,7 @@ run here is a few dozen aggregations over one scan on the single-node cluster th
 recommends — so a smaller number looks like free speed. Measured, it is not: over three runs a
 side at 20,000 findings, `64` produced the fastest single run and the tightest spread but a
 *worse* median than 200. Tune it against your own register with
-[`bench_pipeline.py`](#benchmarking) rather than trusting either number.
+[`tools/bench_pipeline.py`](#benchmarking) rather than trusting either number.
 
 ### Retries are safe, if you pass `scan_id`
 
@@ -1578,10 +1581,10 @@ The oracles are ported, not invented:
   filter shape against the same fixture family;
 - `tests/test_devsecops.py` carries the code-register oracles: both silver projections emit the
   same columns, the CWE ancestor hop works, one missing signal makes a whole row unknown, and
-  asking for resolved SAST findings would report zero-day MTTR — over `sca_findings_example.json`
-  (synthetic: the captured `sca_response.json` is the *grouped* query, one row per repository
-  with severity counts, and has no per-finding rows to drive a pipeline) and
-  `sast_response.json`;
+  asking for resolved SAST findings would report zero-day MTTR — over
+  `fixtures/sca_findings_example.json` (synthetic: the captured `fixtures/sca_response.json` is
+  the *grouped* query, one row per repository with severity counts, and has no per-finding rows
+  to drive a pipeline) and `fixtures/sast_response.json`;
 - **`test_csvstore.py`** asserts the confusion matrix over a CSV-reloaded register is identical
   to the one over the Delta tables it came from. A NULL exploit signal read back as `false`
   inflates efficiency and deflates coverage at once, so the round-trip is checked over every
@@ -1599,14 +1602,15 @@ reopen, and `first_seen`'s earliest-wins each fail the suite.
 
 ## Benchmarking
 
-`bench_pipeline.py` is the measuring instrument for performance work on the pipeline. It builds
-a synthetic register, drives it through the **real** `ingest_to_bronze` and `build_metrics` — the
-API is stubbed, nothing else is — and reports wall-clock and Spark-job count per stage.
+`tools/bench_pipeline.py` is the measuring instrument for performance work on the pipeline. It
+builds a synthetic register, drives it through the **real** `ingest_to_bronze` and
+`build_metrics` — the API is stubbed, nothing else is — and reports wall-clock and Spark-job
+count per stage.
 
 ```bash
-python brick/bench_pipeline.py --findings 20000 --scans 3 \
+python brick/tools/bench_pipeline.py --findings 20000 --scans 3 \
     --out before.json --dump before/          # on the revision you are measuring against
-python brick/bench_pipeline.py --findings 20000 --scans 3 \
+python brick/tools/bench_pipeline.py --findings 20000 --scans 3 \
     --out after.json --dump after/ --compare before.json
 diff -r before/ after/                        # must be empty
 ```

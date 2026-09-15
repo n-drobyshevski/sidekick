@@ -607,7 +607,7 @@ class TestHandoffToTheFirstScan:
 #
 # The perturbation below is the one line that does it, reproduced inline rather than described.
 
-SCA_FIXTURE = BRICK_DIR / "sca_findings_example.json"
+SCA_FIXTURE = BRICK_DIR / "fixtures" / "sca_findings_example.json"
 
 
 def seed_a_sca_register(spark, tables):

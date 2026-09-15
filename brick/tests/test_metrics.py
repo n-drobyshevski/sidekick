@@ -809,7 +809,7 @@ def test_observation_window(spark):
 
 def test_committed_wiz_fixture_parses_end_to_end(spark):
     """The real response shape, straight from the repo fixture -- no network, no mocks."""
-    payload = json.loads((BRICK_DIR / "sca_findings_example.json").read_text())
+    payload = json.loads((BRICK_DIR / "fixtures" / "sca_findings_example.json").read_text())
     nodes = extract_nodes(payload)
     assert nodes, "fixture should contain findings"
 

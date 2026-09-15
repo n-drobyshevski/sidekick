@@ -595,7 +595,12 @@ def test_matplotlib_is_no_longer_a_dependency():
     keeping.
     """
     here = Path(__file__).resolve()  # this file names the token it is looking for
-    sources = list(BRICK_DIR.glob("*.py")) + list(BRICK_DIR.glob("tests/*.py")) + NOTEBOOKS
+    sources = (
+        list(BRICK_DIR.glob("*.py"))
+        + list(BRICK_DIR.glob("tests/*.py"))
+        + list(BRICK_DIR.glob("tools/*.py"))
+        + NOTEBOOKS
+    )
     for path in sources:
         if path.resolve() == here:
             continue

@@ -47,19 +47,17 @@ from config import (  # noqa: E402
     rule_for_scope,
 )
 
-#: The reference queries and captured responses sit beside the modules in this fork, not in a
-#: subdirectory of them -- this IS the devsecops directory.
-DEVSECOPS = BRICK_DIR
+FIXTURES = BRICK_DIR / "fixtures"
 SCAN_TS = "2026-08-01T00:00:00Z"
 
 
 def sast_nodes():
-    payload = json.loads((DEVSECOPS / "sast_response.json").read_text())
+    payload = json.loads((FIXTURES / "sast_response.json").read_text())
     return ingest.extract_nodes(payload)
 
 
 def sca_nodes():
-    payload = json.loads((DEVSECOPS / "sca_response.json").read_text())
+    payload = json.loads((FIXTURES / "sca_response.json").read_text())
     return ingest.extract_nodes(payload)
 
 

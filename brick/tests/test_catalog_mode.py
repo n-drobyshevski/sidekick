@@ -107,7 +107,7 @@ SCOPE_FIXTURES = {
     # second scan *does* make the reconcile do real work: 21 of the 27 rows the truncation drops
     # resolve by disappearance, on top of the 12 the API had already resolved on scan 1.
     "sca": {
-        "fixture": BRICK_DIR / "sca_findings_example.json",
+        "fixture": BRICK_DIR / "fixtures" / "sca_findings_example.json",
         "prefix": "wiz_sca_",
         "ledger": "wiz_sca_vuln_ledger",
         "findings": 54,
