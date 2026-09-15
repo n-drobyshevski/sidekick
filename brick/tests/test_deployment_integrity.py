@@ -32,9 +32,9 @@ import config  # noqa: E402
 import run_pipeline  # noqa: E402
 
 
-def test_the_pipeline_version_is_3_0_devsecops():
+def test_the_pipeline_version_is_3_0():
     """No upstream to disagree with any more -- just the literal the deployment reports."""
-    assert config.PIPELINE_VERSION == "3.0-devsecops"
+    assert config.PIPELINE_VERSION == "3.0"
 
 
 def test_every_module_must_come_from_this_directory(monkeypatch):

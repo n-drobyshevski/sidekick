@@ -93,7 +93,7 @@ from config import (
 )
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 SECONDS_PER_DAY = 86400
 

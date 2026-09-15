@@ -750,7 +750,7 @@ def test_check_deployment_rejects_a_stale_module(monkeypatch):
     """The v1-alongside-v2 case, which imports fine and only fails at the write."""
     stale = types.SimpleNamespace(MODULE_VERSION="1.0")
     monkeypatch.setitem(sys.modules, "metrics", stale)
-    with pytest.raises(RuntimeError, match="Mixed devsecops deployment") as exc:
+    with pytest.raises(RuntimeError, match="Mixed brick deployment") as exc:
         run_pipeline.check_deployment()
     assert "metrics=1.0" in str(exc.value)
     assert "restartPython" in str(exc.value)
@@ -760,7 +760,7 @@ def test_check_deployment_rejects_a_module_with_no_version(monkeypatch):
     """A genuine v1 file has no MODULE_VERSION at all; getattr must not raise AttributeError."""
     ancient = types.SimpleNamespace()  # no MODULE_VERSION
     monkeypatch.setitem(sys.modules, "config", ancient)
-    with pytest.raises(RuntimeError, match="Mixed devsecops deployment") as exc:
+    with pytest.raises(RuntimeError, match="Mixed brick deployment") as exc:
         run_pipeline.check_deployment()
     assert "config=absent" in str(exc.value)
 

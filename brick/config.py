@@ -31,12 +31,14 @@ from typing import Dict, Tuple
 # them before the run touches Spark. Bump this whenever the modules stop being
 # mix-and-matchable with the previous release -- which is nearly always.
 #
-# The suffix is load-bearing. These module names -- `config`, `metrics`, `ledger` -- are the
-# same ones `brick/` uses, so a sys.path holding both directories resolves each import to
-# whichever came first and you get half of one pipeline and half of the other. A version
-# string that cannot collide turns that into a refusal instead of a wrong number, and
-# `check_deployment` additionally requires every module to come from THIS directory.
-PIPELINE_VERSION = "3.0-devsecops"
+# This string used to carry a `-devsecops` suffix, back when `brick/devsecops/` was a separate
+# fork defining these same module names -- `config`, `metrics`, `ledger`: a sys.path holding
+# both directories resolved each import to whichever came first and you got half of one
+# pipeline and half of the other, so a version string that could not collide turned that into
+# a refusal instead of a wrong number. That fork was retired at `ef22b05` and the suffix came
+# off with it; the collision it guarded is now covered by `check_deployment` requiring every
+# module to come from THIS directory as well as to agree on this version.
+PIPELINE_VERSION = "3.0"
 MODULE_VERSION = PIPELINE_VERSION
 
 # ---- Severity taxonomy ----

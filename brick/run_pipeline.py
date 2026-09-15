@@ -78,7 +78,7 @@ from typing import Optional
 from pyspark.sql import Row, SparkSession
 from pyspark.sql import functions as F
 
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 # The six runtime modules move in lockstep, and the documented way to deploy them is pasting
 # files into a Workspace folder one at a time -- so a half-updated folder is the likely failure,
@@ -233,7 +233,7 @@ def check_deployment() -> None:
 
     detail = ", ".join(f"{name}={versions[name] or 'absent'}" for name in stale)
     raise RuntimeError(
-        f"Mixed devsecops deployment: {detail} (expected {PIPELINE_VERSION}). These modules "
+        f"Mixed brick deployment: {detail} (expected {PIPELINE_VERSION}). These modules "
         f"must all come from the same version, and a mismatch is usually one of two things: a "
         f"half-updated folder, or a stale sys.modules entry left over from an earlier import in "
         f"the same long-lived process.\n"

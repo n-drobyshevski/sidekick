@@ -43,7 +43,7 @@ from config import (
 
 # Wiz's shared auth endpoint. Tenants on a dedicated region override it via a job parameter.
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 DEFAULT_AUTH_URL = "https://auth.app.wiz.io/oauth/token"
 AUDIENCE = "wiz-api"

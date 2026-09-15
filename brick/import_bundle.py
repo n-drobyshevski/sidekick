@@ -86,7 +86,7 @@ import run_pipeline
 from config import STATUS_OPEN, STATUS_RESOLVED
 
 # See config.PIPELINE_VERSION: every module in the folder must report the same version.
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 # The interchange contract, shared with gas/src/domain/importMerge.ts and
 # wiz_dashboard/data/migrate.py. Bumping either of these is a coordinated change across

@@ -75,7 +75,7 @@ from pyspark.sql.types import (
 import run_pipeline
 
 # See config.PIPELINE_VERSION: every runtime module must come from the same upload.
-MODULE_VERSION = "3.0-devsecops"
+MODULE_VERSION = "3.0"
 
 #: Every table, in the order a reader wants them. Taken from ``run_pipeline`` rather than
 #: restated, so this and the ``Tables`` dataclass cannot drift -- a table added to one and not
