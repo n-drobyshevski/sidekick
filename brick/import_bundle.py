@@ -766,9 +766,9 @@ def summarize(summary: dict, tables: run_pipeline.Tables) -> None:
             f"with a Wiz id are unaffected."
         )
     print(
-        f"[import] next: run the pipeline with the SAME --severities as GAS was scanning, and "
-        f"--project_id matching WIZ_PROJECT_ID_V2. A first run that resolves most of the "
-        f"register means the populations disagree -- re-import rather than accept it."
+        "[import] next: run the pipeline with the SAME --severities as GAS was scanning, and "
+        "--project_id matching WIZ_PROJECT_ID_V2. A first run that resolves most of the "
+        "register means the populations disagree -- re-import rather than accept it."
     )
 
 
