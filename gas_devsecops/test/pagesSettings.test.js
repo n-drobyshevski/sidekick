@@ -13,18 +13,25 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  AUTO_COMPACT_OFF_NOTE, BATCHED_KEYS, DEFAULT_SYNC_HOUR, DEFAULT_TAB, FIELD_TABS,
-  RETENTION_FLOOR_DAYS, SCOPE_LABELS, SETTINGS_KEYS, TABS,
-  accessFieldView, changeCountText, changeSummary, changedFields, draftFromSettings,
-  maintenanceFieldView, normalizeTab, registerFieldView, retentionFieldView,
+  AUTO_COMPACT_OFF_NOTE, BATCHED_KEYS, COLD_FLOOR_MAX_DAYS, COLD_FLOOR_MIN_DAYS, COLD_MODES,
+  COLD_TARGET_MAX_PCT, COLD_TARGET_MIN_PCT, COLD_WINDOW_MAX_DAYS, COLD_WINDOW_MIN_DAYS,
+  DEFAULT_COLD_AFTER_DAYS as PAGE_DEFAULT_COLD_AFTER_DAYS, DEFAULT_SYNC_HOUR, DEFAULT_TAB,
+  FIELD_TABS, PAGE_DEFAULT_COLD_FLOOR_DAYS, PAGE_DEFAULT_COLD_TARGET_SHARE_PCT,
+  PAGE_DEFAULT_COLD_ZONE_MODE, RETENTION_FLOOR_DAYS, SCOPE_LABELS, SETTINGS_KEYS, TABS,
+  accessFieldView, changeCountText, changeSummary, changedFields, coldFloorFieldView,
+  coldModeFieldView, coldTargetFieldView, coldWindowFieldView,
+  draftFromSettings, maintenanceFieldView, normalizeTab, registerFieldView, retentionFieldView,
   saveReconciliation, slaFieldRows,
 } from "../src/client/js/pages/settings.js";
 import {
   DEFAULT_SETTINGS, cleanSettings, validateSettings, withSettings,
 } from "../src/domain/settingsLogic";
 import {
-  DEFAULT_FETCH_SEVERITIES, SCOPES, SCOPE_LABELS as DOMAIN_SCOPE_LABELS, SEVERITY_ORDER,
-  SLA_TARGETS,
+  COLD_AFTER_DAYS_MAX, COLD_AFTER_DAYS_MIN, COLD_FLOOR_DAYS_MAX, COLD_FLOOR_DAYS_MIN,
+  COLD_TARGET_SHARE_PCT_MAX, COLD_TARGET_SHARE_PCT_MIN, COLD_ZONE_MODES, DEFAULT_COLD_AFTER_DAYS,
+  DEFAULT_COLD_FLOOR_DAYS, DEFAULT_COLD_TARGET_SHARE_PCT, DEFAULT_COLD_ZONE_MODE,
+  DEFAULT_FETCH_SEVERITIES,
+  SCOPES, SCOPE_LABELS as DOMAIN_SCOPE_LABELS, SEVERITY_ORDER, SLA_TARGETS,
 } from "../src/domain/config";
 import { RETENTION_MIN_DAYS } from "../src/domain/maintenance";
 import { code } from "../../gas_shared/test/contracts/emptyStates.js";
@@ -75,20 +82,48 @@ describe("the locally-duplicated constants match the domain values they mirror",
   it("DEFAULT_SYNC_HOUR matches domain/settingsLogic.ts's DEFAULT_SYNC_HOUR default", () => {
     expect(DEFAULT_SYNC_HOUR).toBe(DEFAULT_SETTINGS.syncSchedule);
   });
+
+  it("the three cold-window constants match domain/config.ts", () => {
+    // The page paints its hint and its clamp warning from these three; the server clamps from
+    // the domain's own. Two literals for one range is exactly the drift this file exists to
+    // catch — a page warning "outside 7–365" over a server that stores 30 is worse than no
+    // warning at all.
+    expect(PAGE_DEFAULT_COLD_AFTER_DAYS).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(PAGE_DEFAULT_COLD_AFTER_DAYS).toBe(DEFAULT_SETTINGS.coldAfterDays);
+    expect(COLD_WINDOW_MIN_DAYS).toBe(COLD_AFTER_DAYS_MIN);
+    expect(COLD_WINDOW_MAX_DAYS).toBe(COLD_AFTER_DAYS_MAX);
+  });
+
+  it("the relative cold-zone constants match domain/config.ts too", () => {
+    // Same argument one step further: the page paints "outside the 1–50% range" from its own
+    // literals while the server clamps from the domain's, so a drift here would put a warning
+    // on screen that the save then contradicts.
+    expect([...COLD_MODES]).toEqual([...COLD_ZONE_MODES]);
+    expect(PAGE_DEFAULT_COLD_ZONE_MODE).toBe(DEFAULT_COLD_ZONE_MODE);
+    expect(PAGE_DEFAULT_COLD_ZONE_MODE).toBe(DEFAULT_SETTINGS.coldZoneMode);
+    expect(COLD_TARGET_MIN_PCT).toBe(COLD_TARGET_SHARE_PCT_MIN);
+    expect(COLD_TARGET_MAX_PCT).toBe(COLD_TARGET_SHARE_PCT_MAX);
+    expect(PAGE_DEFAULT_COLD_TARGET_SHARE_PCT).toBe(DEFAULT_COLD_TARGET_SHARE_PCT);
+    expect(PAGE_DEFAULT_COLD_TARGET_SHARE_PCT).toBe(DEFAULT_SETTINGS.coldTargetSharePct);
+    expect(COLD_FLOOR_MIN_DAYS).toBe(COLD_FLOOR_DAYS_MIN);
+    expect(COLD_FLOOR_MAX_DAYS).toBe(COLD_FLOOR_DAYS_MAX);
+    expect(PAGE_DEFAULT_COLD_FLOOR_DAYS).toBe(DEFAULT_COLD_FLOOR_DAYS);
+    expect(PAGE_DEFAULT_COLD_FLOOR_DAYS).toBe(DEFAULT_SETTINGS.coldFloorDays);
+  });
 });
 
 // =========================================================================================
-//  2. draftFromSettings carries the full seven-key contract
+//  2. draftFromSettings carries the full eight-key contract
 // =========================================================================================
 
-describe("draftFromSettings never drops one of the seven Settings fields", () => {
+describe("draftFromSettings never drops one of the eight page-editable Settings fields", () => {
   // The two VIEW SCOPES this page does not own. Both are app-header chrome written through
   // their own endpoints (`api_setProjectView` / `api_setDomainView`), one field at a time —
   // see the module header just above SETTINGS_KEYS in pages/settings.js. So the exact-set
   // check below is "every Settings key EXCEPT the two this page does not own".
   const VIEW_SCOPES = ["projectView", "domainView"];
 
-  it("SETTINGS_KEYS names exactly the seven PAGE-EDITABLE fields Settings declares", () => {
+  it("SETTINGS_KEYS names exactly the eight PAGE-EDITABLE fields Settings declares", () => {
     const pageEditable = Object.keys(DEFAULT_SETTINGS)
       .filter((k) => VIEW_SCOPES.indexOf(k) < 0);
     expect([...SETTINGS_KEYS].sort()).toEqual(pageEditable.sort());
@@ -108,11 +143,11 @@ describe("draftFromSettings never drops one of the seven Settings fields", () =>
     },
   );
 
-  it("produces exactly those seven keys from a real Settings object", () => {
+  it("produces exactly those eight keys from a real Settings object", () => {
     expect(Object.keys(draftFromSettings(DEFAULT_SETTINGS)).sort()).toEqual([...SETTINGS_KEYS].sort());
   });
 
-  it("produces exactly those seven keys from nothing at all", () => {
+  it("produces exactly those eight keys from nothing at all", () => {
     expect(Object.keys(draftFromSettings(null)).sort()).toEqual([...SETTINGS_KEYS].sort());
     expect(Object.keys(draftFromSettings(undefined)).sort()).toEqual([...SETTINGS_KEYS].sort());
     expect(Object.keys(draftFromSettings({})).sort()).toEqual([...SETTINGS_KEYS].sort());
@@ -277,6 +312,279 @@ describe("a retentionDays below the floor is shown as the floor, not the typed v
 });
 
 // =========================================================================================
+//  5b. The cold-zone window is bounded at BOTH ends, and says so honestly
+// =========================================================================================
+
+describe("a cold-zone window outside the range is reported, not silently redrawn", () => {
+  it("lifts through draftFromSettings, and falls back to the default for junk", () => {
+    expect(draftFromSettings(DEFAULT_SETTINGS).coldAfterDays).toBe(DEFAULT_COLD_AFTER_DAYS);
+    expect(draftFromSettings({}).coldAfterDays).toBe(PAGE_DEFAULT_COLD_AFTER_DAYS);
+    expect(draftFromSettings({ coldAfterDays: "soon" }).coldAfterDays).toBe(PAGE_DEFAULT_COLD_AFTER_DAYS);
+    expect(draftFromSettings({ coldAfterDays: 120 }).coldAfterDays).toBe(120);
+  });
+
+  it("an in-range value is shown as typed, with no flag at either end", () => {
+    const v = coldWindowFieldView(120);
+    expect(v.belowFloor).toBe(false);
+    expect(v.aboveCeiling).toBe(false);
+    expect(v.outOfRange).toBe(false);
+    expect(v.displayValue).toBe(120);
+  });
+
+  it("a below-floor value is flagged and displayed at the floor, raw value kept", () => {
+    const v = coldWindowFieldView(3);
+    expect(v.belowFloor).toBe(true);
+    expect(v.outOfRange).toBe(true);
+    expect(v.displayValue).toBe(COLD_WINDOW_MIN_DAYS);
+    expect(v.value).toBe(3); // so the caller can tell "typed 3" from "will store 7"
+  });
+
+  it("an above-ceiling value is flagged the same way — the range has two ends", () => {
+    const v = coldWindowFieldView(400);
+    expect(v.aboveCeiling).toBe(true);
+    expect(v.outOfRange).toBe(true);
+    expect(v.displayValue).toBe(COLD_WINDOW_MAX_DAYS);
+    expect(v.value).toBe(400);
+  });
+
+  it("both ends are INCLUSIVE, matching the server's own clamp", () => {
+    for (const edge of [COLD_WINDOW_MIN_DAYS, COLD_WINDOW_MAX_DAYS]) {
+      expect(coldWindowFieldView(edge).outOfRange).toBe(false);
+      expect(coldWindowFieldView(edge).displayValue).toBe(edge);
+    }
+  });
+
+  it("matches the server's own clamp for the same inputs (cross-check against settingsLogic)", () => {
+    for (const bad of [1, 0, -50, 400, 10_000]) {
+      expect(coldWindowFieldView(bad).displayValue)
+        .toBe(cleanSettings({ coldAfterDays: bad }).coldAfterDays);
+    }
+  });
+
+  it("saveReconciliation reports the server's clamp, from its own response", () => {
+    const notes = saveReconciliation({ coldAfterDays: 400 }, { coldAfterDays: COLD_WINDOW_MAX_DAYS });
+    expect(notes.join(" ")).toMatch(/Cold-zone window saved as 365 days/);
+    expect(notes.join(" ")).toMatch(/clamped into the 7–365 range/);
+  });
+
+  it("saveReconciliation reports nothing when the server stored exactly what was sent", () => {
+    expect(saveReconciliation({ coldAfterDays: 120 }, { coldAfterDays: 120 })).toEqual([]);
+  });
+});
+
+// =========================================================================================
+//  5c. The relative mode: the switch, its two numbers, and what the server rewrote
+// =========================================================================================
+
+describe("the cold-zone mode is a choice between two readings, not a third threshold", () => {
+  it("lifts through draftFromSettings, falling back to fixed for anything unreadable", () => {
+    expect(draftFromSettings(DEFAULT_SETTINGS).coldZoneMode).toBe(DEFAULT_COLD_ZONE_MODE);
+    expect(draftFromSettings({}).coldZoneMode).toBe(PAGE_DEFAULT_COLD_ZONE_MODE);
+    expect(draftFromSettings({ coldZoneMode: "warm" }).coldZoneMode).toBe(PAGE_DEFAULT_COLD_ZONE_MODE);
+    // the String(null) trap, on the page side of the same seam the server guards
+    for (const junk of [null, 0, 1, true, {}, []]) {
+      expect(draftFromSettings({ coldZoneMode: junk }).coldZoneMode).toBe(PAGE_DEFAULT_COLD_ZONE_MODE);
+    }
+    expect(draftFromSettings({ coldZoneMode: " RELATIVE " }).coldZoneMode).toBe("relative");
+  });
+
+  it("coldModeFieldView reports a FALLBACK as not-known, rather than as out of range", () => {
+    // The one place this field differs from the two numbers beside it: a string outside a
+    // two-member set points at nothing, so there is nothing to clamp it toward and `known`
+    // is the honest report.
+    const good = coldModeFieldView("relative");
+    expect(good.value).toBe("relative");
+    expect(good.known).toBe(true);
+    expect(good.isRelative).toBe(true);
+
+    const bad = coldModeFieldView("warm");
+    expect(bad.value).toBe(PAGE_DEFAULT_COLD_ZONE_MODE);
+    expect(bad.known).toBe(false);
+    expect(bad.isRelative).toBe(false);
+
+    for (const junk of [null, undefined, 0, {}, []]) {
+      expect(coldModeFieldView(junk).known).toBe(false);
+      expect(coldModeFieldView(junk).value).toBe(PAGE_DEFAULT_COLD_ZONE_MODE);
+    }
+  });
+
+  it("coldModeFieldView carries both options, in mode order, with reader-facing labels", () => {
+    const v = coldModeFieldView("fixed");
+    expect(v.options.map((o) => o.value)).toEqual([...COLD_MODES]);
+    expect(v.options.map((o) => o.label)).toEqual(["Fixed window", "Relative"]);
+  });
+
+  it("matches the server's own fallback for the same inputs", () => {
+    for (const input of ["warm", "", "RELATIVE", " relative ", "fixed"]) {
+      expect(coldModeFieldView(input).value).toBe(cleanSettings({ coldZoneMode: input }).coldZoneMode);
+    }
+  });
+
+  it("saveReconciliation names the STRING the server could not read, not a range", () => {
+    const notes = saveReconciliation({ coldZoneMode: "warm" }, { coldZoneMode: "fixed" });
+    expect(notes.join(" ")).toBe('Cold-zone mode saved as fixed — "warm" is not a mode.');
+    expect(notes.join(" ")).not.toMatch(/clamp/i);
+  });
+
+  it("saveReconciliation reports nothing when the mode stored is the mode sent", () => {
+    expect(saveReconciliation({ coldZoneMode: "relative" }, { coldZoneMode: "relative" })).toEqual([]);
+  });
+});
+
+describe("the relative mode's target share is bounded at both ends, and says so honestly", () => {
+  it("lifts through draftFromSettings, and falls back to the default for junk", () => {
+    expect(draftFromSettings(DEFAULT_SETTINGS).coldTargetSharePct).toBe(DEFAULT_COLD_TARGET_SHARE_PCT);
+    expect(draftFromSettings({}).coldTargetSharePct).toBe(PAGE_DEFAULT_COLD_TARGET_SHARE_PCT);
+    expect(draftFromSettings({ coldTargetSharePct: "a fifth" }).coldTargetSharePct)
+      .toBe(PAGE_DEFAULT_COLD_TARGET_SHARE_PCT);
+    expect(draftFromSettings({ coldTargetSharePct: 35 }).coldTargetSharePct).toBe(35);
+  });
+
+  it("an in-range value is shown as typed, with no flag at either end", () => {
+    const v = coldTargetFieldView(35);
+    expect(v.outOfRange).toBe(false);
+    expect(v.displayValue).toBe(35);
+  });
+
+  it("flags either end and keeps the raw value beside the stored one", () => {
+    const low = coldTargetFieldView(0);
+    expect(low.belowFloor).toBe(true);
+    expect(low.outOfRange).toBe(true);
+    expect(low.displayValue).toBe(COLD_TARGET_MIN_PCT);
+    expect(low.value).toBe(0);
+
+    const high = coldTargetFieldView(80);
+    expect(high.aboveCeiling).toBe(true);
+    expect(high.outOfRange).toBe(true);
+    expect(high.displayValue).toBe(COLD_TARGET_MAX_PCT);
+    expect(high.value).toBe(80);
+  });
+
+  it("both ends are INCLUSIVE, matching the server's own clamp", () => {
+    for (const edge of [COLD_TARGET_MIN_PCT, COLD_TARGET_MAX_PCT]) {
+      expect(coldTargetFieldView(edge).outOfRange).toBe(false);
+      expect(coldTargetFieldView(edge).displayValue).toBe(edge);
+    }
+  });
+
+  it("matches the server's own clamp for the same inputs", () => {
+    for (const bad of [0, -5, 80, 100, 10_000]) {
+      expect(coldTargetFieldView(bad).displayValue)
+        .toBe(cleanSettings({ coldTargetSharePct: bad }).coldTargetSharePct);
+    }
+  });
+
+  it("saveReconciliation reports the server's clamp, from its own response", () => {
+    const notes = saveReconciliation({ coldTargetSharePct: 80 }, { coldTargetSharePct: COLD_TARGET_MAX_PCT });
+    expect(notes.join(" ")).toBe("Cold-zone target share saved as 50% — clamped into the 1–50% range.");
+  });
+
+  it("saveReconciliation reports nothing when the server stored exactly what was sent", () => {
+    expect(saveReconciliation({ coldTargetSharePct: 20 }, { coldTargetSharePct: 20 })).toEqual([]);
+  });
+});
+
+describe("the relative mode's floor is bounded at both ends, and says so honestly", () => {
+  it("lifts through draftFromSettings, and falls back to the default for junk", () => {
+    expect(draftFromSettings(DEFAULT_SETTINGS).coldFloorDays).toBe(DEFAULT_COLD_FLOOR_DAYS);
+    expect(draftFromSettings({}).coldFloorDays).toBe(PAGE_DEFAULT_COLD_FLOOR_DAYS);
+    expect(draftFromSettings({ coldFloorDays: "a fortnight" }).coldFloorDays)
+      .toBe(PAGE_DEFAULT_COLD_FLOOR_DAYS);
+    expect(draftFromSettings({ coldFloorDays: 30 }).coldFloorDays).toBe(30);
+  });
+
+  it("an in-range value is shown as typed, with no flag at either end", () => {
+    const v = coldFloorFieldView(30);
+    expect(v.outOfRange).toBe(false);
+    expect(v.displayValue).toBe(30);
+  });
+
+  it("flags either end and keeps the raw value beside the stored one", () => {
+    const low = coldFloorFieldView(0);
+    expect(low.belowFloor).toBe(true);
+    expect(low.displayValue).toBe(COLD_FLOOR_MIN_DAYS);
+    expect(low.value).toBe(0);
+
+    const high = coldFloorFieldView(900);
+    expect(high.aboveCeiling).toBe(true);
+    expect(high.displayValue).toBe(COLD_FLOOR_MAX_DAYS);
+    expect(high.value).toBe(900);
+  });
+
+  it("both ends are INCLUSIVE, matching the server's own clamp", () => {
+    for (const edge of [COLD_FLOOR_MIN_DAYS, COLD_FLOOR_MAX_DAYS]) {
+      expect(coldFloorFieldView(edge).outOfRange).toBe(false);
+      expect(coldFloorFieldView(edge).displayValue).toBe(edge);
+    }
+  });
+
+  it("matches the server's own clamp for the same inputs", () => {
+    for (const bad of [0, -9, 900, 10_000]) {
+      expect(coldFloorFieldView(bad).displayValue)
+        .toBe(cleanSettings({ coldFloorDays: bad }).coldFloorDays);
+    }
+  });
+
+  it("saveReconciliation reports the server's clamp, from its own response", () => {
+    const notes = saveReconciliation({ coldFloorDays: 900 }, { coldFloorDays: COLD_FLOOR_MAX_DAYS });
+    expect(notes.join(" ")).toBe("Cold-zone floor saved as 365 days — clamped into the 1–365-day range.");
+  });
+
+  it("saveReconciliation reports nothing when the server stored exactly what was sent", () => {
+    expect(saveReconciliation({ coldFloorDays: 14 }, { coldFloorDays: 14 })).toEqual([]);
+  });
+});
+
+describe("the Deadlines panel shows the mode's own fields and hides the other mode's", () => {
+  // SOURCE-TEXT ASSERTIONS, because this repo boots no DOM (see this file's header). What they
+  // pin is the SHAPE the plan argued for: shown/hidden, never disabled — a disabled control
+  // says "this is part of the answer, you just may not touch it", which is false in whichever
+  // mode is off.
+  it("branches the three rows on the mode rather than disabling any of them", () => {
+    expect(CODE).toMatch(/const modeView = coldModeFieldView\(draft\.coldZoneMode\);/);
+    expect(CODE).toMatch(/if \(!modeView\.isRelative\) \{/);
+    // No `disabled` attribute anywhere in the panel's cold-zone block.
+    const block = CODE.slice(CODE.indexOf("const modeView ="), CODE.indexOf("const panel = settingsPanel({"));
+    expect(block).not.toMatch(/disabled/);
+    expect(block).toMatch(/settings-cold-target-share/);
+    expect(block).toMatch(/settings-cold-floor-days/);
+    expect(block).toMatch(/settings-cold-after-days/);
+  });
+
+  it("the mode control is the shared segmented() group, and rebuilds the panel on change", () => {
+    // `segmented` is a button group, so rebuilding the panel under it cannot interrupt a
+    // drag the way replacing a live <input type=range> would (see createSlaCutlineReadout).
+    expect(CODE).toMatch(/control: segmented\(\{/);
+    const onChange = CODE.slice(CODE.indexOf("onChange: (v) => {"), CODE.indexOf("}));", CODE.indexOf("onChange: (v) => {")));
+    expect(onChange).toMatch(/draft\.coldZoneMode = v;/);
+    expect(onChange).toMatch(/buildDeadlinesPanel\(\);/);
+    expect(onChange).toMatch(/syncDirty\(\);/);
+  });
+
+  it("the target share travels with its denominator, like every other rate in this app", () => {
+    // A target SHARE is a rate: "20%" means nothing until the population it counts against is
+    // named, and that population is narrower than "every repository" — the profile drops the
+    // unobserved and the clear before it ranks anything. test/pagesLit.test.js's exit gate 3/7
+    // sweeps every page for this; pinned here too, with the reason, so the sentence cannot be
+    // dropped while leaving some other `denomNote` on the page to satisfy the sweep.
+    const block = CODE.slice(CODE.indexOf("const targetId ="), CODE.indexOf("const floorId ="));
+    expect(block).toMatch(/denomNote\(/);
+    expect(block).toMatch(/at least one open\s*"\s*\+\s*"?\s*finding/);
+  });
+
+  it("the two number rows carry the ranges their field views clamp to", () => {
+    expect(CODE).toMatch(/min: String\(COLD_TARGET_MIN_PCT\), max: String\(COLD_TARGET_MAX_PCT\)/);
+    expect(CODE).toMatch(/min: String\(COLD_FLOOR_MIN_DAYS\), max: String\(COLD_FLOOR_MAX_DAYS\)/);
+  });
+
+  it("every cold oninput refuses a BLANK field before the cast, the way the window's does", () => {
+    // `Number("") === 0` and 0 is finite: a blank field is NO input, never "zero per cent" or
+    // "cold immediately". Three handlers, three guards.
+    expect((CODE.match(/const blank = raw\.trim\(\) === "";/g) || []).length).toBeGreaterThanOrEqual(3);
+  });
+});
+
+// =========================================================================================
 //  6. canEditAccess: false yields no editing affordance
 // =========================================================================================
 
@@ -374,9 +682,13 @@ describe("tab plumbing", () => {
     expect(normalizeTab(null)).toBe(DEFAULT_TAB);
   });
 
-  it("BATCHED_KEYS is six of the seven fields — showExperimental is deliberately excluded", () => {
+  it("BATCHED_KEYS is ten of the eleven fields — showExperimental is deliberately excluded", () => {
     expect(BATCHED_KEYS.sort()).toEqual(
-      ["scopes", "fetchSeverities", "slaTargets", "syncSchedule", "autoCompact", "retentionDays"].sort(),
+      [
+        "scopes", "fetchSeverities", "slaTargets", "coldAfterDays",
+        "coldZoneMode", "coldTargetSharePct", "coldFloorDays",
+        "syncSchedule", "autoCompact", "retentionDays",
+      ].sort(),
     );
     expect(BATCHED_KEYS).not.toContain("showExperimental");
   });

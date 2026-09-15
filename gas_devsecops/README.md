@@ -48,9 +48,8 @@ reporting new/resolved/reopened of 0/0/0. See [PROBE_FINDINGS.md](PROBE_FINDINGS
   lands, this series will disagree with every other SLA figure in the app the moment an
   operator overrides a window.
 - Several page sections are **honestly empty** because the read models do not publish the
-  data: repos ownership (nothing aggregates `owner_project`), the history open-past-SLA trend,
-  and per-severity KM curves. Each page says which figure it cannot draw instead of drawing a
-  zero.
+  data: the history open-past-SLA trend and per-severity KM curves. Each page says which
+  figure it cannot draw instead of drawing a zero.
 
 **Two ways to slice it, and neither is nested inside the other.** The app header carries one
 scope control with two dimensions: a **project** (where Wiz files the repository — business
@@ -131,10 +130,10 @@ here and `test/vocabulary.test.js` holds the copy to it.
 | `sca` | Dependencies | Registers | Which third-party CVEs are open, and is there anything to upgrade to? |
 | `sast` | Code | Registers | Which weaknesses are in our own code, and where? |
 | `secrets` | Secrets | Registers | Which credentials are in the repository, and are they dead yet? |
-| `repos` | Repositories | Data | Where does the backlog sit, which repos are footholds, who owns them? |
+| `repos` | Repositories | Data | Where does the backlog sit, which repos have gone cold, who owns them? |
 | `history` | Scan history | Data | What was actually measured, when? |
 | `data` | Storage | Data | What is stored, what can be exported, what can be reset? |
-| `settings` | Settings | — | Register, SLA windows, access, system. |
+| `settings` | Settings | — | Register, SLA windows, the cold-zone mode, access, system. |
 
 ### Why SAST, SCA and secrets are three pages
 

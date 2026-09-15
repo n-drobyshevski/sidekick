@@ -28,7 +28,7 @@
 // as "None" — see history.js's `isAllSeverities`/`severitiesLabel` for the same predicate
 // applied to a scan row instead of a draft.
 //
-// showExperimental IS ONE OF THE SEVEN Settings FIELDS AND DELIBERATELY GETS NO CONTROL TIED
+// showExperimental IS ONE OF THE PAGE-EDITABLE Settings FIELDS AND DELIBERATELY GETS NO CONTROL TIED
 // TO api_putSettings. The rail's actual "show experimental content" gate
 // (app.js: "`experimental` gates a route behind Settings -> show experimental content.") is
 // `experimental.js`'s own browser-local flag — nothing in this codebase reads
@@ -53,8 +53,9 @@ import { call } from "../../../../../gas_shared/api.js";
 import { bootstrapCached, invalidateBootstrap, setParams } from "../../../../../gas_shared/store.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import {
-  clear, confirmDialog, diagnosticCard, diagnosticsPanel, el, errorState, fmtCount, fmtDateTime,
-  glossaryTip, heroLines, pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
+  clear, confirmDialog, denomNote, diagnosticCard, diagnosticsPanel, el, errorState, fmtCount,
+  fmtDateTime, glossaryTip, heroLines, pageHeader, segmented, skeletonStack, statusPill,
+  tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -88,12 +89,36 @@ const LOCAL_SCOPES = ["sca", "sast", "secrets"]; // mirrors domain/config.ts SCO
 export const RETENTION_FLOOR_DAYS = 30; // domain/maintenance.ts::RETENTION_MIN_DAYS
 export const DEFAULT_SYNC_HOUR = 5; // domain/settingsLogic.ts::DEFAULT_SYNC_HOUR
 
+// domain/config.ts::DEFAULT_COLD_AFTER_DAYS / COLD_AFTER_DAYS_MIN / COLD_AFTER_DAYS_MAX,
+// mirrored here for the same reason the two constants above are (the client never imports
+// domain/*.ts — see the module header) and held equal to them by test/pagesSettings.test.js.
+// They paint a hint BEFORE a save; what the server actually stored, clamp included, is what
+// `saveReconciliation` reports from api_putSettings's own response.
+export const DEFAULT_COLD_AFTER_DAYS = 90;
+export const COLD_WINDOW_MIN_DAYS = 7;
+export const COLD_WINDOW_MAX_DAYS = 365;
+
+// The relative cold-zone mode's own three mirrors, for the same reason and under the same
+// test: domain/config.ts::COLD_ZONE_MODES / DEFAULT_COLD_ZONE_MODE,
+// DEFAULT_COLD_TARGET_SHARE_PCT / COLD_TARGET_SHARE_PCT_MIN / _MAX, and
+// DEFAULT_COLD_FLOOR_DAYS / COLD_FLOOR_DAYS_MIN / _MAX. The mode is a CLOSED SET rather than
+// a range, which is the one place the pattern differs: an unrecognized string has no nearest
+// legal value to be clamped toward, so both this page and the server FALL BACK to "fixed".
+export const COLD_MODES = ["fixed", "relative"]; // domain/config.ts::COLD_ZONE_MODES
+export const PAGE_DEFAULT_COLD_ZONE_MODE = "fixed";
+export const COLD_TARGET_MIN_PCT = 1;
+export const COLD_TARGET_MAX_PCT = 50;
+export const PAGE_DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+export const COLD_FLOOR_MIN_DAYS = 1;
+export const COLD_FLOOR_MAX_DAYS = 365;
+export const PAGE_DEFAULT_COLD_FLOOR_DAYS = 14;
+
 // Settings also carries `projectView` — the VIEW scope, which project the pages SHOW —
 // and it is DELIBERATELY ABSENT from SETTINGS_KEYS, from FIELD_TABS, from BATCHED_KEYS and
 // from draftFromSettings below. It is app-header chrome, not a settings-page field: a later
 // package puts a header control on it that reads and writes it directly through its own
 // `api_setProjectView` endpoint, one field at a time, without loading or resending the other
-// seven. Adding it here would (a) draw a control for it on the wrong page and (b) put it in
+// others. Adding it here would (a) draw a control for it on the wrong page and (b) put it in
 // this page's draft, so an ordinary Register/Deadlines/System save — which never touches
 // `api_setProjectView` — would round-trip it through `api_putSettings` right alongside
 // `showExperimental`'s pass-through problem below, except worse: showExperimental's control
@@ -101,11 +126,12 @@ export const DEFAULT_SYNC_HOUR = 5; // domain/settingsLogic.ts::DEFAULT_SYNC_HOU
 // would have no source at all to forward and would silently save back whatever stale value
 // this page happened to load with. `test/pagesSettings.test.js` pins the exclusion.
 export const SETTINGS_KEYS = [
-  "scopes", "fetchSeverities", "slaTargets", "showExperimental",
+  "scopes", "fetchSeverities", "slaTargets", "coldAfterDays", "coldZoneMode",
+  "coldTargetSharePct", "coldFloorDays", "showExperimental",
   "syncSchedule", "autoCompact", "retentionDays",
 ];
 
-// Which of the seven fields the save bar batches, and which tab owns each — showExperimental
+// Which of the ten batched fields the save bar owns, and which tab owns each — showExperimental
 // is deliberately absent, see the module header. projectView is absent for the separate
 // reason given above SETTINGS_KEYS: it has no tab on this page at all.
 //
@@ -126,8 +152,8 @@ export { DEFAULT_TAB, changeCountText, changeSummary, changedFields, normalizeTa
 // ============================================================================ pure view model
 
 /**
- * Lift api_getSettings's payload into a flat draft over exactly the seven Settings fields,
- * defensively — a malformed cell must not crash the page (the server's own `cleanSettings`
+ * Lift api_getSettings's payload into a flat draft over exactly the eleven page-editable
+ * Settings fields, defensively — a malformed cell must not crash the page (the server's own `cleanSettings`
  * carries the same never-throw contract; this is its client-side mirror, not a replacement
  * for it). Arrays and per-scope records are copied, never aliased, so editing the draft can
  * never mutate a payload a background revalidation is still holding.
@@ -142,6 +168,29 @@ export function draftFromSettings(settings) {
       LOCAL_SCOPES.map((scope) => [scope, Array.isArray(fs[scope]) ? [...fs[scope]] : []]),
     ),
     slaTargets: { ...sla },
+    // Defensively, exactly like the two scalars below it: a settings cell holding a string, an
+    // object or nothing at all must paint the default rather than put NaN in a number input.
+    // The server's own `cleanColdAfterDays` is what CLAMPS a real out-of-range number into
+    // [7, 365] — this fallback only covers "not a number at all".
+    coldAfterDays: Number.isFinite(Number(s.coldAfterDays))
+      ? Number(s.coldAfterDays)
+      : DEFAULT_COLD_AFTER_DAYS,
+    // The MODE is lifted through `coldModeFieldView` rather than by a second copy of "is it
+    // one of the two words": an unrecognized string (or a number, or nothing at all) has to
+    // land on "fixed" here exactly as the server's own `cleanColdZoneMode` lands it there, and
+    // one function is how that stays true. A genuine string is trimmed and lowercased on the
+    // way, so a hand-edited cell holding " RELATIVE " opens the panel in the mode it means.
+    coldZoneMode: coldModeFieldView(s.coldZoneMode).value,
+    // The two relative-mode numbers, lifted exactly as `coldAfterDays` above is — junk paints
+    // the default rather than putting NaN in a number input, and a REAL out-of-range number is
+    // carried as typed, because clamping it is the server's job and `saveReconciliation` is
+    // what reports the clamp afterwards.
+    coldTargetSharePct: Number.isFinite(Number(s.coldTargetSharePct))
+      ? Number(s.coldTargetSharePct)
+      : PAGE_DEFAULT_COLD_TARGET_SHARE_PCT,
+    coldFloorDays: Number.isFinite(Number(s.coldFloorDays))
+      ? Number(s.coldFloorDays)
+      : PAGE_DEFAULT_COLD_FLOOR_DAYS,
     showExperimental: s.showExperimental === true,
     syncSchedule: Number.isFinite(Number(s.syncSchedule)) ? Number(s.syncSchedule) : DEFAULT_SYNC_HOUR,
     autoCompact: s.autoCompact === true,
@@ -219,6 +268,104 @@ export function retentionFieldView(days) {
   };
 }
 
+/**
+ * The cold-zone window, read the same honest way `retentionFieldView` reads the retention
+ * floor — and BOUNDED AT BOTH ENDS, which is the one difference. The retention window has a
+ * floor and no ceiling; this one has both, so a value outside the range is reported as
+ * `belowFloor` or `aboveCeiling` (with `outOfRange` for the callers that only need to know
+ * that something will move) and `displayValue` is what a save would actually store.
+ *
+ * The RAW typed value is always carried beside them, so a caller can tell "the reader typed
+ * 400" from "the register will use 365" — the same distinction the retention view keeps.
+ */
+export function coldWindowFieldView(days) {
+  const n = Number(days);
+  const value = Number.isFinite(n) ? n : DEFAULT_COLD_AFTER_DAYS;
+  const belowFloor = value < COLD_WINDOW_MIN_DAYS;
+  const aboveCeiling = value > COLD_WINDOW_MAX_DAYS;
+  return {
+    value,
+    floor: COLD_WINDOW_MIN_DAYS,
+    ceiling: COLD_WINDOW_MAX_DAYS,
+    belowFloor,
+    aboveCeiling,
+    outOfRange: belowFloor || aboveCeiling,
+    displayValue: Math.min(COLD_WINDOW_MAX_DAYS, Math.max(COLD_WINDOW_MIN_DAYS, value)),
+  };
+}
+
+/**
+ * The cold-zone MODE, read the way the server reads it: a genuine string, trimmed and
+ * lowercased, that is one of the two known modes — anything else is "nothing was chosen" and
+ * falls back to fixed.
+ *
+ * A FALLBACK, NOT A CLAMP, and `known` is what makes that visible to a caller. The two views
+ * below this one report `outOfRange` because a number outside a range still points at an end
+ * of it; a string outside a two-member set points at nothing, so the honest report is "this
+ * was not a mode" and the page shows fixed. `saveReconciliation` uses the same distinction —
+ * the clamp notes name a range, the mode note names the string it could not read.
+ *
+ * `options` is carried here rather than built at the control, so the two labels the segmented
+ * control shows are part of the tested view model and not a literal buried in the DOM half.
+ */
+export function coldModeFieldView(mode) {
+  const raw = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+  const known = COLD_MODES.indexOf(raw) >= 0;
+  const value = known ? raw : PAGE_DEFAULT_COLD_ZONE_MODE;
+  return {
+    value,
+    isRelative: value === "relative",
+    known,
+    options: [
+      { value: "fixed", label: "Fixed window" },
+      { value: "relative", label: "Relative" },
+    ],
+  };
+}
+
+/**
+ * The relative mode's target share, in per cent — `coldWindowFieldView`'s shape exactly,
+ * because it is the same kind of field: bounded at both ends, clamped by the server, and
+ * worth reporting honestly rather than silently redrawing. 1..50: a "cold zone" that is more
+ * than half the estate is not a zone, and a share of zero would name nobody.
+ */
+export function coldTargetFieldView(pct) {
+  const n = Number(pct);
+  const value = Number.isFinite(n) ? n : PAGE_DEFAULT_COLD_TARGET_SHARE_PCT;
+  const belowFloor = value < COLD_TARGET_MIN_PCT;
+  const aboveCeiling = value > COLD_TARGET_MAX_PCT;
+  return {
+    value,
+    floor: COLD_TARGET_MIN_PCT,
+    ceiling: COLD_TARGET_MAX_PCT,
+    belowFloor,
+    aboveCeiling,
+    outOfRange: belowFloor || aboveCeiling,
+    displayValue: Math.min(COLD_TARGET_MAX_PCT, Math.max(COLD_TARGET_MIN_PCT, value)),
+  };
+}
+
+/**
+ * The relative mode's floor, in days — the same shape again, 1..365. This is the number that
+ * stops a derived line from calling a healthy estate cold: the share always names somebody,
+ * and on a landscape where the idlest fifth has been quiet for nine days, nobody should be.
+ */
+export function coldFloorFieldView(days) {
+  const n = Number(days);
+  const value = Number.isFinite(n) ? n : PAGE_DEFAULT_COLD_FLOOR_DAYS;
+  const belowFloor = value < COLD_FLOOR_MIN_DAYS;
+  const aboveCeiling = value > COLD_FLOOR_MAX_DAYS;
+  return {
+    value,
+    floor: COLD_FLOOR_MIN_DAYS,
+    ceiling: COLD_FLOOR_MAX_DAYS,
+    belowFloor,
+    aboveCeiling,
+    outOfRange: belowFloor || aboveCeiling,
+    displayValue: Math.min(COLD_FLOOR_MAX_DAYS, Math.max(COLD_FLOOR_MIN_DAYS, value)),
+  };
+}
+
 export const AUTO_COMPACT_OFF_NOTE =
   "Off by default. This preserves the behaviour that shipped before this setting existed — "
   + "turning it on is a choice this page leaves to you, not one it steers you toward.";
@@ -246,6 +393,40 @@ export function saveReconciliation(sent, saved) {
   if (Number.isFinite(Number(s.retentionDays)) && Number(s.retentionDays) !== Number(r.retentionDays)) {
     notes.push(
       `Retention window saved as ${r.retentionDays} day(s) — raised to the ${RETENTION_FLOOR_DAYS}-day floor.`,
+    );
+  }
+  // The cold-zone window is the third field the server may silently rewrite, and it is CLAMPED
+  // (into a range, at either end) rather than defaulted — so the note names the range and the
+  // stored value, never "it was rejected".
+  if (Number.isFinite(Number(s.coldAfterDays)) && Number(s.coldAfterDays) !== Number(r.coldAfterDays)) {
+    notes.push(
+      `Cold-zone window saved as ${r.coldAfterDays} days — clamped into the `
+      + `${COLD_WINDOW_MIN_DAYS}–${COLD_WINDOW_MAX_DAYS} range.`,
+    );
+  }
+  // The relative mode's two numbers are clamped exactly as the window above is, so they are
+  // reported exactly as it is — the range and the stored value, never "it was rejected".
+  if (
+    Number.isFinite(Number(s.coldTargetSharePct))
+    && Number(s.coldTargetSharePct) !== Number(r.coldTargetSharePct)
+  ) {
+    notes.push(
+      `Cold-zone target share saved as ${r.coldTargetSharePct}% — clamped into the `
+      + `${COLD_TARGET_MIN_PCT}–${COLD_TARGET_MAX_PCT}% range.`,
+    );
+  }
+  if (Number.isFinite(Number(s.coldFloorDays)) && Number(s.coldFloorDays) !== Number(r.coldFloorDays)) {
+    notes.push(
+      `Cold-zone floor saved as ${r.coldFloorDays} days — clamped into the `
+      + `${COLD_FLOOR_MIN_DAYS}–${COLD_FLOOR_MAX_DAYS}-day range.`,
+    );
+  }
+  // The MODE is the one rewrite that is a FALLBACK rather than a clamp (see coldModeFieldView),
+  // so its note names the string the server could not read instead of a range it was pulled
+  // into — "clamped into the fixed–relative range" would be nonsense.
+  if (typeof s.coldZoneMode === "string" && s.coldZoneMode !== r.coldZoneMode) {
+    notes.push(
+      `Cold-zone mode saved as ${r.coldZoneMode} — "${s.coldZoneMode}" is not a mode.`,
     );
   }
   if (Number.isFinite(Number(s.syncSchedule)) && Number(s.syncSchedule) !== Number(r.syncSchedule)) {
@@ -750,6 +931,199 @@ export async function renderSettings(host, params, ctx) {
       const cutline = slaCutlines[r.sev];
       return el("div", {}, row, divergenceEl, cutline ? cutline.node : null);
     });
+
+    // ---- the cold zone, AFTER the per-severity rows and inside the same panel.
+    //
+    // Same tab, not the same kind of deadline: the rows above promise a window for ONE
+    // finding, these set how long a whole repository may go with nothing closing before the
+    // Repositories page calls it cold. They are last because they are the coarser reading, and
+    // here rather than on System because they are deadlines a reader sets, not a maintenance
+    // knob.
+    //
+    // A MODE AND ITS OWN NUMBERS, SHOWN AND HIDDEN RATHER THAN DISABLED. Fixed mode reads one
+    // number (the window) and relative mode reads two (the target share and the floor), and
+    // the ones the current mode does not read are not merely inert — they are not what the
+    // register is measuring at all. A disabled control still says "this is part of the answer,
+    // you just may not touch it", which would be a lie in whichever mode is off; a control
+    // that is absent says the truth, that this reading has no such number. The draft still
+    // carries all three either way, so flipping back and forth never loses a value.
+    //
+    // Two labels route to the glossary, like the panel's own title routes to `sla-target`:
+    // the mode to `cold-zone-mode` and the window to `cold-zone`. A window is a setting whose
+    // NAME is a measurement decision, and the entries are where those decisions are written
+    // (movement is resolved/removed/rotated, measured at the last scan; the mode entry says
+    // what "relative" ranks and against what). The two relative-mode NUMBERS take plain-text
+    // labels: they are parameters OF the mode, and the entry that explains them is the one
+    // its own label already points at.
+    const modeView = coldModeFieldView(draft.coldZoneMode);
+
+    body.push(settingRow({
+      label: glossaryTip("Cold-zone mode", "cold-zone-mode"),
+      description: "Fixed window calls a repository cold after a set number of idle days. "
+        + "Relative draws the line wherever the idlest share of the estate begins, so a chosen "
+        + "share of the repositories with open findings is cold whatever the idle times are.",
+      control: segmented({
+        options: modeView.options,
+        value: modeView.value,
+        ariaLabel: "Cold-zone mode",
+        onChange: (v) => {
+          draft.coldZoneMode = v;
+          // A field that has just left the screen cannot be corrected, so its in-progress
+          // error must not keep doSave()'s first gate closed from behind a control nobody can
+          // see. The draft itself is always legal here — an oninput below only ever writes a
+          // value it could parse — so the rebuilt inputs come back valid.
+          if (v === "relative") {
+            setFieldError("coldAfterDays", null);
+          } else {
+            setFieldError("coldTargetSharePct", null);
+            setFieldError("coldFloorDays", null);
+          }
+          // REBUILD, THEN syncDirty() — the same order buildPanels() uses. syncDirty()
+          // repaints live readouts into whichever hosts are attached right now, so painting
+          // before the rebuild would write into nodes this call is about to throw away.
+          buildDeadlinesPanel();
+          syncDirty();
+        },
+      }),
+    }));
+
+    if (!modeView.isRelative) {
+      const coldId = "settings-cold-after-days";
+      const coldErrorId = `${coldId}-error`;
+      const coldWarn = el("span", { class: "small settings-retention-warn", hidden: true });
+      const coldError = el(
+        "span", { id: coldErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+        "Enter a number of days.",
+      );
+      const coldInput = el("input", {
+        type: "number", id: coldId, min: String(COLD_WINDOW_MIN_DAYS), max: String(COLD_WINDOW_MAX_DAYS),
+        step: "1", value: String(draft.coldAfterDays), "aria-describedby": coldErrorId,
+        oninput: (ev) => {
+          const raw = ev.target.value;
+          // The same "Number('') is 0, and 0 is finite" trap the two System handlers guard: a
+          // blank field is NO INPUT, never "cold immediately", so it is refused before the cast.
+          const blank = raw.trim() === "";
+          const n = Number(raw);
+          const ok = !blank && Number.isFinite(n);
+          // Out-of-range-but-real is a WARN, not an error — the server clamps it into the range
+          // on save, exactly as a below-floor retention window is clamped up. Only a value that
+          // does not parse as a number at all is invalid.
+          if (ok) {
+            draft.coldAfterDays = Math.floor(n);
+            const v = coldWindowFieldView(draft.coldAfterDays);
+            coldWarn.hidden = !v.outOfRange;
+            coldWarn.textContent = v.outOfRange
+              ? `Outside the ${v.floor}–${v.ceiling}-day range — saving will store ${v.displayValue}.`
+              : "";
+          }
+          coldInput.setAttribute("aria-invalid", ok ? "false" : "true");
+          coldError.hidden = ok;
+          setFieldError("coldAfterDays", ok ? null : "The cold-zone window must be a number.");
+          syncDirty();
+        },
+      });
+      body.push(settingRow({
+        label: glossaryTip("Cold-zone window", "cold-zone"), htmlFor: coldId,
+        description: "Days a repository may sit with open findings and no remediation movement "
+          + "before it is called cold. Movement is any finding resolved, removed or rotated.",
+        control: el("div", {}, coldInput, coldWarn, coldError),
+      }));
+    } else {
+      // The two relative-mode numbers. Both oninput handlers are the cold-window handler above
+      // with the field name changed, deliberately rather than by a shared helper: each one
+      // names its own draft field, its own view and its own error sentence, and the three
+      // differ in exactly those words.
+      const targetId = "settings-cold-target-share";
+      const targetErrorId = `${targetId}-error`;
+      const targetWarn = el("span", { class: "small settings-retention-warn", hidden: true });
+      const targetError = el(
+        "span", { id: targetErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+        "Enter a percentage.",
+      );
+      const targetInput = el("input", {
+        type: "number", id: targetId, min: String(COLD_TARGET_MIN_PCT), max: String(COLD_TARGET_MAX_PCT),
+        step: "1", value: String(draft.coldTargetSharePct), "aria-describedby": targetErrorId,
+        oninput: (ev) => {
+          const raw = ev.target.value;
+          const blank = raw.trim() === "";
+          const n = Number(raw);
+          const ok = !blank && Number.isFinite(n);
+          if (ok) {
+            draft.coldTargetSharePct = Math.floor(n);
+            const v = coldTargetFieldView(draft.coldTargetSharePct);
+            targetWarn.hidden = !v.outOfRange;
+            targetWarn.textContent = v.outOfRange
+              ? `Outside the ${v.floor}–${v.ceiling}% range — saving will store ${v.displayValue}.`
+              : "";
+          }
+          targetInput.setAttribute("aria-invalid", ok ? "false" : "true");
+          targetError.hidden = ok;
+          setFieldError("coldTargetSharePct", ok ? null : "The cold-zone target share must be a number.");
+          syncDirty();
+        },
+      });
+      // THE DENOMINATOR, AND IT IS NOT DECORATION. This field is a RATE — a share of something
+      // — and on every other page in this app a rate travels with the population it is a share
+      // OF (`denomNote`, swept by test/pagesLit.test.js's exit gate 3/7). A target share is no
+      // exception just because the reader types it rather than reading it: "20%" means nothing
+      // until the estate it counts against is named, and the population here is a NARROW one
+      // that the profile decides before any line is drawn — a repository the scanner stopped
+      // returning is not evidence about engagement, and one with nothing open cannot be in a
+      // zone that measures unclosed work. Saying so here is what stops an operator reading
+      // "20%" as a fifth of every repository they own.
+      body.push(el("div", {},
+        settingRow({
+          label: "Cold-zone target share", htmlFor: targetId,
+          description: "The share of the eligible repositories the line aims to put in the "
+            + "cold zone, in %. The idlest ones go first, and ties at the line are all cold, "
+            + "so the share actually reached can come out larger.",
+          control: el("div", {}, targetInput, targetWarn, targetError),
+        }),
+        denomNote(
+          "A share of the repositories the scanner still returns that have at least one open "
+          + "finding; unobserved and clear repositories are not in it. The Repositories page "
+          + "reports the share actually reached against this target.",
+        ),
+      ));
+
+      const floorId = "settings-cold-floor-days";
+      const floorErrorId = `${floorId}-error`;
+      const floorWarn = el("span", { class: "small settings-retention-warn", hidden: true });
+      const floorError = el(
+        "span", { id: floorErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+        "Enter a number of days.",
+      );
+      const floorInput = el("input", {
+        type: "number", id: floorId, min: String(COLD_FLOOR_MIN_DAYS), max: String(COLD_FLOOR_MAX_DAYS),
+        step: "1", value: String(draft.coldFloorDays), "aria-describedby": floorErrorId,
+        oninput: (ev) => {
+          const raw = ev.target.value;
+          const blank = raw.trim() === "";
+          const n = Number(raw);
+          const ok = !blank && Number.isFinite(n);
+          if (ok) {
+            draft.coldFloorDays = Math.floor(n);
+            const v = coldFloorFieldView(draft.coldFloorDays);
+            floorWarn.hidden = !v.outOfRange;
+            floorWarn.textContent = v.outOfRange
+              ? `Outside the ${v.floor}–${v.ceiling}-day range — saving will store ${v.displayValue}.`
+              : "";
+          }
+          floorInput.setAttribute("aria-invalid", ok ? "false" : "true");
+          floorError.hidden = ok;
+          setFieldError("coldFloorDays", ok ? null : "The cold-zone floor must be a number.");
+          syncDirty();
+        },
+      });
+      body.push(settingRow({
+        label: "Cold-zone floor", htmlFor: floorId,
+        description: "The fewest idle days the derived line may ever sit at. A share always "
+          + "names somebody, and on an estate where nothing has been quiet for long, this is "
+          + "what stops the zone being filled anyway.",
+        control: el("div", {}, floorInput, floorWarn, floorError),
+      }));
+    }
+
     const panel = settingsPanel({
       title: glossaryTip("Remediation windows", "sla-target"),
       description: "The same window applies to every register: a CRITICAL finding gets the "

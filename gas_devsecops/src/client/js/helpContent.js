@@ -384,6 +384,61 @@ const ENTRIES = [
     ],
   },
   {
+    // THE COLD ZONE'S THREE WORDS. `cold-zone` is the state and its clock; `unobserved` is the
+    // state that must never be mistaken for it (a fact about the scanner, not about a team);
+    // `idle` is the number both of them are read off. Three entries rather than one because
+    // the tip card renders an entry's first two lines — a definition folded in as a third line
+    // is a definition nobody can reach — and because the Repositories page puts the three in
+    // three different places: the section label, a verdict column, and a figure column.
+    id: "cold-zone",
+    term: "Cold zone",
+    lines: [
+      "A repository with open findings where nothing has moved for at least the cold-zone window: no finding resolved, removed or rotated in that time.",
+      "Measured at the last scan, never against today, so the same saved ledger always reads the same. With no movement on record the figure is a lower bound \u2014 see Lower bound.",
+      "The window is either a fixed number of days or a share of the estate \u2014 see Cold-zone mode. A repository the scanner has stopped returning is Unobserved instead: counted apart, and never counted as warm.",
+    ],
+  },
+  {
+    // THE SECOND DEFINITION OF THE LINE, and its own entry rather than a third line on
+    // `cold-zone`: the tip card renders an entry's first two lines, so a mode folded in as a
+    // third line is a definition nobody can reach. The Settings control and the Repositories
+    // caption both point here.
+    id: "cold-zone-mode",
+    term: "Cold-zone mode",
+    lines: [
+      "Fixed window: a repository is cold after a set number of idle days \u2014 the same number on every estate and in every week, and the one an operator can be held to.",
+      "Relative: the line is derived so that the idlest share of the repositories with open findings are cold. It follows the population instead of standing still while the population moves, and it never falls below the floor.",
+      "Whichever mode is on, the page prints the line it produced in days, the share it was aiming at and the share it actually drew — those last two disagree in both directions by design. Set on the Deadlines tab in Settings.",
+    ],
+  },
+  {
+    // The team-level half of relative mode. A rank is not a verdict, and this is where that
+    // distinction is settled for a reader who found the mark on the project table.
+    id: "coldest-share",
+    term: "Coldest share",
+    lines: [
+      "In relative mode, the projects with the highest share of their open-finding repositories cold — a position relative to the other projects, not a verdict about any one of them.",
+      "A project with no cold repository is never marked, however small the estate; projects tied at the cutoff are all marked rather than split by name.",
+      "Ranked over the projects that have at least one repository with an open finding. A project with nothing open has no share to rank and carries no position at all.",
+    ],
+  },
+  {
+    id: "unobserved",
+    term: "Unobserved",
+    lines: [
+      "The scanner stopped returning this repository: no finding on it reached the last scan of any register it has rows in.",
+      "Its findings close by disappearance, which looks like a whole repository being remediated at once — so it is tested first, counted apart, and never counted as warm or cold.",
+    ],
+  },
+  {
+    id: "idle",
+    term: "Idle days",
+    lines: [
+      "Days since the last movement on a repository: the most recent finding resolved, removed or rotated, whichever came last.",
+      "Measured from the last scan, never from today. Where nothing has ever moved there is no measurement, so the count runs from when we started watching and is published as a lower bound.",
+    ],
+  },
+  {
     id: "returned",
     term: "Returned",
     lines: [

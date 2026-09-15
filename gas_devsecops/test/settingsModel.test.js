@@ -21,7 +21,10 @@
 // would be deleting real behaviour for having no caller yet, not deleting dead code.
 
 import { describe, expect, it } from "vitest";
-import { draftWarnings, settingsDraft, validateDraft } from "../src/client/js/settingsModel.js";
+import {
+  SETTING_FIELDS, TAB_FIELDS, changeSummary, draftWarnings, settingsDraft, tabStatus,
+  validateDraft,
+} from "../src/client/js/settingsModel.js";
 import { SCOPES, SCOPE_LABELS, SEVERITY_ORDER, SLA_TARGETS } from "../src/domain/config";
 
 /** What api_bootstrap ships, which is where a future caller would get these rather than
@@ -184,5 +187,69 @@ describe("the three consequences worth a confirm", () => {
 
   it("survives no context at all rather than throwing mid-save", () => {
     expect(draftWarnings(saved, draftOf({ scopes: ["sca"] }), null)).toHaveLength(1);
+  });
+});
+
+// =========================================================================================
+//  The registry itself: where a field lives, and which tab goes dirty when it moves
+// =========================================================================================
+//
+// `SETTING_FIELDS` is the one registry both this module and `pages/settings.js` read (see the
+// module header). `test/settingsLogic.test.js` holds the whole-map claims — every key is a real
+// Settings field, every tab is a real tab, and the set matches the page's own BATCHED_KEYS. What
+// is pinned here is the one field whose HOME is a judgement call rather than an obvious one.
+describe("coldAfterDays lives on Deadlines", () => {
+  it("is registered under the deadlines tab, with a reader-facing label", () => {
+    // Deadlines, not System: it is a threshold a reader SETS, like the SLA windows beside it,
+    // not a maintenance knob like the retention window. A registry entry under the wrong tab
+    // is invisible in the worst way — the save bar offers "jump to" a tab the control is not on.
+    expect(SETTING_FIELDS.coldAfterDays.tab).toBe("deadlines");
+    expect(SETTING_FIELDS.coldAfterDays.label).toBe("cold-zone window");
+  });
+
+  it("marks ONLY Deadlines dirty when it is the one field that moved", () => {
+    const saved = { slaTargets: { ...SLA_TARGETS }, coldAfterDays: 90, retentionDays: 180 };
+    const draft = { ...saved, coldAfterDays: 120 };
+    const status = tabStatus(draft, saved, {}, TAB_FIELDS);
+    expect(status.deadlines.dirty).toBe(true);
+    expect(status.system.dirty).toBe(false);
+    expect(status.register.dirty).toBe(false);
+    for (const tab of Object.keys(status)) expect(status[tab].invalid).toBe(false);
+  });
+});
+
+// The relative mode's three fields live on Deadlines for the window's reason and one more: the
+// mode DECIDES which of these controls is on screen at all, so a registry that housed them on
+// different tabs would let the save bar offer "jump to" a tab whose control the current mode
+// has hidden.
+describe("the cold-zone mode and its two numbers live on Deadlines too", () => {
+  it("are registered under the deadlines tab, with reader-facing labels", () => {
+    expect(SETTING_FIELDS.coldZoneMode.tab).toBe("deadlines");
+    expect(SETTING_FIELDS.coldZoneMode.label).toBe("cold-zone mode");
+    expect(SETTING_FIELDS.coldTargetSharePct.tab).toBe("deadlines");
+    expect(SETTING_FIELDS.coldTargetSharePct.label).toBe("cold-zone target share");
+    expect(SETTING_FIELDS.coldFloorDays.tab).toBe("deadlines");
+    expect(SETTING_FIELDS.coldFloorDays.label).toBe("cold-zone floor");
+  });
+
+  it("changeSummary names the changed mode in words, under the tab that owns it", () => {
+    // The save bar reads this, so a mode flip has to arrive as "cold-zone mode / Deadlines"
+    // rather than as a raw field name or as nothing at all.
+    const summary = changeSummary(["coldZoneMode", "coldFloorDays"]);
+    expect(summary.map((e) => e.field)).toEqual(["coldZoneMode", "coldFloorDays"]);
+    expect(summary.map((e) => e.label)).toEqual(["cold-zone mode", "cold-zone floor"]);
+    for (const entry of summary) {
+      expect(entry.tab).toBe("deadlines");
+      expect(entry.tabLabel).toBe("Deadlines");
+    }
+  });
+
+  it("marks ONLY Deadlines dirty when the mode is the one field that moved", () => {
+    const saved = { coldZoneMode: "fixed", coldTargetSharePct: 20, coldFloorDays: 14, retentionDays: 180 };
+    const draft = { ...saved, coldZoneMode: "relative" };
+    const status = tabStatus(draft, saved, {}, TAB_FIELDS);
+    expect(status.deadlines.dirty).toBe(true);
+    expect(status.system.dirty).toBe(false);
+    expect(status.register.dirty).toBe(false);
   });
 });

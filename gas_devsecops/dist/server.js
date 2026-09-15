@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "0fa31c2acd0c" : "dev";
+  var BUILD_ID = true ? "e24df4660557" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -639,6 +639,17 @@ var Server = (() => {
     LOW: 90,
     INFO: 180
   };
+  var DEFAULT_COLD_AFTER_DAYS = 90;
+  var COLD_AFTER_DAYS_MIN = 7;
+  var COLD_AFTER_DAYS_MAX = 365;
+  var COLD_ZONE_MODES = ["fixed", "relative"];
+  var DEFAULT_COLD_ZONE_MODE = "fixed";
+  var DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+  var COLD_TARGET_SHARE_PCT_MIN = 1;
+  var COLD_TARGET_SHARE_PCT_MAX = 50;
+  var DEFAULT_COLD_FLOOR_DAYS = 14;
+  var COLD_FLOOR_DAYS_MIN = 1;
+  var COLD_FLOOR_DAYS_MAX = COLD_AFTER_DAYS_MAX;
   var SCOPES = ["sca", "sast", "secrets"];
   var DEFAULT_FETCH_SEVERITIES = {
     sca: ["CRITICAL", "HIGH"],
@@ -3365,6 +3376,10 @@ var Server = (() => {
       secrets: [...DEFAULT_FETCH_SEVERITIES.secrets]
     },
     slaTargets: { ...SLA_TARGETS },
+    coldAfterDays: DEFAULT_COLD_AFTER_DAYS,
+    coldZoneMode: DEFAULT_COLD_ZONE_MODE,
+    coldTargetSharePct: DEFAULT_COLD_TARGET_SHARE_PCT,
+    coldFloorDays: DEFAULT_COLD_FLOOR_DAYS,
     showExperimental: false,
     syncSchedule: DEFAULT_SYNC_HOUR,
     autoCompact: false,
@@ -3415,6 +3430,26 @@ var Server = (() => {
     if (n2 === null) return DEFAULT_RETENTION_DAYS;
     return Math.max(Math.floor(n2), RETENTION_MIN_DAYS);
   }
+  function cleanColdAfterDays(v) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return DEFAULT_COLD_AFTER_DAYS;
+    return Math.min(COLD_AFTER_DAYS_MAX, Math.max(COLD_AFTER_DAYS_MIN, Math.floor(n2)));
+  }
+  function cleanColdZoneMode(v) {
+    if (typeof v !== "string") return DEFAULT_COLD_ZONE_MODE;
+    const m = v.trim().toLowerCase();
+    return COLD_ZONE_MODES.includes(m) ? m : DEFAULT_COLD_ZONE_MODE;
+  }
+  function cleanColdTargetSharePct(v) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return DEFAULT_COLD_TARGET_SHARE_PCT;
+    return Math.min(COLD_TARGET_SHARE_PCT_MAX, Math.max(COLD_TARGET_SHARE_PCT_MIN, Math.floor(n2)));
+  }
+  function cleanColdFloorDays(v) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return DEFAULT_COLD_FLOOR_DAYS;
+    return Math.min(COLD_FLOOR_DAYS_MAX, Math.max(COLD_FLOOR_DAYS_MIN, Math.floor(n2)));
+  }
   function cleanViewScope(v) {
     return typeof v === "string" ? v.trim() : "";
   }
@@ -3436,6 +3471,10 @@ var Server = (() => {
       scopes: scopes.length ? scopes : [...SCOPES],
       fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
       slaTargets: { ...SLA_TARGETS, ...cleanSlaTargets(r.slaTargets) },
+      coldAfterDays: cleanColdAfterDays(r.coldAfterDays),
+      coldZoneMode: cleanColdZoneMode(r.coldZoneMode),
+      coldTargetSharePct: cleanColdTargetSharePct(r.coldTargetSharePct),
+      coldFloorDays: cleanColdFloorDays(r.coldFloorDays),
       showExperimental: r.showExperimental === true,
       syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
       // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
@@ -3460,6 +3499,14 @@ var Server = (() => {
   }
   function effectiveSlaTargets(settings) {
     return { ...SLA_TARGETS, ...cleanSlaTargets(settings == null ? void 0 : settings.slaTargets) };
+  }
+  function effectiveColdZoneSettings(settings) {
+    return {
+      mode: cleanColdZoneMode(settings == null ? void 0 : settings.coldZoneMode),
+      coldAfterDays: cleanColdAfterDays(settings == null ? void 0 : settings.coldAfterDays),
+      targetSharePct: cleanColdTargetSharePct(settings == null ? void 0 : settings.coldTargetSharePct),
+      floorDays: cleanColdFloorDays(settings == null ? void 0 : settings.coldFloorDays)
+    };
   }
 
   // src/server/sheetsDb.ts
@@ -5005,21 +5052,21 @@ var Server = (() => {
   }
 
   // src/domain/settingsImpact.ts
-  function severityCensus(rows, severityOf, isOpen8) {
+  function severityCensus(rows, severityOf, isOpen9) {
     var _a, _b;
     const out = { all: {}, open: {} };
     for (const r of rows) {
       const s2 = severityOf(r);
       out.all[s2] = ((_a = out.all[s2]) != null ? _a : 0) + 1;
-      if (isOpen8(r)) out.open[s2] = ((_b = out.open[s2]) != null ? _b : 0) + 1;
+      if (isOpen9(r)) out.open[s2] = ((_b = out.open[s2]) != null ? _b : 0) + 1;
     }
     return out;
   }
-  function ageHistogram(rows, severityOf, isOpen8, ageDaysOf, capDays = AGE_HISTOGRAM_CAP_DAYS) {
+  function ageHistogram(rows, severityOf, isOpen9, ageDaysOf, capDays = AGE_HISTOGRAM_CAP_DAYS) {
     var _a, _b, _c;
     const perSev = {};
     for (const r of rows) {
-      if (!isOpen8(r)) continue;
+      if (!isOpen9(r)) continue;
       const sev2 = severityOf(r);
       const bucket = (_a = perSev[sev2]) != null ? _a : perSev[sev2] = { deltas: /* @__PURE__ */ new Map(), overCap: 0, unaged: 0 };
       const raw = ageDaysOf(r);
@@ -6146,9 +6193,534 @@ var Server = (() => {
     warmReadModels: () => warmReadModels
   });
 
-  // src/domain/movementDecomposition.ts
+  // src/domain/coldZone.ts
   var DAY_MS7 = 864e5;
+  var COLD_PROJECT_NONE = "(no project)";
   function isOpen4(status) {
+    return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
+  }
+  function blank(v) {
+    return !present(v);
+  }
+  function safePct(numerator, denominator) {
+    return denominator > 0 ? numerator / denominator * 100 : null;
+  }
+  function daysBetween(fromMs, toMs) {
+    return Math.max(0, (toMs - fromMs) / DAY_MS7);
+  }
+  function fmtDays(n2) {
+    return String(Number(n2.toFixed(1)));
+  }
+  var MOVEMENT_RANK = { resolved: 0, removed: 1, rotated: 2 };
+  var VERDICT_RANK = {
+    cold: 0,
+    unobserved: 1,
+    watching: 2,
+    warm: 3,
+    clear: 4
+  };
+  function newAcc(repoId) {
+    return {
+      repoId,
+      repoName: null,
+      project: null,
+      scopes: /* @__PURE__ */ new Set(),
+      rowsByScope: /* @__PURE__ */ new Map(),
+      open: 0,
+      openHigh: 0,
+      reopenedOpen: 0,
+      oldestOpenFirstSeen: null,
+      earliestFirstSeen: null,
+      lastSeen: null,
+      movementAt: null,
+      movementKind: null,
+      disappeared: /* @__PURE__ */ new Map()
+    };
+  }
+  function foldRow(acc, row, risk) {
+    var _a, _b;
+    if (acc.repoName === null && !blank(row.repo_name)) acc.repoName = String(row.repo_name);
+    if (acc.project === null && !blank(row.owner_project)) acc.project = String(row.owner_project);
+    acc.scopes.add(row.scope);
+    const bucket = acc.rowsByScope.get(row.scope);
+    if (bucket) bucket.push(row);
+    else acc.rowsByScope.set(row.scope, [row]);
+    const open = isOpen4(row.status);
+    const firstSeen = parseTs(row.first_seen);
+    if (firstSeen !== null && (acc.earliestFirstSeen === null || firstSeen < acc.earliestFirstSeen)) {
+      acc.earliestFirstSeen = firstSeen;
+    }
+    const lastSeen = parseTs(row.last_seen);
+    if (lastSeen !== null && (acc.lastSeen === null || lastSeen > acc.lastSeen)) acc.lastSeen = lastSeen;
+    if (open) {
+      acc.open += 1;
+      if (risk === "high") acc.openHigh += 1;
+      if (Number(row.reopened_count) > 0) acc.reopenedOpen += 1;
+      if (firstSeen !== null && (acc.oldestOpenFirstSeen === null || firstSeen < acc.oldestOpenFirstSeen)) {
+        acc.oldestOpenFirstSeen = firstSeen;
+      }
+    }
+    const moves = [
+      ["resolved", row.resolved_at],
+      ["removed", row.removed_at],
+      ["rotated", row.rotated_at]
+    ];
+    for (const [kind, value] of moves) {
+      const ms = parseTs(value);
+      if (ms === null) continue;
+      if (acc.movementAt === null || ms > acc.movementAt || ms === acc.movementAt && MOVEMENT_RANK[kind] < MOVEMENT_RANK[acc.movementKind]) {
+        acc.movementAt = ms;
+        acc.movementKind = kind;
+      }
+    }
+    if (String((_a = row.resolution_src) != null ? _a : "") === RESOLUTION_DISAPPEARED) {
+      const at = parseTs(row.resolved_at);
+      if (at !== null) acc.disappeared.set(at, ((_b = acc.disappeared.get(at)) != null ? _b : 0) + 1);
+    }
+  }
+  function isObserved(acc, newestByScope, scopesWithoutScan) {
+    var _a;
+    let observed = false;
+    for (const scope of acc.scopes) {
+      const newest = newestByScope[scope];
+      if (!newest) {
+        scopesWithoutScan.add(scope);
+        observed = true;
+        continue;
+      }
+      const rows = (_a = acc.rowsByScope.get(scope)) != null ? _a : [];
+      const newestTs = parseTs(newest.ts);
+      for (const row of rows) {
+        if (!blank(row.last_scan_id)) {
+          if (!blank(newest.scan_id) && String(row.last_scan_id) === String(newest.scan_id)) {
+            observed = true;
+            break;
+          }
+          continue;
+        }
+        const lastSeen = parseTs(row.last_seen);
+        if (newestTs !== null && lastSeen !== null && lastSeen >= newestTs) {
+          observed = true;
+          break;
+        }
+      }
+    }
+    return observed;
+  }
+  function bucketOf(readingDays, t) {
+    if (readingDays >= t) return 3;
+    if (readingDays >= 2 * t / 3) return 2;
+    if (readingDays >= t / 3) return 1;
+    return 0;
+  }
+  function coldZoneProfile(rows, opts) {
+    var _a, _b;
+    const nowMs = parseTs(opts.now);
+    if (nowMs === null) {
+      throw new Error(`coldZoneProfile: unparseable now (${JSON.stringify(opts.now)})`);
+    }
+    const observedFromOpt = (_a = opts.observedFrom) != null ? _a : null;
+    const observedFromMs = observedFromOpt === null ? null : parseTs(observedFromOpt);
+    if (observedFromOpt !== null && observedFromMs === null) {
+      throw new Error(
+        `coldZoneProfile: unparseable observedFrom (${JSON.stringify(observedFromOpt)})`
+      );
+    }
+    const t = Number(opts.coldAfterDays);
+    if (!Number.isFinite(t) || t <= 0) {
+      throw new Error(`coldZoneProfile: coldAfterDays must be a positive number (${String(opts.coldAfterDays)})`);
+    }
+    const mode = (_b = opts.mode) != null ? _b : DEFAULT_COLD_ZONE_MODE;
+    if (!COLD_ZONE_MODES.includes(mode)) {
+      throw new Error(
+        `coldZoneProfile: mode must be one of ${COLD_ZONE_MODES.join(" | ")} (${JSON.stringify(opts.mode)})`
+      );
+    }
+    const relative = mode === "relative";
+    const targetSharePct = relative ? Number(opts.targetSharePct) : null;
+    const floorDays = relative ? Number(opts.floorDays) : null;
+    if (relative && (!Number.isFinite(targetSharePct) || targetSharePct <= 0 || targetSharePct > 100)) {
+      throw new Error(
+        `coldZoneProfile: relative mode requires targetSharePct in (0, 100] (${String(opts.targetSharePct)})`
+      );
+    }
+    if (relative && (!Number.isFinite(floorDays) || floorDays <= 0)) {
+      throw new Error(
+        `coldZoneProfile: relative mode requires floorDays to be a positive number (${String(opts.floorDays)})`
+      );
+    }
+    let unclassifiedSecrets = 0;
+    const classified = [];
+    for (const row of rows) {
+      if (row.scope === "secrets") {
+        unclassifiedSecrets += 1;
+        classified.push({ row, risk: "unknown" });
+        continue;
+      }
+      classified.push({ row, risk: classifyRisk(row, opts.rule) });
+    }
+    let droppedNoRepo = 0;
+    const byRepo = /* @__PURE__ */ new Map();
+    for (const { row, risk } of classified) {
+      if (blank(row.repo_id)) {
+        droppedNoRepo += 1;
+        continue;
+      }
+      const id = String(row.repo_id).trim();
+      let acc = byRepo.get(id);
+      if (!acc) {
+        acc = newAcc(id);
+        byRepo.set(id, acc);
+      }
+      foldRow(acc, row, risk);
+    }
+    const scopesWithoutScan = /* @__PURE__ */ new Set();
+    const observedById = /* @__PURE__ */ new Map();
+    for (const acc of byRepo.values()) {
+      observedById.set(acc.repoId, isObserved(acc, opts.newestScanByScope, scopesWithoutScan));
+    }
+    const scopesWithoutScanList = [...scopesWithoutScan].sort(cmp);
+    const base = {
+      observed_from: observedFromMs === null ? null : toIso(observedFromMs),
+      as_of: toIso(nowMs),
+      row_count: rows.length,
+      dropped_no_repo: droppedNoRepo,
+      unclassified_secrets: unclassifiedSecrets,
+      scopes_without_scan: scopesWithoutScanList
+    };
+    const modeBase = {
+      mode,
+      fixed_after_days: t,
+      target_share_pct: targetSharePct,
+      floor_days: floorDays
+    };
+    if (observedFromMs === null) {
+      return {
+        measurable: false,
+        ...modeBase,
+        cold_after_days: relative ? floorDays : t,
+        achieved_share_pct: null,
+        floor_applied: false,
+        derived_days: null,
+        eligible_repos: null,
+        cold_bound_only: null,
+        ...base,
+        bucket_edges: null,
+        bucket_labels: null,
+        repos: null,
+        teams: null,
+        totals: null
+      };
+    }
+    const facts = [];
+    for (const acc of byRepo.values()) {
+      const observed = observedById.get(acc.repoId) === true;
+      const idleDays = acc.movementAt === null ? null : daysBetween(acc.movementAt, nowMs);
+      const boundStart = acc.earliestFirstSeen === null ? observedFromMs : Math.max(observedFromMs, acc.earliestFirstSeen);
+      const idleBoundDays = idleDays === null ? daysBetween(boundStart, nowMs) : null;
+      const idleReading = idleDays != null ? idleDays : idleBoundDays;
+      let disappearedAt = null;
+      let disappearedCount = 0;
+      for (const [at, count] of acc.disappeared) {
+        if (count > disappearedCount || count === disappearedCount && disappearedAt !== null && at > disappearedAt) {
+          disappearedAt = at;
+          disappearedCount = count;
+        }
+      }
+      facts.push({
+        acc,
+        observed,
+        idleDays,
+        idleBoundDays,
+        idleReading,
+        disappearedAt,
+        disappearedCount,
+        // Eligible for the share: still scanned, and something is still open on it. A repository
+        // the scanner lost is not evidence about engagement, and one with nothing open cannot be
+        // in a zone that measures unclosed work.
+        eligible: observed && acc.open > 0
+      });
+    }
+    const eligible = facts.filter((f) => f.eligible);
+    const eligibleRepos = eligible.length;
+    let derivedDays = null;
+    let floorApplied = false;
+    let effective = t;
+    if (relative) {
+      if (eligibleRepos > 0) {
+        const readings = eligible.map((f) => f.idleReading).sort((a, b) => b - a);
+        const k = Math.min(eligibleRepos, Math.max(1, Math.ceil(targetSharePct / 100 * eligibleRepos)));
+        derivedDays = Math.floor(readings[k - 1]);
+        effective = Math.max(derivedDays, floorDays);
+        floorApplied = derivedDays < floorDays;
+      } else {
+        effective = floorDays;
+        derivedDays = null;
+        floorApplied = false;
+      }
+    }
+    const bucketEdges = [0, effective / 3, 2 * effective / 3, effective];
+    const bucketLabels = [
+      `${fmtDays(0)}\u2013${fmtDays(effective / 3)} d`,
+      `${fmtDays(effective / 3)}\u2013${fmtDays(2 * effective / 3)} d`,
+      `${fmtDays(2 * effective / 3)}\u2013${fmtDays(effective)} d`,
+      `\u2265 ${fmtDays(effective)} d`,
+      "not yet measurable"
+    ];
+    const repos = [];
+    let coldBoundOnly = 0;
+    for (const f of facts) {
+      const { acc, observed, idleDays, idleBoundDays, idleReading, disappearedAt, disappearedCount } = f;
+      let verdict;
+      if (!observed) verdict = "unobserved";
+      else if (acc.open === 0) verdict = "clear";
+      else if (idleDays !== null && idleDays >= effective) verdict = "cold";
+      else if (idleDays === null && idleBoundDays !== null && idleBoundDays >= effective) verdict = "cold";
+      else if (idleDays !== null) verdict = "warm";
+      else verdict = "watching";
+      if (verdict === "cold" && idleDays === null) coldBoundOnly += 1;
+      const bucket = verdict === "unobserved" || verdict === "clear" ? null : verdict === "watching" ? 4 : bucketOf(idleReading, effective);
+      repos.push({
+        repo_id: acc.repoId,
+        repo_name: acc.repoName,
+        project: acc.project,
+        open_findings: acc.open,
+        open_high_risk: acc.openHigh,
+        oldest_open_age_days: acc.oldestOpenFirstSeen === null ? null : daysBetween(acc.oldestOpenFirstSeen, nowMs),
+        last_movement_at: toIso(acc.movementAt),
+        last_movement_kind: acc.movementKind,
+        idle_days: idleDays,
+        idle_bound_days: idleBoundDays,
+        idle_is_bound: idleDays === null,
+        idle_reading_days: idleReading,
+        observed,
+        last_observed_at: toIso(acc.lastSeen),
+        disappeared_at: toIso(disappearedAt),
+        disappeared_at_last_observation: disappearedCount,
+        reopened_open: acc.reopenedOpen,
+        verdict,
+        cold: verdict === "cold",
+        bucket
+      });
+    }
+    repos.sort(
+      (a, b) => {
+        var _a2, _b2;
+        return VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.open_findings - a.open_findings || cmp((_a2 = a.repo_name) != null ? _a2 : a.repo_id, (_b2 = b.repo_name) != null ? _b2 : b.repo_id);
+      }
+    );
+    const teams = rankTeams(rollUp(repos), mode, targetSharePct);
+    const totals = totalsOf(repos, teams);
+    return {
+      measurable: true,
+      ...modeBase,
+      cold_after_days: effective,
+      achieved_share_pct: totals.cold_repo_share_pct,
+      floor_applied: floorApplied,
+      derived_days: derivedDays,
+      eligible_repos: eligibleRepos,
+      cold_bound_only: coldBoundOnly,
+      ...base,
+      bucket_edges: bucketEdges,
+      bucket_labels: bucketLabels,
+      repos,
+      teams,
+      totals
+    };
+  }
+  function rollUp(repos) {
+    const byProject = /* @__PURE__ */ new Map();
+    for (const r of repos) {
+      const list = byProject.get(r.project);
+      if (list) list.push(r);
+      else byProject.set(r.project, [r]);
+    }
+    const out = [];
+    for (const [project2, list] of byProject) {
+      const buckets = [0, 0, 0, 0, 0];
+      const bucketOpen = [0, 0, 0, 0, 0];
+      let observed = 0;
+      let unobserved = 0;
+      let withOpen = 0;
+      let coldRepos = 0;
+      let watching = 0;
+      let warm = 0;
+      let clear = 0;
+      let openFindings = 0;
+      let openInCold = 0;
+      let highInCold = 0;
+      let openInUnobserved = 0;
+      let lastMovement = null;
+      for (const r of list) {
+        openFindings += r.open_findings;
+        if (r.observed) {
+          observed += 1;
+          const at = parseTs(r.last_movement_at);
+          if (at !== null && (lastMovement === null || at > lastMovement)) lastMovement = at;
+        } else {
+          unobserved += 1;
+          openInUnobserved += r.open_findings;
+        }
+        if (r.bucket !== null) {
+          buckets[r.bucket] += 1;
+          bucketOpen[r.bucket] += r.open_findings;
+        }
+        switch (r.verdict) {
+          case "cold":
+            coldRepos += 1;
+            withOpen += 1;
+            openInCold += r.open_findings;
+            highInCold += r.open_high_risk;
+            break;
+          case "warm":
+            warm += 1;
+            withOpen += 1;
+            break;
+          case "watching":
+            watching += 1;
+            withOpen += 1;
+            break;
+          case "clear":
+            clear += 1;
+            break;
+          default:
+            break;
+        }
+      }
+      const verdict = withOpen === 0 ? "clear" : coldRepos === withOpen ? "fully-cold" : coldRepos > 0 ? "partly-cold" : "warm";
+      out.push({
+        project: project2,
+        label: project2 != null ? project2 : COLD_PROJECT_NONE,
+        repos: list.length,
+        repos_observed: observed,
+        repos_unobserved: unobserved,
+        repos_with_open: withOpen,
+        cold_repos: coldRepos,
+        watching_repos: watching,
+        warm_repos: warm,
+        clear_repos: clear,
+        open_findings: openFindings,
+        open_in_cold: openInCold,
+        high_risk_in_cold: highInCold,
+        open_in_unobserved: openInUnobserved,
+        cold_share_pct: safePct(coldRepos, withOpen),
+        last_movement_at: toIso(lastMovement),
+        verdict,
+        // Filled by `rankTeams`, which runs over the finished roll-up: the rank is a fact about
+        // the whole set of projects, so no single project's fold can know it.
+        relative_rank: null,
+        in_coldest_share: false,
+        buckets,
+        bucket_open: bucketOpen
+      });
+    }
+    out.sort(
+      (a, b) => b.cold_repos - a.cold_repos || b.open_in_cold - a.open_in_cold || cmp(a.label, b.label)
+    );
+    return out;
+  }
+  function rankTeams(teams, mode, targetSharePct) {
+    var _a, _b;
+    const ranked = teams.filter((team) => team.repos_with_open > 0).sort(
+      (a, b) => {
+        var _a2, _b2;
+        return ((_a2 = b.cold_share_pct) != null ? _a2 : 0) - ((_b2 = a.cold_share_pct) != null ? _b2 : 0) || b.open_in_cold - a.open_in_cold || cmp(a.label, b.label);
+      }
+    );
+    const rankOf = /* @__PURE__ */ new Map();
+    ranked.forEach((team, i) => rankOf.set(team, i + 1));
+    const total = ranked.length;
+    const withCold = ranked.filter((team) => team.cold_repos > 0).length;
+    let want = 0;
+    if (mode === "relative" && withCold > 0 && targetSharePct !== null) {
+      want = Math.min(withCold, Math.max(1, Math.ceil(targetSharePct / 100 * total)));
+      while (want < withCold && ((_a = ranked[want].cold_share_pct) != null ? _a : 0) === ((_b = ranked[want - 1].cold_share_pct) != null ? _b : 0) && ranked[want].open_in_cold === ranked[want - 1].open_in_cold) {
+        want += 1;
+      }
+    }
+    return teams.map((team) => {
+      var _a2;
+      const rank = (_a2 = rankOf.get(team)) != null ? _a2 : null;
+      return { ...team, relative_rank: rank, in_coldest_share: rank !== null && rank <= want };
+    });
+  }
+  function totalsOf(repos, teams) {
+    const buckets = [0, 0, 0, 0, 0];
+    const bucketOpen = [0, 0, 0, 0, 0];
+    const t = {
+      repos: repos.length,
+      repos_observed: 0,
+      repos_unobserved: 0,
+      repos_with_open: 0,
+      cold_repos: 0,
+      watching_repos: 0,
+      warm_repos: 0,
+      clear_repos: 0,
+      open_findings: 0,
+      open_in_cold: 0,
+      high_risk_in_cold: 0,
+      open_in_unobserved: 0,
+      cold_repo_share_pct: null,
+      cold_backlog_share_pct: null,
+      teams: teams.length,
+      teams_fully_cold: 0,
+      teams_partly_cold: 0,
+      teams_in_coldest_share: 0,
+      repos_no_project: 0,
+      buckets,
+      bucket_open: bucketOpen
+    };
+    for (const team of teams) {
+      t.repos_observed += team.repos_observed;
+      t.repos_unobserved += team.repos_unobserved;
+      t.repos_with_open += team.repos_with_open;
+      t.cold_repos += team.cold_repos;
+      t.watching_repos += team.watching_repos;
+      t.warm_repos += team.warm_repos;
+      t.clear_repos += team.clear_repos;
+      t.open_findings += team.open_findings;
+      t.open_in_cold += team.open_in_cold;
+      t.high_risk_in_cold += team.high_risk_in_cold;
+      t.open_in_unobserved += team.open_in_unobserved;
+      if (team.verdict === "fully-cold") t.teams_fully_cold += 1;
+      if (team.verdict === "partly-cold") t.teams_partly_cold += 1;
+      if (team.in_coldest_share) t.teams_in_coldest_share += 1;
+      if (team.project === null) t.repos_no_project = team.repos;
+      for (let i = 0; i < 5; i += 1) {
+        buckets[i] += team.buckets[i];
+        bucketOpen[i] += team.bucket_open[i];
+      }
+    }
+    t.cold_repo_share_pct = safePct(t.cold_repos, t.repos_with_open);
+    t.cold_backlog_share_pct = safePct(t.open_in_cold, t.open_findings);
+    return t;
+  }
+  function coldZoneHeadline(result) {
+    return {
+      measurable: result.measurable,
+      mode: result.mode,
+      cold_after_days: result.cold_after_days,
+      fixed_after_days: result.fixed_after_days,
+      target_share_pct: result.target_share_pct,
+      achieved_share_pct: result.achieved_share_pct,
+      floor_days: result.floor_days,
+      floor_applied: result.floor_applied,
+      derived_days: result.derived_days,
+      eligible_repos: result.eligible_repos,
+      cold_bound_only: result.cold_bound_only,
+      observed_from: result.observed_from,
+      as_of: result.as_of,
+      totals: result.totals,
+      row_count: result.row_count,
+      dropped_no_repo: result.dropped_no_repo,
+      unclassified_secrets: result.unclassified_secrets,
+      scopes_without_scan: result.scopes_without_scan
+    };
+  }
+
+  // src/domain/movementDecomposition.ts
+  var DAY_MS8 = 864e5;
+  function isOpen5(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function addCount(total, v, refused) {
@@ -6212,7 +6784,7 @@ var Server = (() => {
         else if (src === RESOLUTION_DISAPPEARED) bounded += 1;
         else unattributed += 1;
       }
-      if (gateSet && isOpen4(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
+      if (gateSet && isOpen5(row.status) && !gateSet.has(normalizeSeverity(row.severity))) {
         outsideGate += 1;
       }
       if (first === null) {
@@ -6249,25 +6821,25 @@ var Server = (() => {
     const flat = scans.filter((s2) => s2["scope"] === scope).map((s2) => parseTs(s2["ts"])).filter((t) => t !== null).sort((a, b) => a - b);
     if (!flat.length) return { since: null, until: null, days: null, reason: "noScans" };
     const until = flat[flat.length - 1];
-    const spanDays = Math.round((until - flat[0]) / DAY_MS7 * 10) / 10;
+    const spanDays = Math.round((until - flat[0]) / DAY_MS8 * 10) / 10;
     if (flat.length === 1) return { since: null, until, days: 0, reason: "oneScan" };
-    const cutoff = until - minDays * DAY_MS7;
+    const cutoff = until - minDays * DAY_MS8;
     for (let i = flat.length - 2; i >= 0; i -= 1) {
       const t = flat[i];
       if (t <= cutoff) {
-        return { since: t, until, days: Math.round((until - t) / DAY_MS7 * 10) / 10, reason: null };
+        return { since: t, until, days: Math.round((until - t) / DAY_MS8 * 10) / 10, reason: null };
       }
     }
     return { since: null, until, days: spanDays, reason: "tooClose" };
   }
 
   // src/domain/assets.ts
-  var DAY_MS8 = 864e5;
+  var DAY_MS9 = 864e5;
   var DAYS_PER_MONTH = 30.4375;
-  function isOpen5(status) {
+  function isOpen6(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
-  function safePct(numerator, denominator) {
+  function safePct2(numerator, denominator) {
     if (numerator === null || denominator === null) return null;
     return denominator > 0 ? numerator / denominator * 100 : null;
   }
@@ -6275,11 +6847,11 @@ var Server = (() => {
     if (Math.abs(netPct) <= NET_CAPACITY_BAND_PCT) return "keeping-up";
     return netPct > 0 ? "gaining" : "falling-behind";
   }
-  function blank(v) {
+  function blank2(v) {
     return v === null || v === void 0 || String(v).trim() === "";
   }
   function assetGroupOf(value) {
-    return blank(value) ? ASSET_GROUP_UNKNOWN : String(value);
+    return blank2(value) ? ASSET_GROUP_UNKNOWN : String(value);
   }
   function perAsset(rows, windowStart, groupBy) {
     const byKey = /* @__PURE__ */ new Map();
@@ -6306,8 +6878,8 @@ var Server = (() => {
         };
         byKey.set(key, a);
       }
-      if (a.label === null && !blank(row.repo_name)) a.label = String(row.repo_name);
-      const open = isOpen5(row.status);
+      if (a.label === null && !blank2(row.repo_name)) a.label = String(row.repo_name);
+      const open = isOpen6(row.status);
       const high = risk === "high";
       if (open) a.density += 1;
       if (high && open) {
@@ -6326,8 +6898,8 @@ var Server = (() => {
       }
     }
     for (const a of byKey.values()) {
-      a.coveragePct = safePct(a.tp, a.tp + a.fn);
-      a.netPct = a.closed === null || a.opened === null ? null : safePct(a.closed - a.opened, a.openAtStart);
+      a.coveragePct = safePct2(a.tp, a.tp + a.fn);
+      a.netPct = a.closed === null || a.opened === null ? null : safePct2(a.closed - a.opened, a.openAtStart);
       a.verdict = a.netPct === null ? null : verdictOf2(a.netPct);
     }
     return [...byKey.values()];
@@ -6339,7 +6911,7 @@ var Server = (() => {
     const mmcr = [];
     if (windowMonths !== null) {
       for (const a of assets) {
-        const rate = safePct(a.closed, a.openAtStart);
+        const rate = safePct2(a.closed, a.openAtStart);
         if (rate !== null) mmcr.push(rate / windowMonths);
       }
     }
@@ -6363,15 +6935,15 @@ var Server = (() => {
       density_p25: quantile(densities, 0.25),
       density_p50: quantile(densities, 0.5),
       density_p75: quantile(densities, 0.75),
-      assets_with_high_risk_pct: safePct(footholds, assets.length),
+      assets_with_high_risk_pct: safePct2(footholds, assets.length),
       assets_with_high_risk: coverages.length,
       asset_coverage_p50: quantile(coverages, 0.5),
       km_median_days: km.median,
       km_median_lower_bound: km.medianLowerBound,
       mmcr_p50: quantile(mmcr, 0.5),
-      falling_behind_pct: safePct(fallingBehind, flowing),
-      maintaining_pct: safePct(maintaining, flowing),
-      gaining_pct: safePct(gaining, flowing),
+      falling_behind_pct: safePct2(fallingBehind, flowing),
+      maintaining_pct: safePct2(maintaining, flowing),
+      gaining_pct: safePct2(gaining, flowing),
       assets_flowing: flowing,
       window_months: windowMonths,
       population,
@@ -6402,7 +6974,7 @@ var Server = (() => {
     if (observedFrom !== null && windowStart === null) {
       throw new Error(`assetProfile: unparseable observedFrom (${JSON.stringify(observedFrom)})`);
     }
-    const windowMonths = windowStart === null ? null : Math.max((nowMs - windowStart) / (DAY_MS8 * DAYS_PER_MONTH), 1);
+    const windowMonths = windowStart === null ? null : Math.max((nowMs - windowStart) / (DAY_MS9 * DAYS_PER_MONTH), 1);
     let unclassifiedSecrets = 0;
     const classified = [];
     for (const row of rows) {
@@ -6417,7 +6989,7 @@ var Server = (() => {
     let droppedNoAsset = 0;
     const kept = [];
     for (const c of population_) {
-      if (blank(c.row.repo_id)) {
+      if (blank2(c.row.repo_id)) {
         droppedNoAsset += 1;
         continue;
       }
@@ -6469,7 +7041,7 @@ var Server = (() => {
   }
 
   // src/domain/secretsLifecycle.ts
-  var DAY_MS9 = 864e5;
+  var DAY_MS10 = 864e5;
   var MEASURED_STATES = /* @__PURE__ */ new Set(["VALID", "INVALID"]);
   var SEGMENT_NONE = "(none)";
   var DEFAULT_REVOKE_SLA_DAYS = 7;
@@ -6536,7 +7108,7 @@ var Server = (() => {
       }
       const died = parseTs(row.rotated_at);
       if (died !== null) {
-        const days = (died - born) / DAY_MS9;
+        const days = (died - born) / DAY_MS10;
         if (!Number.isFinite(days) || days < 0) {
           excludedNoClock += 1;
           continue;
@@ -6554,7 +7126,7 @@ var Server = (() => {
         excludedNoClock += 1;
         continue;
       }
-      const age = (opts.now - born) / DAY_MS9;
+      const age = (opts.now - born) / DAY_MS10;
       if (!Number.isFinite(age) || age < 0) {
         excludedNoClock += 1;
         continue;
@@ -6647,7 +7219,7 @@ var Server = (() => {
     3: "Critical code weakness"
   };
   var TIER_SCOPES = { 1: "secrets", 2: "sca", 3: "sast" };
-  function isOpen6(status) {
+  function isOpen7(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function pastSla(row, targets) {
@@ -6697,7 +7269,7 @@ var Server = (() => {
     let openTotal = 0;
     let ranked = 0;
     for (const row of rows) {
-      if (!isOpen6(row.status)) continue;
+      if (!isOpen7(row.status)) continue;
       openTotal += 1;
       const verdict = classify(row, targets);
       if ("reason" in verdict) {
@@ -6866,8 +7438,8 @@ var Server = (() => {
   }
 
   // src/server/readModels.ts
-  var DAY_MS10 = 864e5;
-  var WEEK_MS = 7 * DAY_MS10;
+  var DAY_MS11 = 864e5;
+  var WEEK_MS = 7 * DAY_MS11;
   var CLOCK_TTL_SEC = 3600;
   var OLDEST_TOP_N = 100;
   var WARM_BUDGET_MS = 27e4;
@@ -6882,13 +7454,18 @@ var Server = (() => {
     const project2 = projectRaw ? projectRaw : null;
     const domainRaw = settings.domainView;
     const domain = domainRaw ? domainRaw : null;
+    const cold = effectiveColdZoneSettings(settings);
     return {
       scope,
       severities,
       showNoFix: (p == null ? void 0 : p.showNoFix) !== false,
       project: project2,
       domain,
-      slaTargets: effectiveSlaTargets(settings)
+      slaTargets: effectiveSlaTargets(settings),
+      coldAfterDays: cold.coldAfterDays,
+      coldZoneMode: cold.mode,
+      coldTargetSharePct: cold.targetSharePct,
+      coldFloorDays: cold.floorDays
     };
   }
   function keyOf(n2) {
@@ -6914,6 +7491,7 @@ var Server = (() => {
   function __resetModelMemosForTest() {
     baseMemo = void 0;
     clockMemo = void 0;
+    newestScanMemo = void 0;
   }
   var clockMemo;
   function ledgerClock(scope) {
@@ -6944,7 +7522,26 @@ var Server = (() => {
     }
     return newest === null ? { asOf: Date.now(), asOfSource: "wallClock", observedFrom: earliestIso } : { asOf: newest, asOfSource: "scan", observedFrom: earliestIso };
   }
-  function isOpen7(status) {
+  var newestScanMemo;
+  function newestScanByScope() {
+    const version = dataVersion();
+    if (!newestScanMemo || newestScanMemo.version !== version) {
+      const byScope3 = {};
+      const newestMs = {};
+      for (const s2 of loadScanRows()) {
+        const ms = parseTs(s2.ts);
+        if (ms === null) continue;
+        const scope = s2.scope;
+        const seen = newestMs[scope];
+        if (seen !== void 0 && ms <= seen) continue;
+        newestMs[scope] = ms;
+        byScope3[scope] = { scan_id: s2.scan_id, ts: s2.ts };
+      }
+      newestScanMemo = { version, byScope: byScope3 };
+    }
+    return newestScanMemo.byScope;
+  }
+  function isOpen8(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
   function scopedRows(rows, n2) {
@@ -6973,10 +7570,10 @@ var Server = (() => {
   }
   function atLedgerClock(rows, asOf) {
     return rows.map((r) => {
-      if (!isOpen7(r.status)) return r;
+      if (!isOpen8(r.status)) return r;
       const first = parseTs(r.first_seen);
       if (first === null) return r;
-      return { ...r, age_days: Math.max(0, asOf - first) / DAY_MS10 };
+      return { ...r, age_days: Math.max(0, asOf - first) / DAY_MS11 };
     });
   }
   function coverageOf2(rows, applies, measured) {
@@ -7156,10 +7753,11 @@ var Server = (() => {
     const snap = baseSnapshot();
     const scoped = scopedRows(snap.rows, n2);
     const rows = visibleRows(snap.rows, n2);
+    const clock = ledgerClock(n2.scope);
     const counts = {};
     let open = 0;
     for (const r of rows) {
-      if (!isOpen7(r.status)) continue;
+      if (!isOpen8(r.status)) continue;
       open += 1;
       const s2 = normalizeSeverity(r.severity);
       counts[s2] = ((_a = counts[s2]) != null ? _a : 0) + 1;
@@ -7171,8 +7769,8 @@ var Server = (() => {
         group: scope,
         dimension: "scope",
         total: sub.length,
-        open: sub.filter((r) => isOpen7(r.status)).length,
-        resolved: sub.filter((r) => !isOpen7(r.status)).length,
+        open: sub.filter((r) => isOpen8(r.status)).length,
+        resolved: sub.filter((r) => !isOpen8(r.status)).length,
         kmMedian: km.median,
         kmMedianLowerBound: km.medianLowerBound,
         awaiting: awaitingVendorFix(sub).overall
@@ -7192,6 +7790,26 @@ var Server = (() => {
       // `unranked.insideSla` — agree with the same windows `mttrModel` measures against.
       fixNext: fixNext(rows, { now: snap.now, slaTargets: n2.slaTargets }),
       movement: openMovement(rows, n2),
+      // The cold-zone HEADLINE — totals, clock and threshold, never the per-repo or per-team
+      // arrays (`coldZoneHeadline`'s own "capped in the model, not sliced at the edge" note).
+      // The Repositories page draws the tables; this page draws one figure out of the totals.
+      //
+      // MEASURED AT `ledgerClock(n.scope)`, NOT AT `snap.now`, and that is the whole care this
+      // block needs. Every number in it is "how long since something happened": dated by the
+      // wall clock it would grow by an hour every time this 1 h cache entry was rebuilt, so a
+      // register nobody had synced for a month would drift into the cold zone on its own, with
+      // no new observation behind the change. `coldZoneAsOfSource` publishes which clock that
+      // was — "wallClock" when there is no scan to date the register from.
+      coldZone: coldZoneHeadline(coldZoneProfile(rows, {
+        now: clock.asOf,
+        observedFrom: clock.observedFrom,
+        coldAfterDays: n2.coldAfterDays,
+        mode: n2.coldZoneMode,
+        targetSharePct: n2.coldTargetSharePct,
+        floorDays: n2.coldFloorDays,
+        newestScanByScope: newestScanByScope()
+      })),
+      coldZoneAsOfSource: clock.asOfSource,
       tiers: riskTierStats(scopedTierRows(rows), void 0),
       signalCoverage: signalCoverage(rows)
     };
@@ -7258,7 +7876,7 @@ var Server = (() => {
     }
     let since = null;
     for (let i = instants.length - 2; i >= 0; i -= 1) {
-      if ((until.ms - instants[i].ms) / DAY_MS10 >= MOVEMENT_MIN_GAP_DAYS) {
+      if ((until.ms - instants[i].ms) / DAY_MS11 >= MOVEMENT_MIN_GAP_DAYS) {
         since = instants[i];
         break;
       }
@@ -7270,7 +7888,7 @@ var Server = (() => {
         syncs: instants.length,
         since: null,
         until: until.iso,
-        days: round12((until.ms - instants[0].ms) / DAY_MS10)
+        days: round12((until.ms - instants[0].ms) / DAY_MS11)
       };
     }
     const perScope = {};
@@ -7278,7 +7896,7 @@ var Server = (() => {
     let prevOpen = 0;
     for (const scope of scopes) {
       const sub = rows.filter((r) => r.scope === scope);
-      const nowOpen = sub.filter((r) => isOpen7(r.status)).length;
+      const nowOpen = sub.filter((r) => isOpen8(r.status)).length;
       const thenOpen = sub.filter((r) => openAsOf(r, since.ms)).length;
       perScope[scope] = { open: nowOpen, prevOpen: thenOpen, delta: nowOpen - thenOpen };
       open += nowOpen;
@@ -7290,7 +7908,7 @@ var Server = (() => {
       syncs: instants.length,
       since: since.iso,
       until: until.iso,
-      days: round12((until.ms - since.ms) / DAY_MS10),
+      days: round12((until.ms - since.ms) / DAY_MS11),
       perScope,
       total: { open, prevOpen, delta: open - prevOpen }
     };
@@ -7299,7 +7917,14 @@ var Server = (() => {
     const n2 = norm(p);
     return cached(
       "dsExecutive1",
-      { ...keyOf(n2), slaTargets: n2.slaTargets },
+      {
+        ...keyOf(n2),
+        slaTargets: n2.slaTargets,
+        coldAfterDays: n2.coldAfterDays,
+        coldZoneMode: n2.coldZoneMode,
+        coldTargetSharePct: n2.coldTargetSharePct,
+        coldFloorDays: n2.coldFloorDays
+      },
       () => buildExecutive(n2),
       CLOCK_TTL_SEC
     );
@@ -7346,8 +7971,8 @@ var Server = (() => {
       severities: isSecrets ? null : n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen7(r.status)).length,
-      resolved: rows.filter((r) => !isOpen7(r.status)).length,
+      open: rows.filter((r) => isOpen8(r.status)).length,
+      resolved: rows.filter((r) => !isOpen8(r.status)).length,
       // The severity axis, or the reason there is not one.
       severityAxis: isSecrets ? { supported: false, reason: SEVERITY_AXIS_REFUSAL } : { supported: true },
       counts: isSecrets ? null : countsOf(rows),
@@ -7445,7 +8070,7 @@ var Server = (() => {
     const severities = severityFilterSupported ? n2.severities : null;
     const scoped = visibleRows(snap.rows, { ...n2, scope, severities });
     const status = normRowStatus(p == null ? void 0 : p.status);
-    const byStatus = status === "all" ? scoped : scoped.filter((r) => isOpen7(r.status) === (status === "open"));
+    const byStatus = status === "all" ? scoped : scoped.filter((r) => isOpen8(r.status) === (status === "open"));
     const isSecrets = scope === "secrets";
     const validation = isSecrets ? normFilterList(p == null ? void 0 : p.validation).filter((v) => SECRET_VALIDATION_STATES.includes(v)) : [];
     const grades = isSecrets ? Array.from(new Set(scoped.map((r) => {
@@ -7539,7 +8164,7 @@ var Server = (() => {
       // refusal is a property of the register, so that is all it states.
       severityAxis: { supported: false, reason: SEVERITY_AXIS_REFUSAL },
       rowCount: rows.length,
-      open: rows.filter((r) => isOpen7(r.status)).length,
+      open: rows.filter((r) => isOpen8(r.status)).length,
       coverage: validationCoverage(secretRows),
       validity: postDetectionValidityRate(secretRows),
       timeToRevoke: timeToRevoke(secretRows, { now: snap.now }),
@@ -7661,12 +8286,33 @@ var Server = (() => {
       rowCount: visible.length,
       byRepo: assetProfilePopulations(rows, { ...opts, groupBy: "repo" }),
       byLanguage: assetProfilePopulations(rows, { ...opts, groupBy: "language" }),
+      // `visible`, NOT the re-censored `rows` copy: this module never reads `age_days`, so
+      // handing it the rewritten rows would only hide which population it actually measured.
+      coldZone: coldZoneProfile(visible, {
+        now: clock.asOf,
+        observedFrom: clock.observedFrom,
+        coldAfterDays: n2.coldAfterDays,
+        mode: n2.coldZoneMode,
+        targetSharePct: n2.coldTargetSharePct,
+        floorDays: n2.coldFloorDays,
+        newestScanByScope: newestScanByScope()
+      }),
       signalCoverage: signalCoverage(visible)
     };
   }
   function reposModel(p) {
     const n2 = norm(p);
-    return durablyCached("dsRepos1", keyOf(n2), () => buildRepos(n2));
+    return durablyCached(
+      "dsRepos2",
+      {
+        ...keyOf(n2),
+        coldAfterDays: n2.coldAfterDays,
+        coldZoneMode: n2.coldZoneMode,
+        coldTargetSharePct: n2.coldTargetSharePct,
+        coldFloorDays: n2.coldFloorDays
+      },
+      () => buildRepos(n2)
+    );
   }
   var MOVEMENT_WINDOW_DAYS = 28;
   function movementNoteFor(win) {
@@ -7721,8 +8367,8 @@ var Server = (() => {
       movementNote,
       kpis: {
         tracked: rows.length,
-        open: rows.filter((r) => isOpen7(r.status)).length,
-        resolvedAllTime: rows.filter((r) => !isOpen7(r.status)).length,
+        open: rows.filter((r) => isOpen8(r.status)).length,
+        resolvedAllTime: rows.filter((r) => !isOpen8(r.status)).length,
         // THE KM MEDIAN, AND NOTHING BESIDE IT — the comment above this block used to say
         // exactly that while the field below it shipped `medianMttr: overall.mttr_median`, the
         // plain median over resolved rows. The page drew THAT one, captioned with the
@@ -8705,6 +9351,13 @@ var Server = (() => {
         // page does not draw.
         fixNext: exec["fixNext"],
         movement: exec["movement"],
+        // The cold zone, already the HEADLINE rather than the profile — `executiveModel` calls
+        // `coldZoneHeadline`, so the per-repository and per-project arrays never enter this
+        // payload and there is nothing here to slice. `coldZoneAsOfSource` travels with it
+        // because this is the one block on the page dated by the LEDGER's clock rather than by
+        // `asOf` above, and a figure that is measured on a different clock has to say so.
+        coldZone: exec["coldZone"],
+        coldZoneAsOfSource: exec["coldZoneAsOfSource"],
         tiers: exec["tiers"],
         signalCoverage: exec["signalCoverage"]
       };
@@ -8830,20 +9483,20 @@ var Server = (() => {
     const ageHistogramByScope = {};
     for (const scope of SCOPES) {
       const scoped = rows.filter((r) => r["scope"] === scope);
-      const isOpen8 = (r) => isOpenRow(r["status"]);
+      const isOpen9 = (r) => isOpenRow(r["status"]);
       byScope3[scope] = {
         total: scoped.length,
-        openTotal: scoped.filter(isOpen8).length,
+        openTotal: scoped.filter(isOpen9).length,
         bySeverity: severityCensus(
           scoped,
           (r) => normalizeSeverity(r["severity"]),
-          isOpen8
+          isOpen9
         )
       };
       ageHistogramByScope[scope] = ageHistogram(
         scoped,
         (r) => normalizeSeverity(r["severity"]),
-        isOpen8,
+        isOpen9,
         (r) => r["age_days"]
       );
     }

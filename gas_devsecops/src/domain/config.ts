@@ -55,6 +55,81 @@ export const SLA_TARGETS: Record<string, number> = {
 };
 
 /**
+ * The cold-zone window in days: how long a repository can go without a finding being
+ * resolved, removed or rotated before `src/domain/coldZone.ts` calls it cold.
+ *
+ * 90 DAYS IS A CHOICE, NOT A MEASUREMENT, and it sits here beside `SLA_TARGETS` because it
+ * is the same kind of fact — an operator's statement of what "too long" means, which the
+ * Settings page can change. It is deliberately NOT one of the SLA targets: those ask "was
+ * THIS finding fixed in time", one row at a time, and every one of them would still be met
+ * by a repository nobody has opened in a year as long as the findings on it are LOW. This
+ * asks the other question — has anything at all happened here — so it is a single window for
+ * the whole repository and it matches the longest routine remediation window (LOW = 90 d):
+ * a quarter with no movement of any severity is a silence, not a backlog.
+ *
+ * The bounds are guardrails for the settings clamp, and each end is a refusal:
+ *   MIN 7    below a week the figure measures the scan cadence, not engagement — a register
+ *            synced weekly would show every repository cold on the first quiet Monday.
+ *   MAX 365  past a year "cold" stops being actionable; a repository silent for longer than
+ *            the retention window has nothing left on record to explain the silence with.
+ */
+export const DEFAULT_COLD_AFTER_DAYS = 90;
+export const COLD_AFTER_DAYS_MIN = 7;
+export const COLD_AFTER_DAYS_MAX = 365;
+
+/**
+ * The SECOND way to draw the same line: relative ("dynamic") cold zoning.
+ *
+ * `fixed` is the window above — a repository is cold after `coldAfterDays` of silence, and
+ * the number means the same thing on every estate. `relative` asks the other question: which
+ * repositories are the idlest COMPARED WITH THE REST OF THIS ESTATE? The operator names a
+ * share (the idlest 20%, say) and the line in days is derived from the population, so it
+ * follows the estate instead of standing still while the estate moves underneath it.
+ *
+ * WHY A SHARE IS A LEGITIMATE DEFINITION, and not just a prettier way to sort:
+ *   * EPSS publishes a PERCENTILE beside its probability for exactly this reason — a raw
+ *     score is unreadable without the distribution it came from, and a percentile line stays
+ *     consistent as the distribution shifts, where a fixed line silently changes meaning.
+ *   * "the top Y% of assets by relative risk" is an established alternative to fixed numeric
+ *     thresholds in security dashboards, because it bounds the work the number creates.
+ *   * Idle times are HEAVY-TAILED (a few repositories silent for years, most for days). That
+ *     is the regime where data-driven cuts — head/tail breaks, Jiang 2013 — beat fixed bins,
+ *     because a fixed bin over a heavy tail either catches everything or nothing.
+ *
+ * WHAT A DATA-DRIVEN CUT GETS WRONG, and what is here to catch it. Any "idlest X%" rule will
+ * name somebody, however healthy the estate, and that is a slander the register has to be
+ * able to refuse. Two failure modes, two answers:
+ *   1  SMALL n. With four repositories carrying open findings, the idlest 20% is one
+ *      repository — whoever happens to be last, even at three days of silence.
+ *   2  ALL-SIMILAR population. If every repository was touched this week, the idlest 20% are
+ *      still only a few days idle, and calling them cold measures nothing but the sort order.
+ * Both are answered by `DEFAULT_COLD_FLOOR_DAYS`: the derived line is never allowed below the
+ * floor, so a fresh or well-tended estate simply reports fewer cold repositories than the
+ * target asked for — and `coldZone.ts` publishes `derived_days`, `floor_applied` and the
+ * ACHIEVED share beside the target, so the page can say the zone came out smaller than asked
+ * rather than pretending the target was met. The reverse (ties at the cutoff pushing the
+ * achieved share ABOVE the target) is published the same way.
+ *
+ * Bounds, and why each end is a refusal:
+ *   TARGET MIN 1   below one percent the "share" is a rounding artefact of the estate size.
+ *   TARGET MAX 50  past half the estate, "the cold zone" stops naming a minority worth
+ *                  looking at and becomes a statement about the register's own cadence.
+ *   FLOOR MIN 1    a floor of zero is no floor: it would let the derived line sit at "idle
+ *                  since yesterday" on an estate where everything is being worked.
+ *   FLOOR MAX      the fixed window's own maximum, so neither mode can draw a line past the
+ *                  point where "cold" stops being actionable (see `COLD_AFTER_DAYS_MAX`).
+ */
+export type ColdZoneMode = "fixed" | "relative";
+export const COLD_ZONE_MODES: readonly ColdZoneMode[] = ["fixed", "relative"];
+export const DEFAULT_COLD_ZONE_MODE: ColdZoneMode = "fixed";
+export const DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+export const COLD_TARGET_SHARE_PCT_MIN = 1;
+export const COLD_TARGET_SHARE_PCT_MAX = 50;
+export const DEFAULT_COLD_FLOOR_DAYS = 14;
+export const COLD_FLOOR_DAYS_MIN = 1;
+export const COLD_FLOOR_DAYS_MAX = COLD_AFTER_DAYS_MAX;
+
+/**
  * The three registers this product measures, and the ONE identity they share.
  *
  * They are separate scopes rather than a filter column because their remediation clocks

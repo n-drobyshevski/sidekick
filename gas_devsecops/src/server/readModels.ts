@@ -33,7 +33,13 @@
 //                                  KM medians are all as-of NOW. `kmMedianAsOf(base, …, now)`
 //                                  moves every time it is called; a durable copy would say
 //                                  "measured now" and mean "measured whenever the file was
-//                                  written".
+//                                  written". ITS ONE TIME-INVARIANT BLOCK SAYS SO: `coldZone`
+//                                  is measured at `ledgerClock(n.scope)`, not at `snap.now`
+//                                  like everything else here, and publishes
+//                                  `coldZoneAsOfSource` — an idle time is "how long since
+//                                  something happened", so dating it by the wall clock would
+//                                  grow it by an hour every time this entry was rebuilt while
+//                                  the ledger stood still.
 //   mttr          cached, 1 h      SLA arithmetic. `openPastSla` breaches on
 //                                  `age_days > target` with a strict `>`, so a single day
 //                                  moves individual rows across the threshold; the open-age
@@ -65,7 +71,33 @@
 //                                  (for KM censoring), so the rows are re-censored at the
 //                                  ledger clock first — `atLedgerClock()` below. Without that
 //                                  re-censoring the half-life column would be the one
-//                                  wall-clock read hiding inside a durable file.
+//                                  wall-clock read hiding inside a durable file. `coldZone`
+//                                  is durable on the same terms and needs no re-censoring at
+//                                  all: it never reads `age_days`, deriving every duration
+//                                  from `first_seen` and the three movement columns against
+//                                  the ledger clock it is handed. The operator's threshold
+//                                  joins the CACHE KEY (`dsRepos2`), because a saved window
+//                                  changes every verdict in the block — and so do the three
+//                                  RELATIVE-MODE fields (`coldZoneMode`, `coldTargetSharePct`,
+//                                  `coldFloorDays`) added beside it, on the identical
+//                                  argument. NO NAMESPACE BUMP CAME WITH THEM, and the
+//                                  reasoning belongs here beside the `dsRepos1 -> dsRepos2`
+//                                  note (on `reposModel` itself) rather than in a commit
+//                                  message: that bump was needed because the PAYLOAD grew a
+//                                  block under an UNCHANGED key, so a warm file was still
+//                                  addressable and still answered — with a page section
+//                                  missing. This change is the opposite shape. The durable
+//                                  filename is `rm-<name>-<sha1(JSON(params))>`
+//                                  (readModelStore.ts's `readModelFileName` over
+//                                  serverCache.ts's `paramsHash`), so three new fields in the
+//                                  params object move the hash and every pre-existing file
+//                                  becomes UNREACHABLE by the new key: there is nothing stale
+//                                  left to serve, and a bump would only orphan the fixed-mode
+//                                  files an operator who never switches modes is still
+//                                  hitting. The two other staleness guards are unchanged and
+//                                  still hold: `currentStamp()` carries `BUILD_ID`, and
+//                                  `MAX_AGE_MS` is 7 days. The same three fields join
+//                                  `dsExecutive1` below, in the same order.
 //   history       durablyCached    The scan log is a stored fact; the KPI band counts rows and
 //                                  reads `mttr_days`, which is `resolved_at − first_seen` off
 //                                  the ledger. The trend backbone emits one point per saved
@@ -109,9 +141,11 @@ import {
   SCOPES,
   SEVERITY_ORDER,
   ruleForScope,
+  type ColdZoneMode,
   type Scope,
 } from "../domain/config";
-import { effectiveSlaTargets } from "../domain/settingsLogic";
+import { effectiveColdZoneSettings, effectiveSlaTargets } from "../domain/settingsLogic";
+import { coldZoneHeadline, coldZoneProfile, type NewestScan } from "../domain/coldZone";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
@@ -253,6 +287,44 @@ interface NormParams {
    * `lifecycle.mttrFromLedger` and `fixNext`'s matching parameters.
    */
   slaTargets: Record<string, number>;
+  /**
+   * The cold-zone threshold actually in force — `settingsLogic.effectiveColdAfterDays`, read
+   * off the SAME `loadSettings()` call as `project`, `domain` and `slaTargets` above, and NOT
+   * a `ModelParams` field for their reason unchanged: a per-page override would let one caller
+   * publish a cold-repository count no other page on this register would agree with.
+   *
+   * Read through `effectiveColdZoneSettings` rather than off the field directly because
+   * `coldZoneProfile` REFUSES a non-positive threshold (it derives its buckets as thirds of
+   * this number), so a settings row that never went through `cleanSettings` would take the
+   * Repositories page down rather than degrade to the shared default.
+   *
+   * IN FIXED MODE THIS IS THE LINE; IN RELATIVE MODE IT IS NOT. The profile publishes
+   * `cold_after_days` as the EFFECTIVE line whichever mode drew it, and keeps this number as
+   * `fixed_after_days`. Nothing here needs to know which: all four fields go in, one line
+   * comes out.
+   */
+  coldAfterDays: number;
+  /**
+   * Which definition draws the line — `settingsLogic.effectiveColdZoneSettings().mode`, read
+   * off the SAME `loadSettings()` call as everything above it, and NOT a `ModelParams` field
+   * for `slaTargets`' and `coldAfterDays`' reason unchanged: a per-page override would let one
+   * caller publish a cold-repository count no other page on this register would agree with.
+   */
+  coldZoneMode: ColdZoneMode;
+  /**
+   * The share relative mode aims at, per cent. Not a `ModelParams` field, same argument.
+   *
+   * TRAVELS WITH THE MODE, ALWAYS — `coldZoneProfile` THROWS in relative mode when this is
+   * absent, so `norm()` takes it and `floorDays` below from the same
+   * `effectiveColdZoneSettings()` call that produced `coldZoneMode`, never from three separate
+   * reads that could disagree about whether a target was stored. Carried (and keyed) in fixed
+   * mode too, where the profile ignores it: a params object whose shape depends on the mode
+   * would make the two cache keys below mode-shaped as well.
+   */
+  coldTargetSharePct: number;
+  /** The floor the derived line may not go below, in days. Not a `ModelParams` field, same
+   *  argument; travels with the mode for the same reason `coldTargetSharePct` does. */
+  coldFloorDays: number;
 }
 
 /**
@@ -266,8 +338,9 @@ function norm(p?: ModelParams): NormParams {
   const severities = Array.isArray(sevRaw) && sevRaw.length
     ? sevRaw.map((s) => normalizeSeverity(s)).filter((s, i, a) => a.indexOf(s) === i).sort()
     : null;
-  // One `loadSettings()` for both fields it feeds below — `project` and `slaTargets` are two
-  // independent readings of the same settings row, not two separate reasons to fetch it twice.
+  // One `loadSettings()` for every field it feeds below — `project`, `slaTargets` and the four
+  // cold-zone fields are independent readings of the same settings row, not seven separate
+  // reasons to fetch it seven times.
   const settings = loadSettings();
   // `cleanProjectView` already collapses anything that is not a genuine string to "" — this
   // is just the last step, turning that "no scope stored" value into the `null` every other
@@ -277,6 +350,11 @@ function norm(p?: ModelParams): NormParams {
   // The same last step for the domain scope, through the same `cleanViewScope` guarantee.
   const domainRaw = settings.domainView;
   const domain = domainRaw ? domainRaw : null;
+  // ALL FOUR COLD-ZONE FIELDS THROUGH ONE DOOR, off the same settings object. See
+  // `effectiveColdZoneSettings`'s own header: reading the mode from one place and the two
+  // relative-mode numbers from another is exactly how `coldZoneProfile` ends up handed a
+  // relative mode with nothing to aim at, which it throws on.
+  const cold = effectiveColdZoneSettings(settings);
   return {
     scope,
     severities,
@@ -284,6 +362,10 @@ function norm(p?: ModelParams): NormParams {
     project,
     domain,
     slaTargets: effectiveSlaTargets(settings),
+    coldAfterDays: cold.coldAfterDays,
+    coldZoneMode: cold.mode,
+    coldTargetSharePct: cold.targetSharePct,
+    coldFloorDays: cold.floorDays,
   };
 }
 
@@ -342,6 +424,7 @@ function baseSnapshot(): BaseSnapshot {
 export function __resetModelMemosForTest(): void {
   baseMemo = undefined;
   clockMemo = undefined;
+  newestScanMemo = undefined;
 }
 
 interface LedgerClock {
@@ -394,6 +477,45 @@ function buildClock(scope: Scope | null): LedgerClock {
   return newest === null
     ? { asOf: Date.now(), asOfSource: "wallClock", observedFrom: earliestIso }
     : { asOf: newest, asOfSource: "scan", observedFrom: earliestIso };
+}
+
+let newestScanMemo: { version: string; byScope: Partial<Record<Scope, NewestScan>> } | undefined;
+
+/**
+ * The newest scan OF EACH SCOPE — what `coldZone` tests "the scanner still returns this
+ * repository" against.
+ *
+ * PER SCOPE, NOT ONE NEWEST SCAN. A sync that collected sca alone writes one scan row; testing
+ * every row of every register against it would mark every sast and secrets finding in the
+ * estate as having vanished, which is the single worst thing that block could say.
+ *
+ * A SCOPE WITH NO SCAN ON RECORD IS LEFT OUT OF THIS MAP ON PURPOSE. Its absence is the input
+ * `coldZone` reads as "observation is undecidable here" — it keeps those repositories observed
+ * and names the scope in `scopes_without_scan`. Filling the gap with a placeholder (a null
+ * `scan_id`, or the whole-register newest) would turn "we cannot tell" into a claim, and the
+ * claim it would make is the accusing one.
+ *
+ * Memoised beside `clockMemo` and keyed on `dataVersion()` for its reason unchanged: a
+ * mutate-then-read inside one execution must rebuild rather than serve what it just
+ * invalidated.
+ */
+function newestScanByScope(): Partial<Record<Scope, NewestScan>> {
+  const version = dataVersion();
+  if (!newestScanMemo || newestScanMemo.version !== version) {
+    const byScope: Partial<Record<Scope, NewestScan>> = {};
+    const newestMs: Partial<Record<Scope, number>> = {};
+    for (const s of loadScanRows()) {
+      const ms = parseTs(s.ts);
+      if (ms === null) continue;
+      const scope = s.scope;
+      const seen = newestMs[scope];
+      if (seen !== undefined && ms <= seen) continue;
+      newestMs[scope] = ms;
+      byScope[scope] = { scan_id: s.scan_id, ts: s.ts };
+    }
+    newestScanMemo = { version, byScope };
+  }
+  return newestScanMemo.byScope;
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -786,6 +908,8 @@ function buildExecutive(n: NormParams): Rec {
   const snap = baseSnapshot();
   const scoped = scopedRows(snap.rows, n);
   const rows = visibleRows(snap.rows, n);
+  // The one block on this page that is NOT measured at `snap.now`. See `coldZone` below.
+  const clock = ledgerClock(n.scope);
 
   const counts: Record<string, number> = {};
   let open = 0;
@@ -825,6 +949,26 @@ function buildExecutive(n: NormParams): Rec {
     // `unranked.insideSla` — agree with the same windows `mttrModel` measures against.
     fixNext: fixNext(rows, { now: snap.now, slaTargets: n.slaTargets }) as unknown as Rec,
     movement: openMovement(rows, n),
+    // The cold-zone HEADLINE — totals, clock and threshold, never the per-repo or per-team
+    // arrays (`coldZoneHeadline`'s own "capped in the model, not sliced at the edge" note).
+    // The Repositories page draws the tables; this page draws one figure out of the totals.
+    //
+    // MEASURED AT `ledgerClock(n.scope)`, NOT AT `snap.now`, and that is the whole care this
+    // block needs. Every number in it is "how long since something happened": dated by the
+    // wall clock it would grow by an hour every time this 1 h cache entry was rebuilt, so a
+    // register nobody had synced for a month would drift into the cold zone on its own, with
+    // no new observation behind the change. `coldZoneAsOfSource` publishes which clock that
+    // was — "wallClock" when there is no scan to date the register from.
+    coldZone: coldZoneHeadline(coldZoneProfile(rows, {
+      now: clock.asOf,
+      observedFrom: clock.observedFrom,
+      coldAfterDays: n.coldAfterDays,
+      mode: n.coldZoneMode,
+      targetSharePct: n.coldTargetSharePct,
+      floorDays: n.coldFloorDays,
+      newestScanByScope: newestScanByScope(),
+    })),
+    coldZoneAsOfSource: clock.asOfSource,
     tiers: riskTierStats(scopedTierRows(rows), undefined),
     signalCoverage: signalCoverage(rows),
   };
@@ -976,9 +1120,28 @@ export function executiveModel(p?: ModelParams): Rec {
   const n = norm(p);
   // `slaTargets` joins the key because `fixNext` (inside `buildExecutive`) reads it — see
   // `mttrModel`'s matching comment for why a param the compute reads has to be in the key.
+  // `coldAfterDays` joins it beside them on the identical argument, one block later: the
+  // cold-zone headline is computed from it, so an operator saving a new window and reloading
+  // would otherwise keep reading the OLD cold count for up to `CLOCK_TTL_SEC` off an entry
+  // whose params look identical to the one now in force.
+  //
+  // AND THE THREE RELATIVE-MODE FIELDS JOIN IT FOR THE SAME REASON, IN A FIXED ORDER matching
+  // `reposModel`'s. The mode is the sharpest case of the rule: flipping fixed -> relative
+  // changes nothing about `coldAfterDays`, so without `coldZoneMode` in the key the params
+  // would be byte-identical across a change that moves every verdict in the block. They are
+  // keyed in BOTH modes rather than only in the one that reads them, so that a params object
+  // never changes SHAPE with the mode — a key that sometimes carries three fewer fields makes
+  // "same params" mean two different things.
   return cached(
     "dsExecutive1",
-    { ...keyOf(n), slaTargets: n.slaTargets },
+    {
+      ...keyOf(n),
+      slaTargets: n.slaTargets,
+      coldAfterDays: n.coldAfterDays,
+      coldZoneMode: n.coldZoneMode,
+      coldTargetSharePct: n.coldTargetSharePct,
+      coldFloorDays: n.coldFloorDays,
+    },
     () => buildExecutive(n),
     CLOCK_TTL_SEC,
   );
@@ -1634,13 +1797,53 @@ function buildRepos(n: NormParams): Rec {
     rowCount: visible.length,
     byRepo: assetProfilePopulations(rows, { ...opts, groupBy: "repo" }),
     byLanguage: assetProfilePopulations(rows, { ...opts, groupBy: "language" }),
+    // `visible`, NOT the re-censored `rows` copy: this module never reads `age_days`, so
+    // handing it the rewritten rows would only hide which population it actually measured.
+    coldZone: coldZoneProfile(visible, {
+      now: clock.asOf,
+      observedFrom: clock.observedFrom,
+      coldAfterDays: n.coldAfterDays,
+      mode: n.coldZoneMode,
+      targetSharePct: n.coldTargetSharePct,
+      floorDays: n.coldFloorDays,
+      newestScanByScope: newestScanByScope(),
+    }),
     signalCoverage: signalCoverage(visible),
   };
 }
 
 export function reposModel(p?: ModelParams): Rec {
   const n = norm(p);
-  return durablyCached("dsRepos1", keyOf(n), () => buildRepos(n));
+  // "dsRepos1" -> "dsRepos2": the payload gained the `coldZone` block. The durable copy has no
+  // TTL to age it out, so a warm dsRepos1 Drive file — which carries no cold zone at all —
+  // would serve a Repositories page with its first section missing entirely, and a section
+  // absent for a cache reason reads as an estate where nothing has gone quiet.
+  //
+  // `coldAfterDays` JOINS THE KEY, the same rule `mttrModel` states for `slaTargets`: this
+  // compute reads it, and a durable entry keyed without it would keep answering with the
+  // previous threshold's verdicts until the next commit rewrote the file.
+  //
+  // SO DO THE THREE RELATIVE-MODE FIELDS, in this fixed order (mode, target, floor) — the same
+  // order `executiveModel` uses, because two key builders that list the same fields differently
+  // are two chances to drop one. The durable layer has no TTL at all, so the argument is
+  // sharper here than on the 1 h entry: an operator who switches to relative mode and reloads
+  // would read the fixed mode's verdicts off a warm Drive file FOREVER, until the next commit
+  // happened to rewrite it, if the mode were not in the name.
+  //
+  // NO NAMESPACE BUMP ("dsRepos2" STAYS) — see this file's caching-audit header for the full
+  // argument: new params fields change the sha1 the filename is built from, so no old file is
+  // addressable by the new key in the first place.
+  return durablyCached(
+    "dsRepos2",
+    {
+      ...keyOf(n),
+      coldAfterDays: n.coldAfterDays,
+      coldZoneMode: n.coldZoneMode,
+      coldTargetSharePct: n.coldTargetSharePct,
+      coldFloorDays: n.coldFloorDays,
+    },
+    () => buildRepos(n),
+  );
 }
 
 // --------------------------------------------------------------------------------------- //

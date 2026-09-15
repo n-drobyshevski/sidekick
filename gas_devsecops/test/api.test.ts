@@ -840,6 +840,54 @@ describe("each read model reaches its slice", () => {
     expect(Object.keys(row).sort()).toEqual(["group", "kmMedian", "open"]);
   });
 
+  it("getExecutivePage: the cold zone ships as the headline, arrays and all left behind", async () => {
+    // There is no slice for this one, and there must not be: `executiveModel` calls
+    // `coldZoneHeadline` so the per-repository and per-project arrays never enter the payload
+    // at all. The exact key set is what pins that — a `repos` key appearing here would mean
+    // every repository name in the estate travelling to draw one percentage.
+    const { api } = await syncedRegister();
+    const d = (api.getExecutivePage({}) as unknown as Rec)["data"] as Rec;
+    const cold = d["coldZone"] as Rec;
+    expect(Object.keys(cold).sort()).toEqual([
+      "achieved_share_pct", "as_of", "cold_after_days", "cold_bound_only", "derived_days",
+      "dropped_no_repo", "eligible_repos", "fixed_after_days", "floor_applied", "floor_days",
+      "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
+      "target_share_pct", "totals", "unclassified_secrets",
+    ]);
+    // The mode fields ride along BY VALUE, not merely by name: the Executive card names which
+    // reading drew the line it is showing, and `cold_after_days` is that line in either mode
+    // while `fixed_after_days` keeps the window the operator saved.
+    expect(cold["mode"]).toBe("fixed");
+    expect(cold["cold_after_days"]).toBe(cold["fixed_after_days"]);
+    expect(cold["target_share_pct"]).toBeNull();
+    // The clock this block was measured on, published beside it: it is the LEDGER's, not the
+    // `asOf` every other figure on this page carries.
+    expect(["scan", "wallClock"]).toContain(d["coldZoneAsOfSource"]);
+  });
+
+  it("getReposPage: the whole profile ships, teams included — the page draws the tables", async () => {
+    // The mirror of the case above, and the reason no slice was needed at either end: this
+    // page IS the cold zone's page, so it gets `repos` and `teams`, which is also the only
+    // route by which `owner_project` reaches it.
+    const { api } = await syncedRegister();
+    const d = (api.getReposPage({}) as unknown as Rec)["data"] as Rec;
+    const cold = d["coldZone"] as Rec;
+    expect(cold["measurable"]).toBe(true);
+    expect(Array.isArray(cold["teams"])).toBe(true);
+    expect(Array.isArray(cold["repos"])).toBe(true);
+    expect((cold["teams"] as Rec[]).length).toBeGreaterThan(0);
+    for (const t of cold["teams"] as Rec[]) expect(t).toHaveProperty("label");
+    // Every team row carries its RELATIVE position beside its absolute verdict, in BOTH modes
+    // — the payload has one shape, so the page never has to branch on the mode to read a row.
+    // In fixed mode the rank is still computed and the badge is simply never awarded.
+    for (const t of cold["teams"] as Rec[]) {
+      expect(t).toHaveProperty("relative_rank");
+      expect(t).toHaveProperty("in_coldest_share");
+      expect(t["in_coldest_share"]).toBe(false);
+    }
+    expect(cold["totals"]).toHaveProperty("teams_in_coldest_share");
+  });
+
   it("getMttrPage: historyModel -> mttrPageTrendSlice, keeping `history`", async () => {
     const { api } = await syncedRegister();
     const d = (api.getMttrPage({}) as unknown as Rec)["data"] as Rec;
