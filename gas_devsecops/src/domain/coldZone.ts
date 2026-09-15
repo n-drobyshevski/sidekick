@@ -56,8 +56,64 @@
 //
 // THRESHOLD SEMANTICS: `>=`, everywhere. Exactly 90.0 days idle is cold, matching the
 // register's "≥ N" wording rule (README / PRODUCT.md) — the page never prints ">".
+//
+// -------------------------------------------------------------------------------------
+// TWO WAYS TO DRAW THAT LINE, and only one of them is a constant:
+//
+//   fixed     the operator names the WINDOW. A repository is cold after `coldAfterDays` of
+//             silence, and that number means the same thing on every estate and in every
+//             week. It is the default, and it is what an absent `mode` means.
+//   relative  the operator names a SHARE, and the line in days is DERIVED from the estate:
+//             the idlest `targetSharePct` per cent of the repositories that are observed and
+//             carry open findings are the cold zone. The line follows the population instead
+//             of standing still while the population moves underneath it — the argument EPSS
+//             makes for publishing a percentile beside a probability (config.ts carries the
+//             sources and the two failure modes the floor answers).
+//
+// Both modes produce ONE effective threshold in days, and `cold_after_days` is ALWAYS that
+// effective line: every verdict, every bucket edge and every label downstream reads it, and
+// nothing downstream has to know which mode produced it. The operator's fixed window is still
+// published as `fixed_after_days`, so the page can say what was asked for as well as what was
+// drawn.
+//
+// WHAT THE RELATIVE MODE REFUSES TO SAY:
+//   * It never interpolates. The cut is a RANK — the k-th largest reading, with
+//     `k = min(n, max(1, ceil(target/100 × n)))` — so the line always sits ON a repository
+//     somebody can go and look at, and ties at the cutoff are ALL cold. The threshold stays
+//     "≥", and two repositories idle the same number of days can never land on opposite
+//     sides of it.
+//   * It never goes below `floorDays`. A share always names somebody, however healthy the
+//     estate; the floor is what stops "the idlest 20%" being a slander on four repositories
+//     that were all touched last week. When the floor holds, `floor_applied` says so and
+//     `derived_days` publishes the line that was refused.
+//   * It never claims the target was met. `achieved_share_pct` is published beside
+//     `target_share_pct` in BOTH modes, and the two disagree in both directions by design —
+//     below when the floor holds the zone smaller than asked, above when ties at the cutoff
+//     widen it.
+//   * A repository with no movement on record ranks at its LOWER BOUND (`idle_reading_days`),
+//     the same number the fixed mode classifies and prints it by. That is a systematic
+//     UNDER-estimate of its silence, so the cost is published: `cold_bound_only` counts the
+//     cold repositories whose idle time was never actually measured.
+//   * With no eligible repository at all, the line rests on the floor and `derived_days` is
+//     NULL — nothing was derived, which is not the same fact as "zero days" — while
+//     `eligible_repos` reports 0 so the empty answer can prove it looked.
+//
+// The TEAM rank is the same idea one level up and is deliberately kept separate from the
+// verdict: `relative_rank` orders the projects that have repositories with open findings by
+// the share of those repositories that are cold, and in relative mode the coldest
+// `targetSharePct` of them are marked `in_coldest_share`. A project with no cold repository
+// is never marked, whatever the arithmetic says (the `C` clamp), and ties are extended
+// through rather than broken by the label — a badge that depended on alphabetical order
+// would be a fact about spelling.
 
-import { RESOLUTION_DISAPPEARED, RESOLVED_STATUSES, type Scope } from "./config";
+import {
+  COLD_ZONE_MODES,
+  DEFAULT_COLD_ZONE_MODE,
+  RESOLUTION_DISAPPEARED,
+  RESOLVED_STATUSES,
+  type ColdZoneMode,
+  type Scope,
+} from "./config";
 import type { BaseRow } from "./ledgerTypes";
 import { classifyRisk, type AnyRiskRule, type RiskClass, type RiskRow } from "./program";
 import { cmp, parseTs, present, toIso } from "./util";
@@ -118,6 +174,22 @@ export interface ColdZoneOptions {
    * overridden and exactly one place to look when a published figure disagrees with it.
    */
   coldAfterDays: number;
+  /**
+   * `"fixed"` (the default when absent) or `"relative"`. Absent means fixed rather than
+   * throwing, because the fixed window is the older contract and every caller that predates
+   * relative mode is still asking for exactly what it used to get.
+   */
+  mode?: ColdZoneMode;
+  /**
+   * The share of eligible repositories the cold zone should hold, in per cent. REQUIRED in
+   * relative mode and REFUSED silently by nothing: there is no default here, for the same
+   * reason `coldAfterDays` has none — the operator's choice lives in the settings layer
+   * (`config.DEFAULT_COLD_TARGET_SHARE_PCT`, clamped to its bounds there), and a default in
+   * this module would be a second place for a published figure to come from.
+   */
+  targetSharePct?: number;
+  /** The line's floor in days, REQUIRED in relative mode. See the module header. */
+  floorDays?: number;
   /** Per scope, the newest scan — a scope absent from this map is undecidable, not stale. */
   newestScanByScope: Partial<Record<Scope, NewestScan>>;
   /** Omit to let each row's scope choose its classifier (`config.ruleForScope`). */
@@ -191,6 +263,18 @@ export interface ColdTeamRow {
   /** Over OBSERVED repositories only: a drop-out's disappearance close is not this team's work. */
   last_movement_at: string | null;
   verdict: TeamVerdict;
+  /**
+   * 1..T over the projects that have repositories with open findings, by `cold_share_pct`
+   * desc, `open_in_cold` desc, label asc. NULL for a project with nothing open — it has no
+   * cold share, and giving it a rank would invent a position for a project that is not in
+   * the race. Computed in BOTH modes, so the payload has one shape.
+   */
+  relative_rank: number | null;
+  /**
+   * The coldest `targetSharePct` of the ranked projects. Only ever true in relative mode,
+   * never true for a project with no cold repository, and extended through ties.
+   */
+  in_coldest_share: boolean;
   /** Repos per idle bucket, length 5 (the fifth is "not yet measurable"). */
   buckets: number[];
   /** Open findings per idle bucket, same length — a cell says how much sits in it, not just how many. */
@@ -217,6 +301,8 @@ export interface ColdZoneTotals {
   teams: number;
   teams_fully_cold: number;
   teams_partly_cold: number;
+  /** Projects marked `in_coldest_share`. Always 0 in fixed mode — the badge is relative. */
+  teams_in_coldest_share: number;
   /** Repositories with no `owner_project` at all — the ownership gap, published as a figure. */
   repos_no_project: number;
   buckets: number[];
@@ -226,7 +312,42 @@ export interface ColdZoneTotals {
 export interface ColdZoneResult {
   /** `observedFrom !== null`. False ⇒ every derived block below is null. */
   measurable: boolean;
+  /** Which definition drew the line. `"fixed"` when the caller said nothing. */
+  mode: ColdZoneMode;
+  /**
+   * THE EFFECTIVE LINE, in days — in fixed mode the operator's window, in relative mode the
+   * derived cut lifted to the floor. Everything downstream (verdicts, buckets, labels, the
+   * page's prose) reads this one number and nothing downstream branches on the mode.
+   */
   cold_after_days: number;
+  /** The operator's fixed window, published in both modes so "asked for" survives the switch. */
+  fixed_after_days: number;
+  /** The share the line was aimed at, in per cent. NULL in fixed mode — nothing was aimed at. */
+  target_share_pct: number | null;
+  /**
+   * The share the line actually drew: cold repositories / repositories with open findings.
+   * Published in BOTH modes (in fixed mode it is the same number as
+   * `totals.cold_repo_share_pct`, said where the target can be read beside it), and NULL over
+   * an empty denominator — "no repository has an open finding" is not "0% of them are cold".
+   */
+  achieved_share_pct: number | null;
+  /** The floor the derived line may not go below. NULL in fixed mode — there is no derivation. */
+  floor_days: number | null;
+  /** True when the floor held the line ABOVE the derived cut, so the zone came out smaller. */
+  floor_applied: boolean;
+  /**
+   * The k-th largest idle reading, floored to whole days — the line the estate asked for
+   * before the floor was applied. NULL in fixed mode and NULL when nothing was eligible;
+   * "not derived" is a different fact from "derived at zero".
+   */
+  derived_days: number | null;
+  /** Observed repositories with at least one open finding: the population the share is of. */
+  eligible_repos: number | null;
+  /**
+   * Cold repositories whose idle time is a LOWER BOUND rather than a measurement. The cost of
+   * ranking a repository that has never closed anything at the bound it can prove.
+   */
+  cold_bound_only: number | null;
   observed_from: string | null;
   /** The instant every duration here was measured against — the clock says where it stood. */
   as_of: string;
@@ -255,7 +376,18 @@ export interface ColdZoneResult {
 /** The Executive projection: the totals and the clock, never the per-repo or per-team arrays. */
 export interface ColdZoneHeadline {
   measurable: boolean;
+  /** Which definition drew the line — the Executive card names the mode it is reading. */
+  mode: ColdZoneMode;
+  /** The EFFECTIVE line, exactly as on `ColdZoneResult`. */
   cold_after_days: number;
+  fixed_after_days: number;
+  target_share_pct: number | null;
+  achieved_share_pct: number | null;
+  floor_days: number | null;
+  floor_applied: boolean;
+  derived_days: number | null;
+  eligible_repos: number | null;
+  cold_bound_only: number | null;
   observed_from: string | null;
   as_of: string;
   totals: ColdZoneTotals | null;
@@ -328,6 +460,27 @@ interface RepoAcc {
   movementKind: MovementKind | null;
   /** Disappearance closes, counted per instant: the mode is the drop-out's fingerprint. */
   disappeared: Map<number, number>;
+}
+
+/**
+ * What pass A knows about one repository: everything the threshold CANNOT change.
+ *
+ * The split exists for the relative mode. The line is derived from `idleReading` over the
+ * eligible population, so those facts have to be complete before any line is drawn — and they
+ * are, because observation and "has anything open" are decided by the scanner and the ledger,
+ * never by the window. That is what makes the derivation a single pass instead of a
+ * fixed-point iteration over "who is cold".
+ */
+interface RepoFacts {
+  acc: RepoAcc;
+  observed: boolean;
+  idleDays: number | null;
+  idleBoundDays: number | null;
+  idleReading: number | null;
+  disappearedAt: number | null;
+  disappearedCount: number;
+  /** `observed && open > 0` — the population the relative share is a share OF. */
+  eligible: boolean;
 }
 
 function newAcc(repoId: string): RepoAcc {
@@ -501,6 +654,31 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
     throw new Error(`coldZoneProfile: coldAfterDays must be a positive number (${String(opts.coldAfterDays)})`);
   }
 
+  // The mode, and the two options it makes REQUIRED. Relative mode without a target or a
+  // floor is not a shape this module can guess its way out of: a default target would be a
+  // second place a published share could come from, and a missing floor would let a healthy
+  // estate's sort order decide who is cold. Both refusals are caller bugs — the settings
+  // layer clamps these to `config`'s bounds before they ever get here.
+  const mode: ColdZoneMode = opts.mode ?? DEFAULT_COLD_ZONE_MODE;
+  if (!COLD_ZONE_MODES.includes(mode)) {
+    throw new Error(
+      `coldZoneProfile: mode must be one of ${COLD_ZONE_MODES.join(" | ")} (${JSON.stringify(opts.mode)})`,
+    );
+  }
+  const relative = mode === "relative";
+  const targetSharePct = relative ? Number(opts.targetSharePct) : null;
+  const floorDays = relative ? Number(opts.floorDays) : null;
+  if (relative && (!Number.isFinite(targetSharePct!) || targetSharePct! <= 0 || targetSharePct! > 100)) {
+    throw new Error(
+      `coldZoneProfile: relative mode requires targetSharePct in (0, 100] (${String(opts.targetSharePct)})`,
+    );
+  }
+  if (relative && (!Number.isFinite(floorDays!) || floorDays! <= 0)) {
+    throw new Error(
+      `coldZoneProfile: relative mode requires floorDays to be a positive number (${String(opts.floorDays)})`,
+    );
+  }
+
   // Classify once, over every row — the counts below report on what was handed in, not on
   // what survived. `secrets` is refused by program.ts and carried as `unknown` rather than
   // thrown on, exactly as assets.ts does it.
@@ -543,7 +721,6 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
   const scopesWithoutScanList = [...scopesWithoutScan].sort(cmp);
 
   const base = {
-    cold_after_days: t,
     observed_from: observedFromMs === null ? null : toIso(observedFromMs),
     as_of: toIso(nowMs)!,
     row_count: rows.length,
@@ -551,10 +728,28 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
     unclassified_secrets: unclassifiedSecrets,
     scopes_without_scan: scopesWithoutScanList,
   };
+  const modeBase = {
+    mode,
+    fixed_after_days: t,
+    target_share_pct: targetSharePct,
+    floor_days: floorDays,
+  };
 
   if (observedFromMs === null) {
+    // No clock, so no population, so nothing to derive a line FROM. In relative mode the line
+    // still has to be a number the page can print, and the only number that owes nothing to a
+    // population we could not read is the floor. `derived_days`, `eligible_repos` and
+    // `cold_bound_only` are null for the same reason `repos` is: they are facts about an
+    // estate this read never got to look at.
     return {
       measurable: false,
+      ...modeBase,
+      cold_after_days: relative ? floorDays! : t,
+      achieved_share_pct: null,
+      floor_applied: false,
+      derived_days: null,
+      eligible_repos: null,
+      cold_bound_only: null,
       ...base,
       bucket_edges: null,
       bucket_labels: null,
@@ -564,16 +759,12 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
     };
   }
 
-  const bucketEdges = [0, t / 3, (2 * t) / 3, t];
-  const bucketLabels = [
-    `${fmtDays(0)}–${fmtDays(t / 3)} d`,
-    `${fmtDays(t / 3)}–${fmtDays((2 * t) / 3)} d`,
-    `${fmtDays((2 * t) / 3)}–${fmtDays(t)} d`,
-    `≥ ${fmtDays(t)} d`,
-    "not yet measurable",
-  ];
-
-  const repos: ColdRepoRow[] = [];
+  // ---------------------------------------------------------------- pass A: what the
+  // threshold cannot change. Idle time, the bound, observation and the drop-out fingerprint
+  // are all decided before any line is drawn — which is exactly why the relative line can be
+  // derived from them without a fixed-point iteration. `unobserved` and `clear` are
+  // threshold-independent too, so the eligible population is knowable here.
+  const facts: RepoFacts[] = [];
   for (const acc of byRepo.values()) {
     const observed = observedById.get(acc.repoId) === true;
     const idleDays = acc.movementAt === null ? null : daysBetween(acc.movementAt, nowMs);
@@ -596,20 +787,85 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
       }
     }
 
+    facts.push({
+      acc,
+      observed,
+      idleDays,
+      idleBoundDays,
+      idleReading,
+      disappearedAt,
+      disappearedCount,
+      // Eligible for the share: still scanned, and something is still open on it. A repository
+      // the scanner lost is not evidence about engagement, and one with nothing open cannot be
+      // in a zone that measures unclosed work.
+      eligible: observed && acc.open > 0,
+    });
+  }
+
+  // ---------------------------------------------------------------- the derivation
+  const eligible = facts.filter((f) => f.eligible);
+  const eligibleRepos = eligible.length;
+  let derivedDays: number | null = null;
+  let floorApplied = false;
+  let effective = t;
+  if (relative) {
+    if (eligibleRepos > 0) {
+      // A RANK, NOT `util.quantile`. That helper interpolates between the two neighbouring
+      // order statistics, which would put the line at a number NO repository sits on (46.4
+      // days between one at 44 and one at 50) and would make the resulting count unpredictable
+      // at small n — a "20% cut" that catches 1 of 5 in one estate and 2 of 5 in another with
+      // the same shape. The k-th largest reading is a line the reader can go and stand on, and
+      // because the test stays `>=`, ties AT that reading are all cold rather than being split
+      // by an interpolation nobody can see.
+      const readings = eligible.map((f) => f.idleReading!).sort((a, b) => b - a);
+      const k = Math.min(eligibleRepos, Math.max(1, Math.ceil((targetSharePct! / 100) * eligibleRepos)));
+      // Floored to WHOLE DAYS so `fmtDays` prose and the "≥ N d" cells cannot contradict each
+      // other. Flooring can only ever widen the zone, so `cold_repos >= k` still holds.
+      derivedDays = Math.floor(readings[k - 1]);
+      effective = Math.max(derivedDays, floorDays!);
+      floorApplied = derivedDays < floorDays!;
+    } else {
+      // Nothing to rank. The line rests on the floor, and `derived_days` stays NULL rather
+      // than reporting a zero nobody derived. `floor_applied` is false because the floor held
+      // nothing back — there was no derived line for it to overrule.
+      effective = floorDays!;
+      derivedDays = null;
+      floorApplied = false;
+    }
+  }
+
+  const bucketEdges = [0, effective / 3, (2 * effective) / 3, effective];
+  const bucketLabels = [
+    `${fmtDays(0)}–${fmtDays(effective / 3)} d`,
+    `${fmtDays(effective / 3)}–${fmtDays((2 * effective) / 3)} d`,
+    `${fmtDays((2 * effective) / 3)}–${fmtDays(effective)} d`,
+    `≥ ${fmtDays(effective)} d`,
+    "not yet measurable",
+  ];
+
+  // ---------------------------------------------------------------- pass B: the verdict and
+  // the bucket, read off the EFFECTIVE line — the only place either mode's choice can matter.
+  const repos: ColdRepoRow[] = [];
+  let coldBoundOnly = 0;
+  for (const f of facts) {
+    const { acc, observed, idleDays, idleBoundDays, idleReading, disappearedAt, disappearedCount } = f;
+
     let verdict: ColdVerdict;
     if (!observed) verdict = "unobserved";
     else if (acc.open === 0) verdict = "clear";
-    else if (idleDays !== null && idleDays >= t) verdict = "cold";
-    else if (idleDays === null && idleBoundDays !== null && idleBoundDays >= t) verdict = "cold";
+    else if (idleDays !== null && idleDays >= effective) verdict = "cold";
+    else if (idleDays === null && idleBoundDays !== null && idleBoundDays >= effective) verdict = "cold";
     else if (idleDays !== null) verdict = "warm";
     else verdict = "watching";
+
+    if (verdict === "cold" && idleDays === null) coldBoundOnly += 1;
 
     const bucket =
       verdict === "unobserved" || verdict === "clear"
         ? null
         : verdict === "watching"
           ? 4
-          : bucketOf(idleReading!, t);
+          : bucketOf(idleReading!, effective);
 
     repos.push({
       repo_id: acc.repoId,
@@ -643,11 +899,18 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
       cmp(a.repo_name ?? a.repo_id, b.repo_name ?? b.repo_id),
   );
 
-  const teams = rollUp(repos);
+  const teams = rankTeams(rollUp(repos), mode, targetSharePct);
   const totals = totalsOf(repos, teams);
 
   return {
     measurable: true,
+    ...modeBase,
+    cold_after_days: effective,
+    achieved_share_pct: totals.cold_repo_share_pct,
+    floor_applied: floorApplied,
+    derived_days: derivedDays,
+    eligible_repos: eligibleRepos,
+    cold_bound_only: coldBoundOnly,
     ...base,
     bucket_edges: bucketEdges,
     bucket_labels: bucketLabels,
@@ -747,6 +1010,10 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
       cold_share_pct: safePct(coldRepos, withOpen),
       last_movement_at: toIso(lastMovement),
       verdict,
+      // Filled by `rankTeams`, which runs over the finished roll-up: the rank is a fact about
+      // the whole set of projects, so no single project's fold can know it.
+      relative_rank: null,
+      in_coldest_share: false,
       buckets,
       bucket_open: bucketOpen,
     });
@@ -756,6 +1023,70 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
     (a, b) => b.cold_repos - a.cold_repos || b.open_in_cold - a.open_in_cold || cmp(a.label, b.label),
   );
   return out;
+}
+
+/**
+ * The team-level relative position, added to the finished roll-up WITHOUT reordering it.
+ *
+ * The published order is the one `rollUp` set (cold repositories desc), because that is the
+ * order the table is read in and changing it under a reader would be a different page. The
+ * rank is a separate column measured on a different axis — the SHARE of a project's
+ * open-finding repositories that are cold, so a project with three cold repositories out of
+ * three outranks one with five out of fifty. Tie-breaks: `open_in_cold` desc, then label asc
+ * for determinism.
+ *
+ * Three refusals, all of them about not badging somebody the arithmetic merely swept up:
+ *   * Only projects with `repos_with_open > 0` are ranked at all. A project with nothing open
+ *     has a NULL cold share, and a rank over a null is an invention.
+ *   * `C` — the ranked projects that actually have a cold repository — CLAMPS the badge.
+ *     "The coldest 20%" of an estate where only one project has anything cold is that one
+ *     project, never a second one whose cold share is zero.
+ *   * Ties at the cutoff are extended through, on `(cold_share_pct, open_in_cold)`. The label
+ *     tie-break orders the table; it must never decide a badge, because that would make the
+ *     mark a fact about spelling.
+ *
+ * Fixed mode still computes the ranks — the payload has one shape in both modes, and the
+ * column can be read without the badge — but marks nobody: `in_coldest_share` is a statement
+ * about a target share, and fixed mode never named one.
+ */
+function rankTeams(
+  teams: ColdTeamRow[],
+  mode: ColdZoneMode,
+  targetSharePct: number | null,
+): ColdTeamRow[] {
+  const ranked = teams
+    .filter((team) => team.repos_with_open > 0)
+    .sort(
+      (a, b) =>
+        (b.cold_share_pct ?? 0) - (a.cold_share_pct ?? 0) ||
+        b.open_in_cold - a.open_in_cold ||
+        cmp(a.label, b.label),
+    );
+  const rankOf = new Map<ColdTeamRow, number>();
+  ranked.forEach((team, i) => rankOf.set(team, i + 1));
+
+  const total = ranked.length;
+  const withCold = ranked.filter((team) => team.cold_repos > 0).length;
+  let want = 0;
+  if (mode === "relative" && withCold > 0 && targetSharePct !== null) {
+    want = Math.min(withCold, Math.max(1, Math.ceil((targetSharePct / 100) * total)));
+    // Extend through a tie at the cutoff — see the refusals above. The walk stops at `withCold`
+    // by construction as well as by the guard: every project past that point has a cold share
+    // of 0, which cannot tie with the share of a project that has a cold repository.
+    while (
+      want < withCold &&
+      (ranked[want].cold_share_pct ?? 0) === (ranked[want - 1].cold_share_pct ?? 0) &&
+      ranked[want].open_in_cold === ranked[want - 1].open_in_cold
+    ) {
+      want += 1;
+    }
+  }
+
+  // A NEW array in the PUBLISHED order — `rankTeams` is pure and the caller's sort survives it.
+  return teams.map((team) => {
+    const rank = rankOf.get(team) ?? null;
+    return { ...team, relative_rank: rank, in_coldest_share: rank !== null && rank <= want };
+  });
 }
 
 function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
@@ -779,6 +1110,7 @@ function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
     teams: teams.length,
     teams_fully_cold: 0,
     teams_partly_cold: 0,
+    teams_in_coldest_share: 0,
     repos_no_project: 0,
     buckets,
     bucket_open: bucketOpen,
@@ -798,6 +1130,9 @@ function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
     t.open_in_unobserved += team.open_in_unobserved;
     if (team.verdict === "fully-cold") t.teams_fully_cold += 1;
     if (team.verdict === "partly-cold") t.teams_partly_cold += 1;
+    // Counted off the rows themselves rather than passed in from the derivation, so the
+    // figure and the marks on the table can never disagree about how many were badged.
+    if (team.in_coldest_share) t.teams_in_coldest_share += 1;
     if (team.project === null) t.repos_no_project = team.repos;
     for (let i = 0; i < 5; i += 1) {
       buckets[i] += team.buckets[i];
@@ -821,7 +1156,16 @@ function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
 export function coldZoneHeadline(result: ColdZoneResult): ColdZoneHeadline {
   return {
     measurable: result.measurable,
+    mode: result.mode,
     cold_after_days: result.cold_after_days,
+    fixed_after_days: result.fixed_after_days,
+    target_share_pct: result.target_share_pct,
+    achieved_share_pct: result.achieved_share_pct,
+    floor_days: result.floor_days,
+    floor_applied: result.floor_applied,
+    derived_days: result.derived_days,
+    eligible_repos: result.eligible_repos,
+    cold_bound_only: result.cold_bound_only,
     observed_from: result.observed_from,
     as_of: result.as_of,
     totals: result.totals,
