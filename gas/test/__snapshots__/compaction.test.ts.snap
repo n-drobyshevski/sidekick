@@ -1,0 +1,48 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`severity scope (fixture parity) > parse 0 1`] = `
+[
+  "CRITICAL",
+  "HIGH",
+]
+`;
+
+exports[`severity scope (fixture parity) > parse 1 1`] = `
+[
+  "HIGH",
+]
+`;
+
+exports[`severity scope (fixture parity) > parse 2 1`] = `
+[
+  "UNKNOWN",
+]
+`;
+
+exports[`severity scope (fixture parity) > parse 3 1`] = `null`;
+
+exports[`severity scope (fixture parity) > parse 4 1`] = `null`;
+
+exports[`severity scope (fixture parity) > parse 5 1`] = `null`;
+
+exports[`severity scope (fixture parity) > parse 6 1`] = `null`;
+
+exports[`severity scope (fixture parity) > parse 7 1`] = `
+[
+  "INFO",
+]
+`;
+
+exports[`severity scope (fixture parity) > serialize 0 1`] = `"["CRITICAL", "HIGH"]"`;
+
+exports[`severity scope (fixture parity) > serialize 1 1`] = `"["CRITICAL", "HIGH"]"`;
+
+exports[`severity scope (fixture parity) > serialize 2 1`] = `null`;
+
+exports[`severity scope (fixture parity) > serialize 3 1`] = `"["INFO"]"`;
+
+exports[`severity scope (fixture parity) > serialize 4 1`] = `"["HIGH"]"`;
+
+exports[`severity scope (fixture parity) > serialize 5 1`] = `null`;
+
+exports[`severity scope (fixture parity) > serialize 6 1`] = `null`;

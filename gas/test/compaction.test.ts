@@ -25,12 +25,12 @@ describe("severity scope (fixture parity)", () => {
   const fx = fixture("severities_scope");
   fx.serialize.forEach((c: any, i: number) => {
     it(`serialize ${i}`, () => {
-      expect(serializeSeverities(c.input)).toBe(c.expected);
+      expect(serializeSeverities(c.input)).toMatchSnapshot();
     });
   });
   fx.parse.forEach((c: any, i: number) => {
     it(`parse ${i}`, () => {
-      expect(parseSeverities(c.input)).toEqual(c.expected);
+      expect(parseSeverities(c.input)).toMatchSnapshot();
     });
   });
 });

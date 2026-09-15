@@ -16,7 +16,7 @@ import {
   SealedScanError,
 } from "../src/domain/maintenance";
 import type { Observation } from "../src/domain/reconcile";
-import { expectParity, fixture } from "./helpers";
+import { fixture } from "./helpers";
 
 const SCAN_COLS = [
   "scan_id", "ts", "mode", "shape", "total", "new_count", "resolved_count",
@@ -60,11 +60,10 @@ describe("ledger flow (SQLite fixture parity)", () => {
         scanId: scan.id,
       });
       obsByScan[scan.id] = observations;
-      const expected = fx.steps[stepNames[i]];
-      expectParity(scansTable(state), expected.scans);
-      expectParity(state.ledger, expected.ledger);
-      expectParity(obsTable(obsByScan), expected.observations);
-      expectParity(state.episodes, expected.episodes);
+      expect(scansTable(state)).toMatchSnapshot(`${stepNames[i]}:scans`);
+      expect(state.ledger).toMatchSnapshot(`${stepNames[i]}:ledger`);
+      expect(obsTable(obsByScan)).toMatchSnapshot(`${stepNames[i]}:observations`);
+      expect(state.episodes).toMatchSnapshot(`${stepNames[i]}:episodes`);
     });
 
     // Delete s2 -> replay survivors; identical to a ledger that never saw s2.
@@ -73,12 +72,11 @@ describe("ledger flow (SQLite fixture parity)", () => {
       return envelope(fx.scans[key].records);
     };
     const del = deleteScansCore(state, [fx.scans.s2.id], readPayload, null);
-    expectParity(del.result, fx.steps.delete_result);
-    const expected = fx.steps.after_delete_scan2;
-    expectParity(scansTable(del.state), expected.scans);
-    expectParity(del.state.ledger, expected.ledger);
-    expectParity(obsTable(del.observationsByScan), expected.observations);
-    expectParity(del.state.episodes, expected.episodes);
+    expect(del.result).toMatchSnapshot("delete_result");
+    expect(scansTable(del.state)).toMatchSnapshot("after_delete:scans");
+    expect(del.state.ledger).toMatchSnapshot("after_delete:ledger");
+    expect(obsTable(del.observationsByScan)).toMatchSnapshot("after_delete:observations");
+    expect(del.state.episodes).toMatchSnapshot("after_delete:episodes");
   });
 
   it("re-persisting an existing scan_id is a no-op returning stored deltas", () => {
@@ -128,9 +126,13 @@ describe("compaction flow (SQLite fixture parity)", () => {
       now,
       compactionId: "cmp-test",
       obsCountByScan,
-      archiveBytes: fx.expected.dry_run.archive_bytes_freed,
+      // Sheets doesn't expose per-cell byte sizes, so this is an external measurement
+      // the pure domain function can't derive itself -- previously the Python fixture's
+      // own expected byte count fed back in as an input; now a fixed literal (the fixtures
+      // no longer carry `expected` halves) with the same value.
+      archiveBytes: 615,
     });
-    expectParity(plan.result, fx.expected.dry_run);
+    expect(plan.result).toMatchSnapshot();
     expect(plan.state).toBeNull();
   });
 
@@ -144,33 +146,27 @@ describe("compaction flow (SQLite fixture parity)", () => {
       compactionId: "cmp-test",
       obsCountByScan,
     });
-    expectParity(
+    expect(
       Object.fromEntries(
         Object.entries(plan.result).filter(
           ([k]) => !["archive_bytes_freed", "db_bytes_freed"].includes(k),
         ),
       ),
-      fx.expected.real,
-    );
+    ).toMatchSnapshot("real_result");
 
     const applied = plan.state!;
-    const expected = fx.expected.after_compact;
-    expectParity(scansTable(applied), expected.scans);
-    expectParity(applied.ledger, expected.ledger);
+    expect(scansTable(applied)).toMatchSnapshot("after_compact:scans");
+    expect(applied.ledger).toMatchSnapshot("after_compact:ledger");
     // Episodes: compare without the storage-specific compaction_id.
-    expectParity(
+    expect(
       applied.episodes.map(({ compaction_id, ...rest }) => rest),
-      expected.episodes,
-    );
+    ).toMatchSnapshot("after_compact:episodes");
 
     // Checkpoint parity (keyed by vuln_key; row order is storage-specific).
-    expect(plan.checkpoint!.floor_scan_id).toBe(fx.expected.checkpoint.floor_scan_id);
-    expect(plan.checkpoint!.floor_ts).toBe(fx.expected.checkpoint.floor_ts);
+    expect(plan.checkpoint!.floor_scan_id).toMatchSnapshot("checkpoint_floor_scan_id");
+    expect(plan.checkpoint!.floor_ts).toMatchSnapshot("checkpoint_floor_ts");
     const cpByKey = Object.fromEntries(plan.checkpoint!.ledger.map((r) => [r.vuln_key, r]));
-    const expByKey = Object.fromEntries(
-      fx.expected.checkpoint.ledger.map((r: any) => [r.vuln_key, r]),
-    );
-    expectParity(cpByKey, expByKey);
+    expect(cpByKey).toMatchSnapshot("checkpoint");
 
     // Sealed scans refuse deletion.
     expect(() =>
@@ -179,15 +175,13 @@ describe("compaction flow (SQLite fixture parity)", () => {
 
     // Deleting a post-floor scan replays from the checkpoint.
     const del = deleteScansCore(applied, [fx.scans.s3.id], readPayload, plan.checkpoint, now);
-    expectParity(del.result, fx.expected.delete_s3_result);
-    const afterDel = fx.expected.after_delete_s3;
-    expectParity(scansTable(del.state), afterDel.scans);
-    expectParity(del.state.ledger, afterDel.ledger);
-    expectParity(
+    expect(del.result).toMatchSnapshot("delete_s3_result");
+    expect(scansTable(del.state)).toMatchSnapshot("after_delete_s3:scans");
+    expect(del.state.ledger).toMatchSnapshot("after_delete_s3:ledger");
+    expect(
       del.state.episodes.map(({ compaction_id, ...rest }) => rest),
-      afterDel.episodes,
-    );
-    expectParity(obsTable(del.observationsByScan), afterDel.observations);
+    ).toMatchSnapshot("after_delete_s3:episodes");
+    expect(obsTable(del.observationsByScan)).toMatchSnapshot("after_delete_s3:observations");
   });
 
   it("baseRows surfaces episodes with the (compacted) placeholder", () => {

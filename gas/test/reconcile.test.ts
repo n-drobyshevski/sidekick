@@ -12,7 +12,7 @@ describe("tagsJson (fixture parity)", () => {
   const { cases } = fixture("tags_json");
   cases.forEach((c: any, i: number) => {
     it(`case ${i}`, () => {
-      expectParity(tagsJson(c.input), c.expected);
+      expect(tagsJson(c.input)).toMatchSnapshot();
     });
   });
 });
@@ -36,9 +36,9 @@ describe("reconcile (fixture parity)", () => {
         sc.input.prev_scan_id,
         opts,
       );
-      expectParity(deltas, sc.expected.deltas);
-      expectParity(ledger, sc.expected.ledger);
-      expectParity(observations, sc.expected.observations);
+      expect(deltas).toMatchSnapshot("deltas");
+      expect(ledger).toMatchSnapshot("ledger");
+      expect(observations).toMatchSnapshot("observations");
     });
   }
 

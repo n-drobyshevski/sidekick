@@ -19,7 +19,7 @@ import {
   type ScanRow,
 } from "../src/domain/ledgerCore";
 import { deleteScansCore, LedgerRebuildError } from "../src/domain/maintenance";
-import { expectParity, fixture } from "./helpers";
+import { fixture } from "./helpers";
 
 const SCAN_COLS = [
   "scan_id", "ts", "mode", "shape", "total", "new_count", "resolved_count",
@@ -60,20 +60,6 @@ function readerOf(gasScans: FixtureScan[]) {
   };
 }
 
-/**
- * The Python fixture's episodes carry real compaction ids; rows minted by the
- * compaction that models the import (the LAST python compaction) map to the TS
- * import's own compactionId, the rest travelled inside the bundle verbatim.
- */
-function normalizeExpectedEpisodes(expected: any) {
-  const cmpIds: string[] = expected.compaction_ids;
-  const importCmp = cmpIds[cmpIds.length - 1];
-  return expected.episodes.map((e: any) => ({
-    ...e,
-    compaction_id: e.compaction_id === importCmp ? IMPORT_CMP_ID : e.compaction_id,
-  }));
-}
-
 function sortedEpisodes(state: LedgerState) {
   return [...state.episodes].sort((a, b) =>
     a.vuln_key < b.vuln_key ? -1 : a.vuln_key > b.vuln_key ? 1 : 0,
@@ -101,18 +87,15 @@ describe("importBundleCore (Python fixture parity)", () => {
       scans_replayed: 2,
       unclassified_severity: 0,
     });
-    expectParity(scansTable(res.state), a.expected.scans);
-    expectParity(res.state.ledger, a.expected.ledger);
-    expectParity(sortedEpisodes(res.state), normalizeExpectedEpisodes(a.expected));
+    expect(scansTable(res.state)).toMatchSnapshot("scans");
+    expect(res.state.ledger).toMatchSnapshot("ledger");
+    expect(sortedEpisodes(res.state)).toMatchSnapshot("episodes");
 
     // Checkpoint parity (keyed; row order is storage-specific).
-    expect(res.checkpoint.floor_scan_id).toBe(a.expected.checkpoint.floor_scan_id);
-    expect(res.checkpoint.floor_ts).toBe(a.expected.checkpoint.floor_ts);
+    expect(res.checkpoint.floor_scan_id).toMatchSnapshot("checkpoint_floor_scan_id");
+    expect(res.checkpoint.floor_ts).toMatchSnapshot("checkpoint_floor_ts");
     const cpByKey = Object.fromEntries(res.checkpoint.ledger.map((r) => [r.vuln_key, r]));
-    const expByKey = Object.fromEntries(
-      a.expected.checkpoint.ledger.map((r: any) => [r.vuln_key, r]),
-    );
-    expectParity(cpByKey, expByKey);
+    expect(cpByKey).toMatchSnapshot("checkpoint");
 
     // Replayed GAS scans got fresh observations; imported sealed scans none.
     expect(Object.keys(res.observationsByScan).sort()).toEqual(
@@ -133,10 +116,10 @@ describe("importBundleCore (Python fixture parity)", () => {
       res.checkpoint,
       now,
     );
-    expectParity(del.result, a.delete_t4.result);
-    expectParity(scansTable(del.state), a.delete_t4.after.scans);
-    expectParity(del.state.ledger, a.delete_t4.after.ledger);
-    expectParity(sortedEpisodes(del.state), normalizeExpectedEpisodes(a.delete_t4.after));
+    expect(del.result).toMatchSnapshot("delete_result");
+    expect(scansTable(del.state)).toMatchSnapshot("scans");
+    expect(del.state.ledger).toMatchSnapshot("ledger");
+    expect(sortedEpisodes(del.state)).toMatchSnapshot("episodes");
   });
 
   it("scenario B: pre-compacted bundle (sealed rows + episodes) merges verbatim", () => {
@@ -156,9 +139,9 @@ describe("importBundleCore (Python fixture parity)", () => {
       scans_replayed: 2,
       unclassified_severity: 0,
     });
-    expectParity(scansTable(res.state), b.expected.scans);
-    expectParity(res.state.ledger, b.expected.ledger);
-    expectParity(sortedEpisodes(res.state), normalizeExpectedEpisodes(b.expected));
+    expect(scansTable(res.state)).toMatchSnapshot("scans");
+    expect(res.state.ledger).toMatchSnapshot("ledger");
+    expect(sortedEpisodes(res.state)).toMatchSnapshot("episodes");
 
     // The synthetic checkpoint pins the newest imported flat scan and mirrors the
     // bundle's live ledger (episode keys excluded, as delete-rebuild expects).

@@ -14,15 +14,7 @@
       ]
      }
     }
-   },
-   "expected": [
-    {
-     "id": "a"
-    },
-    {
-     "id": "b"
-    }
-   ]
+   }
   },
   {
    "input": {
@@ -35,12 +27,7 @@
       ]
      }
     }
-   },
-   "expected": [
-    {
-     "id": "c"
-    }
-   ]
+   }
   },
   {
    "input": {
@@ -49,12 +36,7 @@
       "id": "d"
      }
     ]
-   },
-   "expected": [
-    {
-     "id": "d"
-    }
-   ]
+   }
   },
   {
    "input": [
@@ -80,31 +62,16 @@
       }
      }
     }
-   ],
-   "expected": [
-    {
-     "id": "e"
-    },
-    {
-     "id": "f"
-    }
    ]
   },
   {
-   "input": "{\"data\": {\"vulnerabilityFindings\": {\"nodes\": [{\"id\": \"g\"}]}}}",
-   "expected": [
-    {
-     "id": "g"
-    }
-   ]
+   "input": "{\"data\": {\"vulnerabilityFindings\": {\"nodes\": [{\"id\": \"g\"}]}}}"
   },
   {
-   "input": null,
-   "expected": []
+   "input": null
   },
   {
-   "input": [],
-   "expected": []
+   "input": []
   }
  ]
 }

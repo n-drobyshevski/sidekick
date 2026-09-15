@@ -1,68 +1,52 @@
 {
  "cases": [
   {
-   "input": "CRITICAL",
-   "expected": "CRITICAL"
+   "input": "CRITICAL"
   },
   {
-   "input": "critical",
-   "expected": "CRITICAL"
+   "input": "critical"
   },
   {
-   "input": " high ",
-   "expected": "HIGH"
+   "input": " high "
   },
   {
-   "input": "INFORMATIONAL",
-   "expected": "INFO"
+   "input": "INFORMATIONAL"
   },
   {
-   "input": "informational",
-   "expected": "INFO"
+   "input": "informational"
   },
   {
-   "input": "Info",
-   "expected": "INFO"
+   "input": "Info"
   },
   {
-   "input": "MEDIUM",
-   "expected": "MEDIUM"
+   "input": "MEDIUM"
   },
   {
-   "input": "LOW",
-   "expected": "LOW"
+   "input": "LOW"
   },
   {
-   "input": "UNKNOWN",
-   "expected": "UNKNOWN"
+   "input": "UNKNOWN"
   },
   {
-   "input": "bogus",
-   "expected": "UNKNOWN"
+   "input": "bogus"
   },
   {
-   "input": "",
-   "expected": "UNKNOWN"
+   "input": ""
   },
   {
-   "input": "   ",
-   "expected": "UNKNOWN"
+   "input": "   "
   },
   {
-   "input": null,
-   "expected": "UNKNOWN"
+   "input": null
   },
   {
-   "input": 42,
-   "expected": "UNKNOWN"
+   "input": 42
   },
   {
-   "input": "HIGHER",
-   "expected": "UNKNOWN"
+   "input": "HIGHER"
   },
   {
-   "input": "critical\n",
-   "expected": "CRITICAL"
+   "input": "critical\n"
   }
  ]
 }

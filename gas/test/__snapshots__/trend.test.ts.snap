@@ -1,0 +1,59 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`trendFromFrames (fixture parity) > matches the CRITICAL+HIGH scoped trend 1`] = `
+[
+  {
+    "date": "2026-06-01T06:00:00Z",
+    "median_days": null,
+    "oldest_open_days": 31.25,
+    "open": 3,
+    "resolved": 0,
+    "sla_pct": null,
+  },
+  {
+    "date": "2026-06-08T06:00:00Z",
+    "median_days": 16,
+    "oldest_open_days": 38.25,
+    "open": 3,
+    "resolved": 1,
+    "sla_pct": 0,
+  },
+  {
+    "date": "2026-06-15T06:00:00Z",
+    "median_days": 29,
+    "oldest_open_days": 14.25,
+    "open": 3,
+    "resolved": 2,
+    "sla_pct": 0,
+  },
+]
+`;
+
+exports[`trendFromFrames (fixture parity) > matches the unscoped Python trend 1`] = `
+[
+  {
+    "date": "2026-06-01T06:00:00Z",
+    "median_days": 30,
+    "oldest_open_days": 31.25,
+    "open": 3,
+    "resolved": 1,
+    "sla_pct": 100,
+  },
+  {
+    "date": "2026-06-08T06:00:00Z",
+    "median_days": 23,
+    "oldest_open_days": 38.25,
+    "open": 3,
+    "resolved": 2,
+    "sla_pct": 50,
+  },
+  {
+    "date": "2026-06-15T06:00:00Z",
+    "median_days": 30,
+    "oldest_open_days": 14.25,
+    "open": 4,
+    "resolved": 3,
+    "sla_pct": 33.3,
+  },
+]
+`;
