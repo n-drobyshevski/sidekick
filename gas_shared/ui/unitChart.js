@@ -220,7 +220,12 @@ export function unitChartModel(spec) {
   } = spec || {};
 
   if (typeof unit !== "string" || !unit.trim()) {
-    refuse("`unit` is required — what one item IS differs per register");
+    // NO BACKTICKS IN A THROWN STRING. esbuild lowers template literals, but a backtick
+    // CHARACTER inside a string literal survives minification and the middlebox guard in
+    // every app's esbuild.config.mjs fails the build on it — the proxy that guard replays
+    // strips comments with a tokenizer that does not understand backticks and would leave
+    // the bundle unbalanced. Quoting a parameter name is not worth a broken deploy.
+    refuse("unit is required — what one item IS differs per register");
   }
 
   const rows = Array.isArray(segments) ? segments : [];
@@ -230,7 +235,7 @@ export function unitChartModel(spec) {
   }
   for (const s of rows) {
     if (!s || typeof s.label !== "string" || !s.label.trim()) {
-      refuse("every segment needs a `label` — a fill is never the first cue");
+      refuse("every segment needs a label — a fill is never the first cue");
     }
     if (s.tone !== undefined && !TONES.includes(s.tone)) {
       refuse("unknown tone " + JSON.stringify(s.tone) + " — a fifth tone would be a severity, "
@@ -248,7 +253,7 @@ export function unitChartModel(spec) {
 
   const exact = cells === "exact";
   if (exact && measured && total > MAX_EXACT_CELLS) {
-    refuse("`cells: \"exact\"` over " + fmtCount(total) + " " + unit + " — one cell per member "
+    refuse("cells: exact over " + fmtCount(total) + " " + unit + " — one cell per member "
       + "stops being countable past " + MAX_EXACT_CELLS + "; state a lattice size instead");
   }
   const lattice = exact

@@ -54,6 +54,7 @@ import {
   clear, dataTable, disclosure, el, emptyState, errorState, fmtCount,
   fmtDate, fmtDateTime, fmtDays, fmtSpan, heroStat, num, pageHeader, pluralize, relativeAge,
   scopeBar, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
+  FINE_UNITS, unitRow, unitScale,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -977,20 +978,40 @@ export async function renderExecutive(main, _params, ctx) {
   }
 
   /**
-   * One row of the movement strip: a severity, its pill, and the pair the pill is FROM.
+   * One row of the movement strip: a severity, how much of it there is, its pill, and the pair
+   * the pill is FROM.
    *
    * The raw pair rides beside the delta on purpose. A pill reading "down 9" is a claim about
    * two numbers, and a reader who cannot see both has to trust it; "27 open, was 36" is the
    * arithmetic in the open. A null chip means the previous count was not measurable, and that
    * renders as words rather than as a ±0 (see `deltaChipView`).
    *
+   * THE TALLY IS THE ONE PICTURE THIS PAGE MAY DRAW. The module header's hard rule is no chart
+   * and no canvas on the front door, and `test/executiveFixNext.test.js` holds it; `unitRow` is
+   * DOM and CSS, so the rule is not bent to add it. What it buys is the comparison six numbers
+   * down a column do not make on their own — 27 against 170 is a ratio a reader had to compute,
+   * and marks in one unit are that ratio at a glance. The counts stay exactly where they were:
+   * the marks are a second encoding of a figure already in words, never the readout.
+   *
+   * `unit` IS THE STRIP'S, PASSED IN, and it comes from the largest SEVERITY row rather than
+   * from the total. A total an order of magnitude above every part would pick a unit that drew
+   * the parts as nothing — and the comparison this strip exists for is severity against
+   * severity. The total row keeps its pill and its pair and draws no marks, because "all
+   * severities against one severity" is not the question the tally answers.
+   *
    * THE GLYPH NEVER CARRIES THE MEANING. It is `aria-hidden` and the pill's own visible text
    * spells the direction ("up 4" / "down 4" / "unchanged"), so neither the triangle nor the
    * tint is the only cue.
    */
-  function movementRow(label, r) {
+  function movementRow(label, r, unit) {
     const row = el("div", { class: "movement-row" },
       el("span", { class: "movement-label small" }, label));
+    if (unit) {
+      row.append(unitRow(r.open, {
+        unit,
+        label: label + ", " + fmtCount(r.open) + " open, one mark per " + fmtCount(unit),
+      }));
+    }
     if (r.chip) {
       const glyph = r.chip.direction === "up" ? "▲" : r.chip.direction === "down" ? "▼" : "=";
       row.append(el("span", {
@@ -1029,9 +1050,21 @@ export async function renderExecutive(main, _params, ctx) {
       box.append(el("div", { class: "small muted" },
         "No open-backlog comparison. " + open.reason));
     } else {
+      // ONE UNIT FOR THE WHOLE STRIP, from the largest severity row — see `movementRow`. The
+      // fine ladder, not the default one: a severity's open count is tens, and the coarse
+      // ladder's finest rung would draw the whole strip as three clipped marks.
+      const stripUnit = unitScale(
+        open.rows.reduce(
+          (m, r) => (typeof r.open === "number" && Number.isFinite(r.open) && r.open > m
+            ? r.open
+            : m),
+          0,
+        ),
+        { units: FINE_UNITS },
+      );
       box.append(el("div", { class: "movement-rows" },
-        movementRow(open.total.label, open.total),
-        ...open.rows.map((r) => movementRow(r.label, r))));
+        movementRow(open.total.label, open.total, null),
+        ...open.rows.map((r) => movementRow(r.label, r, stripUnit))));
       box.append(el("div", { class: "small muted" }, open.dates));
     }
 

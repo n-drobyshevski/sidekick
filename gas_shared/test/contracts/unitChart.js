@@ -462,6 +462,18 @@ export function registerUnitChartContract(ctx) {
       expect(SRC).not.toMatch(/\brgba?\(/);
     });
 
+    it("carries no backtick in any string that survives minification", () => {
+      // THIS ONE BROKE THE BUILD BEFORE IT WAS WRITTEN. esbuild lowers template literals, so
+      // backticks in SOURCE are fine and the ones in this module's own comments are stripped
+      // by minify — but a backtick CHARACTER inside a string literal survives both, and every
+      // app's esbuild.config.mjs fails the build on it (the proxy that guard replays strips
+      // comments with a tokenizer that does not understand backticks, and would leave the
+      // bundle unbalanced). `code()` has already removed the comments, so what is left here is
+      // executable text: any backtick in it is either a template literal esbuild will lower or
+      // a string that will fail the build, and this module uses no template literals.
+      expect(SRC).not.toMatch(/`/);
+    });
+
     it("wraps each picture in ONE role=img rather than N nodes", () => {
       const roles = SRC.match(/role: "img"/g) || [];
       expect(roles.length).toBe(2); // one for the tally, one for the lattice

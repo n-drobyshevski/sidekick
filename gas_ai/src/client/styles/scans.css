@@ -12,22 +12,16 @@
    below remains here. */
 .cov-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 
-/* The coverage bar and its keys. Same visual recipe as .sevbar / .sevkey-row, but a
-   separate family on purpose: coverage is not severity, and minting `sev-fill-live` would
-   put three non-severities into the one namespace that means exactly one thing. */
-.cov-bar {
-  display: flex; width: 100%; height: 14px;
-  border-radius: var(--radius-pill); overflow: hidden; background: var(--track-bg);
-}
-/* See `.help-lexbar-seg` — the shared separator, so adjacent fills stay countable.
-   Zero-count states are skipped upstream; the `empty` filler is the track itself and
-   takes no edge. */
-.cov-bar-seg { height: 100%; border-right: 2px solid var(--page); }
-.cov-bar-seg:last-child, .cov-bar-seg[data-state="empty"] { border-right: none; }
-.cov-bar-seg[data-state="live"] { background: var(--ok); }
-.cov-bar-seg[data-state="partial"] { background: var(--warn); }
-.cov-bar-seg[data-state="unscanned"] { background: var(--sev-info); }
-.cov-bar-seg[data-state="empty"] { flex: 1; background: var(--track-bg); }
+/* The coverage census and its keys. `.cov-bar` / `.cov-bar-seg` used to be here — a flex-grow
+   proportional bar over a dozen scan areas, which asked a reader to judge three widths for a
+   fact they could have counted. It is `unitGrid` in exact mode now (gas_shared/ui/unitChart.js,
+   `coverageBar()` in scans.js), one cell per area, so nothing about it is per-page any more:
+   the tone comes from COVERAGE[state].pill and the silhouette from the same ● ◐ ○ progression
+   the keys already draw. The keys below are untouched and are still the text carrier.
+
+   The lattice keeps this page's own width, because a dozen cells in a row reads as a strip and
+   a dozen in a square reads as a grid nobody asked for. */
+.cov-census .isotype--grid { grid-template-columns: repeat(auto-fit, 9px); width: 100%; }
 
 .cov-keys { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .cov-key {

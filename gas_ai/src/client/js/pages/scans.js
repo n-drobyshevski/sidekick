@@ -39,6 +39,7 @@ import {
   firstRunNotice, fmtCount,
   fmtDate, fmtDateTime, appendAll, heroLines, heroStat, pageHeader,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
+  unitChartModel, unitGrid,
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
 
@@ -234,16 +235,40 @@ export async function renderScans(main, params, ctx) {
 
   // The bar is decoration — the keys beneath carry the same three numbers as text — so it
   // is aria-hidden rather than a second announcement of what was just read out.
+  /**
+   * The scan areas, one cell each.
+   *
+   * WHY A LATTICE AND NOT THE PROPORTIONAL BAR IT REPLACES. There are a dozen scan areas, not
+   * a population — "three reporting, two partial, seven not scanned" is a fact a reader can
+   * COUNT, and a flex-grow bar turned it into three widths to judge. `cells: "exact"` is the
+   * mode that says so: one cell per area, no rounding, nothing to explain in a caption.
+   *
+   * THE VOCABULARY IS ALREADY THE MODULE'S. `COVERAGE[state].pill` is ok / warn / neutral,
+   * which is the tone set `unitChartModel` accepts unchanged, and the keys' own glyphs
+   * (● ◐ ○) are a solid / partial / ring progression the `fill` channel already draws. So the
+   * silhouette a reader sees in the lattice is the one they see in the key beside it, and
+   * neither was invented here.
+   *
+   * STILL DECORATION, STILL `aria-hidden`, exactly as the bar was: `coverageKeys` below is the
+   * text carrier and states every figure. `unitGrid` labels its own lattice, so the wrapper
+   * hides it rather than announcing the same three numbers twice.
+   */
   function coverageBar(tally, total) {
-    const bar = el("div", { class: "cov-bar", "aria-hidden": "true" });
-    for (const state of COVERAGE_ORDER) {
-      if (!tally[state]) continue;
-      const seg = el("div", { class: "cov-bar-seg", "data-state": state });
-      seg.style.flexGrow = String(tally[state]);
-      bar.append(seg);
-    }
-    if (!total) bar.append(el("div", { class: "cov-bar-seg", "data-state": "empty" }));
-    return bar;
+    const model = unitChartModel({
+      unit: "scan areas",
+      total,
+      cells: "exact",
+      segments: COVERAGE_ORDER.map((state) => ({
+        key: state,
+        label: COVERAGE[state].label,
+        count: tally[state],
+        tone: COVERAGE[state].pill,
+        fill: state === "live" ? "solid" : state === "partial" ? "hatch" : "ring",
+      })),
+    });
+    const wrap = unitGrid(model, { className: "cov-census" });
+    wrap.setAttribute("aria-hidden", "true");
+    return wrap;
   }
 
   function coverageKeys(tally) {
