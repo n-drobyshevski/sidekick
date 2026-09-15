@@ -14,10 +14,14 @@ This repository's maintained product surfaces are the Google Apps Script apps:
 
 The legacy root dashboard has been removed.
 
-The root Python code that remains is still important: `wiz_dashboard/domain/`
-and related `wiz_dashboard/{data,models}` modules act as the behavioral spec and
-fixture-export source for parts of the GAS rebuild, especially `gas/`. Treat
-that Python domain layer as maintained shared logic, not dead code.
+`gas/` is the reference implementation of the register domain now — the Python
+domain layer (`wiz_dashboard/`) that used to be its behavioral spec has been
+deleted, and `gas/test/` verifies its own domain ports with vitest snapshots
+(regenerate them with `vitest -u` after a deliberate domain change, reading the
+diff carefully). The root Python that remains is `os_vulns.py` — the Wiz
+GraphQL query and client spec — plus its tests: `gas/test/extract_query.py`
+generates `gas/src/server/wizQuery.ts` from its `QUERY`/`VARIABLES`, and
+`tests/test_client.py` is the behavioral spec behind `gas/src/server/wizClient.ts`.
 
 `brick/` is the PySpark + Delta pipeline over the same registers, one tree for
 the three scopes `os`, `sca` and `sast`. Every scope writes the same three tables
@@ -40,16 +44,17 @@ web UI. The top-level `pytest` suite should remain focused on non-UI logic.
 
 - Root Python: `pytest`
 - GAS apps: app-local `npm run check` per package, as documented in each app
-- After changing the Python behavioral spec used by GAS fixture export, regenerate
-  affected fixtures and run the relevant GAS checks
+- After changing a GAS domain port covered by fixture-parity vitest snapshots,
+  regenerate them with `vitest -u` and read the diff carefully before committing
 
 ## Working discipline
 
 - Fix the root cause rather than papering over symptoms.
 - Keep changes scoped to the app/package the user asked about.
-- Do not remove or rewrite the Python domain/spec layer just because the old UI is
-  gone; parts of the GAS system still depend on it.
-- Never regenerate golden fixtures without reading the diff carefully.
+- Do not touch `os_vulns.py` or its tests casually; it is the live spec behind
+  the generated `wizQuery.ts` and `wizClient.ts`.
+- Never regenerate golden fixtures or vitest snapshots without reading the diff
+  carefully.
 - Commit locally; do not push or open a PR unless asked.
 
 ## Design context
