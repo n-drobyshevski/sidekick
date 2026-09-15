@@ -309,6 +309,11 @@ export function registerUnitChartContract(ctx) {
       expect(m.cells).toBe(12);
       expect(m.segments.map((s) => s.cells)).toEqual([7, 3, 2]);
       expect(m.rounded).toBe(false);
+      // AND THE LABEL DOES NOT INVENT A SINGULAR. An earlier form stripped a trailing "s" and
+      // said "one cell per repositorie" on the first page that drew one; `unit` is the
+      // caller's own word in the caller's own language and this module does not conjugate it.
+      expect(m.aria).toContain("Each cell is one of the scan areas");
+      expect(m.aria).not.toMatch(/\ba\b.*\bscan area\b/);
     });
 
     it("refuses exact mode over a population nobody could count", () => {

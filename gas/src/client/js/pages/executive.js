@@ -1004,12 +1004,17 @@ export async function renderExecutive(main, _params, ctx) {
    * tint is the only cue.
    */
   function movementRow(label, r, unit) {
-    const row = el("div", { class: "movement-row" },
+    // The modifier, not a rule on `.movement-row` itself: `gas_devsecops` draws the same shared
+    // class with no tally in it, and its counts are right-aligned by an auto margin that is
+    // correct for a three-part row and wraps a four-part one. A row that gained a picture gets
+    // the flow layout; a row that did not keeps exactly what it had.
+    const row = el("div", { class: "movement-row" + (unit ? " movement-row--tally" : "") },
       el("span", { class: "movement-label small" }, label));
     if (unit) {
       row.append(unitRow(r.open, {
         unit,
-        label: label + ", " + fmtCount(r.open) + " open, one mark per " + fmtCount(unit),
+        label: label + ", " + fmtCount(r.open) + " open, one mark per "
+          + (unit === 1 ? "finding" : fmtCount(unit) + " findings"),
       }));
     }
     if (r.chip) {
@@ -1050,9 +1055,19 @@ export async function renderExecutive(main, _params, ctx) {
       box.append(el("div", { class: "small muted" },
         "No open-backlog comparison. " + open.reason));
     } else {
-      // ONE UNIT FOR THE WHOLE STRIP, from the largest severity row — see `movementRow`. The
-      // fine ladder, not the default one: a severity's open count is tens, and the coarse
-      // ladder's finest rung would draw the whole strip as three clipped marks.
+      // ONE UNIT FOR THE WHOLE STRIP, from the largest severity row — see `movementRow`.
+      //
+      // TWELVE MARKS, NOT FORTY, AND THAT IS A PROPERTY OF THIS ROW RATHER THAN OF THE LADDER.
+      // `MAX_MARKS` is the point past which a reader stops counting and starts estimating from
+      // length, which is still honest in a table cell that owns its whole column. This is an
+      // inline strip capped at 46ch beside a label, a pill and a count pair: at the default
+      // ceiling the largest severity drew 39 marks, the row wrapped, and the pill landed on a
+      // line of its own under a rule of ink. Measured, not guessed — the first screenshot of
+      // this change is what found it. Twelve is also where the icon-array literature puts the
+      // count a reader can still take in at a glance.
+      //
+      // The FINE ladder with it: a severity's open count is tens, and the coarse ladder's
+      // finest rung would draw the whole strip as three clipped marks.
       const stripUnit = unitScale(
         open.rows.reduce(
           (m, r) => (typeof r.open === "number" && Number.isFinite(r.open) && r.open > m
@@ -1060,9 +1075,9 @@ export async function renderExecutive(main, _params, ctx) {
             : m),
           0,
         ),
-        { units: FINE_UNITS },
+        { units: FINE_UNITS, maxMarks: 12 },
       );
-      box.append(el("div", { class: "movement-rows" },
+      box.append(el("div", { class: "movement-rows movement-rows--tally" },
         movementRow(open.total.label, open.total, null),
         ...open.rows.map((r) => movementRow(r.label, r, stripUnit))));
       box.append(el("div", { class: "small muted" }, open.dates));

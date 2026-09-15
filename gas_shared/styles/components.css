@@ -1685,16 +1685,27 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
 /* The tally's own right margin is for a table cell, where it sits before a figure with no
    gap of its own; this row is a flex box that already spaces its children. */
 .movement-row .isotype { margin-right: 0; }
+/* A row carrying a tally has four parts, not three, and the auto margin that right-aligns
+   the count pair in a three-part row pushes the fourth onto a line of its own inside the
+   strip's 46ch. The modifier is on the ROW rather than a rule on `.movement-row`, because
+   a sibling register draws the same class with no tally in it and its right-aligned counts
+   are correct as they are. */
+.movement-row--tally .movement-counts { margin-left: 0; }
+/* And the strip itself needs the room the fourth part takes. 46ch fits a label, a pill and
+   a count pair; it does not fit a tally as well, and the longest row wrapped its counts
+   onto a line of their own — measured on a screenshot, not guessed. The modifier keeps a
+   sibling's three-part strip at the width that is right for three parts. */
+.movement-rows--tally { max-width: 60ch; }
 
-/* THE TALLY IS THE FIRST THING TO GO AT PHONE WIDTH, and it may go because it is a SECOND
-   encoding: the count and the pair are still in words beside it, so a reader loses the
-   comparison at a glance and no figure at all. It is not allowed to wrap instead — a row
-   of 27 marks is ~270px and cannot fit 360px, and the shipped measurement of this page
-   went from 364px to 404px of horizontal overflow the moment it was added without this
-   rule. Overflow on a register is a bug whatever it is carrying. */
-@media (max-width: 640px) {
-  .movement-row .isotype { display: none; }
-}
+/* NO PHONE-WIDTH RULE HERE, AND THE ABSENCE IS MEASURED. The first version of this tally
+   ran at the module's default 40-mark ceiling, drew 39 marks for the largest severity,
+   and took this page from 364px of horizontal overflow at 360px to 404px — an .isotype is
+   one inline-flex run that cannot wrap, so a long one pushes the register off the side of
+   a phone. The first fix hid it below 640px; the right fix was a 12-mark ceiling at the
+   CALL SITE (gas/pages/executive.js), which is the readable count for an inline strip
+   anyway. Re-measured without any hide rule: 364px, the same figure every other route in
+   that app carries. So a phone reader keeps the picture. Do not reintroduce a display:none
+   here without re-measuring first — it would be hiding a symptom this ceiling removed. */
 .movement-block { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
 
 /* `.chart-row` (tables.css) is `repeat(auto-fit, minmax(420px, 1fr))` — right for a page's two

@@ -332,7 +332,11 @@ export function unitChartModel(spec) {
   const restSpoken = remainder ? ", " + remainder.label + " " + remainder.countText : "";
   const aria = measured
     ? "Of " + fmtCount(whole) + " " + unit + ": " + (spoken || "nothing counted") + restSpoken
-      + (exact ? ". One cell per " + unit.replace(/s$/, "") + "."
+      // NO SINGULARISATION. `unit` is the caller's own word and this module does not speak its
+      // language: stripping a trailing "s" turned "repositories" into "repositorie" on the very
+      // first render, and English is not the only way that guess fails. Phrasing it so the
+      // plural stays plural costs nothing and cannot be wrong.
+      + (exact ? ". Each cell is one of the " + unit + "."
         : rounded ? ". Cells are rounded to the nearest whole cell." : "")
     : "Not measured: no " + unit + " counted, so no share is drawn.";
 

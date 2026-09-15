@@ -193,12 +193,17 @@ findings in the seed, hence +3.
 asserts no canvas anywhere in `executive.js`; `unitRow` is DOM and CSS, so the rule stands
 unbent. That is also why the swap landed here first rather than on a page with a chart budget.
 
-**The 360px overflow is a measured near-miss, recorded because it nearly shipped.** The first
-after-run read `executive (404px)` against a pre-existing 364px on every route — a 27-mark tally
-is ~270px and cannot fit a phone. `gas_shared/styles/components.css` hides
-`.movement-row .isotype` below 640px, and it MAY be hidden: the count and the pair are still in
-words, so a narrow reader loses the comparison at a glance and no figure at all. The re-run is
-back at 364px.
+**The 360px overflow is a measured near-miss, and the fix moved once.** The first after-run read
+`executive (404px)` against a pre-existing 364px on every route: the tally ran at the module's
+default 40-mark ceiling, drew 39 marks for the largest severity, and an `.isotype` is one
+inline-flex run that cannot wrap. The first fix hid it below 640px. The RIGHT fix was a 12-mark
+ceiling at the call site — `unitScale(..., { maxMarks: 12 })` — which is also where the
+icon-array literature puts the count a reader still takes in at a glance, and which the first
+screenshot of this change had already argued for on its own: at 39 marks the row wrapped and the
+delta pill landed on a line of its own under a rule of ink. Re-measured with the hide rule
+removed entirely, `executive` reads 364px again, so a phone reader keeps the picture. The
+absence of a `display:none` here is a measurement, not an oversight; `components.css` says so
+beside the rules.
 
 **Three sites examined and rejected, with reasons, so the next round does not re-litigate them:**
 
