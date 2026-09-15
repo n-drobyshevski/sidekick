@@ -32,6 +32,7 @@ import {
   boundedDays, capacityVerdict, capacityView, coldKpiCards, coldRepoRows, coldScatterPoints,
   coldTeamRows, coldZoneView, coverageMeterPct, densityView, footholdCellKind, footholdView,
   groupRows, halfLifeView, heatLevel, heatModel, overallRow, tableRow, unmeasurableNote,
+  projectCountNote,
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
@@ -606,6 +607,22 @@ describe("repos: coldRepoRows — the bound reads \"≥\", and never \">\"", () 
   it("a repository with no project recorded is filed under (no project), never blank", () => {
     const v = coldZoneView(coldModel({ repos: [coldRepo({ project: null })] }));
     expect(coldRepoRows(v)[0].project).toBe("(no project)");
+  });
+});
+
+describe("repos: projectCountNote — names the (no project) bucket only when it is in the table", () => {
+  it("says nothing about a bucket the table does not hold", () => {
+    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_project: 0 }) }));
+    expect(projectCountNote(v, 4)).toBe("4 projects.");
+    expect(projectCountNote(v, 4)).not.toMatch(/no project/);
+  });
+
+  it("names the bucket, with its size, when repositories have no project recorded", () => {
+    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_project: 2 }) }));
+    expect(projectCountNote(v, 3)).toBe(
+      "3 projects, including the 2 repositories with no project recorded, counted together as one.",
+    );
+    expect(projectCountNote(v, 1)).toMatch(/^1 project,/);
   });
 });
 

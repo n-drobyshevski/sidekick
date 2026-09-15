@@ -186,11 +186,17 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
     const result = devSeed.seedSampleLedger();
 
     // Measured independently against the real dev/sampleData.dev.ts battery (not hand-derived
-    // arithmetic — see this describe block's header): 3 syncs, 1436 raw nodes fed through
+    // arithmetic — see this describe block's header): 3 syncs, 1430 raw nodes fed through
     // slimRecord across them, folding to 400 sca + 40 sast + 114 secrets = 554 ledger rows
     // (secrets: 120 nodes / 6 twin-key collisions -> 114 keys, pinned separately by
     // test/sampleData.test.ts; no scope's key population grows after this seed's first scan).
-    expect(result).toEqual({ seeded: 554, syncs: 3, rows: 1436 });
+    // The raw-node count moved from 1436 to 1430 (WP4, cold-zone dev seed): three sca specs
+    // (dev/sampleData.dev.ts's UNOBSERVED_REPO_STAYS_IDX, repo-10 "retired-mobile") are now
+    // flagged scan-A-only so the harness has an `unobserved` repo — each is emitted at scan A
+    // but not at scan B or scan C, so the battery carries 3 fewer nodes at each of those two
+    // syncs: 1436 - 3*2 = 1430. `seeded`/`rows` folds to the same 554 live ledger rows either
+    // way, because these 3 findings are resolved by disappearance rather than counted twice.
+    expect(result).toEqual({ seeded: 554, syncs: 3, rows: 1430 });
 
     const ledger = ledgerStore.loadState().ledger;
     const byScope: Record<string, number> = {};
@@ -237,7 +243,7 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
     const second = devSeed.seedSampleLedger();
     const after = Object.values(ledgerStore.loadState().ledger).length;
 
-    expect(first).toEqual({ seeded: 554, syncs: 3, rows: 1436 });
+    expect(first).toEqual({ seeded: 554, syncs: 3, rows: 1430 });
     expect(second).toEqual(first);
     expect(after).toBe(before);
   });

@@ -65,6 +65,28 @@ describe("generated counts", () => {
       expect(SAMPLE_RAW_NODES[scope].length).toBeGreaterThan(0);
     }
   });
+
+  // Cold-zone coverage guard (WP4): the dev harness needs at least one repository that the sca
+  // battery emits at scan A and never again, so `domain/coldZone.ts`'s `unobserved` verdict has
+  // something real to show locally (dev/sampleData.dev.ts's UNOBSERVED_REPO_STAYS_IDX / repo-10).
+  // This reads the battery generically — by which vulnerableAsset ids appear at each scan —
+  // rather than naming repo-10 directly, so the harness's cold-zone coverage can't be silently
+  // dropped by some future edit without this test noticing.
+  it("the sca battery has at least one repository present only at scan A", () => {
+    const repoIdsAt = (syncIndex: number): Set<string> => {
+      const ids = new Set<string>();
+      const scaBattery = SAMPLE_SYNCS[syncIndex]!.scopes.find((s) => s.scope === "sca")!;
+      for (const n of scaBattery.rawRecords) {
+        ids.add(((n as Rec)["vulnerableAsset"] as Rec)["id"] as string);
+      }
+      return ids;
+    };
+    const atA = repoIdsAt(0);
+    const atB = repoIdsAt(1);
+    const atC = repoIdsAt(2);
+    const scanAOnlyRepos = [...atA].filter((id) => !atB.has(id) && !atC.has(id));
+    expect(scanAOnlyRepos.length).toBeGreaterThan(0);
+  });
 });
 
 /* --------------------------------------------------------------------------- 2 + 3 + 4 + 5 */
@@ -268,9 +290,11 @@ describe("the three-scan battery, through ledgerStore.persistSync", () => {
 
     // scan A's secrets population folds 120 nodes / 6 twin pairs down to 114 live rows.
     expect(secretsAfterA).toBe(114);
-    // sca: EARLY_GONE (50) resolves by disappearance at B, LATE_GONE (40) at C, and
-    // API_RESOLVED (30) resolves directly at B — 120 resolutions total across the battery.
-    expect(sawResolvedSca).toBe(50 + 40 + 30);
+    // sca: EARLY_GONE (50) resolves by disappearance at B, LATE_GONE (40) at C,
+    // API_RESOLVED (30) resolves directly at B, and the 3 cold-zone UNOBSERVED_REPO_STAYS_IDX
+    // findings (dev/sampleData.dev.ts — emitted only at scan A) also resolve by disappearance
+    // at B — 123 resolutions total across the battery.
+    expect(sawResolvedSca).toBe(50 + 40 + 30 + 3);
     // sast: GONE_AT_B (8) resolves at B, GONE_AT_C (2) at C.
     expect(sawResolvedSast).toBe(8 + 2);
     // secrets: the 8 seeded drop-after-A findings resolve by disappearance at scan B.

@@ -232,6 +232,24 @@ export function unmeasurableNote(view) {
 }
 
 /**
+ * The count line under the project table. The "(no project)" bucket is named ONLY when it is
+ * in the table: a sentence that says "including the repositories with no project recorded"
+ * over a table with no such row claims a bucket the reader cannot find.
+ *
+ * @param {{totals?: {repos_no_project?: number}|null}|null|undefined} view
+ * @param {number} rowCount  the rows the table actually holds
+ * @returns {string}
+ */
+export function projectCountNote(view, rowCount) {
+  const rows = num(rowCount, 0);
+  const noProject = view && view.totals ? num(view.totals.repos_no_project, 0) : 0;
+  const head = `${fmtCount(rows)} ${rows === 1 ? "project" : "projects"}`;
+  if (!noProject) return `${head}.`;
+  return `${head}, including the ${fmtCount(noProject)} ${noProject === 1 ? "repository" : "repositories"}`
+    + " with no project recorded, counted together as one.";
+}
+
+/**
  * The four figures, as specs — label, value, the sentence under it and the denominator behind
  * it. DOM-free so the claims can be read without a DOM, the way every other view model on
  * this page is.
@@ -840,10 +858,7 @@ export async function renderRepos(host, _params, _ctx) {
       // `sortRows` leaves a list untouched when it is given no value function.
       emptyText: "No project has a repository to report on yet.",
     }));
-    coldHost.append(denomNote(
-      `${fmtCount(rows.length)} ${rows.length === 1 ? "project" : "projects"}, including the`
-      + " repositories with no project recorded, which are counted together as one.",
-    ));
+    coldHost.append(denomNote(projectCountNote(view, rows.length)));
   }
 
   /**
