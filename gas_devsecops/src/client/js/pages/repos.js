@@ -3,7 +3,7 @@
 //
 // NO gas/ COUNTERPART. This page is new (the OS-vuln register has no repository concept), so
 // it is built straight from `domain/assets.ts::assetProfile` — a D6 port of
-// brick/devsecops/metrics.py's asset-centric family — through `readModels.reposModel`, which
+// brick/metrics.py's asset-centric family — through `readModels.reposModel`, which
 // runs the same estimator twice: `groupBy: "repo"` (one row per repository) and
 // `groupBy: "language"` (one row per language, the only grain where percentiles across
 // several repos are not trivially one point).

@@ -35,7 +35,7 @@ export const MAX_PAGES = 1000;
  *
  * NOTE WHAT IS NOT HERE: any timestamp. Not firstDetectedAt, not resolvedAt, not fixDate.
  * That is not an omission — the documented selection set offers none, which is why this
- * register dates SAST from observation and why brick/devsecops refuses to fetch resolved
+ * register dates SAST from observation and why brick/ refuses to fetch resolved
  * SAST rows at all (they would be born and closed in the same instant, giving a real
  * mttr_days == 0.0 that drags the median to the floor).
  *
@@ -423,7 +423,7 @@ function shapeBase(scope: Scope, base: Record<string, unknown>): Record<string, 
  * resolution by DISAPPEARANCE when the API will not: `first_seen` prefers the API's
  * `createdAt` over the observation date, `resolved_at` becomes the scan that noticed the
  * absence, and `mttr_days` is the subtraction of the two with no guard on how the
- * resolution was learned (brick/devsecops/ledger.py, pinned by
+ * resolution was learned (brick/ledger.py, pinned by
  * test_mttr_is_measured_from_the_ledgers_own_dates). So SAST gets a genuine MTTR from
  * `createdAt` + disappearance — not merely an age metric — once two scans exist.
  *

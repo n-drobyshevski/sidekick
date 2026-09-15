@@ -10,7 +10,7 @@
 //      below is the probe's function, ported verbatim in behaviour — it REFUSES, naming the
 //      keys it did see, rather than handing back an empty connection. A zero has to prove it
 //      looked.
-//   2. PARTIAL IS NOT FAILURE. brick/devsecops raises on any `errors`, which would reject the
+//   2. PARTIAL IS NOT FAILURE. brick/ raises on any `errors`, which would reject the
 //      captured sast_response.json wholesale — a 200 carrying 40 good nodes and one error
 //      about a null Weakness name. Data and errors ride out together as `partialErrors`, and
 //      the caller decides. No live PARTIAL has been reproduced on this tenant in five probe

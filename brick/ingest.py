@@ -66,7 +66,7 @@ RETRY_STATUS = {429, 500, 502, 503, 504}
 # The member list and the per-member field availability are both taken from a live query known
 # to work. Two members genuinely lack some of the fields; asking anyway would 400 again.
 #
-# In this fork only two of them are ever asked for -- see ``config.SCOPE_ASSET_MEMBERS``. The
+# In this register only two of them are ever asked for -- see ``config.SCOPE_ASSET_MEMBERS``. The
 # rest are kept because the list is a record of what the union HAS, and narrowing it by deletion
 # would lose the information that makes the narrowing safe to reason about.
 _ASSET_FIELDS = (
@@ -451,7 +451,7 @@ def _shape_base(scope: str, filter_by: Dict[str, Any]) -> Dict[str, Any]:
 
     ``config.SCOPES`` is written in one convention -- plain lists -- and the shape table decides
     what goes on the wire. Without this pass a literal in ``SCOPES`` bypasses the table
-    completely, which is exactly how the sibling register shipped `codeToCloudPipelineStage`
+    completely, which is exactly how `gas_devsecops/` shipped `codeToCloudPipelineStage`
     as a bare list while its table said it was an object: adding the key to the table changed
     nothing, because the value never went through the shaping function. **A shape table that
     covers only part of the filter is worse than none**, because it reads as though it covers

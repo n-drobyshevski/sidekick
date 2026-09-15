@@ -172,10 +172,11 @@ NOTEBOOK_MODULES = ("panels", "figures", "tiles")
 # because a module it does not import is missing from the folder. Absent is fine; present and
 # disagreeing is not.
 #
-# `import_bundle` ported from `brick/import_bundle.py` when this fork absorbed the `os` scope
-# (S2): the GAS app it seeds from is the OS-patching register, so the importer is only ever run
-# with `--scope=os`, but it is deployment tooling like `csvstore`, not scope-specific code, and
-# lives here rather than behind a scope check.
+# `import_bundle` ported from the OS register's own copy -- `git show
+# ef22b05^:brick/import_bundle.py`, that directory having been retired at `ef22b05` -- when this
+# tree absorbed the `os` scope (S2): the GAS app it seeds from is the OS-patching register, so the
+# importer is only ever run with `--scope=os`, but it is deployment tooling like `csvstore`, not
+# scope-specific code, and lives here rather than behind a scope check.
 #
 # Neither is imported by this module at module scope -- `csvstore` is reached lazily from
 # `export_csv`, and `import_bundle` imports `run_pipeline` (not the other way around) and calls
@@ -1002,9 +1003,9 @@ def reconcile_scan(
     # **The prior is THIS SCOPE'S ledger rows and nothing else.** One ledger holds every scope,
     # and `reconcile` resolves by absence: every `sca` row is missing from an `os` scan by
     # construction, so an unfiltered prior would date the whole of the other two registers as
-    # remediated by this scan, with real-looking resolution dates and a plausible delta. The
-    # sibling that had to learn this priced the mutation at 19,949 findings
-    # (CLAUDE.md, gas_devsecops). `ledger._refuse_foreign_scope` is the proof this line ran.
+    # remediated by this scan, with real-looking resolution dates and a plausible delta.
+    # `gas_devsecops/`, which had to learn this, priced the mutation at 19,949 findings.
+    # `ledger._refuse_foreign_scope` is the proof this line ran.
     touched = ledger_mod.reconcile(
         spark.table(tables.ledger).where(F.col("scope") == scope),
         ledger_mod.observed(silver),

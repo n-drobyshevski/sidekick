@@ -4,8 +4,8 @@ The register is one ledger, one bronze and one metrics table now, with ``scope``
 each rather than a fragment of their names. That makes every scope's rows present in every
 other scope's reads unless something filters them out -- and disappearance-resolution reads
 absence as remediation, so a missing filter is not a mislabelled input but a remediation
-programme that never happened. The sibling that learned this the other way round priced the
-mutation at 19,949 findings (CLAUDE.md, ``gas_devsecops``).
+programme that never happened. ``gas_devsecops/``, which learned this the other way round,
+priced the mutation at 19,949 findings.
 
 There are FOUR independent things holding the three registers apart, and this module perturbs
 each of them separately because they do not fail in the same way and they do not all fail

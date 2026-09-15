@@ -332,7 +332,7 @@ def test_sast_severity_goes_on_the_wire_as_an_object_and_sca_as_a_bare_list():
     ``SASTFindingFilters.severity`` is a ``SASTSeverityFilter``, which takes ``{equals: [...]}``.
     Sending the SCA convention to the SAST type is refused with HTTP 400
     `VALIDATION_INVALID_TYPE_VARIABLE` -- so the run fetches **zero rows** and reads as an empty
-    register rather than as an error. This fork sent the bare list to both until now.
+    register rather than as an error. This tree sent the bare list to both until now.
     """
     assert ingest.build_filter("sca", ["CRITICAL", "HIGH"])["severity"] == ["CRITICAL", "HIGH"]
     assert ingest.build_filter("sast", ["CRITICAL", "HIGH"])["severity"] == {
@@ -350,7 +350,7 @@ def test_every_list_valued_base_key_goes_through_the_shape_table(scope, monkeypa
 
     The mutation: for every list-valued key the emitted filter carries, add it to (or remove it
     from) ``OBJECT_FILTERS`` and demand the wire shape MOVES. A key that does not move is a
-    literal that bypassed the table -- which is exactly how the sibling register shipped
+    literal that bypassed the table -- which is exactly how `gas_devsecops/` shipped
     `codeToCloudPipelineStage` as a bare list while its own table said it was an object: adding
     the key to the table changed nothing, and nothing failed.
 
@@ -594,9 +594,9 @@ def test_static_analysis_is_never_awaiting_a_vendor_fix(spark, monkeypatch):
     Without that guard every open SAST row drops out of ``mttr_actionable_days`` and
     ``actionable_age_days`` while staying in every open and exposure count -- so the two
     halves of a page disagree by exactly this population, and the difference reads as broken
-    arithmetic rather than as the category error it is. The sibling register measured the same
+    arithmetic rather than as the category error it is. `gas_devsecops/` measured the same
     shape on live data: 2,085 rows (127 SAST + 1,958 secrets) awaiting a vendor permanently.
-    The number below is this fork's committed capture, run through the real ledger.
+    The number below is this tree's committed capture, run through the real ledger.
     """
     import ledger as ledger_mod
     from config import HAS_VENDOR_FIX, scope_has_vendor_fix

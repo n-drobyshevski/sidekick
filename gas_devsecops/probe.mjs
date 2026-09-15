@@ -170,7 +170,7 @@ const BEARER = DRY_RUN ? "" : await token();
  *
  * PARTIAL FAILURE IS NOT FAILURE, and that distinction is the reason this returns a triage
  * object instead of throwing. The captured sast_response.json is a 200 carrying 40 good
- * nodes AND an `errors` array (a Weakness whose name was null). brick/devsecops raises on
+ * nodes AND an `errors` array (a Weakness whose name was null). brick/ raises on
  * any `errors`, which would reject that exact response wholesale. Data and errors are
  * reported side by side here so a caller can decide.
  */
@@ -437,7 +437,7 @@ for (const scope of SCOPES) {
     + `, hasNextPage ${conn.pageInfo?.hasNextPage}`);
   if (r.partial) {
     console.log(`  PARTIAL: ${r.errors.length} error(s) alongside good data — e.g. ${r.errors[0].slice(0, 120)}`);
-    console.log("  (the battery must tolerate this; brick/devsecops raises on it)");
+    console.log("  (the battery must tolerate this; brick/ raises on it)");
   }
   if (nodes[0]) {
     const keys = Object.keys(nodes[0]);

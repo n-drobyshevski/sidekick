@@ -1,4 +1,4 @@
-"""Wiring tests for the devsecops entry point.
+"""Wiring tests for ``run_pipeline``, the register's one entry point.
 
 These guard the parts that only fail on a cluster: parameter resolution across the three
 places Databricks can supply them from, and the ``dbutils`` accessors degrading quietly when
@@ -137,9 +137,9 @@ def test_scope_defaults_to_os_and_rejects_unknown_values(monkeypatch):
     """`os` -- the oldest, largest and most read population here, and what the notebooks open on.
 
     **This test used to assert `sca`, and to assert that `os` was REFUSED.** The claim it
-    encoded was "this fork does not measure hosts, so silently accepting the scope name would
-    write `wiz_os_*` tables full of code findings". That claim is gone by decision, not by
-    accident: this fork absorbed the host register, `os` is a real scope with brick's own
+    encoded was "this register does not measure hosts, so silently accepting the scope name
+    would write `wiz_os_*` tables full of code findings". That claim is gone by decision, not by
+    accident: this tree absorbed the host register, `os` is a real scope with the OS register's
     filter behind it, and host findings in the register is now the correct outcome. (The
     `wiz_os_*` tables themselves are gone too -- every scope shares `wiz_*` now, with `scope`
     a column -- but that is a later change and not why this one flipped.)
@@ -170,11 +170,11 @@ def test_both_scopes_default_to_the_same_gate_and_the_shape_says_they_need_not(m
     a single tuple produced. What the shape buys is the next scope: it has to state its own
     gate rather than inherit a volume control chosen for a different population.
 
-    The sibling register is the evidence that the inheritance is not hypothetical.
-    `gas_devsecops` gave `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted
-    `PASSWORD` 209 -> 0 and `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and
-    shipped a secrets register with no passwords in it. Nothing errored; the gate was simply
-    the right answer to a question nobody had asked about that population.
+    `gas_devsecops/` is the evidence that the inheritance is not hypothetical. It gave `secrets`
+    the vulnerability registers' CRITICAL,HIGH, which deleted `PASSWORD` 209 -> 0 and
+    `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and shipped a secrets register
+    with no passwords in it. Nothing errored; the gate was simply the right answer to a question
+    nobody had asked about that population.
     """
     from config import DEFAULT_FETCH_SEVERITIES, default_fetch_severities
 
@@ -359,7 +359,7 @@ def test_sca_scope_matches_the_reference_query():
     assert got["isDefaultBranch"] == {"equals": True}
     assert got["hasFix"] is True
     assert got["severity"] == ["CRITICAL"]
-    # This fork measures code, so none of the host-register restrictions apply.
+    # `sca` measures code, so none of the host-register restrictions apply.
     assert "detectionMethod" not in got
     assert "assetType" not in got
 
@@ -445,7 +445,8 @@ def test_unknown_scope_is_rejected():
 
 
 def test_the_sca_query_asks_for_exactly_two_asset_members():
-    """The inversion of brick's rule, and the reason this fork can compute P2P v5 at all.
+    """The inversion of the OS register's rule, and the reason this tree can compute P2P v5
+    at all.
 
     A union fails as a whole, so one member the tenant no longer has costs the entire request
     -- which is why `FETCH_ASSET_FIELDS` is off for a register that would have to ask for all
@@ -454,7 +455,7 @@ def test_the_sca_query_asks_for_exactly_two_asset_members():
 
     Reads `build_query(scope="sca")` rather than the module-level `QUERY`, which used to be the
     same document and is not any more: `QUERY` is `build_query()`, so it follows
-    `config.DEFAULT_SCOPE`, and that became `os` when this fork absorbed the host register.
+    `config.DEFAULT_SCOPE`, and that became `os` when this tree absorbed the host register.
     Nothing about the `sca` document changed -- see the test below for what `QUERY` now holds.
     """
     sca_query = ingest.build_query(scope="sca")

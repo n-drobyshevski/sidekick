@@ -13,7 +13,7 @@ read it.
 ## Status: Phase 2 complete — all ten pages lit, never deployed
 
 **What is real:** everything from the shell to the screen. The domain layer (19 modules
-ported from `brick/devsecops/` against golden fixtures), the transport, the archives, the
+ported from `brick/` against golden fixtures), the transport, the archives, the
 journaled ledger commit, the sync battery, eight read models behind twenty RPCs, the standing
 triggers, and all ten pages rendering real figures. `test/pagesLit.test.js` is the phase's
 exit gate — seven criteria, and it passes.
@@ -89,7 +89,7 @@ that first stopped seeing the finding — an upper bound whose error is the scan
 SAST that is *every* closed row; on SCA and secrets it is most of them.
 
 **The design that carried the risk.** Neither source register does three scopes in one
-ledger: `gas/` has one, and `brick/devsecops`'s reconcile takes a `scope` but only stamps it,
+ledger: `gas/` has one, and `brick/`'s reconcile takes a `scope` but only stamps it,
 because its caller hands it a prior already filtered down. Here the prior is one tab holding
 all three, and every row of the other two is absent from any given scan by construction — so
 a disappearance pass that did not filter by scope would resolve 19,949 findings as
@@ -98,7 +98,7 @@ convention, and a mutation check in the suite confirms that removing the guard d
 that.
 
 **Where the domain comes from.** Not greenfield.
-[`../brick/devsecops/`](../brick/devsecops/) implements this product as a tested Spark
+[`../brick/`](../brick/) implements this product as a tested Spark
 pipeline: real captured Wiz queries, a cross-scan lifecycle reconciler, Kaplan–Meier with
 censoring and RMST, the P2P coverage/efficiency/capacity family, and ~6,400 lines of tests.
 `test/reconcile.test.js` replays the behaviours its `test_ledger.py` names. The statistics
@@ -147,7 +147,7 @@ measured and which is estimated.
 That question — whether SAST can carry an MTTR at all, or only an age — was open across
 three probe passes and is now settled: it is a **genuine MTTR**. `createdAt` gives a real
 birth date, and the ledger dates the death by disappearance with no guard on how the
-resolution was learned (`brick/devsecops/ledger.py`, pinned by
+resolution was learned (`brick/ledger.py`, pinned by
 `test_mttr_is_measured_from_the_ledgers_own_dates`). The one caveat is that the death side is
 observation-bounded — the scan that noticed overstates by up to one scan interval — so a
 ledger started today reads near-zero until disappearances accrue. A secret leaves the register when the string leaves HEAD,

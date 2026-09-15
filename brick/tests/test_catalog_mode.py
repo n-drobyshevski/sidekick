@@ -1,14 +1,16 @@
 """Do three-level ``catalog.schema.table`` names work against a local Spark? Measured here.
 
-Heir to ``brick/tests/test_catalog_mode.py`` as well as this fork's own: when the OS fork was
-retired its half of this module was folded in here rather than dropped, so the end-to-end
-assertions run **once per scope** -- ``os`` and ``sca``, the two scopes with a committed capture
-to drive them. (``sast`` has none; see ``conftest``'s note on why the grouped captures cannot
-drive a pipeline.) The claim under test is ``brick/docs/storage.md`` ("Running it locally") and
-``panels.tables``' docstring: *"saveAsTable against a three-level catalog.schema.table name
-needs Unity Catalog -- a local Spark can only write two-level names."* Every local test in this
-suite builds a two-level namespace on the strength of it, so the catalog-mode path -- the mode
-this register is meant to be deployed in -- is exercised nowhere but on a cluster.
+Heir to the OS register's own ``brick/tests/test_catalog_mode.py`` -- ``git show
+ef22b05^:brick/tests/test_catalog_mode.py`` -- as well as to this tree's: when that directory was
+retired at ``ef22b05`` its half of this module was folded in here rather than dropped, so the
+end-to-end assertions run **once per scope** -- ``os`` and ``sca``, the two scopes with a
+committed capture to drive them. (``sast`` has none; see ``conftest``'s note on why the grouped
+captures cannot drive a pipeline.) The claim under test is ``brick/docs/storage.md`` ("Running it
+locally") and ``panels.tables``' docstring: *"saveAsTable against a three-level
+catalog.schema.table name needs Unity Catalog -- a local Spark can only write two-level names."*
+Every local test in this suite builds a two-level namespace on the strength of it, so the
+catalog-mode path -- the mode this register is meant to be deployed in -- is exercised nowhere but
+on a cluster.
 
 That claim is wrong in its subject and wrong in its reason, and one narrower thing in its
 neighbourhood is true. What this module pins, all of it measured on this box against

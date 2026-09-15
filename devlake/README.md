@@ -14,16 +14,16 @@ earlier process created, and (in later steps) a fake Wiz transport and IPython/`
 
 ## One tree, and the failure that is still real
 
-`brick/` used to have a sibling fork (`brick/devsecops/`) defining the same module names
-(`config`, `ingest`, `run_pipeline`, ...) in different files — a `sys.path` holding both
-directories would resolve a bare `import config` to whichever came first, half of one pipeline
-and half of the other, with no error. That fork is retired: one tree, four scopes. What is
-still real on a flat Databricks workspace folder is a STALE IMPORT — a `sys.modules` entry left
-behind from some other directory entirely (a prior test module, a notebook cell, an old
-checkout on `sys.path` ahead of this one) — and `devlake.session.put_brick_on_path` still
-refuses that outright, checking every module name it defines against the directory it was
-actually loaded from. `devlake` itself has to live at the repo root rather than inside `brick/`
-for exactly this reason — a fork directory can only ever host that one tree.
+`brick/` used to have a sibling fork (`brick/devsecops/`, retired at `ef22b05`) defining the same
+module names (`config`, `ingest`, `run_pipeline`, ...) in different files — a `sys.path` holding
+both directories would resolve a bare `import config` to whichever came first, half of one
+pipeline and half of the other, with no error. That fork is retired: one tree, three scopes. What
+is still real on a flat Databricks workspace folder is a STALE IMPORT — a `sys.modules` entry left
+behind from some other directory entirely (a prior test module, a notebook cell, an old checkout
+on `sys.path` ahead of this one) — and `devlake.session.put_brick_on_path` still refuses that
+outright, checking every module name it defines against the directory it was actually loaded from.
+`devlake` itself has to live at the repo root rather than inside `brick/` for exactly this reason
+— a fork directory can only ever host that one tree.
 
 ## The jar pin
 

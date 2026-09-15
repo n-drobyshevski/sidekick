@@ -82,10 +82,10 @@ On a cluster this is six `.py` files in one flat folder and nothing else —
 | [`docs/reading-the-numbers.md`](docs/reading-the-numbers.md) | before quoting a number | coverage vs efficiency, Kaplan–Meier, the three easy mistakes, the actionable clock, what this does not do |
 | [`docs/internals.md`](docs/internals.md) | the contributor | module layout, why the ledger exists, the test suite, benchmarking |
 
-**This directory used to be two.** `brick/` measured only `os` and `brick/devsecops/` measured
-`sca`/`sast` as a separate, self-contained copy of the same modules under the same names — a
-real fork, deployable on its own, at the cost of the cross-scan reconciler and the P2P maths
-existing twice. The two have since merged into this one tree, and with the second copy gone, so
-is the rule that exactly one of them could be on `sys.path`. The trap that survives the merge is
-narrower: a stale `sys.modules` entry left behind by an earlier import in the same long-lived
-process, which `run_pipeline.check_deployment()` still catches before Spark starts.
+**This directory used to be two.** `brick/` measured only `os` and `brick/devsecops/` (retired at
+`ef22b05`) measured `sca`/`sast` as a separate, self-contained copy of the same modules under the
+same names — a real fork, deployable on its own, at the cost of the cross-scan reconciler and the
+P2P maths existing twice. The two have since merged into this one tree, and with the second copy
+gone, so is the rule that exactly one of them could be on `sys.path`. The trap that survives the
+merge is narrower: a stale `sys.modules` entry left behind by an earlier import in the same
+long-lived process, which `run_pipeline.check_deployment()` still catches before Spark starts.

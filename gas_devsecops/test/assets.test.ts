@@ -2,8 +2,8 @@
 //
 // Two oracles, in this order of authority:
 //   1. test/fixtures/brick/asset_profile.json — the REAL PySpark output of
-//      brick/devsecops/metrics.py::asset_profile_populations over 13 literal rows
-//      (brick/devsecops/export_fixtures.py:490-600). Two cases, `observed_from_none` and
+//      brick/metrics.py::asset_profile_populations over 13 literal rows
+//      (brick/tools/export_fixtures.py:490-600). Two cases, `observed_from_none` and
 //      `observed_from_set`; every group AND the OVERALL row of both populations, at 1e-9.
 //      A disagreement between this file and that fixture is a FINDING about the port, never
 //      a reason to touch the fixture.

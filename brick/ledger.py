@@ -284,8 +284,8 @@ def _merge_peak(new: Column, old: Column) -> Column:
 
 
 #: How many offending rows the guard collects before it names them. A refusal has to say WHICH
-#: population it was handed, and one row can only name one scope; three names every scope either
-#: fork has while keeping the check a LIMIT -- no shuffle, no full scan, no aggregate.
+#: population it was handed, and one row can only name one scope; three names every scope this
+#: register has while keeping the check a LIMIT -- no shuffle, no full scan, no aggregate.
 _FOREIGN_SCOPE_SAMPLE = 3
 
 

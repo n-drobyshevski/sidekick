@@ -17,7 +17,8 @@
     "up by an unrealistic fixture.",
     "",
     "Regenerate rather than hand-edit if the shape needs to change; see",
-    "brick/devsecops/README.md, Tests."
+    "brick/docs/internals.md, Tests (the brick/devsecops/README.md this used to name went with",
+    "that fork, retired at ef22b05, and brick/README.md has since split into brick/docs/)."
   ],
   "data": {
     "vulnerabilityFindings": {

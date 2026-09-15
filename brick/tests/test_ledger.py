@@ -628,7 +628,7 @@ def test_untouched_rows_are_not_republished(spark):
 # reconcile for exactly this; the lesson it wrote down is that reconcile must not trust its
 # caller for this, because the violation is silent and arrives dressed as remediation.
 
-FOREIGN_SCOPE = "sast"  # this fork's other register: same ledger schema, different population
+FOREIGN_SCOPE = "sast"  # this tree's other register: same ledger schema, different population
 NATIVE_SCOPE = "sca"
 #: How many OPEN rows the foreign prior holds -- the price of the missing guard, in rows.
 FOREIGN_PRIOR_ROWS = 6

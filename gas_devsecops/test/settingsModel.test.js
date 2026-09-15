@@ -162,7 +162,7 @@ describe("the three consequences worth a confirm", () => {
   });
 
   it("warns that a changed SLA window diverges from the other three sidekicks", () => {
-    // SLA_TARGETS is byte-identical across gas/, gas_ai/, brick/devsecops and this register on
+    // SLA_TARGETS is byte-identical across gas/, gas_ai/, brick/ and this register on
     // purpose: they measure the same estate, so the same finding must not be inside its
     // deadline on one dashboard and past it on another.
     const w = draftWarnings(saved, draftOf({

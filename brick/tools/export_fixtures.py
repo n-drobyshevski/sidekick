@@ -27,15 +27,16 @@ carry the mismatch):
 Regenerate whenever ``brick/metrics.py`` changes; the fixtures are committed so the
 TS tests run without a PySpark toolchain.
 
-This script moved from ``brick/export_fixtures.py`` to ``brick/tools/export_fixtures.py`` and
-its ``generated_by`` strings below now say so. The four fixtures already committed under
+This script moved from ``brick/export_fixtures.py`` to ``brick/tools/export_fixtures.py`` and its
+``generated_by`` strings below now say so. The four fixtures already committed under
 ``gas_devsecops/test/fixtures/brick/`` (``capacity.json``, ``confusion.json``,
 ``asset_profile.json``, ``km.json``) still carry the older ``brick/devsecops/export_fixtures.py``
-value from before that fork was absorbed -- one fork-name generation further back than this
-move. They are left alone here rather than regenerated to match: doing that needs Docker and a
-local PySpark/JRE toolchain, and CLAUDE.md says never to regenerate a golden fixture without
-reading the diff carefully, which is not a step to take just to freshen a provenance string. They
-will pick up the current value the next time they are regenerated for a reason of their own.
+value, from before that fork was absorbed and its directory retired at ``ef22b05`` -- one
+fork-name generation further back than this move. They are left alone here rather than regenerated
+to match: doing that needs Docker and a local PySpark/JRE toolchain, and CLAUDE.md says never to
+regenerate a golden fixture without reading the diff carefully, which is not a step to take just
+to freshen a provenance string. They will pick up the current value the next time they are
+regenerated for a reason of their own.
 """
 
 from __future__ import annotations

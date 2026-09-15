@@ -365,7 +365,7 @@ def test_fakewiz_refuses_a_bare_list_severity_for_sast():
 
 def test_fakewiz_refuses_an_object_shaped_bare_list_key_for_sca():
     """The reverse mutation: ``codeToCloudPipelineStage`` must stay a bare list on ``sca`` --
-    wrapping it as ``{"equals": [...]}}`` is the sibling mistake CLAUDE.md names ("codeToCloud-
+    wrapping it as ``{"equals": [...]}}`` is ``gas_devsecops/``'s mistake ("codeToCloud-
     PipelineStage sat in BASE as a literal and bypassed the table entirely")."""
     run._ensure_brick_on_path()
     import ingest as ingest_module

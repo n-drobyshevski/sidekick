@@ -426,7 +426,7 @@ describe("queryPage on a response with no connection", () => {
 describe("a PARTIAL response", () => {
   it("returns the nodes AND surfaces partialErrors", async () => {
     // FIXTURE-ONLY. gas/'s captured sast_response.json is a 200 with 40 good nodes and one
-    // error about a null Weakness name; brick/devsecops raises on it and would reject the
+    // error about a null Weakness name; brick/ raises on it and would reject the
     // whole page. No live PARTIAL has been reproduced on this tenant in five probe passes
     // (PROBE_FINDINGS.md §7) — this path is here so the first one does not lose 40 rows.
     replies = [

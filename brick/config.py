@@ -79,15 +79,15 @@ API_SEVERITY_VALUES = {
 # the same thing, deliberately.
 #
 # A single list is a volume control that every future population inherits without anybody
-# choosing it for them, and the sibling register made exactly that mistake in production:
-# `gas_devsecops` gave `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted
-# `PASSWORD` 209 -> 0 and `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and
-# published a secrets register with no passwords in it. Nothing was wrong with the number; it
-# was the right answer to a question nobody had asked about that population.
+# choosing it for them, and `gas_devsecops/` made exactly that mistake in production: it gave
+# `secrets` the vulnerability registers' CRITICAL,HIGH, which deleted `PASSWORD` 209 -> 0 and
+# `CERTIFICATE` 160 -> 0 -- every one of those sits below HIGH -- and published a secrets
+# register with no passwords in it. Nothing was wrong with the number; it was the right answer
+# to a question nobody had asked about that population.
 #
 # All three scopes here are CVE- or weakness-bearing volume registers whose severities mean the
 # same thing, so they agree, and this changes no figure today. What it changes is what happens
-# next: a fourth scope has to state its own gate rather than inherit one -- the sibling's
+# next: a fourth scope has to state its own gate rather than inherit one -- `gas_devsecops/`'s
 # `secrets` register is the population where the inherited gate was wrong. See
 # `default_fetch_severities`.
 #
@@ -139,7 +139,8 @@ SCOPES = {
     # Mirrors os_vulns.VARIABLES["filterBy"], minus its hardcoded projectIdV2 -- that is one
     # tenant's project and is exposed here as an opt-in `project_id` parameter instead.
     #
-    # Copied verbatim from `brick/config.py` when this fork absorbed the host register (S2).
+    # Copied verbatim from the OS register's own copy -- `git show ef22b05^:brick/config.py`,
+    # that directory having been retired at `ef22b05` -- when this tree absorbed it (S2).
     # It is OS-VIEW POLICY, not incidental: `detectionMethod` and `assetType` say what a host
     # finding is, `assetIsRepresentativeResource: False` drops the duplicate the API attaches
     # to a representative resource, and the `detailedNameV2` exclusions are three packages the
@@ -224,7 +225,7 @@ SAST_FETCH_RESOLVED = False
 if SAST_FETCH_RESOLVED:
     SCOPES["sast"]["status"] = ["OPEN", "RESOLVED"]
 
-# `os` since this fork absorbed the host register (S2): it is the oldest, largest and most
+# `os` since this tree absorbed the host register (S2): it is the oldest, largest and most
 # read population here, it is what the OS register and the GAS app both measure, and
 # it is the scope the notebooks open on. The property that made `sca` the default before it
 # still holds of `os` and is the real requirement -- a reader who runs this pipeline without
@@ -259,12 +260,13 @@ DEFAULT_SCOPE = "os"
 #: definition "open with no fix available" is true of EVERY SAST finding, forever. Without the
 #: guard every open SAST row would read as awaiting a vendor: out of every actionable clock,
 #: still in every exposure count, so the two halves of a page disagree and the gap looks like
-#: broken arithmetic rather than the category error it is. The sibling register measured the
-#: cost on live data -- 2,085 rows (127 SAST + 1,958 secrets) sitting in that state
-#: permanently -- and `tests/test_ledger.py` prices it here as a mutation.
+#: broken arithmetic rather than the category error it is. `gas_devsecops/` measured the cost
+#: on live data -- 2,085 rows (127 SAST + 1,958 secrets) sitting in that state permanently --
+#: and `tests/test_ledger.py` prices it here as a mutation.
 #:
-#: `os` joined `sca` here when this fork absorbed the host register (S2); brick's retired copy
-#: said {"os", "all"} and `all` is not ported. Adding a scope to `SCOPES` does NOT add it here
+#: `os` joined `sca` here when this tree absorbed the host register (S2); the OS register's own
+#: copy -- `git show ef22b05^:brick/config.py` -- said {"os", "all"}, and `all` is not ported.
+#: Adding a scope to `SCOPES` does NOT add it here
 #: -- this set is declared rather than derived, because "is there a vendor" is not visible in
 #: a filter. `SCOPES_PINNING_HAS_FIX` below is the derived one, and they answer different
 #: questions: a scope can have a vendor and not pin `hasFix`, and (in principle) the reverse.
@@ -365,7 +367,7 @@ SAST_SOURCE = Source(kind="sast", connection="sastFindings")
 
 SOURCES = {
     # `os` reads the same connection behind the same filter type `sca` does -- which is the
-    # whole reason the host register fitted into this fork with no new branch: one more entry
+    # whole reason the host register fitted into this tree with no new branch: one more entry
     # here, and `query_for`, `build_filter`, `_shape_base` and `metrics.silver_findings` all
     # route it exactly as they route `sca`.
     "os": VULN_SOURCE,
@@ -385,11 +387,10 @@ SOURCES = {
 #   SASTFindingFilters.status                 SASTStatusFilter                     {equals:[..]}
 #   SASTFindingFilters.projectId              [String!]                            a bare list
 #
-# This asymmetry has cost the sibling register (`gas_devsecops/`) its whole SAST population
-# once, and it cost this fork the same way until now: ``build_filter`` applied the SCA
-# convention to both scopes, so every SAST run would be refused with HTTP 400
-# `VALIDATION_INVALID_TYPE_VARIABLE` and fetch **zero rows** -- which does not read as an error,
-# it reads as an empty register.
+# This asymmetry has cost `gas_devsecops/` its whole SAST population once, and it cost this tree
+# the same way until now: ``build_filter`` applied the SCA convention to both scopes, so every
+# SAST run would be refused with HTTP 400 `VALIDATION_INVALID_TYPE_VARIABLE` and fetch **zero
+# rows** -- which does not read as an error, it reads as an empty register.
 #
 # DO NOT "TIDY" THIS INTO ONE CONVENTION. Applying SAST's object form to SCA breaks SCA, which
 # works today; the type names above are the evidence. And note `projectId` on SAST is a *bare*

@@ -118,9 +118,9 @@ class FakeWiz:
 
         * a key the table says must be ``{"equals": [...]}`` arrives as a bare list (SAST's
           ``severity`` sent SCA's way -- the bug that cost the whole SAST population once);
-        * a key the table does NOT mention arrives wrapped as ``{"equals": [...]}`` anyway (the
-          sibling mistake: over-applying the object convention to a key that must stay a bare
-          list).
+        * a key the table does NOT mention arrives wrapped as ``{"equals": [...]}`` anyway
+          (``gas_devsecops/``'s mistake: over-applying the object convention to a key that must
+          stay a bare list).
 
         Anything else -- a scalar, a differently-shaped nested filter such as
         ``{"notEquals": [...]}`` or ``{"isDefaultBranch": {"equals": True}}`` -- is untouched by

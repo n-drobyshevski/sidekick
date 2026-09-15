@@ -249,7 +249,7 @@ def dump_tables(spark, tables, target: Path) -> None:
     ``metrics_<family>.json``. ``family`` itself is dropped from each file: it is constant
     within a file by construction and would only be noise in the diff. This is what keeps the
     per-family granularity ``diff -r`` had when mttr/program/capacity/sensitivity were
-    separate tables. This fork's ``METRICS_FAMILIES`` also carries ``assets``, and that family
+    separate tables. This tree's ``METRICS_FAMILIES`` also carries ``assets``, and that family
     is dumped the same way as the other three with no special case here.
     """
     import run_pipeline
