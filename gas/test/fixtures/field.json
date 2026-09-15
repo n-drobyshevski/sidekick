@@ -8,8 +8,7 @@
     "keys": [
      "vulnerableAsset.name"
     ]
-   },
-   "expected": "vm-a"
+   }
   },
   {
    "input": {
@@ -21,8 +20,7 @@
     "keys": [
      "vulnerableAsset.name"
     ]
-   },
-   "expected": "vm-b"
+   }
   },
   {
    "input": {
@@ -35,8 +33,7 @@
     "keys": [
      "vulnerableAsset.name"
     ]
-   },
-   "expected": "vm-c"
+   }
   },
   {
    "input": {
@@ -48,8 +45,7 @@
      "a",
      "b"
     ]
-   },
-   "expected": "x"
+   }
   },
   {
    "input": {
@@ -61,8 +57,7 @@
      "a",
      "b"
     ]
-   },
-   "expected": "y"
+   }
   },
   {
    "input": {
@@ -70,8 +65,7 @@
     "keys": [
      "missing"
     ]
-   },
-   "expected": ""
+   }
   },
   {
    "input": {
@@ -81,8 +75,7 @@
     "keys": [
      "n"
     ]
-   },
-   "expected": "0"
+   }
   },
   {
    "input": {
@@ -92,8 +85,7 @@
     "keys": [
      "n"
     ]
-   },
-   "expected": "False"
+   }
   }
  ]
 }

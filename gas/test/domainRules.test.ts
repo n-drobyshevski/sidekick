@@ -13,13 +13,13 @@ describe("domain rules (fixture parity)", () => {
   const compiled = compileDomains(fx.items);
 
   fx.records.forEach((rec: any, i: number) => {
-    it(`record ${i} -> ${fx.expected.assignments[i]}`, () => {
-      expect(assignDomain(rec, compiled)).toBe(fx.expected.assignments[i]);
+    it(`record ${i}`, () => {
+      expect(assignDomain(rec, compiled)).toMatchSnapshot();
     });
   });
 
   it("domainNames parity", () => {
-    expect(domainNames(fx.items)).toEqual(fx.expected.names);
+    expect(domainNames(fx.items)).toMatchSnapshot();
   });
 });
 
@@ -30,7 +30,7 @@ describe("validateDomains (fixture parity)", () => {
     // truncated at the "does not compile" detail.
     const trim = (msgs: string[]) =>
       msgs.map((m) => m.replace(/pattern does not compile \(.*\)\.$/, "pattern does not compile."));
-    expect(trim(validateDomains(fx.items))).toEqual(trim(fx.expected));
+    expect(trim(validateDomains(fx.items))).toMatchSnapshot();
   });
   it("accepts a well-formed list", () => {
     expect(

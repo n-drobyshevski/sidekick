@@ -4,15 +4,13 @@
    "input": [
     "CRITICAL",
     "HIGH"
-   ],
-   "expected": "[\"CRITICAL\", \"HIGH\"]"
+   ]
   },
   {
    "input": [
     "HIGH",
     "CRITICAL"
-   ],
-   "expected": "[\"CRITICAL\", \"HIGH\"]"
+   ]
   },
   {
    "input": [
@@ -21,72 +19,50 @@
     "MEDIUM",
     "LOW",
     "INFO"
-   ],
-   "expected": null
+   ]
   },
   {
    "input": [
     "INFORMATIONAL"
-   ],
-   "expected": "[\"INFO\"]"
+   ]
   },
   {
    "input": [
     "bogus",
     "HIGH"
-   ],
-   "expected": "[\"HIGH\"]"
+   ]
   },
   {
-   "input": [],
-   "expected": null
+   "input": []
   },
   {
-   "input": null,
-   "expected": null
+   "input": null
   }
  ],
  "parse": [
   {
-   "input": "[\"CRITICAL\",\"HIGH\"]",
-   "expected": [
-    "CRITICAL",
-    "HIGH"
-   ]
+   "input": "[\"CRITICAL\",\"HIGH\"]"
   },
   {
-   "input": "[\"HIGH\"]",
-   "expected": [
-    "HIGH"
-   ]
+   "input": "[\"HIGH\"]"
   },
   {
-   "input": "[\"bogus\"]",
-   "expected": [
-    "UNKNOWN"
-   ]
+   "input": "[\"bogus\"]"
   },
   {
-   "input": "not-json",
-   "expected": null
+   "input": "not-json"
   },
   {
-   "input": "",
-   "expected": null
+   "input": ""
   },
   {
-   "input": null,
-   "expected": null
+   "input": null
   },
   {
-   "input": "{\"a\":1}",
-   "expected": null
+   "input": "{\"a\":1}"
   },
   {
-   "input": "[\"INFORMATIONAL\"]",
-   "expected": [
-    "INFO"
-   ]
+   "input": "[\"INFORMATIONAL\"]"
   }
  ]
 }

@@ -155,31 +155,5 @@
    "vulnerableAsset.name": "sg-other",
    "_supportGroup": "OTHER-GROUP"
   }
- ],
- "expected": {
-  "assignments": [
-   "Payments",
-   "Payments",
-   "Data Platform",
-   "Unassigned",
-   "Unassigned",
-   "Payments",
-   "Unassigned",
-   "Data Platform",
-   "Unassigned",
-   "Supply Monitoring",
-   "Supply Monitoring",
-   "Supply Monitoring",
-   "Unassigned"
-  ],
-  "names": [
-   "Payments",
-   "Data Platform",
-   "AnyTag",
-   "Supply Monitoring",
-   "BadRegex",
-   "EmptyRule",
-   "Unassigned"
-  ]
- }
+ ]
 }

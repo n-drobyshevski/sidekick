@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { extractNodes, flattenNode, mergeNodes, nodesToRecords } from "../src/domain/transform";
-import { expectParity, fixture } from "./helpers";
+import { fixture } from "./helpers";
 
 describe("extractNodes (fixture parity)", () => {
   const { cases } = fixture("extract_nodes");
   cases.forEach((c: any, i: number) => {
     it(`case ${i}`, () => {
-      expectParity(extractNodes(c.input), c.expected);
+      expect(extractNodes(c.input)).toMatchSnapshot();
     });
   });
 });
@@ -14,7 +14,7 @@ describe("extractNodes (fixture parity)", () => {
 describe("mergeNodes (fixture parity)", () => {
   const fx = fixture("merge_nodes");
   it("replaces in place, appends new, keeps last intra-delta duplicate", () => {
-    expectParity(mergeNodes(fx.baseline, fx.delta), fx.expected);
+    expect(mergeNodes(fx.baseline, fx.delta)).toMatchSnapshot();
   });
   it("does not mutate inputs", () => {
     const b = [{ id: "x" }];

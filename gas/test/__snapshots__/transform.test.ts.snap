@@ -1,0 +1,72 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`extractNodes (fixture parity) > case 0 1`] = `
+[
+  {
+    "id": "a",
+  },
+  {
+    "id": "b",
+  },
+]
+`;
+
+exports[`extractNodes (fixture parity) > case 1 1`] = `
+[
+  {
+    "id": "c",
+  },
+]
+`;
+
+exports[`extractNodes (fixture parity) > case 2 1`] = `
+[
+  {
+    "id": "d",
+  },
+]
+`;
+
+exports[`extractNodes (fixture parity) > case 3 1`] = `
+[
+  {
+    "id": "e",
+  },
+  {
+    "id": "f",
+  },
+]
+`;
+
+exports[`extractNodes (fixture parity) > case 4 1`] = `
+[
+  {
+    "id": "g",
+  },
+]
+`;
+
+exports[`extractNodes (fixture parity) > case 5 1`] = `[]`;
+
+exports[`extractNodes (fixture parity) > case 6 1`] = `[]`;
+
+exports[`mergeNodes (fixture parity) > replaces in place, appends new, keeps last intra-delta duplicate 1`] = `
+[
+  {
+    "id": "k1",
+    "v": 1,
+  },
+  {
+    "id": "k2",
+    "v": 2,
+  },
+  {
+    "id": "k3",
+    "v": 1,
+  },
+  {
+    "id": "k4",
+    "v": 3,
+  },
+]
+`;

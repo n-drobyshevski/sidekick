@@ -1,0 +1,57 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`domain rules (fixture parity) > domainNames parity 1`] = `
+[
+  "Payments",
+  "Data Platform",
+  "AnyTag",
+  "Supply Monitoring",
+  "BadRegex",
+  "EmptyRule",
+  "Unassigned",
+]
+`;
+
+exports[`domain rules (fixture parity) > record 0 1`] = `"Payments"`;
+
+exports[`domain rules (fixture parity) > record 1 1`] = `"Payments"`;
+
+exports[`domain rules (fixture parity) > record 2 1`] = `"Data Platform"`;
+
+exports[`domain rules (fixture parity) > record 3 1`] = `"Unassigned"`;
+
+exports[`domain rules (fixture parity) > record 4 1`] = `"Unassigned"`;
+
+exports[`domain rules (fixture parity) > record 5 1`] = `"Payments"`;
+
+exports[`domain rules (fixture parity) > record 6 1`] = `"Unassigned"`;
+
+exports[`domain rules (fixture parity) > record 7 1`] = `"Data Platform"`;
+
+exports[`domain rules (fixture parity) > record 8 1`] = `"Unassigned"`;
+
+exports[`domain rules (fixture parity) > record 9 1`] = `"Supply Monitoring"`;
+
+exports[`domain rules (fixture parity) > record 10 1`] = `"Supply Monitoring"`;
+
+exports[`domain rules (fixture parity) > record 11 1`] = `"Supply Monitoring"`;
+
+exports[`domain rules (fixture parity) > record 12 1`] = `"Unassigned"`;
+
+exports[`validateDomains (fixture parity) > emits the same errors (regex-compile detail excluded) 1`] = `
+[
+  "Domain 1: not a valid entry.",
+  "Domain 2: name is required.",
+  "Domain 2: needs at least one rule.",
+  "Domain “Unassigned”: “Unassigned” is reserved.",
+  "Domain “A,B”: names cannot contain commas.",
+  "Domain “A,B”: needs at least one rule.",
+  "Domain “Dup”, rule 1, condition 1: unknown condition type 'bogus'.",
+  "Domain “dup”: duplicate name.",
+  "Domain “dup”, rule 1, condition 1: tag key is required.",
+  "Domain “dup”, rule 2, condition 1: pattern is longer than 200 characters.",
+  "Domain “dup”, rule 3, condition 1: pattern does not compile.",
+  "Domain “dup”, rule 4, condition 1: pick at least one subscription.",
+  "Domain “dup”, rule 5, condition 1: pick at least one support group.",
+]
+`;

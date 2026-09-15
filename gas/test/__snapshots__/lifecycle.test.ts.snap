@@ -1,0 +1,84 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`field (fixture parity) > case 0 1`] = `"vm-a"`;
+
+exports[`field (fixture parity) > case 1 1`] = `"vm-b"`;
+
+exports[`field (fixture parity) > case 2 1`] = `"vm-c"`;
+
+exports[`field (fixture parity) > case 3 1`] = `"x"`;
+
+exports[`field (fixture parity) > case 4 1`] = `"y"`;
+
+exports[`field (fixture parity) > case 5 1`] = `""`;
+
+exports[`field (fixture parity) > case 6 1`] = `"0"`;
+
+exports[`field (fixture parity) > case 7 1`] = `"False"`;
+
+exports[`mttrFromLedger (fixture parity) > matches the Python summary > overall 1`] = `
+{
+  "mttr_mean": 13.5,
+  "mttr_median": 13.5,
+  "open": 3,
+  "resolved": 2,
+}
+`;
+
+exports[`mttrFromLedger (fixture parity) > matches the Python summary > perSev 1`] = `
+{
+  "CRITICAL": {
+    "mttr_mean": 3,
+    "mttr_median": 3,
+    "open": 1,
+    "open_age_p50": 21,
+    "open_age_p90": 21,
+    "resolved": 1,
+    "sla_compliant": 1,
+    "sla_pct": 100,
+    "sla_target": 7,
+  },
+  "HIGH": {
+    "mttr_mean": 24,
+    "mttr_median": 24,
+    "open": 1,
+    "open_age_p50": 150,
+    "open_age_p90": 150,
+    "resolved": 1,
+    "sla_compliant": 0,
+    "sla_pct": 0,
+    "sla_target": 14,
+  },
+  "LOW": {
+    "mttr_mean": null,
+    "mttr_median": null,
+    "open": 0,
+    "open_age_p50": null,
+    "open_age_p90": null,
+    "resolved": 0,
+    "sla_compliant": 0,
+    "sla_pct": null,
+    "sla_target": 90,
+  },
+}
+`;
+
+exports[`vulnKey (fixture parity) > case 0 1`] = `"id:abc-123"`;
+
+exports[`vulnKey (fixture parity) > case 1 1`] = `"id:abc-123"`;
+
+exports[`vulnKey (fixture parity) > case 2 1`] = `"h:500fdcc0491c0a59"`;
+
+exports[`vulnKey (fixture parity) > case 3 1`] = `"h:5d7da3e3da48262b"`;
+
+exports[`vulnKey (fixture parity) > case 4 1`] = `"h:5d7da3e3da48262b"`;
+
+exports[`vulnKey (fixture parity) > case 5 1`] = `"h:3b78356f75d15302"`;
+
+exports[`vulnKey (fixture parity) > case 6 1`] = `"h:5d62996d83503e8a"`;
+
+exports[`vulnKey (fixture parity) > case 7 1`] = `"h:500fdcc0491c0a59"`;
+
+exports[`vulnKey (fixture parity) > case 8 1`] = `"h:89222af85ca5a71d"`;
+
+exports[`vulnKey (fixture parity) > case 9 1`] = `"h:243a9d5ac8296892"`;
