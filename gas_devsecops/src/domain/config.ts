@@ -55,6 +55,29 @@ export const SLA_TARGETS: Record<string, number> = {
 };
 
 /**
+ * The cold-zone window in days: how long a repository can go without a finding being
+ * resolved, removed or rotated before `src/domain/coldZone.ts` calls it cold.
+ *
+ * 90 DAYS IS A CHOICE, NOT A MEASUREMENT, and it sits here beside `SLA_TARGETS` because it
+ * is the same kind of fact — an operator's statement of what "too long" means, which the
+ * Settings page can change. It is deliberately NOT one of the SLA targets: those ask "was
+ * THIS finding fixed in time", one row at a time, and every one of them would still be met
+ * by a repository nobody has opened in a year as long as the findings on it are LOW. This
+ * asks the other question — has anything at all happened here — so it is a single window for
+ * the whole repository and it matches the longest routine remediation window (LOW = 90 d):
+ * a quarter with no movement of any severity is a silence, not a backlog.
+ *
+ * The bounds are guardrails for the settings clamp, and each end is a refusal:
+ *   MIN 7    below a week the figure measures the scan cadence, not engagement — a register
+ *            synced weekly would show every repository cold on the first quiet Monday.
+ *   MAX 365  past a year "cold" stops being actionable; a repository silent for longer than
+ *            the retention window has nothing left on record to explain the silence with.
+ */
+export const DEFAULT_COLD_AFTER_DAYS = 90;
+export const COLD_AFTER_DAYS_MIN = 7;
+export const COLD_AFTER_DAYS_MAX = 365;
+
+/**
  * The three registers this product measures, and the ONE identity they share.
  *
  * They are separate scopes rather than a filter column because their remediation clocks
