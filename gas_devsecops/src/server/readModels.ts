@@ -77,7 +77,27 @@
 //                                  from `first_seen` and the three movement columns against
 //                                  the ledger clock it is handed. The operator's threshold
 //                                  joins the CACHE KEY (`dsRepos2`), because a saved window
-//                                  changes every verdict in the block.
+//                                  changes every verdict in the block — and so do the three
+//                                  RELATIVE-MODE fields (`coldZoneMode`, `coldTargetSharePct`,
+//                                  `coldFloorDays`) added beside it, on the identical
+//                                  argument. NO NAMESPACE BUMP CAME WITH THEM, and the
+//                                  reasoning belongs here beside the `dsRepos1 -> dsRepos2`
+//                                  note (on `reposModel` itself) rather than in a commit
+//                                  message: that bump was needed because the PAYLOAD grew a
+//                                  block under an UNCHANGED key, so a warm file was still
+//                                  addressable and still answered — with a page section
+//                                  missing. This change is the opposite shape. The durable
+//                                  filename is `rm-<name>-<sha1(JSON(params))>`
+//                                  (readModelStore.ts's `readModelFileName` over
+//                                  serverCache.ts's `paramsHash`), so three new fields in the
+//                                  params object move the hash and every pre-existing file
+//                                  becomes UNREACHABLE by the new key: there is nothing stale
+//                                  left to serve, and a bump would only orphan the fixed-mode
+//                                  files an operator who never switches modes is still
+//                                  hitting. The two other staleness guards are unchanged and
+//                                  still hold: `currentStamp()` carries `BUILD_ID`, and
+//                                  `MAX_AGE_MS` is 7 days. The same three fields join
+//                                  `dsExecutive1` below, in the same order.
 //   history       durablyCached    The scan log is a stored fact; the KPI band counts rows and
 //                                  reads `mttr_days`, which is `resolved_at − first_seen` off
 //                                  the ledger. The trend backbone emits one point per saved
@@ -121,9 +141,10 @@ import {
   SCOPES,
   SEVERITY_ORDER,
   ruleForScope,
+  type ColdZoneMode,
   type Scope,
 } from "../domain/config";
-import { effectiveColdAfterDays, effectiveSlaTargets } from "../domain/settingsLogic";
+import { effectiveColdZoneSettings, effectiveSlaTargets } from "../domain/settingsLogic";
 import { coldZoneHeadline, coldZoneProfile, type NewestScan } from "../domain/coldZone";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
@@ -272,12 +293,38 @@ interface NormParams {
    * a `ModelParams` field for their reason unchanged: a per-page override would let one caller
    * publish a cold-repository count no other page on this register would agree with.
    *
-   * Read through `effectiveColdAfterDays` rather than off the field directly because
+   * Read through `effectiveColdZoneSettings` rather than off the field directly because
    * `coldZoneProfile` REFUSES a non-positive threshold (it derives its buckets as thirds of
    * this number), so a settings row that never went through `cleanSettings` would take the
    * Repositories page down rather than degrade to the shared default.
+   *
+   * IN FIXED MODE THIS IS THE LINE; IN RELATIVE MODE IT IS NOT. The profile publishes
+   * `cold_after_days` as the EFFECTIVE line whichever mode drew it, and keeps this number as
+   * `fixed_after_days`. Nothing here needs to know which: all four fields go in, one line
+   * comes out.
    */
   coldAfterDays: number;
+  /**
+   * Which definition draws the line — `settingsLogic.effectiveColdZoneSettings().mode`, read
+   * off the SAME `loadSettings()` call as everything above it, and NOT a `ModelParams` field
+   * for `slaTargets`' and `coldAfterDays`' reason unchanged: a per-page override would let one
+   * caller publish a cold-repository count no other page on this register would agree with.
+   */
+  coldZoneMode: ColdZoneMode;
+  /**
+   * The share relative mode aims at, per cent. Not a `ModelParams` field, same argument.
+   *
+   * TRAVELS WITH THE MODE, ALWAYS — `coldZoneProfile` THROWS in relative mode when this is
+   * absent, so `norm()` takes it and `floorDays` below from the same
+   * `effectiveColdZoneSettings()` call that produced `coldZoneMode`, never from three separate
+   * reads that could disagree about whether a target was stored. Carried (and keyed) in fixed
+   * mode too, where the profile ignores it: a params object whose shape depends on the mode
+   * would make the two cache keys below mode-shaped as well.
+   */
+  coldTargetSharePct: number;
+  /** The floor the derived line may not go below, in days. Not a `ModelParams` field, same
+   *  argument; travels with the mode for the same reason `coldTargetSharePct` does. */
+  coldFloorDays: number;
 }
 
 /**
@@ -291,8 +338,9 @@ function norm(p?: ModelParams): NormParams {
   const severities = Array.isArray(sevRaw) && sevRaw.length
     ? sevRaw.map((s) => normalizeSeverity(s)).filter((s, i, a) => a.indexOf(s) === i).sort()
     : null;
-  // One `loadSettings()` for both fields it feeds below — `project` and `slaTargets` are two
-  // independent readings of the same settings row, not two separate reasons to fetch it twice.
+  // One `loadSettings()` for every field it feeds below — `project`, `slaTargets` and the four
+  // cold-zone fields are independent readings of the same settings row, not seven separate
+  // reasons to fetch it seven times.
   const settings = loadSettings();
   // `cleanProjectView` already collapses anything that is not a genuine string to "" — this
   // is just the last step, turning that "no scope stored" value into the `null` every other
@@ -302,6 +350,11 @@ function norm(p?: ModelParams): NormParams {
   // The same last step for the domain scope, through the same `cleanViewScope` guarantee.
   const domainRaw = settings.domainView;
   const domain = domainRaw ? domainRaw : null;
+  // ALL FOUR COLD-ZONE FIELDS THROUGH ONE DOOR, off the same settings object. See
+  // `effectiveColdZoneSettings`'s own header: reading the mode from one place and the two
+  // relative-mode numbers from another is exactly how `coldZoneProfile` ends up handed a
+  // relative mode with nothing to aim at, which it throws on.
+  const cold = effectiveColdZoneSettings(settings);
   return {
     scope,
     severities,
@@ -309,7 +362,10 @@ function norm(p?: ModelParams): NormParams {
     project,
     domain,
     slaTargets: effectiveSlaTargets(settings),
-    coldAfterDays: effectiveColdAfterDays(settings),
+    coldAfterDays: cold.coldAfterDays,
+    coldZoneMode: cold.mode,
+    coldTargetSharePct: cold.targetSharePct,
+    coldFloorDays: cold.floorDays,
   };
 }
 
@@ -907,6 +963,9 @@ function buildExecutive(n: NormParams): Rec {
       now: clock.asOf,
       observedFrom: clock.observedFrom,
       coldAfterDays: n.coldAfterDays,
+      mode: n.coldZoneMode,
+      targetSharePct: n.coldTargetSharePct,
+      floorDays: n.coldFloorDays,
       newestScanByScope: newestScanByScope(),
     })),
     coldZoneAsOfSource: clock.asOfSource,
@@ -1065,9 +1124,24 @@ export function executiveModel(p?: ModelParams): Rec {
   // cold-zone headline is computed from it, so an operator saving a new window and reloading
   // would otherwise keep reading the OLD cold count for up to `CLOCK_TTL_SEC` off an entry
   // whose params look identical to the one now in force.
+  //
+  // AND THE THREE RELATIVE-MODE FIELDS JOIN IT FOR THE SAME REASON, IN A FIXED ORDER matching
+  // `reposModel`'s. The mode is the sharpest case of the rule: flipping fixed -> relative
+  // changes nothing about `coldAfterDays`, so without `coldZoneMode` in the key the params
+  // would be byte-identical across a change that moves every verdict in the block. They are
+  // keyed in BOTH modes rather than only in the one that reads them, so that a params object
+  // never changes SHAPE with the mode — a key that sometimes carries three fewer fields makes
+  // "same params" mean two different things.
   return cached(
     "dsExecutive1",
-    { ...keyOf(n), slaTargets: n.slaTargets, coldAfterDays: n.coldAfterDays },
+    {
+      ...keyOf(n),
+      slaTargets: n.slaTargets,
+      coldAfterDays: n.coldAfterDays,
+      coldZoneMode: n.coldZoneMode,
+      coldTargetSharePct: n.coldTargetSharePct,
+      coldFloorDays: n.coldFloorDays,
+    },
     () => buildExecutive(n),
     CLOCK_TTL_SEC,
   );
@@ -1729,6 +1803,9 @@ function buildRepos(n: NormParams): Rec {
       now: clock.asOf,
       observedFrom: clock.observedFrom,
       coldAfterDays: n.coldAfterDays,
+      mode: n.coldZoneMode,
+      targetSharePct: n.coldTargetSharePct,
+      floorDays: n.coldFloorDays,
       newestScanByScope: newestScanByScope(),
     }),
     signalCoverage: signalCoverage(visible),
@@ -1745,7 +1822,28 @@ export function reposModel(p?: ModelParams): Rec {
   // `coldAfterDays` JOINS THE KEY, the same rule `mttrModel` states for `slaTargets`: this
   // compute reads it, and a durable entry keyed without it would keep answering with the
   // previous threshold's verdicts until the next commit rewrote the file.
-  return durablyCached("dsRepos2", { ...keyOf(n), coldAfterDays: n.coldAfterDays }, () => buildRepos(n));
+  //
+  // SO DO THE THREE RELATIVE-MODE FIELDS, in this fixed order (mode, target, floor) — the same
+  // order `executiveModel` uses, because two key builders that list the same fields differently
+  // are two chances to drop one. The durable layer has no TTL at all, so the argument is
+  // sharper here than on the 1 h entry: an operator who switches to relative mode and reloads
+  // would read the fixed mode's verdicts off a warm Drive file FOREVER, until the next commit
+  // happened to rewrite it, if the mode were not in the name.
+  //
+  // NO NAMESPACE BUMP ("dsRepos2" STAYS) — see this file's caching-audit header for the full
+  // argument: new params fields change the sha1 the filename is built from, so no old file is
+  // addressable by the new key in the first place.
+  return durablyCached(
+    "dsRepos2",
+    {
+      ...keyOf(n),
+      coldAfterDays: n.coldAfterDays,
+      coldZoneMode: n.coldZoneMode,
+      coldTargetSharePct: n.coldTargetSharePct,
+      coldFloorDays: n.coldFloorDays,
+    },
+    () => buildRepos(n),
+  );
 }
 
 // --------------------------------------------------------------------------------------- //

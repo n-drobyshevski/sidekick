@@ -849,9 +849,17 @@ describe("each read model reaches its slice", () => {
     const d = (api.getExecutivePage({}) as unknown as Rec)["data"] as Rec;
     const cold = d["coldZone"] as Rec;
     expect(Object.keys(cold).sort()).toEqual([
-      "as_of", "cold_after_days", "dropped_no_repo", "measurable", "observed_from", "row_count",
-      "scopes_without_scan", "totals", "unclassified_secrets",
+      "achieved_share_pct", "as_of", "cold_after_days", "cold_bound_only", "derived_days",
+      "dropped_no_repo", "eligible_repos", "fixed_after_days", "floor_applied", "floor_days",
+      "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
+      "target_share_pct", "totals", "unclassified_secrets",
     ]);
+    // The mode fields ride along BY VALUE, not merely by name: the Executive card names which
+    // reading drew the line it is showing, and `cold_after_days` is that line in either mode
+    // while `fixed_after_days` keeps the window the operator saved.
+    expect(cold["mode"]).toBe("fixed");
+    expect(cold["cold_after_days"]).toBe(cold["fixed_after_days"]);
+    expect(cold["target_share_pct"]).toBeNull();
     // The clock this block was measured on, published beside it: it is the LEDGER's, not the
     // `asOf` every other figure on this page carries.
     expect(["scan", "wallClock"]).toContain(d["coldZoneAsOfSource"]);
@@ -869,6 +877,15 @@ describe("each read model reaches its slice", () => {
     expect(Array.isArray(cold["repos"])).toBe(true);
     expect((cold["teams"] as Rec[]).length).toBeGreaterThan(0);
     for (const t of cold["teams"] as Rec[]) expect(t).toHaveProperty("label");
+    // Every team row carries its RELATIVE position beside its absolute verdict, in BOTH modes
+    // — the payload has one shape, so the page never has to branch on the mode to read a row.
+    // In fixed mode the rank is still computed and the badge is simply never awarded.
+    for (const t of cold["teams"] as Rec[]) {
+      expect(t).toHaveProperty("relative_rank");
+      expect(t).toHaveProperty("in_coldest_share");
+      expect(t["in_coldest_share"]).toBe(false);
+    }
+    expect(cold["totals"]).toHaveProperty("teams_in_coldest_share");
   });
 
   it("getMttrPage: historyModel -> mttrPageTrendSlice, keeping `history`", async () => {

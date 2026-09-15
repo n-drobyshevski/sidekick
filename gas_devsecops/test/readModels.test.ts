@@ -57,6 +57,20 @@ const H = vi.hoisted(() => ({
    *  the mock below returns a PARTIAL settings object: without that degradation
    *  `coldZoneProfile` would be handed an `undefined` threshold, which it refuses. */
   coldAfterDays: undefined as number | undefined,
+  /** `settingsStore.loadSettings().coldZoneMode` — read through
+   *  `settingsLogic.effectiveColdZoneSettings` beside the three numbers. `undefined` (the
+   *  default) degrades to `config.DEFAULT_COLD_ZONE_MODE` ("fixed"), which is what every test
+   *  written before relative mode existed measured against. */
+  coldZoneMode: undefined as string | undefined,
+  /** `settingsStore.loadSettings().coldTargetSharePct` — `undefined` degrades to 20. THIS
+   *  SEAM IS THE POINT OF THE ONE DOOR: the mock below is a deliberately PARTIAL settings
+   *  object, and `coldZoneProfile` THROWS in relative mode when the target is missing, so a
+   *  `norm()` that read the mode from one place and this from another would take the two
+   *  models down the moment a test set the mode alone. */
+  coldTargetSharePct: undefined as number | undefined,
+  /** `settingsStore.loadSettings().coldFloorDays` — `undefined` degrades to 14. Same seam,
+   *  same reason. */
+  coldFloorDays: undefined as number | undefined,
   /** `historyStore`'s per-UTC-day blobs, ascending — one file per day, latest write wins.
    *  `secretsModel` reads its twin fold off the NEWEST one; `historyModel` ships the array. */
   history: [] as { date: string; stats: unknown }[],
@@ -146,6 +160,8 @@ vi.mock("../src/server/jobsStore", () => ({
 vi.mock("../src/server/settingsStore", () => ({
   loadSettings: () => ({
     projectView: H.projectView, slaTargets: H.slaTargets, coldAfterDays: H.coldAfterDays,
+    coldZoneMode: H.coldZoneMode, coldTargetSharePct: H.coldTargetSharePct,
+    coldFloorDays: H.coldFloorDays,
   }),
 }));
 
@@ -344,6 +360,9 @@ beforeEach(() => {
   H.projectView = "";
   H.slaTargets = undefined;
   H.coldAfterDays = undefined;
+  H.coldZoneMode = undefined;
+  H.coldTargetSharePct = undefined;
+  H.coldFloorDays = undefined;
   H.history = [{ date: "2026-03-01", stats: { open: 5 } }];
   H.historyReads.length = 0;
   seed();
@@ -1140,6 +1159,101 @@ describe("reposModel", () => {
     expect(new Set(keys).size).toBe(2);
   });
 
+  // THE RELATIVE MODE, MEASURED BY HAND OVER THIS FIXTURE. The three repositories are all
+  // observed and all carry at least one open finding, so `eligible_repos` is 3 and every
+  // reading is a real idle time (no bound-only rows). Against the ledger clock 2026-03-01:
+  //
+  //   r1  last movement 2026-01-08 (CVE-1 resolved)  -> 52 idle days
+  //   r2  last movement 2026-02-20 (CWE-1004 resolved) ->  9 idle days
+  //   r3  last movement 2026-02-20 (k3 removed)      ->  9 idle days
+  //
+  // readings desc = [52, 9, 9];  k = min(3, max(1, ceil(0.20 x 3))) = ceil(0.6) = 1
+  // derived = floor(readings[0]) = 52;  effective = max(52, 14) = 52;  floor did not apply
+  // cold = {r1};  achieved = 1/3 x 100 = 33.33...%, which is ABOVE the 20% asked for — the
+  // small-n effect the floor and the achieved-vs-target report exist to make visible.
+  it("derives the line from the estate in relative mode, and publishes what it aimed at", () => {
+    H.coldZoneMode = "relative";
+    __resetModelMemosForTest();
+    const cz = (reposModel(ALL) as any).coldZone;
+
+    expect(cz.mode).toBe("relative");
+    expect(cz.eligible_repos).toBe(3);
+    expect(cz.derived_days).toBe(52);
+    expect(cz.floor_applied).toBe(false);
+    expect(cz.floor_days).toBe(14);
+    // `cold_after_days` is ALWAYS the EFFECTIVE line, whichever mode drew it; the operator's
+    // fixed window survives beside it untouched.
+    expect(cz.cold_after_days).toBe(52);
+    expect(cz.fixed_after_days).toBe(90);
+    expect(cz.target_share_pct).toBe(20);
+    expect(cz.totals.cold_repos).toBe(1);
+    expect(cz.totals.repos_with_open).toBe(3);
+    expect(cz.achieved_share_pct).toBeCloseTo(100 / 3, 6);
+    expect(cz.cold_bound_only).toBe(0);
+    // The team roll-up carries its own relative position, and the one project holding the one
+    // cold repository is in the coldest share.
+    expect(cz.teams.map((t: any) => t.relative_rank)).toEqual([1]);
+    expect(cz.teams.map((t: any) => t.in_coldest_share)).toEqual([true]);
+    expect(cz.totals.teams_in_coldest_share).toBe(1);
+  });
+
+  // THE FLOOR, ON THE SAME FIXTURE, at the widest target the settings accept. k = min(3,
+  // ceil(0.50 x 3)) = 2, so the derived line is the SECOND largest reading — floor(9) = 9 —
+  // which is below the 14-day floor. The floor takes over, the zone comes out SMALLER than the
+  // 50% asked for (one repository, 33.3%), and both halves of that are published.
+  it("lets the floor overrule a derived line that would call a quiet estate cold", () => {
+    H.coldZoneMode = "relative";
+    H.coldTargetSharePct = 50;
+    __resetModelMemosForTest();
+    const cz = (reposModel(ALL) as any).coldZone;
+
+    expect(cz.derived_days).toBe(9);
+    expect(cz.floor_applied).toBe(true);
+    expect(cz.cold_after_days).toBe(14);
+    expect(cz.totals.cold_repos).toBe(1);
+    expect(cz.achieved_share_pct).toBeCloseTo(100 / 3, 6);
+    expect(cz.achieved_share_pct).toBeLessThan(cz.target_share_pct);
+  });
+
+  it("the derived line is stable across a moving wall clock, like the fixed one", () => {
+    // The relative line is derived from idle times, which are the most wall-clock-sensitive
+    // numbers in the payload — a derivation dated by `Date.now()` would move the LINE as well
+    // as the verdicts, which is the stale-figure failure twice over.
+    H.coldZoneMode = "relative";
+    __resetModelMemosForTest();
+    const before = JSON.stringify((reposModel(ALL) as any).coldZone);
+    vi.setSystemTime(NOW + 30 * DAY);
+    H.store.clear();
+    __resetModelMemosForTest();
+    expect(JSON.stringify((reposModel(ALL) as any).coldZone)).toBe(before);
+  });
+
+  it("puts the mode and its two numbers in the key, so a flipped mode is a new entry", () => {
+    // `coldAfterDays`'s rule, at its sharpest: flipping fixed -> relative leaves
+    // `coldAfterDays` at 90, so without `coldZoneMode` in the key the params would be
+    // byte-identical across a change that moves every verdict in the block — and the durable
+    // layer has no TTL to age the wrong answer out.
+    const before = reposModel(ALL) as any;
+    expect(before.coldZone.cold_after_days).toBe(90);
+
+    H.coldZoneMode = "relative";
+    __resetModelMemosForTest();
+    expect((reposModel(ALL) as any).coldZone.cold_after_days).toBe(52);
+    const afterMode = H.cacheCalls.filter((c) => c.name === "dsRepos2").map((c) => JSON.stringify(c.params));
+    expect(new Set(afterMode).size).toBe(2);
+
+    // ...and so are the two numbers only relative mode reads: changing the target moves the
+    // line without touching the mode.
+    H.coldTargetSharePct = 50;
+    __resetModelMemosForTest();
+    expect((reposModel(ALL) as any).coldZone.cold_after_days).toBe(14);
+    H.coldFloorDays = 30;
+    __resetModelMemosForTest();
+    expect((reposModel(ALL) as any).coldZone.cold_after_days).toBe(30);
+    const allKeys = H.cacheCalls.filter((c) => c.name === "dsRepos2").map((c) => JSON.stringify(c.params));
+    expect(new Set(allKeys).size).toBe(4);
+  });
+
   it("publishes the window it rests on, or null when there is none", () => {
     const m = reposModel(ALL) as any;
     expect(m.byRepo.all.windowMonths).toBeGreaterThan(0);
@@ -1376,8 +1490,10 @@ describe("executiveModel", () => {
     // page draws one number out of the totals, and shipping every repository name in the
     // estate to draw it is the "cap in the model, no slice at the edge" rule being lost.
     expect(Object.keys(m.coldZone).sort()).toEqual([
-      "as_of", "cold_after_days", "dropped_no_repo", "measurable", "observed_from", "row_count",
-      "scopes_without_scan", "totals", "unclassified_secrets",
+      "achieved_share_pct", "as_of", "cold_after_days", "cold_bound_only", "derived_days",
+      "dropped_no_repo", "eligible_repos", "fixed_after_days", "floor_applied", "floor_days",
+      "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
+      "target_share_pct", "totals", "unclassified_secrets",
     ]);
     expect(m.coldZone).not.toHaveProperty("repos");
     expect(m.coldZone).not.toHaveProperty("teams");
@@ -1418,6 +1534,46 @@ describe("executiveModel", () => {
       .filter((c) => c.name === "dsExecutive1")
       .map((c) => JSON.stringify(c.params));
     expect(new Set(keys).size).toBe(2);
+  });
+
+  it("puts the cold-zone MODE in the key too, and ships the mode it read", () => {
+    // The same claim as `reposModel`'s, on the 1 h entry: flipping the mode does not move
+    // `coldAfterDays`, so the mode is the only thing that can tell the two params objects
+    // apart — and the headline carries `mode` so the card can name which reading it is
+    // drawing.
+    const before = executiveModel(ALL) as any;
+    expect(before.coldZone.mode).toBe("fixed");
+    expect(before.coldZone.cold_after_days).toBe(90);
+
+    H.coldZoneMode = "relative";
+    __resetModelMemosForTest();
+    const after = executiveModel(ALL) as any;
+    expect(after.coldZone.mode).toBe("relative");
+    // 52 — the k-th largest idle reading over this fixture; `reposModel`'s own block above
+    // does the arithmetic. `fixed_after_days` keeps what the operator saved.
+    expect(after.coldZone.cold_after_days).toBe(52);
+    expect(after.coldZone.fixed_after_days).toBe(90);
+    expect(after.coldZone.derived_days).toBe(52);
+    expect(after.coldZone.target_share_pct).toBe(20);
+
+    const keys = H.cacheCalls
+      .filter((c) => c.name === "dsExecutive1")
+      .map((c) => JSON.stringify(c.params));
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it("degrades a PARTIAL settings row carrying ONLY the mode, rather than throwing", () => {
+    // `coldZoneProfile` REFUSES relative mode without a target share or a floor. The mock
+    // `loadSettings()` in this file hands back exactly that kind of partial row, so this is
+    // the case `settingsLogic.effectiveColdZoneSettings` — the one door `norm()` reads all
+    // four fields through — exists for.
+    H.coldZoneMode = "relative";
+    H.coldTargetSharePct = undefined;
+    H.coldFloorDays = undefined;
+    __resetModelMemosForTest();
+    const m = executiveModel(ALL) as any;
+    expect(m.coldZone.target_share_pct).toBe(20);
+    expect(m.coldZone.floor_days).toBe(14);
   });
 });
 
@@ -1482,3 +1638,4 @@ describe("warmReadModels", () => {
     expect(H.swept).toBe(1);
   });
 });
+
