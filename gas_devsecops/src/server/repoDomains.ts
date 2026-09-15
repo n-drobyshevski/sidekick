@@ -303,19 +303,87 @@ export function refreshRepoDomains(): DomainRefresh {
   return stats;
 }
 
+export interface MapHealth {
+  /** Identity tokens indexed. */
+  keys: number;
+  /** Distinct domains in the map. */
+  domains: number;
+  tagKey: string;
+  /** Repositories in the `repos` tab — the register's own asset dimension. */
+  repos: number;
+  /** Of those, how many the map actually places. THE FIGURE THAT MATTERS. */
+  placed: number;
+  /** A few map tokens, and a few repository identities the map did NOT place. */
+  sampleTokens: string[];
+  sampleUnplaced: string[];
+}
+
+/** How many of a sample to carry back. Enough to see a shape, few enough to read. */
+const SAMPLE = 5;
+
 /**
- * What the Settings readout says about the map, without fetching anything.
+ * What the Settings readout says about the map, without fetching anything from Wiz.
  *
- * SEPARATE FROM THE REFRESH STATS on purpose. `DomainRefresh` describes what one fetch saw;
- * this describes what the register is CURRENTLY joining against, which is what an operator
- * looking at an empty domain switcher needs. The two disagree exactly when a refresh has not
- * been run since the tag key changed — which is the case worth being able to see.
+ * SEPARATE FROM THE REFRESH STATS on purpose. `DomainRefresh` describes what one fetch SAW;
+ * this describes what the register can currently DO with it.
+ *
+ * IT MEASURES THE JOIN RATHER THAN ASSERTING IT, and that is the whole point of the rewrite.
+ * An earlier version reported keys and domains only — and a map with thousands of keys and
+ * three domains reads as healthy while placing exactly zero findings, because the tokens a
+ * repository ENTITY carries need not be the ones a FINDING carries (see
+ * `recordIdentityTokens`: nothing in this tree can verify that overlap without the live
+ * tenant). That is the third state, the one an operator staring at an empty domain switcher
+ * is actually in, and a readout that cannot see it is the confident lie the card exists to
+ * prevent. `placed` is what separates it from the other two:
+ *
+ *   keys 0                    never refreshed
+ *   keys > 0, placed 0        fetched, but the map reaches none of this register's repos
+ *   keys > 0, placed > 0      working — the switcher should be offering these domains
+ *
+ * The samples are carried ONLY to make the middle case actionable. Two lists side by side —
+ * what the map is keyed on, what the register's repositories are called — is what turns "the
+ * domains do not appear" into a visible mismatch an operator can report, without anyone
+ * needing the execution log.
+ *
+ * JOINED AGAINST THE `repos` TAB, NOT THE LEDGER. It is one row per repository rather than one
+ * per finding, it carries the same `repo_id`/`repo_name` the join probes, and reading it costs
+ * a fraction of a base-row build — this is a diagnostic on a Settings card, and it must not
+ * cost what a page costs.
  */
-export function mapHealth(): { keys: number; domains: number; tagKey: string } {
+export function mapHealth(): MapHealth {
   const map = getDomainMap();
+  const tagKey = configuredDomainTagKey();
+  const keys = Object.keys(map);
+
+  let repos = 0;
+  let placed = 0;
+  const sampleUnplaced: string[] = [];
+  try {
+    for (const row of readAll(TABS.repos)) {
+      repos += 1;
+      if (resolveDomain(row, map, tagKey)) {
+        placed += 1;
+        continue;
+      }
+      if (sampleUnplaced.length < SAMPLE) {
+        // The identity as the REGISTER spells it — which is the half of the mismatch the map
+        // does not already show.
+        sampleUnplaced.push(String(row["repo_name"] ?? row["repo_id"] ?? "(blank)"));
+      }
+    }
+  } catch (e) {
+    // Same posture as `getDomainMap`: a diagnostic that cannot read the tab reports what it
+    // knows rather than taking the Settings page down.
+    console.warn(`Repos tab unreadable — domain map health is partial: ${String(e)}`);
+  }
+
   return {
-    keys: Object.keys(map).length,
+    keys: keys.length,
     domains: new Set(Object.values(map)).size,
-    tagKey: configuredDomainTagKey(),
+    tagKey,
+    repos,
+    placed,
+    sampleTokens: keys.slice(0, SAMPLE),
+    sampleUnplaced,
   };
 }
