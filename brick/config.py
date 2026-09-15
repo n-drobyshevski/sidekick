@@ -153,7 +153,10 @@ SCOPES = {
         "detailedNameV2": {"notEquals": ["openssl", "python", "vim"]},
     },
     # Software composition analysis: CVEs in the libraries a repository depends on. Mirrors
-    # sca_request.py's filterBy, minus its hardcoded projectIdV2.
+    # the filterBy of the Wiz console's own SCA export, minus its hardcoded projectIdV2. That
+    # export script is deleted -- `git show ef22b05^:brick/devsecops/sca_request.py` still holds
+    # it, brick/fixtures/sca_response.json is the capture it produced, and
+    # test_pipeline.py::test_sca_scope_matches_the_reference_query transcribes the filterBy.
     #
     # This reads the same GraphQL connection the `os` scope above does --
     # `vulnerabilityFindings`, filtered to the code stage of the pipeline -- which is why it

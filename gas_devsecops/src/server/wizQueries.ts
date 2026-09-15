@@ -6,10 +6,10 @@
 // the probe stops being evidence about the battery. gas_ai keeps the same rule for the same
 // reason.
 //
-// PROVENANCE. The two documents below are transcribed from brick/devsecops/ingest.py, which
-// is tenant-verified: brick/devsecops/sast_response.json is a live capture of the SAST one
-// (40 nodes, totalCount 11,406) and sca_response.json captures the grouped SCA shape. The
-// selections and the filter spellings are theirs, not guesses.
+// PROVENANCE. The two documents below are transcribed from brick/ingest.py, which
+// is tenant-verified: brick/fixtures/sast_response.json is a live capture of the SAST one
+// (40 nodes, totalCount 11,406) and brick/fixtures/sca_response.json captures the grouped SCA
+// shape. The selections and the filter spellings are theirs, not guesses.
 //
 // INLINE LITERALS DO NOT SURVIVE THIS GATEWAY. Filters go through $filterBy as variables,
 // never interpolated into the document. gas_ai learned that twice.
@@ -523,8 +523,11 @@ export function buildFilter(scope: Scope, opts: FilterOptions = {}): Record<stri
 
   if (opts.projectId) {
     // The two filter types spell the project restriction differently, and the tenant's own
-    // exported reference scripts are the evidence for each: sast_request.py passes a bare
-    // `projectId: [...]`, sca_request.py passes `projectIdV2: {equals: [...]}`.
+    // Wiz console exports are the evidence for each: the SAST export passed a bare
+    // `projectId: [...]`, the SCA export passed `projectIdV2: {equals: [...]}`. Those exports
+    // are deleted from brick/; brick/fixtures/sast_response.json and
+    // brick/fixtures/sca_response.json are the captures they produced, and `git show
+    // ef22b05^:brick/devsecops/sca_request.py` still holds the requests themselves.
     // SAST and secrets spell it `projectId`, SCA spells it `projectIdV2`. The SHAPE each
     // wants comes from the same table every other list-valued key goes through, rather than
     // being written inline here — an inline literal is exactly how codeToCloudPipelineStage

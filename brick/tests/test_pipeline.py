@@ -339,8 +339,13 @@ def test_severity_filter_maps_info_to_the_api_spelling():
 
 
 def test_sca_scope_matches_the_reference_query():
-    """Parity with `sca_request.py`'s filterBy, which is the Wiz console's own export and the
-    only evidence available that this selection validates.
+    """Parity with the filterBy of the Wiz console's own SCA export, which was the only
+    evidence available that this selection validates.
+
+    That export script is deleted, so the literal asserted below is now the surviving
+    transcription of the console's filterBy. The capture it produced,
+    `brick/fixtures/sca_response.json`, is the evidence the selection actually ran against the
+    tenant, and `git show ef22b05^:brick/devsecops/sca_request.py` still holds the request.
 
     Both clauses earn their place. Without `codeToCloudPipelineStage: CODE` a dependency is
     counted once in the repository and again in every container image built from it; without
@@ -418,7 +423,8 @@ def test_project_id_is_opt_in():
     run to that project."""
     assert "projectIdV2" not in build_filter("sca")
     assert build_filter("sca", project_id="p-1")["projectIdV2"] == {"equals": ["p-1"]}
-    # The two filter types spell it differently -- sast_request.py passes a bare list.
+    # The two filter types spell it differently -- the Wiz console's SAST export passed a bare
+    # list (its capture is brick/fixtures/sast_response.json).
     assert build_filter("sast", project_id="p-1")["projectId"] == ["p-1"]
 
 

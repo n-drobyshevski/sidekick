@@ -58,10 +58,6 @@ import_bundle.py     one-shot: seed the `os` ledger from a gas/ migration bundle
 export_fixtures.py   golden-fixture exporter for gas_devsecops/'s TypeScript parity suites
 csvstore.py          the register as typed CSV, for a deployment with no catalog -- see the
                      CSV register
-sast_request.py      a standalone reference script: the exact SAST GraphQL request the `sast`
-                     scope's filter was copied from (the code-register analogue of the repo
-                     root's os_vulns.py, which the `os` scope's filter mirrors)
-sca_request.py       the same, for the SCA GraphQL request
 
 panels.py            every number a notebook shows, and the one place that pins the scan
 figures.py           pandas -> Plotly figures, drawn the way the GAS apps draw them
@@ -466,9 +462,12 @@ supports either key, and neither is about scoping:
   remediation rates mean the same thing across scopes that have it. `sast` has no vendor fix at
   all, so the key does not apply there.
 
-`os_vulns.py` (`sast_request.py`, `sca_request.py` for the other two) also pins a `projectIdV2`
-/ `projectId`. That is one tenant's project, so it is **not** copied into the scope; pass
-`--project_id=<id>` if you want it.
+`os_vulns.py` — and, for the other two, the Wiz console exports the `sast` and `sca` filters were
+copied from — also pins a `projectIdV2` / `projectId`. That is one tenant's project, so it is
+**not** copied into the scope; pass `--project_id=<id>` if you want it. Those two exports are
+deleted; their committed captures, `brick/fixtures/sast_response.json` and
+`brick/fixtures/sca_response.json`, are what survives of them, and `git show
+ef22b05^:brick/devsecops/sca_request.py` still holds the requests themselves.
 
 Bronze keeps the finding as a JSON string so a Wiz schema change can never fail ingest; silver
 is just the typed projection of whatever arrived.
