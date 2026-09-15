@@ -114,6 +114,27 @@ describe("capacityByMonth", () => {
     expect(out.oneInN).toBeCloseTo(2.4, 6);
   });
 
+  it("means the CLOSED counts over exactly the months the rate is taken over", () => {
+    // The same two months, counted rather than rated: Feb closed 1, Mar closed 1 -> 1.0.
+    // This is the figure that turns "about one in 2.4 a month" into a number of findings, so
+    // it has to be the same population as `mmcrMean` or the two cannot be read together.
+    expect(out.closedPerMonthMean).toBeCloseTo(1, 6);
+    expect(out.monthsCounted).toBe(2);
+  });
+
+  it("is null, never zero, when no month was fully observed", () => {
+    // "We closed nothing" and "nobody was watching" are different claims, and a 0 here would
+    // make the second read as the first — the same refusal `mmcrMean` already makes.
+    const youngOnly = capacityByMonth(
+      [cap({ first_seen: "2026-04-02T00:00:00Z", resolved_at: null })],
+      scans,
+      { rule: RULE, now: NOW },
+    );
+    expect(youngOnly.monthsCounted).toBe(0);
+    expect(youngOnly.mmcrMean).toBeNull();
+    expect(youngOnly.closedPerMonthMean).toBeNull();
+  });
+
   it("carries the scan-delta cross-check and ignores grouped scans", () => {
     const byKey = Object.fromEntries(out.months.map((m) => [m.month, m]));
     expect(byKey["2026-02"]!.scanClosed).toBe(1);
@@ -175,6 +196,7 @@ describe("capacityByMonth", () => {
     const empty = capacityByMonth([], scans, { rule: RULE, now: NOW });
     expect(empty.months).toEqual([]);
     expect(empty.mmcrMean).toBeNull();
+    expect(empty.closedPerMonthMean).toBeNull();
     expect(empty.verdict).toBeNull();
   });
 
@@ -189,6 +211,29 @@ describe("capacityByMonth", () => {
     // The summary still describes the whole series — trimming is a display concern.
     expect(trimmed.monthsCounted).toBe(2);
     expect(trimmed.mmcrMean).toBeCloseTo(41.6666667, 6);
+  });
+
+  it("the closed-per-month mean does not move when maxMonths trims the series", () => {
+    // THE WHOLE REASON THIS LIVES IN THE DOMAIN. The page is handed a trimmed `months` array
+    // (readModels passes maxMonths: 24), so a mean computed there would silently be over a
+    // narrower window than `monthsCounted` claims. Feb closes 3 and Mar closes 1, so the true
+    // mean is 2 and a mean over the trailing two months alone would be 1 — told apart on
+    // purpose, unlike the shared fixture above where both answers happen to be 1.
+    const skewed = [
+      cap({ first_seen: "2026-01-05T00:00:00Z", resolved_at: "2026-02-10T00:00:00Z" }),
+      cap({ first_seen: "2026-01-06T00:00:00Z", resolved_at: "2026-02-11T00:00:00Z" }),
+      cap({ first_seen: "2026-01-07T00:00:00Z", resolved_at: "2026-02-12T00:00:00Z" }),
+      cap({ first_seen: "2026-01-08T00:00:00Z", resolved_at: "2026-03-10T00:00:00Z" }),
+      cap({ first_seen: "2026-01-09T00:00:00Z", resolved_at: null }),
+    ];
+    const full = capacityByMonth(skewed, scans, { rule: RULE, now: NOW });
+    expect(full.months).toHaveLength(4);
+    expect(full.closedPerMonthMean).toBeCloseTo(2, 6);
+
+    const trimmed = capacityByMonth(skewed, scans, { rule: RULE, now: NOW, maxMonths: 2 });
+    expect(trimmed.months.map((m) => m.month)).toEqual(["2026-03", "2026-04"]);
+    expect(trimmed.monthsCounted).toBe(2);
+    expect(trimmed.closedPerMonthMean).toBeCloseTo(2, 6);
   });
 });
 
@@ -238,9 +283,16 @@ describe("observationWindowDays", () => {
 //   closed_observed     CapacityOptions.closedObserved, as a month-keyed Record
 //
 // NOTHING IS UNMAPPED: every column of brick's capacity frame is asserted above, and every
-// field this module publishes appears in one of the rows below. `maxMonths` is the one
-// option with no brick counterpart — it is a display cap gas/ added and brick has no
-// notion of, so it is pinned by hand in the block above instead.
+// field this module publishes appears in one of the rows below — with two named exceptions,
+// both GAS-side additions brick has no notion of and neither of which changes a figure brick
+// emits, so both are pinned by hand in the block above instead:
+//
+//   maxMonths            a display cap gas/ added: how many trailing months to RETURN.
+//   closedPerMonthMean   the mean of `closed` over the same months `mmcr_mean` averages —
+//                        the rate's absolute counterpart, for a page that has to say how
+//                        much work "about one in ten" actually is. A derivation over figures
+//                        brick already emits (`closed`, `partial`, `reconstructed`), not a
+//                        second measurement, which is why there is no column to port.
 
 type BrickCapRow = Record<string, unknown>;
 

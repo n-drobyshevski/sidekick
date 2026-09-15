@@ -18,9 +18,10 @@ import { call } from "../../../../../gas_shared/api.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   DEFAULT_PAGE_SIZE, PAGE_SIZES, absent, absentText, bookTip, chartTable, clear, dataTable,
-  denomNote, downloadText, el, emptyState, errorState, figureCard, fmtDate, glossaryTip,
-  heroStat, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable, scopeBar,
-  sectionLabel, sevBadge, skeleton, statRow, statusPill, tableFooter, tipLabel, toast,
+  denomNote, downloadText, el, emptyState, errorState, figureCard, fmtCount, fmtDate,
+  glossaryTip, heroStat, meter, num, openSheet, pageHeader, pct1, quadModel, quadTable,
+  scopeBar, sectionLabel, sevBadge, skeleton, statRow, statusPill, tableFooter, tipLabel,
+  toast,
 } from "../ui.js";
 
 // Matrix cells, in reading order. `key` matches the server's `matrix_cell` / cohort quadrant
@@ -97,6 +98,31 @@ function pct0(v) {
 function pct0Cell(v) {
   const n = num(v);
   return n === null ? absent() : pct0(n);
+}
+
+/**
+ * The capacity headline's other half: mean findings CLOSED per month, as a count.
+ *
+ * WHY IT IS HERE AT ALL. `mmcrMean` is a share of the starting backlog, and "about one in
+ * ten a month" is four findings on one register and four hundred on another — a reader
+ * staffing the work cannot tell those apart from the rate. `Capacity.closedPerMonthMean`
+ * averages the same months `mmcrMean` does, so the two always report the same denominator.
+ *
+ * THE GRAIN SHIFTS ONCE, AT TEN. A programme clearing hundreds a month has no use for a
+ * tenth of a finding, and the mean's own base is a handful of months, so a decimal up there
+ * is false precision — the same argument `pct0` above makes for the close rate. But rounding
+ * a mean of 0.4 to a flat "0" would say the programme closes nothing while the table below
+ * shows it closing things, and that is the one reading this figure must not produce. Below
+ * ten the tenth is what separates "barely moving" from "not moving at all", so it stays.
+ *
+ * Returns the shared `absentText`, which `statRow` turns into the muted dash itself
+ * (`valueOrAbsent`, gas_shared/ui/controls.js) and which concatenates into a sentence — the
+ * note under the capacity table needs the string form, so there is no Node variant.
+ */
+export function closedPerMonthText(v) {
+  const n = num(v);
+  if (n === null) return absentText;
+  return fmtCount(n < 10 ? Math.round(n * 10) / 10 : Math.round(n));
 }
 
 /**
@@ -584,6 +610,28 @@ export async function renderProgram(main, _params, ctx) {
               el("span", { class: "prog-range" }, "1 in " + capOverall.oneInN.toFixed(1)))
             : pct0Cell(capOverall.mmcrMean),
           null,
+        ),
+        // THE COUNT SITS DIRECTLY UNDER THE RATE, and the pair is the point: the rate says
+        // what share of the backlog moves, this says how much work that is. The two share
+        // `monthsCounted`, so the tip states the base once for both rather than each row
+        // carrying a different-looking denominator for the same set of months.
+        statRow(
+          "Closed per month",
+          closedPerMonthText(capOverall.closedPerMonthMean),
+          null,
+          null,
+          {
+            term: "closed-per-month",
+            lines: [
+              "Mean findings closed per calendar month — the close rate above as a count, "
+              + "over the same months.",
+              capOverall.monthsCounted
+                ? "Averaged over " + capOverall.monthsCounted
+                  + " complete, directly-observed month(s); the month in progress and any "
+                  + "month before the first saved scan are excluded from both figures."
+                : "No complete, directly-observed month yet, so there is nothing to average.",
+            ],
+          },
         ),
         statRow("Net capacity (high risk)", verdictPill(capHigh.verdict), null),
       ],
@@ -1106,21 +1154,25 @@ export async function renderProgram(main, _params, ctx) {
       rows: months,
     }));
     if (cap.monthsCounted) {
+      // BOTH FIGURES IN ONE SENTENCE, over one stated base. The rate is the research
+      // benchmark and the count is what it costs to hit it; separated, a reader has to carry
+      // the register's size in their head to get from one to the other.
       capacityHost.append(el("p", { class: "note" },
         "Mean close rate " + pct(cap.mmcrMean) +
         (cap.oneInN ? " (about one in " + cap.oneInN.toFixed(1) + ")" : "") +
-        " over " + cap.monthsCounted + " complete month(s). Months still in progress, and " +
-        "months before the first saved scan, are excluded from that mean."));
+        ", about " + closedPerMonthText(cap.closedPerMonthMean) + " finding(s) a month, " +
+        "over " + cap.monthsCounted + " complete month(s). Months still in progress, and " +
+        "months before the first saved scan, are excluded from both means."));
     } else {
-      // Say why the headline figure is absent rather than leaving an em dash to be
+      // Say why the headline figures are absent rather than leaving an em dash to be
       // misread as zero. Every month here is either still running or predates the scan
-      // history, and a mean over reconstructed months would understate the close rate
-      // (closures before the first scan are systematically under-counted).
+      // history, and a mean over reconstructed months would understate both the close rate
+      // and the count (closures before the first scan are systematically under-counted).
       capacityHost.append(el("p", { class: "note" },
-        "No complete month has been fully observed yet, so there is no mean close rate. " +
-        "Months marked reconstructed predate the first saved scan and under-count closures; " +
-        "the month in progress is not over. The per-month figures above are still exact for " +
-        "what was observed."));
+        "No complete month has been fully observed yet, so there is no mean close rate and " +
+        "no mean monthly count. Months marked reconstructed predate the first saved scan " +
+        "and under-count closures; the month in progress is not over. The per-month figures " +
+        "above are still exact for what was observed."));
     }
     renderHindcast(p);
   }
