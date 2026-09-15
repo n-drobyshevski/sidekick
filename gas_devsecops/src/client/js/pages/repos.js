@@ -331,6 +331,7 @@ export function coldModeCaption(view) {
     + " resolved, removed or rotated.";
   const coldCount = `${fmtCount(cold)} ${cold === 1 ? "repository" : "repositories"}`
     + (achieved === null ? "" : ` (${pct1(achieved)})`);
+  const coldVerb = cold === 1 ? "is" : "are";
 
   if (v.measurable !== true) {
     return relative
@@ -346,16 +347,16 @@ export function coldModeCaption(view) {
   }
   if (!relative) {
     return `${fixedLead} ${fmtCount(cold)} of ${fmtCount(eligible)} repositories with open`
-      + ` findings${achieved === null ? "" : ` (${pct1(achieved)})`} are cold.${suffix}`;
+      + ` findings${achieved === null ? "" : ` (${pct1(achieved)})`} ${coldVerb} cold.${suffix}`;
   }
   const lead = `Relative mode: the line is set so the idlest ${targetText} of the`
     + ` ${fmtCount(eligible)} repositories with open findings are cold.`;
   if (v.floorApplied === true) {
     return `${lead} The idlest ${targetText} would have been ${fmtDays(num(v.derivedDays))}, so`
-      + ` the ${floorPhrase} holds the line instead, and ${coldCount} are cold — a smaller zone`
-      + ` than the ${targetText} asked for.${suffix}`;
+      + ` the ${floorPhrase} holds the line instead, and ${coldCount} ${coldVerb} cold — a`
+      + ` smaller zone than the ${targetText} asked for.${suffix}`;
   }
-  return `${lead} It landed at ${fmtDays(days)} idle, and ${coldCount} are cold. The`
+  return `${lead} It landed at ${fmtDays(days)} idle, and ${coldCount} ${coldVerb} cold. The`
     + ` ${floorPhrase} did not apply.${suffix}`;
 }
 

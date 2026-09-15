@@ -825,6 +825,12 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
     );
   });
 
+  it("fixed and populated at n = 1: the verb agrees with a single cold repository", () => {
+    expect(caption(fixedModel({ achieved_share_pct: (1 / 46) * 100 }, { cold_repos: 1 }))).toBe(
+      `${FIXED_LEAD} 1 of 46 repositories with open findings (2.2%) is cold.`,
+    );
+  });
+
   it("fixed with nothing open: no share is reported, and no 0% is invented", () => {
     expect(caption(fixedModel(
       { eligible_repos: 0, achieved_share_pct: null },
@@ -852,6 +858,14 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
     );
   });
 
+  it("relative with the floor idle at n = 1: the verb agrees with a single cold repository", () => {
+    expect(caption(relativeModel({ achieved_share_pct: (1 / 46) * 100 }, { cold_repos: 1 })))
+      .toBe(
+        `${RELATIVE_LEAD} It landed at 47 days idle, and 1 repository (2.2%) is cold.`
+        + " The 14-day floor did not apply.",
+      );
+  });
+
   it("relative with the floor holding: the line that was refused, and the smaller zone", () => {
     expect(caption(relativeModel(
       { floor_applied: true, derived_days: 9, cold_after_days: 14,
@@ -863,6 +877,19 @@ describe("repos: coldModeCaption — one sentence per state, in the copy the sec
       + " for.",
     );
   });
+
+  it("relative with the floor holding at n = 1: the verb agrees with a single cold repository",
+    () => {
+      expect(caption(relativeModel(
+        { floor_applied: true, derived_days: 9, cold_after_days: 14,
+          achieved_share_pct: (1 / 46) * 100 },
+        { cold_repos: 1 },
+      ))).toBe(
+        `${RELATIVE_LEAD} The idlest 20% would have been 9 days, so the 14-day floor holds the`
+        + " line instead, and 1 repository (2.2%) is cold — a smaller zone than the 20% asked"
+        + " for.",
+      );
+    });
 
   it("relative with nothing to rank: the line rests on the floor, and says so", () => {
     expect(caption(relativeModel(

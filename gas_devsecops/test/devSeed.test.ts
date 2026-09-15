@@ -196,6 +196,11 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
     // but not at scan B or scan C, so the battery carries 3 fewer nodes at each of those two
     // syncs: 1436 - 3*2 = 1430. `seeded`/`rows` folds to the same 554 live ledger rows either
     // way, because these 3 findings are resolved by disappearance rather than counted twice.
+    // A second cold-zone repo (SLOW_REPO_STAYS_IDX / SLOW_REPO_RESOLVED_IDX, repo-11
+    // "warehouse-sync") was added later so relative mode has two repositories to rank instead
+    // of one — it reassigns three ordinary STAYS indices and two ordinary API_RESOLVED indices
+    // to a different repo, present at every scan exactly as the unmodified specs were, so it
+    // moves no raw-node count and 1430/554 are unchanged.
     expect(result).toEqual({ seeded: 554, syncs: 3, rows: 1430 });
 
     const ledger = ledgerStore.loadState().ledger;

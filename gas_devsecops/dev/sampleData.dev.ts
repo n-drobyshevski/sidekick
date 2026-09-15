@@ -85,17 +85,24 @@ const REPO_POOL: readonly RepoSpec[] = [
   { id: "repo-8", name: "dktunited/reporting-etl", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" },
 ];
 
-// Two repos that exist ONLY for the cold-zone section (`domain/coldZone.ts`) to have something
-// to show locally. They are deliberately NOT in REPO_POOL — every sca/sast/secrets default
-// repo assignment below cycles through REPO_POOL by `idx % REPO_POOL.length`, and adding two
-// more entries there would shift that modulo and silently reassign every existing finding's
-// repo. Instead a handful of sca indices are pointed at these via `ScaSpec.repoOverride` (see
-// COLD_REPO_STAYS_IDX / COLD_REPO_RESOLVED_IDX / UNOBSERVED_REPO_STAYS_IDX below), which changes
-// nothing about the deterministic RNG sequence the rest of the file depends on.
+// Three repos that exist ONLY for the cold-zone section (`domain/coldZone.ts`) to have
+// something to show locally. They are deliberately NOT in REPO_POOL — every sca/sast/secrets
+// default repo assignment below cycles through REPO_POOL by `idx % REPO_POOL.length`, and
+// adding more entries there would shift that modulo and silently reassign every existing
+// finding's repo. Instead a handful of sca indices are pointed at these via
+// `ScaSpec.repoOverride` (see COLD_REPO_STAYS_IDX / COLD_REPO_RESOLVED_IDX / SLOW_REPO_STAYS_IDX
+// / SLOW_REPO_RESOLVED_IDX / UNOBSERVED_REPO_STAYS_IDX below), which changes nothing about the
+// deterministic RNG sequence the rest of the file depends on.
 const COLD_REPO: RepoSpec =
   { id: "repo-9", name: "dktunited/legacy-batch", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" };
 const UNOBSERVED_REPO: RepoSpec =
   { id: "repo-10", name: "dktunited/retired-mobile", branch: "main", cloudPlatform: "GitHub", language: "JAVASCRIPT" };
+// repo-11 "warehouse-sync": a SECOND cold repo, idle for a shorter but still-real stretch —
+// its last movement is ~40 days before scan C, short of repo-9's ~151 but past the 14-day
+// floor — so relative mode at 20% has two repositories to rank instead of one, and the derived
+// line (not the floor) decides the count. See SLOW_REPO_STAYS_IDX / SLOW_REPO_RESOLVED_IDX.
+const SLOW_REPO: RepoSpec =
+  { id: "repo-11", name: "dktunited/warehouse-sync", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" };
 
 interface ProjectSpec {
   folder: string;
@@ -176,7 +183,8 @@ interface ScaSpec {
   epssProbability: number;
   repo: RepoSpec;
   // Cold-zone dev-seed overrides (WP4) — see COLD_REPO_STAYS_IDX / COLD_REPO_RESOLVED_IDX /
-  // UNOBSERVED_REPO_STAYS_IDX below. All optional; unset for the other 395 of 400 specs.
+  // SLOW_REPO_STAYS_IDX / SLOW_REPO_RESOLVED_IDX / UNOBSERVED_REPO_STAYS_IDX below. All
+  // optional; unset for the other 387 of 400 specs.
   repoOverride?: RepoSpec;
   firstDetectedAtOverride?: string;
   resolvedAtOverride?: string;
@@ -191,6 +199,15 @@ const COLD_REPO_STAYS_IDX = new Set([10, 11, 12]);
 const COLD_REPO_RESOLVED_IDX = new Set([340, 341]);
 const COLD_REPO_FIRST_DETECTED = "2025-11-01T00:00:00.000Z";
 const COLD_REPO_RESOLVED_AT = "2026-01-15T00:00:00.000Z";
+
+// repo-11 "warehouse-sync": same shape as repo-9 — three STAYS indices plus two API_RESOLVED
+// indices — but the resolvedAt is pinned closer in, to 2026-05-06 — ~40 days before scan C
+// (2026-06-15), past the 14-day floor but well short of repo-9's ~151 — so relative mode has a
+// second, more-recently-quiet repository for the derived line to rank against repo-9.
+const SLOW_REPO_STAYS_IDX = new Set([30, 31, 32]);
+const SLOW_REPO_RESOLVED_IDX = new Set([342, 343]);
+const SLOW_REPO_FIRST_DETECTED = "2026-01-15T00:00:00.000Z";
+const SLOW_REPO_RESOLVED_AT = "2026-05-06T00:00:00.000Z";
 
 // repo-10 "retired-mobile": three STAYS indices reassigned here and flagged scan-A-only, so
 // `scaNodesForScan` emits them at scan A and never again — they close by disappearance at
@@ -218,6 +235,12 @@ function buildScaSpecs(): ScaSpec[] {
       repoOverride = COLD_REPO;
       firstDetectedAtOverride = COLD_REPO_FIRST_DETECTED;
       resolvedAtOverride = COLD_REPO_RESOLVED_AT;
+    } else if (SLOW_REPO_STAYS_IDX.has(idx)) {
+      repoOverride = SLOW_REPO;
+    } else if (SLOW_REPO_RESOLVED_IDX.has(idx)) {
+      repoOverride = SLOW_REPO;
+      firstDetectedAtOverride = SLOW_REPO_FIRST_DETECTED;
+      resolvedAtOverride = SLOW_REPO_RESOLVED_AT;
     } else if (UNOBSERVED_REPO_STAYS_IDX.has(idx)) {
       repoOverride = UNOBSERVED_REPO;
       scanAOnly = true;

@@ -291,9 +291,11 @@ describe("the three-scan battery, through ledgerStore.persistSync", () => {
     // scan A's secrets population folds 120 nodes / 6 twin pairs down to 114 live rows.
     expect(secretsAfterA).toBe(114);
     // sca: EARLY_GONE (50) resolves by disappearance at B, LATE_GONE (40) at C,
-    // API_RESOLVED (30) resolves directly at B, and the 3 cold-zone UNOBSERVED_REPO_STAYS_IDX
-    // findings (dev/sampleData.dev.ts — emitted only at scan A) also resolve by disappearance
-    // at B — 123 resolutions total across the battery.
+    // API_RESOLVED (30, including the cold-zone COLD_REPO_RESOLVED_IDX and
+    // SLOW_REPO_RESOLVED_IDX pairs — both are ordinary members of the API_RESOLVED bucket, just
+    // repointed to a different repo and resolvedAt) resolves directly at B, and the 3 cold-zone
+    // UNOBSERVED_REPO_STAYS_IDX findings (dev/sampleData.dev.ts — emitted only at scan A) also
+    // resolve by disappearance at B — 123 resolutions total across the battery.
     expect(sawResolvedSca).toBe(50 + 40 + 30 + 3);
     // sast: GONE_AT_B (8) resolves at B, GONE_AT_C (2) at C.
     expect(sawResolvedSast).toBe(8 + 2);
