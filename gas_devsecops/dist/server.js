@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "f032e54717b1" : "dev";
+  var BUILD_ID = true ? "bca9adcb95ac" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -642,6 +642,14 @@ var Server = (() => {
   var DEFAULT_COLD_AFTER_DAYS = 90;
   var COLD_AFTER_DAYS_MIN = 7;
   var COLD_AFTER_DAYS_MAX = 365;
+  var COLD_ZONE_MODES = ["fixed", "relative"];
+  var DEFAULT_COLD_ZONE_MODE = "fixed";
+  var DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+  var COLD_TARGET_SHARE_PCT_MIN = 1;
+  var COLD_TARGET_SHARE_PCT_MAX = 50;
+  var DEFAULT_COLD_FLOOR_DAYS = 14;
+  var COLD_FLOOR_DAYS_MIN = 1;
+  var COLD_FLOOR_DAYS_MAX = COLD_AFTER_DAYS_MAX;
   var SCOPES = ["sca", "sast", "secrets"];
   var DEFAULT_FETCH_SEVERITIES = {
     sca: ["CRITICAL", "HIGH"],
@@ -3369,6 +3377,9 @@ var Server = (() => {
     },
     slaTargets: { ...SLA_TARGETS },
     coldAfterDays: DEFAULT_COLD_AFTER_DAYS,
+    coldZoneMode: DEFAULT_COLD_ZONE_MODE,
+    coldTargetSharePct: DEFAULT_COLD_TARGET_SHARE_PCT,
+    coldFloorDays: DEFAULT_COLD_FLOOR_DAYS,
     showExperimental: false,
     syncSchedule: DEFAULT_SYNC_HOUR,
     autoCompact: false,
@@ -3424,6 +3435,21 @@ var Server = (() => {
     if (n2 === null) return DEFAULT_COLD_AFTER_DAYS;
     return Math.min(COLD_AFTER_DAYS_MAX, Math.max(COLD_AFTER_DAYS_MIN, Math.floor(n2)));
   }
+  function cleanColdZoneMode(v) {
+    if (typeof v !== "string") return DEFAULT_COLD_ZONE_MODE;
+    const m = v.trim().toLowerCase();
+    return COLD_ZONE_MODES.includes(m) ? m : DEFAULT_COLD_ZONE_MODE;
+  }
+  function cleanColdTargetSharePct(v) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return DEFAULT_COLD_TARGET_SHARE_PCT;
+    return Math.min(COLD_TARGET_SHARE_PCT_MAX, Math.max(COLD_TARGET_SHARE_PCT_MIN, Math.floor(n2)));
+  }
+  function cleanColdFloorDays(v) {
+    const n2 = numericOrNull(v);
+    if (n2 === null) return DEFAULT_COLD_FLOOR_DAYS;
+    return Math.min(COLD_FLOOR_DAYS_MAX, Math.max(COLD_FLOOR_DAYS_MIN, Math.floor(n2)));
+  }
   function cleanViewScope(v) {
     return typeof v === "string" ? v.trim() : "";
   }
@@ -3446,6 +3472,9 @@ var Server = (() => {
       fetchSeverities: cleanFetchSeverities(r.fetchSeverities),
       slaTargets: { ...SLA_TARGETS, ...cleanSlaTargets(r.slaTargets) },
       coldAfterDays: cleanColdAfterDays(r.coldAfterDays),
+      coldZoneMode: cleanColdZoneMode(r.coldZoneMode),
+      coldTargetSharePct: cleanColdTargetSharePct(r.coldTargetSharePct),
+      coldFloorDays: cleanColdFloorDays(r.coldFloorDays),
       showExperimental: r.showExperimental === true,
       syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
       // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
@@ -3471,8 +3500,13 @@ var Server = (() => {
   function effectiveSlaTargets(settings) {
     return { ...SLA_TARGETS, ...cleanSlaTargets(settings == null ? void 0 : settings.slaTargets) };
   }
-  function effectiveColdAfterDays(settings) {
-    return cleanColdAfterDays(settings == null ? void 0 : settings.coldAfterDays);
+  function effectiveColdZoneSettings(settings) {
+    return {
+      mode: cleanColdZoneMode(settings == null ? void 0 : settings.coldZoneMode),
+      coldAfterDays: cleanColdAfterDays(settings == null ? void 0 : settings.coldAfterDays),
+      targetSharePct: cleanColdTargetSharePct(settings == null ? void 0 : settings.coldTargetSharePct),
+      floorDays: cleanColdFloorDays(settings == null ? void 0 : settings.coldFloorDays)
+    };
   }
 
   // src/server/sheetsDb.ts
@@ -6280,7 +6314,7 @@ var Server = (() => {
     return 0;
   }
   function coldZoneProfile(rows, opts) {
-    var _a;
+    var _a, _b;
     const nowMs = parseTs(opts.now);
     if (nowMs === null) {
       throw new Error(`coldZoneProfile: unparseable now (${JSON.stringify(opts.now)})`);
@@ -6295,6 +6329,25 @@ var Server = (() => {
     const t = Number(opts.coldAfterDays);
     if (!Number.isFinite(t) || t <= 0) {
       throw new Error(`coldZoneProfile: coldAfterDays must be a positive number (${String(opts.coldAfterDays)})`);
+    }
+    const mode = (_b = opts.mode) != null ? _b : DEFAULT_COLD_ZONE_MODE;
+    if (!COLD_ZONE_MODES.includes(mode)) {
+      throw new Error(
+        `coldZoneProfile: mode must be one of ${COLD_ZONE_MODES.join(" | ")} (${JSON.stringify(opts.mode)})`
+      );
+    }
+    const relative = mode === "relative";
+    const targetSharePct = relative ? Number(opts.targetSharePct) : null;
+    const floorDays = relative ? Number(opts.floorDays) : null;
+    if (relative && (!Number.isFinite(targetSharePct) || targetSharePct <= 0 || targetSharePct > 100)) {
+      throw new Error(
+        `coldZoneProfile: relative mode requires targetSharePct in (0, 100] (${String(opts.targetSharePct)})`
+      );
+    }
+    if (relative && (!Number.isFinite(floorDays) || floorDays <= 0)) {
+      throw new Error(
+        `coldZoneProfile: relative mode requires floorDays to be a positive number (${String(opts.floorDays)})`
+      );
     }
     let unclassifiedSecrets = 0;
     const classified = [];
@@ -6328,7 +6381,6 @@ var Server = (() => {
     }
     const scopesWithoutScanList = [...scopesWithoutScan].sort(cmp);
     const base = {
-      cold_after_days: t,
       observed_from: observedFromMs === null ? null : toIso(observedFromMs),
       as_of: toIso(nowMs),
       row_count: rows.length,
@@ -6336,9 +6388,22 @@ var Server = (() => {
       unclassified_secrets: unclassifiedSecrets,
       scopes_without_scan: scopesWithoutScanList
     };
+    const modeBase = {
+      mode,
+      fixed_after_days: t,
+      target_share_pct: targetSharePct,
+      floor_days: floorDays
+    };
     if (observedFromMs === null) {
       return {
         measurable: false,
+        ...modeBase,
+        cold_after_days: relative ? floorDays : t,
+        achieved_share_pct: null,
+        floor_applied: false,
+        derived_days: null,
+        eligible_repos: null,
+        cold_bound_only: null,
         ...base,
         bucket_edges: null,
         bucket_labels: null,
@@ -6347,15 +6412,7 @@ var Server = (() => {
         totals: null
       };
     }
-    const bucketEdges = [0, t / 3, 2 * t / 3, t];
-    const bucketLabels = [
-      `${fmtDays(0)}\u2013${fmtDays(t / 3)} d`,
-      `${fmtDays(t / 3)}\u2013${fmtDays(2 * t / 3)} d`,
-      `${fmtDays(2 * t / 3)}\u2013${fmtDays(t)} d`,
-      `\u2265 ${fmtDays(t)} d`,
-      "not yet measurable"
-    ];
-    const repos = [];
+    const facts = [];
     for (const acc of byRepo.values()) {
       const observed = observedById.get(acc.repoId) === true;
       const idleDays = acc.movementAt === null ? null : daysBetween(acc.movementAt, nowMs);
@@ -6370,14 +6427,59 @@ var Server = (() => {
           disappearedCount = count;
         }
       }
+      facts.push({
+        acc,
+        observed,
+        idleDays,
+        idleBoundDays,
+        idleReading,
+        disappearedAt,
+        disappearedCount,
+        // Eligible for the share: still scanned, and something is still open on it. A repository
+        // the scanner lost is not evidence about engagement, and one with nothing open cannot be
+        // in a zone that measures unclosed work.
+        eligible: observed && acc.open > 0
+      });
+    }
+    const eligible = facts.filter((f) => f.eligible);
+    const eligibleRepos = eligible.length;
+    let derivedDays = null;
+    let floorApplied = false;
+    let effective = t;
+    if (relative) {
+      if (eligibleRepos > 0) {
+        const readings = eligible.map((f) => f.idleReading).sort((a, b) => b - a);
+        const k = Math.min(eligibleRepos, Math.max(1, Math.ceil(targetSharePct / 100 * eligibleRepos)));
+        derivedDays = Math.floor(readings[k - 1]);
+        effective = Math.max(derivedDays, floorDays);
+        floorApplied = derivedDays < floorDays;
+      } else {
+        effective = floorDays;
+        derivedDays = null;
+        floorApplied = false;
+      }
+    }
+    const bucketEdges = [0, effective / 3, 2 * effective / 3, effective];
+    const bucketLabels = [
+      `${fmtDays(0)}\u2013${fmtDays(effective / 3)} d`,
+      `${fmtDays(effective / 3)}\u2013${fmtDays(2 * effective / 3)} d`,
+      `${fmtDays(2 * effective / 3)}\u2013${fmtDays(effective)} d`,
+      `\u2265 ${fmtDays(effective)} d`,
+      "not yet measurable"
+    ];
+    const repos = [];
+    let coldBoundOnly = 0;
+    for (const f of facts) {
+      const { acc, observed, idleDays, idleBoundDays, idleReading, disappearedAt, disappearedCount } = f;
       let verdict;
       if (!observed) verdict = "unobserved";
       else if (acc.open === 0) verdict = "clear";
-      else if (idleDays !== null && idleDays >= t) verdict = "cold";
-      else if (idleDays === null && idleBoundDays !== null && idleBoundDays >= t) verdict = "cold";
+      else if (idleDays !== null && idleDays >= effective) verdict = "cold";
+      else if (idleDays === null && idleBoundDays !== null && idleBoundDays >= effective) verdict = "cold";
       else if (idleDays !== null) verdict = "warm";
       else verdict = "watching";
-      const bucket = verdict === "unobserved" || verdict === "clear" ? null : verdict === "watching" ? 4 : bucketOf(idleReading, t);
+      if (verdict === "cold" && idleDays === null) coldBoundOnly += 1;
+      const bucket = verdict === "unobserved" || verdict === "clear" ? null : verdict === "watching" ? 4 : bucketOf(idleReading, effective);
       repos.push({
         repo_id: acc.repoId,
         repo_name: acc.repoName,
@@ -6403,14 +6505,21 @@ var Server = (() => {
     }
     repos.sort(
       (a, b) => {
-        var _a2, _b;
-        return VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.open_findings - a.open_findings || cmp((_a2 = a.repo_name) != null ? _a2 : a.repo_id, (_b = b.repo_name) != null ? _b : b.repo_id);
+        var _a2, _b2;
+        return VERDICT_RANK[a.verdict] - VERDICT_RANK[b.verdict] || b.open_findings - a.open_findings || cmp((_a2 = a.repo_name) != null ? _a2 : a.repo_id, (_b2 = b.repo_name) != null ? _b2 : b.repo_id);
       }
     );
-    const teams = rollUp(repos);
+    const teams = rankTeams(rollUp(repos), mode, targetSharePct);
     const totals = totalsOf(repos, teams);
     return {
       measurable: true,
+      ...modeBase,
+      cold_after_days: effective,
+      achieved_share_pct: totals.cold_repo_share_pct,
+      floor_applied: floorApplied,
+      derived_days: derivedDays,
+      eligible_repos: eligibleRepos,
+      cold_bound_only: coldBoundOnly,
       ...base,
       bucket_edges: bucketEdges,
       bucket_labels: bucketLabels,
@@ -6497,6 +6606,10 @@ var Server = (() => {
         cold_share_pct: safePct(coldRepos, withOpen),
         last_movement_at: toIso(lastMovement),
         verdict,
+        // Filled by `rankTeams`, which runs over the finished roll-up: the rank is a fact about
+        // the whole set of projects, so no single project's fold can know it.
+        relative_rank: null,
+        in_coldest_share: false,
         buckets,
         bucket_open: bucketOpen
       });
@@ -6505,6 +6618,31 @@ var Server = (() => {
       (a, b) => b.cold_repos - a.cold_repos || b.open_in_cold - a.open_in_cold || cmp(a.label, b.label)
     );
     return out;
+  }
+  function rankTeams(teams, mode, targetSharePct) {
+    var _a, _b;
+    const ranked = teams.filter((team) => team.repos_with_open > 0).sort(
+      (a, b) => {
+        var _a2, _b2;
+        return ((_a2 = b.cold_share_pct) != null ? _a2 : 0) - ((_b2 = a.cold_share_pct) != null ? _b2 : 0) || b.open_in_cold - a.open_in_cold || cmp(a.label, b.label);
+      }
+    );
+    const rankOf = /* @__PURE__ */ new Map();
+    ranked.forEach((team, i) => rankOf.set(team, i + 1));
+    const total = ranked.length;
+    const withCold = ranked.filter((team) => team.cold_repos > 0).length;
+    let want = 0;
+    if (mode === "relative" && withCold > 0 && targetSharePct !== null) {
+      want = Math.min(withCold, Math.max(1, Math.ceil(targetSharePct / 100 * total)));
+      while (want < withCold && ((_a = ranked[want].cold_share_pct) != null ? _a : 0) === ((_b = ranked[want - 1].cold_share_pct) != null ? _b : 0) && ranked[want].open_in_cold === ranked[want - 1].open_in_cold) {
+        want += 1;
+      }
+    }
+    return teams.map((team) => {
+      var _a2;
+      const rank = (_a2 = rankOf.get(team)) != null ? _a2 : null;
+      return { ...team, relative_rank: rank, in_coldest_share: rank !== null && rank <= want };
+    });
   }
   function totalsOf(repos, teams) {
     const buckets = [0, 0, 0, 0, 0];
@@ -6527,6 +6665,7 @@ var Server = (() => {
       teams: teams.length,
       teams_fully_cold: 0,
       teams_partly_cold: 0,
+      teams_in_coldest_share: 0,
       repos_no_project: 0,
       buckets,
       bucket_open: bucketOpen
@@ -6545,6 +6684,7 @@ var Server = (() => {
       t.open_in_unobserved += team.open_in_unobserved;
       if (team.verdict === "fully-cold") t.teams_fully_cold += 1;
       if (team.verdict === "partly-cold") t.teams_partly_cold += 1;
+      if (team.in_coldest_share) t.teams_in_coldest_share += 1;
       if (team.project === null) t.repos_no_project = team.repos;
       for (let i = 0; i < 5; i += 1) {
         buckets[i] += team.buckets[i];
@@ -6558,7 +6698,16 @@ var Server = (() => {
   function coldZoneHeadline(result) {
     return {
       measurable: result.measurable,
+      mode: result.mode,
       cold_after_days: result.cold_after_days,
+      fixed_after_days: result.fixed_after_days,
+      target_share_pct: result.target_share_pct,
+      achieved_share_pct: result.achieved_share_pct,
+      floor_days: result.floor_days,
+      floor_applied: result.floor_applied,
+      derived_days: result.derived_days,
+      eligible_repos: result.eligible_repos,
+      cold_bound_only: result.cold_bound_only,
       observed_from: result.observed_from,
       as_of: result.as_of,
       totals: result.totals,
@@ -7305,6 +7454,7 @@ var Server = (() => {
     const project2 = projectRaw ? projectRaw : null;
     const domainRaw = settings.domainView;
     const domain = domainRaw ? domainRaw : null;
+    const cold = effectiveColdZoneSettings(settings);
     return {
       scope,
       severities,
@@ -7312,7 +7462,10 @@ var Server = (() => {
       project: project2,
       domain,
       slaTargets: effectiveSlaTargets(settings),
-      coldAfterDays: effectiveColdAfterDays(settings)
+      coldAfterDays: cold.coldAfterDays,
+      coldZoneMode: cold.mode,
+      coldTargetSharePct: cold.targetSharePct,
+      coldFloorDays: cold.floorDays
     };
   }
   function keyOf(n2) {
@@ -7651,6 +7804,9 @@ var Server = (() => {
         now: clock.asOf,
         observedFrom: clock.observedFrom,
         coldAfterDays: n2.coldAfterDays,
+        mode: n2.coldZoneMode,
+        targetSharePct: n2.coldTargetSharePct,
+        floorDays: n2.coldFloorDays,
         newestScanByScope: newestScanByScope()
       })),
       coldZoneAsOfSource: clock.asOfSource,
@@ -7761,7 +7917,14 @@ var Server = (() => {
     const n2 = norm(p);
     return cached(
       "dsExecutive1",
-      { ...keyOf(n2), slaTargets: n2.slaTargets, coldAfterDays: n2.coldAfterDays },
+      {
+        ...keyOf(n2),
+        slaTargets: n2.slaTargets,
+        coldAfterDays: n2.coldAfterDays,
+        coldZoneMode: n2.coldZoneMode,
+        coldTargetSharePct: n2.coldTargetSharePct,
+        coldFloorDays: n2.coldFloorDays
+      },
       () => buildExecutive(n2),
       CLOCK_TTL_SEC
     );
@@ -8129,6 +8292,9 @@ var Server = (() => {
         now: clock.asOf,
         observedFrom: clock.observedFrom,
         coldAfterDays: n2.coldAfterDays,
+        mode: n2.coldZoneMode,
+        targetSharePct: n2.coldTargetSharePct,
+        floorDays: n2.coldFloorDays,
         newestScanByScope: newestScanByScope()
       }),
       signalCoverage: signalCoverage(visible)
@@ -8136,7 +8302,17 @@ var Server = (() => {
   }
   function reposModel(p) {
     const n2 = norm(p);
-    return durablyCached("dsRepos2", { ...keyOf(n2), coldAfterDays: n2.coldAfterDays }, () => buildRepos(n2));
+    return durablyCached(
+      "dsRepos2",
+      {
+        ...keyOf(n2),
+        coldAfterDays: n2.coldAfterDays,
+        coldZoneMode: n2.coldZoneMode,
+        coldTargetSharePct: n2.coldTargetSharePct,
+        coldFloorDays: n2.coldFloorDays
+      },
+      () => buildRepos(n2)
+    );
   }
   var MOVEMENT_WINDOW_DAYS = 28;
   function movementNoteFor(win) {

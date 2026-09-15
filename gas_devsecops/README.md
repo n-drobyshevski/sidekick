@@ -133,7 +133,7 @@ here and `test/vocabulary.test.js` holds the copy to it.
 | `repos` | Repositories | Data | Where does the backlog sit, which repos have gone cold, who owns them? |
 | `history` | Scan history | Data | What was actually measured, when? |
 | `data` | Storage | Data | What is stored, what can be exported, what can be reset? |
-| `settings` | Settings | — | Register, SLA windows, access, system. |
+| `settings` | Settings | — | Register, SLA windows, the cold-zone mode, access, system. |
 
 ### Why SAST, SCA and secrets are three pages
 

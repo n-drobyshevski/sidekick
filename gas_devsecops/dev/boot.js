@@ -115,6 +115,60 @@
     }
   }
 
+  // -------------------------------------------------------------- cold-zone mode, dev-forced
+  //
+  // `coldZoneMode` is Settings state, saved through `api_putSettings` exactly as the Deadlines
+  // tab does it — same as `?noscope` replays a pick through `api_setProjectView` rather than
+  // poking the store directly. It runs AFTER seeding on purpose: `putSettings` bumps the
+  // settings data version, and the read models that key their durable cache on it
+  // (`coldZoneMode`/`coldTargetSharePct`/`coldFloorDays` are in both `dsRepos2` and
+  // `dsExecutive1`'s params) only recompute against the seed once that version has moved. Doing
+  // this first would save the mode, THEN seed — one more version bump the pages never see,
+  // and no bug, but running it after the seed is what an operator flipping the mode after a
+  // sync actually does, and it is the cheaper of two ways to get the same reachable state.
+  //
+  // `?cold=relative` alone changes only the mode — `putSettings` MERGES over the currently
+  // loaded settings (see its own header in `src/server/api.ts`), so leaving `coldtarget`/
+  // `coldfloor` off the query string leaves `coldTargetSharePct`/`coldFloorDays` at whatever
+  // they already are (the domain defaults, 20% / 14d, on a fresh harness). `?coldfloor=120` is
+  // the one that makes the floor-applied caption reachable locally: the seed's ~9 eligible
+  // repos put the derived 20% line under 120 days, so the floor holds it there instead.
+  const coldMode = query.get("cold");
+  if (coldMode === "relative" || coldMode === "fixed") {
+    const patch = { coldZoneMode: coldMode };
+    const parts = [`mode=${coldMode}`];
+    if (coldMode === "relative") {
+      const rawTarget = query.get("coldtarget");
+      if (rawTarget !== null) {
+        const target = Number(rawTarget);
+        if (Number.isFinite(target)) {
+          patch.coldTargetSharePct = target; // server clamps to the legal range
+          parts.push(`target=${target}%`);
+        } else {
+          console.log(`[dev] ?coldtarget=${rawTarget} is not a finite number — ignored.`);
+        }
+      }
+      const rawFloor = query.get("coldfloor");
+      if (rawFloor !== null) {
+        const floor = Number(rawFloor);
+        if (Number.isFinite(floor)) {
+          patch.coldFloorDays = floor; // server clamps to the legal range
+          parts.push(`floor=${floor}d`);
+        } else {
+          console.log(`[dev] ?coldfloor=${rawFloor} is not a finite number — ignored.`);
+        }
+      }
+    }
+    const saved = Server.api.putSettings({ settings: patch });
+    if (saved && saved.ok) {
+      console.log(`[dev] ?cold=${coldMode} — settings saved (${parts.join(", ")}).`);
+    } else {
+      console.log(
+        `[dev] ?cold=${coldMode} — save refused: ${(saved && saved.error) || "unknown error"}.`,
+      );
+    }
+  }
+
   // ------------------------------------------------------------------ the domain map, faked
   //
   // The one piece of the register the sample battery cannot produce. A project rides in on the
