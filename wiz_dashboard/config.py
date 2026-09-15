@@ -10,36 +10,8 @@ from typing import Dict
 CACHE_FILENAME = "last_results.json.gz"
 DEFAULT_CACHE_TTL_MINUTES = 60
 
-# ---- Live Wiz API deadline ----
-# Mirrors os_vulns.DEFAULT_TIMEOUT_SECONDS; kept here too (rather than importing os_vulns,
-# which pulls in the wiz_sdk import machinery) so config stays a lightweight, dependency-free
-# module. Overridable per-tenant via a "wiz_api_timeout_seconds" key in wiz_config.json.
-DEFAULT_WIZ_API_TIMEOUT_SECONDS = 120.0
-
 # ---- Severity taxonomy ----
 SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
-# Light-theme severity palette: Altair renders charts to SVG and can't read CSS vars,
-# so these single hex values are tuned to stay legible (>=3:1 as graphical marks) on a
-# white background (notably MEDIUM is #d97706 — the old #eab308 was ~1.6:1 on white).
-# Mirrored as --sev-* CSS tokens in assets/styles.css for the custom-HTML badges/cards.
-SEVERITY_COLORS = {
-    "CRITICAL": "#dc2626",
-    "HIGH": "#ea580c",
-    "MEDIUM": "#d97706",
-    "LOW": "#2563eb",
-    "INFO": "#64748b",
-    "UNKNOWN": "#475569",
-}
-# Glyphs give severity a non-color signal (accessibility) in labels and tables,
-# so meaning isn't carried by color alone.
-SEVERITY_GLYPHS = {
-    "CRITICAL": "🔴",
-    "HIGH": "🟠",
-    "MEDIUM": "🟡",
-    "LOW": "🔵",
-    "INFO": "⚪",
-    "UNKNOWN": "⚫",
-}
 # Standard VM SLAs (days). Tweak per your remediation policy.
 SLA_TARGETS = {"CRITICAL": 7, "HIGH": 14, "MEDIUM": 30, "LOW": 90, "INFO": 180}
 
