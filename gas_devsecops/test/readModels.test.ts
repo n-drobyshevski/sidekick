@@ -384,7 +384,12 @@ describe("the caching audit is per model, and the header states it", () => {
     expect(layerOf("dsRegister2")).toEqual(["cached", "cached", "cached"]);
 
     // Time-invariant models: dated by the ledger's own clock, so a stored copy stays true.
-    expect(layerOf("dsProgram1")).toEqual(["durablyCached"]);
+    // "dsProgram1" -> "dsProgram2": the namespace was bumped when `capacity` gained
+    // `closedPerMonthMean`. The CLAIM this line encodes is the LAYER the model caches in, not
+    // the spelling of its namespace, and that is unchanged — a durable entry from the old
+    // namespace carries no such field and the capacity strip would draw the absent mark
+    // beside a live close rate, with nothing to age it out but the next commit.
+    expect(layerOf("dsProgram2")).toEqual(["durablyCached"]);
     expect(layerOf("dsRepos1")).toEqual(["durablyCached"]);
     // "dsHistory1" -> "dsHistory2": the namespace was bumped when the payload gained its
     // per-register `movement` / `movementNote` blocks. The CLAIM this line encodes is the
@@ -1307,7 +1312,7 @@ describe("warmReadModels", () => {
     expect(report.skipped).toBe(0);
     expect(H.swept).toBe(1);
     expect(new Set(H.cacheCalls.map((c) => c.name))).toEqual(new Set([
-      "dsHistory2", "dsProgram1", "dsRepos1", "dsStorage1",
+      "dsHistory2", "dsProgram2", "dsRepos1", "dsStorage1",
       "dsExecutive1", "dsMttr2", "dsSecrets1", "dsRegister2",
     ]));
   });

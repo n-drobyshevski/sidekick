@@ -1631,7 +1631,10 @@ const cachedProgramData = (p?: unknown) =>
   cached(
     // "program1" -> "program2": the payload gained `capacityHindcast`; dataVersion persists
     // across deploys, so bump the namespace or a stale hindcast-less entry outlives the ship.
-    "program2",
+    // "program2" -> "program3": `capacity` gained `closedPerMonthMean`, same reasoning — an
+    // entry written before the ship carries no such field and the page would draw the absent
+    // mark beside a live close rate for a full TTL.
+    "program3",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),

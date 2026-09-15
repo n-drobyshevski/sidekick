@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "d4f958d43763" : "dev";
+  var BUILD_ID = true ? "f635437fddf5" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -1680,7 +1680,15 @@ var Server = (() => {
       scanClosedByMonth[k] = ((_b = scanClosedByMonth[k]) != null ? _b : 0) + Number((_c = s["resolved_count"]) != null ? _c : 0);
     }
     if (!parsed.length) {
-      return { months: [], mmcrMean: null, oneInN: null, netTotal: 0, verdict: null, monthsCounted: 0 };
+      return {
+        months: [],
+        mmcrMean: null,
+        oneInN: null,
+        closedPerMonthMean: null,
+        netTotal: 0,
+        verdict: null,
+        monthsCounted: 0
+      };
     }
     const earliest = minNum(parsed.map((p) => p.first));
     const months = [];
@@ -1717,6 +1725,7 @@ var Server = (() => {
     }
     const counted = months.filter((m) => !m.partial && !m.reconstructed && m.mmcr !== null);
     const mmcrMean = counted.length ? counted.reduce((a, m) => a + m.mmcr, 0) / counted.length : null;
+    const closedPerMonthMean = counted.length ? counted.reduce((a, m) => a + m.closed, 0) / counted.length : null;
     const netTotal = months.reduce((a, m) => a + m.net, 0);
     const netPctOverall = counted.length ? counted.reduce((a, m) => {
       var _a2;
@@ -1727,6 +1736,7 @@ var Server = (() => {
       months: trimmed,
       mmcrMean,
       oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
+      closedPerMonthMean,
       netTotal,
       verdict: counted.length ? verdictOf(netPctOverall) : null,
       monthsCounted: counted.length
@@ -10290,7 +10300,10 @@ var Server = (() => {
     return cached(
       // "program1" -> "program2": the payload gained `capacityHindcast`; dataVersion persists
       // across deploys, so bump the namespace or a stale hindcast-less entry outlives the ship.
-      "program2",
+      // "program2" -> "program3": `capacity` gained `closedPerMonthMean`, same reasoning — an
+      // entry written before the ship carries no such field and the page would draw the absent
+      // mark beside a live close rate for a full TTL.
+      "program3",
       {
         domain: String((_a = p == null ? void 0 : p["domain"]) != null ? _a : ""),
         supportGroup: String((_b = p == null ? void 0 : p["supportGroup"]) != null ? _b : ""),

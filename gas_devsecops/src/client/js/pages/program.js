@@ -392,6 +392,28 @@ export function signalBreakdownView(signals, coverage, rowCount) {
 }
 
 /**
+ * The capacity headline's other half: mean findings CLOSED per month, as a count.
+ *
+ * WHY IT EXISTS. `mmcrMean` is a share of the starting backlog, and "about one in ten a
+ * month" is four findings on one register and four hundred on another — a reader staffing
+ * the work cannot tell those apart from the rate. `Capacity.closedPerMonthMean` averages the
+ * same months `mmcrMean` does, so both figures always report the same base.
+ *
+ * THE GRAIN SHIFTS ONCE, AT TEN. A register clearing hundreds a month has no use for a tenth
+ * of a finding, and the mean's own base is a handful of months, so a decimal up there is
+ * false precision. But rounding a mean of 0.4 to a flat "0" would say the register closes
+ * nothing while the chart beside it shows closures, and that is the one reading this figure
+ * must not produce — below ten the tenth separates "barely moving" from "not moving at all".
+ *
+ * Returns `absentText`, never a zero: no fully observed month means nothing to average.
+ */
+function closedPerMonthText(v) {
+  const n = num(v);
+  if (n === null) return absentText;
+  return fmtCount(n < 10 ? Math.round(n * 10) / 10 : Math.round(n));
+}
+
+/**
  * Capacity month by month, with every month that was not directly observed marked as such.
  *
  * `marks` is what a row is NOT: "partial" (the current month, still running) or
@@ -435,6 +457,10 @@ export function capacityView(capacity) {
       fmtCount(monthsCounted) + " fully observed " + pluralize(monthsCounted, "month"),
     ),
     oneInN: c.oneInN === null || c.oneInN === undefined ? null : Number(c.oneInN),
+    // `num`, not `Number(… || 0)`: this one is genuinely null on a register with no fully
+    // observed month, and a zero there would claim the register closes nothing.
+    closedPerMonthMean: num(c.closedPerMonthMean),
+    closedPerMonthText: closedPerMonthText(c.closedPerMonthMean),
     netTotal: Number(c.netTotal || 0),
     verdict: c.verdict || null,
     verdictLabel: VERDICT_LABELS[c.verdict] || absentText,
@@ -1000,6 +1026,26 @@ export async function renderProgram(host, params, _ctx) {
       view.oneInN === null ? absentText : "1 in " + Math.round(view.oneInN),
       "of what was open at the start of a month gets closed in it",
     ));
+    // THIRD, AND THE ORDER IS THE ARGUMENT. The first two cards are one rate written twice —
+    // a percentage and the P2P idiom — and the question the second one raises is "one in ten
+    // of WHAT, exactly?". This is that answer, so it reads immediately after the idiom rather
+    // than between the two spellings of the rate it qualifies. Same `monthsCounted` as the
+    // rate, so the denominator sentence below is the same claim in the same words.
+    row.append(figureCard({
+      label: "Closed per month",
+      value: view.closedPerMonthText,
+      sub: view.monthsCounted
+        ? "findings, on average, over the same "
+          + pluralize(view.monthsCounted, "month")
+        : "no month was fully observed, so there is nothing to average",
+      help: { term: "closed-per-month" },
+      denominator: view.closedPerMonthMean === null
+        ? "Not measured: no complete, directly-observed month yet."
+        : "Averaged over " + fmtCount(view.monthsCounted) + " fully observed "
+          + pluralize(view.monthsCounted, "month")
+          + " — the same months as the rate beside it, so the two figures describe one"
+          + " population rather than two.",
+    }));
     // THE VERDICT IS A WORD, AND THE DOT ONLY REPEATS IT — gas_ai's `.cap-verdict` rule,
     // ported. Three states told apart by hue alone survive neither greyscale nor a dichromat,
     // and this is the one figure on the card a reader takes away.

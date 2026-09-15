@@ -61,6 +61,12 @@ const EXPECTED_IDS = [
   // table used to say which is which. The entry is where that reading lives now, and the
   // meter beside each cell is drawn only for the first of the three.
   "signal-coverage",
+  // The capacity section's absolute half. It publishes a rate and the P2P one-in-N idiom
+  // beside it, and neither says whether that is four findings a month or four hundred — the
+  // figure a reader staffs against. Beside mmcr rather than folded into capacity: the tip
+  // card renders two lines, so a third line is a definition nobody reaches, and this is a
+  // count where capacity defines a comparison.
+  "closed-per-month",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164

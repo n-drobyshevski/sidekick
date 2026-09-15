@@ -4,17 +4,27 @@
 workspace and the current user, and there is neither. So this module checks the half that needs
 no workspace -- that every path the bundle names exists, that every scope it passes is a scope
 the fork it points at actually has, and that the two guards which make a scheduled run safe are
-present on every scan job.
+present on every scan task.
 
-The scope check is the one worth having. Both forks' entry points are called
-``run_pipeline.py`` and take a ``--scope``, so a job pointed at the wrong one imports cleanly,
-runs, and measures the wrong register -- ``brick/run_pipeline.py --scope=sca`` fails only once
-it reaches ``resolve_scope``, an hour of cluster time after the deploy that introduced it.
+Ported from ``brick/devsecops/tests/test_bundle.py`` when the fork that used to live beside
+this one was retired (S2): every job in ``brick/databricks.yml`` points at ``brick/run_pipeline.py``
+now that there is only one tree, so ``FORK_OF`` -- which used to map two entry points to two
+forks' ``config.py`` -- collapses to the one entry it was already heading toward. The scope
+check this module exists for stays live even with nothing left to mix up with: a typo could
+still point a job's ``python_file`` at some other path, and
+``test_every_scope_belongs_to_the_fork_the_job_points_at`` would refuse it, because ``FORK_OF``
+only recognises the one path the bundle is supposed to use.
 
-``config.SCOPES`` is read with ``ast`` rather than imported: the two forks carry the same module
-names and exactly one of them may be on ``sys.path`` (see
-``brick/devsecops/tests/test_fork_integrity.py``), so a test that imported both would be asking
-which one won rather than what each says.
+Step 3 collapsed the three single-task scan jobs into one ``wiz_scan`` job with three chained
+tasks (``scan_os -> scan_sca -> scan_sast``), because every scope now writes the same three
+tables and three concurrent MERGEs into one ``wiz_vuln_ledger`` would conflict. ``parameters()``
+therefore takes a ``task_key`` -- a job here may hold more than one task -- and the tests below
+add the chain shape and the per-task scope/scan_id checks that a single-task job never needed.
+
+``config.SCOPES`` is read with ``ast`` rather than imported so this test module needs no
+``sys.path`` entry of its own and cannot collide with whatever a test run elsewhere already put
+on ``sys.path`` (see ``brick/tests/test_deployment_integrity.py`` for the guard that matters when
+something does).
 """
 
 from __future__ import annotations
@@ -31,11 +41,10 @@ BRICK_DIR = Path(__file__).resolve().parents[1]
 REPO_ROOT = BRICK_DIR.parent
 BUNDLE = BRICK_DIR / "databricks.yml"
 
-#: Which fork each entry point belongs to, and therefore whose ``SCOPES`` its ``--scope`` is
-#: checked against.
+#: Which tree each entry point belongs to, and therefore whose ``SCOPES`` its ``--scope`` is
+#: checked against. One entry: every job in the bundle points at this tree's ``run_pipeline.py``.
 FORK_OF = {
     "brick/run_pipeline.py": BRICK_DIR / "config.py",
-    "brick/devsecops/run_pipeline.py": BRICK_DIR / "devsecops" / "config.py",
 }
 
 VAR_REF = re.compile(r"\$\{var\.([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -65,9 +74,22 @@ def jobs(bundle: dict) -> dict:
     return bundle["resources"]["jobs"]
 
 
-def parameters(job: dict) -> list:
-    (task,) = job["tasks"]
-    return task["spark_python_task"]["parameters"]
+def all_tasks(job: dict) -> list:
+    """Every task of a job, in the order the bundle declares them."""
+    return job["tasks"]
+
+
+def parameters(job: dict, task_key: str) -> list:
+    """The ``spark_python_task`` parameters of one named task in a job.
+
+    A job may hold more than one task since Step 3 chained the three scan tasks into
+    ``wiz_scan``, so the single-task shortcut this used to be (``(task,) = job["tasks"]``) would
+    now raise on the very job it is asked about most.
+    """
+    for task in all_tasks(job):
+        if task["task_key"] == task_key:
+            return task["spark_python_task"]["parameters"]
+    raise AssertionError(f"no task {task_key!r} in job {job.get('name', '?')!r}")
 
 
 def flag(params: list, name: str):
@@ -79,70 +101,103 @@ def flag(params: list, name: str):
     return None
 
 
-def is_scan(job: dict) -> bool:
-    """A scan ingests; ``--maintain=true`` exits before it does."""
-    return flag(parameters(job), "maintain") is None
+def test_the_bundle_parses_and_names_one_scan_job_and_one_maintain_job(bundle):
+    assert set(jobs(bundle)) == {"wiz_scan", "wiz_maintain"}
 
 
-def test_the_bundle_parses_and_names_a_job_per_register(bundle):
-    assert set(jobs(bundle)) == {
-        "wiz_os_scan",
-        "wiz_sca_scan",
-        "wiz_sast_scan",
-        "wiz_os_maintain",
+def test_the_scan_job_has_exactly_three_tasks(bundle):
+    task_keys = [task["task_key"] for task in all_tasks(jobs(bundle)["wiz_scan"])]
+    assert task_keys == ["scan_os", "scan_sca", "scan_sast"]
+
+
+def test_every_scan_task_names_a_scope_the_fork_has(bundle):
+    scan_job = jobs(bundle)["wiz_scan"]
+    scopes = {
+        task["task_key"]: flag(task["spark_python_task"]["parameters"], "scope")
+        for task in all_tasks(scan_job)
     }
+    assert all(scopes.values()), f"a task names no scope: {scopes}"
+    assert set(scopes.values()) == {"os", "sca", "sast"}
+    available = scopes_of(FORK_OF["brick/run_pipeline.py"])
+    missing = set(scopes.values()) - available
+    assert not missing, f"{missing} not in config.SCOPES ({sorted(available)})"
 
 
-@pytest.mark.parametrize("name", ["wiz_os_scan", "wiz_sca_scan", "wiz_sast_scan"])
-def test_every_scan_passes_the_run_id_as_its_scan_id(bundle, name):
-    """Without it a retry looks like a brand-new scan and advances every lifecycle twice.
+def test_every_scan_id_is_retry_stable_and_distinct_per_scope(bundle):
+    """``{{job.run_id}}`` is constant across a task's own retries; ``{{task.run_id}}`` is not
+    (CLAUDE.md, "Databricks {{task.run_id}} changes on a task retry").
 
-    Databricks retries a failed task *within* the same run, so ``{{job.run_id}}`` makes the
-    second attempt arrive with the id the first one used -- it then finds its own row in the
-    scan log and does nothing (``run_pipeline``, "Retries are safe, if you pass scan_id").
+    Every scan task's ``--scan_id`` must be built from the job-scoped token, and no two tasks in
+    the chain may resolve to the same id -- the three scopes now write commit rows into one
+    shared ``wiz_metrics``, so a collision would let one scope's row overwrite another's.
     """
-    assert flag(parameters(jobs(bundle)[name]), "scan_id") == "{{job.run_id}}"
+    scan_ids = []
+    for task in all_tasks(jobs(bundle)["wiz_scan"]):
+        scan_id = flag(task["spark_python_task"]["parameters"], "scan_id")
+        assert scan_id is not None, task["task_key"]
+        assert scan_id.startswith("{{job.run_id}}"), scan_id
+        assert "{{task.run_id}}" not in scan_id, scan_id
+        scan_ids.append(scan_id)
+    assert len(scan_ids) == len(set(scan_ids)), scan_ids
+
+
+def test_the_scan_chain_is_linear_and_survives_a_failed_link(bundle):
+    """Concurrent MERGEs into one ledger would conflict, hence the chain (depends_on); a failing
+    scope must neither block the scope behind it nor be blocked by the scope before it, hence
+    ``run_if: ALL_DONE`` rather than the default ``ALL_SUCCESS``."""
+    by_key = {task["task_key"]: task for task in all_tasks(jobs(bundle)["wiz_scan"])}
+    assert by_key["scan_os"].get("depends_on") in (None, []), "scan_os must start the chain"
+    assert by_key["scan_sca"]["depends_on"] == [{"task_key": "scan_os"}]
+    assert by_key["scan_sca"]["run_if"] == "ALL_DONE"
+    assert by_key["scan_sast"]["depends_on"] == [{"task_key": "scan_sca"}]
+    assert by_key["scan_sast"]["run_if"] == "ALL_DONE"
 
 
 def test_no_job_may_run_concurrently_with_itself(bundle):
-    """Two concurrent scans of one scope both pass the recorded-scan check and reconcile twice."""
+    """Two concurrent runs of the same chain would let two tasks race the same MERGE target."""
     for name, job in jobs(bundle).items():
         assert job.get("max_concurrent_runs") == 1, name
 
 
 def test_every_python_file_exists(bundle):
     for name, job in jobs(bundle).items():
-        (task,) = job["tasks"]
-        path = task["spark_python_task"]["python_file"]
-        assert (REPO_ROOT / path).is_file(), f"{name} points at a missing {path}"
+        for task in all_tasks(job):
+            path = task["spark_python_task"]["python_file"]
+            assert (REPO_ROOT / path).is_file(), f"{name}/{task['task_key']} points at a missing {path}"
 
 
 def test_every_scope_belongs_to_the_fork_the_job_points_at(bundle):
-    """The check that catches a job wired to the other fork's identically-named entry point."""
+    """The check that catches a task wired to an entry point whose config does not have the
+    scope it was given -- the one-tree survivor of a check that used to catch two forks'
+    identically-named entry points instead."""
     for name, job in jobs(bundle).items():
-        (task,) = job["tasks"]
-        path = task["spark_python_task"]["python_file"]
-        scope = flag(parameters(job), "scope")
-        assert scope is not None, f"{name} names no scope"
-        assert path in FORK_OF, f"{name} runs an unknown entry point {path}"
-        available = scopes_of(FORK_OF[path])
-        assert scope in available, f"{name}: {path} has no scope {scope!r}, only {sorted(available)}"
+        for task in all_tasks(job):
+            path = task["spark_python_task"]["python_file"]
+            scope = flag(task["spark_python_task"]["parameters"], "scope")
+            assert scope is not None, f"{name}/{task['task_key']} names no scope"
+            assert path in FORK_OF, f"{name}/{task['task_key']} runs an unknown entry point {path}"
+            available = scopes_of(FORK_OF[path])
+            assert scope in available, (
+                f"{name}/{task['task_key']}: {path} has no scope {scope!r}, "
+                f"only {sorted(available)}"
+            )
 
 
 def test_the_maintain_job_only_maintains(bundle):
     """It runs OPTIMIZE and exits; asking it for credentials it never uses would be noise."""
-    params = parameters(jobs(bundle)["wiz_os_maintain"])
+    params = parameters(jobs(bundle)["wiz_maintain"], "maintain")
     assert flag(params, "maintain") == "true"
     assert flag(params, "severities") is None
     assert flag(params, "secret_scope") is None
 
 
-def test_every_scan_names_a_catalog_and_a_schema(bundle):
-    """`catalog` has no default anywhere in this pipeline, so the job has to supply one."""
+def test_every_task_names_a_catalog_and_a_schema(bundle):
+    """`catalog` has no default anywhere in this pipeline, so every task has to supply one."""
     for name, job in jobs(bundle).items():
-        params = parameters(job)
-        assert flag(params, "catalog"), name
-        assert flag(params, "schema"), name
+        for task in all_tasks(job):
+            params = task["spark_python_task"]["parameters"]
+            assert flag(params, "catalog"), f"{name}/{task['task_key']}"
+            assert flag(params, "schema"), f"{name}/{task['task_key']}"
 
 
 def test_every_variable_reference_is_declared(bundle):
@@ -157,8 +212,9 @@ def test_the_catalog_and_node_type_have_no_default(bundle):
     """Both fail loudly rather than guessing: one is a disclosure, the other a wrong bill.
 
     ``run_pipeline.resolve_namespace`` refuses to default the catalog because these tables map
-    unpatched CVEs to named hosts; the bundle must not put one back. ``node_type_id`` is
-    cloud-specific and a default that is valid on one cloud is a deploy failure on another.
+    unpatched CVEs to named hosts and repositories; the bundle must not put one back.
+    ``node_type_id`` is cloud-specific and a default that is valid on one cloud is a deploy
+    failure on another.
     """
     for name in ("catalog", "node_type_id"):
         assert "default" not in bundle["variables"][name], name

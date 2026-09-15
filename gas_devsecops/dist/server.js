@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // src/server/buildInfo.ts
-  var BUILD_ID = true ? "3e7227024b6f" : "dev";
+  var BUILD_ID = true ? "0855e80d4874" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -2085,7 +2085,15 @@ var Server = (() => {
       }
     }
     if (!parsed.length) {
-      return { months: [], mmcrMean: null, oneInN: null, netTotal: 0, verdict: null, monthsCounted: 0 };
+      return {
+        months: [],
+        mmcrMean: null,
+        oneInN: null,
+        closedPerMonthMean: null,
+        netTotal: 0,
+        verdict: null,
+        monthsCounted: 0
+      };
     }
     const earliest = minNum(parsed.map((p) => p.first));
     const months = [];
@@ -2122,6 +2130,7 @@ var Server = (() => {
     }
     const counted = months.filter((m) => !m.partial && !m.reconstructed && m.mmcr !== null);
     const mmcrMean = counted.length ? counted.reduce((a, m) => a + m.mmcr, 0) / counted.length : null;
+    const closedPerMonthMean = counted.length ? counted.reduce((a, m) => a + m.closed, 0) / counted.length : null;
     const netTotal = months.reduce((a, m) => a + m.net, 0);
     const netPctOverall = counted.length ? counted.reduce((a, m) => {
       var _a2;
@@ -2132,6 +2141,7 @@ var Server = (() => {
       months: trimmed,
       mmcrMean,
       oneInN: mmcrMean !== null && mmcrMean > 0 ? 100 / mmcrMean : null,
+      closedPerMonthMean,
       netTotal,
       verdict: counted.length ? verdictOf(netPctOverall) : null,
       monthsCounted: counted.length
@@ -7608,7 +7618,7 @@ var Server = (() => {
   }
   function programModel(p) {
     const n2 = norm(p);
-    return durablyCached("dsProgram1", keyOf(n2), () => buildProgram(n2));
+    return durablyCached("dsProgram2", keyOf(n2), () => buildProgram(n2));
   }
   function buildRepos(n2) {
     const snap = baseSnapshot();

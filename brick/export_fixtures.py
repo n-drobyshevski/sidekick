@@ -8,7 +8,7 @@ number typed by hand into this file. Every value in the fixtures below comes out
 ``DataFrame.collect()`` -- nothing here is a hand-computed expectation.
 
 No Delta, no ``ingest``, no tenant, no Parquet: the SparkSession built here carries no Delta
-jars (contrast ``brick/devsecops/tests/conftest.py``, which sets ``PYSPARK_SUBMIT_ARGS`` with
+jars (contrast ``brick/tests/conftest.py``, which sets ``PYSPARK_SUBMIT_ARGS`` with
 a Delta package at import time -- this script does not import that module), and every input
 row is a literal Python value written directly below. That makes the whole file reviewable in
 a diff and runnable anywhere PySpark runs, without a Databricks cluster or a live tenant.
@@ -22,9 +22,9 @@ carry the mismatch):
     docker run --rm -v <repo>:/repo -w /repo python:3.11-slim sh -c "
       apt-get update -qq && apt-get install -y -qq default-jre-headless >/dev/null &&
       pip install -q 'pyspark>=3.5,<4' pandas &&
-      python brick/devsecops/export_fixtures.py"
+      python brick/export_fixtures.py"
 
-Regenerate whenever ``brick/devsecops/metrics.py`` changes; the fixtures are committed so the
+Regenerate whenever ``brick/metrics.py`` changes; the fixtures are committed so the
 TS tests run without a PySpark toolchain.
 """
 
@@ -36,13 +36,10 @@ import math
 import sys
 from pathlib import Path
 
-DEVSECOPS_DIR = Path(__file__).resolve().parent
-REPO_ROOT = DEVSECOPS_DIR.parents[1]
-# This IS the devsecops directory -- metrics.py's own `from config import ...` needs it on the
-# path, and (deliberately) nothing above it: brick/ and brick/devsecops/ both define modules
-# named `metrics` and `config`, and importing the wrong pair is a full page of plausible wrong
-# numbers, not an error. See config.py's own MODULE_VERSION comment.
-sys.path.insert(0, str(DEVSECOPS_DIR))
+BRICK_DIR = Path(__file__).resolve().parent
+REPO_ROOT = BRICK_DIR.parent
+# metrics.py's own `from config import ...` needs this directory on the path.
+sys.path.insert(0, str(BRICK_DIR))
 
 import metrics  # noqa: E402
 from config import (  # noqa: E402
@@ -57,7 +54,7 @@ OUT = REPO_ROOT / "gas_devsecops" / "test" / "fixtures" / "brick"
 def spark_session():
     """A plain local SparkSession -- no Delta extensions, no catalog, no jars.
 
-    Contrast ``brick/devsecops/tests/conftest.py``: that fixture sets ``PYSPARK_SUBMIT_ARGS``
+    Contrast ``brick/tests/conftest.py``: that fixture sets ``PYSPARK_SUBMIT_ARGS``
     with the Delta package *at import time*, because Delta's SQL extensions can only be
     installed when the JVM launches. This script never imports that module and never asks for
     Delta, so none of that applies -- every function this exporter calls (``metrics.py``) is a
@@ -127,7 +124,7 @@ def dump(name, payload):
 
 # ------------------------------------------------------------------------- bronze -> silver
 #: Every CVE-shaped node built below carries these defaults; ``**over`` replaces exactly the
-#: keys a case cares about, matching brick/devsecops/tests/test_metrics.py::node.
+#: keys a case cares about, matching brick/tests/test_metrics.py::node.
 CVE_NODE_DEFAULTS = {
     "id": "f-1",
     "name": "CVE-2026-0001",
@@ -190,7 +187,7 @@ def silver(spark, nodes, scan_ts, scope="sca"):
 
 # ================================================================================ km.json
 #
-# Transcribed from brick/devsecops/tests/test_km.py (byte-identical to brick/tests/test_km.py),
+# Transcribed from brick/tests/test_km.py,
 # one case per test function -- ``test_censoring_after_the_last_event_extends_the_rmst`` builds
 # two distinct curves (short/long), so it is split into two cases here. Spark must agree with
 # the hand arithmetic in those tests; see the work-package report for the pytest run that
@@ -251,7 +248,7 @@ def export_km(spark):
     dump("km", {
         "version": 1,
         "source": "metrics.kaplan_meier",
-        "generated_by": "brick/devsecops/export_fixtures.py",
+        "generated_by": "brick/export_fixtures.py",
         "cases": cases,
     })
 
@@ -368,7 +365,7 @@ def export_capacity(spark):
     dump("capacity", {
         "version": 1,
         "source": "metrics.capacity_by_month, metrics.capacity_populations",
-        "generated_by": "brick/devsecops/export_fixtures.py",
+        "generated_by": "brick/export_fixtures.py",
         "cases": cases,
     })
 
@@ -483,7 +480,7 @@ def export_confusion(spark):
         "version": 1,
         "source": "metrics.confusion_matrix, metrics.signal_breakdown, "
                   "metrics.rule_sensitivity, metrics.classify_risk",
-        "generated_by": "brick/devsecops/export_fixtures.py",
+        "generated_by": "brick/export_fixtures.py",
         "cases": [cve_case, sast_case],
     })
 
@@ -491,7 +488,7 @@ def export_confusion(spark):
 # ======================================================================= asset_profile.json
 #
 # A lifecycle frame built directly (the shape metrics.asset_profile reads, matching
-# brick/devsecops/tests/test_devsecops.py::lifecycle_rows/v5_frame) rather than routed through
+# brick/tests/test_devsecops.py::lifecycle_rows/v5_frame) rather than routed through
 # silver_findings: asset_profile's inputs are the ledger's own post-classification columns, not
 # a raw API node. Five real assets across three languages (JAVA x2, PYTHON x1, GO x2) plus two
 # RUBY rows with no asset id, so the "findings with no asset are dropped" count is exercised.
@@ -594,7 +591,7 @@ def export_asset_profile(spark):
         "version": 1,
         "source": "metrics.asset_profile_populations "
                   "(metrics.asset_profile, metrics._asset_half_life)",
-        "generated_by": "brick/devsecops/export_fixtures.py",
+        "generated_by": "brick/export_fixtures.py",
         "cases": cases,
     })
 

@@ -18,8 +18,8 @@ The root Python package is still used as domain/spec infrastructure:
 - `wiz_dashboard/domain/` — Python behavioral spec and analytics logic
 - `wiz_dashboard/data/` — supporting data transforms, cache, history, and ledger helpers
 - `wiz_dashboard/models/` — schema/model helpers
-- `brick/` and `brick/devsecops/` — Databricks/Delta pipelines over the same registers
-- `devlake/` — local harness for the `brick/*` pipelines
+- `brick/` — the Databricks/Delta pipeline over the same registers (scopes `os`, `sca`, `sast`)
+- `devlake/` — local harness for the `brick/` pipeline
 
 Do not remove the remaining Python domain layer without also updating the GAS
 fixture export flow and related tests. As documented in `CLAUDE.md`, the GAS

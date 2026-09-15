@@ -1591,7 +1591,10 @@ function programTrendFor(n: NormParams, all: BaseRow[]): Rec[] {
 
 export function programModel(p?: ModelParams): Rec {
   const n = norm(p);
-  return durablyCached("dsProgram1", keyOf(n), () => buildProgram(n));
+  // "dsProgram1" -> "dsProgram2": `capacity` gained `closedPerMonthMean`. The durable copy
+  // has no TTL to age it out, so a shape change has to move the name or the page draws the
+  // absent mark beside a live close rate until the next commit rewrites the file.
+  return durablyCached("dsProgram2", keyOf(n), () => buildProgram(n));
 }
 
 // --------------------------------------------------------------------------------------- //

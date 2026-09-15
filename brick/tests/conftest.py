@@ -1,4 +1,4 @@
-"""One SparkSession for the whole brick suite, with Delta enabled, and one register to read.
+"""One SparkSession for the whole suite, with Delta enabled, and one register to read.
 
 There used to be an identical ``spark`` fixture in each test module. That worked while nothing
 needed Delta, and stopped working the moment the ledger tests did, for a reason worth writing
@@ -26,6 +26,8 @@ from pathlib import Path
 import pytest
 
 BRICK_DIR = Path(__file__).resolve().parents[1]
+#: brick/ is one hop below the repo root. Only the GAS golden fixture is read from there --
+#: everything else is beside these tests.
 REPO_ROOT = BRICK_DIR.parent
 sys.path.insert(0, str(BRICK_DIR))
 
@@ -54,7 +56,7 @@ DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.3"
 # Spark 4.0. Measured here on OpenJDK 21.0.10: session start, a Delta write/read, and OPTIMIZE
 # on a single-column CLUSTER BY table (the exact path this suite depends on, see the comment
 # above) all ran clean, no reflective-access stack trace, no added flags. The full suite ran on
-# it too -- 549/551 passed (one pre-existing failure in test_csvstore.py, unrelated to the JVM:
+# it too -- 568/569 passed (one pre-existing failure in test_csvstore.py, unrelated to the JVM:
 # a Delta v2-catalog "does not support truncate in batch mode" error that `import_bundle.py`
 # already documents and works around elsewhere; csvstore.py just doesn't use that workaround
 # yet). So this fixture does not gate the JVM version -- a guard here would block a setup that
@@ -78,7 +80,16 @@ DELTA_PACKAGE = "io.delta:delta-spark_2.12:3.3.3"
 # Like --packages, this can only be set before the JVM starts: spark.driver.memory is read by
 # spark-submit at launch and setting it on the builder afterwards is silently ignored.
 def _driver_memory() -> str:
-    """4g for a single process; 2g per worker under xdist.
+    """4g for a single process; 3g per worker under xdist.
+
+    3g, not 2g, since 3.0. Measured on the 3.0 suite (707 tests, one shared table set, the
+    scope-isolation and metrics-table modules each building path-backed registers and
+    replaying them): at 2g the worker holding the ``live_tables`` group died with
+    ``java.lang.OutOfMemoryError: Java heap space`` around stage 11,000, twice, once before and
+    once after ``merge_ledger`` learned to release its checkpoint -- the release moved the death
+    later but not past the end. At 3g the same run finished with no OOM in 31 minutes at
+    ``-n 2``. Three workers at 3g is 9g, inside the ~13 GiB cgroup the 4g-per-worker cascade
+    below was measured against.
 
     Keyed on ``PYTEST_XDIST_WORKER``, not ``PYTEST_XDIST_WORKER_COUNT``. The count used to be
     read here at *import* time, but conftest.py is imported in the xdist CONTROLLER first --
@@ -91,8 +102,14 @@ def _driver_memory() -> str:
     (e.g. ``"gw0"``) is set only *inside* a worker's own process, never in the controller, so
     reading it from ``pytest_configure`` -- which xdist runs separately in every process,
     controller and each worker alike -- correctly tells this process apart from the controller.
+
+    ``BRICK_TEST_DRIVER_MEMORY`` overrides both sizes, for measuring how much heap a run of the
+    whole suite actually needs on a given box rather than guessing.
     """
-    return "2g" if os.environ.get("PYTEST_XDIST_WORKER") else "4g"
+    override = os.environ.get("BRICK_TEST_DRIVER_MEMORY")
+    if override:
+        return override
+    return "3g" if os.environ.get("PYTEST_XDIST_WORKER") else "4g"
 
 
 def pytest_configure(config):
@@ -222,9 +239,18 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(pytest.mark.xdist_group("live_tables"))
 
 
-LIVE_SCHEMA = "dash"
-LIVE_SCOPE = "os"
+LIVE_SCHEMA = "code"
+LIVE_SCOPE = "sca"
 LIVE_SEVERITIES = ["CRITICAL", "HIGH"]
+
+#: The findings the live register is built from.
+#:
+#: **Synthetic, and labelled as such where it lives.** The captured `sca_response.json` is the
+#: *grouped* query -- one row per repository with severity counts -- so it has no per-finding
+#: rows and cannot drive a pipeline. `sca_findings_example.json` is what the ungrouped query
+#: returns, synthesised over the repository branches and cloud platforms the real capture does
+#: contain. See its header.
+LIVE_FIXTURE = "sca_findings_example.json"
 
 
 @pytest.fixture(scope="session")
@@ -251,10 +277,10 @@ def live_tables(spark):
     import run_pipeline
     from ingest import extract_nodes
 
-    nodes = extract_nodes(json.loads((REPO_ROOT / "os_vulns_response_exemple.json").read_text()))
+    nodes = extract_nodes(json.loads((BRICK_DIR / LIVE_FIXTURE).read_text()))
     spark.sql(f"DROP DATABASE IF EXISTS {LIVE_SCHEMA} CASCADE")
     spark.sql(f"CREATE DATABASE {LIVE_SCHEMA}")
-    tables = run_pipeline.resolve_tables(LIVE_SCHEMA, LIVE_SCOPE, argv=[])
+    tables = run_pipeline.resolve_tables(LIVE_SCHEMA, argv=[])
     run_pipeline.ensure_tables(spark, tables)
 
     def scan(scan_id, scan_ts, payload):
