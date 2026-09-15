@@ -390,7 +390,7 @@ def test_sast_does_not_ask_for_resolved_findings_yet():
     `first_seen = createdAt` and `resolved_at = now` -- reporting its AGE as its MTTR, which is
     worse than the flat 0 that arithmetic used to give because it looks like a measurement. See
     `config.SAST_FETCH_RESOLVED` for the trace, and
-    `test_devsecops.test_asking_sast_for_resolved_findings_would_report_its_age_as_its_mttr`
+    `test_code_scopes.test_asking_sast_for_resolved_findings_would_report_its_age_as_its_mttr`
     for the measurement.
 
     `hasFix` is a separate matter and simply meaningless for a weakness in first-party code.
@@ -622,7 +622,7 @@ def test_deploy_doc_does_not_still_say_five_modules():
 # ------------------------------------------------------------ the committed captures' location
 #
 # Six brick test modules (conftest.py, test_ledger.py, test_catalog_mode.py,
-# test_import_bundle.py, test_csvstore.py, test_metrics.py, test_devsecops.py) and
+# test_import_bundle.py, test_csvstore.py, test_metrics.py, test_code_scopes.py) and
 # devlake/run.py each build a path to one of the three committed Wiz captures. Only the brick
 # ones run in this suite, and all of them need Spark -- so a fixture move that updated the six
 # brick readers but missed devlake/run.py would pass every brick test and still break

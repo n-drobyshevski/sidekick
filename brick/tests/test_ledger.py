@@ -640,7 +640,7 @@ def foreign_prior(spark, *, scope=FOREIGN_SCOPE, count=FOREIGN_PRIOR_ROWS):
     Built through the real parse and reconcile path, so the rows are a genuine ledger of that
     scope rather than hand-written ones that might not satisfy the disappearance conditions.
     The payloads are SCA-shaped and merely STAMPED ``sast``: what reconcile reads is the stamp,
-    and a genuinely SAST-shaped ledger is exercised in ``test_devsecops.py``.
+    and a genuinely SAST-shaped ledger is exercised in ``test_code_scopes.py``.
     """
     touched = ledger.reconcile(
         ledger.empty_ledger(spark),

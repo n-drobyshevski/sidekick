@@ -210,7 +210,7 @@ SCOPES = {
 # Kaplan-Meier median would be dragged up by the register's own start date instead of down by
 # it. Every historical resolved finding is priced by when we happened to look. `first_seen` is
 # real, `resolved_at` is fabricated, and their difference measures neither.
-# `tests/test_devsecops.py` pins that arithmetic so nobody flips this without meeting it.
+# `tests/test_code_scopes.py` pins that arithmetic so nobody flips this without meeting it.
 #
 # The `sca` scope takes `status: [OPEN, RESOLVED]` safely because it has BOTH dates:
 # `firstDetectedAt` and `resolvedAt`, so the subtraction has two measured ends.

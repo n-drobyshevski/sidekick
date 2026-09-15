@@ -498,7 +498,7 @@ def export_confusion(spark):
 # ======================================================================= asset_profile.json
 #
 # A lifecycle frame built directly (the shape metrics.asset_profile reads, matching
-# brick/tests/test_devsecops.py::lifecycle_rows/v5_frame) rather than routed through
+# brick/tests/test_code_scopes.py::lifecycle_rows/v5_frame) rather than routed through
 # silver_findings: asset_profile's inputs are the ledger's own post-classification columns, not
 # a raw API node. Five real assets across three languages (JAVA x2, PYTHON x1, GO x2) plus two
 # RUBY rows with no asset id, so the "findings with no asset are dropped" count is exercised.

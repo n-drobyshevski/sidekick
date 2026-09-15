@@ -172,7 +172,7 @@ vendor forever: out of every actionable clock, in every exposure count, and the 
 the page disagree in a way that reads as broken arithmetic rather than a category error. The
 mutation is measured rather than argued: put `sast` back into `config.HAS_VENDOR_FIX` and all
 40 open findings in the committed capture flip
-(`tests/test_devsecops.py::test_static_analysis_is_never_awaiting_a_vendor_fix`). `os` and `sca`
+(`tests/test_code_scopes.py::test_static_analysis_is_never_awaiting_a_vendor_fix`). `os` and `sca`
 both have a vendor and both carry the guard's opposite risk — see below.
 
 **The `hasFix` population.** Every scope whose filter pins `hasFix: true` — `os` and `sca`, but

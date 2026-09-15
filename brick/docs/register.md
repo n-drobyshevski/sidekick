@@ -379,7 +379,7 @@ Four things about this register are different, and none is a detail:
   `first_seen = createdAt`, `resolved_at = now`, so `mttr_days` would be the finding's age at
   the moment we first looked — worse than a flat zero, because it is plausible: a weakness fixed
   within a day two years ago would report 730 days, and the Kaplan–Meier median would be set by
-  the register's own start date rather than by remediation. `tests/test_devsecops.py` measures
+  the register's own start date rather than by remediation. `tests/test_code_scopes.py` measures
   that age. Turn the flag on if a `resolvedAt` appears, not before.
 - **The same field name carries a different KIND across the two filter types.**
   `SASTFindingFilters` does accept `severity`, but as a `SASTSeverityFilter`, an object taking

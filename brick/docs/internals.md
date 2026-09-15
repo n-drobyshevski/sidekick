@@ -187,7 +187,7 @@ The oracles are ported, not invented:
 - one test replays the committed `os_vulns_response_exemple.json` end to end, so the real Wiz
   response shape is covered without a network call, and `tests/test_os_scope.py` pins the `os`
   filter shape against the same fixture family;
-- `tests/test_devsecops.py` carries the code-register oracles: both silver projections emit the
+- `tests/test_code_scopes.py` carries the code-register oracles: both silver projections emit the
   same columns, the CWE ancestor hop works, one missing signal makes a whole row unknown, and
   asking for resolved SAST findings would report zero-day MTTR — over
   `fixtures/sca_findings_example.json` (synthetic: the captured `fixtures/sca_response.json` is
