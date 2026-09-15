@@ -28,6 +28,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { spiralLayout } from "../src/client/js/pages/spiralLayout.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const R0 = 24;
 const DR = 14;
@@ -214,28 +215,6 @@ const HISTORY_SRC = readFileSync(
 );
 const APP_SRC = readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8");
 
-/** The file with its `//` comments removed, string-aware — mirrors `pagesLit.test.js`. */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    out += c;
-    i++;
-  }
-  return out;
-}
 const HISTORY = code(HISTORY_SRC);
 
 describe("history.js — the spiral is behind the toggle, and hands the slot back", () => {
@@ -247,7 +226,20 @@ describe("history.js — the spiral is behind the toggle, and hands the slot bac
     expect(gate).toBeGreaterThan(fn);
     // The heading and the lede are BUILT INSIDE the gated function — an off experiment leaves
     // no heading behind. Both strings appear exactly once, after the gate.
-    for (const literal of ["Open count, one turn per quarter", "Experimental. Each turn is a"]) {
+    //
+    // THE SECOND LITERAL MOVED IN WAVE C, AND THE CLAIM DID NOT. The 24-word lede was one
+    // `.section-note` opening "Experimental. Each turn is a calendar quarter…"; it is now a
+    // `statusPill("neutral", "Experimental")` on the heading (the word is a STATE of the
+    // picture and stays on the surface) over two tip lines holding the geometry (how to read
+    // an unfamiliar shape is a definition, and goes one level down). Both pieces are still
+    // built inside the gated function, which is the whole of what this case checks — so the
+    // strings are re-pointed and a third is added, because the pill is now the only thing on
+    // screen saying the section is unfinished and it must not be able to escape the gate.
+    for (const literal of [
+      "Open count, one turn per quarter",
+      "Each turn is a calendar quarter",
+      '"Experimental"',
+    ]) {
       expect(HISTORY.split(literal)).toHaveLength(2);
       expect(HISTORY.indexOf(literal)).toBeGreaterThan(gate);
     }

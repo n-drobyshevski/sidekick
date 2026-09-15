@@ -52,6 +52,19 @@ const ENTRIES = [
     ],
   },
   {
+    // The Code register's clock section. `censoring` next door is about a finding that is
+    // still OPEN; this is about one that has closed and whose closing DATE is an estimate —
+    // the opposite end of the same clock, and the two were being asked to share one entry.
+    // The page's own 85-word caveat leads the tip and this is what sits behind it.
+    id: "disappearance",
+    term: "Dated by disappearance",
+    lines: [
+      "A finding dated closed at the first scan that stopped returning it, because the API publishes no resolution date for it.",
+      "An upper bound whose error is the interval between two scans: \"gone by 12 Aug\", never \"resolved 12 Aug\".",
+      "Until two syncs have run and findings have begun to disappear between them, a register dated this way reads near-zero — an absence of observations, not a fast team.",
+    ],
+  },
+  {
     id: "sla-target",
     term: "SLA target",
     lines: [
@@ -175,6 +188,58 @@ const ENTRIES = [
       "Not closings over new arrivals, and not closings over the whole register: the denominator is that month's starting backlog.",
     ],
   },
+  // THE THREE EXPLOITATION SIGNALS, one entry each. They used to share the "sca" entry — the
+  // definition of the REGISTER — so hovering "CISA KEV", "Known exploit", "EPSS score" or the
+  // breakdown tables' "On KEV" column all answered "Software composition analysis: a known CVE
+  // in a third-party package at a version", which defines the page rather than the column
+  // under the pointer. Each signal says a different thing about exploitation, and the
+  // differences are the whole reason the page draws three rows instead of one.
+  {
+    id: "kev",
+    term: "On KEV",
+    lines: [
+      "CISA's Known Exploited Vulnerabilities catalogue: CVEs with reliable evidence that someone, somewhere, has actually exploited them.",
+      "Observed exploitation of the CVE — not a statement that this finding is reachable here. It raises the priority of a finding; it does not decide it.",
+      "A row Wiz never evaluated against the catalogue is unknown, not absent from it, which is why these counts are reported as a floor.",
+    ],
+  },
+  {
+    id: "known-exploit",
+    term: "Known exploit",
+    lines: [
+      "Public exploit code exists for the CVE.",
+      "A weaker claim than KEV and a different one: code being published is not the same as exploitation having been observed. A CVE can carry this and not be on KEV, and the reverse.",
+    ],
+  },
+  {
+    id: "epss",
+    term: "EPSS score",
+    lines: [
+      "Exploit Prediction Scoring System: the estimated probability that a CVE will be exploited in the next 30 days.",
+      "A FORECAST, not an observation — the one signal here that says what may happen rather than what has. It is a probability, so a high score on a large register still describes many findings that will never be attacked.",
+    ],
+  },
+  // The Code register's one signal, and the only one here that is somebody else's OPINION
+  // rather than an observation or a forecast. It shared the "sast" entry — the register's own
+  // definition — for the same reason the three above shared "sca".
+  {
+    id: "ai-verdict",
+    term: "AI triage verdict",
+    lines: [
+      "The scanner's own judgement that a static-analysis finding is real. A vendor opinion, not a measurement this register made — which is why it is one clause of the high-risk rule and never the whole of it.",
+      "It has never actually fired in this tenant: every SAST node captured so far carries a null aiAnalysis, so a zero beside it means nobody was asked, not that the AI looked and disagreed.",
+      "The values that count are EXPLOITABLE, TRUE_POSITIVE, CONFIRMED and VULNERABLE (domain/config.ts's AI_VERDICTS_HIGH). That vocabulary is UNVERIFIED against this tenant, so a register where every row reads unevaluated means either the field is not being returned or those are the wrong strings — both worth knowing, and neither of them a finding about the code.",
+    ],
+  },
+  {
+    id: "signal-coverage",
+    term: "Signal coverage",
+    lines: [
+      "How much of the column a risk clause rests on was ever captured, over the rows that clause applies to.",
+      "A measured 0% is a measurement: it separates \u201cthe AI agreed with nothing\u201d from \u201cnobody asked the AI\u201d. \u201cNot applicable\u201d is a third statement \u2014 no row in scope has such a column at all.",
+      "The clauses are OR'd and overlap, so what each one fired on never sums to the high-risk count.",
+    ],
+  },
   {
     id: "reconstructed",
     term: "Reconstructed month",
@@ -235,6 +300,75 @@ const ENTRIES = [
     lines: [
       "Only exceptions speak: a sync running, a sync that failed, nothing to sync with, a register never measured, a scan gone old, or current.",
       "Never-measured outranks old: a register nobody has looked at is unmeasured, not stale.",
+    ],
+  },
+  {
+    // The Storage page's three words. Compaction is the act, a sealed scan is what it leaves
+    // behind, and an episode is what a finding's row becomes once its scan is sealed — three
+    // names for one mechanism, and the page used all three before any of them was defined.
+    id: "compaction",
+    term: "Compaction",
+    lines: [
+      "Folding the oldest saved scans into episodes: their per-finding observations are pruned and the scan's own totals are kept.",
+      "It reclaims spreadsheet cells and archive bytes. The most recent scans are never candidates, and the dry run states what would go before anything goes.",
+    ],
+  },
+  {
+    id: "sealed",
+    term: "Sealed",
+    lines: [
+      "A saved scan whose per-finding observations compaction has already pruned. Its totals stay; the detail behind them is gone.",
+      "A sealed scan cannot be deleted from the Storage page — the archive it pointed at was reclaimed when it was sealed.",
+    ],
+  },
+  {
+    id: "episode",
+    term: "Episode",
+    lines: [
+      "One finding's settled lifetime — first seen, how it ended, when — kept after the scan that carried it was sealed.",
+      "The clock survives compaction; the per-scan observations behind it do not. A finding seen again after its episode begins a new one.",
+    ],
+  },
+  {
+    // The Executive front door's "Movement" aside, and Scan history's "What moved the number"
+    // section. The method sentence used to sit under the rows as its own paragraph; the rows
+    // already carry the chips and the raw pair, so what was left to say was what the
+    // comparison is BETWEEN — a definition, which is what a tip is for.
+    //
+    // THE THIRD LINE IS THE ONE BOTH PAGES LEANED ON AND NEITHER DEFINED. Scan history's
+    // 65-word section note said it in its own words; this entry did not say it at all, so a
+    // reader who followed the trigger from either page met a definition that reads as though
+    // one window covered the whole register. It is third because a tip card shows the first
+    // two lines: the general reading leads, and this qualifies it on the Help page.
+    id: "movement",
+    term: "Movement",
+    lines: [
+      "The open backlog now against the same register at the previous sync. A rising count is worse.",
+      "The comparison is between two syncs, not between two calendar dates — a register only learns anything on the days it looks.",
+      "Each register has its own window: the three share one scan log, and a scan of one of them looked at none of the others.",
+    ],
+  },
+  {
+    // The Executive front door's "Fix next" section heading. This is the RANKING RULE, and it
+    // is a definition rather than a caveat: without it the list is eight repositories in an
+    // order nobody can check.
+    id: "fix-next",
+    term: "Fix next",
+    lines: [
+      "Ranked by what cannot wait rather than by severity: a credential somebody confirmed is live, then a fixable dependency finding already late, then a critical code weakness already late.",
+      "Grouped by repository, because that is the smallest unit somebody can be asked to own.",
+    ],
+  },
+  {
+    // The MTTR page's "Open findings by age" legend. NO DAY COUNTS IN THE COPY: the targets
+    // are per severity and editable in Settings, and the legend line beside this tip prints
+    // whatever the payload actually carries. A glossary that hard-coded 7 / 14 / 30 would be
+    // a second place for them to drift.
+    id: "sla-edge",
+    term: "SLA edge",
+    lines: [
+      "The day count that splits one severity's open findings into late and not late — its own SLA target, read against the age buckets.",
+      "A deadline rarely lands on a bucket's boundary, so a bucket is usually part in and part out; a rule is drawn on the chart only where every severity shares one exact edge.",
     ],
   },
   {

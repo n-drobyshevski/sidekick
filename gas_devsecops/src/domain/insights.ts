@@ -226,9 +226,13 @@ export interface AgingDistribution {
  * three every bucket strictly to the right is wholly a breach. HIGH (14 d) and INFO (180 d)
  * land INSIDE their bucket, which is therefore part in and part out — the client says so in
  * words rather than drawing a line that implies the cut is clean.
+ *
+ * `targets` defaults to `SLA_TARGETS` (the shared constant) but a caller narrows a register
+ * to its own saved windows by passing `settingsLogic.effectiveSlaTargets(settings)` instead —
+ * see `agingDistribution` below, the only caller that does.
  */
-export function slaEdgeBucket(severity: unknown): number | null {
-  const target = SLA_TARGETS[normalizeSeverity(severity)];
+export function slaEdgeBucket(severity: unknown, targets: Record<string, number> = SLA_TARGETS): number | null {
+  const target = targets[normalizeSeverity(severity)];
   if (typeof target !== "number" || !Number.isFinite(target)) return null;
   return target <= AGE_BUCKET_EDGES[0] ? 0
     : target <= AGE_BUCKET_EDGES[1] ? 1
@@ -236,9 +240,10 @@ export function slaEdgeBucket(severity: unknown): number | null {
 }
 
 /** True when a severity's deadline is exactly a bucket boundary, so the bucket it names is
- *  wholly inside the window and everything to its right is wholly outside it. */
-export function slaEdgeIsExact(severity: unknown): boolean {
-  const target = SLA_TARGETS[normalizeSeverity(severity)];
+ *  wholly inside the window and everything to its right is wholly outside it. `targets`
+ *  defaults to `SLA_TARGETS`, same as `slaEdgeBucket`. */
+export function slaEdgeIsExact(severity: unknown, targets: Record<string, number> = SLA_TARGETS): boolean {
+  const target = targets[normalizeSeverity(severity)];
   return typeof target === "number" && (AGE_BUCKET_EDGES as readonly number[]).indexOf(target) >= 0;
 }
 
@@ -250,6 +255,14 @@ export function slaEdgeIsExact(severity: unknown): boolean {
 export function agingDistribution(
   rows: Pick<BaseRow, "severity" | "status" | "age_days" | "scope">[],
   scope?: Scope,
+  /**
+   * Severity -> SLA window, in days. Defaults to the shared `SLA_TARGETS` constant; a caller
+   * measuring one register's OWN saved windows passes
+   * `settingsLogic.effectiveSlaTargets(settings)` instead (`readModels.ts`'s `buildMttr`
+   * does). Only `slaEdge` / `slaTargets` / `slaEdgeExact` below read this — the bucket edges
+   * themselves (`AGE_BUCKET_EDGES`) are fixed and never move with it.
+   */
+  targets: Record<string, number> = SLA_TARGETS,
 ): AgingDistribution {
   const perSev: Record<string, [number, number, number, number]> = {};
   let unaged = 0;
@@ -275,10 +288,10 @@ export function agingDistribution(
   const slaTargets: Record<string, number | null> = {};
   const slaEdgeExact: Record<string, boolean> = {};
   for (const s of Object.keys(perSev)) {
-    slaEdge[s] = slaEdgeBucket(s);
-    const t = SLA_TARGETS[s];
+    slaEdge[s] = slaEdgeBucket(s, targets);
+    const t = targets[s];
     slaTargets[s] = typeof t === "number" && Number.isFinite(t) ? t : null;
-    slaEdgeExact[s] = slaEdgeIsExact(s);
+    slaEdgeExact[s] = slaEdgeIsExact(s, targets);
   }
   return {
     labels: AGE_BUCKET_LABELS.slice(),
@@ -590,6 +603,9 @@ export function triageFunnel(
   exposedKeys: Set<string>,
   exposureKnown: boolean,
   scope?: Scope,
+  /** Severity -> SLA window, in days, for the `overdue` step. Defaults to `SLA_TARGETS`; see
+   *  `agingDistribution`'s matching parameter for why a caller would pass anything else. */
+  targets: Record<string, number> = SLA_TARGETS,
 ): TriageFunnel {
   const rows = byScope(rowsIn, scope);
   const out: TriageFunnel = {
@@ -613,7 +629,7 @@ export function triageFunnel(
     out.exploitable += 1;
     if (!exposureKnown || !exposedKeys.has(row.finding_key)) continue;
     out.exposed += 1;
-    const target = SLA_TARGETS[normalizeSeverity(row.severity)];
+    const target = targets[normalizeSeverity(row.severity)];
     const age = row.actionable_age_days;
     // Strict `>`, matching remediation.openPastSla — a finding on its due date is in SLA.
     if (typeof target === "number" && typeof age === "number" && Number.isFinite(age) && age > target) {

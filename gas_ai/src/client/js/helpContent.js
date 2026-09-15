@@ -40,13 +40,17 @@ import {
   tierBadge,
 } from "./ui.js";
 
-/** The six headings, in reading order. Six headings and find-in-page beat a search box. */
+/** The eight headings, in reading order. Eight headings and find-in-page beat a search box. */
 export const FAMILIES = [
   { id: "graph", title: "Reading the graph" },
   { id: "signal", title: "Risk signals" },
   { id: "score", title: "The score" },
   { id: "severity", title: "Severity" },
   { id: "coverage", title: "Coverage and freshness" },
+  // What the issue ledger records BETWEEN syncs — arrival, departure, return. Separate from
+  // "Coverage and freshness", which is about whether a sync ran at all: these terms are about
+  // what changed once two of them had.
+  { id: "lifecycle", title: "The issue lifecycle" },
   { id: "framework", title: "Framework vocabularies" },
   // Phase 8: what a published number IS — its goal, formula, source and whether it was
   // measured or judged. See src/domain/measureSpec.ts for the authoritative record; this
@@ -114,7 +118,7 @@ export const ENTRIES = [
       "them — and the icon and the word are the KIND. Every kind draws its own mark, so a " +
       "glyph names one thing and one thing only. Colour is still never the only cue: the " +
       "icon rides beside the label, never instead of it.",
-    drawnOn: ["graph", "inventory"],
+    drawnOn: ["graph", "inventory", "scans"],
     mark: () => kindMark("AI_AGENT"),
     // The strip of every category, so the reader can match a tint on screen to a word.
     strip: () => CATEGORY_ORDER.map((cat) => ({ cat, label: CATEGORY_LABELS[cat] })),
@@ -805,6 +809,29 @@ export const ENTRIES = [
     mark: () => el("span", { class: "pill neutral" }, "off by default"),
     link: { label: "Open Settings → Register", route: "settings", params: { tab: "register" } },
   },
+  {
+    // The Priorities title's own tip used to point at `priorities-rank`, which is the
+    // Problem tree + posture tier cascade — EXPERIMENTAL, isolated to the Scoring Models
+    // page, and not what this page has ranked by since `compareProblems` dropped both
+    // (src/domain/problems.ts's own header: "THE OUTCOME AND THE POSTURE TIER USED TO LEAD
+    // IT, and both are gone from here"). So the key sheet hid the very definition a visible
+    // page's title pointed at whenever experimental content was off. This entry states what
+    // the page actually does, is not experimental, and is drawn where it is read.
+    id: "priorities-order",
+    term: "The Priorities order",
+    aka: "worst severity, then soonest due, then oldest",
+    family: "score",
+    blurb:
+      "Worst-first, four levels. Wiz's own severity leads — the loudest fact about a " +
+      "problem this app did not invent — then the nearest due date (overdue counts as " +
+      "soonest, no deadline sorts last), then how long the row has been open, oldest " +
+      "first, then id, so two rows that agree on the first three still sort the same way " +
+      "every time. This is the order the page has always used. Settings' \"Rank leads the " +
+      "Priorities order\" can put the blended rank score in charge instead — off by " +
+      "default — and that entry says what changes and why the switch exists.",
+    drawnOn: ["problems"],
+    mark: () => el("span", { class: "pill neutral" }, "1–4"),
+  },
 
   // ---------------------------------------------------------------------- severity
   {
@@ -817,7 +844,7 @@ export const ENTRIES = [
       "bucket, never a value the API returns. Every severity on every screen is a coloured " +
       "DOT plus the level WORD — the red, orange and amber sit close enough together that " +
       "the redundant cue is load-bearing, not decorative.",
-    drawnOn: ["combos", "inventory", "graph", "problems"],
+    drawnOn: ["combos", "inventory", "graph", "problems", "config", "compliance"],
     mark: () => sevBadge("CRITICAL"),
     count: (ctx) => {
       const c = ctx.boot.counts;
@@ -900,7 +927,7 @@ export const ENTRIES = [
       "scanned means no query runs at all. The state is DERIVED wherever a resolver can " +
       "decide it, so a missing figure steps back to Partial on its own rather than " +
       "asserting a number it cannot compute.",
-    drawnOn: ["scans"],
+    drawnOn: ["scans", "compliance", "inventory"],
     mark: () => glyph("●", "ok"),
     count: (ctx) => {
       const t = ctx.tally;
@@ -940,7 +967,7 @@ export const ENTRIES = [
       "wholesale. The sync-history row is written LAST and is the commit record: no history " +
       "row means the sync never happened. It runs on demand and daily at 05:00 Europe/Paris, and " +
       "resumes itself if one execution runs long.",
-    drawnOn: ["data", "scans"],
+    drawnOn: ["data", "problems", "scans"],
     mark: () => el("span", { class: "pill neutral" }, "↻"),
     count: (ctx) => {
       const s = ctx.boot.latestSync;
@@ -971,9 +998,168 @@ export const ENTRIES = [
       "RAN. Widening the scope changes what every one of those figures counts, not how " +
       "many rows it holds — and the stored register keeps counting the OLD categories " +
       "until the next sync applies the new one.",
-    drawnOn: ["settings"],
+    // Also on the issue sheet's Lifecycle section: the two sighting dates there were both
+    // read under this scope, and the row says which one.
+    drawnOn: ["settings", "scans", "problems"],
     mark: () => statusPill("neutral", "Scope"),
     link: { label: "Open Settings → Register", route: "settings", params: { tab: "register" } },
+  },
+
+  // ------------------------------------------------------------------ the issue lifecycle
+  {
+    id: "first-seen",
+    term: "First seen by this register",
+    aka: "the ledger's own birth date, not Wiz's",
+    family: "lifecycle",
+    blurb:
+      "The first sync that returned this issue. It is this register's OWN observation, and " +
+      "it is deliberately not Wiz's created date: an issue can have existed in the tenant " +
+      "for a year before the first sync here looked, and every lifecycle figure on this " +
+      "page measures from the date a sync actually recorded. Nothing backfills it — a row " +
+      "that predates the ledger has no earlier sighting to claim, and inventing one would " +
+      "be a measurement nobody took.",
+    drawnOn: ["combos", "inventory", "config", "problems"],
+    mark: () => statusPill("neutral", "First seen"),
+  },
+  {
+    id: "movement",
+    term: "Movement",
+    aka: "how the open backlog changed between two syncs",
+    family: "lifecycle",
+    blurb:
+      "The open issue backlog now, against what it was at an earlier sync — replayed from " +
+      "the transition counts each sync recorded, never from two independently stored " +
+      "totals. It needs TWO syncs before it can say anything, and a further seven days " +
+      "before the week-ago row appears; until then the page says so rather than showing a " +
+      "difference of nothing. Findings are not counted here: they never enter the " +
+      "lifecycle ledger, so no sync has ever recorded one arriving or leaving.",
+    drawnOn: ["data", "problems"],
+    mark: () => statusPill("neutral", "±"),
+  },
+  {
+    id: "disappearance",
+    term: "Gone by",
+    aka: "a departure dated by absence",
+    family: "lifecycle",
+    blurb:
+      "Wiz never tells this register that an issue was fixed, so a departure is dated by " +
+      "the first sync that stopped seeing it. That date is an UPPER BOUND, and its error " +
+      "is the interval between syncs: an issue closed the morning after a Monday sync is " +
+      "dated Tuesday. It is also the reason a longer gap between syncs makes every " +
+      "departure look later than it was, rather than making fewer of them.",
+    // Also on the issue sheet's Lifecycle section, which is where a reader meets one
+    // bounded date rather than a column of them.
+    drawnOn: ["data", "combos", "inventory"],
+    mark: () => statusPill("neutral", "Gone"),
+  },
+  {
+    id: "episode",
+    term: "Episode",
+    aka: "an issue that left the register and came back",
+    family: "lifecycle",
+    blurb:
+      "An issue that disappeared and was seen again starts a new episode, and the count is " +
+      "what tells a genuine re-detection apart from one long open row. The register does " +
+      "NOT record when each episode began — only how many there have been — so the gap " +
+      "between one episode and the next cannot be priced, and no clock here spans two of " +
+      "them.",
+    // `data` was dropped here in P1.4: the sync-history "Returned" column now points at the
+    // "returned" entry (a per-sync count) instead, so Episode (the per-issue count) is
+    // reachable from these two routes' issue sheets only.
+    drawnOn: ["combos", "inventory"],
+    mark: () => statusPill("neutral", "↩"),
+  },
+  {
+    id: "half-life",
+    term: "Issue half-life",
+    aka: "how long an issue survives in this register",
+    family: "lifecycle",
+    blurb:
+      "The point by which half of every issue this register has ever recorded had left it, " +
+      "measured from the sync that first saw the row to the sync that first stopped seeing " +
+      "it. It is a survival estimate rather than an average of the ones that closed: an " +
+      "average would drop every issue still open, and the ones still open are usually the " +
+      "slow ones the figure exists to catch. A shorter half-life means the register is " +
+      "being worked through rather than merely counted.",
+    drawnOn: ["problems"],
+    mark: () => statusPill("neutral", "½"),
+  },
+  {
+    id: "censoring",
+    term: "Still open, still counted",
+    aka: "right-censoring",
+    family: "lifecycle",
+    blurb:
+      "An issue that has not left the register has no departure date, and dropping it from " +
+      "the half-life would be the whole defect: those are the rows that have survived " +
+      "longest. So each one stays in as a partial observation — it is known to have lasted " +
+      "at least as long as the gap between its first and its last sighting, and it holds " +
+      "the estimate up for exactly that span before dropping out. That span runs to the " +
+      "LAST SIGHTING, not to today, which is why the figure only moves when a sync moves " +
+      "it and not merely because the page was opened later.",
+    drawnOn: ["problems"],
+    mark: () => statusPill("neutral", "+"),
+  },
+  {
+    id: "lower-bound",
+    term: "At least N days",
+    aka: "the half-life the register has not reached yet",
+    family: "lifecycle",
+    blurb:
+      "On a young register most issues are still open, so the survival estimate never falls " +
+      "to half and there is no half-life to report. Rather than print a centre nobody " +
+      "measured, the page publishes the longest lifetime it actually observed and says the " +
+      "half-life is at least that. The number will grow with the register until enough " +
+      "issues have left for the curve to cross, at which point it is replaced by the " +
+      "measured figure rather than added to it.",
+    drawnOn: ["problems"],
+    mark: () => statusPill("neutral", "≥"),
+  },
+  {
+    id: "returned",
+    term: "Returned",
+    aka: "how many came back in this one sync",
+    family: "lifecycle",
+    blurb:
+      "How many issues this one sync saw again after an earlier sync had stopped seeing them " +
+      "— the Gone column's mirror. It is a COUNT FOR THE SYNC, not a per-issue reading: an " +
+      "issue that returns twice in its life adds one to the Returned tally on each of the " +
+      "two syncs that caught it, and this count no more records when either absence began " +
+      "than Episode does — see Episode for the per-issue number this same event bumps on " +
+      "the row itself.",
+    drawnOn: ["data"],
+    mark: () => statusPill("neutral", "Returned"),
+  },
+  {
+    id: "rail-status",
+    term: "The rail status dot",
+    aka: "one dot, one sentence",
+    family: "lifecycle",
+    blurb:
+      "What the dot at the foot of the nav rail is currently saying, ranked by how " +
+      "actionable it is: a sync running right now beats one that just failed, which beats a " +
+      "register that has never been synced at all, which beats one whose sync date this app " +
+      "could not even read, which beats one that ran too long ago, which beats one that is " +
+      "current. A register nobody has ever synced is UNMEASURED, not stale, so \"never " +
+      "synced\" always outranks it. Dry-run decorates whichever of those states fired as an " +
+      "extra sentence — it never replaces the reading, because a dry-run register still has " +
+      "its own real sync history to be stale or current about.",
+    drawnOn: ["data"],
+    mark: () => statusPill("neutral", "●"),
+  },
+  {
+    id: "stale",
+    term: "Stale",
+    aka: "more than two days since the last sync",
+    family: "lifecycle",
+    blurb:
+      "The latest sync finished more than two days ago. The threshold is short on purpose: " +
+      "this register is meant to run daily, so two missed days already means the page is " +
+      "answering yesterday's question, and the dot says so before a reader has to notice the " +
+      "date themselves. A register that has never synced at all is never called stale — it " +
+      "is unmeasured, which the rail status dot ranks as the more urgent of the two.",
+    drawnOn: ["data"],
+    mark: () => statusPill("warn", "Stale"),
   },
 
   // --------------------------------------------------------------- framework vocabularies
@@ -1030,6 +1216,7 @@ const MEASURE_ROUTES = {
   "problem-axis-unknown-rate": ["aars"],
   "posture-tier-distribution": ["aars"],
   "issue-sla-tally": ["combos", "problems"],
+  "issue-half-life": ["problems"],
   "compliance-gaps": ["inventory", "config"],
   "compliance-gaps-unlinked": ["inventory"],
   "guardrail-coverage-pct": ["scans"],

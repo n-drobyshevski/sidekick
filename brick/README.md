@@ -25,8 +25,8 @@ Those lifecycles are the difference between this and the pipeline's first versio
 from what the register has been observed to do over time, not from whatever the latest snapshot
 happens to say. See [The ledger, and why it exists](#the-ledger-and-why-it-exists).
 
-This is a third surface over the same registers as the Streamlit app and the Apps Script
-rebuilds, not a replacement for any of them. `gas/` is the reference implementation for the
+This is a second surface over the same registers as the Apps Script rebuilds, not a
+replacement for them. `gas/` is the reference implementation for the
 machinery every scope shares: the lifecycle rules are ported from `gas/src/domain/reconcile.ts`,
 the P2P family from `gas/src/domain/program.ts`, and Kaplan–Meier from
 `gas/src/domain/remediation.ts`. `gas_devsecops/` is the reference for what is genuinely only
@@ -96,7 +96,7 @@ win — that would fail as a confusing `AttributeError` rather than an import er
 notebook's first cell does this, and `06_run_and_verify` prints the `__file__` each module
 actually came from.
 
-`brick/` never imports `wiz_dashboard` — a Spark cluster has neither that package nor Streamlit.
+`brick/` never imports `wiz_dashboard` — a Spark cluster does not carry that package.
 The shared constants are duplicated on purpose; `config.py` names its sources.
 
 ## The ledger, and why it exists
@@ -449,7 +449,7 @@ distinct per scope when three scopes now share one commit-record table
 
 | Scope | Population | Vendor fix? | Default severity gate |
 | --- | --- | --- | --- |
-| `os` (default) | OS-package CVEs on host workloads — parity with `os_vulns.VARIABLES["filterBy"]`, so the numbers are comparable with the Streamlit dashboard's and with `gas/` | yes | `CRITICAL,HIGH` |
+| `os` (default) | OS-package CVEs on host workloads — parity with `os_vulns.VARIABLES["filterBy"]`, so the numbers are comparable with `gas/` | yes | `CRITICAL,HIGH` |
 | `sca` | CVEs in the libraries a repository depends on, restricted to the default branch's code stage | yes | `CRITICAL,HIGH` |
 | `sast` | weaknesses in first-party code, no CVE involved | no | `CRITICAL,HIGH` |
 
@@ -1938,7 +1938,7 @@ not the same evidence as "closed on day 40". Columns on the `mttr` family of `�
 | `km_rmst` | restricted mean survival time — area under the curve out to the longest observed time |
 | `km_truncated` | survival never reached zero, so `km_rmst` is a floor rather than a mean |
 | `km_events` / `km_censored` | how much of the estimate rests on closures vs. still-open findings |
-| `mttr_mean` / `mttr_median` | the naive closed-only figures, kept for comparison with the Streamlit dashboard — the gap against `km_median` *is* the bias |
+| `mttr_mean` / `mttr_median` | the naive closed-only figures, kept for comparison with the earlier Python spec — the gap against `km_median` *is* the bias |
 
 On the committed `os` fixture the two differ by about 18%: naive 18.1d against a KM median of
 21.3d.
@@ -2024,7 +2024,7 @@ asserting a fix that is no longer guaranteed.
   subscription and tag inputs. `subscription_name` / `subscription_ext_id` are on the `os`
   ledger; **asset tags are not, because `ingest.py` does not select them** — adding that is an
   ingest change (a new field on every `vulnerableAsset` inline fragment), not a ledger one.
-- **No retention.** The ledger grows monotonically. The Streamlit side seals old scans into
+- **No retention.** The ledger grows monotonically. The Python spec seals old scans into
   `resolved_episodes` (`wiz_dashboard/data/ledger.py::compact_ledger`); on Delta the equivalent
   levers are `VACUUM` and bronze retention, and a large register will eventually want both.
   Compaction is no longer on this list — [`--maintain`](#maintenance) runs `OPTIMIZE` over the

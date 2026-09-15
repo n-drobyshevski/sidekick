@@ -7,9 +7,9 @@
 /* Three levels, the same shape the AI Inventory header uses: the hero says how much of the
    scan surface reports, the strip says how that splits, the stat strip carries the sync
    that produced both. Hero and strip are borderless — dominance from size and position,
-   never from a card or a stripe. */
-/* .cov-header, .cov-hero-sub and the stat-list span now come from .page-header
-   (components.css); only the page-specific pieces below remain. */
+   never from a card or a stripe. The header itself is `pageHeader`'s own `.page-header`
+   (components.css), drawn by `postureHeader()` in scans.js; only the page-specific strip
+   below remains here. */
 .cov-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 
 /* The coverage bar and its keys. Same visual recipe as .sevbar / .sevkey-row, but a
@@ -280,10 +280,9 @@
 }
 
 /* ------------------------------------------------------------------- narrow widths */
-@media (max-width: 980px) {
-  .cov-header { grid-template-columns: 1fr 1fr; }
-}
+/* The 980px two-up step that used to live here for `.cov-header` retired with the class —
+   the header is `pageHeader`'s own `.page-header` now, and its shared 640px one-column
+   collapse (components.css) is what governs it. */
 @media (max-width: 760px) {
-  .cov-header { grid-template-columns: 1fr; gap: var(--space-4); }
   .cov-diagram-scroll { padding: var(--space-1) var(--space-1) var(--space-2); }
 }

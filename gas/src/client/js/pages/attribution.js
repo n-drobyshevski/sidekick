@@ -16,7 +16,7 @@
 import { bootstrap, setParams, swrCall } from "../../../../../gas_shared/store.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
 import {
-  absent, clear, dataTable, el, emptyState, firstRunNotice, fmtDate, glossaryTip, kpiCard, pageHeader, settingsPanel, statusPill, tableFooter, tip,
+  DEFAULT_PAGE_SIZE, absent, clear, dataTable, el, emptyState, errorState, firstRunNotice, fmtDate, glossaryTip, kpiCard, measuredEmpty, pageHeader, settingsPanel, sevEntries, sevSegmentBar, sevSpoken, statusPill, tableFooter, tip,
 } from "../ui.js";
 
 // The engine's placeholder domain for findings that matched no rule (domainRules.UNASSIGNED).
@@ -72,7 +72,11 @@ export async function renderAttribution(main, params, ctx) {
   // Rows per RPC page. It used to be the literal 50 below and nothing could change it; the
   // table footer now offers the standard sizes, and the server pages against this value.
   // Deliberately NOT in the hash: the page number is what a shared link is about.
-  let pageSize = 50;
+  //
+  // THE SHARED CONSTANT, not a literal. A second copy of the number here is how this table
+  // would keep opening at 50 after the shared default moved — the change would look applied
+  // everywhere and silently miss the two pages that spelled it out themselves.
+  let pageSize = DEFAULT_PAGE_SIZE;
 
   main.append(pageHeader({
     route: "attribution",
@@ -163,9 +167,9 @@ export async function renderAttribution(main, params, ctx) {
         `scan from ${fmtDate(data.scan.ts)}.`));
     }
 
-    renderKpis(coverage, unassigned, untagged);
-    renderCoverageTable(coverage);
-    renderSupportGroupCoverage(supportGroups, sgMap);
+    guard("the coverage KPIs", () => renderKpis(coverage, unassigned, untagged));
+    guard("coverage by domain", () => renderCoverageTable(coverage));
+    guard("coverage by support group", () => renderSupportGroupCoverage(supportGroups, sgMap));
 
     // THE LEDGER LIST IS CHECKED BEFORE THE ALL-CLEAR, and that ordering is the whole point.
     // Every figure above is about the current scan, so an operator who has just fixed their
@@ -177,11 +181,16 @@ export async function renderAttribution(main, params, ctx) {
     const frameClear = (coverage.unassignedFindings || 0) === 0 &&
       (coverage.supportGroupUnresolved || 0) === 0;
     if (frameClear && !ledgerRows.length) {
-      bodyHost.append(emptyState(
-        "Everything is attributed.",
-        "Every finding maps to a manual group and every subscription with findings carries a " +
-        "support group, in this scan and across the ledger. Nothing to troubleshoot.",
-      ));
+      // MEASURED, not a structural absence: `frameClear` is read straight off the CURRENT
+      // per-finding scan's coverage numbers ("in this scan" in the hint below is literal), and
+      // `ledgerRows` reflects the register as reconciliation left it after that same scan — so
+      // the whole claim is dated by `data.scan.ts`, the same as "No unassigned resources on
+      // this page" and "Every subscription … carries a support group" two panels down.
+      bodyHost.append(measuredEmpty("Everything is attributed.", {
+        at: data.scan.ts,
+        hint: "Every finding maps to a manual group and every subscription with findings carries a " +
+          "support group, in this scan and across the ledger. Nothing to troubleshoot.",
+      }));
       return;
     }
     // Live attribution is complete and the history is not — the reported case. The frame-side
@@ -190,7 +199,7 @@ export async function renderAttribution(main, params, ctx) {
       bodyHost.append(el("p", { class: "section-note" },
         "Every finding in the current scan is attributed. The lifecycles below are not, and "
         + "they are the ones the MTTR by-domain split draws as Unassigned."));
-      renderUnassignedLedger(ledgerRows);
+      guard("unassigned lifecycles", () => renderUnassignedLedger(ledgerRows));
       return;
     }
 
@@ -202,10 +211,27 @@ export async function renderAttribution(main, params, ctx) {
     bodyHost.append(editorHost);
     const editor = renderDomainsEditor(editorHost, boot, ctx, { onCommitted: () => editor.save() });
 
-    renderUnassigned(unassigned, editor);
-    renderRuleHealth(ruleHealthRows, editor);
-    renderUntagged(untagged, sgMap);
-    renderUnassignedLedger(ledgerRows);
+    guard("unassigned resources", () => renderUnassigned(unassigned, editor, data.scan.ts));
+    guard("rule health", () => renderRuleHealth(ruleHealthRows, editor));
+    guard("untagged subscriptions", () => renderUntagged(untagged, sgMap, data.scan.ts));
+    guard("unassigned lifecycles", () => renderUnassignedLedger(ledgerRows));
+  }
+
+  // One failing panel must not blank the rest of the audit — each panel reads its own slice
+  // of the payload and the page is exactly the kind of one-throw-per-drawer surface
+  // gas_devsecops/pages/executive.js's `guard()` was written for. `bodyHost` rather than a
+  // per-panel host: unlike executive.js this page appends its panels straight into one
+  // stream rather than into pre-built section hosts, so a caught exception's errorState
+  // takes the exact spot the panel would have filled.
+  function guard(label, fn) {
+    try {
+      fn();
+    } catch (e) {
+      console.error("[attribution] " + label + " render failed:", e);
+      bodyHost.append(errorState("Couldn't render " + label + ".", {
+        detail: String((e && e.message) || e),
+      }));
+    }
   }
 
   // ------------------------------------------------- unassigned lifecycles (ledger)
@@ -224,23 +250,59 @@ export async function renderAttribution(main, params, ctx) {
     // because the stored lifecycle never carried a subscription, a support group or a last-seen
     // date, and a dash in the same ink as the values beside it reads as a value.
     const columns = [
-      { key: "asset", label: "Asset", cell: (r) => assetCell(r) },
-      { key: "subscription", label: "Subscription", className: "muted",
-        cell: (r) => r.subscription || absent() },
-      { key: "supportGroup", label: "Support group", className: "muted",
-        cell: (r) => r.supportGroup || absent() },
-      { key: "open", label: "Open", className: "num",
-        cell: (r) => (r.open || 0).toLocaleString() },
-      { key: "resolved", label: "Resolved", className: "num",
-        cell: (r) => (r.resolved || 0).toLocaleString() },
-      { key: "lastSeen", label: "Last seen", className: "muted",
-        cell: (r) => (r.lastSeen ? fmtDate(r.lastSeen) : absent()) },
-      { key: "tags", label: "Stored tags", className: "small muted", cell: (r) => {
-        const tagEntries = Object.entries(r.tags || {});
-        // "no tags" is a MEASUREMENT, not an absence: the lifecycle carried a tag bag and it
-        // was empty, which is why this one stays a word rather than becoming the dash.
-        return tagEntries.length ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ") : "no tags";
-      } },
+      {
+        key: "asset",
+        label: "Asset",
+        help: ["The asset this lifecycle belongs to."],
+        cell: (r) => assetCell(r),
+      },
+      {
+        key: "subscription",
+        label: "Subscription",
+        className: "muted",
+        help: ["The subscription recorded on this lifecycle's stored tag snapshot."],
+        cell: (r) => r.subscription || absent(),
+      },
+      {
+        key: "supportGroup",
+        label: "Support group",
+        className: "muted",
+        help: ["The support group recorded on this lifecycle's stored tag snapshot — may be stale."],
+        cell: (r) => r.supportGroup || absent(),
+      },
+      {
+        key: "open",
+        label: "Open",
+        className: "num",
+        help: ["Findings in this lifecycle not yet resolved."],
+        cell: (r) => (r.open || 0).toLocaleString(),
+      },
+      {
+        key: "resolved",
+        label: "Resolved",
+        className: "num",
+        help: ["Findings in this lifecycle already resolved."],
+        cell: (r) => (r.resolved || 0).toLocaleString(),
+      },
+      {
+        key: "lastSeen",
+        label: "Last seen",
+        className: "muted",
+        help: ["The most recent scan that reported this lifecycle."],
+        cell: (r) => (r.lastSeen ? fmtDate(r.lastSeen) : absent()),
+      },
+      {
+        key: "tags",
+        label: "Stored tags",
+        className: "small muted",
+        help: ["The tag values stored the last time this lifecycle was seen."],
+        cell: (r) => {
+          const tagEntries = Object.entries(r.tags || {});
+          // "no tags" is a MEASUREMENT, not an absence: the lifecycle carried a tag bag and it
+          // was empty, which is why this one stays a word rather than becoming the dash.
+          return tagEntries.length ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ") : "no tags";
+        },
+      },
     ];
     function assetCell(r) {
       const nm = (r.nearMisses || [])[0];
@@ -327,24 +389,44 @@ export async function renderAttribution(main, params, ctx) {
     }
     const total = coverage.totalFindings || 0;
     const columns = [
-      { key: "domain", label: "Domain", cell: (d) => {
-        // Zero-count real domains never matched anything (possibly dead); a non-empty
-        // Unassigned row is a coverage gap. Never a warning on an empty Unassigned row (good).
-        // `Not attributable` is NEITHER: nothing an operator does here can close it, so
-        // flagging it as a gap would put a permanent red pill beside work that does not exist.
-        const marker = d.domain === NOT_ATTRIBUTABLE
-          ? statusPill("neutral", "no inputs")
-          : d.domain === UNASSIGNED
-            ? (d.findings > 0 ? statusPill("bad", "coverage gap") : null)
-            : (d.findings === 0 ? statusPill("warn", "no matches") : null);
-        return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
-          el("strong", {}, d.domain), marker);
-      } },
-      { key: "findings", label: "Findings", className: "num",
-        cell: (d) => (d.findings || 0).toLocaleString() },
-      { key: "assets", label: "Assets", className: "num",
-        cell: (d) => (d.assets || 0).toLocaleString() },
-      { key: "share", label: "Share", cell: (d) => shareCell(total ? d.findings / total : 0) },
+      {
+        key: "domain",
+        label: "Domain",
+        help: ["The manual group or Wiz/Domain tag value findings resolved to."],
+        cell: (d) => {
+          // Zero-count real domains never matched anything (possibly dead); a non-empty
+          // Unassigned row is a coverage gap. Never a warning on an empty Unassigned row (good).
+          // `Not attributable` is NEITHER: nothing an operator does here can close it, so
+          // flagging it as a gap would put a permanent red pill beside work that does not exist.
+          const marker = d.domain === NOT_ATTRIBUTABLE
+            ? statusPill("neutral", "no inputs")
+            : d.domain === UNASSIGNED
+              ? (d.findings > 0 ? statusPill("bad", "coverage gap") : null)
+              : (d.findings === 0 ? statusPill("warn", "no matches") : null);
+          return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
+            el("strong", {}, d.domain), marker);
+        },
+      },
+      {
+        key: "findings",
+        label: "Findings",
+        className: "num",
+        help: ["Findings that resolved to this domain, in the current scan."],
+        cell: (d) => (d.findings || 0).toLocaleString(),
+      },
+      {
+        key: "assets",
+        label: "Assets",
+        className: "num",
+        help: ["Distinct assets carrying at least one finding resolved to this domain."],
+        cell: (d) => (d.assets || 0).toLocaleString(),
+      },
+      {
+        key: "share",
+        label: "Share",
+        help: ["This domain's findings as a share of every finding in the current scan."],
+        cell: (d) => shareCell(total ? d.findings / total : 0),
+      },
     ];
     bodyHost.append(settingsPanel({
       title: "Coverage by domain",
@@ -430,17 +512,37 @@ export async function renderAttribution(main, params, ctx) {
     }
     const total = sg.totalFindings || 0;
     const columns = [
-      { key: "group", label: "Support group", cell: (g) => {
-        // A non-empty "(none)" row is the unresolved gap; resolved groups carry no marker.
-        const marker = g.unresolved && g.findings > 0 ? statusPill("bad", "unresolved") : null;
-        return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
-          el("strong", {}, g.group), marker);
-      } },
-      { key: "findings", label: "Findings", className: "num",
-        cell: (g) => (g.findings || 0).toLocaleString() },
-      { key: "assets", label: "Assets", className: "num",
-        cell: (g) => (g.assets || 0).toLocaleString() },
-      { key: "share", label: "Share", cell: (g) => shareCell(total ? g.findings / total : 0) },
+      {
+        key: "group",
+        label: "Support group",
+        help: ["The support group a finding's subscription resolved to."],
+        cell: (g) => {
+          // A non-empty "(none)" row is the unresolved gap; resolved groups carry no marker.
+          const marker = g.unresolved && g.findings > 0 ? statusPill("bad", "unresolved") : null;
+          return el("span", { style: "display:inline-flex; align-items:center; gap:8px" },
+            el("strong", {}, g.group), marker);
+        },
+      },
+      {
+        key: "findings",
+        label: "Findings",
+        className: "num",
+        help: ["Findings whose subscription resolved to this support group."],
+        cell: (g) => (g.findings || 0).toLocaleString(),
+      },
+      {
+        key: "assets",
+        label: "Assets",
+        className: "num",
+        help: ["Distinct assets carrying at least one finding in this support group."],
+        cell: (g) => (g.assets || 0).toLocaleString(),
+      },
+      {
+        key: "share",
+        label: "Share",
+        help: ["This group's findings as a share of every finding in the current scan."],
+        cell: (g) => shareCell(total ? g.findings / total : 0),
+      },
     ];
     bodyHost.append(settingsPanel({
       title: "Coverage by support group",
@@ -451,13 +553,17 @@ export async function renderAttribution(main, params, ctx) {
 
   // ------------------------------------------------------- unassigned resources
 
-  function renderUnassigned(unassigned, editor) {
+  function renderUnassigned(unassigned, editor, scanTs) {
     const rows = unassigned.rows || [];
     if (!rows.length) {
       bodyHost.append(settingsPanel({
         title: "Unassigned resources",
-        body: emptyState("No unassigned resources on this page.",
-          "Every finding here maps to a manual group."),
+        // MEASURED: this is the current per-finding scan's own paginated slice, not a
+        // structural gap like "no rules configured" — "we looked, on this date" is literal.
+        body: measuredEmpty("No unassigned resources on this page.", {
+          at: scanTs,
+          hint: "Every finding here maps to a manual group.",
+        }),
       }));
       return;
     }
@@ -465,36 +571,63 @@ export async function renderAttribution(main, params, ctx) {
     // row Wiz told us nothing about, and a black em dash in the same weight as the values
     // beside it reads as a recorded value rather than as silence.
     const columns = [
-      { key: "asset", label: "Asset", cell: (r) => {
-        // Top near-miss as a muted second line under the asset name ("almost matches
-        // Payments — rule 2, failing: tag"). ruleIndex is 0-based; show it 1-based.
-        const nm = (r.nearMisses || [])[0];
-        return [
-          el("strong", {}, r.asset || absent()),
-          nm
-            ? el("div", { class: "small muted" },
-              "almost matches ", el("em", {}, nm.domain), ` — rule ${nm.ruleIndex + 1}`,
-              (nm.failedTypes && nm.failedTypes.length)
-                ? `, failing: ${nm.failedTypes.join(", ")}` : "")
-            : null,
-        ];
-      } },
-      { key: "assetType", label: "Type", cell: (r) => r.assetType || absent() },
-      { key: "subscription", label: "Subscription", cell: (r) => r.subscription || absent() },
-      { key: "supportGroup", label: "Support group",
-        cell: (r) => (r.supportGroup ? r.supportGroup : statusPill("neutral", "(none)")) },
-      { key: "tags", label: "Tags", cell: (r) => {
-        const tagEntries = Object.entries(r.tags || {});
-        return el("span", { class: "small muted" }, tagEntries.length
-          ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ")
-          : absent());
-      } },
-      { key: "findings", label: "Findings", cell: (r) =>
-        el("div", { class: "mix-cell" },
-          mixStrip(r.sevCounts || {}),
-          el("span", { class: "mix-text small muted num" },
-            mixText(r.sevCounts || {}) || `${(r.findings || 0).toLocaleString()}`)) },
-      // The action column's heading is deliberately empty — the button says what it does.
+      {
+        key: "asset",
+        label: "Asset",
+        help: ["The asset no manual group rule claimed."],
+        cell: (r) => {
+          // Top near-miss as a muted second line under the asset name ("almost matches
+          // Payments — rule 2, failing: tag"). ruleIndex is 0-based; show it 1-based.
+          const nm = (r.nearMisses || [])[0];
+          return [
+            el("strong", {}, r.asset || absent()),
+            nm
+              ? el("div", { class: "small muted" },
+                "almost matches ", el("em", {}, nm.domain), ` — rule ${nm.ruleIndex + 1}`,
+                (nm.failedTypes && nm.failedTypes.length)
+                  ? `, failing: ${nm.failedTypes.join(", ")}` : "")
+              : null,
+          ];
+        },
+      },
+      {
+        key: "assetType",
+        label: "Type",
+        help: ["The asset's type, as reported by Wiz."],
+        cell: (r) => r.assetType || absent(),
+      },
+      {
+        key: "subscription",
+        label: "Subscription",
+        help: ["The subscription this asset belongs to."],
+        cell: (r) => r.subscription || absent(),
+      },
+      {
+        key: "supportGroup",
+        label: "Support group",
+        help: ["The support group resolved for this asset's subscription, if any."],
+        cell: (r) => (r.supportGroup ? r.supportGroup : statusPill("neutral", "(none)")),
+      },
+      {
+        key: "tags",
+        label: "Tags",
+        help: ["The tags Wiz recorded for this asset."],
+        cell: (r) => {
+          const tagEntries = Object.entries(r.tags || {});
+          return el("span", { class: "small muted" }, tagEntries.length
+            ? tagEntries.map(([k, v]) => `${k}=${v}`).join(", ")
+            : absent());
+        },
+      },
+      {
+        key: "findings",
+        label: "Findings",
+        help: ["This asset's open findings, split by severity."],
+        cell: (r) => sevMixCell(r.sevCounts, r.findings),
+      },
+      // The action column's heading is deliberately empty — the button says what it does, and
+      // an empty heading has nothing for a `?` to define. See test/columnHelp.test.js's
+      // allowlist.
       { key: "attribute", label: "", cell: (r) => {
         const btn = el("button", { type: "button",
           onclick: () => editor.openWithPrefill({
@@ -550,21 +683,49 @@ export async function renderAttribution(main, params, ctx) {
     }
     const items = (boot.settings.domains && boot.settings.domains.items) || [];
     const columns = [
-      { key: "domain", label: "Manual group", cell: (rh) => el("strong", {}, rh.domain) },
-      { key: "rule", label: "Rule", cell: (rh) => {
-        const rule = items[rh.domainIndex] && items[rh.domainIndex].rules
-          ? items[rh.domainIndex].rules[rh.ruleIndex] : null;
-        return el("span", { class: "small muted" }, summarizeRule(rule));
-      } },
-      { key: "fired", label: "Fired", className: "num",
-        cell: (rh) => (rh.fired || 0).toLocaleString() },
-      { key: "matched", label: "Matched", className: "num",
-        cell: (rh) => (rh.matched || 0).toLocaleString() },
-      { key: "status", label: "Status", cell: (rh) => {
-        const [kind, label] = STATUS_PILL[rh.status] || ["neutral", rh.status || "?"];
-        return statusPill(kind, label);
-      } },
-      // Empty heading: a column of "Edit" buttons names itself.
+      {
+        key: "domain",
+        label: "Manual group",
+        help: ["The manual group this rule belongs to."],
+        cell: (rh) => el("strong", {}, rh.domain),
+      },
+      {
+        key: "rule",
+        label: "Rule",
+        help: ["The rule's own conditions, ANDed together."],
+        cell: (rh) => {
+          const rule = items[rh.domainIndex] && items[rh.domainIndex].rules
+            ? items[rh.domainIndex].rules[rh.ruleIndex] : null;
+          return el("span", { class: "small muted" }, summarizeRule(rule));
+        },
+      },
+      {
+        key: "fired",
+        label: "Fired",
+        className: "num",
+        help: ["Findings this rule actually claims, under first-match priority — an earlier "
+          + "rule can shadow it."],
+        cell: (rh) => (rh.fired || 0).toLocaleString(),
+      },
+      {
+        key: "matched",
+        label: "Matched",
+        className: "num",
+        help: ["Findings this rule's conditions match, whether or not an earlier rule claims "
+          + "them first."],
+        cell: (rh) => (rh.matched || 0).toLocaleString(),
+      },
+      {
+        key: "status",
+        label: "Status",
+        help: { term: "rule-health" },
+        cell: (rh) => {
+          const [kind, label] = STATUS_PILL[rh.status] || ["neutral", rh.status || "?"];
+          return statusPill(kind, label);
+        },
+      },
+      // Empty heading: a column of "Edit" buttons names itself, and there is nothing for a
+      // `?` to define. See test/columnHelp.test.js's allowlist.
       { key: "edit", label: "", cell: (rh) => {
         const btn = el("button", { type: "button",
           onclick: () => editor.openEditor(rh.domainIndex) }, "Edit");
@@ -582,7 +743,7 @@ export async function renderAttribution(main, params, ctx) {
 
   // ------------------------------------------------------ untagged subscriptions
 
-  function renderUntagged(untagged, sgMap) {
+  function renderUntagged(untagged, sgMap, scanTs) {
     if (!sgMap.configured) {
       bodyHost.append(settingsPanel({
         title: "Untagged subscriptions",
@@ -599,21 +760,40 @@ export async function renderAttribution(main, params, ctx) {
     if (!untagged.length) {
       bodyHost.append(settingsPanel({
         title: "Untagged subscriptions", description: desc,
-        body: emptyState("Every subscription with findings carries a support group."),
+        // MEASURED for the same reason as "No unassigned resources on this page": it reads
+        // the current per-finding scan's own subscription set, not a structural gap.
+        body: measuredEmpty("Every subscription with findings carries a support group.",
+          { at: scanTs }),
       }));
       return;
     }
     const columns = [
-      { key: "subscription", label: "Subscription",
-        cell: (u) => el("strong", {}, u.subscription) },
-      { key: "extId", label: "Ext ID", cell: (u) => u.extId },
-      { key: "assets", label: "Assets", className: "num",
-        cell: (u) => (u.assets || 0).toLocaleString() },
-      { key: "findings", label: "Findings", cell: (u) =>
-        el("div", { class: "mix-cell" },
-          mixStrip(u.sevCounts || {}),
-          el("span", { class: "mix-text small muted num" },
-            mixText(u.sevCounts || {}) || `${(u.findings || 0).toLocaleString()}`)) },
+      {
+        key: "subscription",
+        label: "Subscription",
+        help: ["The subscription carrying findings but no support-group tag."],
+        cell: (u) => el("strong", {}, u.subscription),
+      },
+      {
+        key: "extId",
+        label: "Ext ID",
+        help: ["The subscription's external id, as Wiz reports it — compare against the "
+          + "support-group map's indexed keys."],
+        cell: (u) => u.extId,
+      },
+      {
+        key: "assets",
+        label: "Assets",
+        className: "num",
+        help: ["Distinct assets under this subscription with at least one finding."],
+        cell: (u) => (u.assets || 0).toLocaleString(),
+      },
+      {
+        key: "findings",
+        label: "Findings",
+        help: ["This subscription's findings, split by severity."],
+        cell: (u) => sevMixCell(u.sevCounts, u.findings),
+      },
     ];
     bodyHost.append(settingsPanel({
       title: "Untagged subscriptions", description: desc,
@@ -634,26 +814,29 @@ export async function renderAttribution(main, params, ctx) {
     return strip;
   }
 
-  /** Proportional severity-mix bar. Decorative (aria-hidden); the exact counts ride in the
-   *  visible .mix-text the caller renders beside it. Copied from overview.js. */
-  function mixStrip(sevCounts) {
-    const total = boot.palette.order.reduce((a, s) => a + (sevCounts[s] || 0), 0);
-    const strip = el("div", { class: "mix-strip", "aria-hidden": "true" });
-    if (!total) return strip;
-    for (const s of boot.palette.order) {
-      if (!sevCounts[s]) continue;
-      const span = el("span", {});
-      span.style.width = `${(sevCounts[s] / total) * 100}%`;
-      span.style.background = boot.palette.colors[s];
-      strip.append(span);
-    }
-    return strip;
-  }
-
-  function mixText(sevCounts) {
-    return boot.palette.order
-      .filter((s) => sevCounts[s])
-      .map((s) => `${s} ${sevCounts[s]}`)
-      .join(" · ");
+  /**
+   * A row's severity mix, as the shared distribution idiom rather than this page's own
+   * hand-rolled bar + text: `sevSegmentBar` (a segment per level, grown by its count) beside
+   * its spoken form. THIS REPLACES THE PAGE'S FORMER PRIVATE `mixStrip`/`mixText` COPY, which
+   * drew the identical picture with its own div-and-inline-style loop (a second copy of the
+   * same idiom overview.js's own private mixStrip/mixText already carried, per that page's
+   * comment "Copied from overview.js" — that comment is why this is the one worth de-forking).
+   *
+   * SIZED `"xs"`, not the brief's literal `"sm"` — no `.sevbar--sm` class exists
+   * (components.css defines only xs/md/lg), and `"xs"` is the one already documented as the
+   * in-row / table-cell size ("the severity mix in a table cell", components.css:423), which
+   * is exactly this call site.
+   *
+   * NO `label` ON THE BAR: it stays `aria-hidden` because the visible `sevSpoken` text beside
+   * it already names every level and its count — meaning never rides on colour alone, but the
+   * "key" here is that text, not a second `sevKeyRow` (which would repeat the same counts a
+   * second time, wider, once per row, across two tables of many rows).
+   */
+  function sevMixCell(sevCounts, fallbackCount) {
+    const entries = sevEntries(sevCounts || {}, boot.palette.order);
+    return el("div", { class: "mix-cell" },
+      sevSegmentBar(entries, { size: "xs" }),
+      el("span", { class: "mix-text small muted num" },
+        entries.length ? sevSpoken(entries) : `${(fallbackCount || 0).toLocaleString()}`));
   }
 }

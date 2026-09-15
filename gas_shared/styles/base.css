@@ -369,6 +369,25 @@
 .rail-status-dot:focus-visible {
   outline: 2px solid var(--accent-text); outline-offset: 3px;
 }
+/* PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b (2026-09-08) —
+   byte-identical in both, so this is the one copy. `.rail-status-dot` above is a 9px mark -
+   all the colour a scan's state needs, but nine pixels of hit target and, until each app's
+   own app.js fix, a span wearing `aria-hidden` with nothing behind it for a keyboard or a
+   screen reader. It is a real `<button>` now, so this is chrome, not colour: WCAG 2.2 SC
+   2.5.8 wants 24x24px of TARGET even though the mark painted inside it stays 9px -
+   `padding` plus `background-clip: content-box` grows the hit box without growing the dot,
+   and the negative margin keeps the surrounding rail layout exactly as tight as it was when
+   this was a span. The state colours (`.ok`/`.warn`/`.bad`/`.neutral`/`.scanning` above) keep
+   painting the 9px content box unchanged - only the box the pointer and the focus ring
+   measure grows. */
+.sidebar .rail-status-dot {
+  width: 24px; height: 24px; padding: 7.5px; box-sizing: border-box;
+  background-clip: content-box; margin: -7.5px auto;
+}
+/* Reset of the generic `button` chrome below (border, box-shadow, min-height) a dot never
+   wanted - it is a mark with a tip and a destination, not a bordered control sitting in the
+   icon rail beside the Run scan/sync button. */
+.sidebar button.rail-status-dot { border: none; box-shadow: none; min-height: 0; cursor: pointer; }
 
 /* The rail proper — everything here used to be the .collapsed variant of a rail that could
    also be 232px wide. It cannot any more: the second tier is a panel beside the rail, not a
@@ -550,17 +569,29 @@
 .scan-step { display: flex; align-items: center; gap: var(--space-1); font-size: var(--fs-body); color: var(--text-3); }
 .scan-step.done { color: var(--ok); }
 .scan-step.active { color: var(--accent-text); font-weight: 600; }
+/* THE MARK IS THE GLYPH, and this rule used to draw a second one behind it.
+
+   It was written for a CONTENTLESS span: an 8x8 disc, hollow when queued and filled when not,
+   which is what the `.sidebar` block above still describes. The row builders
+   (`scopeStepsRow`, one per app) later began putting a text glyph INSIDE that same span —
+   `✓` / `●` / `○` — because shape-plus-colour cannot separate `done` from `active`: both were
+   filled discs differing only in hue, and status here never carries meaning by colour alone.
+   Nobody removed the disc, so each chip painted twice, and a 14px glyph in an 8px box with
+   `overflow: visible` spilled 13px below it and 4px past its side. Measured on the sync
+   sheet's three chips: box 8x8, content 8x21 (`●`) and 12x21 (`○`).
+
+   So the box goes and the glyph stays — the half that carries state without colour. It also
+   gets the token contract right by inheriting `color` from `.scan-step.done` / `.active`:
+   that puts `--accent-text` (7.39:1) on the active chip, where the disc used `--accent`, a
+   FILL token at 1.52:1 that is only ever legible behind `--accent-edge`.
+
+   `min-width: 1em` rather than a px size: the three glyphs have different advance widths, and
+   without it the register name shifts sideways every time a step changes state. */
 .scan-step-dot {
-  display: inline-block; width: 8px; height: 8px; border-radius: 50%;
-  background: transparent; border: 1px solid var(--text-3);
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 1em;
+  font-size: var(--fs-body); line-height: 1;
   flex-shrink: 0;
-}
-.scan-step.done .scan-step-dot {
-  background: var(--ok); border-color: var(--ok);
-}
-.scan-step.active .scan-step-dot {
-  background: var(--accent); border-color: var(--accent);
-  box-shadow: inset 0 0 0 1px var(--accent-edge);
 }
 @keyframes scan-step-pulse {
   0%, 100% { opacity: 1; transform: scale(1); }

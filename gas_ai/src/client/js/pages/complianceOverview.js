@@ -37,16 +37,19 @@
 // `aria-label` on itself — but the visible "3 of 4" count sits OUTSIDE that labelled
 // picture, or a sighted-plus-screen-reader user would see one thing and hear another.
 //
-// postureCell(), checksCell(), stateStrip() and subcategoryDetail() all come from
-// complianceShared.js — the same cells and the same detail panel the per-framework register
-// uses, not a second implementation of either.
+// postureCell(), checksCell(), complianceTrendCard() and subcategoryDetail() all come from
+// complianceShared.js — the same cells, the same header chart and the same detail panel the
+// per-framework register uses, not a second implementation of any of them.
 
 import {
-  checksCell, extChip, findSubcategory, fiveRsDerived, postureCell, STATES, stateStrip,
+  checksCell, complianceHero, complianceTrendCard, extChip, findSubcategory, fiveRsDerived,
+  postureAbsence, postureCell, STATES,
   subcategoryDetail,
 } from "./complianceShared.js";
+import { landscapeSeries } from "../complianceTrendModel.js";
 import {
-  absent, dataTable, el, emptyState, meter, plural, sectionLabel, sevBadge, sevRank, statRow,
+  absent, absentText, dataTable, el, meter, pageHeader, plural, sectionLabel, sevBadge, sevRank,
+  statRow,
 } from "../ui.js";
 
 import { tip } from "../ui.js";
@@ -105,18 +108,16 @@ function worstFailingSeverityAcross(rail) {
   return worst;
 }
 
-export function renderOverview(host, data, view, actions) {
+export function renderOverview(host, data, view, actions, boot) {
   // A stale SWR cache from before this band shipped degrades to `rail: undefined` rather
   // than throwing (the payload contract's defensive-coding note) — and that is genuinely
   // indistinguishable from "nothing synced yet" from this page's point of view, so it gets
-  // the same message the per-framework view shows for zero trees.
+  // the same message the per-framework view shows for zero trees: `postureAbsence`, not a
+  // second hand-written sentence describing a cache edge case only this file's author could
+  // tell apart from a first run.
   const rail = (data && data.rail) || [];
   if (!rail.length) {
-    host.append(emptyState(
-      "No compliance posture has been synced yet.",
-      "This view needs the cross-framework rollup the last sync produced. Refresh the " +
-      "page, or run a sync if this stays empty.",
-    ));
+    host.append(postureAbsence(boot, data));
     return;
   }
 
@@ -191,47 +192,61 @@ function renderHeadline(host, data) {
       + "different, AI-scoped derived figure for it.");
   }
   const subKids = [heroLead];
-  if (worstSeverity) subKids.push(sevBadge(worstSeverity));
+  // Wrapped in its own small margin/vertical-align hook (compliance.css) rather than the
+  // shared `.page-hero-sub .sev-badge` — see the matching note in compliance.js.
+  if (worstSeverity) subKids.push(el("span", { class: "comp-posture-badge" }, sevBadge(worstSeverity)));
 
-  const hero = el("div", {},
-    el("div", { class: "label" }, tip("Compliance posture", heroWhy)),
-    // `.comp-hero-value` sets no colour (the scored case is meant to read at hero weight), so
-    // the unscored case needs `absent()` rather than a dash that inherits the same ink.
-    scored
-      ? el("div", { class: "comp-hero-value num" }, `${kpis.averagePosture}%`)
-      : el("div", { class: "comp-hero-value" }, absent()),
-    scored
-      ? el("div", { class: "comp-hero-meter" }, heroMeter)
-      : null,
-    // The one number on this page Wiz did not hand us — it names its own denominator so it
-    // is never mistaken for a vendor figure.
-    el("div", { class: "comp-hero-sub" }, ...subKids),
-  );
-
-  // The shared strip only ever reads `.stateCounts`, so the landscape-wide roll-up — which is
-  // not a FrameworkTree — can drive the exact same component the register uses per
-  // framework. It no longer cross-filters the weakest-areas band below: that band lists
-  // scored subcategories only now, so every state but one filtered to nothing. The strip
-  // is a summary here, and the landscape's only count of what went unscored.
-  const strip = stateStrip({ stateCounts: coverage.stateCounts || {} });
+  // THE HEADER'S SECOND COLUMN. It was the four-segment state bar; it is the mean's own
+  // history now, because "is the landscape improving" is what this hero is read for and a
+  // distribution of subcategory states never answered it.
+  //
+  // THE LINE IS THE SAME NUMBER AS THE HERO, at every sync rather than at this one — the
+  // mean of the scored frameworks, computed by the same arithmetic
+  // (`complianceKpis.averagePosture` and `censusCompliancePosture.avg` share a predicate, and
+  // a test holds them equal). Not one line per framework: eight lines in a header column is a
+  // thicket, and the rail below lists every framework's current figure with its own bar.
+  //
+  // The state counts the bar carried are still drawn, under the chart: `complianceTrendCard`
+  // takes the landscape-wide roll-up — not a FrameworkTree, but `stateKeys` only ever reads
+  // `.stateCounts` — and it stays the landscape's only count of what went unscored.
+  const strip = complianceTrendCard({
+    tree: { stateCounts: coverage.stateCounts || {} },
+    title: "Posture over time",
+    label: "Landscape compliance posture at each sync, as a percentage",
+    points: data.complianceTrend || [],
+    series: landscapeSeries(),
+    postureScope: data.postureScope,
+  });
 
   const sharedRows = data.sharedControls || [];
   const sharedCount = sharedRows.filter((c) => (c.frameworkCount || 0) >= 2).length;
 
-  const stats = el("div", { class: "stat-list" },
-    statRow("Frameworks", `${coverage.collected ?? 0} of ${coverage.catalogued ?? 0}`,
-      "collected of catalogued"),
-    statRow("Failing subcategories", String(kpis.failingSubcategories ?? 0),
-      "across every collected framework"),
-    statRow("Failing controls", String(kpis.failingPolicies ?? 0),
-      "distinct policies with a failing check"),
-    statRow("Shared across frameworks", String(sharedCount),
-      `of ${plural(sharedRows.length, "failing control")}`),
-  );
-
   host.append(el("div", { class: "comp-ov-section" },
     sectionLabel("Landscape posture"),
-    el("div", { class: "comp-header" }, hero, strip, stats)));
+    pageHeader({
+      hero: complianceHero({
+        // The tip carries the whole `heroWhy` disclosure, exactly as the hand-rolled
+        // `tip("Compliance posture", heroWhy)` label did — `heroStat`'s own `help` argument
+        // routes an array straight into the same `tip()` call.
+        label: "Compliance posture",
+        help: heroWhy,
+        scored,
+        pct: kpis.averagePosture,
+        meterNode: scored ? heroMeter : null,
+        sub: subKids,
+      }),
+      aside: strip,
+      stats: [
+        statRow("Frameworks", `${coverage.collected ?? 0} of ${coverage.catalogued ?? 0}`,
+          "collected of catalogued"),
+        statRow("Failing subcategories", String(kpis.failingSubcategories ?? 0),
+          "across every collected framework"),
+        statRow("Failing controls", String(kpis.failingPolicies ?? 0),
+          "distinct policies with a failing check"),
+        statRow("Shared across frameworks", String(sharedCount),
+          `of ${plural(sharedRows.length, "failing control")}`),
+      ],
+    })));
 }
 
 // ------------------------------------------------------------------------ B. rail
@@ -390,7 +405,7 @@ function railRow(row, meanPct, actions, fiveRsScope, data) {
   kids.push(el("span", {
     class: `comp-fw-pct${scored ? "" : " comp-fw-pct--dash"}`,
     "aria-hidden": "true",
-  }, scored ? `${railPct}%` : "—"));
+  }, scored ? `${railPct}%` : absentText));
 
   // Every inner part of this row is aria-hidden, so railAriaLabel() is the only place the
   // framework's reading exists in full — the percentage, how many policies are failing, the
@@ -501,14 +516,27 @@ function renderWeakestAreas(host, data, view, actions) {
     columns: [
       {
         key: "sub", label: "Subcategory",
+        help: { lines: ["Which framework and subcategory this row is closest to failing."] },
         cell: (r) => el("div", {},
           el("div", {}, extChip(r), r.title),
           el("div", { class: "small muted" }, r.frameworkName)),
       },
-      { key: "posture", label: "Compliance posture", cell: (r) => postureCell(r) },
-      { key: "checks", label: "Checks passing", className: "num", cell: (r) => checksCell(r) },
+      {
+        key: "posture", label: "Compliance posture",
+        help: { lines: [
+          "The percentage of evaluated policies passing under this subcategory. Every row " +
+          "here was scored — an unscored subcategory carries no posture and cannot be ranked.",
+        ] },
+        cell: (r) => postureCell(r),
+      },
+      {
+        key: "checks", label: "Checks passing", className: "num",
+        help: { lines: ["How many individual checks passed, of how many ran, under this subcategory."] },
+        cell: (r) => checksCell(r),
+      },
       {
         key: "failing", label: "Failing policies", className: "num",
+        help: { lines: ["How many distinct policies under this subcategory have at least one failing evaluation."] },
         cell: (r) => String(r.failingPolicyCount),
       },
     ],
@@ -583,16 +611,26 @@ function renderSharedControls(host, data) {
     columns: [
       {
         key: "control", label: "Control",
+        help: { lines: ["The failing framework control or policy, and which kind of evaluation it is."] },
         cell: (r) => el("div", {},
           el("div", {}, r.name),
           el("div", { class: "small muted" },
             [r.shortId, policyKindLabel(r.policyKind)].filter(Boolean).join(" · "))),
       },
-      { key: "severity", label: "Severity", cell: (r) => sevBadge(r.severity) },
-      { key: "raisedBy", label: "Raised by", cell: (r) => raisedByCell(r, order) },
-      { key: "failing", label: "Failing", className: "num", cell: (r) => String(r.failCount) },
+      { key: "severity", label: "Severity", help: { term: "severity" }, cell: (r) => sevBadge(r.severity) },
+      {
+        key: "raisedBy", label: "Raised by",
+        help: { lines: ["Which of the tracked frameworks raise this same control as a failure."] },
+        cell: (r) => raisedByCell(r, order),
+      },
+      {
+        key: "failing", label: "Failing", className: "num",
+        help: { lines: ["How many resources currently fail this control."] },
+        cell: (r) => String(r.failCount),
+      },
       {
         key: "remediation", label: "Remediation",
+        help: { lines: ["Whether Wiz can fix this control automatically, or a person has to."] },
         cell: (r) => (r.hasAutoRemediation
           ? el("span", { class: "comp-auto" }, "Auto-remediation")
           : absent()),

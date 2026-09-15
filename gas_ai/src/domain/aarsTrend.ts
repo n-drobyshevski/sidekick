@@ -227,7 +227,13 @@ function countsFromObject<K extends string>(
   return counts;
 }
 
-function parseCounts<K extends string>(
+/**
+ * EXPORTED for `backlogMovement.ts`, which reads the same `ledger_json` cell off the same
+ * commit rows `capacityFromLedgerDeltas` does. A second copy of this would be a second place
+ * for "absent is not zero" to be spelled differently, and the two figures would disagree about
+ * a pre-ledger sync without either of them being obviously wrong.
+ */
+export function parseCounts<K extends string>(
   v: unknown, keys: readonly K[], absentKeyIsNull = false,
 ): Record<K, number | null> | null {
   if (typeof v !== "string" || !v) return null;

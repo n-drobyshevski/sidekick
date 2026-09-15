@@ -12,9 +12,24 @@ import {
 import { bootstrap } from "../../../../../gas_shared/store.js";
 import { purgeStatusView } from "../purgeStatus.js";
 import {
-  clear, confirmDialog, downloadText, el, emptyState, errorState, fmtDateTime, fmtSpan,
-  pageHeader, progressBar, scopeBar, sectionLabel, settingRow, settingsPanel,
-  switchToggle, toast,
+  absentText,
+  clear,
+  confirmDialog,
+  downloadText,
+  el,
+  emptyState,
+  errorState,
+  fmtDateTime,
+  fmtSpan,
+  pageHeader,
+  progressBar,
+  scopeBar,
+  sectionLabel,
+  segmented,
+  settingRow,
+  settingsPanel,
+  switchToggle,
+  toast,
 } from "../ui.js";
 
 // A one-line description of the global scope a report/export is generated under, so a
@@ -23,36 +38,54 @@ function scopeLine(domain, supportGroup) {
   const parts = [];
   if (domain) parts.push(`Domain: ${domain}`);
   if (supportGroup) parts.push(`Support group: ${supportGroup}`);
-  return parts.length ? `Scoped to ${parts.join(" · ")}.` : "The whole register.";
+  return parts.length
+    ? `Scoped to ${parts.join(" · ")}.`
+    : "The whole register.";
 }
 
 export async function renderData(main, params, ctx) {
   const boot = await bootstrap();
   const domain = ctx.domain || "";
   const supportGroup = ctx.supportGroup || "";
-  main.append(pageHeader({
-    route: "data",
-    lede: "Reports out, raw data out, legacy history in.",
-  }));
-  const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
+  main.append(
+    pageHeader({
+      route: "data",
+      lede: "Reports out, raw data out, legacy history in.",
+    }),
+  );
+  const scopeChips = scopeBar({
+    domain,
+    supportGroup,
+    onClear: ctx.clearScope,
+  });
   if (scopeChips) main.append(scopeChips);
 
-  main.append(sectionLabel("Report"));
+  main.append(sectionLabel("Report", { term: "scan" }));
   if (boot.latestScan) {
     // Synchronous mount + lazy preview: the report preview must never block (or, on error,
     // blank) the Export and Import sections below, which don't even need a scan.
     renderReportSection(main, boot, domain, supportGroup);
   } else {
-    main.append(el("p", { class: "muted small" },
-      "No scan saved yet — run a scan to generate a report."));
+    main.append(
+      el(
+        "p",
+        { class: "muted small" },
+        "No scan saved yet — run a scan to generate a report.",
+      ),
+    );
   }
 
-  main.append(sectionLabel("Export"));
+  main.append(sectionLabel("Export", { term: "sealed" }));
   if (boot.latestScan) {
     renderExportSection(main, boot, domain, supportGroup);
   } else {
-    main.append(el("p", { class: "muted small" },
-      "No scan saved yet — run a scan to export findings."));
+    main.append(
+      el(
+        "p",
+        { class: "muted small" },
+        "No scan saved yet — run a scan to export findings.",
+      ),
+    );
   }
 
   main.append(sectionLabel("Import"));
@@ -70,7 +103,7 @@ export async function renderData(main, params, ctx) {
   main.append(sectionLabel("Maintenance"));
   renderMaintenanceSection(main, boot, ctx);
 
-  main.append(sectionLabel("Storage"));
+  main.append(sectionLabel("Storage", { term: "compaction" }));
   renderStorageSection(main);
 }
 
@@ -101,8 +134,11 @@ function renderStorageSection(main) {
       // for ordinary notes, with no role at all — a screen reader heard nothing. errorState
       // is role="alert" and puts the exception in a disclosure instead of printing it at the
       // reader; the section stays best-effort either way, exactly as the comment above says.
-      clear(host).append(errorState("Storage usage is unavailable right now.",
-        { detail: String((e && e.message) || e) }));
+      clear(host).append(
+        errorState("Storage usage is unavailable right now.", {
+          detail: String((e && e.message) || e),
+        }),
+      );
     }
   })();
 }
@@ -116,27 +152,45 @@ function renderReportSection(main, boot, domain, supportGroup) {
   const domains = domain ? [domain] : [];
   const supportGroups = supportGroup ? [supportGroup] : [];
   let format = "markdown";
-  // A segmented toggle group (aria-pressed), not a radiogroup — the buttons are toggle
-  // buttons, so radiogroup semantics (role=radio + arrow keys) would misannounce them.
-  const controls = el("div", { class: "filter-bar", role: "group", "aria-label": "Report format" });
-  for (const [value, label] of [["markdown", "Markdown"], ["csv", "CSV"], ["json", "JSON"]]) {
-    const btn = el("button", {
-      class: "seg-btn", type: "button",
-      "aria-pressed": format === value ? "true" : "false",
-      onclick: () => {
-        format = value;
-        controls.querySelectorAll("button.seg-btn").forEach((b) =>
-          b.setAttribute("aria-pressed", b === btn ? "true" : "false"));
-      },
-    }, label);
-    controls.append(btn);
-  }
-  const generateBtn = el("button", { class: "primary", onclick: generate }, "Generate & download");
-  controls.append(generateBtn);
+  // The shared segmented() control, replacing a hand-rolled .filter-bar of .seg-btn buttons —
+  // aria-pressed, not a radiogroup: the buttons are toggle buttons, so radiogroup semantics
+  // (role=radio + arrow keys) would misannounce them.
+  const formatToggle = segmented({
+    options: [
+      { value: "markdown", label: "Markdown" },
+      { value: "csv", label: "CSV" },
+      { value: "json", label: "JSON" },
+    ],
+    value: format,
+    ariaLabel: "Report format",
+    // Nothing else re-renders on a format pick — unlike every OTHER converted toggle on this
+    // page, which rebuilds its whole section and so gets a fresh, correctly-pressed
+    // `segmented()` for free. `format` only feeds the Generate button's click handler, so
+    // the toggle has to reflect the pick itself via `.set()`, or the pressed state would
+    // freeze on "Markdown" forever while `format` silently changed underneath it.
+    onChange: (v) => {
+      format = v;
+      formatToggle.set(v);
+    },
+  });
+  const generateBtn = el(
+    "button",
+    { class: "primary", onclick: generate },
+    "Generate & download",
+  );
+  const controls = el(
+    "div",
+    { class: "filter-bar" },
+    formatToggle,
+    generateBtn,
+  );
 
   main.append(
-    el("p", { class: "muted small", style: "margin:-2px 0 8px" },
-      scopeLine(domain, supportGroup)),
+    el(
+      "p",
+      { class: "muted small", style: "margin:-2px 0 8px" },
+      scopeLine(domain, supportGroup),
+    ),
     controls,
   );
   const previewHost = el("div", {});
@@ -146,9 +200,15 @@ function renderReportSection(main, boot, domain, supportGroup) {
   // Export and Import mounted rather than blanking the whole page.
   loadPreview();
   async function loadPreview() {
-    clear(previewHost).append(el("p", { class: "muted small" }, "Loading report preview…"));
+    clear(previewHost).append(
+      el("p", { class: "muted small" }, "Loading report preview…"),
+    );
     try {
-      const preview = await call("api_getReport", { format: "json", domains, supportGroups });
+      const preview = await call("api_getReport", {
+        format: "json",
+        domains,
+        supportGroups,
+      });
       renderMatrix(preview.matrix);
     } catch (e) {
       // This was errorState hand-rolled: it already had both halves — a retry control and the
@@ -156,50 +216,80 @@ function renderReportSection(main, boot, domain, supportGroup) {
       // and printed the raw message as body copy beside the button. The shared component
       // announces the failure, gives the retry its own action row, and demotes the exception
       // into "Technical details" where it does not compete with the sentence a reader needs.
-      clear(previewHost).append(errorState("Couldn't load the report preview.", {
-        onRetry: loadPreview,
-        detail: String((e && e.message) || e),
-      }));
+      clear(previewHost).append(
+        errorState("Couldn't load the report preview.", {
+          onRetry: loadPreview,
+          detail: String((e && e.message) || e),
+        }),
+      );
     }
   }
 
   function renderMatrix(matrix) {
     clear(previewHost);
-    previewHost.append(el("div", { class: "label", style: "margin:2px 0 6px" },
-      "Report preview — severity by source"));
+    previewHost.append(
+      el(
+        "div",
+        { class: "label", style: "margin:2px 0 6px" },
+        "Report preview — severity by source",
+      ),
+    );
     if (!matrix.length) {
       previewHost.append(emptyState("No findings in the current scope."));
       return;
     }
     const sevCols = boot.palette.order;
-    const table = el("table", { class: "data" },
-      el("thead", {}, el("tr", {},
-        el("th", { scope: "col" }, "Source"),
-        ...sevCols.map((s) => el("th", { scope: "col" }, s)),
-        el("th", { scope: "col" }, "Total"),
-        el("th", { scope: "col" }, "Median MTTR"),
-        el("th", { scope: "col" }, "Open"))),
+    const table = el(
+      "table",
+      { class: "data" },
+      el(
+        "thead",
+        {},
+        el(
+          "tr",
+          {},
+          el("th", { scope: "col" }, "Source"),
+          ...sevCols.map((s) => el("th", { scope: "col" }, s)),
+          el("th", { scope: "col" }, "Total"),
+          el("th", { scope: "col" }, "Median MTTR"),
+          el("th", { scope: "col" }, "Open"),
+        ),
+      ),
     );
     const tbody = el("tbody", {});
     for (const row of matrix) {
-      tbody.append(el("tr", {},
-        el("td", {}, row.source),
-        ...sevCols.map((s) => el("td", { class: "num" }, row[s] ?? 0)),
-        el("td", { class: "num" }, row.total),
-        el("td", { class: "num" }, fmtSpan(row.medianMttr)),
-        el("td", { class: "num" }, row.open),
-      ));
+      tbody.append(
+        el(
+          "tr",
+          {},
+          el("td", {}, row.source),
+          ...sevCols.map((s) => el("td", { class: "num" }, row[s] ?? 0)),
+          el("td", { class: "num" }, row.total),
+          el("td", { class: "num" }, fmtSpan(row.medianMttr)),
+          el("td", { class: "num" }, row.open),
+        ),
+      );
     }
     table.append(tbody);
-    previewHost.append(el("div", { class: "table-wrap", style: "margin-top:4px" }, table));
+    previewHost.append(
+      el("div", { class: "table-wrap", style: "margin-top:4px" }, table),
+    );
   }
 
   async function generate() {
     generateBtn.disabled = true;
     try {
-      const res = await call("api_getReport", { format, domains, supportGroups });
-      const mime = format === "json" ? "application/json"
-        : format === "csv" ? "text/csv;charset=utf-8" : "text/markdown;charset=utf-8";
+      const res = await call("api_getReport", {
+        format,
+        domains,
+        supportGroups,
+      });
+      const mime =
+        format === "json"
+          ? "application/json"
+          : format === "csv"
+            ? "text/csv;charset=utf-8"
+            : "text/markdown;charset=utf-8";
       downloadText(res.filename, res.content, mime);
     } catch (e) {
       toast(`Report failed: ${e.message}`, "error");
@@ -219,32 +309,51 @@ function renderExportSection(main, boot, domain, supportGroup) {
   const card = el("div", { class: "card" });
   card.append(
     el("h3", {}, "OS vulnerabilities"),
-    el("p", { class: "muted small" },
+    el(
+      "p",
+      { class: "muted small" },
       `Scan ${fmtDateTime(boot.latestScan.ts)} — ` +
-      `${boot.latestScan.total.toLocaleString()} finding(s), ${boot.latestScan.mode}.`),
-    el("p", { class: "muted small", style: "margin-top:-4px" },
-      scopeLine(domain, supportGroup)),
+        `${boot.latestScan.total.toLocaleString()} finding(s), ${boot.latestScan.mode}.`,
+    ),
+    el(
+      "p",
+      { class: "muted small", style: "margin-top:-4px" },
+      scopeLine(domain, supportGroup),
+    ),
   );
   const row = el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" });
   const csvBtn = el("button", { onclick: csv }, "Download CSV");
   const rawBtn = el("button", { onclick: raw }, "Raw JSON (Drive)");
-  const bundleBtn = el("button", { onclick: bundle }, "Migration bundle (Drive)");
+  const bundleBtn = el(
+    "button",
+    { onclick: bundle },
+    "Migration bundle (Drive)",
+  );
   row.append(csvBtn, rawBtn, bundleBtn);
   const rawHost = el("div", { style: "margin-top:10px" });
   const bundleHost = el("div", { style: "margin-top:10px" });
   card.append(row, rawHost, bundleHost);
   // The bundle is the whole register, not the filtered frame — say so, because it sits
   // under a heading whose other two buttons honor the global filters.
-  card.append(el("p", { class: "muted small" },
-    "The migration bundle carries the entire durable ledger — every scan, lifecycle and " +
-    "resolved episode — ignoring the filters above. It is the file another surface " +
-    "imports, and this app can re-import it too."));
+  card.append(
+    el(
+      "p",
+      { class: "muted small" },
+      "The migration bundle carries the entire durable ledger — every scan, lifecycle and " +
+        "resolved episode — ignoring the filters above. It is the file another surface " +
+        "imports, and this app can re-import it too.",
+    ),
+  );
   main.append(card);
 
   async function csv() {
     csvBtn.disabled = true;
     try {
-      const res = await call("api_getExportCsv", { source: "findings", domains, supportGroups });
+      const res = await call("api_getExportCsv", {
+        source: "findings",
+        domains,
+        supportGroups,
+      });
       downloadText(res.filename, res.content, "text/csv;charset=utf-8");
     } catch (e) {
       toast(`Export failed: ${e.message}`, "error");
@@ -255,22 +364,45 @@ function renderExportSection(main, boot, domain, supportGroup) {
 
   async function raw() {
     rawBtn.disabled = true;
-    clear(rawHost).append(el("p", { class: "muted small" }, "Locating archive…"));
+    clear(rawHost).append(
+      el("p", { class: "muted small" }, "Locating archive…"),
+    );
     try {
-      const res = await call("api_getExportRawUrl", { scanId: boot.latestScan.scanId });
+      const res = await call("api_getExportRawUrl", {
+        scanId: boot.latestScan.scanId,
+      });
       clear(rawHost);
       if (!res.urls.length) {
-        rawHost.append(el("p", { class: "muted small" },
-          "No raw archive is available for this scan (it may have been compacted)."));
+        rawHost.append(
+          el(
+            "p",
+            { class: "muted small" },
+            "No raw archive is available for this scan (it may have been compacted).",
+          ),
+        );
         return;
       }
-      rawHost.append(el("p", { class: "small" },
-        el("a", { href: res.folderUrl, target: "_blank", rel: "noopener" },
-          "Open the archive folder in Drive ↗"),
-        ` — ${res.urls.length} gzipped page file(s):`));
+      rawHost.append(
+        el(
+          "p",
+          { class: "small" },
+          el(
+            "a",
+            { href: res.folderUrl, target: "_blank", rel: "noopener" },
+            "Open the archive folder in Drive ↗",
+          ),
+          ` — ${res.urls.length} gzipped page file(s):`,
+        ),
+      );
       const ul = el("ul", { class: "small" });
       for (const u of res.urls) {
-        ul.append(el("li", {}, el("a", { href: u.url, target: "_blank", rel: "noopener" }, u.name)));
+        ul.append(
+          el(
+            "li",
+            {},
+            el("a", { href: u.url, target: "_blank", rel: "noopener" }, u.name),
+          ),
+        );
       }
       rawHost.append(ul);
     } catch (e) {
@@ -283,18 +415,30 @@ function renderExportSection(main, boot, domain, supportGroup) {
 
   async function bundle() {
     bundleBtn.disabled = true;
-    clear(bundleHost).append(el("p", { class: "muted small" }, "Assembling the bundle…"));
+    clear(bundleHost).append(
+      el("p", { class: "muted small" }, "Assembling the bundle…"),
+    );
     try {
       const res = await call("api_exportMigrationBundle", {});
       const c = res.counts;
       clear(bundleHost).append(
-        el("p", { class: "small" },
-          el("a", { href: res.url, target: "_blank", rel: "noopener" }, `Download ${res.name} ↗`),
-          ` — ${Math.round(res.bytes / 1024).toLocaleString()} KB gzipped`),
-        el("p", { class: "muted small" },
+        el(
+          "p",
+          { class: "small" },
+          el(
+            "a",
+            { href: res.url, target: "_blank", rel: "noopener" },
+            `Download ${res.name} ↗`,
+          ),
+          ` — ${Math.round(res.bytes / 1024).toLocaleString()} KB gzipped`,
+        ),
+        el(
+          "p",
+          { class: "muted small" },
           `${c.ledger.toLocaleString()} lifecycle(s), ${c.episodes.toLocaleString()} sealed ` +
-          `episode(s), ${c.scans.toLocaleString()} scan(s), ` +
-          `${c.mttr_history.toLocaleString()} history point(s).`),
+            `episode(s), ${c.scans.toLocaleString()} scan(s), ` +
+            `${c.mttr_history.toLocaleString()} history point(s).`,
+        ),
       );
     } catch (e) {
       clear(bundleHost);
@@ -311,27 +455,50 @@ function renderImportSection(main, ctx) {
   const card = el("div", { class: "card" });
   card.append(
     el("h3", {}, "Import from the legacy dashboard"),
-    el("p", { class: "muted small" },
-      "Merge a migration bundle exported from the Streamlit app's Exports page into " +
-      "this ledger. Imported scans arrive sealed — their raw archives stay on the old " +
-      "machine — and the merge is one-time: it can't be undone from here."),
-    el("p", { class: "muted small" },
+    el(
+      "p",
+      { class: "muted small" },
+      "Merge a migration bundle exported from the legacy Python dashboard into this " +
+        "ledger. Imported scans arrive sealed — their raw archives stay on the old " +
+        "machine — and the merge is one-time: it can't be undone from here.",
+    ),
+    el(
+      "p",
+      { class: "muted small" },
       "A large export arrives as several .json files (a manifest plus shards) — select all " +
-      "of them together. A sharded import needs a fresh, never-scanned ledger: if this ledger " +
-      "already has scans, use Reset ledger first, then import and run a Wiz scan to refill " +
-      "open-vulnerability detail."),
+        "of them together. A sharded import needs a fresh, never-scanned ledger: if this ledger " +
+        "already has scans, use Reset ledger first, then import and run a Wiz scan to refill " +
+        "open-vulnerability detail.",
+    ),
   );
   const fileInput = el("input", {
-    type: "file", accept: "application/json", multiple: "", style: "display:none",
-    "aria-hidden": "true", tabindex: "-1",
+    type: "file",
+    accept: "application/json",
+    multiple: "",
+    style: "display:none",
+    "aria-hidden": "true",
+    tabindex: "-1",
   });
   fileInput.addEventListener("change", importFiles);
-  const importBtn = el("button", { class: "primary", onclick: () => fileInput.click() },
-    "Import migration bundle…");
-  const resetBtn = el("button", { class: "danger", onclick: resetLedger }, "Reset ledger…");
+  const importBtn = el(
+    "button",
+    { class: "primary", onclick: () => fileInput.click() },
+    "Import migration bundle…",
+  );
+  const resetBtn = el(
+    "button",
+    { class: "danger", onclick: resetLedger },
+    "Reset ledger…",
+  );
   const statusHost = el("div", { style: "margin-top:10px" });
   card.append(
-    el("div", { style: "display:flex; gap:8px; flex-wrap:wrap" }, importBtn, resetBtn, fileInput),
+    el(
+      "div",
+      { style: "display:flex; gap:8px; flex-wrap:wrap" },
+      importBtn,
+      resetBtn,
+      fileInput,
+    ),
     statusHost,
   );
   main.append(card);
@@ -348,7 +515,8 @@ function renderImportSection(main, ctx) {
   async function resetLedger() {
     const ok = await confirmDialog({
       title: "Reset the GAS ledger?",
-      body: "Permanently clears ALL scans, tracked vulnerabilities, resolved episodes, and " +
+      body:
+        "Permanently clears ALL scans, tracked vulnerabilities, resolved episodes, and " +
         "MTTR history from this GAS ledger. Raw archives on the old machine are unaffected. " +
         "Use this before importing a migration bundle into a ledger that already has data, " +
         "then run a Wiz scan to refill open-vulnerability detail. This can't be undone.",
@@ -360,8 +528,10 @@ function renderImportSection(main, ctx) {
     setStatus("Resetting ledger…");
     try {
       const out = await call("api_resetLedger");
-      toast(`Cleared ${out.scans} scan(s), ${out.vulns} tracked vulnerabilities, ` +
-        `${out.episodes} resolved episode(s), ${out.compactions} compaction record(s).`);
+      toast(
+        `Cleared ${out.scans} scan(s), ${out.vulns} tracked vulnerabilities, ` +
+          `${out.episodes} resolved episode(s), ${out.compactions} compaction record(s).`,
+      );
       clear(statusHost);
       ctx.refresh();
     } catch (e) {
@@ -378,7 +548,9 @@ function renderImportSection(main, ctx) {
   // stale pre-rollout server build simply omits the suffix rather than throwing.
   function unclassifiedSuffix(out) {
     const n = out?.unclassified_severity;
-    return n ? ` ${n.toLocaleString()} row(s) had an unrecognized severity.` : "";
+    return n
+      ? ` ${n.toLocaleString()} row(s) had an unrecognized severity.`
+      : "";
   }
 
   // On a fresh-ledger rejection, offer to reset and retry the same (already-parsed) import.
@@ -387,7 +559,8 @@ function renderImportSection(main, ctx) {
     if (!isNotEmptyError(e)) return false;
     const ok = await confirmDialog({
       title: "Reset ledger and import?",
-      body: "This ledger isn't empty, so the import can't run. Reset it — permanently clearing " +
+      body:
+        "This ledger isn't empty, so the import can't run. Reset it — permanently clearing " +
         "all scans, tracked vulnerabilities, resolved episodes, and MTTR history in GAS — then " +
         "import? Raw archives on the old machine are unaffected; run a Wiz scan afterward to " +
         "refill open-vulnerability detail.",
@@ -409,9 +582,12 @@ function renderImportSection(main, ctx) {
     for (const f of files) {
       if (f.size > MAX_BUNDLE_BYTES) {
         const mb = (n) => (n / (1024 * 1024)).toFixed(1);
-        toast(`${f.name} is ${mb(f.size)} MB — over the ${mb(MAX_BUNDLE_BYTES)} MB per-file ` +
-          "limit. Use the sharded export — a manifest plus smaller .json shards — for a very " +
-          "large ledger.", "error");
+        toast(
+          `${f.name} is ${mb(f.size)} MB — over the ${mb(MAX_BUNDLE_BYTES)} MB per-file ` +
+            "limit. Use the sharded export — a manifest plus smaller .json shards — for a very " +
+            "large ledger.",
+          "error",
+        );
         return;
       }
       withText.push({ name: f.name, text: await f.text() });
@@ -434,7 +610,8 @@ function renderImportSection(main, ctx) {
     const c = res.counts;
     const ok = await confirmDialog({
       title: "Import migration bundle?",
-      body: `${c.scans} scan(s), ${c.vulns} tracked vulnerabilities, ${c.episodes} resolved ` +
+      body:
+        `${c.scans} scan(s), ${c.vulns} tracked vulnerabilities, ${c.episodes} resolved ` +
         `episode(s), ${c.history} MTTR history point(s). Existing scans will be replayed ` +
         "over the imported history — this can take a minute and can't be undone from the UI.",
       confirmLabel: "Import",
@@ -451,10 +628,15 @@ function renderImportSection(main, ctx) {
       // Compress the payload before it crosses google.script.run — a raw multi-MB object
       // argument fails opaquely. Fall back to the plain object when gzip isn't available.
       const gzipB64 = await gzipToBase64(JSON.stringify(bundle));
-      const out = await call("api_importMigration",
-        gzipB64 ? { gzipB64 } : { bundle });
-      toast(`Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
-        `vulnerabilities, ${out.history_added} history point(s).` + unclassifiedSuffix(out));
+      const out = await call(
+        "api_importMigration",
+        gzipB64 ? { gzipB64 } : { bundle },
+      );
+      toast(
+        `Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
+          `vulnerabilities, ${out.history_added} history point(s).` +
+          unclassifiedSuffix(out),
+      );
       clear(statusHost);
       ctx.refresh();
     } catch (e) {
@@ -470,7 +652,8 @@ function renderImportSection(main, ctx) {
     const n = cls.shards.length;
     const ok = await confirmDialog({
       title: "Import sharded migration bundle?",
-      body: `${c.scans} scan(s), ${c.vulns} tracked vulnerabilities, ${c.episodes} resolved ` +
+      body:
+        `${c.scans} scan(s), ${c.vulns} tracked vulnerabilities, ${c.episodes} resolved ` +
         `episode(s), ${c.history} MTTR history point(s) across ${n} shard(s). GAS rebuilds ` +
         "the history in several steps into a fresh, never-imported ledger — this can't be " +
         "undone from the UI. Re-select the same files to resume if it's interrupted.",
@@ -487,29 +670,45 @@ function renderImportSection(main, ctx) {
     try {
       setStatus("Starting import…");
       const begGz = await gzipToBase64(cls.manifestText);
-      const beg = await call("api_importBegin",
-        begGz ? { gzipB64: begGz } : { manifest: cls.manifest });
+      const beg = await call(
+        "api_importBegin",
+        begGz ? { gzipB64: begGz } : { manifest: cls.manifest },
+      );
       let applied = beg.appliedShards || 0;
       for (const s of cls.shards) {
         if (s.index < applied) continue; // already applied (resume)
         setStatus(`Applying shard ${s.index + 1} of ${n}…`);
         const gz = await gzipToBase64(s.text);
-        const prog = await call("api_importShard",
-          gz ? { sessionId: beg.sessionId, index: s.index, gzipB64: gz }
-             : { sessionId: beg.sessionId, index: s.index, shard: JSON.parse(s.text) });
+        const prog = await call(
+          "api_importShard",
+          gz
+            ? { sessionId: beg.sessionId, index: s.index, gzipB64: gz }
+            : {
+                sessionId: beg.sessionId,
+                index: s.index,
+                shard: JSON.parse(s.text),
+              },
+        );
         applied = prog.appliedShards;
       }
       setStatus("Finalizing…");
-      const out = await call("api_importFinalize", { sessionId: beg.sessionId });
-      toast(`Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
-        `vulnerabilities, ${out.history_added} history point(s).` + unclassifiedSuffix(out));
+      const out = await call("api_importFinalize", {
+        sessionId: beg.sessionId,
+      });
+      toast(
+        `Imported ${out.scans_imported} scan(s), ${out.vulns_imported} tracked ` +
+          `vulnerabilities, ${out.history_added} history point(s).` +
+          unclassifiedSuffix(out),
+      );
       clear(statusHost);
       ctx.refresh();
     } catch (e) {
       importBtn.disabled = false;
       // A fresh-ledger rejection happens at begin, before any shard is applied — reset and retry.
       if (await offerResetRetry(e)) return runSharded(cls);
-      setStatus("Import interrupted — re-select the same files to resume where it stopped.");
+      setStatus(
+        "Import interrupted — re-select the same files to resume where it stopped.",
+      );
       toast(`Import failed: ${e.message}`, "error");
     }
   }
@@ -528,28 +727,48 @@ const AGE_CHOICES = [
 
 /** A severity pill row — the settings-page control, minus the coupling it doesn't need. */
 function severityPills(options, selected, { onChange, ariaLabel } = {}) {
-  const node = el("div", { class: "pill-row", role: "group", "aria-label": ariaLabel });
+  const node = el("div", {
+    class: "pill-row",
+    role: "group",
+    "aria-label": ariaLabel,
+  });
   for (const sev of options) {
-    const btn = el("button", {
-      class: `sev-pill sev-${sev}`, type: "button",
-      "aria-pressed": selected.includes(sev) ? "true" : "false",
-      onclick: () => {
-        const i = selected.indexOf(sev);
-        if (i >= 0) selected.splice(i, 1);
-        else selected.push(sev);
-        btn.setAttribute("aria-pressed", selected.includes(sev) ? "true" : "false");
-        if (onChange) onChange();
+    const btn = el(
+      "button",
+      {
+        class: `sev-pill sev-${sev}`,
+        type: "button",
+        "aria-pressed": selected.includes(sev) ? "true" : "false",
+        onclick: () => {
+          const i = selected.indexOf(sev);
+          if (i >= 0) selected.splice(i, 1);
+          else selected.push(sev);
+          btn.setAttribute(
+            "aria-pressed",
+            selected.includes(sev) ? "true" : "false",
+          );
+          if (onChange) onChange();
+        },
       },
-    }, sev);
+      sev,
+    );
     node.append(btn);
   }
   return { node, selected };
 }
 
 function daysSelect(id, value, onChange) {
-  const sel = el("select", { id, "aria-label": "Age threshold" },
+  const sel = el(
+    "select",
+    { id, "aria-label": "Age threshold" },
     ...AGE_CHOICES.map(([v, label]) =>
-      el("option", { value: String(v), selected: v === value ? true : null }, label)));
+      el(
+        "option",
+        { value: String(v), selected: v === value ? true : null },
+        label,
+      ),
+    ),
+  );
   if (onChange) sel.addEventListener("change", onChange);
   return sel;
 }
@@ -581,86 +800,113 @@ function renderMaintenanceSection(main, boot, ctx) {
   let historyDays = 365;
 
   // ---- purge findings by severity
-  const purgeCounts = el("p", { class: "muted small" }, "Pick one or more severities.");
-  const purgeBtn = el("button", { class: "danger", disabled: true, onclick: onPurge },
-    "Purge findings…");
+  const purgeCounts = el(
+    "p",
+    { class: "muted small" },
+    "Pick one or more severities.",
+  );
+  const purgeBtn = el(
+    "button",
+    { class: "danger", disabled: true, onclick: onPurge },
+    "Purge findings…",
+  );
   const purgeProgress = el("div", { class: "maint-progress" });
   const purgePills = severityPills(order, purgeSel, {
-    ariaLabel: "Severities to purge", onChange: () => refreshPreview(),
+    ariaLabel: "Severities to purge",
+    onChange: () => refreshPreview(),
   });
 
-  main.append(settingsPanel({
-    title: "Purge findings by severity",
-    description:
-      "Removes every trace of the chosen severities — open and resolved lifecycles, the " +
-      "sealed episode records, the compaction baseline, and the saved scan archives in " +
-      "Drive. Rewriting the archives is what makes it stick: without it, deleting a scan " +
-      "replays the findings straight back. The archive pass runs in the background and " +
-      "blocks scanning while it does.",
-    body: [purgePills.node, purgeCounts, purgeProgress],
-    footer: purgeBtn,
-  }));
+  main.append(
+    settingsPanel({
+      title: "Purge findings by severity",
+      description:
+        "Removes every trace of the chosen severities — open and resolved lifecycles, the " +
+        "sealed episode records, the compaction baseline, and the saved scan archives in " +
+        "Drive. Rewriting the archives is what makes it stick: without it, deleting a scan " +
+        "replays the findings straight back. The archive pass runs in the background and " +
+        "blocks scanning while it does.",
+      body: [purgePills.node, purgeCounts, purgeProgress],
+      footer: purgeBtn,
+    }),
+  );
 
   // ---- prune resolved episodes
   const episodeCounts = el("p", { class: "muted small" }, "Loading…");
-  const episodeBtn = el("button", { class: "danger", disabled: true, onclick: onPrune },
-    "Prune episodes…");
+  const episodeBtn = el(
+    "button",
+    { class: "danger", disabled: true, onclick: onPrune },
+    "Prune episodes…",
+  );
   const episodePills = severityPills(selectable, episodeSel, {
-    ariaLabel: "Limit the prune to these severities", onChange: () => refreshPreview(),
+    ariaLabel: "Limit the prune to these severities",
+    onChange: () => refreshPreview(),
   });
 
-  main.append(settingsPanel({
-    title: "Prune resolved episodes",
-    description:
-      "Drops sealed lifecycles that were closed long enough ago to stop being interesting. " +
-      "Compaction moves closed findings into episode rows but never removes them, so this " +
-      "is the only thing that shortens that tab. Unlike compaction, it CHANGES THE PAST: " +
-      "episodes feed MTTR and remediation coverage, so historical figures will move.",
-    body: [
-      settingRow({
-        label: "Resolved more than",
-        description: "Only episodes closed before this are pruned.",
-        control: daysSelect("maint-ep-days", episodeDays, (e) => {
-          episodeDays = Number(e.target.value);
-          refreshPreview();
+  main.append(
+    settingsPanel({
+      title: "Prune resolved episodes",
+      description:
+        "Drops sealed lifecycles that were closed long enough ago to stop being interesting. " +
+        "Compaction moves closed findings into episode rows but never removes them, so this " +
+        "is the only thing that shortens that tab. Unlike compaction, it CHANGES THE PAST: " +
+        "episodes feed MTTR and remediation coverage, so historical figures will move.",
+      body: [
+        settingRow({
+          label: "Resolved more than",
+          description: "Only episodes closed before this are pruned.",
+          control: daysSelect("maint-ep-days", episodeDays, (e) => {
+            episodeDays = Number(e.target.value);
+            refreshPreview();
+          }),
+          htmlFor: "maint-ep-days",
         }),
-        htmlFor: "maint-ep-days",
-      }),
-      el("div", { class: "scope-block" },
-        el("span", { class: "label" }, "Limit to severities"),
-        el("p", { class: "muted small scope-block__note" },
-          "Leave all unselected to prune every severity."),
-        episodePills.node),
-      episodeCounts,
-    ],
-    footer: episodeBtn,
-  }));
+        el(
+          "div",
+          { class: "scope-block" },
+          el("span", { class: "label" }, "Limit to severities"),
+          el(
+            "p",
+            { class: "muted small scope-block__note" },
+            "Leave all unselected to prune every severity.",
+          ),
+          episodePills.node,
+        ),
+        episodeCounts,
+      ],
+      footer: episodeBtn,
+    }),
+  );
 
   // ---- trim trend history
   const historyCounts = el("p", { class: "muted small" }, "Loading…");
-  const historyBtn = el("button", { class: "danger", disabled: true, onclick: onTrim },
-    "Trim history…");
+  const historyBtn = el(
+    "button",
+    { class: "danger", disabled: true, onclick: onTrim },
+    "Trim history…",
+  );
 
-  main.append(settingsPanel({
-    title: "Trim trend history",
-    description:
-      "Drops daily KPI snapshots older than the window. The only cleanup here with no " +
-      "knock-on: the snapshots are written once per scan and never replayed, so trimming " +
-      "them shortens the history-based series and changes nothing else.",
-    body: [
-      settingRow({
-        label: "Keep the last",
-        description: "Snapshots older than this are dropped.",
-        control: daysSelect("maint-hist-days", historyDays, (e) => {
-          historyDays = Number(e.target.value);
-          refreshPreview();
+  main.append(
+    settingsPanel({
+      title: "Trim trend history",
+      description:
+        "Drops daily KPI snapshots older than the window. The only cleanup here with no " +
+        "knock-on: the snapshots are written once per scan and never replayed, so trimming " +
+        "them shortens the history-based series and changes nothing else.",
+      body: [
+        settingRow({
+          label: "Keep the last",
+          description: "Snapshots older than this are dropped.",
+          control: daysSelect("maint-hist-days", historyDays, (e) => {
+            historyDays = Number(e.target.value);
+            refreshPreview();
+          }),
+          htmlFor: "maint-hist-days",
         }),
-        htmlFor: "maint-hist-days",
-      }),
-      historyCounts,
-    ],
-    footer: historyBtn,
-  }));
+        historyCounts,
+      ],
+      footer: historyBtn,
+    }),
+  );
 
   // ---- preview plumbing
   let previewSeq = 0;
@@ -706,7 +952,9 @@ function renderMaintenanceSection(main, boot, ctx) {
       purgeCounts.textContent =
         `${total.toLocaleString()} lifecycle(s) — ${detail}. ` +
         `${p.scansToRewrite} scan archive(s) will be rewritten` +
-        (p.sealedScans ? `; ${p.sealedScans} sealed scan(s) have none left to rewrite.` : ".");
+        (p.sealedScans
+          ? `; ${p.sealedScans} sealed scan(s) have none left to rewrite.`
+          : ".");
       purgeBtn.disabled = false;
       purgeBtn.textContent = `Purge ${total.toLocaleString()} finding(s)…`;
     }
@@ -714,19 +962,23 @@ function renderMaintenanceSection(main, boot, ctx) {
     const ep = preview.episodes;
     episodeCounts.textContent = ep.rows
       ? `${ep.rows.toLocaleString()} episode(s) — ${bySeverityLine(order, ep.bySeverity)}. ` +
-        `Oldest ${ep.oldest ? ep.oldest.slice(0, 10) : "—"}, newest ` +
-        `${ep.newest ? ep.newest.slice(0, 10) : "—"}. ${ep.remaining.toLocaleString()} would remain.`
+        `Oldest ${ep.oldest ? ep.oldest.slice(0, 10) : absentText}, newest ` +
+        `${ep.newest ? ep.newest.slice(0, 10) : absentText}. ${ep.remaining.toLocaleString()} would remain.`
       : "No episodes are old enough to prune.";
     episodeBtn.disabled = !ep.rows;
-    episodeBtn.textContent = ep.rows ? `Prune ${ep.rows.toLocaleString()} episode(s)…` : "Prune episodes…";
+    episodeBtn.textContent = ep.rows
+      ? `Prune ${ep.rows.toLocaleString()} episode(s)…`
+      : "Prune episodes…";
 
     const h = preview.history;
     historyCounts.textContent = h.rows
-      ? `${h.rows.toLocaleString()} snapshot(s) before ${h.oldest ? h.oldest : "—"}… ` +
+      ? `${h.rows.toLocaleString()} snapshot(s) before ${h.oldest ? h.oldest : absentText}… ` +
         `${h.remaining.toLocaleString()} would remain.`
       : "No snapshots are old enough to trim.";
     historyBtn.disabled = !h.rows;
-    historyBtn.textContent = h.rows ? `Trim ${h.rows.toLocaleString()} snapshot(s)…` : "Trim history…";
+    historyBtn.textContent = h.rows
+      ? `Trim ${h.rows.toLocaleString()} snapshot(s)…`
+      : "Trim history…";
   }
 
   // ---- purge: confirm + start + progress
@@ -747,17 +999,29 @@ function renderMaintenanceSection(main, boot, ctx) {
 
     const ok = await confirmDialog({
       title: `Purge ${total.toLocaleString()} finding(s)?`,
-      body: el("div", {},
-        el("p", {}, `${p.ledgerRows.toLocaleString()} tracked lifecycle(s) and ` +
-          `${p.episodeRows.toLocaleString()} resolved episode(s) will be deleted — ` +
-          `${bySeverityLine(order, p.bySeverity)}.`),
-        el("p", {}, `${p.scansToRewrite} saved scan archive(s) in Drive are rewritten so a ` +
-          `later scan deletion can't replay these findings back. That runs in the background ` +
-          `and blocks scanning until it finishes.` +
-          (p.sealedScans
-            ? ` ${p.sealedScans} sealed scan(s) have no archive left to rewrite.`
-            : "")),
-        el("div", { style: "margin:10px 0" },
+      body: el(
+        "div",
+        {},
+        el(
+          "p",
+          {},
+          `${p.ledgerRows.toLocaleString()} tracked lifecycle(s) and ` +
+            `${p.episodeRows.toLocaleString()} resolved episode(s) will be deleted — ` +
+            `${bySeverityLine(order, p.bySeverity)}.`,
+        ),
+        el(
+          "p",
+          {},
+          `${p.scansToRewrite} saved scan archive(s) in Drive are rewritten so a ` +
+            `later scan deletion can't replay these findings back. That runs in the background ` +
+            `and blocks scanning until it finishes.` +
+            (p.sealedScans
+              ? ` ${p.sealedScans} sealed scan(s) have no archive left to rewrite.`
+              : ""),
+        ),
+        el(
+          "div",
+          { style: "margin:10px 0" },
           settingRow({
             label: "Also stop scanning for these severities",
             description: narrowable.length
@@ -766,12 +1030,16 @@ function renderMaintenanceSection(main, boot, ctx) {
               : "Not available — the scan scope can't be narrowed to these.",
             control: scopeToggle.node,
             htmlFor: "purge-narrow-scope",
-          })),
-        el("p", { class: "small muted" },
+          }),
+        ),
+        el(
+          "p",
+          { class: "small muted" },
           "MTTR history snapshots carry no severity breakdown, so past daily figures keep " +
-          "counting these findings and will disagree with the recomputed trend. A migration " +
-          "bundle exported before now would restore everything if re-imported. This can't " +
-          "be undone."),
+            "counting these findings and will disagree with the recomputed trend. A migration " +
+            "bundle exported before now would restore everything if re-imported. This can't " +
+            "be undone.",
+        ),
       ),
       confirmLabel: "Purge",
       danger: true,
@@ -796,9 +1064,18 @@ function renderMaintenanceSection(main, boot, ctx) {
     const view = purgeStatusView(status);
     clear(purgeProgress);
     if (!status) return;
-    if (view.pct !== null || view.busy) purgeProgress.append(progressBar(view.pct));
+    if (view.pct !== null || view.busy)
+      purgeProgress.append(progressBar(view.pct));
     purgeProgress.append(
-      el("p", { class: view.warn ? "small field-error" : "muted small", role: "status" }, view.text));
+      el(
+        "p",
+        {
+          class: view.warn ? "small field-error" : "muted small",
+          role: "status",
+        },
+        view.text,
+      ),
+    );
     purgeBtn.disabled = view.busy;
     if (view.poll) {
       setTimeout(loadPurgeStatus, 4000);
@@ -823,17 +1100,30 @@ function renderMaintenanceSection(main, boot, ctx) {
     if (!ep || !ep.rows) return;
     const ok = await confirmDialog({
       title: `Prune ${ep.rows.toLocaleString()} resolved episode(s)?`,
-      body: el("div", {},
-        el("p", {}, `Sealed lifecycles resolved before ` +
-          `${ep.newest ? ep.newest.slice(0, 10) : "the cutoff"} will be deleted — ` +
-          `${bySeverityLine(order, ep.bySeverity)}. ${ep.remaining.toLocaleString()} remain.`),
-        el("p", {}, "This rewrites history. Episodes are part of the remediation record, so " +
-          "MTTR, the trend, and remediation coverage will show different past numbers " +
-          "afterwards — that is the difference between this and compaction, which is gated " +
-          "on leaving those figures identical."),
-        el("p", { class: "small muted" },
+      body: el(
+        "div",
+        {},
+        el(
+          "p",
+          {},
+          `Sealed lifecycles resolved before ` +
+            `${ep.newest ? ep.newest.slice(0, 10) : "the cutoff"} will be deleted — ` +
+            `${bySeverityLine(order, ep.bySeverity)}. ${ep.remaining.toLocaleString()} remain.`,
+        ),
+        el(
+          "p",
+          {},
+          "This rewrites history. Episodes are part of the remediation record, so " +
+            "MTTR, the trend, and remediation coverage will show different past numbers " +
+            "afterwards — that is the difference between this and compaction, which is gated " +
+            "on leaving those figures identical.",
+        ),
+        el(
+          "p",
+          { class: "small muted" },
           "A pruned lifecycle that reappears in a later scan counts as new rather than " +
-          "reopened. This can't be undone."),
+            "reopened. This can't be undone.",
+        ),
       ),
       confirmLabel: "Prune",
       danger: true,
@@ -842,10 +1132,13 @@ function renderMaintenanceSection(main, boot, ctx) {
     episodeBtn.disabled = true;
     try {
       const res = await call("api_pruneEpisodes", {
-        days: episodeDays, severities: [...episodeSel],
+        days: episodeDays,
+        severities: [...episodeSel],
       });
-      toast(`Pruned ${res.removed.toLocaleString()} episode(s); ` +
-        `${res.remaining.toLocaleString()} remain.`);
+      toast(
+        `Pruned ${res.removed.toLocaleString()} episode(s); ` +
+          `${res.remaining.toLocaleString()} remain.`,
+      );
       ctx.refresh();
     } catch (e) {
       episodeBtn.disabled = false;
@@ -858,7 +1151,8 @@ function renderMaintenanceSection(main, boot, ctx) {
     if (!h || !h.rows) return;
     const ok = await confirmDialog({
       title: `Trim ${h.rows.toLocaleString()} history snapshot(s)?`,
-      body: `Daily KPI snapshots older than ${historyDays} days will be deleted, leaving ` +
+      body:
+        `Daily KPI snapshots older than ${historyDays} days will be deleted, leaving ` +
         `${h.remaining.toLocaleString()}. The history-based change chips stop reaching past ` +
         `the cutoff; the reconstructed MTTR trend is unaffected. This can't be undone.`,
       confirmLabel: "Trim",
@@ -868,8 +1162,10 @@ function renderMaintenanceSection(main, boot, ctx) {
     historyBtn.disabled = true;
     try {
       const res = await call("api_trimHistory", { days: historyDays });
-      toast(`Trimmed ${res.removed.toLocaleString()} snapshot(s); ` +
-        `${res.remaining.toLocaleString()} remain.`);
+      toast(
+        `Trimmed ${res.removed.toLocaleString()} snapshot(s); ` +
+          `${res.remaining.toLocaleString()} remain.`,
+      );
       ctx.refresh();
     } catch (e) {
       historyBtn.disabled = false;

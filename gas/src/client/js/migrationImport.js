@@ -1,5 +1,5 @@
-// Parsing for migration bundles exported by the legacy Streamlit dashboard
-// (wiz_dashboard/data/migrate.py). Pure and DOM-free so it is unit-testable.
+// Parsing for migration bundles exported by the legacy Python dashboard
+// (`wiz_dashboard/data/migrate.py`). Pure and DOM-free so it is unit-testable.
 // Structural checks only — deep validation (timestamp ordering, sealed-state
 // preconditions, row caps) stays server-side in api_importMigration.
 
@@ -20,7 +20,9 @@ export const MAX_BUNDLE_BYTES = 64 * 1024 * 1024;
  */
 export async function gzipToBase64(text) {
   if (typeof CompressionStream === "undefined") return null;
-  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  const stream = new Blob([text])
+    .stream()
+    .pipeThrough(new CompressionStream("gzip"));
   const bytes = new Uint8Array(await new Response(stream).arrayBuffer());
   let binary = "";
   const CHUNK = 0x8000; // chunk the fromCharCode call so a big array can't overflow the stack
@@ -44,17 +46,25 @@ export function parseMigrationBundle(text) {
     return { error: "Not valid JSON: " + e.message };
   }
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
-    return { error: "Unrecognized format — expected a migration bundle object." };
+    return {
+      error: "Unrecognized format — expected a migration bundle object.",
+    };
   }
   if (data.kind === "wiz-sidekick-domains") {
-    return { error: "This is a domains export — import it on the Settings page instead." };
+    return {
+      error:
+        "This is a domains export — import it on the Settings page instead.",
+    };
   }
   if (data.kind !== MIGRATION_KIND) {
-    return { error: `Not a migration bundle — expected "kind": "${MIGRATION_KIND}".` };
+    return {
+      error: `Not a migration bundle — expected "kind": "${MIGRATION_KIND}".`,
+    };
   }
   if (Number(data.version) !== MIGRATION_VERSION) {
     return {
-      error: `Unsupported bundle version ${data.version} — this app understands version ` +
+      error:
+        `Unsupported bundle version ${data.version} — this app understands version ` +
         `${MIGRATION_VERSION}. The bundle may come from a newer exporter.`,
     };
   }
@@ -71,16 +81,28 @@ export function parseMigrationBundle(text) {
   }
   for (let i = 0; i < tables.scans.length; i++) {
     const s = tables.scans[i];
-    if (s === null || typeof s !== "object" || Array.isArray(s) ||
-        typeof s.scan_id !== "string" || !s.scan_id || typeof s.ts !== "string" || !s.ts) {
+    if (
+      s === null ||
+      typeof s !== "object" ||
+      Array.isArray(s) ||
+      typeof s.scan_id !== "string" ||
+      !s.scan_id ||
+      typeof s.ts !== "string" ||
+      !s.ts
+    ) {
       return { error: `Scan ${i + 1}: missing scan_id or ts.` };
     }
   }
   for (const name of ["ledger", "episodes"]) {
     for (let i = 0; i < tables[name].length; i++) {
       const r = tables[name][i];
-      if (r === null || typeof r !== "object" || Array.isArray(r) ||
-          typeof r.vuln_key !== "string" || !r.vuln_key) {
+      if (
+        r === null ||
+        typeof r !== "object" ||
+        Array.isArray(r) ||
+        typeof r.vuln_key !== "string" ||
+        !r.vuln_key
+      ) {
         return { error: `${name} row ${i + 1}: missing vuln_key.` };
       }
     }
@@ -89,7 +111,8 @@ export function parseMigrationBundle(text) {
     bundle: {
       kind: MIGRATION_KIND,
       version: MIGRATION_VERSION,
-      exported_at: typeof data.exported_at === "string" ? data.exported_at : null,
+      exported_at:
+        typeof data.exported_at === "string" ? data.exported_at : null,
       scans: tables.scans,
       ledger: tables.ledger,
       episodes: tables.episodes,
@@ -126,7 +149,9 @@ export function classifyImportFiles(files) {
     return { mode: "single", text: parsed[0].text };
   }
 
-  const others = parsed.filter((p) => p.kind !== MANIFEST_KIND && p.kind !== SHARD_KIND);
+  const others = parsed.filter(
+    (p) => p.kind !== MANIFEST_KIND && p.kind !== SHARD_KIND,
+  );
   if (others.length) {
     return {
       error: parsed.some((p) => p.kind === MIGRATION_KIND)
@@ -136,13 +161,18 @@ export function classifyImportFiles(files) {
   }
   const manifests = parsed.filter((p) => p.kind === MANIFEST_KIND);
   if (manifests.length !== 1) {
-    return { error: "Select exactly one manifest.json together with its shard files." };
+    return {
+      error: "Select exactly one manifest.json together with its shard files.",
+    };
   }
   const m = manifests[0].data;
   if (Number(m.version) !== MIGRATION_VERSION) {
-    return { error: `Unsupported manifest version ${m.version} — expected ${MIGRATION_VERSION}.` };
+    return {
+      error: `Unsupported manifest version ${m.version} — expected ${MIGRATION_VERSION}.`,
+    };
   }
-  if (!Array.isArray(m.scans)) return { error: "Manifest scans must be a list." };
+  if (!Array.isArray(m.scans))
+    return { error: "Manifest scans must be a list." };
   const shardCount = Number(m.shard_count);
 
   const shards = parsed
@@ -150,10 +180,13 @@ export function classifyImportFiles(files) {
     .map((p) => ({ index: Number(p.data.index), text: p.text }))
     .sort((a, b) => a.index - b.index);
   if (shards.length !== shardCount) {
-    return { error: `Expected ${shardCount} shard(s) for this manifest, got ${shards.length}.` };
+    return {
+      error: `Expected ${shardCount} shard(s) for this manifest, got ${shards.length}.`,
+    };
   }
   for (let i = 0; i < shards.length; i++) {
-    if (shards[i].index !== i) return { error: `Shard ${i} is missing or duplicated.` };
+    if (shards[i].index !== i)
+      return { error: `Shard ${i} is missing or duplicated.` };
   }
   return {
     mode: "sharded",

@@ -630,9 +630,9 @@ def mttr_by_severity(df: DataFrame) -> DataFrame:
         F.when(F.col("severity") == OVERALL, F.col("oldest_open_days")),
     )
 
-    # The censoring-aware estimate rides alongside the naive one. `mttr_median` stays because
-    # it is what the Streamlit dashboard shows and dropping it would make the two surfaces
-    # incomparable -- but `km_median` is the one to report, and it is normally larger.
+    # The censoring-aware estimate rides alongside the naive one. `mttr_median` stays for
+    # comparison with the earlier Python spec, but `km_median` is the one to report, and it is
+    # normally larger.
     return combined.join(kaplan_meier(df), "severity", "left")
 
 

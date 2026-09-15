@@ -3,14 +3,15 @@
 import { call, } from "../../../../../gas_shared/api.js";
 import { bootstrap, bootstrapCached, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  absent, appendAll, clear, confirmDialog, dataTable, el, emptyState, errorState, heroLines,
-  firstRunNotice, fmtDateTime, pageHeader,
+  absent, absentText, appendAll, clear, confirmDialog, dataTable, el, emptyState, errorState,
+  heroLines, firstRunNotice, fmtDateTime, pageHeader,
   prunePanel, registerWideNote, statRow,
   sectionLabel, skeleton, statusPill, toast,
 } from "../ui.js";
+import { ledgerDeltasOf } from "./dataModel.js";
 
 function fmtBytes(n) {
-  if (!Number.isFinite(n)) return "—";
+  if (!Number.isFinite(n)) return absentText;
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
   return `${(n / (1024 * 1024)).toFixed(1)} MB`;
@@ -55,7 +56,15 @@ export async function renderData(main, _params, ctx) {
 
   const historyHost = el("div", {});
   const statsHost = el("div", {});
-  main.append(sectionLabel("Sync history"), historyHost, sectionLabel("Storage"), statsHost);
+  main.append(
+    // The rail dot's own precedence has nowhere else to be read: it lives in app.js, which
+    // this wave does not touch, so its definition is drawn here instead — the section
+    // whose own rows are the raw material that precedence is derived from.
+    sectionLabel("Sync history", { term: "rail-status" }),
+    historyHost,
+    sectionLabel("Storage"),
+    statsHost,
+  );
 
   // Seed each host with a skeleton until its RPC resolves; paintHistory()/paintStats() clear.
   historyHost.append(el("div", {
@@ -143,20 +152,67 @@ export async function renderData(main, _params, ctx) {
     // A count Wiz never reported is `absent()`, not a plain dash: a sync row that failed
     // before it counted anything must not read in the same ink as one that counted zero.
     const count = (n) => (n === null || n === undefined ? absent() : String(n));
+    // WHAT THE LIFECYCLE LEDGER DID ON EACH SYNC, beside what the sync collected. The three
+    // columns are one cell (`ledger_json`) read once per row: a sync recorded before the
+    // ledger existed carries none of them, and all three then read `absent()` together rather
+    // than three separate zeroes that would describe a quiet week nobody measured.
+    const delta = (key) => (r) => {
+      const d = ledgerDeltasOf(r);
+      return d === null ? absent() : String(d[key]);
+    };
     historyHost.append(dataTable({
       columns: [
-        { key: "finished", label: "Finished", cell: (r) => fmtDateTime(r.finished_at) },
+        {
+          key: "finished", label: "Finished",
+          // The one date the rail dot's own staleness reading is computed from — the
+          // LATEST row's, not every row's, but a reader judging "how stale" reads down this
+          // column the same way the dot does.
+          help: { term: "stale" },
+          cell: (r) => fmtDateTime(r.finished_at),
+        },
         {
           key: "status", label: "Status",
+          help: { lines: [
+            "Whether this one sync committed (Success) or was interrupted before it could " +
+            "write its row (Failed). The sync-history row is written LAST, so a sync that " +
+            "never reached Success also never appears here at all.",
+          ] },
           cell: (r) => (r.status === "SUCCESS"
             ? statusPill("ok", "Success")
             : statusPill("bad", String(r.status || "Failed"))),
         },
-        { key: "mode", label: "Mode", cell: (r) => r.mode || absent() },
-        { key: "nodes", label: "Nodes", className: "num", cell: (r) => count(r.node_count) },
-        { key: "edges", label: "Edges", className: "num", cell: (r) => count(r.edge_count) },
-        { key: "issues", label: "Issues", className: "num", cell: (r) => count(r.issue_count) },
-        { key: "calls", label: "API calls", className: "num", cell: (r) => count(r.api_calls) },
+        { key: "mode", label: "Mode", help: { term: "dry-run" }, cell: (r) => r.mode || absent() },
+        {
+          key: "nodes", label: "Nodes", className: "num", help: { term: "sync" },
+          cell: (r) => count(r.node_count),
+        },
+        {
+          key: "edges", label: "Edges", className: "num",
+          help: { lines: ["How many relationships between assets this sync's graph read produced."] },
+          cell: (r) => count(r.edge_count),
+        },
+        {
+          key: "issues", label: "Issues", className: "num",
+          help: { lines: ["How many issue-ledger rows this sync's own register scope collected."] },
+          cell: (r) => count(r.issue_count),
+        },
+        {
+          key: "ledgerNew", label: "New", className: "num",
+          help: { term: "movement" }, cell: delta("new"),
+        },
+        {
+          key: "ledgerGone", label: "Gone", className: "num",
+          help: { term: "disappearance" }, cell: delta("resolved"),
+        },
+        {
+          key: "ledgerReturned", label: "Returned", className: "num",
+          help: { term: "returned" }, cell: delta("reopened"),
+        },
+        {
+          key: "calls", label: "API calls", className: "num",
+          help: { lines: ["How many Wiz GraphQL calls this one sync made to collect its rows."] },
+          cell: (r) => count(r.api_calls),
+        },
       ],
       rows: payload.rows,
     }));

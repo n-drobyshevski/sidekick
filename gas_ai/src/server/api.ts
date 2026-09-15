@@ -136,8 +136,10 @@ import {
 import { dropUnselected, scopeFiveRs, withCountsFrom } from "../domain/complianceScope";
 import { fiveRsDerivedPosture } from "../domain/fiveRsPosture";
 import { CANDIDATE_CATEGORIES, registerScopeSignature } from "../domain/registerScope";
+import * as settingsImpact from "../domain/settingsImpact";
 import { cleanFiveRsPins } from "../domain/settingsLogic";
 import { buildAllFrameworkTrees, complianceKpis } from "../domain/compliancePosture";
+import { compliancePostureTrendFromHistory } from "../domain/complianceTrend";
 import { graphCacheParams, resolveGraphParams, resolveLayoutParams } from "../domain/graphApiParams";
 import { conditionHolds, conditionState } from "../domain/riskConditions";
 import {
@@ -176,6 +178,8 @@ import {
 import { normalizeCompliancePosturePage } from "../domain/syncNormalize";
 import { DATASTORE_KINDS } from "../domain/graphEnrich";
 import { comboDigest } from "../domain/comboDigest";
+import { backlogMovement, type BacklogMovement } from "../domain/backlogMovement";
+import { issueHalfLife, type IssueHalfLife } from "../domain/issueSurvival";
 import { estateReach, type EstateReach } from "../domain/reach";
 import { comboGroupById, comboSummary, REGISTER_GROUPS } from "../domain/toxicCombos";
 import { clampInt, nowIso, type Rec } from "../domain/util";
@@ -435,7 +439,12 @@ function openIssues(): IssueRow[] {
 function registerScopeNotice(latest: Rec | null): Rec | null {
   const persisted = latest ? String(latest["register_scope"] ?? "") : "";
   if (!persisted) return null;
-  const current = registerScopeSignature(settingsStore.getIssueCategories());
+  // The scope a sync STARTED NOW would apply — categories from settings, perimeter from
+  // `projectScope()`, which is the same resolution the battery itself would run. Reading the
+  // setting instead would claim a scope the battery might not take: `project` with the
+  // property blank collects tenant-wide, and a notice comparing against the wrong side would
+  // fire (or stay silent) on a register that had not moved.
+  const current = registerScopeSignature(settingsStore.getIssueCategories(), projectScope());
   if (persisted === current) return null;
   return { kind: "registerScope", persisted, current, remedy: "sync" };
 }
@@ -2167,6 +2176,25 @@ function cachedComplianceModel(): Rec {
         // mirror to reconcile against — computing it here instead buys nothing but risk.
         fiveRsPosture,
         coverage: coverageSummary(trees, merged),
+        // POSTURE OVER TIME — one point per sync, every framework plus the cross-framework
+        // mean, read off `sync_history`'s own column (domain/complianceTrend.ts). It replaces
+        // the state strip that used to sit beside the hero: that strip drew the LATEST sync's
+        // subcategory states as a four-segment bar, which answers "what did Wiz score" and
+        // never "is this getting better", the question a compliance register is actually
+        // opened with.
+        //
+        // Shipped whole, with every framework's series in the same array, because the page
+        // switches framework client-side off one fetch (the `?framework=` control rebuilds
+        // from `data`, it does not re-call). One array of at most 90 points holding a handful
+        // of frameworks is smaller than the trees beside it.
+        //
+        // REGISTER-WIDE EVEN UNDER A PROJECT VIEW, and the card says so rather than quietly
+        // drawing the landscape's history under a project filter. `scopedPosture` re-asks Wiz
+        // for the project in view, which is how every OTHER figure on this page narrows — but
+        // the past cannot be re-asked, and a history row carries no asset id to re-slice by.
+        // `postureScope` beside it already carries the project and domain in force, so the
+        // card reads its disclaimer off the field the rest of the page already trusts.
+        complianceTrend: compliancePostureTrendFromHistory(syncStore.syncHistory()),
         // WHICH POPULATION every figure above describes, and — when a project view is set
         // but the numbers are still the register's — why. The page prints this beside the
         // hero rather than as a footnote, the discipline `registerWideNote` already keeps:
@@ -2307,24 +2335,159 @@ export function expandAsset(p?: unknown): ApiResult {
 
 // --------------------------------------------------------------------------- issues
 
+/**
+ * Row ceiling for ONE toxic-combination group's issue table, mirroring
+ * `problems.PROBLEMS_CLIENT_ALL_MAX` / `assetTable.CLIENT_ALL_MAX` /
+ * `configFindings.CONFIG_CLIENT_ALL_MAX`: under it the browser holds every row IN THE
+ * GROUP and filters/sorts/pages them locally — the exact shape `combos.js`'s issue table
+ * already used, unpaginated, before this ceiling existed. Past it the server pages, and
+ * `filtered` reports the GROUP's own count, never the register's, because the group
+ * filter always runs BEFORE the page is cut below, not after it.
+ */
+export const ISSUES_CLIENT_ALL_MAX = 1000;
+
 export function getIssues(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
     const group = String(params["group"] ?? "");
-    return durablyCached("getIssues", { group }, () => {
-      let rows = viewIssues();
-      if (group) rows = rows.filter((i) => i.comboGroup === group);
-      return { rows: rows.map((r) => publicRow(r as unknown as Rec)) };
-    });
+    // Absent and bogus alike refuse to 0/DEFAULT_PAGE_SIZE before either reaches pageOf,
+    // which does not itself guard a non-finite pageSize (`Math.max(1, Math.floor(NaN))`
+    // is NaN, not 1) — the same refuse-before-cast rule this file's `getProblems` neighbour
+    // gets right only by the accident of `||` treating NaN as falsy.
+    const page = clampInt(params["page"], 0, 0, Number.MAX_SAFE_INTEGER);
+    const pageSize = clampInt(params["pageSize"], DEFAULT_PAGE_SIZE, 1, MAX_PAGE_SIZE);
+
+    // "getIssues2": the cached SHAPE changed underneath this name — `{ rows }` alone,
+    // unpaginated, is what a still-warm "getIssues" entry (keyed on `group` alone, same as
+    // this one) would still answer with. Bumped in `assetsModel2`'s own convention: the
+    // digit moves when the STORED SHAPE changes, not when a derivation does — nothing about
+    // how a group's rows are chosen moved here.
+    //
+    // `publicRow` runs INSIDE the cached closure, same boundary the original single-shape
+    // `getIssues` drew, not outside it the way `getProblems` redacts its own already-slim
+    // `ProblemRow`. `IssueRow` is not slim — `projectRefs`, `frameworks`, `problemInput` and
+    // the rest of `VERDICT_ROW_KEYS` ride along on every row — so caching the RAW rows and
+    // redacting per request would persist the wide shape to the L2 Drive archive forever,
+    // never the shape any caller actually reads. Measured: moving the redaction outside
+    // grew the durable `getIssues2` file from 37,956 to 49,599 bytes (+11,643) for the same
+    // 32-row seed, an eleven-off-by-nothing regression `getStorageStats`'s own golden
+    // snapshot caught — the redaction is not free to defer.
+    const groupRows = durablyCached("getIssues2", { group }, () => {
+      const rows = viewIssues();
+      const scoped = group ? rows.filter((i) => i.comboGroup === group) : rows;
+      return scoped.map((i) => publicRow(i as unknown as Rec));
+    }) as Rec[];
+
+    if (groupRows.length <= ISSUES_CLIENT_ALL_MAX) {
+      return {
+        all: true,
+        rows: groupRows,
+        filtered: groupRows.length,
+        page: 0,
+        pageCount: Math.max(1, Math.ceil(groupRows.length / pageSize)),
+      };
+    }
+
+    // Past the ceiling. `groupRows` is already scoped to this one pattern — the group
+    // filter above ran BEFORE this page is cut, never after — so `filtered` reports the
+    // GROUP's size. Paging the whole register first and filtering the page afterward would
+    // instead report the register's size under this pattern's label, and a deep link into
+    // one narrow pattern would leaf through other patterns' rows.
+    const paged = pageOf(groupRows, page, pageSize);
+    return {
+      all: false,
+      rows: paged.rows,
+      filtered: groupRows.length,
+      page: paged.page,
+      pageCount: paged.pageCount,
+    };
   });
 }
 
+/**
+ * What a SURFACE may read off one lifecycle-ledger row.
+ *
+ * A PROJECTION, not the row. `IssueLedgerRow` also carries the frozen rank inputs
+ * (`ruleId`, `aiAdjacency`, `exploitationTier`, `epssPeak`), `lastStatus`, `categories` and
+ * — the one that matters — Wiz's own `createdAt`, which on a departed row can predate this
+ * register's first sighting by a YEAR (`sampleData.ts` seeds exactly that, deliberately, so
+ * a fixture cannot pass a client that reached for the wrong date). Shipping the whole row
+ * would put that year-earlier date one property access away from a sheet whose entire
+ * subject is when THIS register saw the issue. Eight fields, all of them the ledger's own
+ * observations plus the two words that qualify them.
+ */
+interface PublicIssueLedger {
+  firstSeenAt: string;
+  firstSeenSync: string;
+  lastSeenAt: string;
+  lastSeenSync: string;
+  disappearedAt: string | null;
+  resolutionSrc: "disappeared" | "reopened" | null;
+  episode: number;
+  registerScope: string;
+}
+
+/**
+ * The lifecycle ledger as a lookup, projected and cached.
+ *
+ * BEHIND `cached` BECAUSE `loadIssueLedger()` IS DELIBERATELY NOT MEMOIZED.
+ * `syncStore.ts`'s own header says why: `persistSync` is a caller inside a WRITE and must
+ * see the tab as it stands rather than as some earlier read in the same execution left it,
+ * so a stale ledger there would be reconciled against and written back, silently dropping
+ * whatever the missed read held. That rule is right for the write path and wrong for this
+ * one — a per-RPC sheet read of every row this register has ever held, to answer about one
+ * id. So the READ side gets its own entry rather than the load being memoized underneath
+ * both.
+ *
+ * L1 only. The cache namespace is `issueLedgerIndex1`, in this file's own suffix convention
+ * (`assetsModel2`, `backlogMovement1`): the trailing digit is bumped when the SHAPE of what
+ * is stored changes, so a still-warm entry cannot answer a newer client with an older
+ * payload. Keyed on the data version like every other `cached` entry, which is what a sync
+ * bumps — and a sync is the only thing that can move a ledger row.
+ */
+function issueLedgerIndex(): Record<string, PublicIssueLedger> {
+  return cached("issueLedgerIndex1", null, () => {
+    const out: Record<string, PublicIssueLedger> = {};
+    for (const row of syncStore.loadIssueLedger()) {
+      out[row.issueId] = {
+        firstSeenAt: row.firstSeenAt,
+        firstSeenSync: row.firstSeenSync,
+        lastSeenAt: row.lastSeenAt,
+        lastSeenSync: row.lastSeenSync,
+        disappearedAt: row.disappearedAt,
+        resolutionSrc: row.resolutionSrc,
+        episode: row.episode,
+        registerScope: row.registerScope,
+      };
+    }
+    return out;
+  });
+}
+
+/**
+ * One issue, its combination, and the register's own record of its lifetime.
+ *
+ * THE JOIN GOES BESIDE `issue`, NEVER INSIDE IT. `test/seedParity.test.ts` pins
+ * `getIssueDetail(id).issue` deep-equal to that id's row in `getIssues({}).rows`, which is
+ * what lets a list hand the sheet a row it already holds and skip the round trip entirely.
+ * Folding a ledger field into `issue` would break that seed path — quietly, as a repaint on
+ * every seeded open rather than as an error.
+ *
+ * A GONE ISSUE FINALLY HAS A SURFACE. `ai_issues` is overwritten on every sync and gated to
+ * OPEN / IN_PROGRESS, so an issue the ledger has dated by disappearance is not in that tab
+ * and this endpoint used to answer `null` — indistinguishable from an id that never
+ * existed, on the one register whose ledger knows precisely when the row left. When the tab
+ * has no row but the ledger does, the payload is `{ issue: null, group: null, ledger }` and
+ * the sheet says what the register knows instead of "not found". A `null` return now means
+ * one thing only: neither the tab nor the ledger has ever heard of this id.
+ */
 export function getIssueDetail(p?: unknown): ApiResult {
   return run(() => {
     const id = String(((p ?? {}) as Rec)["id"] ?? "");
     // Raw for the same reason as getConfigFindingDetail above: lists narrow, links do not.
     const issue = syncStore.loadIssues().find((i) => i.id === id) ?? null;
-    if (!issue) return null;
+    const ledger = id ? (issueLedgerIndex()[id] ?? null) : null;
+    if (!issue) return ledger ? { issue: null, group: null, ledger } : null;
     const group = issue.comboGroup ? comboGroupById(issue.comboGroup) : null;
     return {
       issue: publicRow(issue as unknown as Rec),
@@ -2338,6 +2501,7 @@ export function getIssueDetail(p?: unknown): ApiResult {
             frameworks: group.frameworks,
           }
         : null,
+      ledger,
     };
   });
 }
@@ -2606,6 +2770,57 @@ function publicProblemRow(r: ProblemRow): Rec {
  * the invariant `problems.ts`'s own header documents: `total` must equal
  * `issues.filter(isUnresolvedIssue).length + findings.filter(isOpenGap).length` exactly.
  */
+/**
+ * How the OPEN BACKLOG moved since the last sync, and since a week before it.
+ *
+ * ONE DERIVATION, TWO ENDPOINTS. `getProblems` and `getActions` publish the same block over
+ * the same population — they already share `problemsModel` for exactly that reason — and a
+ * second copy here would be a second chance for the two halves of one page to disagree.
+ *
+ * `openNow` COUNTS ISSUES ONLY, and that is not a filter, it is the population the figure is
+ * about. The lifecycle ledger holds issues alone: `persistSync` reconciles `decidedIssues`,
+ * and a finding never enters `ai_issue_ledger` at all, so the five per-sync transition counts
+ * `backlogMovement` replays have never described one. Anchoring the replay on the whole union
+ * would undo issue transitions from a count that includes findings, and every `prevOpen` it
+ * produced would be off by the finding population — a wrong number with no symptom.
+ *
+ * L1 only. The cache namespace is `backlogMovement1`, in this file's own suffix convention
+ * (`assetsModel2`, `getIssues2`): the trailing digit is bumped when the SHAPE of what is
+ * stored changes, so a still-warm entry cannot answer a newer client with an older payload.
+ */
+function problemsMovement(model: ProblemsModel): BacklogMovement {
+  const openNow = model.rows.filter((r) => r.kind === "ISSUE").length;
+  return cached("backlogMovement1", { openNow }, () =>
+    backlogMovement(syncStore.syncHistory(), { openNow })) as BacklogMovement;
+}
+
+/**
+ * The issue half-life: a Kaplan-Meier survival curve over the whole lifecycle ledger.
+ *
+ * ONE DERIVATION, TWO ENDPOINTS, for the same reason `problemsMovement` above is one — the
+ * two modes of the Priorities page must not be able to state different figures about one
+ * population. Unlike movement it takes NO parameters: the estimate is over every row the
+ * ledger holds, not over the filtered or paged view a caller asked for, so a reader narrowing
+ * the register to one severity does not get a curve that quietly re-fits itself to the
+ * selection.
+ *
+ * READ RAW, NOT THROUGH `issueLedgerIndex()`. That index is keyed by `issueId` for a
+ * lookup — one row per id by construction — and this is a POPULATION figure over rows. Two
+ * ledger rows sharing an id would be a defect, and folding them silently into one before
+ * counting them is exactly the shape of hiding it. The read is behind `cached` either way, so
+ * reusing the index would buy nothing but that fold.
+ *
+ * L1 only. The cache namespace is `issueHalfLife1`, in this file's own suffix convention
+ * (`assetsModel2`, `backlogMovement1`, `issueLedgerIndex1`): the trailing digit is bumped when
+ * the SHAPE of what is stored changes, so a still-warm entry cannot answer a newer client with
+ * an older payload. Keyed on the data version like every other `cached` entry — and a sync is
+ * the only thing that can move a ledger row.
+ */
+function problemsHalfLife(): IssueHalfLife {
+  return cached("issueHalfLife1", null, () =>
+    issueHalfLife(syncStore.loadIssueLedger())) as IssueHalfLife;
+}
+
 export function getProblems(p?: unknown): ApiResult {
   return run(() => {
     const params = (p ?? {}) as Rec;
@@ -2637,6 +2852,10 @@ export function getProblems(p?: unknown): ApiResult {
       // score and a stored rule can be compared instead of assumed to match.
       rankSignature: model.rankSignature,
       rankLeadsSort: model.rankLeadsSort,
+      // How the open ISSUE backlog moved since the last sync — see `problemsMovement`.
+      movement: problemsMovement(model),
+      // How long an issue survives in this register — see `problemsHalfLife`.
+      halfLife: problemsHalfLife(),
     };
 
     if (model.rows.length <= PROBLEMS_CLIENT_ALL_MAX) {
@@ -2705,6 +2924,11 @@ export function getActions(p?: unknown): ApiResult {
       totalProblems: model.rows.length,
       curve: coverCurve(fullyRanked, model.rows.length),
       concentration: concentrationRatio(fullyRanked, model.rows.length),
+      // The same two blocks `getProblems` publishes, off the same model and the same ledger —
+      // the two modes of one page must not be able to state different movement, or a
+      // different half-life.
+      movement: problemsMovement(model),
+      halfLife: problemsHalfLife(),
     };
   });
 }
@@ -2940,6 +3164,11 @@ export function getSettings(_p?: unknown): ApiResult {
     // be a second place for them to drift.
     issueCategories: settingsStore.getIssueCategories(),
     candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({ id: c.id, name: c.name })),
+    // WHICH PERIMETERS THE SYNC COLLECTS FROM — the other half of the same scope decision,
+    // and the reason it is on this payload rather than read from a Script Property by the
+    // client: the property is the server's to know, and `saveSettings` bumps the data
+    // version the client's SWR cache is keyed on.
+    syncScope: settingsStore.getSyncScope(),
     // The minimal model's knobs and whether it leads the Priorities order. The two presets
     // travel WITH them for the same reason the candidate list above travels with its
     // selection: a client that hand-copied `DEFAULT_RANK_RULE` or `RANK_PRESET_V2` would be
@@ -2988,6 +3217,12 @@ export function setSettings(p?: unknown): ApiResult {
     if (params["issueCategories"] !== undefined) {
       settingsStore.setIssueCategories(params["issueCategories"]);
     }
+    // WHICH PERIMETERS THE SYNC COLLECTS FROM. `!== undefined` rather than truthiness for the
+    // reason `autoExpand` above states: "project" is the DEFAULT, so a truthy guard would
+    // still pass it, but the shape has to match its sibling or the next value added here
+    // inherits the wrong guard. `cleanSyncScope` folds anything unrecognised back to
+    // "project", so a hand-edited or older client cannot store a third state.
+    if (params["syncScope"] !== undefined) settingsStore.setSyncScope(params["syncScope"]);
     // Cleaned rather than validated: `cleanRankRule` clamps every knob into range and reads a
     // pre-v2 rule as the two-term case, so a hand-edited or older blob degrades to a rule
     // that scores rather than to a refused save. Same latitude the two above take.
@@ -3009,6 +3244,10 @@ export function setSettings(p?: unknown): ApiResult {
       // Echoed like the rest, so the Settings page repaints the STORED list rather than
       // the one it asked for.
       issueCategories: settingsStore.getIssueCategories(),
+      // Echoed like the rest, so the Settings page repaints the STORED perimeter rather than
+      // the one it asked for — which matters here because an unrecognised value is folded
+      // back to "project" rather than refused.
+      syncScope: settingsStore.getSyncScope(),
       // Echoed for the same reason, and it matters more here: `cleanRankRule` can return a
       // rule that is not the one the caller sent (a share out of range, a v1 blob read as
       // the two-term case), so a page that repainted its own request would show knobs the
@@ -3017,6 +3256,113 @@ export function setSettings(p?: unknown): ApiResult {
       rankLeadsSort: settingsStore.getRankLeadsSort(),
     };
   });
+}
+
+/**
+ * Everything the Settings page needs to say, beside each control, what that control is
+ * currently doing to the register — in ONE payload, mirroring `gas/`'s `getSettingsImpact`.
+ * See `domain/settingsImpact.ts`'s header for the four figures and the honesty requirement
+ * the category cube (and, as of P11, the rank cube) keep.
+ *
+ * WHAT THIS WALKS. `syncStore.loadIssues()` once (memoized per execution, and likely already
+ * warm — every issue-reading endpoint calls it) to build the category cube; then one ALREADY
+ * -CACHED model, `problemsModel` (the Priorities queue), via `durablyCached` — the same
+ * read-through cache the Priorities page itself hits — reused for BOTH `termCoverage` and the
+ * P11 rank cube, and `assetsModel` (for the agent count) the same way. On a warm cache this is
+ * one sheet read plus two cache lookups, PLUS one more O(rows) pass over `problems.rows` to
+ * bucket every row into the rank cube (`buildRankCube`) — the walk this endpoint is most
+ * likely to strain the 6-minute cap on, so it is measured rather than assumed: on the
+ * reference tenant's ~200-row queue this is low-single-digit milliseconds, and
+ * `test/settingsImpact.test.ts` builds a cube from several thousand synthetic rows to pin the
+ * cell count (and therefore the serialized size against `CacheService`'s 100 KB ceiling) at a
+ * scale well past any tenant this app has been measured against. On a cold cache (first load
+ * after a sync) the whole function pays exactly what `getProblems` and `getAssets` already pay
+ * on their own first load, plus that one extra bucketing pass — never a second, independent
+ * full computation of the queue itself.
+ */
+function settingsImpactData(): Rec {
+  const openIssues = syncStore.loadIssues().filter(isUnresolvedIssue);
+  const candidateIds = CANDIDATE_CATEGORIES.map((c) => c.id);
+  const configuredIds = settingsStore.getIssueCategories();
+  const categoryCube = settingsImpact.buildCategoryCube(openIssues, candidateIds, configuredIds);
+
+  const problems = durablyCached("problemsModel", null, problemsModel) as ProblemsModel;
+  const termCoverage = settingsImpact.termCoverageOf(problems.rows);
+
+  // P11: the sparse joint over the rank tuple, built from the SAME `effectiveRankRule()` that
+  // scored `problems.rows` in the first place — see `domain/settingsImpact.ts`'s "P11: rank
+  // cube" section for the tuple, and why `ruleWeightKey`/the two ladders can be fixed at this
+  // rule without a caller-supplied one going stale: none of them are draft fields on this
+  // panel. `createdAt` reads `firstSeenAt`, the same field name `withRankScores` maps it
+  // through onto a `ProblemRow` — one birth-date field, one meaning, on both sides.
+  const rankRule = effectiveRankRule();
+  const rankCube = settingsImpact.buildRankCube(
+    problems.rows.map((r) => ({
+      ruleId: r.ruleId,
+      ruleShortId: r.ruleShortId,
+      dueAt: r.dueAt ?? undefined,
+      createdAt: r.firstSeenAt,
+      exploitationTier: r.exploitationTier,
+      epssPeak: r.epssPeak,
+      aiAdjacency: r.aiAdjacency,
+    })),
+    rankRule,
+    nowIso(),
+  );
+
+  const assets = durablyCached("assetsModel2", null, assetsModel) as AssetsModel;
+  const agentCount = Number(assets.kpis["agents"] ?? 0);
+
+  return {
+    categoryCube,
+    // The six candidates' dated calibration figures, travelling WITH their provenance rather
+    // than the client hand-copying them off a comment — registerScope.ts's own header on why.
+    candidateCategories: CANDIDATE_CATEGORIES.map((c) => ({
+      id: c.id,
+      name: c.name,
+      count: c.count,
+      measuredAt: c.measuredAt,
+      measuredScope: c.measuredScope,
+    })),
+    termCoverage,
+    rankCube,
+    agentCount,
+  };
+}
+
+// Keyed on the two settings that define the register's scope — the collected category set
+// and the sync perimeter — reusing gas's own argument for `cachedSettingsImpactData`: key on
+// what changes the MEASURED POPULATION, never on a field the client re-cuts itself (there,
+// the risk-classifier thresholds; here, there is no such field at all — this payload carries
+// no threshold for the client to preview against).
+//
+// `issueCategories` is read LIVE by `settingsImpactData` (it feeds `measuredCandidateIds`
+// directly, no resync required), so keying on it is load-bearing: without it, flipping the
+// category picker would keep serving a stale honesty flag for up to an hour. `syncScope` is
+// NOT read anywhere in `settingsImpactData` today — the cube and the two reused models all
+// come from the LEDGER, which only a sync can move, and `dataVersion()` (folded into every
+// `cached()` key already) covers that. It is kept in the key anyway because
+// `registerScope.ts` treats the pair as ONE scope decision (`registerScopeSignature` stamps
+// both), and a payload titled "what does the register scope cost" silently missing half of
+// that scope's own key would be the kind of drift this app spends a great deal of effort
+// refusing elsewhere. The cost is a harmless extra cache miss on a syncScope-only save, never
+// a wrong answer.
+//
+// 1h TTL, same as gas — the agent count and term coverage are wall-clock-stale-tolerant, and
+// a save immediately bumps the data version anyway.
+const cachedSettingsImpactData = () =>
+  cached(
+    "settingsImpact1",
+    {
+      issueCategories: settingsStore.getIssueCategories(),
+      syncScope: settingsStore.getSyncScope(),
+    },
+    () => settingsImpactData(),
+    3600,
+  );
+
+export function getSettingsImpact(_p?: unknown): ApiResult {
+  return run(() => cachedSettingsImpactData());
 }
 
 // ------------------------------------------------------------------------- access

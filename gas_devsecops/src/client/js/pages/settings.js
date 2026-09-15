@@ -50,15 +50,23 @@
 // actually lives), never a button or field this build cannot back.
 
 import { call } from "../../../../../gas_shared/api.js";
-import { bootstrapCached, invalidateBootstrap } from "../../../../../gas_shared/store.js";
+import { bootstrapCached, invalidateBootstrap, setParams } from "../../../../../gas_shared/store.js";
 import { setShowExperimental, showExperimental } from "../experimental.js";
 import {
-  clear, diagnosticCard, diagnosticsPanel, el, errorState, fmtCount, fmtDateTime, glossaryTip,
-  heroLines, pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
+  clear, confirmDialog, diagnosticCard, diagnosticsPanel, el, errorState, fmtCount, fmtDateTime,
+  glossaryTip, heroLines, pageHeader, skeletonStack, statusPill, tipLabel, toast, togglePills,
 } from "../ui.js";
 import { disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList } from "../../../../../gas_shared/ui/settings.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
-import { TAB_FIELDS, tabStatus } from "../settingsModel.js";
+import {
+  DEFAULT_TAB, SETTINGS_TABS, TAB_FIELDS,
+  changeCountText, changeSummary, changedFields, draftWarnings, normalizeTab, tabStatus,
+  validateDraft,
+} from "../settingsModel.js";
+import {
+  createSlaCutlineReadout, renderRetentionReadout, severityScopeReadout, slaDivergenceNote,
+  strandedOpenCount, strandedRowsReadout,
+} from "../settingsReadouts.js";
 
 // ============================================================================ vocabulary
 
@@ -101,34 +109,19 @@ export const SETTINGS_KEYS = [
 // is deliberately absent, see the module header. projectView is absent for the separate
 // reason given above SETTINGS_KEYS: it has no tab on this page at all.
 //
-// `= TAB_FIELDS` rather than a second literal: settingsModel.js's tabStatus() computes each
-// tab's dirty/invalid state for the tablist off this SAME map, so a field can never be
-// listed under one tab in the save bar and marked on a different tab in the tablist.
+// `= TAB_FIELDS` rather than a second literal, and `TAB_FIELDS` ITSELF now comes straight from
+// settingsModel.js's own `SETTING_FIELDS` — the tab-and-label registry both files used to keep
+// half of. tabStatus() below computes each tab's dirty/invalid state for the tablist off this
+// SAME map, so a field can never be listed under one tab in the save bar and marked on a
+// different tab in the tablist.
 export const FIELD_TABS = TAB_FIELDS;
 export const BATCHED_KEYS = Object.keys(FIELD_TABS);
 
-const FIELD_LABELS = {
-  scopes: "registers collected",
-  fetchSeverities: "severities requested",
-  slaTargets: "remediation windows",
-  syncSchedule: "sync hour",
-  autoCompact: "automatic compaction",
-  retentionDays: "retention window",
-};
-
-export const TABS = [
-  { key: "register", label: "Register" },
-  { key: "deadlines", label: "Deadlines" },
-  { key: "access", label: "Access" },
-  { key: "system", label: "System" },
-];
-export const DEFAULT_TAB = "register";
-const TAB_LABEL = Object.fromEntries(TABS.map((t) => [t.key, t.label]));
-
-/** A tab key the hash is allowed to name; anything else falls back — mirrors navModel.js. */
-export function normalizeTab(key) {
-  return TABS.some((t) => t.key === key) ? key : DEFAULT_TAB;
-}
+// TABS/DEFAULT_TAB/normalizeTab/changedFields/changeSummary/changeCountText are re-exported
+// from settingsModel.js below rather than declared here — see this page's import line and that
+// file's own header.
+export const TABS = SETTINGS_TABS;
+export { DEFAULT_TAB, changeCountText, changeSummary, changedFields, normalizeTab };
 
 // ============================================================================ pure view model
 
@@ -156,48 +149,27 @@ export function draftFromSettings(settings) {
   };
 }
 
-function sameValue(a, b) {
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
-  }
-  if (a && b && typeof a === "object" && typeof b === "object") {
-    const ka = Object.keys(a).sort();
-    const kb = Object.keys(b).sort();
-    if (JSON.stringify(ka) !== JSON.stringify(kb)) return false;
-    return ka.every((k) => sameValue(a[k], b[k]));
-  }
-  return a === b;
-}
-
-/** Which of the seven fields differ between saved and draft — for the save bar, not the wire. */
-export function changedFields(saved, draft) {
-  return SETTINGS_KEYS.filter((k) => !sameValue((saved || {})[k], (draft || {})[k]));
-}
-
-/**
- * What the save bar says, each change naming the tab that owns it. `showExperimental` never
- * appears here even if it differs — it has no batched tab and no Save/Discard affordance of
- * its own; it saves itself the moment its switch is flipped.
- */
-export function changeSummary(changed) {
-  return (changed || [])
-    .filter((k) => FIELD_TABS[k])
-    .map((k) => ({
-      field: k, label: FIELD_LABELS[k] || k, tab: FIELD_TABS[k], tabLabel: TAB_LABEL[FIELD_TABS[k]],
-    }));
-}
-
-export function changeCountText(n) {
-  return n + " unsaved change" + (n === 1 ? "" : "s");
-}
+// `changedFields`/`changeSummary`/`changeCountText` are the kernel's (see the import line and
+// settingsModel.js's own header). `changedFields` used to scan this page's own SETTINGS_KEYS —
+// seven fields, `showExperimental` included — while `changeSummary` filtered its result down to
+// the six FIELD_TABS carries; nothing ever set `draft.showExperimental` to a value other than
+// what it loaded with, so the gap between the two never actually printed a mismatched count
+// beside an empty summary, but it was a live structural inconsistency rather than a proven-safe
+// one. Reading `changedFields` off the same six-key registry `changeSummary` and `tabStatus`
+// already read closes the gap outright rather than leaving it merely unreachable.
 
 // ---------------------------------------------------------------------------- register tab
 
-const SECRETS_ALL_NOTE =
-  "No severity gate is set by default. Severity grades how a scanner classified the "
-  + "detection, not whether the credential is still live — a SAAS_API_KEY can read LOW and "
-  + "still work. An empty selection here requests every severity, which is this register's "
-  + "whole CODE population.";
+// SPLIT IN TWO SO THE ROW CAN SHOW ITS LEDE AND DISCLOSE THE REST (R1's ladder), while
+// `registerFieldView().note` — pinned by test/pagesSettings.test.js to still contain
+// "detection" — keeps reading the WHOLE sentence, unchanged, below. Only the DOM half
+// (`registerScopeBlock`) reads the two halves separately; the model still hands back one note.
+const SECRETS_SEVERITY_LEDE = "No severity gate is set by default.";
+const SECRETS_SEVERITY_DETAIL =
+  "Severity grades how a scanner classified the detection, not whether the credential is "
+  + "still live — a SAAS_API_KEY can read LOW and still work. An empty selection here "
+  + "requests every severity, which is this register's whole CODE population.";
+const SECRETS_ALL_NOTE = SECRETS_SEVERITY_LEDE + " " + SECRETS_SEVERITY_DETAIL;
 
 const SCOPE_ALL_NOTE = "No severities selected requests every severity for this register.";
 
@@ -326,7 +298,13 @@ export async function renderSettings(host, params, ctx) {
   }));
 
   const tabHost = el("div", {});
-  const panelHost = el("div", { class: "settings-panels" });
+  // A PLAIN GROUPING DIV, ON PURPOSE — not a layout class. Its four children each own their
+  // own `hidden` attribute (only the active tab's panel is ever shown), and default block flow
+  // already stacks them exactly the way gas/gas_ai append their tab panels straight to `host`
+  // with no wrapper at all — nothing here needs a rule to arrange. `settings-panels` used to be
+  // the class on this node, with no CSS rule anywhere in the repo behind it; deleted rather than
+  // given a no-op rule, since nothing about the four-tabpanel layout above actually needs one.
+  const panelHost = el("div", {});
   const bar = saveBar({
     onSave: () => doSave(),
     onDiscard: () => doDiscard(),
@@ -355,6 +333,11 @@ export async function renderSettings(host, params, ctx) {
     idPrefix: "tab",
     onSelect: (key) => {
       for (const k of Object.keys(panels)) panels[k].hidden = k !== key;
+      // history.replaceState — does not fire hashchange, does not re-render. Without this,
+      // `#/settings?tab=deadlines` could be READ on entry (normalizeTab(params.tab) above) but
+      // never PRODUCED by using the page: every click left the address bar on whatever tab the
+      // reader arrived at. gas_ai's settings page does the same thing at the same call site.
+      setParams({ tab: key });
     },
   });
 
@@ -378,6 +361,26 @@ export async function renderSettings(host, params, ctx) {
   function setFieldError(field, message) {
     if (message) errors[field] = message; else delete errors[field];
   }
+
+  // The api_getSettingsImpact payload — decorative, exactly like gas's and gas_ai's own copy of
+  // this variable: every control on this page already applied its own edit before this ever
+  // resolves, and `repaintReadouts()` below opens with `if (!impact) return;` so a slow or
+  // failed fetch costs this page some captions, never a working control.
+  let impact = null;
+  // Live-readout DOM hosts, reassigned each time buildRegisterPanel()/buildSystemPanel() run
+  // (initial load, and again on Discard) so repaintReadouts() always writes into whichever
+  // hosts are actually attached to the page right now.
+  let severitySplitHosts = {};
+  let strandedHost = null;
+  let retentionHost = null;
+  // Per-severity SLA input elements, so a cutline drag (below) can push its value back into the
+  // same plain number field the reader might otherwise type into — see slaCutlines' own comment.
+  let slaInputs = {};
+  // The standing divergence note's own hosts — PAYLOAD-FREE (slaDivergenceNote reads only
+  // boot.slaTargets, already on bootstrap, and the draft), so these are repainted from
+  // syncDirty() directly rather than from repaintReadouts()'s `if (!impact) return`-gated body:
+  // they must be correct even when the impact payload never arrives.
+  let slaDivergenceHosts = {};
 
   // ONE FAILURE, NOT FOUR. This used to loop over every tab panel and put its own
   // `errorState` in each — four identical red boxes for one fetch that failed once.
@@ -404,6 +407,17 @@ export async function renderSettings(host, params, ctx) {
     return;
   }
 
+  // THE SLA CUTLINE'S RANGE INPUTS ARE BUILT EXACTLY ONCE HERE, before the first buildPanels()
+  // call — never inside buildDeadlinesPanel() or repaintReadouts(), which both run repeatedly
+  // (on every edit, and again on Discard). See createSlaCutlineReadout()'s own header: replacing
+  // its `<input type="range">` mid-drag silently aborts the drag, so buildDeadlinesPanel() below
+  // only ever re-embeds these same instances, and repaintReadouts() only ever calls `.update()`
+  // on them.
+  const slaCutlines = {};
+  for (const row of slaFieldRows(draft.slaTargets, severityOrder)) {
+    slaCutlines[row.sev] = createSlaCutlineReadout({ sev: row.sev });
+  }
+
   buildPanels();
 
   // ------------------------------------------------------------------------- dirty tracking
@@ -415,19 +429,161 @@ export async function renderSettings(host, params, ctx) {
       tabs.setDirty(t.key, !!(status[t.key] && status[t.key].dirty));
       tabs.setInvalid(t.key, !!(status[t.key] && status[t.key].invalid));
     }
-    bar.update(changeCountText(changed.length), changeSummary(changed));
+    bar.update(changeCountText(changed), changeSummary(changed));
+    // Recomputed on every edit, not only on load — the stranded-rows figure and the cutlines'
+    // live breach counts are both draft-derived (this file's own settingsReadouts.js header).
+    repaintReadouts();
+    // UNGATED, unlike repaintReadouts() above — see slaDivergenceHosts' own comment: this note
+    // needs nothing from api_getSettingsImpact and must stay correct even when that call never
+    // resolves.
+    repaintDivergenceNotes();
   }
 
+  /** The standing "this window differs from the canonical one" note, per severity — see
+   *  slaDivergenceNote()'s own header for why it reads boot.slaTargets rather than the saved or
+   *  effective override. */
+  function repaintDivergenceNotes() {
+    for (const row of slaFieldRows(draft.slaTargets, severityOrder)) {
+      const host = slaDivergenceHosts[row.sev];
+      if (!host) continue;
+      const note = slaDivergenceNote(row.days, boot.slaTargets && boot.slaTargets[row.sev]);
+      host.textContent = note;
+      host.hidden = !note;
+    }
+  }
+
+  /**
+   * Everything this page draws from api_getSettingsImpact — decorative, per this file's own
+   * `impact` comment above. Every draft-derived readout here (the severity split, the stranded
+   * figure, the SLA cutlines) is recomputed from `draft` on every call; the retention timeline
+   * is the one that is closer to payload-derived but still reads `draft.retentionDays`, so it is
+   * rebuilt here too rather than once at load.
+   */
+  function repaintReadouts() {
+    if (!impact) return; // decorative — every control above already applied its own edit
+
+    const census = (impact.census && impact.census.byScope) || {};
+    const selectable = severityOrder.filter((s) => s !== "UNKNOWN");
+    for (const scope of scopeList) {
+      const host = severitySplitHosts[scope];
+      if (!host) continue;
+      clear(host).append(
+        severityScopeReadout(scope, census[scope], draft.fetchSeverities[scope], selectable),
+      );
+    }
+
+    if (strandedHost) {
+      const stranded = strandedOpenCount(
+        census, scopeList, draft.scopes, draft.fetchSeverities, severityOrder,
+      );
+      clear(strandedHost).append(strandedRowsReadout(stranded));
+    }
+
+    if (retentionHost) {
+      clear(retentionHost).append(
+        renderRetentionReadout(impact.scans, draft.retentionDays, SCOPE_LABELS),
+      );
+    }
+
+    const ageHistogramByScope = impact.ageHistogram || {};
+    const capDays = Number.isFinite(Number(impact.capDays)) ? Number(impact.capDays) : undefined;
+    for (const row of slaFieldRows(draft.slaTargets, severityOrder)) {
+      const cutline = slaCutlines[row.sev];
+      if (!cutline) continue;
+      const bins = scopeList.map((sc) => (ageHistogramByScope[sc] || {})[row.sev]);
+      const savedDays = Number(saved.slaTargets[row.sev]);
+      cutline.update({
+        bins,
+        windowDays: row.days,
+        savedDays: Number.isFinite(savedDays) ? savedDays : row.days,
+        capDays,
+        onCut: (v) => {
+          draft.slaTargets[row.sev] = v;
+          const input = slaInputs[row.sev];
+          if (input) input.value = String(v);
+          syncDirty();
+        },
+      });
+    }
+  }
+
+  async function loadImpact() {
+    try {
+      impact = await call("api_getSettingsImpact", {});
+    } catch (e) {
+      console.warn("[settings] impact unavailable:", e);
+      impact = null;
+    }
+    repaintReadouts();
+  }
+
+  // THE CANONICAL SHAPE IS gas's (pages/settings.js, ~line 1000): validate -> toast + jump on
+  // refusal -> the warnings loop -> setBusy(true) -> send -> re-baseline -> syncDirty() -> toast
+  // the reconciliation. Only the send itself differs — this app PUTs the whole draft to
+  // api_putSettings, gas sends a patch built from settingsPatch(saved, draft) — everything
+  // around it is the same sequence for the same reasons.
   async function doSave() {
+    // FIRST GATE: a field currently failing its OWN input's validity check (see `errors` above)
+    // never reaches `draft` at all — an in-progress "12" being typed over as "-3" leaves
+    // `draft.slaTargets` holding the last LEGAL value, so validateDraft below would see nothing
+    // wrong. `errors` is the only place that in-progress failure is recorded, so it is consulted
+    // first, before the committed draft is judged at all.
+    const invalidKeys = Object.keys(errors);
+    if (invalidKeys.length) {
+      toast("Fix the highlighted field(s) before saving.", "warn");
+      const invalidTab = invalidKeys.map((k) => FIELD_TABS[k]).find(Boolean);
+      if (invalidTab) tabs.select(invalidTab);
+      return;
+    }
+    // SECOND GATE: the committed draft itself, against settingsModel.js's own rules — an empty
+    // register list, or a non-positive SLA target that arrived already-invalid from the server
+    // (draftFromSettings never rejects what api_getSettings hands it) and was never retyped.
+    const v = validateDraft(draft);
+    if (!v.ok) {
+      toast(v.message, "warn");
+      tabs.select(v.tab);
+      return;
+    }
+    // Legal, and almost always a mistake — dropping a register FREEZES its open findings,
+    // narrowing a severity gate strands ledger rows that can never resolve by absence, and a
+    // changed SLA window diverges from the other three sidekicks (see settingsModel.js's own
+    // header). `ctx` is what draftWarnings needs and this closure already has: `scopeList`/
+    // `severityOrder` are this page's own bootstrap-or-fallback reads (above), `SCOPE_LABELS` is
+    // this page's own literal (byte-equal to the domain layer, pinned by
+    // test/pagesSettings.test.js), and `boot.slaTargets` is api_bootstrap's own SLA_TARGETS —
+    // the shared, byte-identical value every sidekick ships, not this draft's own slaTargets.
+    const warnings = draftWarnings(saved, draft, {
+      scopes: scopeList,
+      severityOrder,
+      scopeLabels: SCOPE_LABELS,
+      sharedSlaTargets: boot.slaTargets,
+    });
+    for (const w of warnings) {
+      const ok = await confirmDialog({
+        title: w.title, body: w.body, confirmLabel: w.confirmLabel, danger: true,
+      });
+      if (!ok) return;
+    }
     bar.setBusy(true);
     try {
       const sent = draft;
       const result = await call("api_putSettings", { settings: sent });
+      // RE-BASELINE FROM THE SERVER'S OWN RESPONSE, not from `sent` — `cleanSettings` may have
+      // clamped retentionDays or fallen back syncSchedule, and `saved` has to reflect what is
+      // actually stored, not what was asked for. `draft` is left as-is on purpose: if the server
+      // rewrote a value, `saved` and `draft` now disagree on THAT field and syncDirty() below
+      // reports it as still unsaved, which is the honest state — the toast right after names the
+      // rewrite, this is what makes it visible in the tablist and the save bar too.
+      saved = draftFromSettings(result);
+      syncDirty();
       const notes = saveReconciliation(sent, result);
       toast(notes.length ? notes.join(" ") : "Settings saved.");
       ctx && ctx.refresh && ctx.refresh();
     } catch (e) {
       toast(`Couldn't save settings: ${(e && e.message) || e}`, "error");
+    } finally {
+      // ALWAYS, success or failure — the bug this replaces left a successful save with a
+      // permanently disabled "Saving…" button sitting above a stale "N unsaved changes" bar.
       bar.setBusy(false);
     }
   }
@@ -449,20 +605,31 @@ export async function renderSettings(host, params, ctx) {
   }
 
   function buildRegisterPanel() {
+    // THE MOST VALUABLE READOUT ON THIS PAGE — see settingsReadouts.js's own header: two
+    // paragraphs of confirm-dialog prose (settingsModel.js's draftWarnings), turned into a
+    // figure that moves live as the scopes/severities below are edited. Sits above the
+    // per-scope blocks because it reads across all of them at once.
+    strandedHost = el("div", {});
+    severitySplitHosts = {};
     const scopesPanel = settingsPanel({
       title: "Registers & severities",
       description: "Which registers a sync collects, and which severities it requests, per register.",
-      body: scopeList.map((scope) => registerScopeBlock(scope)),
+      body: [strandedHost, ...scopeList.map((scope) => registerScopeBlock(scope))],
     });
     const projectPanel = settingsPanel({
       title: "Wiz project scope (what a sync collects)",
       body: [
         el("p", { class: "small muted" },
           "Set by an operator as the WIZ_PROJECT_ID_V2 script property, outside this settings "
-          + "tab. This decides what a sync COLLECTS from Wiz, not which project the pages "
-          + "SHOW of what is already collected — that is a separate, page-level scope set "
-          + "elsewhere in the app. This page does not offer to edit either one, and the "
-          + "current fetch value is not part of what it is given to draw with."),
+          + "tab."),
+        disclosure(
+          "What this scope decides",
+          el("p", {},
+            "This decides what a sync COLLECTS from Wiz, not which project the pages SHOW of "
+            + "what is already collected — that is a separate, page-level scope set elsewhere "
+            + "in the app. This page does not offer to edit either one, and the current fetch "
+            + "value is not part of what it is given to draw with."),
+        ),
       ],
     });
     clear(panels.register).append(scopesPanel, projectPanel);
@@ -505,13 +672,31 @@ export async function renderSettings(host, params, ctx) {
         syncDirty();
       },
     });
+    // SECRETS GETS THE LEDE ON THE ROW AND THE REST BEHIND A DISCLOSURE; the other two scopes'
+    // note (`SCOPE_ALL_NOTE`, 9 words) is already the whole thing there is to say and stays a
+    // plain row description. `view.note` itself is untouched (still the full sentence,
+    // test/pagesSettings.test.js reads "detection" off it directly) — only the DOM below
+    // splits it, and only for the one scope whose note is 50 words rather than 9.
     const severitiesRow = settingRow({
       label: "Severities requested",
-      description: view.note,
+      description: scope === "secrets" ? SECRETS_SEVERITY_LEDE : view.note,
       control: el("div", { class: "settings-severity-row" }, pills, displayEl),
     });
+    const severityDisclosure = scope === "secrets"
+      ? disclosure("Why severity is not a gate for secrets", el("p", {}, SECRETS_SEVERITY_DETAIL))
+      : null;
 
-    return el("div", { class: "settings-scope-block" }, collectRow, severitiesRow);
+    // The live severity-scope split — a segment per requested severity plus "Not requested",
+    // over the OPEN population. registerFieldView() above already renders `[]` as "All
+    // severities"; severityScopeReadout() (settingsReadouts.js) must read the identical `[]`
+    // the same way, or this bar would contradict the words right above it.
+    const splitHost = el("div", {});
+    severitySplitHosts[scope] = splitHost;
+
+    return el(
+      "div", { class: "settings-scope-block" },
+      collectRow, severitiesRow, severityDisclosure, splitHost,
+    );
   }
 
   function buildDeadlinesPanel() {
@@ -519,6 +704,8 @@ export async function renderSettings(host, params, ctx) {
     // One "slaTargets" error for the whole field (it is one SETTINGS_KEYS entry, an object
     // keyed by severity), tracked across however many per-severity rows are invalid right now.
     const invalidSevs = new Set();
+    slaInputs = {};
+    slaDivergenceHosts = {};
     const body = rows.map((r) => {
       const id = `settings-sla-${r.sev}`;
       const errorId = `${id}-error`;
@@ -543,11 +730,25 @@ export async function renderSettings(host, params, ctx) {
           syncDirty();
         },
       });
-      return settingRow({
+      slaInputs[r.sev] = input;
+      const row = settingRow({
         label: `${r.sev} target`, htmlFor: id,
         description: "Days to remediate. In SLA means resolved on or before this many days.",
         control: el("div", {}, input, errorEl),
       });
+      // THE STANDING DIVERGENCE NOTE — payload-free, so it is correct even before/without
+      // api_getSettingsImpact; see slaDivergenceHosts' own comment on why it is repainted from
+      // syncDirty() directly rather than from the impact-gated repaintReadouts(). Warn-toned,
+      // not error-toned, no `role="alert"` — a diverged window is legal (draftWarnings only
+      // confirms on save, it never refuses), the same "worth flagging, not wrong" register the
+      // retention floor's own warn span already uses just below.
+      const divergenceEl = el("p", { class: "small settings-retention-warn", hidden: true });
+      slaDivergenceHosts[r.sev] = divergenceEl;
+      // THE HEADLINE READOUT — see settingsReadouts.js's own header. Built once, before the
+      // first buildPanels() call, and only ever re-embedded here; buildDeadlinesPanel() never
+      // constructs a new cutline instance itself.
+      const cutline = slaCutlines[r.sev];
+      return el("div", {}, row, divergenceEl, cutline ? cutline.node : null);
     });
     const panel = settingsPanel({
       title: glossaryTip("Remediation windows", "sla-target"),
@@ -759,9 +960,13 @@ export async function renderSettings(host, params, ctx) {
       control: el("div", {}, retentionInput, retentionWarn, retentionError),
     });
 
+    // ONE LANE, across every register's scan rows — see settingsReadouts.js's own header on
+    // why this register draws one retention timeline rather than three.
+    retentionHost = el("div", {});
+
     const maintenancePanel = settingsPanel({
       title: "Maintenance",
-      body: [scheduleRow, scheduleCaveat, autoCompactRow, retentionRow],
+      body: [scheduleRow, scheduleCaveat, autoCompactRow, retentionRow, retentionHost],
     });
 
     // Self-saving, NOT part of the batch above — see the module header.
@@ -850,4 +1055,8 @@ export async function renderSettings(host, params, ctx) {
     );
   }
 
+  // ------------------------------------------------------------------------------ first paint
+  // Fetched after the panels already exist, exactly like gas's own loadImpact(): every control
+  // above already works off `draft` alone, so this only ever ADDS captions, on its own schedule.
+  await loadImpact();
 }

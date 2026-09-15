@@ -12,9 +12,12 @@
 //   data.js       quantity display: progress track, the sortable table, the paging footer
 //   chartTable.js the data-table alternative under every canvas — the same series a chart
 //                 was handed, as a disclosure a keyboard and a screen reader can read
-//   tableModel.js how a register orders and pages its rows — comparators, where an unknown
-//                 goes, what a tie does. DOM-free, so the half that can be WRONG is the
-//                 half vitest can hold
+//   tableModel.js how a register orders and pages its rows, and which of its columns it
+//                 draws — comparators, where an unknown goes, what a tie does, what a
+//                 second press on a heading means, and which columns refuse to be hidden.
+//                 DOM-free, so the half that can be WRONG is the half vitest can hold
+//   columnPicker.js the "Columns" button and its popover — the reader's own answer to a
+//                 register with more columns than their question needs
 //   cells.js      what a cell says when the answer is "nothing" or "maybe" — the one muted
 //                 em dash, yes/no/unknown
 //   nodeCell.js   and what it says when the answer is "this is a node": the kind medallion.
@@ -45,12 +48,27 @@
 //   usageMeter.js one ratio against a HARD ceiling: a used/total numeral caption plus warn
 //                 and bad states, which neither meter() nor progressBar() carries
 //   figures.js    the register vocabulary's numeric core: num, fmtCount, days1, pct1,
-//                 denomNote, fmtDays, boundedDays, relativeAge — refuse-before-cast, so an
-//                 absent figure never renders as a confident 0
+//                 denomNote, fmtDays, boundedDays, relativeAge, openAndTotal — refuse-before-
+//                 cast, so an absent figure never renders as a confident 0 — plus figureCard,
+//                 the KPI tile whose denominator sentence rides in the tip and the attribute
+//                 instead of as a paragraph under the card
+//   quad.js       two yes/no questions crossed: the ordered 2x2, its shares and its one
+//                 aria sentence (pure), and the real <th scope> table that draws them
+//   sparkline.js  a series as one line at the size of a word: the path (pure, gaps kept as
+//                 breaks) and the role="img" SVG around it
+//   splitBar.js   one track split into labelled segments, with the figures repeated in words
+//                 beneath it — an in/out proportion, or a severity mix
+//   settingsReadouts.js  what a Settings control is doing to the register, right now: the
+//                 with/without split a toggle draws (impactSplitModel/impactSplit), the
+//                 severity scan-scope split (severitySplitModel, `inScope` a PREDICATE never
+//                 a selected array), a labelled tick sequence that never computes its own
+//                 state (tickTimeline), and a cut histogram whose <input type=range> is built
+//                 once and never recreated (createCutHistogram)
 
 export { appendAll, clear, downloadText, el, motionOk, registerWideNote } from "./dom.js";
 export {
-  absentText, boundedDays, days1, denomNote, fmtCount, fmtDays, num, pct1, relativeAge,
+  absentText, boundedDays, days1, denomNote, figureCard, figureCardModel, fmtCount, fmtDays,
+  num, openAndTotal, pct1, relativeAge,
 } from "./figures.js";
 export {
   DISPLAY_TZ, dueRank, fmtDate, fmtDateTime, plural, pluralize, sevRank,
@@ -59,10 +77,15 @@ export {
   sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken,
 } from "./severity.js";
 export { dataTable, meter, pager, progressBar, tableFooter } from "./data.js";
-export { chartTable, chartTableModel, survivalTableModel } from "./chartTable.js";
+export { columnsButton, readStoredColumns, writeStoredColumns } from "./columnPicker.js";
 export {
-  DEFAULT_PAGE_SIZE, PAGE_SIZES, compareValues, nullsLast, pageForSize, pageOf, sortRows,
-  triState,
+  chartTable, chartTableModel, chartTablePaged, survivalTableModel,
+} from "./chartTable.js";
+export {
+  DEFAULT_COLUMNS, DEFAULT_PAGE_SIZE, PAGE_SIZES, columnChoice, columnChoices, columnShown,
+  columnsChanged, compareValues, encodeColumnChoice, hasDefaultHidden, hideableColumn,
+  nextSort, nullsLast, pageForSize, pageOf, parseColumnChoice, regroupSpans, sortRows,
+  toggleColumn, triState, visibleColumns,
 } from "./tableModel.js";
 export { absent, triCell } from "./cells.js";
 export { nameCell } from "./nodeCell.js";
@@ -92,7 +115,13 @@ export { brandMark } from "./brandMark.js";
 export { pointRail, railScale } from "./rail.js";
 export { debounce, onPageTeardown, runPageTeardown } from "./timing.js";
 export { axisBar, axisSegments } from "./axisBar.js";
+export { quadModel, quadTable } from "./quad.js";
+export { sparkLabel, sparkPath, sparkline } from "./sparkline.js";
 export { rowDrag, ruleGrip } from "./rowReorder.js";
+export { splitBar } from "./splitBar.js";
+export {
+  createCutHistogram, impactSplit, impactSplitModel, severitySplitModel, tickTimeline,
+} from "./settingsReadouts.js";
 export {
   disclosure, saveBar, settingRow, settingsPanel, switchToggle, tabList,
 } from "./settings.js";

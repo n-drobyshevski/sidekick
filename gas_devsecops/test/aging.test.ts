@@ -224,6 +224,38 @@ describe("slaEdgeBucket places each deadline in the bucket that still contains i
   });
 });
 
+// P5: `agingDistribution`/`slaEdgeBucket`/`slaEdgeIsExact` used to read `SLA_TARGETS` directly,
+// so a register's own saved window never reached this chart — this is the trailing `targets`
+// parameter (all three functions) that fixes it. Defaults to `SLA_TARGETS` when omitted, which
+// is why every test above this block — none of which pass a third/second argument — is
+// unaffected by the parameter's existence.
+describe("a caller-supplied targets map overrides SLA_TARGETS", () => {
+  it("slaEdgeBucket / slaEdgeIsExact read the map they are handed, not the constant", () => {
+    // CRITICAL's default (7 d) sits exactly on the first edge; moved to 20 d it lands inside
+    // the second bucket instead, and is no longer an exact boundary.
+    expect(slaEdgeBucket("CRITICAL", { CRITICAL: 20 })).toBe(1);
+    expect(slaEdgeIsExact("CRITICAL", { CRITICAL: 20 })).toBe(false);
+    // A severity absent from the supplied map has no deadline, same as SLA_TARGETS.UNKNOWN.
+    expect(slaEdgeBucket("HIGH", { CRITICAL: 20 })).toBeNull();
+  });
+
+  it("agingDistribution's slaEdge/slaTargets/slaEdgeExact move with the supplied map, not the bucket counts", () => {
+    const custom = { CRITICAL: 20 };
+    const withDefault = agingDistribution([row(10, "CRITICAL")]);
+    const withCustom = agingDistribution([row(10, "CRITICAL")], undefined, custom);
+    // The row itself still lands in the 8-30d bucket either way — the histogram is unmoved.
+    expect(withCustom.perSev.CRITICAL).toEqual(withDefault.perSev.CRITICAL);
+    // But the deadline overlay drawn across it has moved from the default (7 d, edge 0, exact)
+    // to the supplied one (20 d, edge 1, inexact).
+    expect(withDefault.slaTargets.CRITICAL).toBe(7);
+    expect(withDefault.slaEdge.CRITICAL).toBe(0);
+    expect(withDefault.slaEdgeExact.CRITICAL).toBe(true);
+    expect(withCustom.slaTargets.CRITICAL).toBe(20);
+    expect(withCustom.slaEdge.CRITICAL).toBe(1);
+    expect(withCustom.slaEdgeExact.CRITICAL).toBe(false);
+  });
+});
+
 describe("the edge travels beside the counts it is read against", () => {
   it("carries an edge, a target and an exactness flag for every severity drawn", () => {
     const d = agingDistribution([

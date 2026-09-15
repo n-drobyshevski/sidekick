@@ -42,10 +42,22 @@ import { scopeChrome, scopeKinds } from "../src/client/js/ui/projectScope.js";
 import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
-import { relativeAge } from "../../gas_shared/ui/figures.js";
+import { figureCardModel, openAndTotal, relativeAge } from "../../gas_shared/ui/figures.js";
+import { registerFigureCardContract } from "../../gas_shared/test/contracts/figureCard.js";
+import { registerQuadContract } from "../../gas_shared/test/contracts/quad.js";
+import { quadModel } from "../../gas_shared/ui/quad.js";
+import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
+import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
+import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
+import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
+import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
+import { registerSettingsReadoutsContract } from "../../gas_shared/test/contracts/settingsReadouts.js";
+import {
+  createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
+} from "../../gas_shared/ui/settingsReadouts.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 const base = { describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, app: "devsecops" };
@@ -121,9 +133,13 @@ registerPageHeaderContract({
 
 registerParityContract({
   ...base,
-  // The one module that is genuinely this register's: it reads src/domain/projectScope.ts
-  // and means nothing in a sibling with no repositories.
-  localUiModules: ["projectScope.js"],
+  // Two modules that are genuinely this register's, neither a fork of a shared one:
+  // `projectScope.js` reads src/domain/projectScope.ts and means nothing in a sibling with no
+  // repositories; `verdict.js` is the capacity dot-and-word `pages/program.js` and
+  // `pages/repos.js` both draw — promoted out of program.js in Wave C once a second page
+  // wanted the identical mark, but never pushed down into gas_shared because neither sibling
+  // register has a capacity verdict to draw it for.
+  localUiModules: ["projectScope.js", "verdict.js"],
   sheetOrder: [
     "../../../gas_shared/styles/tokens.base.css",
     "./styles/tokens.css",
@@ -226,6 +242,25 @@ registerRelativeAgeContract({ ...base, relativeAge });
 registerSyncCaptionContract(base);
 
 // =========================================================================================
+//  The three primitives this wave added, and the arithmetic each of them can get wrong
+// =========================================================================================
+//
+// NO NAMED SKIPS HERE, and that is a claim rather than an omission. The other contracts in
+// this file carry optional halves because the three registers genuinely differ (gas_ai has no
+// error log; gas_hub has no sync caption). These three do not: `quadModel`, `sparkPath` and
+// `figureCardModel` are pure functions with no app-specific input at all, so every assertion
+// below runs in every app that registers them. If a future app cannot run one of these, the
+// reason belongs beside a named skip — a silent pass is the failure mode this whole directory
+// guards against.
+//
+// THE MODEL HALVES ARE HANDED OVER, the DOM halves are swept as source text: this package has
+// no jsdom (no `environment` in vitest.config.ts), which is the same reason `emptyStates.js`
+// reads code rather than rendering.
+registerQuadContract({ ...base, quadModel });
+registerSparklineContract({ ...base, sparkPath, sparkLabel });
+registerFigureCardContract({ ...base, figureCardModel });
+
+// =========================================================================================
 //  The hub link: one rule, this register's boundary and the shared header gate
 // =========================================================================================
 //
@@ -234,3 +269,36 @@ registerSyncCaptionContract(base);
 // exist because no `src/server/**` module here imports gas_shared (tsconfig has no `allowJs`),
 // and this table is what holds them to the same rule.
 registerHubUrlContract({ ...base, normalizeHubUrl });
+
+// =========================================================================================
+//  The scope-walk chip: one mark per register, not two
+// =========================================================================================
+//
+// The two halves of the defect live in different files — a fixed pixel box in base.css and a
+// text glyph put into it by this app's own row builder — so the contract reads both. See the
+// contract's header for the measured overflow (an 8px box holding 21px of content).
+registerScanStepContract({
+  ...base,
+  progressSrc: readFileSync(new URL("../src/client/js/syncProgress.js", import.meta.url), "utf8"),
+  baseCss: readFileSync(new URL("../../gas_shared/styles/base.css", import.meta.url), "utf8"),
+});
+
+// =========================================================================================
+//  The settings kernel: this register's own SETTINGS_TABS/SETTING_FIELDS, plus the kernel's
+//  own fixed behaviour against a synthetic registry (settingsForm.js's own concern, not this
+//  app's — see that contract's header). `spine: true` pins the canonical tab order — this app
+//  was already Register · Deadlines · Access · System before this wave.
+// =========================================================================================
+registerSettingsFormContract({
+  ...base, tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB, spine: true,
+});
+
+// =========================================================================================
+//  The settings read-out vocabulary. gas_devsecops's own Settings page does not draw with
+//  this yet (that is P3 onward's job) — this registers the shared primitives' own fixed
+//  behaviour, the same way registerQuadContract/registerSparklineContract above hold their
+//  modules' behaviour independent of which page in this app happens to call them.
+// =========================================================================================
+registerSettingsReadoutsContract({
+  ...base, impactSplitModel, severitySplitModel, tickTimeline, createCutHistogram, openAndTotal,
+});

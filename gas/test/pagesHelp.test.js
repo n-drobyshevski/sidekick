@@ -16,16 +16,13 @@ import { describe, expect, it } from "vitest";
 import { allEntries } from "../src/client/js/helpContent.js";
 import { registerHelpContract } from "../../gas_shared/test/contracts/help.js";
 import { buildHash } from "../../gas_shared/store.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const ENTRIES = allEntries();
 const APP_ROOT = new URL("../", import.meta.url);
 
-/** Source with comments removed — every sweep below is a claim about CODE, and several of
- *  the comments this package wrote explain the very rule they sit beside. */
-function code(src) {
-  return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
-}
-
+// Source with comments removed — every sweep below is a claim about CODE, and several of
+// the comments this package wrote explain the very rule they sit beside.
 const APP_SRC = code(
   readFileSync(new URL("../src/client/js/app.js", import.meta.url), "utf8"),
 );

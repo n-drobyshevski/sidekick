@@ -13,11 +13,26 @@
 //                  risk metric, not about a number.
 //   span.js        `fmtSpan` — hours/days/months/years on one scale. It is not `fmtDays` and
 //                  not `days1`; see the module header for the table of what the three do to
-//                  the same input, and why renaming it was the honest move.
+//                  the same input, and why renaming it was the honest move. P1.1 converged
+//                  every OTHER MTTR duration onto the shared pair and left `fmtSpan` at its
+//                  surviving call sites — the ones where a fleet's open backlog genuinely spans
+//                  hours to years and a fixed grain would either read as "0.0 d" or bury a
+//                  years-old CRITICAL in four-digit days: `pages/mttr.js` (the by-domain
+//                  table's KM-median, naive-median and p90 columns, the hero's naive-median
+//                  clause and its change chip, the open-age-p90 stat row and its change chip,
+//                  and the by-severity table's MTTR p90 column), `pages/executive.js` (the
+//                  by-domain table's KM-median column) and `pages/data.js` (the per-repository
+//                  median-MTTR column). `pages/history.js` no longer calls it at all — its own
+//                  KPI band's median-MTTR tile is gone, and the week-over-week trend badge
+//                  `pages/executive.js` once carried is gone too.
 //   nvd.js         a CVE's page at NIST. No sibling register has a CVE.
 //   scopeBar.js    WHICH two scopes this register has (a Wiz/Domain tag, a support group).
 //                  The chips themselves are the shared `filterChipRow` now.
-//   splitBar.js    an in/out proportion with arbitrary tones. `sevSegmentBar` draws
+//
+// `splitBar.js` HAS LEFT THIS LIST TOO (P2), and for the same shape of reason `usageMeter.js`
+// did: what was gas-only was never the in/out-proportion IDEA, only the fact that gas was the
+// only app drawing one yet. It is `gas_shared/ui/splitBar.js` now, reached through the star
+// below; the two call sites that used it (both in settingsReadouts.js) are unchanged.   splitBar.js    an in/out proportion with arbitrary tones. `sevSegmentBar` draws
 //                  severities and only severities.
 //
 // `usageMeter.js` HAS LEFT THIS LIST TOO, and the reason it was on it was measurably wrong.
@@ -46,4 +61,3 @@ export { changeChip } from "./ui/changeChip.js";
 export { nvdUrl } from "./ui/nvd.js";
 export { scopeBar } from "./ui/scopeBar.js";
 export { fmtSpan } from "./ui/span.js";
-export { splitBar } from "./ui/splitBar.js";

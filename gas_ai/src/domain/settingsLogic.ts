@@ -8,7 +8,12 @@ import type { ScopePins } from "./complianceScope";
 import { cleanProblemRule, DEFAULT_PROBLEM_RULE, type ProblemRule } from "./problemRule";
 import { cleanPostureRule, DEFAULT_POSTURE_RULE, type PostureRule } from "./postureRule";
 import { cleanRankRule, DEFAULT_RANK_RULE, type RankRule } from "./rank";
-import { cleanCategoryIds, DEFAULT_CATEGORY_IDS } from "./registerScope";
+import {
+  cleanCategoryIds,
+  cleanSyncScope,
+  DEFAULT_CATEGORY_IDS,
+  type SyncScope,
+} from "./registerScope";
 import { cleanStepVars } from "./scanVars";
 import {
   DEPTH_DEFAULT,
@@ -725,6 +730,37 @@ export function withIssueCategories(settings: Rec, ids: unknown): Rec {
       ids: cleanCategoryIds(ids),
     },
   };
+}
+
+// -------------------------------------------------- the OTHER half: what the sync collects FROM
+
+/**
+ * WHICH PERIMETERS THE SYNC COLLECTS FROM — the configured Wiz project, or all of them.
+ *
+ * `project` is today's behaviour: every step carries the WIZ_PROJECT_ID_V2 filter. `tenant`
+ * sends no project filter at all, which is what an unset property has always done, so the
+ * battery collects every perimeter the credentials reach. The vocabulary and the resolution
+ * live in registerScope.ts beside the category scope, the same way `cleanCategoryIds` does
+ * for the section above — both decide what every published figure counts, and a reader
+ * changing one needs the other in front of them.
+ *
+ * A SETTING RATHER THAN A SECOND SCRIPT PROPERTY, for the reason `getProjectView` gives one
+ * screen up: `saveSettings` bumps the data version the client's SWR cache is keyed on, and a
+ * Script Property would change the answer under a cache that had no idea. Every other scope
+ * preference in this app is already here too, so an operator finds it where the others are.
+ *
+ * NO VERSION COUNTER, unlike `issue_categories` above. A generation exists there because the
+ * stored list and the applied one can disagree in arbitrarily many ways and a notice has to
+ * name both; a two-state enum has no generation worth tracking, and the scope a sync applied
+ * is already recorded where it has to be — `sync_history.register_scope`.
+ */
+export function getSyncScope(settings: Rec): SyncScope {
+  return cleanSyncScope(settings["sync_scope"]);
+}
+
+/** Store the perimeter choice. PATCH-safe: it touches no other key. */
+export function withSyncScope(settings: Rec, v: unknown): Rec {
+  return { ...settings, sync_scope: cleanSyncScope(v) };
 }
 
 export function withScanVars(settings: Rec, stepId: string, vars: unknown): Rec {

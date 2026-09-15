@@ -27,7 +27,7 @@
 
 import { readFileSync } from "node:fs";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { SCOPES, type Scope } from "../src/domain/config";
+import { SCOPES, SLA_TARGETS, type Scope } from "../src/domain/config";
 import { DEFAULT_SETTINGS } from "../src/domain/settingsLogic";
 import type { Rec } from "../src/domain/util";
 import type { WarmReport } from "../src/server/readModels";
@@ -475,6 +475,43 @@ describe("bootstrap's freshness caption reports the SYNC, not one of its rows", 
     const { api } = await syncedRegister();
     const sync = api.bootstrap({}).data!.latestSync!;
     expect(sync.scopes.map((s) => s.scope)).toEqual(["sca", "sast", "secrets"]);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  P5: bootstrap ships BOTH the canonical constant and the effective (settings-overlaid) map
+// --------------------------------------------------------------------------------------- //
+//
+// `slaTargets` MUST stay the bare `SLA_TARGETS` constant forever — it is the canonical value
+// `src/client/js/pages/settings.js`'s `doSave` reads as `draftWarnings`'s `sharedSlaTargets`,
+// the baseline a saved draft is compared AGAINST. If it started shipping this register's own
+// override instead, that comparison would compare the draft against itself and the "would no
+// longer match the other registers" warning (P0, settingsModel.js) could never fire again for
+// an operator who has ever saved one. `effectiveSlaTargets` is the second field that exists so
+// `slaTargets` never has to carry both meanings.
+describe("bootstrap ships the canonical SLA constant and the effective override separately", () => {
+  it("both equal SLA_TARGETS before any operator has saved a window", async () => {
+    const { api } = await load();
+    const boot = api.bootstrap({});
+    expect(boot.data!.slaTargets).toEqual(SLA_TARGETS);
+    expect(boot.data!.effectiveSlaTargets).toEqual(SLA_TARGETS);
+  });
+
+  it("effectiveSlaTargets moves with a saved override; slaTargets stays the constant", async () => {
+    const { api } = await load();
+    const saved = api.putSettings({
+      settings: { ...DEFAULT_SETTINGS, slaTargets: { ...DEFAULT_SETTINGS.slaTargets, CRITICAL: 3 } },
+    }) as unknown as Rec;
+    expect(saved["ok"], String(saved["error"])).toBe(true);
+
+    const boot = api.bootstrap({});
+    expect(boot.data!.effectiveSlaTargets.CRITICAL).toBe(3);
+    expect(boot.data!.effectiveSlaTargets.HIGH).toBe(SLA_TARGETS.HIGH);
+    // THE LOAD-BEARING ASSERTION: the canonical field did NOT move. `draftWarnings`'s
+    // `sharedSlaTargets` reads exactly this field, and a draft that now matches the operator's
+    // own saved CRITICAL:3 must still be compared against the shared 7, not against itself.
+    expect(boot.data!.slaTargets).toEqual(SLA_TARGETS);
+    expect(boot.data!.slaTargets.CRITICAL).toBe(7);
   });
 });
 

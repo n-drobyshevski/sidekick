@@ -4,6 +4,13 @@
 // operators only learn one vocabulary.
 
 import { resolveDomainTagKey } from "../domain/domainTag";
+import { resolveProjectScope } from "../domain/registerScope";
+// The settings tab holds the perimeter half of the sync scope (see `projectScope` below).
+// A cycle on paper — settingsStore reaches back here through serverCache and sheetsDb — and
+// benign in fact: nothing in that ring touches another module at import time, only inside
+// function bodies, and `loadSettings` is memoized per execution so reading a setting here
+// costs the battery nothing.
+import * as settingsStore from "./settingsStore";
 
 export const PROP_KEYS = {
   wizApiToken: "WIZ_API_TOKEN",
@@ -73,16 +80,26 @@ export function deleteProp(key: string): void {
 }
 
 /**
- * Project scope for the Wiz queries that accept a project filter, from the
- * WIZ_PROJECT_ID_V2 Script Property. Returns `[id]` when set, else `null` (query
- * every project). The four captured queries hardcode a tenant project id; routing
- * scope through this prop keeps that id out of the shipped code and lets operators
- * narrow a large tenant. Matches the diagnostics message ("unset — querying all
- * projects") and the sibling gas tool's projectIdV2 behavior.
+ * Project scope for the Wiz queries that accept a project filter. Returns `[id]` to scope
+ * the battery to one project, else `null` — query every perimeter.
+ *
+ * TWO INPUTS NOW, and the property is only one of them. The Fetch scope setting decides
+ * whether the property is applied at all: `project` (the default, today's behaviour) applies
+ * it, `tenant` declines to send any project filter, which is exactly what a blank property
+ * has always done. The property still holds WHICH project, so the tenant id stays out of the
+ * shipped code and out of the four captured queries that used to hardcode one.
+ *
+ * The decision itself is `resolveProjectScope` in domain/registerScope.ts, tested without GAS
+ * globals; this is that function plus two reads. The settings read is free — every getter
+ * funnels through `loadSettings`, memoized per execution — which is what lets the ~25 call
+ * sites in the sync battery keep calling this per step. `wizDiagnostic()` prints the resolved
+ * answer beside the raw property, so the two can never appear to disagree.
  */
 export function projectScope(): string[] | null {
-  const id = getProp(PROP_KEYS.wizProjectIdV2);
-  return id && id.trim() ? [id.trim()] : null;
+  return resolveProjectScope(
+    settingsStore.getSyncScope(),
+    getProp(PROP_KEYS.wizProjectIdV2),
+  );
 }
 
 /**

@@ -3,8 +3,8 @@
 Holds the severity scope: which severities scans *pull* from the Wiz API
 (``fetch_severities``) and which the UI *displays* (``display_severities``,
 always a subset of the fetch scope). Values are canonical uppercase tuples
-ordered by ``config.SEVERITY_ORDER`` so they're stable as ``st.cache_data``
-keys and comparable across sessions.
+ordered by ``config.SEVERITY_ORDER`` so they're stable cache keys and comparable
+across sessions.
 
 Reads mirror ``config.load_wiz_config``: a missing or unreadable file means
 defaults, never an error. Writes are atomic (tmp + ``os.replace``) so a crash

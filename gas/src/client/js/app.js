@@ -14,8 +14,10 @@
 
 import { configureApp } from "../../../../gas_shared/appConfig.js";
 import { call } from "../../../../gas_shared/api.js";
+import { navigate } from "../../../../gas_shared/store.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
 import { renderScanCard, openScanDetails } from "./scanProgress.js";
+import { railStatus } from "./railStatus.js";
 import { scopeChrome, scopeKinds, scopeSwitchView } from "./scopeKinds.js";
 import {
   bookTip, clear, el, scopeControl, scopePayload, statusPill, syncCaption, tip, tipAnchor,
@@ -268,6 +270,14 @@ let scanCardHost = null; // the progress-card slot in the current scan zone
 let scanButtonsRow = null; // the Run/Quick buttons, hidden while a job runs
 let stoppingJobId = null; // optimistic "Stopping…" until the server confirms CANCELLED
 let stoppingSince = 0; // when Stop was pressed — the optimistic state expires (see paintCard)
+// The rail-status caption + dot slot, repainted independently of the progress card so the
+// dot can move through railStatus.js's own states (scanning/bad/neutral/warn/ok) on every
+// poll tick without tearing down the Run/Quick buttons or the card beside it. `railHasCredentials`
+// / `railLatestScanTs` are captured once per renderScanZone(data) call — they do not change
+// while a job is running — so paintRailStatus() only needs the CURRENT job to redraw.
+let railStatusHost = null;
+let railHasCredentials = false;
+let railLatestScanTs = null;
 // How long "Stopping…" is allowed to stand before the action comes back. A live fetch hop
 // honors the cooperative flag at its next page boundary, which can take a page's worth of
 // time; past that, a request that hasn't landed isn't going to, and the button must return
@@ -325,34 +335,19 @@ function renderScanZone(data) {
   scanCardHost = el("div", {}); // filled by the poller while a job runs
   zone.append(scanCardHost, scanButtonsRow);
   if (data) {
-    const credDot = el("span", {
-      class: `rail-status-dot ${data.hasCredentials ? "ok" : "neutral"}`,
-      "aria-hidden": "true",
-    });
-    tipAnchor(credDot, () => [
-      data.hasCredentials ? "Credentials loaded" : "Dry-run (no credentials)",
-    ]);
-    zone.append(
-      el("div", { class: "scan-caption" },
-        data.hasCredentials
-          ? statusPill("ok", "Credentials loaded")
-          : statusPill("neutral", "Dry-run (no credentials)"),
-      ),
-      // Compact stand-in for the pill above, shown on the icon rail (where the captions do not
-      // fit) so the credentials/dry-run state stays glanceable at 76px.
-      //
-      // tipAnchor, NOT tip(): tip() wraps a non-interactive node in a `.tip-trigger` button,
-      // and this dot is aria-hidden decoration whose words are already on the pill beside it
-      // — a tab stop here would announce nothing and stop everyone. tipAnchor is the shared
-      // answer for an anchor that cannot host a wrapper.
-      credDot,
-    );
+    railHasCredentials = !!data.hasCredentials;
+    railLatestScanTs = data.latestScan && data.latestScan.ts;
+    railStatusHost = el("div", {});
+    zone.append(railStatusHost);
+    paintRailStatus(data.activeJob);
     // `syncCaption` (gas_shared/ui/feedback.js), unified across all three apps: "Last <noun>
     // <datetime> · <relativeAge>" once a scan is saved, "No <noun>s yet." before the first
     // one. It used to be a bare Math.floor day count gated at `age >= 2` — a scan an hour old
     // showed no age at all, and this app's own Scan History page had finer just-now/min/hour
     // granularity that this caption never got. `sync.noun` in this app's MANIFEST ("scan") is
-    // what turns the shared sentence's default "sync"/"syncs" into "scan"/"scans" here.
+    // what turns the shared sentence's default "sync"/"syncs" into "scan"/"scans" here. A
+    // DIFFERENT fact from the dot above: this is when the register last ran ANYTHING, not the
+    // derived state (running/failed/never/stale/ok) the dot reports.
     zone.append(
       el("div", { class: "scan-caption" }, syncCaption(data.latestScan && data.latestScan.ts)),
     );
@@ -364,6 +359,50 @@ function renderScanZone(data) {
     }
   }
   return zone;
+}
+
+/**
+ * The rail's own status pill + dot, repainted from `railStatus()` on every job transition —
+ * boot, a fresh Run/Quick click, every 3s poll tick, and a failure — rather than only once
+ * per full rail rebuild. `job` is the CURRENT JobRow (or null between runs); credentials and
+ * the last-scan timestamp are read from the closured values `renderScanZone` captured, since
+ * neither changes while a job runs.
+ *
+ * THE DOT IS DERIVED, NEVER ASSERTED — it used to be `hasCredentials ? "ok" : "neutral"`, a
+ * literal reading one field, agreeing with Settings only by accident and never noticing a
+ * register that ran once and then went quiet for weeks (see railStatus.js's own header). It
+ * is a real `<button>` now, not a `<span>` wearing `aria-hidden` and nothing else: WCAG 2.2
+ * SC 2.5.8 wants 24×24px of TARGET even though the mark stays 9px (pages.css), and a control
+ * with a destination — Scan History, where every state above is explained at length — is
+ * what app.js's own header already says this app's chrome is careful to only ever offer.
+ *
+ * THE CAPTION COMES FIRST IN SOURCE ORDER, and that is not cosmetic: above 800px it is the
+ * ONLY node visually hidden by `.sidebar .scan-caption` (gas_shared/styles/base.css) — hidden
+ * from SIGHT, never from the accessibility tree — so it has to exist before the dot that
+ * repeats its sentence as colour, for a reader stepping through the DOM in order.
+ */
+function paintRailStatus(job) {
+  if (!railStatusHost) return;
+  const status = railStatus({
+    hasCredentials: railHasCredentials,
+    lastScanByScope: { os: railLatestScanTs },
+    scopes: ["os"],
+    job: job || null,
+  });
+  const pillKind = status.state === "warn" ? "warn"
+    : status.state === "bad" ? "bad"
+    : status.state === "ok" ? "ok"
+    : "neutral";
+  clear(railStatusHost).append(
+    el("div", { class: "scan-caption" }, statusPill(pillKind, status.label)),
+    tipAnchor(el("button", {
+      type: "button",
+      class: `rail-status-dot ${status.state}`,
+      "aria-label": status.label,
+      onclick: () => navigate("history"),
+    }), [status.label, status.detail].filter(Boolean).join(" — ")),
+    ...(status.detail ? [el("div", { class: "scan-caption" }, status.detail)] : []),
+  );
 }
 
 async function startScan(incremental, btn) {
@@ -435,39 +474,67 @@ async function requestStop(jobId) {
   }
 }
 
+/**
+ * One poll tick: fetch the job and hand it to `applyJob`, which decides what a terminal vs.
+ * a running phase means for the card AND the rail dot. Split out of `watchJob` so the SAME
+ * tick can run once immediately (see `watchJob` below) and once every 3s after — a transient
+ * fetch failure here is fine, the next tick tries again.
+ */
+async function pollTick(jobId) {
+  try {
+    const job = await call("api_getJobStatus", { jobId });
+    applyJob(job);
+  } catch {
+    /* transient poll errors are fine */
+  }
+}
+
+/** What one job summary means for the card and the rail dot, whatever phase it is in. */
+function applyJob(job) {
+  if (!job) {
+    stopWatch();
+    clearCard();
+    paintRailStatus(null);
+    return;
+  }
+  if (job.phase === "DONE") {
+    stopWatch();
+    if (scanDetails) scanDetails.update(job); // let an open drawer settle on "Complete"
+    toast("Scan complete.");
+    // refresh() re-fetches the bootstrap payload and rebuilds the whole rail from it — the
+    // dot repaints as part of that with the fresh `latestScan`, so no separate
+    // paintRailStatus() call is needed on this path.
+    refresh();
+  } else if (job.phase === "CANCELLED") {
+    stopWatch();
+    stoppingJobId = null;
+    if (scanDetails) scanDetails.update(job); // an open drawer settles on "Cancelled"
+    toast("Scan stopped.");
+    refresh();
+  } else if (job.phase === "FAILED") {
+    stopWatch();
+    paintCard(job); // leave the failure visible; buttons return for a retry
+    paintRailStatus(job); // "Last scan failed" — this path takes no refresh(), so say so here
+    if (scanButtonsRow) scanButtonsRow.style.display = "";
+    toast(job.error || "Scan failed.", "error");
+  } else {
+    paintCard(job);
+    paintRailStatus(job); // "Scan in progress — N of M" on every tick, not only at boot
+  }
+}
+
+/**
+ * Poll a job every 3s until it settles. THE FIRST TICK RUNS IMMEDIATELY, not after the first
+ * interval: pressing Run scan used to leave both the card and the rail dot showing their
+ * pre-scan state for a full 3 seconds — on the one control whose entire job is to say
+ * something is now happening. Only visible in a browser with the continuation trigger
+ * frozen (the dev harness's fake clock lets 45 pages complete inside a few hundred
+ * milliseconds of real time, so the card never got a frame in that setup either).
+ */
 function watchJob(jobId) {
-  if (jobPoller) clearInterval(jobPoller);
-  jobPoller = setInterval(async () => {
-    try {
-      const job = await call("api_getJobStatus", { jobId });
-      if (!job) {
-        stopWatch();
-        clearCard();
-        return;
-      }
-      if (job.phase === "DONE") {
-        stopWatch();
-        if (scanDetails) scanDetails.update(job); // let an open drawer settle on "Complete"
-        toast("Scan complete.");
-        refresh();
-      } else if (job.phase === "CANCELLED") {
-        stopWatch();
-        stoppingJobId = null;
-        if (scanDetails) scanDetails.update(job); // an open drawer settles on "Cancelled"
-        toast("Scan stopped.");
-        refresh();
-      } else if (job.phase === "FAILED") {
-        stopWatch();
-        paintCard(job); // leave the failure visible; buttons return for a retry
-        if (scanButtonsRow) scanButtonsRow.style.display = "";
-        toast(job.error || "Scan failed.", "error");
-      } else {
-        paintCard(job);
-      }
-    } catch {
-      /* transient poll errors are fine */
-    }
-  }, 3000);
+  stopWatch();
+  pollTick(jobId);
+  jobPoller = setInterval(() => pollTick(jobId), 3000);
 }
 
 function stopWatch() {

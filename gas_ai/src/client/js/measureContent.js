@@ -128,6 +128,23 @@ export const MEASURE_ENTRIES = [
     revisionDue: "2027-08-13",
   },
   {
+    id: "issue-half-life", measure: "Issue half-life", type: "effectiveness",
+    measurementMethod: "Objective",
+    goal: "How long an issue actually survives in this register once it has been seen — "
+      + "the one figure here computed from the register's own two dates rather than "
+      + "from a snapshot of today.",
+    formula: "Kaplan–Meier over first_seen_at to disappeared_at, with every still-open "
+      + "row kept in as right-censored at its last sighting (issueSurvival.kaplanMeier). "
+      + "The median is the half-life; where survival never falls that far the longest "
+      + "lifetime observed is published as a lower bound instead.",
+    dataSource: "ai_issue_ledger.first_seen_at, ai_issue_ledger.disappeared_at",
+    reportingFormat: "Priorities page header, as the half-life hero and its qualifier. A "
+      + "departure is dated by the sync that first stopped seeing the row, so every event "
+      + "time is an upper bound whose error is the sync interval; a reopened row is "
+      + "excluded and counted, because the ledger records no per-episode start.",
+    revisionDue: "2027-08-13",
+  },
+  {
     id: "compliance-gaps", measure: "complianceGaps", type: "effectiveness",
     measurementMethod: "Objective",
     goal: "How many cloud-configuration controls are failing right now — one definition, "

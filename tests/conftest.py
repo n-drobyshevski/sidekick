@@ -1,20 +1,9 @@
-"""Shared pytest fixtures for characterization + unit tests.
-
-These pin the *current* behavior of the monolith before the refactor, then
-travel with the functions as they move into the wiz_dashboard package.
-"""
+"""Shared pytest fixtures for the remaining Python domain/spec tests."""
 
 import os
 from pathlib import Path
 
 import pytest
-
-# Shrink the dry-run demo volume (default 5k CRITICAL / 60k HIGH) before anything imports
-# the app: AppTest suites trigger real dry-run scans, and 65k full-fidelity nodes per run
-# would crawl. CRITICAL=6 / HIGH=11 keeps one RESOLVED node per severity (i % 12 == 5) so
-# MTTR/SLA paths stay exercised. demo.demo_volume() reads the env at call time, so tests
-# can still monkeypatch.setenv their own volume.
-os.environ.setdefault("WIZ_DEMO_VOLUME", "CRITICAL=6,HIGH=11")
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 # The grouped-by-asset shape (vulnerabilityFindingsGroupedByValues); the real live
@@ -24,43 +13,13 @@ FIXTURE_PATH = REPO_ROOT / "os_vulns_grouped_response_example.json"
 
 @pytest.fixture(autouse=True)
 def _isolated_ledger(tmp_path, monkeypatch):
-    """Point the durable ledger at a per-test temp dir and reset its caches.
-
-    Without this, any test that triggers a scan (e.g. clicking ``sidebar_run``) would write a
-    real ``./data/ledger.db`` in the repo and leak state into later tests — notably the
-    MTTR empty-state test, which needs the ledger to be empty. ``config.DATA_DIR`` is read
-    at call time, so monkeypatching it isolates every read/write to ``tmp_path``.
-    """
+    """Point the durable ledger/history files at a per-test temp dir."""
     from wiz_dashboard import config
     from wiz_dashboard.data import history
-    from wiz_dashboard.ui.pages import _derived
 
     monkeypatch.setattr(config, "DATA_DIR", tmp_path / "data")
-    # Also keep the legacy daily-median file out of the repo when a test triggers a scan.
     monkeypatch.setattr(history, "HISTORY_FILENAME", str(tmp_path / "mttr_history.json"))
-    # Some tests reassign _derived.history_cached to a plain lambda (to isolate from the
-    # local history file). That mutates the shared module attribute, so snapshot and restore
-    # the real CachedFunc here — otherwise the leaked lambda (which lacks .clear()) breaks
-    # any later test whose code path clears the history cache.
-    orig_history_cached = _derived.history_cached
-    caches = (
-        _derived.ledger_mttr_cached,
-        _derived.ledger_scans_cached,
-        _derived.ledger_base_cached,
-        _derived.ledger_trend_cached,
-        _derived.previous_severity_counts_cached,
-        # st.cache_resource is process-global: without clearing, one test's saved-scan
-        # frame/payload (keyed by a per-second scan_id that CAN repeat across fast
-        # tests) would be served to the next test's different tmp_path ledger.
-        _derived.scan_frame_cached,
-        _derived.raw_payload_cached,
-    )
-    for c in caches:
-        c.clear()
     yield
-    _derived.history_cached = orig_history_cached
-    for c in caches:
-        c.clear()
 
 
 @pytest.fixture(scope="session")

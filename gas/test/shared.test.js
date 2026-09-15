@@ -37,10 +37,19 @@ import { registerScopeContract } from "../../gas_shared/test/contracts/scope.js"
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
-import { relativeAge } from "../../gas_shared/ui/figures.js";
+import { openAndTotal, relativeAge } from "../../gas_shared/ui/figures.js";
+import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
+import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
+import { registerSettingsReadoutsContract } from "../../gas_shared/test/contracts/settingsReadouts.js";
+import {
+  createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
+} from "../../gas_shared/ui/settingsReadouts.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
+import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
 import { normalizeHubUrl } from "../src/server/hubUrl";
+import { registerSettingsFormContract } from "../../gas_shared/test/contracts/settingsForm.js";
+import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/settingsModel.js";
 
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 import { scopeChrome, scopeKinds } from "../src/client/js/scopeKinds.js";
@@ -115,10 +124,17 @@ registerZScaleContract(base);
 // =========================================================================================
 registerParityContract({
   ...base,
-  // FIVE MODULES, AND EACH IS A FACT ABOUT AN OS-VULNERABILITY REGISTER that means nothing in
+  // FOUR MODULES, AND EACH IS A FACT ABOUT AN OS-VULNERABILITY REGISTER that means nothing in
   // a sibling: which two scopes exist (scopeBar), a CVE's page at NIST (nvd), a delta that
-  // knows which direction is worse (changeChip), a duration that changes unit across three
-  // orders of magnitude (span), and an in/out proportion with arbitrary tones (splitBar).
+  // knows which direction is worse (changeChip), and a duration that changes unit across three
+  // orders of magnitude (span).
+  //
+  // `splitBar.js` LEFT THIS LIST WITH P2, and unlike the two entries below it was never
+  // justified by a fact about THIS register — its own comment here already said the nearby
+  // component (`sevSegmentBar`) draws severities and only severities, which is an argument
+  // against merging the two, not an argument that the in/out-proportion idea itself is
+  // gas-only. It is `gas_shared/ui/splitBar.js` now, reached through the barrel; its two call
+  // sites (both in settingsReadouts.js) are unchanged.
   //
   // `combobox.js` LEFT THIS LIST FIRST, and it was the only entry that was ever on it under
   // protest. gas_shared/ui/combobox.js resolves an option row's glyph by NAME through
@@ -140,7 +156,7 @@ registerParityContract({
   // cannot use it: its `getStorageStats` publishes no `cellLimit`, so there is no ratio to
   // draw. That is a missing FIGURE, not a missing widget.)
   localUiModules: [
-    "changeChip.js", "nvd.js", "scopeBar.js", "span.js", "splitBar.js",
+    "changeChip.js", "nvd.js", "scopeBar.js", "span.js",
   ],
   sheetOrder: SHEET_ORDER,
   localSheets: ["./styles/tokens.css", "./styles/pages.css"],
@@ -157,7 +173,7 @@ registerEmptyStateContract({
   routes: [
     "executive", "mttr", "program", "overview", "data", "history", "attribution", "settings",
   ],
-  // The non-vacuity half: these five still carry the failure messages, on errorState. All
+  // The non-vacuity half: these seven still carry the failure messages, on errorState. All
   // seven "Couldn't …" call sites were emptyState before P4 — a crash announced through
   // `role="status"`, in the same dashed box the register uses for "no scan saved yet", with
   // the exception dropped on the floor rather than put in the disclosure.
@@ -173,10 +189,19 @@ registerEmptyStateContract({
   // now, which is the measurement: the route matches the carrier regex where it did not
   // before, and dropping it from this list to keep the test green would have re-hidden
   // exactly the surface the contract exists to find.
-  errorStateCarriers: ["executive", "mttr", "overview", "program", "data"],
-  // The two pages that render section-by-section behind a guard(), because they are the
-  // ones a single failing section must not blank.
-  guardedRoutes: ["executive", "program"],
+  //
+  // "history" AND "attribution" JOINED WITH P1.3. history.js had no errorState anywhere — a
+  // failed scan-history fetch and a failed trend fetch were each a bare `console.error`, so a
+  // page whose whole subject is what has been measured announced its own failures nowhere on
+  // screen at all. attribution.js had a page-level firstRunNotice and no errorState: seven
+  // section renderers, each able to throw on its own slice of the payload, all unguarded.
+  errorStateCarriers: ["executive", "mttr", "overview", "program", "data", "history", "attribution"],
+  // The four pages that render section-by-section behind a guard(), because they are the
+  // ones a single failing section must not blank. "mttr" and "attribution" joined with P1.3:
+  // mttr's hero/survival-curve/SLA-table/by-domain sections each read a different slice of
+  // two RPCs' payloads, and attribution's seven panels each read a different slice of one —
+  // in both, one section's throw used to take the whole page down with it.
+  guardedRoutes: ["executive", "program", "mttr", "attribution"],
   // THE FIELD NAME IS AN ARGUMENT NOW, so this list is no longer empty.
   //
   // It was `[]`, and the comment here was explicit that the pages DO say the ledger has not
@@ -191,19 +216,41 @@ registerEmptyStateContract({
   // "latestSync" fails both routes).
   syncField: "latestScan",
   //
-  // ONE ROUTE, NOT TWO, AND THAT IS A SECOND FINDING. The old comment named `data` and
-  // `attribution` as "the two pages that gate on it", and both do gate on `latestScan` — but
-  // neither reached for `firstRunNotice` at all; each had hand-rolled its own words. Only
-  // `attribution`'s was a PAGE-LEVEL first-run state, so only it is converted. `data`'s two
-  // are section notes inside Report and Export ("No scan saved yet — run a scan to generate a
-  // report"), which name the specific thing that section cannot do; replacing them with one
-  // page-wide notice would say less, in a bigger box, twice. Registering `data` here to make
-  // the list look symmetrical would be the tail wagging the page.
-  firstRunRoutes: ["attribution"],
-  // attribution.js's call renders only inside `if (!boot.latestScan)` — `synced: false` is a
+  // FOUR MORE ROUTES JOINED WITH P1.3: `executive`, `mttr`, `overview`, `history`. Each used
+  // to say "nothing has been read yet" in its own hand-rolled words (or, on `executive`,
+  // three separate absences saying it three different ways) rather than through the one
+  // shared component every other first-run state on this page uses. `data`'s two remain
+  // deliberately unconverted — see below, unchanged from the original finding.
+  //
+  // `executive` LEFT THIS LIST WITH THE P2.2 REWRITE, and the reason is the component rather
+  // than the claim. That page no longer draws `firstRunNotice` — a one-line box saying the
+  // ledger has not been read — because it now draws the ITEMISED first-run panel its sibling
+  // does: `emptyState(heading, hint, { variant: "firstrun", items })`, one row per withheld
+  // figure naming what unlocks it and which control does the unlocking (see
+  // `executiveFirstRunView` and `test/executiveFirstRun.test.js`, which holds the panel's
+  // shape and its zero-suppression). It is a STRONGER statement than the shared notice, not a
+  // dropped one, and gas_devsecops's own registration excludes `executive` for exactly this
+  // reason. Keeping it here would force the page back to the weaker component, or to drawing
+  // both — two absences saying the same thing in two voices, which is what this whole
+  // contract exists to stop.
+  firstRunRoutes: ["attribution", "history", "mttr", "overview"],
+  // `data`'s two are section notes inside Report and Export ("No scan saved yet — run a scan
+  // to generate a report"), which name the specific thing that section cannot do; replacing
+  // them with one page-wide notice would say less, in a bigger box, twice. Registering `data`
+  // here to make the list look symmetrical would be the tail wagging the page.
+  //
+  // `attribution` AND `overview` CANNOT CARRY A DATE, and for the same reason: each one's only
+  // `firstRunNotice(` call renders inside `if (!boot.latestScan)` — `synced: false` is a
   // literal there, never a value derived at render time, so there is never a scan to date.
   // Same shape as gas_devsecops's `data` route (`gas_devsecops/test/shared.test.js`).
-  firstRunNoAt: ["attribution"],
+  // `executive` is off both lists together (see above): it dates its own panel, from
+  // `executiveFirstRunView`'s `synced`, through a component this contract does not measure.
+  // `mttr` and `history` are NOT here: both pass `at:` on the branch where a scan exists but
+  // tracked nothing (`synced: true`), so the contract's own regex finds a dated call in each
+  // file even though each ALSO carries an undated `synced: false` branch for the no-scan-at-
+  // all case — the check is file-level ("does this route ever date its notice"), not
+  // per-call, and both routes do.
+  firstRunNoAt: ["attribution", "overview"],
 });
 
 // =========================================================================================
@@ -376,6 +423,15 @@ registerRelativeAgeContract({ ...base, relativeAge });
 registerSyncCaptionContract(base);
 
 // =========================================================================================
+//  A gap is not a zero — the shared sparkline component, now that Scan History draws one
+// =========================================================================================
+//
+// `pages/historyModel.js`'s `kpiSparkSeries`/`kmSparkCaption` build on `sparkPath`/
+// `sparkLabel` directly, so this register's own KPI-band sparklines are held to the same
+// refuse-before-cast contract `gas_devsecops`'s Scan History page already registers.
+registerSparklineContract({ ...base, sparkPath, sparkLabel });
+
+// =========================================================================================
 //  The hub link: one rule, this register's boundary and the shared header gate
 // =========================================================================================
 //
@@ -384,3 +440,35 @@ registerSyncCaptionContract(base);
 // exist because no `src/server/**` module here imports gas_shared (tsconfig has no `allowJs`),
 // and this table is what holds them to the same rule.
 registerHubUrlContract({ ...base, normalizeHubUrl });
+
+// =========================================================================================
+//  The scope-walk chip: one mark per register, not two
+// =========================================================================================
+//
+// The two halves of the defect live in different files — a fixed pixel box in base.css and a
+// text glyph put into it by this app's own row builder — so the contract reads both. See the
+// contract's header for the measured overflow (an 8px box holding 21px of content).
+registerScanStepContract({
+  ...base,
+  progressSrc: readFileSync(new URL("../src/client/js/scanProgress.js", import.meta.url), "utf8"),
+  baseCss: readFileSync(new URL("../../gas_shared/styles/base.css", import.meta.url), "utf8"),
+});
+
+// =========================================================================================
+//  The settings kernel: this register's own SETTINGS_TABS/SETTING_FIELDS, plus the kernel's
+//  own fixed behaviour against a synthetic registry (settingsForm.js's own concern, not this
+//  app's — see that contract's header). `spine: true` pins the canonical tab order this wave
+//  put in place: Register · Risk · Attribution · Lifecycle · Access · System.
+// =========================================================================================
+registerSettingsFormContract({
+  ...base, tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB, spine: true,
+});
+
+// =========================================================================================
+//  The settings read-out vocabulary: gas is the first and, until P3 onward, only caller — see
+//  gas_shared/ui/settingsReadouts.js's own header for what moved here from gas's client mirror
+// =========================================================================================
+registerSettingsReadoutsContract({
+  ...base, beforeAll, afterAll,
+  impactSplitModel, severitySplitModel, tickTimeline, createCutHistogram, openAndTotal,
+});

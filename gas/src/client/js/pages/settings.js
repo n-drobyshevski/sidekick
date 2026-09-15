@@ -1,7 +1,14 @@
-// Settings — five task tabs (Register / Risk / Attribution / Lifecycle / System) over one
-// batched save bar. settingsModel.js owns the draft/dirty/validate model; settingsReadouts.js
-// owns the live "what is this control doing right now" readouts; this file wires DOM controls
-// to the draft and repaints both on every edit.
+// Settings — Register / Risk / Attribution / Lifecycle / Access / System over one batched save
+// bar. settingsModel.js owns the draft/dirty/validate model; settingsReadouts.js owns the live
+// "what is this control doing right now" readouts; this file wires DOM controls to the draft
+// and repaints both on every edit.
+//
+// ACCESS IS NOT ALWAYS BUILT. `renderAccessPanel()` (accessEditor.js) answers null for a reader
+// who may not edit the roster, and this page then draws no Access tab at all — the same rule
+// gas_ai's and gas_devsecops's own Access tabs already follow. The tablist below is built from
+// only the tabs that actually got a panel, and `normalizeTab` is called with that built set as
+// its second argument, so a stale `#/settings?tab=access` bookmark falls back instead of
+// selecting a tab nothing rendered.
 
 import { call } from "../../../../../gas_shared/api.js";
 import { backfillStatusView } from "../backfillStatus.js";
@@ -9,22 +16,58 @@ import { capacityView } from "../capacity.js";
 import { decodePrefill, PREFILL_KEY } from "../attributionPrefill.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams } from "../../../../../gas_shared/store.js";
 import {
-  changeCountText, changeSummary, changedFields, clampDisplayToFetch, dirtyTabs, draftWarnings,
-  normalizeTab, SETTINGS_TABS, settingsDraft, settingsPatch, validateDraft,
+  changeCountText, changeSummary, changedFields, clampDisplayToFetch, draftWarnings, fieldErrors,
+  normalizeTab, SETTINGS_TABS, settingsDraft, settingsPatch, TAB_FIELDS, tabStatus, validateDraft,
 } from "../settingsModel.js";
 import {
-  createRiskReadout, renderRetentionReadout, severityScopeReadout, toggleHeadline,
-  toggleReadoutBar, toggleReadoutNote,
+  createRiskReadout, renderRetentionReadout, severityScopeReadout,
 } from "../settingsReadouts.js";
 import {
   absent, clear, confirmDialog, diagnosticsPanel, disclosure, el, errorCountBadge, errorLogBody,
   heroLines,
-  fmtDateTime, normalizeErrorLog, openSheet, pageHeader, saveBar, settingRow,
-  settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor, toast,
+  fmtDateTime, impactSplit, impactSplitModel, normalizeErrorLog, openSheet, pageHeader, saveBar,
+  settingRow, settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor,
+  tipLabel, toast,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
 import { renderDomainsEditor } from "./domainsEditor.js";
+
+// Mirrors src/domain/config.ts's RETENTION_MIN_DAYS — the client never imports the TS domain
+// modules (every page's own header states the rule; see e.g. overview.js's SLA_TARGETS copy),
+// so this is a second literal held equal to the source of truth by a test rather than by an
+// import. Used only to word `saveReconciliation`'s toast; `validateDraft` already blocks a
+// below-floor value from ever reaching api_saveSettings through this page's own Save button
+// (see settingsModel.js), so the clamp this names is a defence against a value that bypassed
+// this page entirely — a stale script-property edit, or a caller other than this UI.
+const RETENTION_FLOOR_DAYS = 30;
+
+/**
+ * What the server actually stored versus what was sent — the honest surface for the one field
+ * that can drift from client validation even though `validateDraft` already refuses to SEND
+ * an out-of-range value: `retentionDays` clamps to the floor server-side too
+ * (settingsLogic.ts's `withRetentionDays`), and a persisted value written before this page's
+ * own check existed (or by a caller other than this UI) reaches `saveSettings` unclamped.
+ * Reading only `sent` would miss a rewrite this save never asked for; reading only `saved`
+ * would miss that one happened at all. Returns human sentences rather than a code, because
+ * the only consumer is a toast. Ported from gas_devsecops/src/client/js/pages/settings.js's
+ * own `saveReconciliation`, minus the sync-hour half that app has and this one does not.
+ */
+export function saveReconciliation(sent, saved) {
+  const notes = [];
+  const s = sent || {};
+  const r = saved || {};
+  if (
+    s.retentionDays !== null && Number.isFinite(Number(s.retentionDays))
+    && r.retentionDays !== null && Number(s.retentionDays) !== Number(r.retentionDays)
+  ) {
+    notes.push(
+      `Retention window saved as ${r.retentionDays} day(s) — raised to the `
+      + `${RETENTION_FLOOR_DAYS}-day floor.`,
+    );
+  }
+  return notes;
+}
 
 export async function renderSettings(main, params, ctx) {
   const boot = await bootstrap();
@@ -99,6 +142,23 @@ export async function renderSettings(main, params, ctx) {
     ariaLabel: "Severities every page shows",
     onChange: () => onEdit(),
   });
+  // Inline `role="alert"` spans for the two severity checks `fieldErrors` runs (an empty
+  // scan scope, and the display-severity ⊆ fetch-severity subset rule) — hidden until an
+  // error, same "hidden until an error" shape hubUrlPanel's field already uses
+  // (gas_shared/ui/hubPanel.js). `aria-describedby` on the pill row itself: there is no
+  // single `<input>` a multi-button toggle group can hang the error off of, so the GROUP is
+  // the control an assistive-tech reader is told is invalid. `paintFieldErrors()` (below)
+  // is what actually shows/hides these and flips `aria-invalid`.
+  const fetchErrorId = "settings-fetch-severities-error";
+  const fetchError = el(
+    "span", { id: fetchErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+  );
+  fetchPills.node.setAttribute("aria-describedby", fetchErrorId);
+  const displayErrorId = "settings-display-severities-error";
+  const displayError = el(
+    "span", { id: displayErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+  );
+  displayPills.node.setAttribute("aria-describedby", displayErrorId);
   // Display must be a subset of the scan scope: lock (and, via clampDisplayToFetch, drop) any
   // display pill outside the current fetch selection, so the "always a subset" promise the copy
   // makes is kept by the control rather than relying on the server to quietly clamp it after.
@@ -137,13 +197,15 @@ export async function renderSettings(main, params, ctx) {
         el("p", { class: "muted small scope-block__note" },
           "Fewer severities = faster scans; a severity outside the scope pauses its " +
           "lifecycle tracking."),
-        fetchPills.node),
+        fetchPills.node,
+        fetchError),
       el("div", { class: "scope-block scope-block--divided" },
         el("span", { class: "label" }, "Shown across the app"),
         el("p", { class: "muted small scope-block__note" },
           "A subset of the scan scope. A severity outside the scan scope is locked here " +
           "until you add it above."),
-        displayPills.node),
+        displayPills.node,
+        displayError),
       scopeReadoutHost,
     ],
   });
@@ -218,9 +280,20 @@ export async function renderSettings(main, params, ctx) {
     ariaLabel: "Count an EPSS score above the threshold as high risk",
     onChange: (c) => { draft.riskRule.epss = c; onEdit(); },
   });
+  // `setEpssThreshold` (below) clamps every keystroke into [0,1], so this field's OWN control
+  // can never leave the draft holding an out-of-range value — the practical way `fieldErrors`
+  // lights this span is a persisted settings blob that already carried a bad value before the
+  // reader touched the control at all (settingsDraft() only checks the TYPE of a stored
+  // epssThreshold, never its range). The span exists for that case, not for ordinary typing.
+  const riskThresholdErrorId = "settings-epss-threshold-error";
+  const riskThresholdError = el(
+    "span",
+    { id: riskThresholdErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+  );
   const riskThreshold = el("input", {
     type: "number", id: "risk-epss-threshold", min: "0", max: "1", step: "0.01",
     value: draft.riskRule.epssThreshold.toFixed(2), style: "width:96px",
+    "aria-describedby": riskThresholdErrorId,
     oninput: (e) => setEpssThreshold(e.target.value),
     onchange: () => { riskThreshold.value = draft.riskRule.epssThreshold.toFixed(2); },
   });
@@ -257,7 +330,7 @@ export async function renderSettings(main, params, ctx) {
       settingRow({
         label: "EPSS threshold",
         description: "Between 0 and 1. Raising it flags fewer findings as high risk.",
-        control: riskThreshold,
+        control: el("div", {}, riskThreshold, riskThresholdError),
         htmlFor: "risk-epss-threshold",
       }),
       riskReadout.node,
@@ -308,13 +381,26 @@ export async function renderSettings(main, params, ctx) {
       onEdit();
     },
   });
+  const retentionDaysErrorId = "settings-retention-days-error";
+  const retentionDaysError = el(
+    "span",
+    { id: retentionDaysErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+  );
   const retentionDays = el("input", {
-    type: "number", min: "30", step: "1", value: draft.retentionDays ?? 180,
+    type: "number", id: "settings-retention-days", min: "30", step: "1",
+    value: draft.retentionDays ?? 180,
     style: "width:96px", "aria-label": "Retention window in days",
+    "aria-describedby": retentionDaysErrorId,
     disabled: draft.retentionDays === null ? true : null,
     oninput: (e) => {
       const n = Number(e.target.value);
-      if (Number.isFinite(n)) { draft.retentionDays = n; onEdit(); }
+      // Only a value that PARSES updates the draft — an in-progress "1" before a second digit
+      // lands, or stray text, is not "retain for NaN days". But `onEdit()` now runs either
+      // way: it used to return early here without calling it, which is the read-instead-of-
+      // presence trap in the other direction — a keystroke that never validated also never
+      // told the save bar or the tablist that anything had happened.
+      if (Number.isFinite(n)) draft.retentionDays = n;
+      onEdit();
     },
   });
   const autoCompactSwitch = switchToggle({
@@ -338,10 +424,12 @@ export async function renderSettings(main, params, ctx) {
         htmlFor: "ret-on",
       }),
       settingRow({
-        label: "Retention window",
+        label: "Retention window", htmlFor: "settings-retention-days",
         description: "Scans older than this are sealed (minimum 30 days).",
-        control: el("div", { style: "display:flex; align-items:center; gap:6px" },
-          retentionDays, el("span", { class: "muted small" }, "days")),
+        control: el("div", {},
+          el("div", { style: "display:flex; align-items:center; gap:6px" },
+            retentionDays, el("span", { class: "muted small" }, "days")),
+          retentionDaysError),
       }),
       settingRow({
         label: "Compact automatically after each scan",
@@ -399,6 +487,13 @@ export async function renderSettings(main, params, ctx) {
   // History backfill, Domain-tag backfill and Support group refresh, one row each. A job's full
   // former paragraph lives verbatim in its row's disclosure rather than sitting open on the page.
   const historyStatusCell = el("td", { class: "job-status-cell" });
+  // History backfill is the one row of the three with a real status endpoint behind it
+  // (api_getRiskBackfillStatus -> backfillJobs.backfillStatus() -> JobRow.updated_at), so it
+  // is the one row that can honestly print something other than absent() here. Domain-tag
+  // backfill and Support group refresh are synchronous one-shot RPCs with no persisted job
+  // row at all — nothing records when they last ran, which is why the COLUMN HEADING below
+  // carries that explanation rather than a dash with nothing behind it.
+  const historyLastRunCell = el("td", { class: "num" }, absent());
   const historyBtn = el("button", { onclick: runBackfill }, "Recover history signals");
 
   function paintHistoryStatus(b) {
@@ -420,6 +515,7 @@ export async function renderSettings(main, params, ctx) {
     if (view.text) {
       historyStatusCell.append(el("div", { class: "muted small", style: "margin-top:3px" }, view.text));
     }
+    clear(historyLastRunCell).append(b && b.updatedAt ? fmtDateTime(b.updatedAt) : absent());
     historyBtn.disabled = view.busy;
     // The job hops on a one-shot trigger, so poll rather than assume it finished.
     if (view.poll) setTimeout(loadHistoryStatus, 4000);
@@ -458,7 +554,7 @@ export async function renderSettings(main, params, ctx) {
         "bag is never overwritten, so a repeated or interrupted run converges on the same " +
         "result. Scans already sealed by compaction had their archives pruned; for those, use " +
         "Domain-tag backfill below, which reads the checkpoints instead."))),
-    el("td", { class: "num" }, absent()),
+    historyLastRunCell,
     historyStatusCell,
     el("td", {}, historyBtn));
 
@@ -497,6 +593,9 @@ export async function renderSettings(main, params, ctx) {
         "runs. Reads the compaction checkpoints in Drive, which still hold them. Safe to " +
         "re-run: a row that already carries its tags is never overwritten, and a run that " +
         "recovers nothing writes nothing."))),
+    // A synchronous RPC (api_backfillEpisodeTags), not a job row — nothing server-side
+    // records when this last ran, which is why the "Last run" HEADING carries the
+    // explanation rather than this cell pretending to know and printing a bare dash.
     el("td", { class: "num" }, absent()),
     tagStatusCell,
     el("td", {}, tagBtn));
@@ -549,6 +648,8 @@ export async function renderSettings(main, params, ctx) {
         "CS-SUPPLY-MONITORING). Refreshing pulls every tagged subscription from Wiz and joins " +
         "it onto findings, powering the Support group filter, breakdown, and domain condition. " +
         "Also refreshes automatically after each scan."))),
+    // Same reason as Domain-tag backfill above: api_refreshSupportGroups is a synchronous
+    // RPC with no persisted job row, so nothing here can honestly report a last-run time.
     el("td", { class: "num" }, absent()),
     sgStatusCell,
     el("td", {}, sgBtn));
@@ -559,7 +660,23 @@ export async function renderSettings(main, params, ctx) {
     body: el("div", { class: "table-wrap" },
       el("table", { class: "data jobs-table" },
         el("thead", {}, el("tr", {},
-          ...["Job", "Last run", "Status", ""].map((h) => el("th", { scope: "col" }, h)))),
+          // "Last run" only ever fills in for History backfill (the one row with a real
+          // status endpoint behind it, api_getRiskBackfillStatus). Domain-tag backfill and
+          // Support group refresh are synchronous RPCs with no persisted job row at all, so
+          // their cells stay absent() — a bare dash with NOTHING explaining it would read as
+          // a measurement the app forgot to take, so the column heading itself carries the
+          // reason rather than leaving two of three rows unexplained.
+          el("th", { scope: "col" }, "Job"),
+          el("th", { scope: "col" },
+            tipLabel("Last run", {
+              lines: [
+                "History backfill records this. Domain-tag backfill and Support group " +
+                "refresh run synchronously and keep no record of when they last ran.",
+              ],
+            })),
+          el("th", { scope: "col" }, "Status"),
+          el("th", { scope: "col" }, ""),
+        )),
         el("tbody", {}, historyRow, tagRow, sgRow))),
   });
 
@@ -712,16 +829,20 @@ export async function renderSettings(main, params, ctx) {
   const riskTab = tabPanel("risk", riskPanel);
   const attributionTab = tabPanel("attribution", domainsPanel, attributionCrossRef);
   const lifecycleTab = tabPanel("lifecycle", retentionPanel, jobsPanel);
-  // The Access roster editor is NOT a diagnostic — it is an editor with its own save control —
-  // so it stays a sibling of the read-out grid rather than moving inside it.
+  // THE ONE SECTION THAT MAY LEGITIMATELY VANISH — renderAccessPanel() (accessEditor.js)
+  // answers null both for a reader who may not edit the roster and for a failed fetch, and its
+  // own rule is that a non-editor gets no section at all rather than a disabled one. No `panels`
+  // entry is built for it in that case, exactly as gas_ai's own settings.js does.
+  const accessTab = accessPanelNode ? tabPanel("access", accessPanelNode) : null;
   const systemTab = tabPanel(
     "system",
     diagnostics.node,
       // The hub field, on System because it is a fact about this DEPLOYMENT rather than about
-      // the register's own data. `accessPanelNode` is the tier signal this page already
-      // trusts — renderAccessPanel() answers null for a reader who may not edit the roster —
-      // and the same tier owns the hub URL. `saveHubUrl` re-checks server-side regardless, so
-      // this decides what to OFFER, never what is allowed.
+      // the register's own data — gas_ai's and gas_devsecops's own System tabs draw it here for
+      // the same reason. `accessPanelNode` is the tier signal this page already trusts —
+      // renderAccessPanel() answers null for a reader who may not edit the roster — and the
+      // same tier owns the hub URL. `saveHubUrl` re-checks server-side regardless, so this
+      // decides what to OFFER, never what is allowed.
       //
       // `refresh` is what makes the header catch up: the hub button is drawn from the
       // bootstrap payload, so without it a reader saves a URL and the control it is FOR does
@@ -731,26 +852,33 @@ export async function renderSettings(main, params, ctx) {
         canEdit: !!accessPanelNode,
         onSaved: () => { ctx && ctx.refresh && ctx.refresh(); },
       }),
-    accessPanelNode,
   );
 
   const panels = {
     register: registerTab, risk: riskTab, attribution: attributionTab,
     lifecycle: lifecycleTab, system: systemTab,
   };
+  if (accessTab) panels.access = accessTab;
+
+  // Only the tabs that actually got a panel — SETTINGS_TABS names Access whether or not this
+  // reader may edit the roster, and `panels.access` above is the thing that actually decides.
+  const tabDefs = SETTINGS_TABS.filter((t) => panels[t.key]);
+  const tabKeys = tabDefs.map((t) => t.key);
 
   // Deep-linkable via `#/settings?tab=risk`, not a sub-path (parseHash splits on "?" and looks
   // up PAGES[pathPart], so a sub-path would fall through to a different page). The Attribution
-  // handoff (below) forces this tab regardless of any ?tab= already in the hash.
-  const initialTab = params.attribute ? "attribution" : normalizeTab(params.tab);
+  // handoff (below) forces this tab regardless of any ?tab= already in the hash. `normalizeTab`
+  // takes `tabKeys` as its second argument so a stale `#/settings?tab=access` bookmark from a
+  // reader who has since lost roster access falls back instead of selecting a tab nothing built.
+  const initialTab = params.attribute ? "attribution" : normalizeTab(params.tab, tabKeys);
 
   const tabs = tabList({
-    tabs: SETTINGS_TABS.map((t) => ({ key: t.key, label: t.label })),
+    tabs: tabDefs.map((t) => ({ key: t.key, label: t.label })),
     active: initialTab,
     ariaLabel: "Settings sections",
     idPrefix: "settings",
     onSelect: (key) => {
-      for (const t of SETTINGS_TABS) panels[t.key].hidden = t.key !== key;
+      for (const k of tabKeys) panels[k].hidden = k !== key;
       // history.replaceState — does not fire hashchange, does not re-render. This also covers
       // the Attribution handoff's "read-then-strip": the very first onSelect (fired during
       // tabList's own construction, for `initialTab`) replaces the whole query string,
@@ -761,14 +889,61 @@ export async function renderSettings(main, params, ctx) {
 
   const bar = saveBar({ onSave, onDiscard, onJump: (tab) => tabs.select(tab) });
 
-  main.append(tabs.node, registerTab, riskTab, attributionTab, lifecycleTab, systemTab, bar.node);
+  main.append(tabs.node, ...tabKeys.map((k) => panels[k]), bar.node);
 
   // ------------------------------------------------------------------------ shared repainting
+  // Fields currently failing their OWN legality check (fieldErrors), keyed by SETTING_KEYS
+  // name — read by tabStatus() by KEY PRESENCE, never truthiness (a caller clears a field by
+  // DELETING the key, not by setting a falsy message; see tabStatus's own header for why that
+  // split matters). Recomputed wholesale on every edit rather than patched per-field: the
+  // checks are cheap and cross-field (the display-severity subset rule reads BOTH severity
+  // lists), so patching one field's entry in isolation risks leaving a stale verdict on the
+  // other after an edit that only touched one of the two.
+  let errors = {};
+
+  function refreshFieldErrors() {
+    const fe = fieldErrors(draft);
+    for (const [field, message] of Object.entries(fe)) {
+      if (message) errors[field] = message; else delete errors[field];
+    }
+  }
+
+  /** Paint the four inline `role="alert"` spans (and their `aria-invalid` pairing) from
+   *  `errors` — hidden text is not merely INVISIBLE, `[hidden]` (base.css's global reset)
+   *  drops it from the accessibility tree too, so a cleared field is silent rather than an
+   *  empty alert. */
+  function paintFieldErrors() {
+    fetchError.hidden = !errors.fetchSeverities;
+    fetchError.textContent = errors.fetchSeverities || "";
+    fetchPills.node.setAttribute("aria-invalid", errors.fetchSeverities ? "true" : "false");
+
+    displayError.hidden = !errors.displaySeverities;
+    displayError.textContent = errors.displaySeverities || "";
+    displayPills.node.setAttribute("aria-invalid", errors.displaySeverities ? "true" : "false");
+
+    riskThresholdError.hidden = !errors.riskRule;
+    riskThresholdError.textContent = errors.riskRule || "";
+    riskThreshold.setAttribute("aria-invalid", errors.riskRule ? "true" : "false");
+
+    retentionDaysError.hidden = !errors.retentionDays;
+    retentionDaysError.textContent = errors.retentionDays || "";
+    retentionDays.setAttribute("aria-invalid", errors.retentionDays ? "true" : "false");
+  }
+
   function syncDirty() {
+    refreshFieldErrors();
+    paintFieldErrors();
     const changed = changedFields(saved, draft);
     bar.update(changeCountText(changed), changeSummary(changed));
-    const dt = new Set(dirtyTabs(changed));
-    for (const t of SETTINGS_TABS) tabs.setDirty(t.key, dt.has(t.key));
+    // tabStatus() replaces the old `dirtyTabs(changed)` lookup with the same underlying
+    // comparison (sameValue), plus the invalid half `dirtyTabs` never carried — one call
+    // instead of two so the tablist's dirty and invalid marks can never read from two
+    // different snapshots of `draft`.
+    const status = tabStatus(draft, saved, errors, TAB_FIELDS);
+    for (const k of tabKeys) {
+      tabs.setDirty(k, !!(status[k] && status[k].dirty));
+      tabs.setInvalid(k, !!(status[k] && status[k].invalid));
+    }
   }
 
   function onEdit() {
@@ -781,19 +956,33 @@ export async function renderSettings(main, params, ctx) {
     clear(scopeReadoutHost);
     scopeReadoutHost.append(severityScopeReadout(impact.census, draft, boot.palette.selectable));
 
-    vfHeadline.textContent = toggleHeadline(impact.toggles.noFix, impact.toggles.openTotal,
-      "have no vendor fix available");
+    const vfModel = impactSplitModel({
+      count: impact.toggles.noFix, total: impact.toggles.openTotal, unit: "findings",
+      phrase: "have no vendor fix available",
+      includedLabel: "Has a vendor fix", excludedLabel: "No vendor fix",
+      on: draft.showNoFix,
+      onNote: `All ${impact.toggles.openTotal.toLocaleString()} open findings counted.`,
+      offNote: `${impact.toggles.noFix.toLocaleString()} findings hidden from every chart, `
+        + "table, KPI and export.",
+    });
+    vfHeadline.textContent = vfModel.headline;
     clear(vfBarHost);
-    vfBarHost.append(toggleReadoutBar(impact.toggles.noFix, impact.toggles.openTotal,
-      "Has a vendor fix", "No vendor fix"));
-    vfNote.textContent = toggleReadoutNote(impact.toggles.noFix, impact.toggles.openTotal, draft.showNoFix);
+    vfBarHost.append(impactSplit(vfModel));
+    vfNote.textContent = vfModel.note;
 
-    eolHeadline.textContent = toggleHeadline(impact.toggles.eolOpen, impact.toggles.openTotal,
-      "are on an end-of-life operating system");
+    const eolModel = impactSplitModel({
+      count: impact.toggles.eolOpen, total: impact.toggles.openTotal, unit: "findings",
+      phrase: "are on an end-of-life operating system",
+      includedLabel: "Supported OS", excludedLabel: "End-of-life OS",
+      on: draft.includeEol,
+      onNote: `All ${impact.toggles.openTotal.toLocaleString()} open findings counted.`,
+      offNote: `${impact.toggles.eolOpen.toLocaleString()} findings hidden from every chart, `
+        + "table, KPI and export.",
+    });
+    eolHeadline.textContent = eolModel.headline;
     clear(eolBarHost);
-    eolBarHost.append(toggleReadoutBar(impact.toggles.eolOpen, impact.toggles.openTotal,
-      "Supported OS", "End-of-life OS"));
-    eolNote.textContent = toggleReadoutNote(impact.toggles.eolOpen, impact.toggles.openTotal, draft.includeEol);
+    eolBarHost.append(impactSplit(eolModel));
+    eolNote.textContent = eolModel.note;
 
     riskReadout.update(impact.risk.cube, draft.riskRule, { onThresholdChange: setEpssThreshold });
 
@@ -835,6 +1024,14 @@ export async function renderSettings(main, params, ctx) {
   }
 
   async function onSave() {
+    // INLINE ERRORS FIRST: refresh + repaint the four spans against the draft as it stands
+    // right now, so a persisted-invalid value nobody has EDITED this session (settingsDraft()
+    // never clamps on load) lights its span the moment Save is pressed rather than only after
+    // the reader happens to touch that control. THEN the toast + jump, which is what actually
+    // stops the save and sends the reader to the right tab — the spans are the "what", the
+    // toast is the "go look".
+    refreshFieldErrors();
+    paintFieldErrors();
     const v = validateDraft(draft);
     if (!v.ok) {
       toast(v.message, "warn");
@@ -851,6 +1048,7 @@ export async function renderSettings(main, params, ctx) {
     bar.setBusy(true);
     try {
       const patch = settingsPatch(saved, draft);
+      const sent = draft;
       const res = await call("api_saveSettings", { patch });
       savedShape = res;
       Object.assign(saved, settingsDraft(savedShape));
@@ -860,7 +1058,8 @@ export async function renderSettings(main, params, ctx) {
       invalidateRpcCache();
       await loadImpact();
       syncDirty();
-      toast("Settings saved.");
+      const notes = saveReconciliation(sent, saved);
+      toast(notes.length ? notes.join(" ") : "Settings saved.");
     } catch (e) {
       toast(`Save failed: ${e.message}`, "error");
     } finally {

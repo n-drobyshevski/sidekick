@@ -141,6 +141,14 @@
   font-size: var(--fs-body);
 }
 
+/* ------------------------------------------------------- the Sidekick URLs live readout
+   `.settings-panel__body` (gas_shared/styles/settings.css) is plain block flow, not a flex
+   column with its own `gap` — every OTHER `.label` sub-heading in these apps sits inside a
+   flex container that supplies its spacing for it (gas's `.scope-block`), which this page has
+   none of. So the one rule this file adds gives the label its own rhythm rather than reaching
+   for a shared flex wrapper this panel does not otherwise need. */
+.settings-panel__body > .label { display: block; margin: var(--space-4) 0 var(--space-1); }
+
 /* --------------------------------------------------------------------------- the nav rail
    FINDING 5 OF THE PLANNING PASS. navRail.js draws a leading `.nav-rule` in front of what it
    expects to be an unlabelled CHROME TAIL following one or more labelled lanes (:127 for the

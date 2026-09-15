@@ -16,6 +16,23 @@
 // Every call site here passes one `rows` reference into `chartTableModel` and the identical
 // reference (or the arrays it was read from) into the chart wrapper, in the same statement.
 //
+// PAGING IS A VIEWPORT, NOT A FILTER, and the pager is what keeps that true. The rule above
+// says the model holds one row per point with no truncation, and it still does —
+// `chartTableModel` is untouched by any of this. What a long curve needed was somewhere to
+// put 130 rows other than "all of them, always": `#/mttr`'s Kaplan-Meier disclosure ran the
+// page several screens past the chart it describes, and the reader who opened it to find one
+// step had to scroll through every other one to get back. So the DISCLOSURE pages its own
+// model, and the pager states the total on every page ("Page 1 of 9 — 130 rows") so the
+// population the canvas drew is still named where the rows are read. A table that quietly
+// showed the first fifteen with nothing saying so would be the truncation this file bans.
+//
+// THE PAGER'S PRESENCE IS DECIDED ONCE, from the row count against DEFAULT_PAGE_SIZE, and
+// never again from the size in force. Deciding it from the CURRENT size is the trap: pick
+// "250 / page" on a 130-row curve and the footer that offered the choice has no more pages to
+// show, so it removes itself and takes the only route back to 15 with it. `chartTablePaged`
+// is that decision, pure and tested; a table at or under the default keeps exactly the markup
+// it had before pagination existed.
+//
 // THE PURE / DOM SPLIT, and why the pure half is the bigger one. `chartTableModel` is
 // DOM-free and does all of the formatting; `chartTable` only dresses its output. This
 // project's vitest run has no `environment` set (no jsdom), so the half that can actually be
@@ -25,7 +42,8 @@
 // prints an em dash and a measured zero prints "0", and the two never trade places.
 
 import { el, motionOk } from "./dom.js";
-import { dataTable } from "./data.js";
+import { dataTable, tableFooter } from "./data.js";
+import { DEFAULT_PAGE_SIZE, pageOf } from "./tableModel.js";
 import { days1, fmtCount, num, pct1 } from "./figures.js";
 
 /**
@@ -131,6 +149,29 @@ export function survivalTableModel(curve) {
   });
 }
 
+/**
+ * Does this table get a pager? DOM-free, so the one decision that can be WRONG has a test
+ * that needs no jsdom.
+ *
+ * Answered from the row count alone, against `DEFAULT_PAGE_SIZE` — deliberately NOT against
+ * whatever size is in force. See the header: a footer that disappears when the reader widens
+ * the page is a control that eats itself. `chartTable` calls this once, at build time, and
+ * the answer is fixed for the life of the node.
+ *
+ * At or under the default the disclosure renders exactly what it rendered before paging
+ * existed: the whole model, no footer, no row count. A four-bucket aging table does not need
+ * to be told it has four rows.
+ *
+ * @param {number} rowCount rows in the built model
+ * @param {number} [defaultSize] the size the table opens on
+ * @returns {boolean}
+ */
+export function chartTablePaged(rowCount, defaultSize = DEFAULT_PAGE_SIZE) {
+  const rows = Math.floor(Number(rowCount)) || 0;
+  const size = Math.max(1, Math.floor(Number(defaultSize)) || 0);
+  return rows > size;
+}
+
 let seq = 0;
 
 /**
@@ -152,15 +193,24 @@ let seq = 0;
  * The caret rotation is gated on `motionOk()` — a marker that swings is decoration, and a
  * reader who asked for reduced motion gets the same disclosure with a caret that simply
  * changes state.
+ *
+ * `pageSize` overrides the size the table OPENS on; it does not change whether a footer is
+ * offered, which is `chartTablePaged`'s answer and is taken against the default regardless.
  */
 export function chartTable(spec) {
-  const { canvas = null, caption = "", model = null, id = null } = spec || {};
+  const {
+    canvas = null, caption = "", model = null, id = null, pageSize = DEFAULT_PAGE_SIZE,
+  } = spec || {};
   const built = model && Array.isArray(model.columns) && Array.isArray(model.rows)
     ? model
     : chartTableModel({});
 
   seq += 1;
   const nodeId = id || `chart-table-${seq}`;
+
+  const paged = chartTablePaged(built.rows.length);
+  let page = 0;
+  let size = Math.max(1, Math.floor(Number(pageSize)) || DEFAULT_PAGE_SIZE);
 
   const table = dataTable({
     columns: built.columns.map((col, i) => ({
@@ -169,10 +219,46 @@ export function chartTable(spec) {
       className: col.align === "num" ? "num" : null,
       cell: (row) => row[i],
     })),
-    rows: built.rows,
+    rows: paged ? pageOf(built.rows, page, size).rows : built.rows,
     panel: true,
     emptyText: "This chart has no points to list.",
   });
+
+  // The strip lives in its own host so a page change repaints the footer WITHOUT rebuilding
+  // the table's header — `dataTable` hands back `setRows` for exactly this, and rebuilding
+  // the whole wrap would throw away the sort state and the scroll position of the wrap the
+  // reader is mid-way through.
+  const footerHost = paged ? el("div", { class: "chart-table__footer" }) : null;
+
+  /**
+   * Paging replaces the control that was just pressed, so keyboard focus falls back to the
+   * document — the same defect `pages/inventory.js` fixed for the register tables, fixed the
+   * same way. `pager` stamps `data-nav` on its two buttons; put focus back on the one that
+   * was used, or on its neighbour where the move disabled it (first / last page).
+   */
+  function repaint(nav) {
+    const view = pageOf(built.rows, page, size);
+    page = view.page;
+    table.setRows(view.rows);
+    while (footerHost.firstChild) footerHost.removeChild(footerHost.firstChild);
+    footerHost.append(tableFooter({
+      page,
+      pageCount: view.pageCount,
+      total: built.rows.length,
+      pageSize: size,
+      onPage: (p) => { page = p; repaint("page"); },
+      onPageSize: (next, nextPage) => { size = next; page = nextPage; repaint("size"); },
+    }));
+    if (nav !== "page") return;
+    const active = document.activeElement;
+    const wanted = active && active.getAttribute ? active.getAttribute("data-nav") : null;
+    if (!wanted) return;
+    const same = footerHost.querySelector(`[data-nav="${wanted}"]`);
+    const other = footerHost.querySelector(
+      `[data-nav="${wanted === "prev" ? "next" : "prev"}"]`);
+    const target = same && !same.disabled ? same : (other && !other.disabled ? other : null);
+    if (target) target.focus();
+  }
 
   const node = el("details", { class: "chart-table", id: nodeId },
     el("summary", {},
@@ -180,7 +266,9 @@ export function chartTable(spec) {
       "Show the figures"),
     el("div", { class: "chart-table__body" },
       caption ? el("p", { class: "chart-table__caption" }, caption) : null,
-      table));
+      table,
+      footerHost));
+  if (paged) repaint(null);
   if (motionOk()) node.classList.add("chart-table--motion");
   if (canvas && canvas.setAttribute) canvas.setAttribute("aria-details", nodeId);
   return node;

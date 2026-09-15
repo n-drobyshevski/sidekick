@@ -207,7 +207,11 @@ describe("two syncs back to back", () => {
   it("stamps the scope the sync APPLIED on every row it saw", async () => {
     persist();
     const settings = await import("../src/server/settingsStore");
-    const scope = registerScopeSignature(settings.getIssueCategories());
+    // BOTH halves of the applied scope, resolved the way the battery resolves them —
+    // `projectScope()` and not the Fetch scope setting, because a dry run in this env has no
+    // WIZ_PROJECT_ID_V2 and therefore applies no project filter at all.
+    const props = await import("../src/server/props");
+    const scope = registerScopeSignature(settings.getIssueCategories(), props.projectScope());
     for (const row of ledgerRows()) expect(row["register_scope"]).toBe(scope);
     // The same signature the commit row records, because the guard on the NEXT sync compares
     // the two: a ledger stamped from settings and a history row stamped from the battery

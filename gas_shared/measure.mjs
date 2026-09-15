@@ -334,7 +334,7 @@ function distSizes(root) {
 }
 
 // ============================================================================================
-//  6. The 12-item cross-app inconsistency scorecard
+//  6. The 13-item cross-app inconsistency scorecard
 // ============================================================================================
 //
 // Each check is structural (existence / import graph / call-site counts), not a restatement
@@ -602,6 +602,41 @@ function scorecard(root) {
     });
   }
 
+  // 13. shared settings kernel
+  {
+    // STRUCTURAL, NOT A RESTATEMENT: this is the same declaration sweep
+    // test/contracts/parity.js's own "defines … nowhere but gas_shared" check runs per app,
+    // reapplied here across all four so a regression shows up in the scorecard rather than
+    // only in one app's own test run. `dirtyTabs` is deliberately not in this list — it was
+    // dead in production in every app that had it and was deleted, not promoted; see
+    // gas_shared/ui/settingsForm.js's own header.
+    const kernelExists = existsSync(join(sharedUi, "settingsForm.js"));
+    const registered = APPS.every((a) => /registerSettingsFormContract\(/.test(
+      readIfExists(join(root, a, "test/shared.test.js")),
+    ));
+    const FORKABLE = [
+      "normalizeTab", "changedFields", "settingsPatch", "changeSummary", "changeCountText",
+      "tabStatus", "sameValue",
+    ];
+    const declPattern = new RegExp(
+      "(function\\s+(" + FORKABLE.join("|") + ")\\s*\\(|\\b(?:const|let|var)\\s+("
+      + FORKABLE.join("|") + ")\\s*=)",
+    );
+    const forked = APPS.filter((a) => declPattern.test(readCode(clientTrees(root, a).js)));
+    const ok = kernelExists && registered && forked.length === 0;
+    items.push({
+      item: "settings-form kernel",
+      mark: ok ? "✓" : "✗",
+      note: ok
+        ? "one settingsForm() factory in gas_shared/ui/settingsForm.js; every app binds it to " +
+          "its own SETTINGS_TABS/SETTING_FIELDS registry rather than declaring normalizeTab/" +
+          "changedFields/settingsPatch/changeSummary/changeCountText/tabStatus/sameValue " +
+          "locally, and all four register the shared settingsForm contract."
+        : `kernel present: ${kernelExists}; all four registered: ${registered}; still declared ` +
+          `locally: ${forked.join(", ") || "(none)"}.`,
+    });
+  }
+
   return items;
 }
 
@@ -695,7 +730,7 @@ function printReport(m) {
     console.log(`  ${app.padEnd(14)} total ${totalRaw} B / ${totalGz} B gz`);
   }
 
-  console.log("\n-- 12-item cross-app inconsistency scorecard --");
+  console.log("\n-- 13-item cross-app inconsistency scorecard --");
   for (const row of m.scorecard) {
     console.log(`  ${row.mark}  ${row.item}`);
     console.log(`       ${row.note}`);

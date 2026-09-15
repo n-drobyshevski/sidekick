@@ -12,6 +12,8 @@ from pathlib import Path
 
 import pandas as pd
 
+from wiz_dashboard.domain.metrics import calculate_mttr, overall_sla_oldest
+
 logger = logging.getLogger(__name__)
 
 HISTORY_FILENAME = "mttr_history.json"
@@ -87,3 +89,28 @@ def load_history(filename: str = HISTORY_FILENAME) -> pd.DataFrame:
     df = pd.DataFrame(records)
     df["date"] = pd.to_datetime(df.get("date"), errors="coerce")
     return df.dropna(subset=["date"]).sort_values("date").reset_index(drop=True)
+
+
+def record_snapshot_from_findings(
+    df, counts=None, *, filename: str = HISTORY_FILENAME, when: str | None = None
+) -> bool:
+    """Compute and persist a snapshot from a findings frame when MTTR is available.
+
+    Returns ``False`` when the frame has no computable median, matching the old
+    scan-side behavior.
+    """
+    per_sev, overall = calculate_mttr(df)
+    median = overall.get("mttr_median")
+    if pd.isna(median):
+        return False
+    sla_pct, oldest_open_days = overall_sla_oldest(per_sev)
+    return record_snapshot(
+        median,
+        overall.get("resolved", 0),
+        overall.get("open", 0),
+        counts or {},
+        filename=filename,
+        when=when,
+        sla_pct=sla_pct,
+        oldest_open_days=oldest_open_days,
+    )

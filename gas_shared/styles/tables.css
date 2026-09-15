@@ -1,5 +1,21 @@
 /* ----------------------------------------------------------------------- tables */
 .table-wrap { overflow-x: auto; border: 1px solid var(--hairline); border-radius: var(--radius-lg); }
+/* PROMOTED FROM gas_devsecops/src/client/styles/pages.css, P3.4b (2026-09-08) — byte-identical
+   to gas's own copy of the same rule. THE TABLE WAS NEVER THE PROBLEM: `.table-wrap` above
+   already clips its `table.data` with `overflow-x: auto`. What escapes is `.sr-only` (this
+   file's own base sheet: `position: absolute`, no `top`/`left` of its own) — every `tip()`
+   call drops one of these beside its trigger for the description a screen reader needs, and
+   a register row's severity/status cells anchor several. `.table-wrap` was never `position`ed,
+   so an absolutely-positioned description with no positioned ancestor between it and the
+   document root takes its STATIC POSITION — computed from where the WIDE, un-scrolled table
+   would have placed it, a column or two past the visible edge — and resolves against the
+   document's own un-clipped flow instead of `.table-wrap`'s scrollport. The description is
+   1x1px and invisible either way; the bug is that its LAYOUT BOX still counts toward
+   `document.documentElement.scrollWidth`. Measured on gas_devsecops's seeded fixture at a
+   640px viewport: four routes (Coverage & efficiency, Code, Dependencies, Secrets) rendered
+   888/978/1201/1145px wide before this rule, and exactly 640 (the viewport) after it, with
+   nothing else touched. */
+.table-wrap { position: relative; }
 /* A table nested inside a card or a detail cell. The surrounding surface IS the box, so a
    bordered wrapper here would be a surface inside a surface — the shape DESIGN.md rules out
    for cards and the reason both of these tables were hand-built rather than asked for. The
@@ -146,6 +162,38 @@ a { color: var(--accent-text); }
   gap: var(--space-3);
   margin-bottom: var(--space-5);
 }
+/* PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b (2026-09-08) —
+   byte-identical in both. Small multiples: one survival curve per severity, on an MTTR page.
+   `auto-fit` + a 280px floor gives three per row on a desktop content column, two around
+   800px and one below ~560px, without a media query per breakpoint — the floor is where a
+   26-week staircase stops being readable rather than a device width. The canvas is HALF the
+   standard `.chart-box` so six of them stay light: these cards are read as shapes against
+   each other, and the figures behind each one are a keystroke away in the card's own table. */
+.sev-fan {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-4);
+}
+.sev-fan .chart-box { height: 160px; }
+/* The badge row. Severity is never colour alone: the dot and the word travel together here,
+   and the caption below states the half-life in words. */
+.sev-fan__head { margin-bottom: var(--space-2); }
+
+/* PROMOTED FROM gas/ AND gas_devsecops/ src/client/styles/pages.css, P3.4b — byte-identical.
+   `.sev-fan` and `.chart-row--pair` (components.css) both use `auto-fit` with a floor - 280px
+   and 300px - that two columns can still clear on a narrow phone before the text inside each
+   card starts crowding; below 640px a single column reads better than two cramped ones.
+   `.chart-row` above joins the same query for a different reason: its 420px floor is not too
+   CROWDED at 360px, it is simply wider than the viewport — `auto-fit` never lets a track
+   shrink below its `minmax` floor even down to a single column, so `1fr` alone (no floor)
+   collapses it to the real available width instead, same fix as `.page-header`'s narrow
+   collapse (components.css). Placed after `.chart-row` and `.sev-fan` so this wins the
+   cascade at equal specificity; `.chart-row--pair` lives in components.css, which this file
+   loads AFTER (SHEET_ORDER), so it wins over that definition too regardless of position here. */
+@media (max-width: 640px) {
+  .sev-fan, .chart-row--pair, .chart-row { grid-template-columns: 1fr; }
+}
 /* The line under a chart title: what the chart leaves out, or what it's still waiting for. */
 .chart-note { margin: -4px 0 var(--space-3); font-size: var(--fs-label); color: var(--text-3); }
 /* Stands in for the plot when there aren't enough points to draw one — matched to the
@@ -180,4 +228,94 @@ a { color: var(--accent-text); }
  * assessment scope arrives. */
 table.data .detail-row > td {
   white-space: normal; max-width: none; overflow: visible; text-overflow: clip;
+}
+
+/* ------------------------------------------ the column chooser (ui/columnPicker.js) */
+/* THE COG SITS IN THE LAST HEADING CELL, pinned to its right edge — not in a column of its
+   own, which would be a column the table then owes an empty cell on every row, for a control
+   that belongs to no row at all.
+
+   POSITIONED, NOT LAID OUT, and that is load-bearing rather than a preference: `display: flex`
+   on a `<th>` takes the cell out of the table layout algorithm and the column widths go with
+   it. The cell stays a table cell; it just reserves a right margin for the control, and the
+   control is absolutely placed inside it.
+
+   STICKY TO THE RIGHT, AND MEASURED. `position: relative` here read as the obvious choice and
+   was wrong twice over. It puts the cog at the right end of the TABLE, which on the table this
+   control exists for is past the right end of the WINDOW: the AI inventory measures 1534px of
+   columns in a 1300px column at a 1440px viewport, so the one control that makes a too-wide
+   table narrower was itself 177px off-screen. And it beat the sticky-heading rule above on
+   source order at equal specificity ((0,2,2) both), which would have left this one heading
+   cell scrolling away while the rest of its row stayed pinned. Sticking to the right edge of
+   whatever is scrolling — `main` when the wrap has been released above 1100px, the wrap
+   itself below that — fixes both: the `top` from the rule above still applies (nothing here
+   contests it), so the cell pins in both axes on a sticky table and in one on every other.
+
+   The cell therefore SLIDES OVER its neighbours as the table scrolls, which is why it carries
+   its own ground rather than inheriting the panel variant's transparency. Adopt the chooser on
+   a table whose last column is narrow or unlabelled — the inventory's is the Graph button, so
+   there is nothing in the cell but the cog — or accept that its heading travels with it. */
+table.data th.th-cols {
+  position: sticky; right: 0; z-index: 2;
+  padding-right: 30px; background: var(--surface);
+}
+.col-pick-btn {
+  position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; min-height: 0;
+  background: none; border: none; box-shadow: none; border-radius: var(--radius-sm);
+  color: var(--text-3); cursor: pointer;
+}
+.col-pick-btn:hover { color: var(--ink); background: var(--wash-hover); }
+.col-pick-btn:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 1px; }
+/* The table is narrowed, and the cog is the way back. Colour is not the only carrier: the
+   button's accessible name says how many columns are off (ui/columnPicker.js), which is the
+   half a dot cannot spell. */
+.col-pick-btn.is-narrowed { color: var(--accent-text); }
+.col-pick-btn.is-narrowed::after {
+  content: ""; position: absolute; top: 0; right: 0;
+  width: 5px; height: 5px; border-radius: 50%; background: var(--accent-text);
+  /* A ring in the heading's own ground, so the dot reads as a mark ON the cog rather than as
+     one more tooth growing out of it — the gear's top-right lobe reaches within a pixel. */
+  box-shadow: 0 0 0 1.5px var(--surface);
+}
+
+/* The popover: a compact list on the cog, not a sheet — the same argument gas_ai's graph
+   workbench writes above its own column panel. Choosing columns is an adjustment to the table
+   you are looking at, and a full-height overlay to make it hides the thing being adjusted. */
+.col-pick { display: flex; flex-direction: column; min-height: 0; }
+.col-pick-head {
+  margin: 0; padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--hairline); background: var(--surface);
+  font-size: var(--fs-label); font-weight: 600; color: var(--ink);
+}
+/* `min-height: 0` is what lets it actually scroll: a flex item's floor is its CONTENT by
+   default, so without this the list refuses to shrink inside a clamped `.col-pick` and the
+   overflow it was given has nothing to do. */
+.col-pick-list {
+  padding: var(--space-1); min-height: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+}
+.col-pick-row {
+  display: flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-2); border-radius: var(--radius-sm);
+  font-size: var(--fs-body); color: var(--ink); cursor: pointer;
+}
+.col-pick-row:hover { background: var(--wash-hover); }
+/* The whole row is the label, so the checkbox and the word are one target. */
+.col-pick-row input { margin: 0; flex: 0 0 auto; }
+.col-pick-name {
+  flex: 1 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A column the register keeps — the name, and anything a page pinned. Not greyed out of
+   recognition: the reader opened this asking where a column went, and the answer for these
+   is "it is still here and it stays", which they have to be able to READ. */
+.col-pick-row.is-fixed { cursor: default; color: var(--text-2); }
+.col-pick-row.is-fixed:hover { background: none; }
+.col-pick-always { flex: 0 0 auto; font-size: var(--fs-label); color: var(--text-3); }
+.col-pick-foot {
+  display: flex; align-items: center; justify-content: flex-end;
+  padding: var(--space-2) var(--space-3); border-top: 1px solid var(--hairline);
+  background: var(--surface);
 }

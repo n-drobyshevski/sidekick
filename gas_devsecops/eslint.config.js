@@ -80,6 +80,18 @@ const platformGlobals = {
   __BUILD_ID__: "readonly",
 };
 
+// dev/*.mjs: real Node ESM (the density walker and its pure model half), not a classic-script
+// shim. `document`/`window` come from browserGlobals below even though this runs under Node —
+// dev/density.mjs's own serializeMain() names them, but that function's SOURCE TEXT is shipped
+// into a live page via Playwright's page.evaluate() and never actually executes in this
+// process; declaring the globals it needs where it is textually written is cheaper and more
+// honest than an eslint-disable comment on a function that is correct exactly where it runs.
+const nodeGlobals = {
+  process: "readonly",
+  Buffer: "readonly",
+  AbortSignal: "readonly",
+};
+
 export default [
   {
     // dev/server.dev.js is esbuild's rebuild of the TS server bundle for the local dev
@@ -112,6 +124,17 @@ export default [
       ecmaVersion: 2022,
       sourceType: "script",
       globals: { ...browserGlobals, ...platformGlobals, ...devShimGlobals },
+    },
+    rules: {
+      "no-undef": "error",
+    },
+  },
+  {
+    files: ["dev/*.mjs"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: { ...browserGlobals, ...nodeGlobals },
     },
     rules: {
       "no-undef": "error",

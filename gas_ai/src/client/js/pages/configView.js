@@ -11,6 +11,7 @@
 // asserts the two agree on a fixture set. Change one, change the other, or the test fails.
 
 import { listSplit } from "../../../../../gas_shared/store.js";
+import { absentText } from "../../../../../gas_shared/ui/figures.js";
 
 export const CONFIG_SORTS = ["severity", "rule", "resource", "firstSeen", "status"];
 
@@ -280,7 +281,7 @@ function byControlSeverity(a, b) {
 export function rollupControls(rows) {
   const byRule = new Map();
   for (const row of rows) {
-    const key = row.ruleShortId || row.ruleName || "—";
+    const key = row.ruleShortId || row.ruleName || absentText;
     const bucket = byRule.get(key);
     if (bucket) bucket.push(row);
     else byRule.set(key, [row]);

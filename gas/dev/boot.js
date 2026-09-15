@@ -67,20 +67,50 @@
     console.log("[dev] seeded support-group map (6 subscriptions)");
   })();
 
-  // Seed: 7 daily dry-run scans. Each dry-run scan deterministically resolves one
+  // Seed: 8 daily dry-run scans. Each dry-run scan deterministically resolves one
   // more open sample finding, so scan-over-scan deltas and MTTR are non-trivial.
   // ?noseed leaves a fresh, empty ledger — for exercising the migration import paths.
+  //
+  // EIGHT, NOT SEVEN, AND THE OFF-BY-ONE IS THE WHOLE POINT. N daily scans span N-1 days, so
+  // the old 7 spanned 6 — and `insights.openMovement` refuses a comparison whose endpoints are
+  // under MOVEMENT_MIN_GAP_DAYS (7) apart. The seeded harness therefore rendered `tooClose`
+  // FOREVER: the Executive movement block could not be looked at locally at all, in any state
+  // but its refusal state. Eight scans span exactly 7 days, which clears the `>=` and makes
+  // the comparable path the default one a developer sees. (The refusal path is still
+  // reachable — drop a scan, or widen the gap — and it is what a real register looks like in
+  // its first week, so it is not a state anyone should have to hunt for either.)
   const DAY = 86_400_000;
-  const SEED_SCANS = 7;
+  const SEED_SCANS = 8;
+  // THE SCAN AT WHICH THE VANISHING ROWS STOP BEING RETURNED. `dev/sampleData.dev.ts` appends
+  // six findings and exposes `__devWithholdVanishing`; from this scan onward the fixture no
+  // longer returns them, so `reconcile.ts`'s disappearance pass resolves them and dates them
+  // by the scan that first missed them — `resolution_src: "disappeared"`, the branch a
+  // dry-run scan cannot otherwise reach, because `dryRunScan` only ever stamps `resolvedAt`
+  // (an API resolution). Four scans of presence first, so each one has a real age and a
+  // `last_scan_id` equal to the previous scan, which is what the pass requires.
+  const VANISH_AFTER_SCAN = 4;
   if (new URLSearchParams(location.search).has("noseed")) {
     console.log("[dev] ?noseed — fresh empty ledger");
   } else {
     const base = RealDate.now() - (SEED_SCANS - 1) * DAY;
     for (let i = 0; i < SEED_SCANS; i++) {
+      if (typeof globalThis.__devWithholdVanishing === "function") {
+        globalThis.__devWithholdVanishing(i >= VANISH_AFTER_SCAN);
+      }
       const res = withNow(base + i * DAY, () => Server.api.runScan({}));
       if (!res.ok) console.error("[dev] seed scan failed:", res.error);
     }
     console.log(`[dev] seeded ${SEED_SCANS} dry-run scans`);
+    // The counts this seed exists to produce, printed so a run can be checked rather than
+    // assumed — the same discipline as "a zero has to prove it looked".
+    const scanned = Server.api.getRegisterRows({ status: "resolved", pageSize: 250 });
+    if (scanned.ok) {
+      const rows = scanned.data.rows || [];
+      const bySrc = {};
+      for (const r of rows) bySrc[r.resolution_src || "(none)"] = (bySrc[r.resolution_src || "(none)"] || 0) + 1;
+      console.log("[dev] resolved rows by resolution_src:", JSON.stringify(bySrc),
+        "of", scanned.data.total, "resolved");
+    }
   }
 
   // Seed a few value chains so the sidebar's global Value Chain filter (and the

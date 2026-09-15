@@ -45,8 +45,8 @@ SEVERITY_ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
 # Standard VM SLAs, in days.
 SLA_TARGETS = {"CRITICAL": 7, "HIGH": 14, "MEDIUM": 30, "LOW": 90, "INFO": 180}
 
-# Light-theme severity palette, mirrored from wiz_dashboard/config.py so a chart here and a
-# chart in the Streamlit app agree. Each colour clears 3:1 against white as a graphical mark.
+# Light-theme severity palette, mirrored from wiz_dashboard/config.py so the register
+# surfaces agree. Each colour clears 3:1 against white as a graphical mark.
 #
 # It is a deliberate heat ramp, not a categorical palette, and it does NOT pass a categorical
 # colourblind check: HIGH and MEDIUM sit ΔE 1.6 apart under deuteranopia and 6.7 apart even
@@ -135,7 +135,7 @@ _BASE = {
 }
 
 SCOPES = {
-    # OS-package CVEs on host workloads: the population the Streamlit dashboard measures.
+    # OS-package CVEs on host workloads: the population the OS register measures.
     # Mirrors os_vulns.VARIABLES["filterBy"], minus its hardcoded projectIdV2 -- that is one
     # tenant's project and is exposed here as an opt-in `project_id` parameter instead.
     #
@@ -222,7 +222,7 @@ if SAST_FETCH_RESOLVED:
     SCOPES["sast"]["status"] = ["OPEN", "RESOLVED"]
 
 # `os` since this fork absorbed the host register (S2): it is the oldest, largest and most
-# read population here, it is what the Streamlit dashboard and the GAS app both measure, and
+# read population here, it is what the OS register and the GAS app both measure, and
 # it is the scope the notebooks open on. The property that made `sca` the default before it
 # still holds of `os` and is the real requirement -- a reader who runs this pipeline without
 # choosing a scope gets a register whose numbers mean what they appear to mean: CVEs, real

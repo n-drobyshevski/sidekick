@@ -77,6 +77,11 @@ export function wizDiagnostic(): string {
   log(`WIZ_CLIENT_SECRET:  ${secretPreview(clientSecret)}`);
   if (mode === "oauth") log(`WIZ_AUTH_URL:       ${authUrl}`);
   log(`WIZ_PROJECT_ID_V2:  ${projectId || "(unset — querying all projects)"}`);
+  // THE RESOLVED ANSWER, beside the raw property, because the property is no longer the whole
+  // story: Settings → Fetch scope can decline to apply it. Printing only the property would
+  // let a diagnostic say "scoped to PROJECT-X" about a battery that collected the whole
+  // tenant — the one thing a secret-safe step-by-step check exists to prevent.
+  log(`Applied project scope: ${projectScope()?.[0] ?? "(none — querying all perimeters)"}`);
 
   if (!apiUrl) {
     log("FAIL: WIZ_API_URL is required, e.g. https://api.<region>.app.wiz.io/graphql.");

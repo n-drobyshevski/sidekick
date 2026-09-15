@@ -70,6 +70,7 @@ function api_getRegisterRows(p) { return timedApi_("getRegisterRows", p); }
 function api_getReposPage(p) { return timedApi_("getReposPage", p); }
 function api_getScanHistory(p) { return timedApi_("getScanHistory", p); }
 function api_getStorageStats(p) { return timedApi_("getStorageStats", p); }
+function api_getSettingsImpact(p) { return timedApi_("getSettingsImpact", p); }
 function api_runSync(p) { return timedApi_("runSync", p); }
 function api_getJobStatus(p) { return timedApi_("getJobStatus", p); }
 function api_cancelSync(p) { return timedApi_("cancelSync", p); }

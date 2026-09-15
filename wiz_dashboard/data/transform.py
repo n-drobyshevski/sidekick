@@ -12,8 +12,8 @@ def coerce_results(results):
     """Normalize dict/list/json-string/python-repr-string/SDK-result into a plain object.
 
     The Wiz SDK returns a ``WizAPIResult`` wrapper that holds a live SSL socket and so
-    can't be pickled by ``st.cache_data``. This converts it (and any similar wrapper) to
-    plain Python data so the cached ``fetch_findings`` value is serializable. The SDK's
+    can't be pickled. This converts it (and any similar wrapper) to plain Python data so
+    the cached ``fetch_findings`` value is serializable. The SDK's
     ``.nodes`` property is preferred because it spans *all* paginated pages (unlike
     ``.data``, which is only the last page); the nodes are re-wrapped in the canonical
     ``{"data": {"vulnerabilityFindings": {"nodes": [...]}}}`` envelope that
@@ -126,9 +126,9 @@ def merge_nodes(baseline_nodes, delta_nodes):
 def df_signature(df) -> str:
     """Cheap, stable signature for cache-keying computations derived from ``df``.
 
-    Used with the ``@st.cache_data`` ``(sig, _df)`` idiom so the (potentially large)
-    DataFrame isn't hashed on every rerun -- only this string is. Falls back to a
-    shape+columns key when cells aren't hashable (e.g. list-valued columns).
+    Used as a lightweight cache key so the (potentially large) DataFrame is not hashed
+    repeatedly. Falls back to a shape+columns key when cells are not hashable (e.g.
+    list-valued columns).
     """
     if df is None or getattr(df, "empty", True):
         return "empty"
@@ -140,10 +140,9 @@ def df_signature(df) -> str:
 
 
 # Low-cardinality string columns worth dictionary-encoding after flattening. ``category``
-# dtype shrinks a 100k+-row frame's memory severalfold AND the Arrow payload
-# st.dataframe/st.data_editor serialize to the browser on every render (Arrow encodes
-# categoricals dictionary-style). Values compare equal to their plain-string selves, so
-# filters/groupbys downstream are unaffected.
+# dtype shrinks a 100k+-row frame's memory severalfold, and Arrow encodes categoricals
+# dictionary-style for browser-bound table payloads. Values compare equal to their
+# plain-string selves, so filters/groupbys downstream are unaffected.
 _CATEGORY_COLUMNS = (
     "severity",
     "status",

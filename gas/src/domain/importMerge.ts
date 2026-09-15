@@ -1,5 +1,5 @@
-// Pure migration-import logic: merge a bundle exported by the legacy Streamlit app
-// (wiz_dashboard/data/migrate.py) into a LedgerState.
+// Pure migration-import logic: merge a bundle exported by the legacy Python dashboard
+// (`wiz_dashboard/data/migrate.py`) into a LedgerState.
 //
 // The merge is defined as "the unified history compacted at the import floor":
 // imported scans become the sealed prefix (their raw archives stay on the old
@@ -10,7 +10,12 @@
 // disappearance) all fall out of reconcile during the replay.
 
 import { CHECKPOINT_VERSION, type Checkpoint } from "./compaction";
-import { scansAsc, type EpisodeRow, type LedgerState, type ScanRow } from "./ledgerCore";
+import {
+  scansAsc,
+  type EpisodeRow,
+  type LedgerState,
+  type ScanRow,
+} from "./ledgerCore";
 import {
   loadReplayPayloads,
   replayScans,
@@ -18,7 +23,11 @@ import {
   toEpisodeRow,
   type PayloadReader,
 } from "./maintenance";
-import { coerceRiskSignals, type LedgerRow, type Observation } from "./reconcile";
+import {
+  coerceRiskSignals,
+  type LedgerRow,
+  type Observation,
+} from "./reconcile";
 import { normalizeSeverity } from "./severity";
 import { parseTs, type Rec } from "./util";
 
@@ -51,7 +60,9 @@ function asArray(value: unknown, name: string): Rec[] {
   }
   for (const item of value) {
     if (item === null || typeof item !== "object" || Array.isArray(item)) {
-      throw new ImportValidationError(`Bundle field "${name}" must contain objects.`);
+      throw new ImportValidationError(
+        `Bundle field "${name}" must contain objects.`,
+      );
     }
   }
   return value as Rec[];
@@ -60,7 +71,9 @@ function asArray(value: unknown, name: string): Rec[] {
 /** Structural validation of an uploaded bundle (throws ImportValidationError). */
 export function validateBundle(data: unknown): MigrationBundle {
   if (data === null || typeof data !== "object" || Array.isArray(data)) {
-    throw new ImportValidationError("The uploaded file is not a migration bundle.");
+    throw new ImportValidationError(
+      "The uploaded file is not a migration bundle.",
+    );
   }
   const rec = data as Rec;
   if (rec["kind"] !== MIGRATION_KIND) {
@@ -100,21 +113,34 @@ export function validateBundle(data: unknown): MigrationBundle {
     );
   }
   for (const s of scans) {
-    if (typeof s["scan_id"] !== "string" || !s["scan_id"] || typeof s["ts"] !== "string" || !s["ts"]) {
-      throw new ImportValidationError("Every bundle scan needs string scan_id and ts.");
+    if (
+      typeof s["scan_id"] !== "string" ||
+      !s["scan_id"] ||
+      typeof s["ts"] !== "string" ||
+      !s["ts"]
+    ) {
+      throw new ImportValidationError(
+        "Every bundle scan needs string scan_id and ts.",
+      );
     }
   }
-  for (const [name, rows] of [["ledger", ledger], ["episodes", episodes]] as const) {
+  for (const [name, rows] of [
+    ["ledger", ledger],
+    ["episodes", episodes],
+  ] as const) {
     for (const r of rows) {
       if (typeof r["vuln_key"] !== "string" || !r["vuln_key"]) {
-        throw new ImportValidationError(`Every bundle ${name} row needs a string vuln_key.`);
+        throw new ImportValidationError(
+          `Every bundle ${name} row needs a string vuln_key.`,
+        );
       }
     }
   }
   return {
     kind: MIGRATION_KIND,
     version,
-    exported_at: typeof rec["exported_at"] === "string" ? rec["exported_at"] : null,
+    exported_at:
+      typeof rec["exported_at"] === "string" ? rec["exported_at"] : null,
     scans,
     ledger,
     episodes,
@@ -133,7 +159,8 @@ export function coerceScan(r: Rec): ScanRow {
     scan_id: String(r["scan_id"]),
     ts: String(r["ts"]),
     mode: String(r["mode"] ?? "import"),
-    shape: (r["shape"] === "grouped" ? "grouped" : "flat") as "flat" | "grouped",
+    shape: (r["shape"] === "grouped" ? "grouped" : "flat") as
+      "flat" | "grouped",
     total: Number(r["total"] ?? 0),
     new_count: Number(r["new_count"] ?? 0),
     resolved_count: Number(r["resolved_count"] ?? 0),
@@ -236,7 +263,9 @@ export function importBundleCore(
   counts: ImportCounts;
 } {
   const existingRows = scansAsc(state.scans);
-  const sealedExisting = existingRows.filter((r) => r.sealed).map((r) => r.scan_id);
+  const sealedExisting = existingRows
+    .filter((r) => r.sealed)
+    .map((r) => r.scan_id);
   if (sealedExisting.length) {
     throw new ImportValidationError(
       `This ledger already has compacted (sealed) history (${sealedExisting.join(", ")}) — ` +
@@ -263,7 +292,9 @@ export function importBundleCore(
 
   // Strict ordering: the sealed prefix must be a ts-contiguous prefix of all scans,
   // so every imported scan must predate every existing one.
-  const badTs = importedAsc.filter((r) => parseTs(r.ts) === null).map((r) => r.scan_id);
+  const badTs = importedAsc
+    .filter((r) => parseTs(r.ts) === null)
+    .map((r) => r.scan_id);
   if (badTs.length) {
     throw new ImportValidationError(
       `Bundle scan(s) ${badTs.join(", ")} have unparseable timestamps.`,
@@ -304,8 +335,11 @@ export function importBundleCore(
   // classified. Counted over the bundle rows so it lines up with Σ of the sharded path's
   // per-shard counts (importSharded.ts partitions exactly these two tables).
   const unclassifiedSeverity =
-    bundle.ledger.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length +
-    bundle.episodes.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN").length;
+    bundle.ledger.filter((r) => normalizeSeverity(r["severity"]) === "UNKNOWN")
+      .length +
+    bundle.episodes.filter(
+      (r) => normalizeSeverity(r["severity"]) === "UNKNOWN",
+    ).length;
 
   // The checkpoint captures the baseline BEFORE replay mutates it.
   const flats = importedAsc.filter((r) => r.shape === "flat");
@@ -330,7 +364,11 @@ export function importBundleCore(
 
   // Episode conversion at the import floor — same rule as compaction: baseline rows
   // whose lifecycle was settled before the GAS era leave the live ledger.
-  const converted = settledEpisodeRows(checkpoint.ledger, rebuilt.ledger, importedIds);
+  const converted = settledEpisodeRows(
+    checkpoint.ledger,
+    rebuilt.ledger,
+    importedIds,
+  );
   for (const live of converted) {
     rebuilt.episodes.push(toEpisodeRow(live, options.compactionId));
     delete rebuilt.ledger[live.vuln_key];
@@ -389,7 +427,10 @@ export function mergeMttrHistory(
       resolved: Number(r["resolved"] ?? 0),
       open: Number(r["open"] ?? 0),
       total: Number(r["total"] ?? 0),
-      sla_pct: r["sla_pct"] === null || r["sla_pct"] === undefined ? null : Number(r["sla_pct"]),
+      sla_pct:
+        r["sla_pct"] === null || r["sla_pct"] === undefined
+          ? null
+          : Number(r["sla_pct"]),
       oldest_open_days:
         r["oldest_open_days"] === null || r["oldest_open_days"] === undefined
           ? null
@@ -399,7 +440,11 @@ export function mergeMttrHistory(
     added += 1;
   }
   const rows = [...byDate.values()].sort((a, b) =>
-    String(a["date"]) < String(b["date"]) ? -1 : String(a["date"]) > String(b["date"]) ? 1 : 0,
+    String(a["date"]) < String(b["date"])
+      ? -1
+      : String(a["date"]) > String(b["date"])
+        ? 1
+        : 0,
   );
   return { rows, added, skipped };
 }

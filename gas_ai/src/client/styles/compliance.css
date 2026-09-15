@@ -10,34 +10,50 @@
    guarantee the severity tokens carry. Control severity on this page still uses sevBadge,
    because that IS a Wiz severity. */
 
-/* .comp-header comes from .page-header (components.css). */
-.comp-header .stat-list { grid-column: 1 / -1; }
-.comp-hero-value { font-size: var(--fs-hero); line-height: 1.1; font-variant-numeric: tabular-nums; }
-.comp-hero-sub { font-size: var(--fs-label); color: var(--text-3); margin-top: var(--space-1); }
-/* The hero's severity mark rides in this existing prose slot rather than a new one — see
-   the tint comment on `.comp-fw-bar` below for the full rule this and the rail bar both
-   follow. A small left margin only, since the badge follows running text inline. */
-.comp-hero-sub .sev-badge { margin-left: var(--space-2); vertical-align: -1px; }
-.comp-hero-meter { margin-top: var(--space-3); max-width: 260px; }
+/* The header itself — hero, aside and stat list — is `pageHeader`'s own `.page-header`
+   (components.css) now, drawn by `complianceHero()` (complianceShared.js); the two
+   page-local rules that used to sit here (`.comp-hero-value`/`.comp-hero-sub`, byte-identical
+   to the shared `.hero-value`/`.page-hero-sub` they duplicated) retired with it. The meter
+   keeps its own wrapper below, renamed rather than dropped — the posture-tier band tints
+   further down this file need a hook to key off, and the shared sub-line does not offer one. */
+/* The hero's severity mark rides in its own small wrapper rather than the shared
+   `.page-hero-sub` — see the tint comment on `.comp-fw-bar` below for the full rule this and
+   the rail bar both follow. A small left margin only, since the badge follows running text
+   inline. */
+.comp-posture-badge .sev-badge { margin-left: var(--space-2); vertical-align: -1px; }
+.comp-posture-meter { margin-top: var(--space-3); max-width: 260px; }
 
 .comp-strip { display: flex; flex-direction: column; gap: var(--space-2); }
 .comp-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; max-width: var(--measure); }
 
-.comp-bar {
-  display: flex;
-  width: 100%;
-  height: 14px;
-  border-radius: var(--radius-pill);
-  overflow: hidden;
-  background: var(--track-bg);
-}
-.comp-bar-seg { height: 100%; }
-.comp-bar-seg[data-state="scored"] { background: var(--ok); }
-.comp-bar-seg[data-state="noResources"] { background: var(--sev-info); }
-.comp-bar-seg[data-state="noPolicies"] { background: var(--warn); }
-.comp-bar-seg[data-state="unknown"] { background: var(--text-3); }
-.comp-bar-seg[data-state="empty"] { flex: 1; background: var(--track-bg); }
+/* THE FOUR-SEGMENT STATE BAR IS GONE, and `.comp-bar` / `.comp-bar-seg` went with it.
+   It drew the latest sync's subcategory states across the header's second column — a
+   distribution a reader learns once — and that column now holds the posture trend, which
+   answers the question a compliance register is actually opened with. The COUNTS the bar
+   encoded are still drawn under the chart (`.comp-keys` below, unchanged): losing the bar
+   lost a second encoding of four numbers printed beside it and nothing else.
 
+   Three comments further down this file used to name `.comp-bar-seg[data-state]` as the
+   precedent for keying a state off `data-` rather than a class; they name
+   `.comp-key[data-state]` below instead, which carries the identical four states and has
+   always been the half of the pair that was not redundant. */
+
+/* The header's second column, and the Overview's band A. A column rather than a row
+   because the chart, its caption lines and the state keys under it are one reading
+   top-to-bottom. */
+.comp-trend-head {
+  margin: 0;
+  font-size: var(--fs-label);
+  font-weight: 600;
+  color: var(--text-2);
+}
+/* SHORTER THAN `.chart-box`'s 240px, deliberately. This canvas sits in a page HEADER beside
+   a hero, not in a card of its own on a chart row: at 240px the header would be taller than
+   the register's first screenful and the percentage it qualifies would scroll away from it.
+   160px still clears the axis labels and a readable slope. */
+.comp-trend-box { position: relative; height: 160px; }
+
+.comp-keys-block { display: flex; flex-direction: column; gap: var(--space-2); }
 .comp-keys { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 /* A <span>, not a <button>. The strip was the page's cross-filter and every key was
    operable; the tables now list scored subcategories only, so three of the four states
@@ -144,11 +160,10 @@
 }
 .comp-policy-counts b { color: var(--ink); font-weight: 600; }
 
-@media (max-width: 1080px) {
-  .comp-header { grid-template-columns: 1fr 1fr; }
-}
+/* The 1080px two-up step that used to live here for `.comp-header` retired with the class —
+   the header is `pageHeader`'s own `.page-header` now, and its shared 640px one-column
+   collapse (components.css) is what governs it. */
 @media (max-width: 760px) {
-  .comp-header { grid-template-columns: 1fr; gap: var(--space-4); }
   .comp-posture { min-width: 110px; }
 }
 
@@ -160,7 +175,7 @@
 /* The cross-framework Overview: one surface, four bands, divided by hairlines rather
    than stacked as cards — the same document-not-boxes grammar as `.rule-section`
    (aars.css:42) and `.help-section` (help.css:151). Band A is the existing hero +
-   `.comp-strip` + `.comp-bar` + `.comp-keys` + `.stat-list`; nothing new is defined for
+   `.comp-strip` + `.comp-trend-box` + `.comp-keys` + `.stat-list`; nothing new is defined for
    it, and a fourth stat cell needs nothing either, since `.stat-list` is already an
    auto-fit grid. Bands B and D follow below, each named for the letter it fills.
 
@@ -174,7 +189,7 @@
    is already the divider — so the header drawing its own closing rule put two hairlines about
    28px apart with nothing between them. The section separator wins; the header keeps its
    shape and drops the duplicate. */
-.comp-ov-section .comp-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+.comp-ov-section .page-header { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
 
 /* --------------------------------------------------------- band B: the framework rail */
 /* Small-multiple bullet rows sharing ONE 0-100 axis, so a reader compares frameworks by
@@ -293,7 +308,7 @@
 
    `data-band` rather than a class named for a colour: the thresholds live in the domain,
    and a class called `.is-red` would have to be renamed to move one. Same reason
-   `.comp-bar-seg` keys its four posture states off `data-state` a few rules up. */
+   `.comp-key` keys its four posture states off `data-state` a few rules up. */
 .comp-fw-bar { position: absolute; inset: 0 auto 0 0; background: var(--graphite); }
 
 /* THE ONE RAMP, for all four bars: the rail lane above, both hero meters, and every posture
@@ -309,8 +324,8 @@
 
    DESIGN.md's Ordinal-Fork Rule is satisfied, not bent: a percentage band is ordinal, so
    the ordinal scale is the right instrument for it. What the rule forbids is a categorical
-   fact wearing the ramp — which is why `.comp-bar-seg[data-state]` and `.comp-key` a few
-   rules up keep the status triad. Those four states are kinds, not steps.
+   fact wearing the ramp — which is why `.comp-key[data-state]` a few rules up keeps the
+   status triad. Those four states are kinds, not steps.
 
    RED/GREEN IS THE OBVIOUS COLOURBLIND TRAP, and the reason it is survivable here is the
    number: `.comp-posture-num` sits beside every one of these bars, and the hero prints its
@@ -320,16 +335,16 @@
    `.meter-fill` is a shared class, so each selector stays scoped to its own slot rather
    than restyling every meter in the app. */
 .comp-fw-bar[data-band="strong"],
-.comp-hero-meter .meter-fill[data-band="strong"],
+.comp-posture-meter .meter-fill[data-band="strong"],
 .comp-posture .meter-fill[data-band="strong"] { background: var(--rank-1-solid); }
 .comp-fw-bar[data-band="fair"],
-.comp-hero-meter .meter-fill[data-band="fair"],
+.comp-posture-meter .meter-fill[data-band="fair"],
 .comp-posture .meter-fill[data-band="fair"] { background: var(--rank-2-solid); }
 .comp-fw-bar[data-band="poor"],
-.comp-hero-meter .meter-fill[data-band="poor"],
+.comp-posture-meter .meter-fill[data-band="poor"],
 .comp-posture .meter-fill[data-band="poor"] { background: var(--rank-3-solid); }
 .comp-fw-bar[data-band="weak"],
-.comp-hero-meter .meter-fill[data-band="weak"],
+.comp-posture-meter .meter-fill[data-band="weak"],
 .comp-posture .meter-fill[data-band="weak"] { background: var(--rank-4-solid); }
 
 /* THE EDGE, so LENGTH survives tier 2. The ramp's steps were measured against each OTHER
@@ -356,7 +371,7 @@
    Hue-neutral on purpose: a per-step edge token would be a fifth thing to keep in sync with
    the ramp, and this one says nothing except "the fill ends here". */
 .comp-fw-bar[data-band],
-.comp-hero-meter .meter-fill[data-band],
+.comp-posture-meter .meter-fill[data-band],
 .comp-posture .meter-fill[data-band] { box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.40); }
 
 /* The honest-state lane: an unscored framework gets NO bar, not a bar at zero — a
@@ -376,7 +391,7 @@
 }
 /* Reuses `.comp-key-glyph` (components.css glyph, already sized for this row height)
    rather than minting a second glyph class, and tints it by the SAME four states
-   `.comp-bar-seg[data-state]` above already carries — so the strip at the top of the
+   `.comp-key[data-state]` above already carries — so the keys at the top of the
    page and a single row's empty lane never disagree about what a state's color is.
    `noResources` takes the *-text swap `.comp-key` already uses (line 69): the plain
    `--sev-info` fill is legible as a bar but not as small text. */
@@ -470,7 +485,7 @@
 /* Auto-remediation chip: a small code-like mark (mono, like `.step-id` / `.prov-mono`)
    rather than a status pill, because "this control fixes itself" is closer to a
    capability flag than to a severity or an SLA verdict, and giving it the pill
-   vocabulary would make it compete with `.comp-bar-seg`'s actual states for the same
+   vocabulary would make it compete with `.comp-key`'s actual states for the same
    visual register. */
 .comp-auto {
   display: inline-flex; align-items: center;
@@ -652,3 +667,25 @@
 }
 .scope-disclose:hover { background: var(--wash-hover); color: var(--ink); }
 .scope-disclose:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+
+/* The 5Rs LIVE split (settingsReadouts.js's fiveRsSplitModel/fiveRsSplit): derived-in /
+   pinned-in / pinned-out / derived-out, over gas_shared's splitBar(). The two DERIVED tones
+   are the shared component's own "in"/"out" — the landscape's own answer, same as every other
+   toggle split in the tree. The two PINNED tones are new and app-local (gas_shared ships only
+   "in"/"out"; a fourth-and-fifth tone belonging to one app's one card has no reuse case), and
+   they borrow tickTimeline's own precedent for the identical fact (gas_shared/styles/
+   components.css's `.tick-timeline__tick--pinned`): a pin is a HUMAN override, not the
+   landscape's own derivation, and it earns a border rather than a different hue — the same
+   distinction `.scope-reason--pinned` a few rules up draws on the row list this bar
+   summarizes. Never the only cue: the caption beneath the bar (splitBar's own contract) names
+   all four counts in words regardless. */
+.splitbar__seg--pinned-in {
+  background: var(--accent-wash);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.splitbar__seg--pinned-out {
+  background-image: repeating-linear-gradient(
+    135deg, var(--text-3) 0, var(--text-3) 2px, transparent 2px, transparent 6px);
+  background-color: transparent; opacity: 0.6;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}

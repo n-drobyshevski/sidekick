@@ -55,7 +55,8 @@ import {
 } from "./graphQuery.js";
 import { queryBar } from "./graphQueryBar.js";
 import {
-  clear, confirmDialog, el, emptyState, filterChipRow, motionOk, onPageTeardown,
+  clear, confirmDialog, el, emptyState, errorState, filterChipRow, firstRunNotice, motionOk,
+  onPageTeardown,
   openPopover, portalsOpen, segmented, selectField, sevBadge, tip, tipMark, toast,
   togglePills, uiIcon,
 } from "../ui.js";
@@ -553,10 +554,10 @@ export async function renderGraphPage(main, params, _ctx) {
   main.append(root);
 
   if (!boot.latestSync) {
-    body.append(el("div", { class: "workbench-empty" }, emptyState(
-      "No sync yet.",
-      "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
-    )));
+    body.append(el("div", { class: "workbench-empty" }, firstRunNotice({
+      synced: false,
+      hint: "Run “Sync now” in the sidebar — without credentials it loads the sample dataset.",
+    })));
     return;
   }
 
@@ -837,10 +838,13 @@ export async function renderGraphPage(main, params, _ctx) {
       body.classList.remove("gcanvas-handoff");
       body.removeAttribute("aria-busy");
       updatingBar.hidden = true;
-      // A rejected query is the common case here now, and its message names the offending
-      // kind or relationship — far more use than "couldn't load".
+      // A rejected query is a FAILURE, not an absence — this used to read "This query didn't
+      // run." inside a role="status" emptyState, which announces a broken canvas the same
+      // calm way the page announces "nothing here yet". The offending kind or relationship is
+      // still the most useful line in the message; it now lives in the disclosure `detail`
+      // carries rather than the empty-state hint, so a screen reader hears the alert first.
       clear(body).append(el("div", { class: "workbench-empty" },
-        emptyState("This query didn't run.", String(e.message || e))));
+        errorState("Couldn't run this query.", { detail: String(e.message || e) })));
     }
   }
 

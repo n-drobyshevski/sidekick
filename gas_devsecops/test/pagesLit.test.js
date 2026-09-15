@@ -18,6 +18,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { secretsModel } from "../src/client/js/pages/secrets.js";
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 // The key sheet joined the Data lane in the help-route package; this list moves only when a
 // route is added or removed on purpose.
@@ -36,37 +37,11 @@ const APP_SRC = readFileSync(new URL("../src/client/js/app.js", import.meta.url)
 const STUB_SRC = readFileSync(new URL("../src/client/js/pages/_stub.js", import.meta.url), "utf8");
 const HELP_SRC = readFileSync(new URL("../src/client/js/helpContent.js", import.meta.url), "utf8");
 
-/**
- * The file with its `//` comments removed — string-aware, so a comment marker inside a quoted
- * string survives. Mirrors `code()` in `test/pagesRegisters.test.js`.
- *
- * THE REASON THIS EXISTS: `secrets.js`'s own module header EXPLAINS its prohibitions in prose
- * — it names `sevBadge`, `sev-*`, and `validationDetails` precisely to say it does not use
- * them, and a naive "must not appear" check over the raw text would fail on the sentence that
- * states the rule. Prohibitions below are checked over the CODE; the header's own claims are
- * checked over the prose, separately, where that distinction matters.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    out += c;
-    i++;
-  }
-  return out;
-}
+// `secrets.js`'s own module header EXPLAINS its prohibitions in prose — it names `sevBadge`,
+// `sev-*`, and `validationDetails` precisely to say it does not use them, and a naive "must
+// not appear" check over the raw text would fail on the sentence that states the rule.
+// Prohibitions below are checked over the CODE; the header's own claims are checked over the
+// prose, separately, where that distinction matters.
 const CODE = Object.fromEntries(ROUTES.map((r) => [r, code(SRC[r])]));
 
 /** Every object key in a structure, at every depth — mirrors `pagesRegisters.test.js`. */

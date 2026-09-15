@@ -9,23 +9,48 @@
 // ONE source of truth for field -> tab ownership. The save bar names the owning tab and the tab
 // itself wears a dirty marker; both read SETTING_FIELDS, so a knob can never be listed under one
 // tab in the bar and another on the tablist.
+//
+// THE DIRTY/SAVE-BAR MECHANICS BELOW ARE NOT THIS FILE'S OWN ANY MORE. `normalizeTab`,
+// `changedFields`, `settingsPatch`, `changeSummary`, `changeCountText` and `tabStatus` were
+// byte-identical or near enough across gas/, gas_ai/ and gas_devsecops/. `gas_shared/ui/
+// settingsForm.js` is that one rule now, a factory closed over THIS file's own `SETTINGS_TABS`/
+// `SETTING_FIELDS` below, so this file still owns the registry and every other module's import
+// of these six names keeps working unchanged. What stays genuinely local: the registry itself,
+// `settingsDraft`/`validateDraft`/`fieldErrors`/`draftWarnings` (this register's own rules) and
+// the register-scope/rank helpers below, none of which any sibling has a use for. See
+// settingsForm.js's own header for why its `sameValue` leaf is `a === b || Object.is(a, b)`
+// rather than this file's old `JSON.stringify` comparison — this file's own `nodesInput`
+// handler in pages/settings.js is the reachable case that leaf closes (an unguarded
+// `Number(nodesInput.value)` can be `Infinity`, and `JSON.stringify(Infinity)` collapsed to the
+// same string as `JSON.stringify(null)`) — and for why `dirtyTabs`, one of the functions this
+// file used to export, did not come back: `tabStatus` replaced its only call site in
+// pages/settings.js (see the comment there), and its remaining callers were this app's own test
+// file, exercising a function nothing built calls.
 
-/** The tabs, in order. `key` is what rides in the hash (`#/settings?tab=compliance`). */
+import { settingsForm } from "../../../../gas_shared/ui/settingsForm.js";
+
+/**
+ * The tabs, in order. `key` is what rides in the hash (`#/settings?tab=compliance`).
+ *
+ * REGISTER LEADS, matching the spine `gas` and `gas_devsecops` already draw (Register ·
+ * <app lanes> · Access · System). Neither Graph (traversal defaults) nor Compliance (the 5Rs
+ * framework) is "which Wiz risk categories the issue register collects" — that scope decision
+ * feeds every issue-shaped figure the app publishes (Priorities, AARS, Toxic Combinations),
+ * Graph's own traversals included, and the ranking that orders those same rows belongs beside
+ * it rather than on a page that edits neither. That is also why Register goes first rather
+ * than staying a fifth tab tacked on the end: everything downstream of it — what Graph walks,
+ * what Compliance measures — reads off the scope this tab decides, so the scope decision comes
+ * before the tabs that depend on it, not after.
+ */
 export const SETTINGS_TABS = [
-  { key: "graph", label: "Graph" },
-  // Neither Graph (traversal defaults) nor Compliance (the 5Rs framework) is "which risk
-  // categories the issue register collects" — that scope decision feeds every issue-shaped
-  // figure the app publishes (Priorities, AARS, Toxic Combinations), and the ranking that
-  // orders those same rows belongs beside it rather than on a page that edits neither. A
-  // fifth tab earns its keep here for the reason the others do not: nothing else already
-  // owns this question.
   { key: "register", label: "Register" },
+  { key: "graph", label: "Graph" },
   { key: "compliance", label: "Compliance" },
   { key: "access", label: "Access" },
   { key: "system", label: "System" },
 ];
 
-export const DEFAULT_TAB = "graph";
+export const DEFAULT_TAB = "register";
 
 /**
  * Every knob the page-level save bar owns, and where it lives.
@@ -44,10 +69,12 @@ export const SETTING_FIELDS = {
   defaultDepth: { tab: "graph", label: "default depth" },
   maxNodes: { tab: "graph", label: "node budget" },
   autoExpand: { tab: "graph", label: "agent auto-expand" },
-  // Both scope the same register: which categories it collects, and how the rows it collects
-  // are ordered. Sent and diffed as whole objects, the same discipline `fiveRsPins` already
-  // takes below — a delta of a category list or a rank rule is not a smaller edit, it is a
-  // different shape the server would have to reconstruct.
+  // THREE scope the same register: which perimeters the sync collects FROM, which categories
+  // it collects, and how the rows it collects are ordered. Sent and diffed as whole objects,
+  // the same discipline `fiveRsPins` already takes below — a delta of a category list or a
+  // rank rule is not a smaller edit, it is a different shape the server would have to
+  // reconstruct.
+  syncScope: { tab: "register", label: "fetch scope" },
   issueCategories: { tab: "register", label: "register categories" },
   rankRule: { tab: "register", label: "priorities ranking" },
   rankLeadsSort: { tab: "register", label: "rank leads sort" },
@@ -56,19 +83,19 @@ export const SETTING_FIELDS = {
 
 export const SETTING_KEYS = Object.keys(SETTING_FIELDS);
 
+const kernel = settingsForm({ tabs: SETTINGS_TABS, fields: SETTING_FIELDS, defaultTab: DEFAULT_TAB });
+
 /**
- * A tab key the hash is allowed to name; anything else falls back.
- *
- * `available` exists because the Access tab is not always there: renderAccessPanel() returns
- * null for anyone who may not edit the roster, and this app's stated rule is that a non-editor
- * gets no section at all rather than a disabled one. A stale `?tab=access` bookmark must
- * therefore land somewhere real instead of selecting a tab that was never built.
+ * The bound kernel — see gas_shared/ui/settingsForm.js's header for `normalizeTab`'s two-
+ * argument form (`available` is the Access tab's own reason: `renderAccessPanel()` returns null
+ * for anyone who may not edit the roster, so a stale `?tab=access` bookmark must land somewhere
+ * real), `changeCountText`'s array signature, `tabStatus`'s key-presence reading of `errors`,
+ * and `sameValue`'s `a === b || Object.is(a, b)` leaf.
  */
-export function normalizeTab(key, available) {
-  const keys = available && available.length ? available : SETTINGS_TABS.map((t) => t.key);
-  if (keys.indexOf(key) >= 0) return key;
-  return keys.indexOf(DEFAULT_TAB) >= 0 ? DEFAULT_TAB : keys[0];
-}
+export const {
+  normalizeTab, changedFields, settingsPatch, changeSummary, changeCountText, tabStatus,
+  TAB_FIELDS,
+} = kernel;
 
 /** Pins as the page holds them: two id lists, neither of which is ordered. */
 function pinsOf(v) {
@@ -107,6 +134,10 @@ export function settingsDraft(settings) {
     // draft array in place (via categoryDraftPatch's caller) and must never reach back into
     // the payload the rest of the page is still reading.
     issueCategories: Array.isArray(s.issueCategories) ? [...s.issueCategories] : [],
+    // "project" for anything else, mirroring cleanSyncScope() in domain/registerScope.ts:
+    // the server folds an unrecognised value back to the narrow answer, so a draft that read
+    // it any other way would show a control disagreeing with what the sync will do.
+    syncScope: s.syncScope === "tenant" ? "tenant" : "project",
     rankRule: cloneOf(s.rankRule),
     // Off by default — matches the server's own default (settingsStore.getRankLeadsSort) —
     // rather than duplicating that default as a literal here: an absent flag reads as "not
@@ -115,57 +146,21 @@ export function settingsDraft(settings) {
   };
 }
 
-/** Order-insensitive for the pin lists: re-selecting rules in another order is not an edit. */
-function sameValue(a, b) {
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return JSON.stringify([...a].sort()) === JSON.stringify([...b].sort());
-  }
-  if (a && b && typeof a === "object" && typeof b === "object") {
-    const ka = Object.keys(a).sort();
-    const kb = Object.keys(b).sort();
-    if (JSON.stringify(ka) !== JSON.stringify(kb)) return false;
-    return ka.every((k) => sameValue(a[k], b[k]));
-  }
-  return JSON.stringify(a) === JSON.stringify(b);
-}
+// The built-in bounds, used whenever a caller (validateDraft or fieldErrors) is not handed the
+// server's own maxNodesFloor/maxNodesCeiling. ONE place for the four numbers, so the "node
+// budget must be between X and Y" message a reader sees inline and the one validateDraft
+// refuses a save with can never quietly name two different ranges.
+const DEPTH_MIN_DEFAULT = 1;
+const DEPTH_MAX_DEFAULT = 3;
+const NODES_FLOOR_DEFAULT = 30;
+const NODES_CEILING_DEFAULT = 400;
 
-/** The field keys whose draft value differs from the saved one, in SETTING_KEYS order. */
-export function changedFields(saved, draft) {
-  return SETTING_KEYS.filter((k) => !sameValue(saved[k], draft[k]));
-}
-
-/** Only the changed fields, ready to send as one atomic patch to api_setSettings. */
-export function settingsPatch(saved, draft) {
-  const out = {};
-  for (const k of changedFields(saved, draft)) out[k] = draft[k];
-  return out;
-}
-
-/** Tab keys carrying at least one changed field, in tablist order. */
-export function dirtyTabs(changed) {
-  const owned = new Set(changed.map((k) => SETTING_FIELDS[k].tab));
-  return SETTINGS_TABS.filter((t) => owned.has(t.key)).map((t) => t.key);
-}
-
-const TAB_LABEL = Object.fromEntries(SETTINGS_TABS.map((t) => [t.key, t.label]));
-
-/**
- * What the save bar says. Each change carries the tab that owns it, because a tabbed page can
- * hide a dirty control behind an inactive tab — naming the tab is what makes it findable, and
- * the bar renders each entry as a link to that tab.
- */
-export function changeSummary(changed) {
-  return changed.map((k) => ({
-    field: k,
-    label: SETTING_FIELDS[k].label,
-    tab: SETTING_FIELDS[k].tab,
-    tabLabel: TAB_LABEL[SETTING_FIELDS[k].tab],
-  }));
-}
-
-export function changeCountText(changed) {
-  const n = changed.length;
-  return n + " unsaved change" + (n === 1 ? "" : "s");
+function nodesBounds(bounds) {
+  const b = bounds || {};
+  return {
+    floor: Number.isFinite(b.nodesFloor) ? b.nodesFloor : NODES_FLOOR_DEFAULT,
+    ceiling: Number.isFinite(b.nodesCeiling) ? b.nodesCeiling : NODES_CEILING_DEFAULT,
+  };
 }
 
 /**
@@ -181,10 +176,9 @@ export function changeCountText(changed) {
  */
 export function validateDraft(draft, bounds) {
   const b = bounds || {};
-  const depthMin = Number.isFinite(b.depthMin) ? b.depthMin : 1;
-  const depthMax = Number.isFinite(b.depthMax) ? b.depthMax : 3;
-  const floor = Number.isFinite(b.nodesFloor) ? b.nodesFloor : 30;
-  const ceiling = Number.isFinite(b.nodesCeiling) ? b.nodesCeiling : 400;
+  const depthMin = Number.isFinite(b.depthMin) ? b.depthMin : DEPTH_MIN_DEFAULT;
+  const depthMax = Number.isFinite(b.depthMax) ? b.depthMax : DEPTH_MAX_DEFAULT;
+  const { floor, ceiling } = nodesBounds(bounds);
 
   const d = Number(draft.defaultDepth);
   if (!Number.isFinite(d) || d < depthMin || d > depthMax) {
@@ -203,6 +197,33 @@ export function validateDraft(draft, bounds) {
     };
   }
   return { ok: true, message: "", tab: null };
+}
+
+/**
+ * Per-field legality of the draft, independent of any other field's state — unlike
+ * `validateDraft` above, which stops at the FIRST failure it finds (a fixed priority order) so
+ * it can hand the save button one message and one tab to jump to.
+ *
+ * SETTINGS VALIDATES EXACTLY ONE TYPABLE FIELD TODAY: the node budget (`maxNodes`) on the
+ * Graph tab. `defaultDepth` is a `<select>` fed only the three legal options
+ * (`[1, 2, 3].map(...)`, settings.js) — there is no keystroke that could put it out of range,
+ * so it earns no inline alert and this function does not check it. A future typable field
+ * gets its own entry here and its own `<span role="alert">` in settings.js; this is not a
+ * general-purpose validator, and inventing a second checked field here without a control that
+ * can actually go invalid would be asserting a rule with nothing behind it.
+ *
+ * Returns an object carrying a message ONLY for a field currently invalid — `tabStatus` below
+ * reads this by KEY PRESENCE, so a caller's contract is to DELETE the key once the field
+ * clears rather than set it to a falsy message (see `tabStatus`'s own header).
+ */
+export function fieldErrors(draft, bounds) {
+  const { floor, ceiling } = nodesBounds(bounds);
+  const errs = {};
+  const n = Number(draft.maxNodes);
+  if (!Number.isFinite(n) || n < floor || n > ceiling) {
+    errs.maxNodes = "The node budget must be between " + floor + " and " + ceiling + ".";
+  }
+  return errs;
 }
 
 /**

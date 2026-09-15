@@ -15,14 +15,15 @@
 // been scanned yet" for a ledger nobody had synced. Every one of those reads as a control or
 // an object the reader then goes looking for and does not find.
 //
-// SOURCE TEXT, COMMENT-STRIPPED. The stripper is `emptyStates.test.js`'s, copied for the same
-// reason it was written stricter there than in `pagesLit.test.js`: this very header quotes the
-// sentences it forbids, and a helper that leaks comment text would fail on its own explanation.
+// SOURCE TEXT, COMMENT-STRIPPED. This very header quotes the sentences it forbids, and a
+// stripper that leaks comment text would fail on its own explanation.
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 
 const CLIENT_DIR = fileURLToPath(new URL("../src/client/js/", import.meta.url));
 const PAGES_DIR = fileURLToPath(new URL("../src/client/js/pages/", import.meta.url));
@@ -42,40 +43,6 @@ function walk(dir, prefix = "") {
     const full = join(dir, name);
     if (statSync(full).isDirectory()) out.push(...walk(full, prefix + name + "/"));
     else if (name.endsWith(".js")) out.push([prefix + name, full]);
-  }
-  return out;
-}
-
-/**
- * The file with EVERY comment removed — `//` and block comments both — string-aware, and
- * tracking template literals too. Copied verbatim from `test/emptyStates.test.js`; see that
- * file's doc comment for the apostrophe-in-a-block-comment defect that made the stricter
- * version necessary.
- */
-function code(src) {
-  let out = "";
-  let i = 0;
-  let quote = null;
-  while (i < src.length) {
-    const c = src[i];
-    const n = src[i + 1];
-    if (quote) {
-      out += c;
-      if (c === "\\" && n !== undefined) { out += n; i += 2; continue; }
-      if (c === quote) quote = null;
-      i++;
-      continue;
-    }
-    if (c === '"' || c === "'" || c === "`") { quote = c; out += c; i++; continue; }
-    if (c === "/" && n === "/") { while (i < src.length && src[i] !== "\n") i++; continue; }
-    if (c === "/" && n === "*") {
-      i += 2;
-      while (i < src.length && !(src[i] === "*" && src[i + 1] === "/")) i++;
-      i += 2;
-      continue;
-    }
-    out += c;
-    i++;
   }
   return out;
 }

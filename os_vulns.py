@@ -823,8 +823,7 @@ def fetch_findings(
 ) -> Any:
     """Fetch the raw Wiz vulnerability-findings response.
 
-    Importable entry point shared by the CLI (`main`) and the Streamlit app, so
-    the app no longer has to shell out via runpy.
+    Importable entry point shared by the CLI (`main`) and other Python callers.
 
     Args:
         dry_run: when True, return bundled sample data without calling the API.
@@ -833,8 +832,8 @@ def fetch_findings(
             key overrides ``timeout_seconds`` (lets ops tune the deadline per-tenant via
             ``wiz_config.json`` without a code change).
         timeout_seconds: hard deadline for a single page's live API call. The blocking SDK
-            call runs in a worker thread so a hung endpoint can't freeze the Streamlit
-            server; exceeding the deadline retries once (see ``_QUERY_MAX_RETRIES``) and
+            call runs in a worker thread so a hung endpoint can't freeze the caller;
+            exceeding the deadline retries once (see ``_QUERY_MAX_RETRIES``) and
             then raises ``TimeoutError``. Defaults to ``DEFAULT_TIMEOUT_SECONDS``.
         sample_shape: which dry-run sample to return -- ``"grouped"`` (default) yields
             the committed grouped-by-asset response (mirrors the real API); ``"flat"``

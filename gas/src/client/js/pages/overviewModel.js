@@ -18,7 +18,7 @@
 // cached payload with no `population` block at all, a gate that arrived empty, a count that
 // arrived null — and those are enumerable in node.
 
-import { fmtCount } from "../../../../../gas_shared/ui/figures.js";
+import { absentText, fmtCount, fmtDays, num } from "../../../../../gas_shared/ui/figures.js";
 
 /** The separator between parts. One line, read left to right. */
 const JOINER = " · ";
@@ -106,4 +106,132 @@ export function slaConsumedCaption(slaConsumed) {
   return "Bucket k is time used; 9−k is time left. "
     + `${fmtCount(pastTotal)} past the window are not drawn; `
     + `${fmtCount(slaConsumed.noWindow)} carry no window.`;
+}
+
+
+/* --------------------------------------------------------------- the hero and its strip */
+
+/** What the hero shows while the insights RPC is still in flight. Not a dash: a dash means
+ *  "we looked and there was nothing", and nothing has looked yet. */
+export const HERO_PENDING = "…";
+
+/**
+ * THE PAGE'S ARGUMENT IN ONE FIGURE, plus the four supporting facts under it — as data.
+ *
+ * "Act now" is open findings carrying BOTH evidence of exploitation (on the CISA KEV catalog
+ * or with a public exploit) AND a way in (a host reachable from outside). It is meant to be
+ * small. On a register where severity is close to a constant, a count of everything is not a
+ * priority; the intersection is.
+ *
+ * THREE STATES, AND THEY ARE NOT THE SAME STATE:
+ *
+ *   pending   the RPC has not landed. `HERO_PENDING`, no stats — nothing has been measured.
+ *   firstRun  the ledger holds no row at all for this scope. The hero is the em dash and the
+ *             stat strip is EMPTY, not four zeros: "0 open · 0 past SLA · 0 awaiting · 0 days"
+ *             states four facts about a population nobody has looked at (CLAUDE.md, "An
+ *             unmeasured register is not a register of zeroes"). `firstRunNotice` carries the
+ *             reason instead.
+ *   measured  the figures, and — where the last scan carried no exposure field — the KEV count
+ *             with a sentence saying the narrower figure could not be computed. Never a
+ *             confident 0 for the intersection: that would be a measurement, and this is a
+ *             refusal to measure.
+ *
+ * PURE, and it returns rate STATS AS NUMBERS rather than as `rateView` results: `rateView` and
+ * `rateCell` live in `pages/mttr.js` / `pages/_rates.js`, which reach `../ui.js` and therefore
+ * the DOM. Keeping the arithmetic here and the widget in the page is what lets
+ * `test/registerFirstRun.test.js` run this in node.
+ */
+export function overviewHeroView(insights, firstRun) {
+  const loaded = !!(insights && insights.flatScan);
+  if (!loaded) {
+    return { pending: true, firstRun: false, value: HERO_PENDING, qualifier: "", lines: [], stats: [] };
+  }
+  if (firstRun && firstRun.show) {
+    return {
+      pending: false,
+      firstRun: true,
+      value: absentText,
+      qualifier: "Nothing has been measured for this register yet.",
+      lines: [],
+      stats: [],
+    };
+  }
+
+  const f = insights.funnel || {};
+  const exposureKnown = !!f.exposureKnown;
+  const tiers = insights.tiers || {};
+  const kev = (tiers.perTier || {}).kev;
+  const past = (insights.pastSla || {}).overall || null;
+  const aw = insights.awaiting || null;
+  const median = insights.medianOpenAge;
+  const scanTs = insights.scan ? insights.scan.ts : null;
+
+  return {
+    pending: false,
+    firstRun: false,
+    value: fmtCount(exposureKnown ? f.exposed : kev),
+    qualifier: exposureKnown
+      ? "open findings on the CISA KEV catalog or with a public exploit, on a host reachable "
+        + "from outside."
+      : "open findings on the CISA KEV catalog. Internet exposure was not captured in this "
+        + "scan, so the narrower figure cannot be computed.",
+    scanTs,
+    exposureKnown,
+    lines: exposureKnown
+      ? [
+        "Open findings that carry BOTH evidence of exploitation — on the CISA KEV catalog or "
+        + "with a public exploit — and a way in: a host reachable from outside.",
+        "The intersection, not a total. On a register where nearly everything is severe, a "
+        + "count of everything is not a priority.",
+      ]
+      : [
+        "Open findings on the CISA KEV catalog. The last scan carried no exposure field, so "
+        + "the narrower figure — the ones also reachable from outside — could not be computed.",
+        "It is not zero: nothing looked. Run a scan to capture exposure.",
+      ],
+    stats: [
+      {
+        name: "Open",
+        value: fmtCount(f.open),
+        sub: "still outstanding",
+        lines: ["Open findings in scope for this scan, after the severity gate and the "
+          + "register's own filters."],
+      },
+      {
+        // A RATE, so it carries its base. The denominator is open findings whose SLA clock has
+        // STARTED, which is smaller than the open count whenever anything is awaiting a vendor
+        // fix — those have no clock to breach.
+        name: "Past SLA",
+        kind: "rate",
+        pct: past ? past.pct : null,
+        denominator: past ? past.open : 0,
+        // SHORT, BECAUSE A STAT COLUMN IS ~180px WIDE. Measured on the seeded harness at
+        // 1280: "35 of 59 with a running clock" wrapped to three lines under the figure and
+        // the sub-line beneath repeated the same fact in different words. The denominator
+        // names the BASE and the sub-line names the CLOCK; neither restates the other.
+        denominatorLabel: past
+          ? "of " + fmtCount(past.open) + " on the clock"
+          : "no clock running",
+        emptyLabel: "no open finding has an SLA clock running",
+        sub: "past it, on the vendor-fix clock",
+        lines: ["On the vendor-fix clock, matching the MTTR page — a finding with no patch "
+          + "available yet is not counted as a breach, because its clock has not started."],
+        term: "actionable-age",
+      },
+      {
+        name: "Awaiting vendor fix",
+        value: fmtCount(aw ? aw.overall : null),
+        sub: "no published patch yet",
+        term: "awaiting-fix",
+      },
+      {
+        name: "Median open age",
+        // `absentText`, not a typed dash and not a zero: no median means the payload never
+        // measured one.
+        value: num(median) === null ? absentText : fmtDays(median),
+        sub: "half the open backlog is older",
+        term: "age",
+      },
+    ],
+  };
 }

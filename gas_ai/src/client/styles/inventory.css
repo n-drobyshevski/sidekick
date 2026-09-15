@@ -1,18 +1,21 @@
 /* ------------------------------------------------------- AI Inventory: posture header */
-/* Four levels rather than eight peers: the hero says what the landscape IS, the verdict row
-   says which assets carry an action, the strip says how the worst open issue is distributed,
-   and the stat list carries the supporting facts. Hero, verdict and strip are deliberately
-   borderless — DESIGN.md's Hero Stat takes its dominance from size and position, never from
-   a card, a gradient or an accent stripe.
+/* Three levels: the hero says what the landscape IS, the strip beside it says how the worst
+   open issue is distributed, and the stat list carries the supporting facts underneath both
+   — the shared `pageHeader({ hero, aside, stats })` (ui/controls.js), the same shape Cloud
+   Configuration and Wiz Scans draw. Hero and strip are deliberately borderless — DESIGN.md's
+   Hero Stat takes its dominance from size and position, never from a card, a gradient or an
+   accent stripe.
 
-   READING ORDER IS THE ARGUMENT HERE. The verdict shares the top row with the hero and the
-   distribution sits underneath both, because the posture tier cuts a queue and a severity
-   spread does not. The strip was on the top row before this and read as the page's headline.
+   READING ORDER IS THE ARGUMENT HERE. The verdict row (below) is its own block directly
+   under the shared header rather than sharing the hero's row: `statRow` carries no
+   delta-chip slot, and every one of the verdict's three counts carries one against the
+   previous sync. The distribution sits beside the hero instead — the posture tier cuts a
+   queue and a severity spread does not, so the strip qualifies the hero rather than
+   competing with it for the top row.
 
    The strip used to be the findings-score distribution, and this comment still described it
-   as such long after inventory.js:501 relabelled it "Worst open issue" — which is Wiz's own
+   as such long after inventory.js relabelled it "Worst open issue" — which is Wiz's own
    rating carried through, not a level this app computes. */
-/* .inv-header and .inv-hero-sub now come from .page-header (components.css). */
 
 /* The verdict row: the two posture tiers that carry an action. Read-outs, not controls —
    this table has no posture facet, and a chip shaped like the strip's filter keys but inert
@@ -25,16 +28,10 @@
 .inv-count { display: flex; flex-direction: column; gap: var(--space-half); }
 .inv-count-n { font-size: var(--fs-display-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
 
-/* Full width, under the hero and the verdict. */
-.inv-header .sev-strip { grid-column: 1 / -1; }
-
 /* The distribution strip. The bar is a graphic; the keys under it are the controls, so
    the cross-filter has a real keyboard path (a canvas would not). Both are the shared
    .sevbar / .sevkey-row components (components.css) — this page only sizes the stack. */
 .sev-strip-note { font-size: var(--fs-label); color: var(--text-3); margin: 0; }
-
-/* The stat strip itself is shared (components.css); the header only says where it sits. */
-.inv-header .stat-list { grid-column: 1 / -1; }
 
 /* ------------------------------------------------------------- AI Inventory: toolbar */
 .inv-toolbar {
@@ -107,8 +104,10 @@
 .asset-card-marks:empty { display: none; }
 .asset-card-meta { display: flex; flex-wrap: wrap; gap: var(--space-half) var(--space-2); font-size: var(--fs-label); color: var(--text-3); }
 
-@media (max-width: 1180px) { .inv-header { grid-template-columns: 1fr 1fr; } }
-@media (max-width: 760px) { .inv-header { grid-template-columns: 1fr; gap: var(--space-4); } }
+/* The two `.inv-header` breakpoints that used to live here (1180px two-up, 760px one-up)
+   retired with the class itself — the header is `pageHeader`'s own `.page-header` now, and
+   its shared 640px one-column collapse (components.css) is what governs it, same as every
+   other converted header on this register. */
 
 /* -------------------------------------------------- Cloud Configuration: the facet rows */
 /* Its own name, because .facet-row is the filter DRAWER's four-column grid (sheet.css) and

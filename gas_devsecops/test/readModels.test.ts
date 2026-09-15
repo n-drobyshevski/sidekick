@@ -46,6 +46,16 @@ const H = vi.hoisted(() => ({
    *  never from a model's own params. `""` (the default) is "no scope", same as an unset
    *  Settings field. */
   projectView: "",
+  /** `settingsStore.loadSettings().slaTargets` — `norm()` reads this through
+   *  `settingsLogic.effectiveSlaTargets`. `undefined` (the default) is "nothing saved", which
+   *  `effectiveSlaTargets` degrades to the shared `SLA_TARGETS` constant — the same figure
+   *  every test above this harness addition already measured against. */
+  slaTargets: undefined as Record<string, number> | undefined,
+  /** `historyStore`'s per-UTC-day blobs, ascending — one file per day, latest write wins.
+   *  `secretsModel` reads its twin fold off the NEWEST one; `historyModel` ships the array. */
+  history: [] as { date: string; stats: unknown }[],
+  /** Which historyStore reader each model reached for, in order — "list" or "latest". */
+  historyReads: [] as string[],
 }));
 
 function memo(name: string, params: unknown, compute: () => unknown): unknown {
@@ -106,7 +116,17 @@ vi.mock("../src/server/ledgerStore", () => ({
 }));
 
 vi.mock("../src/server/historyStore", () => ({
-  listHistory: () => [{ date: "2026-03-01", stats: { open: 5 } }],
+  listHistory: () => {
+    H.historyReads.push("list");
+    return H.history;
+  },
+  // The real one is a single Drive read of `max(names)` — see `historyStore.ts` for why it is
+  // not `listHistory().slice(-1)`. Here it is the last element for the same reason: the
+  // fixture list is ascending by date, exactly as the folder listing sorts.
+  latestHistory: () => {
+    H.historyReads.push("latest");
+    return H.history.length ? H.history[H.history.length - 1]! : null;
+  },
 }));
 
 vi.mock("../src/server/jobsStore", () => ({
@@ -118,7 +138,7 @@ vi.mock("../src/server/jobsStore", () => ({
 // -> `SpreadsheetApp` — a GAS global nothing in this file's harness defines. See
 // `test/projectView.test.ts` for the same knob exercised over a real booted server.
 vi.mock("../src/server/settingsStore", () => ({
-  loadSettings: () => ({ projectView: H.projectView }),
+  loadSettings: () => ({ projectView: H.projectView, slaTargets: H.slaTargets }),
 }));
 
 vi.mock("../src/server/sheetsDb", async (orig) => {
@@ -314,6 +334,9 @@ beforeEach(() => {
   H.cellCountThrows = false;
   H.computeDepths.length = 0;
   H.projectView = "";
+  H.slaTargets = undefined;
+  H.history = [{ date: "2026-03-01", stats: { open: 5 } }];
+  H.historyReads.length = 0;
   seed();
   __resetModelMemosForTest();
   vi.stubGlobal("console", { ...console, warn: () => {}, log: () => {} });
@@ -547,6 +570,91 @@ describe("mttrModel", () => {
 });
 
 // --------------------------------------------------------------------------------------- //
+//  P5: the Deadlines tab actually takes effect
+// --------------------------------------------------------------------------------------- //
+//
+// Before this package, every one of these figures read `config.SLA_TARGETS` directly, and a
+// saved `slaTargets` override reached none of them — the defect this section pins shut.
+// `sca:CVE-2` (seeded above) is CRITICAL, open, 69 days old: 69 days past the default 7-day
+// CRITICAL target, and 69 days STILL WITHIN a widened one. One row, one flip, over every
+// reader this package wired.
+
+describe("effective SLA windows reach the models that publish them", () => {
+  it("mttrModel: openPastSla no longer breaches once the window is widened past 69 days", () => {
+    expect((mttrModel(ALL) as any).remediation.openPastSla.perSev.CRITICAL.breached).toBe(1);
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    expect((mttrModel(ALL) as any).remediation.openPastSla.perSev.CRITICAL.breached).toBe(0);
+  });
+
+  it("mttrModel: the actionable-clock openPastSla widens the same way", () => {
+    expect((mttrModel(ALL) as any).remediation.actionable.openPastSla.overall.breached).toBe(1);
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    expect((mttrModel(ALL) as any).remediation.actionable.openPastSla.overall.breached).toBe(0);
+  });
+
+  it("mttrModel: agingDistribution's own slaTargets/slaEdge move with the saved window", () => {
+    const before = (mttrModel(ALL) as any).remediation.aging;
+    expect(before.slaTargets.CRITICAL).toBe(7);
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    const after = (mttrModel(ALL) as any).remediation.aging;
+    expect(after.slaTargets.CRITICAL).toBe(90);
+    // The bucket edges (0-7/8-30/31-90/90+) are fixed, so the 69-day row itself stays in the
+    // 31-90d bar either way — it is the DEADLINE overlay that moved, not the histogram.
+    expect(after.slaEdge.CRITICAL).not.toBe(before.slaEdge.CRITICAL);
+  });
+
+  it("mttrModel: overallSlaOldest's headline In-SLA % moves with mttrFromLedger's window", () => {
+    // sca:CVE-1 resolved in 7 days — exactly the default CRITICAL target, so it counts as
+    // in-SLA already; narrowing the window below 7 pushes it out instead.
+    const before = (mttrModel(ALL) as any).slaPct as number;
+    H.slaTargets = { CRITICAL: 1 };
+    __resetModelMemosForTest();
+    const after = (mttrModel(ALL) as any).slaPct as number;
+    expect(after).toBeLessThan(before);
+  });
+
+  it("registerModel: threads the effective window into triageFunnel without changing its shape", () => {
+    // `buildRegister` always calls `triageFunnel` with `exposureKnown: false` (this register's
+    // asset is a repository, never a host — see that call's own comment), so the funnel stops
+    // at `exploitable` and `overdue` is 0 by construction, whatever the SLA window is. The
+    // arithmetic itself — that the `targets` parameter actually moves `overdue` once a caller
+    // DOES know exposure — is `insights.test.ts`'s "triageFunnel" suite. What this proves is
+    // narrower and just as necessary: the new parameter reaches this call site and the payload
+    // keeps its contract.
+    const r = registerModel("sca", ALL) as any;
+    expect(r.funnel.overdue).toBe(0);
+    expect(r.funnel.exposureKnown).toBe(false);
+  });
+
+  it("executiveModel: fixNext's tier-2 gate moves with the saved window", () => {
+    // sca:CVE-2 (CRITICAL, fix available, 69 d old) is a tier-2 candidate once past SLA.
+    const before = executiveModel(ALL).fixNext as any;
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    const after = executiveModel(ALL).fixNext as any;
+    expect(after.unranked.insideSla).toBeGreaterThan(before.unranked.insideSla);
+  });
+
+  it("bootstrap-adjacent: the constant stays the default when nothing was saved", () => {
+    // The regression the whole package exists to avoid re-introducing: an operator who never
+    // opened the Deadlines tab keeps seeing exactly today's figures.
+    expect((mttrModel(ALL) as any).remediation.openPastSla.perSev.CRITICAL.target).toBe(7);
+  });
+
+  it("puts slaTargets in the key, so a changed window invalidates the cache instead of serving a stale one", () => {
+    mttrModel(ALL);
+    H.slaTargets = { CRITICAL: 90 };
+    __resetModelMemosForTest();
+    mttrModel(ALL);
+    const keys = H.cacheCalls.filter((c) => c.name === "dsMttr2").map((c) => JSON.stringify(c.params));
+    expect(new Set(keys).size).toBe(2);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
 //  Absent is never zero
 // --------------------------------------------------------------------------------------- //
 
@@ -635,6 +743,185 @@ describe("secretsModel has no severity axis", () => {
     expect(m.timeToRevoke.censored).toBe(1); // k1, measured live
     expect(m.timeToRevoke.excludedUnmeasured).toBe(1); // k3, nobody looked
     expect(m.timeToRevoke.total).toBe(3);
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  secretsModel — the twin fold, and the absence that is not a zero
+// --------------------------------------------------------------------------------------- //
+
+/**
+ * A day's history blob, in the shape `scanJobs.ts`'s `dailyStats()` actually writes: a
+ * `scopes[]` with one entry per scope the sync committed, each carrying that scope's `twins`.
+ * Only the fields this reader touches are filled in — the rest of `dailyStats` (deltas, mttr,
+ * pages) is not what is under test and a fixture pretending otherwise would rot with it.
+ */
+function historyDay(date: string, scopes: { scope: string; twins?: unknown }[]) {
+  return { date, stats: { sync_id: `sync-${date}`, at: `${date}T02:00:00Z`, scopes } };
+}
+
+function freshSecrets(): any {
+  H.store.clear();
+  __resetModelMemosForTest();
+  return secretsModel(ALL) as any;
+}
+
+/**
+ * WHY THIS BLOCK IS READ OFF THE HISTORY BLOB AT ALL, since three of this register's own
+ * comments said it came from the scan row: it never did. `reconcile()` returns `TwinStats`,
+ * `persistFlatScan` gets it and returns it BESIDE the row, and the row it pushes has no such
+ * field — `ScanRow` is eleven fields and `TAB_HEADERS[TABS.scans]` has no twins column, so
+ * `writeGrid` would have dropped it. `ledgerStore`'s copy is on the transient `ScopeOutcome`.
+ * The one durable copy is the per-UTC-day blob `dailyStats()` writes, which is what these
+ * cases hand the reader.
+ *
+ * THE FAILURE THESE GUARD AGAINST IS A ZERO WHERE THERE WAS AN ABSENCE. `emptyTwinStats()` is
+ * right there, it type-checks, and it turns "no sync has reported a fold" into "a sync looked
+ * and found none" — a claim about a measurement nobody made. The client cannot recover from
+ * it: `twinFoldView` prints "0 twins folded" for `{keys: 0, folded: 0}` because that IS the
+ * honest reading of a measured zero.
+ */
+describe("secretsModel: the twin fold is read from the newest per-sync history blob", () => {
+  it("ships the newest entry's secrets block verbatim", () => {
+    H.history = [historyDay("2026-03-02", [
+      { scope: "sca", twins: { keys: 99, folded: 99, medianGapDays: 99 } },
+      { scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } },
+    ])];
+    expect(freshSecrets().twins).toEqual({ keys: 6, folded: 7, medianGapDays: 19.94 });
+  });
+
+  /**
+   * THE DAY RIDES BESIDE THE BLOCK, and both halves of that matter.
+   *
+   * BESIDE: `twins` has to stay exactly `{keys, folded, medianGapDays}`, because that is what
+   * the client's absent-vs-measured-zero decision reads and a fourth field in there is a
+   * fourth thing to interpret. So the date is its own payload key.
+   *
+   * AT ALL: the blob is one file per UTC day, latest write wins, so this can be Tuesday's
+   * fold read on Friday. PRODUCT.md's seventh principle — a clock has to say where it started
+   * — is the reason the page is given something to say it with.
+   */
+  it("dates the fold with the blob's own day, as a sibling key", () => {
+    H.history = [historyDay("2026-03-02", [
+      { scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } },
+    ])];
+    const m = freshSecrets();
+    expect(m.twinsAsOf).toBe("2026-03-02");
+    // The block itself stays a faithful TwinStats — three fields, no fourth.
+    expect(Object.keys(m.twins).sort()).toEqual(["folded", "keys", "medianGapDays"]);
+  });
+
+  it.each([
+    ["a date that is not a day", "yesterday"],
+    ["a date that is a timestamp", "2026-03-02T02:00:00Z"],
+    ["a numeric date", 20260302],
+    ["an empty date", ""],
+    ["no date at all", undefined],
+  ])("%s ships the fold UNDATED rather than dating it now", (_label, date) => {
+    H.history = [{
+      date,
+      stats: { scopes: [{ scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } }] },
+    } as any];
+    const m = freshSecrets();
+    // The fold was measured; only its day is unknown. Both facts survive.
+    expect(m.twins).toEqual({ keys: 6, folded: 7, medianGapDays: 19.94 });
+    expect("twinsAsOf" in m).toBe(false);
+  });
+
+  it("no fold means no date either — an absence dates nothing", () => {
+    H.history = [];
+    const m = freshSecrets();
+    expect("twins" in m).toBe(false);
+    expect("twinsAsOf" in m).toBe(false);
+  });
+
+  it("takes the NEWEST day, not the oldest — the fold is a property of the last sync", () => {
+    H.history = [
+      historyDay("2026-03-01", [{ scope: "secrets", twins: { keys: 1, folded: 1, medianGapDays: 3 } }]),
+      historyDay("2026-03-02", [{ scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } }]),
+    ];
+    const twins = freshSecrets().twins;
+    expect(twins.folded).toBe(7);
+    expect(twins.folded).not.toBe(1); // the oldest entry's own answer
+  });
+
+  it("a measured zero travels — a sync that looked and folded nothing said something", () => {
+    H.history = [historyDay("2026-03-02", [
+      { scope: "secrets", twins: { keys: 0, folded: 0, medianGapDays: null } },
+    ])];
+    expect(freshSecrets().twins).toEqual({ keys: 0, folded: 0, medianGapDays: null });
+  });
+
+  it.each([
+    ["no history at all", [] as unknown[]],
+    ["a newest sweep that never looked at secrets", [historyDay("2026-03-02", [
+      { scope: "sca", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } },
+      { scope: "sast", twins: { keys: 0, folded: 0, medianGapDays: null } },
+    ])]],
+    ["a secrets scope carrying no twins block", [historyDay("2026-03-02", [{ scope: "secrets" }])]],
+    ["stats that are not an object", [{ date: "2026-03-02", stats: null }]],
+    ["stats with no scopes array", [{ date: "2026-03-02", stats: { sync_id: "s" } }]],
+  ])("%s ships NOTHING — the key is absent, never emptyTwinStats()", (_label, history) => {
+    H.history = history as any;
+    const m = freshSecrets();
+    expect("twins" in m).toBe(false);
+    expect(m.twins).toBeUndefined();
+  });
+
+  it.each([
+    ["keys null", { keys: null, folded: 0, medianGapDays: null }],
+    ["keys a numeric STRING", { keys: "6", folded: 7, medianGapDays: 19.94 }],
+    ["folded missing", { keys: 6, medianGapDays: 19.94 }],
+    ["folded an empty string", { keys: 6, folded: "", medianGapDays: null }],
+    ["folded an empty array", { keys: 6, folded: [], medianGapDays: null }],
+    ["folded false", { keys: 6, folded: false, medianGapDays: null }],
+    ["NaN", { keys: 6, folded: NaN, medianGapDays: null }],
+    ["no medianGapDays key at all", { keys: 6, folded: 7 }],
+    ["a medianGapDays that is not a number", { keys: 6, folded: 7, medianGapDays: "19.94" }],
+    ["an array where the block should be", []],
+  ])("a malformed block (%s) ships NOTHING", (_label, twins) => {
+    H.history = [historyDay("2026-03-02", [{ scope: "secrets", twins }])];
+    expect("twins" in freshSecrets()).toBe(false);
+  });
+
+  /**
+   * THE GUARD, WHERE IT ACTUALLY BITES. Every case above would still pass against a reader
+   * that answered `emptyTwinStats()` for an absence IF the assertion were only "the numbers
+   * are right when there are numbers". What separates the two readers is that one of them
+   * makes an absence and a measured zero into the SAME BYTES on the wire, after which no
+   * client can tell them apart — `twinFoldView` prints "0 twins folded" for `{keys: 0,
+   * folded: 0, medianGapDays: null}` because that is the honest reading of a measured zero.
+   * So the two payloads are built here and compared directly.
+   */
+  it("an absence and a measured zero are different payloads, and the wire keeps them apart", () => {
+    H.history = [historyDay("2026-03-02", [
+      { scope: "secrets", twins: { keys: 0, folded: 0, medianGapDays: null } },
+    ])];
+    const measuredZero = freshSecrets();
+    H.history = [];
+    const absent = freshSecrets();
+
+    expect(measuredZero.twins).toEqual({ keys: 0, folded: 0, medianGapDays: null });
+    expect("twins" in absent).toBe(false);
+    // The line that fails against `emptyTwinStats()`: the substitution makes these identical.
+    expect(JSON.stringify(absent.twins)).not.toBe(JSON.stringify(measuredZero.twins));
+    // And the substitution reproduced, so the two readers are present at once and disagree.
+    const substituting = (block: unknown) => block ?? { keys: 0, folded: 0, medianGapDays: null };
+    expect(substituting(absent.twins)).toEqual(measuredZero.twins);
+  });
+
+  it("costs ONE history read, not one per recorded day", () => {
+    // `latestHistory` exists for this: `listHistory().slice(-1)` reads and gunzips every day's
+    // blob to answer a question about one of them, and `secretsModel` sits behind a one-hour
+    // cache rather than the durable one. The mock counts calls; the shape of the saving is in
+    // `historyStore.ts`'s own comment.
+    H.history = [
+      historyDay("2026-03-01", [{ scope: "secrets", twins: { keys: 1, folded: 1, medianGapDays: 3 } }]),
+      historyDay("2026-03-02", [{ scope: "secrets", twins: { keys: 6, folded: 7, medianGapDays: 19.94 } }]),
+    ];
+    freshSecrets();
+    expect(H.historyReads).toEqual(["latest"]);
+    expect(H.historyReads).not.toContain("list");
   });
 });
 
@@ -808,8 +1095,35 @@ describe("historyModel", () => {
     expect(m.kpis.tracked).toBe(8);
     expect(m.kpis.open).toBe(5);
     expect(m.kpis.resolvedAllTime).toBe(3);
-    expect(m.kpis.medianMttr).toBe(10);
     expect(m.kpis.km.total).toBe(8);
+  });
+
+  /**
+   * WHY `kpis.medianMttr` IS GONE, AND WHAT THIS FIXTURE SAYS ABOUT IT.
+   *
+   * The retired claim was `expect(m.kpis.medianMttr).toBe(10)` — `overall.mttr_median`, the
+   * plain median over the three rows that CLOSED. It was true of the field and false of the
+   * card that drew it: the Scan History KPI band captions that figure with the `half-life`
+   * glossary term, which defines a Kaplan-Meier estimate that keeps still-open findings in as
+   * right-censored evidence (PRODUCT.md's seventh principle — the clock has to say what it
+   * did with the rows it could not measure).
+   *
+   * THIS FIXTURE IS THE SUBSTITUTION IN MINIATURE. Eight tracked, three closed, five still
+   * open: the curve never falls to half, so there is NO Kaplan-Meier median to publish at all
+   * and the honest figure is a lower bound of 69 days. The retired field answered 10 — a
+   * confident number, seven times smaller, over a population that is five-eighths unmeasured.
+   * On the dev seed the same substitution reads 93 days against "at least 297 days".
+   *
+   * So the pin moves to the two fields the client now reads, and the naive one is asserted
+   * ABSENT rather than merely unused: a payload key nothing reads is the next reader's trap.
+   */
+  it("publishes the Kaplan-Meier half-life — a bound where there is no median, and no naive median beside it", () => {
+    const m = historyModel(ALL) as any;
+    expect(m.kpis.km.median).toBeNull();
+    expect(m.kpis.km.medianLowerBound).toBe(69);
+    expect(m.kpis.km.events).toBe(3); // the three that closed
+    expect(m.kpis.km.censored).toBe(5); // the five the plain median would have dropped
+    expect("medianMttr" in m.kpis).toBe(false);
   });
 
   it("reports per-scope scan coverage", () => {

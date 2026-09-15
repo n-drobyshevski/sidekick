@@ -20,15 +20,15 @@ Condition types (the persisted dicts under ``settings.json → domains.items[].r
   any of the values, trimmed + case-insensitive. The support group is resolved live
   from the subscription's ``Wiz/provisioning`` tag and attached to each record as
   ``_supportGroup`` by the server before assignment (the engine only reads the field,
-  never the subscription→group map). All-false in the Streamlit frame, which does not
-  attach it — the GAS port populates it.
+  never the subscription→group map). Records without that field simply do not match
+  support-group conditions.
 
 A rule with zero (or any malformed) conditions never matches: a hand-edited settings
 file must fail closed, never become an accidental catch-all.
 
-Pure pandas/stdlib — no Streamlit — so the matrix of semantics above is unit-testable
-directly (see ``tests/test_domain_rules.py``). Cached wrappers live in
-``ui/pages/_derived.py`` and key on the settings ``domains.version`` token.
+Pure pandas/stdlib, so the matrix of semantics above is unit-testable
+directly (see ``tests/test_domain_rules.py``). Callers that cache derived domain assignments
+should key on the settings ``domains.version`` token.
 """
 
 import json

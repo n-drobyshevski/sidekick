@@ -13,6 +13,7 @@ import { domainNames, validateDomains, compileDomains, assignDomain, assignDomai
 import { coverage, ruleHealth, supportGroupBreakdown, unassignedLifecycles, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
 import type { BaseRow } from "../domain/ledgerCore";
+import { fixNext } from "../domain/fixNext";
 import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
 import { normalizeSeverity } from "../domain/severity";
@@ -32,7 +33,7 @@ import {
   recordNoFix,
   resolutionBuckets,
 } from "../domain/remediation";
-import type { LatencyOrigin } from "../domain/remediation";
+import type { KMResult, LatencyOrigin } from "../domain/remediation";
 import { validateBundle } from "../domain/importMerge";
 import { buildMigrationBundle, bundleCounts } from "../domain/exportBundle";
 import { SealedScanError, LedgerRebuildError } from "../domain/maintenance";
@@ -42,9 +43,12 @@ import * as insights from "../domain/insights";
 import * as program from "../domain/program";
 import * as settingsImpact from "../domain/settingsImpact";
 import {
-  execGroupSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice, mttrGroupTrendSlice,
-  jobSummarySlice, mttrPageTrendSlice, oldestOpenSlice, overviewInsightsSlice,
-  programTrendSlice, scanRowsSlice,
+  execGroupSlice, execInsightsSlice, execMttrSlice, historyTrendSlice, mttrGroupTableSlice,
+  mttrGroupTrendSlice, jobSummarySlice, mttrPageTrendSlice, oldestOpenSlice,
+  overviewInsightsSlice, programTrendSlice, scanRowsSlice,
+  REGISTER_ROW_COLUMNS, REGISTER_ROW_DEFAULT_SORT, REGISTER_ROW_KEY,
+  REGISTER_ROWS_DEFAULT_PAGE_SIZE, REGISTER_ROWS_PAGE_SIZE_CAP,
+  pageOfRegisterRows, registerRowsSlice, registerSortValue, sortRegisterRows,
 } from "../domain/pagePayload";
 import * as archive from "./archiveStore";
 import * as errorLog from "./errorLog";
@@ -476,6 +480,14 @@ function insightsData(p?: unknown): Rec {
   // One pass over the frame, read by both the `exploit` block and the risk ladder's
   // exposure join below.
   const exploitSummaryScoped = insights.exploitSummary(recsVisible);
+  // HOISTED OUT OF `riskLadder` because `fixNext` reads the same two answers, and neither is
+  // free: `exposedVulnKeys` is a full pass over every frame record, and the rule decides how
+  // every row on this page classifies. Hoisting rather than returning them from `riskLadder`
+  // keeps it visible that the ranked list and the triage funnel are reading ONE join and ONE
+  // rule — two passes would eventually disagree about which hosts are reachable, and the page
+  // would print a tier-1 count the funnel's `exposed` step contradicts.
+  const rule = settingsStore.getRiskRule().rule;
+  const exposedKeys = exposedVulnKeys(recsVisible, exploitSummaryScoped.exposureKnown);
   return {
     flatScan: true,
     domain,
@@ -505,7 +517,26 @@ function insightsData(p?: unknown): Rec {
     // print different unclassified counts for one fleet (pinned in test/program.test.ts).
     ...riskLadder(
       recsVisible, baseVisible as unknown as Rec[], base as unknown as Rec[],
-      severities, showNoFix, exploitSummaryScoped,
+      severities, showNoFix, exploitSummaryScoped, rule, exposedKeys,
+    ),
+    // WHAT TO DO ON MONDAY, and what the list left out. The Executive front door reads this
+    // (via `execInsightsSlice`); the Overview does not, and `overviewInsightsSlice` drops it.
+    // Computed HERE rather than in a read-model of its own so both pages share one `cached()`
+    // entry — see the note on `execInsightsSlice`.
+    fixNext: fixNext(baseVisible as unknown as Parameters<typeof fixNext>[0], {
+      exposedKeys,
+      exposureKnown: exploitSummaryScoped.exposureKnown,
+      rule,
+      slaTargets: SLA_TARGETS,
+    }),
+    // Open-backlog movement across at least a week of SCANS — the different question from
+    // `movement` below, which reports the latest scan's reconcile deltas (one day of news on
+    // a daily register). Reads the same `baseVisible` and the same severity gate, so the two
+    // blocks describe one population. Also Executive-only.
+    movementOpen: insights.openMovement(
+      baseVisible as unknown as Parameters<typeof insights.openMovement>[0],
+      ledgerStore.loadScanRows() as unknown as Parameters<typeof insights.openMovement>[1],
+      { severities },
     ),
     // Open findings awaiting a vendor fix (no patch available yet) over the same scoped base
     // rows — sourced here so the Overview can explain the post-rollout open-count step-up.
@@ -546,6 +577,28 @@ function insightsData(p?: unknown): Rec {
 }
 
 /**
+ * Frame -> ledger join: the `vuln_key`s of findings on an internet-reachable host.
+ *
+ * `hasWideInternetExposure` is a CURRENT-SCAN fact and not a ledger column, so exposure can
+ * only ever be answered by joining the frame. When the frame predates those keys the caller
+ * passes `exposureKnown: false` and the set stays EMPTY — which is why every consumer has to
+ * carry the flag beside it: an empty set here means "we could not look", not "nothing is
+ * reachable", and the two render differently (CLAUDE.md, "The Outside").
+ */
+function exposedVulnKeys(recsVisible: Rec[], exposureKnown: boolean): Set<string> {
+  const out = new Set<string>();
+  if (!exposureKnown) return out;
+  for (const r of recsVisible) {
+    if (r["vulnerableAsset.hasWideInternetExposure"] === true
+      || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
+      const k = String(r["_vuln_key"] ?? "");
+      if (k) out.add(k);
+    }
+  }
+  return out;
+}
+
+/**
  * The Overview page's risk-ladder block: tiers, the triage funnel, the tier trend, aging
  * stacked by tier, concentration, and the one SLA figure.
  *
@@ -575,21 +628,12 @@ function riskLadder(
   // Passed in rather than recomputed: `insightsData` already ran it for the `exploit`
   // field, and it is a full pass over every frame record.
   exposure: insights.ExploitSummary,
+  // Both hoisted into `insightsData` so `fixNext` reads the same answers this block does —
+  // see the note there. They were computed in here until the ranked list needed them too.
+  rule: program.RiskRule,
+  exposedKeys: Set<string>,
 ): Rec {
-  const rule = settingsStore.getRiskRule().rule;
   const tierOf = (r: Rec) => program.riskTier(r as unknown as program.RiskRow, rule);
-
-  // Frame -> ledger join for the funnel's exposure step.
-  const exposedKeys = new Set<string>();
-  if (exposure.exposureKnown) {
-    for (const r of recsVisible) {
-      if (r["vulnerableAsset.hasWideInternetExposure"] === true
-        || r["vulnerableAsset.hasLimitedInternetExposure"] === true) {
-        const k = String(r["_vuln_key"] ?? "");
-        if (k) exposedKeys.add(k);
-      }
-    }
-  }
 
   const agingTier = insights.ageBucketsBy(
     baseVisible as unknown as Parameters<typeof insights.ageBucketsBy>[0],
@@ -637,7 +681,15 @@ const cachedInsightsData = (p?: unknown) =>
     // "insights5" → "insights6": the payload gained `slaConsumed` (open findings by tenth of
     // their SLA window, plus the past-window and no-window counts that are not drawn); a
     // stale insights5 entry has none of it and the section would render as a measured zero.
-    "insights6",
+    // "insights6" → "insights7": the payload gained `fixNext` (the Executive front door's
+    // ranked list plus its unranked accounting) and `movementOpen` (open-backlog movement
+    // across at least a week of scans). A stale insights6 entry carries NEITHER, and both are
+    // read unconditionally by `execInsightsSlice`, so an Executive page served one would paint
+    // a front door with no ranked list and no movement block for up to an hour after deploy —
+    // which reads as a register with nothing to do rather than as a cache miss. The key is
+    // unchanged: both new figures are computed from `baseVisible`, the risk rule and the scan
+    // log, every one of which the existing key already covers.
+    "insights7",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1030,16 +1082,72 @@ function scopedBaseRows(domain: string, supportGroup: string): Rec[] {
  * One latency clock's shippable summary: the KM stats WITHOUT the curve, plus the segment
  * counts that say how much of the population was measured at all.
  *
- * The curve's omission is deliberate, not an oversight. `kmActionable` — a second complete
- * KMResult, curve included — used to ship on every MTTR and Executive load with no reader
- * anywhere, and was removed for it (see the note in the remediation block below). Two more
- * curves with no chart to draw them would re-make that mistake twice over. Add the curve
- * back the day something plots it.
+ * THE RULE IS "A CURVE SHIPS WHERE SOMETHING PLOTS IT", AND IT HAS NOW CUT BOTH WAYS.
+ * `kmActionable` — a second complete KMResult, curve included — used to ship on every MTTR
+ * and Executive load with no reader anywhere, and was removed for it (see the note in the
+ * remediation block below). This comment then said the per-severity curves were withheld for
+ * the same reason: "three fixed statistics per severity, and no chart to draw the staircase
+ * they were read off". That is no longer true. `remediation.kmPerSev` ships one `shipKM`-
+ * narrowed curve per severity because `pages/mttr.js` now DRAWS them — a `.sev-fan` grid of
+ * small multiples above the per-severity table, where the table's three numbers are the
+ * statistics and the fan is the shape they came from. The two latency clocks below still
+ * have no plotter, so they still ship without a curve; add theirs back the day one exists.
  *
  * One `now` for both calls so the segment counts and the estimator's own event/censored
  * split are computed against the same instant, which is what makes their agreement an
  * invariant rather than a near-certainty.
  */
+
+/**
+ * A Kaplan-Meier estimate narrowed for the wire — `{t, s}` curve points, and the statistics
+ * a client actually reads off them.
+ *
+ * `KMPoint` carries `{t, s, atRisk, events}`: the risk set and the event count at each step
+ * are what the estimator needs to BUILD the curve and what `test/remediation.test.ts` pins on
+ * it, but the survival chart plots `t` against `s`. One point per distinct resolution time
+ * means the register decides the array's length, so halving a point's width is a saving that
+ * grows with the ledger — and there are now SIX of these curves per payload rather than one.
+ *
+ * NOT USED FOR THE OVERALL `km`, AND THE SHAPES ARE WHY. `remediation.km` must keep
+ * `naiveMedian` and `naiveMean` — the closed-only comparison the KM headline corrects for —
+ * because `pages/mttr.js` draws `naiveMedian` as the hero's secondary stat, as a marker on the
+ * overall survival curve, and as the "Naive" arm of the MTTR-over-time toggle, and
+ * `test/pagePayload.test.ts` reads it off the Executive slice. `shipKM` deliberately drops
+ * both: a per-severity card draws two Kaplan-Meier markers and no closed-only comparison, so
+ * shipping six copies of a statistic nothing plots is exactly the `kmActionable` mistake at
+ * six times the width. The overall narrowing below therefore stays a spread with its curve
+ * replaced; this is a narrower projection for a different reader, not a second copy of one.
+ *
+ * `p90` is computed HERE rather than by the caller so `kmPerSev[s].p90` and `kmP90PerSev[s]`
+ * cannot be two different reads of the same curve.
+ */
+interface ShippedKM {
+  curve: { t: number; s: number }[];
+  median: number | null;
+  medianLowerBound: number | null;
+  p90: number | null;
+  mean: number | null;
+  meanTruncated: boolean;
+  restrictionTime: number | null;
+  events: number;
+  censored: number;
+  total: number;
+}
+
+function shipKM(km: KMResult): ShippedKM {
+  return {
+    curve: km.curve.map((p) => ({ t: p.t, s: p.s })),
+    median: km.median,
+    medianLowerBound: km.medianLowerBound,
+    p90: kmQuantileFromCurve(km.curve, 0.9),
+    mean: km.mean,
+    meanTruncated: km.meanTruncated,
+    restrictionTime: km.restrictionTime,
+    events: km.events,
+    censored: km.censored,
+    total: km.total,
+  };
+}
 function latencySummary(rows: BaseRow[], origin: LatencyOrigin): Rec {
   const now = Date.now();
   const km = kaplanMeier(latencyView(rows, origin, now));
@@ -1082,18 +1190,43 @@ function mttrData(p?: unknown): Rec {
   // that bias low on a wave of fresh open findings. Both read off one KM curve per severity.
   // Keyed by normalized severity to line up with `perSev` (UNKNOWN included). Grouped over the
   // same from-detection rows as the overall `km` below.
+  //
+  // THE CURVE SHIPS NOW, NOT ONLY ITS STATISTICS. This block used to run one `kaplanMeier(rs)`
+  // per severity and keep the median and the P90 off it, discarding the staircase that
+  // produced both — so no surface in the app could compare severity survival SHAPES, and two
+  // fixed statistics cannot say that CRITICAL closes fast and then stalls, or that LOW never
+  // moves at all. `kmPerSev` is that same curve, narrowed by `shipKM`, so the fan of small
+  // multiples and the summary table under it are two views of ONE estimate rather than two
+  // estimates: `kmPerSev[s].median` IS `kmMedianPerSev[s]` by construction.
+  //
+  // `kmLowerBoundPerSev` joins them for the same reason it is on the hero: a severity whose
+  // curve never falls to half has a median that is AT LEAST the longest observation, and the
+  // per-severity table printed a dash for that until this shipped — throwing away a true
+  // statement because the stronger one was unavailable.
+  //
+  // The three flat maps stay beside the curve map rather than being folded into it. They are
+  // what the summary table reads today, and collapsing them would rewrite a read path for no
+  // measured gain. Keys are emitted in `SEVERITY_ORDER` so the client's fan needs no sort.
   const kmMedianPerSev: Record<string, number | null> = {};
   const kmP90PerSev: Record<string, number | null> = {};
+  const kmLowerBoundPerSev: Record<string, number | null> = {};
+  const kmPerSev: Record<string, ShippedKM> = {};
   {
     const bySev: Record<string, BaseRow[]> = {};
     for (const r of remRows) {
       const s = normalizeSeverity((r as unknown as Rec)["severity"]);
       (bySev[s] ?? (bySev[s] = [])).push(r);
     }
-    for (const [s, rs] of Object.entries(bySev)) {
-      const k = kaplanMeier(rs);
+    const seen = Object.keys(bySev);
+    const ordered = (SEVERITY_ORDER as readonly string[])
+      .filter((s) => seen.indexOf(s) >= 0)
+      .concat(seen.filter((s) => (SEVERITY_ORDER as readonly string[]).indexOf(s) < 0));
+    for (const s of ordered) {
+      const k = kaplanMeier(bySev[s]!);
       kmMedianPerSev[s] = k.median;
+      kmLowerBoundPerSev[s] = k.medianLowerBound;
       kmP90PerSev[s] = kmQuantileFromCurve(k.curve, 0.9);
+      kmPerSev[s] = shipKM(k);
     }
   }
   // Full Kaplan–Meier estimate (curve + KM median/RMST mean + naive comparison stats), open
@@ -1117,6 +1250,21 @@ function mttrData(p?: unknown): Rec {
     kmP90: kmQuantileFromCurve(kmFull.curve, 0.9),
     kmMedianPerSev,
     kmP90PerSev,
+    kmLowerBoundPerSev,
+    kmPerSev,
+    /**
+     * The open backlog as an age DISTRIBUTION, against the per-severity SLA edge.
+     *
+     * `openPastSla` below it is the same population reduced to one ratio per severity, and a
+     * ratio cannot say whether the breaches are a week late or a year late. This ships the
+     * shape as well, over the SAME `remRows` every other block here measures — so the domain,
+     * support-group, severity and both display toggles apply to it identically.
+     *
+     * `unaged` is on the wire for the reason `ageBuckets` could not put it there: an open row
+     * with no readable `first_seen` is not young, it is undated, and the page prints that
+     * count rather than letting the bars quietly cover fewer rows than the hero does.
+     */
+    aging: insights.agingDistribution(remRows),
     openPastSla: openPastSla(remRows),
     // Actionable-clock companion (clock starts at vendor-fix availability): the same function
     // over the actionableView projection. Awaiting-vendor-fix rows carry null actionable
@@ -1428,7 +1576,17 @@ const cachedMttrData = (p?: unknown) =>
     // latency clocks and their segment counts. Note they are computed over a DIFFERENT
     // population from everything else in the block (the show-no-fix filter is not applied to
     // them), so a stale entry is not merely missing keys; bump so none survives.
-    "mttr9",
+    // "mttr9" -> "mttr10": remediation gained `kmPerSev` (one shipKM-narrowed Kaplan-Meier
+    // curve per severity, for the small-multiple fan), `kmLowerBoundPerSev` (the bound the
+    // per-severity table prints where the curve never falls to half) and `aging` (the open
+    // backlog by age bucket and severity, with the unaged remainder and the SLA edge). A
+    // stale mttr9 entry is not merely FATTER than an mttr10 one, which is the case a TTL
+    // could ride out: it carries none of those three keys, so for up to an hour after a
+    // deploy the fan would draw no cards, the table's bound column would fall back to a dash
+    // on every censored severity, and the whole aging section would render its "no open
+    // findings to age yet" empty state over a register with a backlog. An absent section
+    // reads as a measurement — "there is nothing here" — rather than as a cache age.
+    "mttr10",
     {
       domain: String((p as Rec)?.["domain"] ?? ""),
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1602,10 +1760,14 @@ export function getMttrPage(p?: unknown): ApiResult {
   }));
 }
 
-/** The by-group drawer's trend series, fetched when it opens. Repeats getMttrPage's dimension
- *  switch verbatim — it has to, both because the switch reads `domain` and because the params
- *  must match key-for-key to hit the entry that page already warmed. Deliberately NOT folded
- *  into `getGroupTrend`, which serves Overview's breakdown and is a different series. */
+/** The by-group section's trend series, fetched beside `getMttrPage` rather than inside it —
+ *  it is the per-point KM replay, the heavy half of that section, and keeping it out lets the
+ *  breakdown table paint with the page while these two charts land underneath it. (It used to
+ *  be fetched when a drawer opened; the section is on the page now, so the client fires this on
+ *  render. Nothing about the endpoint changed.) Repeats getMttrPage's dimension switch verbatim
+ *  — it has to, both because the switch reads `domain` and because the params must match
+ *  key-for-key to hit the entry that page already warmed. Deliberately NOT folded into
+ *  `getGroupTrend`, which serves Overview's breakdown and is a different series. */
 export function getMttrByDomainTrend(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
   return run(() => mttrGroupTrendSlice(
@@ -1764,6 +1926,330 @@ function riskCohortRows(p: unknown, quadrant: string): Rec[] {
   return out;
 }
 
+// ------------------------------------------------------------ the register's own rows
+//
+// EVERY OTHER READ MODEL IN THIS FILE IS AN AGGREGATE. Severity counts, the tier ladder, KM
+// curves, oldest-open rankings, a confusion matrix — the OS register can say a great deal
+// about its population and, until this endpoint, could not hand a reader the population
+// itself. `getRiskCohort` above is the closest thing and is not it: it is a drill-down into
+// ONE confusion-matrix cell, with a hand-built ten-column projection chosen to make that
+// cell checkable.
+//
+// So this is the register: one page of findings, sorted and paged SERVER-SIDE, each row
+// carrying its own provenance (was the death date measured or bounded, was the exposure
+// looked at, which clause put it in its tier). The slice and the ordering rule live in
+// `domain/pagePayload.ts` — see that file's header for why both halves sit together and how
+// the ordering is held identical to the client's `gas_shared/ui/tableModel.js`.
+
+/** The four row-level filters, normalized ONCE so the cache key and the compute agree. */
+interface RegisterRowFilters {
+  status: "open" | "resolved" | "all";
+  fix: "all" | "fixable" | "awaiting";
+  /** A subset of `RISK_TIER_ORDER`, in tier order, or null for "no tier filter". */
+  tier: string[] | null;
+  /** Whether the reader ASKED for internet-reachable only. Whether it BIT is a separate
+   *  question, answered inside the compute where the frame is in hand. */
+  exposed: boolean;
+}
+
+const REGISTER_ROW_STATUSES = ["open", "resolved", "all"] as const;
+const REGISTER_ROW_FIX_MODES = ["all", "fixable", "awaiting"] as const;
+
+/**
+ * The filters as the server will actually apply them.
+ *
+ * AN UNRECOGNISED VALUE FALLS BACK TO THE DEFAULT, NEVER TO AN EMPTY PAGE. These arrive from
+ * a URL hash, which is a place typos come from, and answering a typo with "0 findings" states
+ * a measurement about a population nobody asked for. The applied values are echoed in the
+ * payload so the client can see what actually bit.
+ *
+ * A TIER NAME THIS REGISTER DOES NOT HAVE IS DROPPED, and a list that drops to empty is no
+ * filter at all — same rule, one level down. `tier` comes back in `RISK_TIER_ORDER` order
+ * rather than the order it was asked in, so two clients asking for the same set land on one
+ * cache entry.
+ */
+function registerRowFilters(p?: unknown): RegisterRowFilters {
+  const params = (p ?? {}) as Rec;
+  const askedStatus = String(params["status"] ?? "").toLowerCase();
+  const status = (REGISTER_ROW_STATUSES as readonly string[]).includes(askedStatus)
+    ? (askedStatus as RegisterRowFilters["status"])
+    // OPEN, not "all": the register's question is what is still outstanding. Resolved rows
+    // are one parameter away and are counted in `population.inScope` either way.
+    : "open";
+  const askedFix = String(params["fix"] ?? "").toLowerCase();
+  const fix = (REGISTER_ROW_FIX_MODES as readonly string[]).includes(askedFix)
+    ? (askedFix as RegisterRowFilters["fix"])
+    : "all";
+  const rawTier = params["tier"];
+  const askedTiers = Array.isArray(rawTier)
+    ? (rawTier as unknown[]).map(String)
+    : rawTier === null || rawTier === undefined || rawTier === ""
+      ? []
+      : String(rawTier).split(",");
+  const wanted = new Set(
+    askedTiers
+      .map((v) => v.trim().toLowerCase())
+      .filter((v) => (program.RISK_TIER_ORDER as readonly string[]).includes(v)),
+  );
+  const tier = wanted.size
+    ? (program.RISK_TIER_ORDER as readonly string[]).filter((t) => wanted.has(t))
+    : null;
+  const rawExposed = params["exposed"];
+  return { status, fix, tier, exposed: rawExposed === true || rawExposed === "true" };
+}
+
+/**
+ * The whole filtered set, sliced to the wire columns — everything except the sort and the
+ * page, which the endpoint applies outside the cache entry.
+ *
+ * THE POPULATION CHAIN IS THE ONE EVERY ANALYTIC PAGE USES, in the same order, deliberately:
+ * `scopedBaseRows` (domain / support-group scope) → `filterSeverities` (the display-severity
+ * subset) → `visibleBase` (the no-fix and end-of-life toggles). A register whose rows came
+ * from a different chain than the figures above it would be two populations on one screen —
+ * the failure `executiveSeverityCounts` was corrected for.
+ *
+ * THREE COLUMNS ARE STAMPED HERE BECAUSE NOTHING ELSE COULD.
+ *
+ *   `support_group` / `domain` — a base row is a ledger row and carries neither natively;
+ *   they come from the attribution join, exactly as `insightsData` attaches them.
+ *
+ *   `risk_tier` — `program.riskTier` under the rule in force. It is a REFINEMENT of
+ *   `classifyRisk`, never a second opinion, so a reader can filter the table by the same tier
+ *   the ladder above it counted (pinned in test/program.test.ts).
+ *
+ *   `internet_exposed` — and this one is TRI-STATE, which is the whole reason it is computed
+ *   rather than read. `hasWideInternetExposure` is a CURRENT-SCAN fact and not a ledger
+ *   column, so it can only be answered by joining the frame. `true` when the join says the
+ *   host is reachable; `false` only when the frame carries the exposure keys AND this row is
+ *   in the frame without them; `null` otherwise — either the frame predates those keys
+ *   (`exposureKnown` false) or the row is not in the current frame at all, which every
+ *   finding resolved by disappearance is. `Boolean(exposedKeys.has(k))` is the tempting
+ *   one-liner and it answers `false` to all three, turning "we could not look" into "not
+ *   reachable" (CLAUDE.md, "The Outside"); `test/registerRows.test.ts` reproduces that
+ *   rewrite inline and shows it failing.
+ *
+ * `asOf` is stamped INSIDE this compute, not at the endpoint. The rows carry wall-clock ages
+ * (`age_days`, `actionable_age_days`) computed when this ran, and a cached payload that
+ * restamped `asOf` on every read would claim those ages were measured up to an hour later
+ * than they were.
+ */
+function registerRowsData(p: unknown, filters: RegisterRowFilters): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  const severities = readSeverities(p);
+
+  // The frame half. `scopedFrameRecords` already applies `visibleFrame`, so this is the same
+  // `recsVisible` the Overview's risk ladder and triage funnel read — one join, one answer
+  // about which hosts are reachable, rather than a second pass free to disagree.
+  const recsVisible = filterSeverities(
+    scopedFrameRecords(domain, supportGroup, []),
+    severities,
+  );
+  // `exposureKnown` is `exploitSummary`'s own answer rather than a re-derivation: the key it
+  // probes for is private to insights.ts, and a copy here is a second definition of "did the
+  // scan look".
+  const exposureKnown = insights.exploitSummary(recsVisible).exposureKnown;
+  const exposedKeys = exposedVulnKeys(recsVisible, exposureKnown);
+  const framedKeys = new Set<string>();
+  for (const r of recsVisible) {
+    const k = String(r["_vuln_key"] ?? "");
+    if (k) framedKeys.add(k);
+  }
+
+  // The durable half — the same chain riskCohortRows uses.
+  const base = visibleBase(
+    filterSeverities(scopedBaseRows(domain, supportGroup), severities),
+  );
+  supportGroups.attachSupportGroups(base);
+  bizDomains.attachBizDomains(base);
+  const compiled = compileDomains(settingsStore.getDomains().items);
+  const rule = settingsStore.getRiskRule().rule;
+  for (const r of base) {
+    r["_domain"] = resolveDomainName(r, compiled);
+    r["risk_tier"] = program.riskTier(r as unknown as program.RiskRow, rule);
+    const key = String(r["vuln_key"] ?? "");
+    r["internet_exposed"] = !exposureKnown || !framedKeys.has(key)
+      ? null
+      : exposedKeys.has(key);
+  }
+
+  let rows = base;
+  if (filters.status !== "all") {
+    const wantOpen = filters.status === "open";
+    rows = rows.filter((r) => isOpenStatus(r["status"]) === wantOpen);
+  }
+  // THE TWO FIX MODES ARE NOT COMPLEMENTS, and the asymmetry is the honest one. `awaiting`
+  // is the ledger's own `awaiting_vendor_fix` — OPEN with no fix available — while `fixable`
+  // asks whether a vendor fix was ever observed at all (`fix_available_at`). Under the
+  // default `status: open` they do partition the register; across RESOLVED rows they do not,
+  // because a lifecycle can close without this register ever having seen a fix date, and
+  // calling such a row "fixable" would be a claim nobody measured.
+  if (filters.fix === "awaiting") {
+    rows = rows.filter((r) => r["awaiting_vendor_fix"] === true);
+  } else if (filters.fix === "fixable") {
+    rows = rows.filter((r) => present(r["fix_available_at"]));
+  }
+  if (filters.tier) {
+    const keep = new Set(filters.tier);
+    rows = rows.filter((r) => keep.has(String(r["risk_tier"])));
+  }
+  // THE EXPOSURE FILTER IS REFUSED, NOT SILENTLY SATISFIED, when the frame never carried the
+  // keys. Applying it against an empty `exposedKeys` would answer "0 internet-facing
+  // findings" — a measurement — where the truth is that nothing looked. The payload says
+  // `exposureFilterSupported: false` and the control is the client's to disable.
+  const exposedApplied = filters.exposed && exposureKnown;
+  if (exposedApplied) rows = rows.filter((r) => r["internet_exposed"] === true);
+
+  const latestFlat = ledgerStore.latestFlatScanRow();
+  return {
+    asOf: nowIso(),
+    // SLICED HERE, INSIDE THE CACHE ENTRY, so what is stored is exactly what travels: 26
+    // allowlisted fields per row rather than a whole `BaseRow` with `tags_json`, the scan
+    // ids and the raw fix/risk capture columns riding along. The sort reads only allowlisted
+    // columns, so nothing outside the wire shape is needed downstream.
+    rows: registerRowsSlice(rows),
+    exposureKnown,
+    exposureFilterSupported: exposureKnown,
+    exposed: exposedApplied,
+    // WHAT THIS PAGE MEASURED AND WHAT IT NEVER LOOKED AT — the same three-part line
+    // `insightsData` publishes, over the same population, so the register and the Overview
+    // account for their Outside identically. `inScope` is the scoped, gated, toggle-filtered
+    // register BEFORE the reader's own row filters; `total` below is after them.
+    population: {
+      inScope: base.length,
+      gate: latestFlat ? parseSeverities(latestFlat.severities) : null,
+      filters: BASE_FILTER_WORDS,
+    },
+  };
+}
+
+/**
+ * The filtered set, cached, with the sort and the page applied OUTSIDE it.
+ *
+ * A NEW NAMESPACE RATHER THAN A BUMP: nothing served this shape before, so no stale entry can
+ * survive. `registerRows1` holds one FILTERED, SLICED row set per (scope × severities ×
+ * showNoFix × risk rule × status × fix × tier × exposed) — deliberately not per sort or per
+ * page, which is the shape `getAttribution` and `riskCohort1` already use: paging inside the
+ * key would mint an entry per click of Next, evict the read-models worth keeping, and still
+ * miss on the first click of every new sort.
+ *
+ * WHAT INVALIDATES IT. Everything that changes WHICH ROWS EXIST is in the key or in the
+ * global stamp. `riskRuleVersion` joins for the reason `program1` and `riskCohort1` carry it:
+ * the rule decides every row's `risk_tier`, so a changed rule is a different filtered set
+ * AND a different `tier` filter result — a stale entry here is not merely fat, it is a table
+ * that disagrees with the tier ladder printed above it. `includeEol` is deliberately absent,
+ * for the reason it is absent from "mttr9" and "execSevCounts2": `setIncludeEol` goes through
+ * `mutate()`, which bumps `DATA_VERSION`, and the version is already part of every key.
+ * `showNoFix` is carried for symmetry with its siblings rather than because it must be.
+ * `exposed` is keyed as REQUESTED, not as applied — on a frame with no exposure keys that
+ * mints two entries holding the same rows, which is a rounding error against keeping the key
+ * computable without a frame pass.
+ *
+ * DELIBERATELY NOT WARMED. `warmReadModels` precomputes what a LANDING PAGE opens with; a
+ * paged table is fetched on demand, and what would be worth warming is not one payload but
+ * the filtered set for whichever of the filter combinations a reader happens to pick. The
+ * cache entry is the thing that makes the second click cheap, and it is populated by the
+ * first one.
+ *
+ * 1h TTL, matching its siblings: the rows carry wall-clock-relative ages.
+ */
+const cachedRegisterRows = (p: unknown, filters: RegisterRowFilters): Rec =>
+  cached(
+    "registerRows1",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+      riskRuleVersion: settingsStore.getRiskRule().version,
+      status: filters.status,
+      fix: filters.fix,
+      tier: filters.tier,
+      exposed: filters.exposed,
+    },
+    () => registerRowsData(p, filters),
+    3600,
+  );
+
+/** A page size the reader asked for, CLAMPED into range. Refuses null / blank / non-numeric
+ *  BEFORE the cast — `Number(null)` is 0 and `Number.isFinite(0)` is true, so a cast-first
+ *  form would read an absent `pageSize` as the clamp's floor of one row per page. */
+function registerRowsPageSize(v: unknown): number {
+  if (!present(v)) return REGISTER_ROWS_DEFAULT_PAGE_SIZE;
+  const n = Number(v);
+  if (!Number.isFinite(n)) return REGISTER_ROWS_DEFAULT_PAGE_SIZE;
+  return Math.min(REGISTER_ROWS_PAGE_SIZE_CAP, Math.max(1, Math.floor(n)));
+}
+
+/** The requested page index; `pageOfRegisterRows` does the clamping, so this only has to
+ *  refuse the values a cast would turn into a confident 0. */
+function registerRowsPage(v: unknown): number {
+  if (!present(v)) return 0;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.floor(n) : 0;
+}
+
+/**
+ * One page of the register: the findings themselves, with the provenance to read them by.
+ *
+ * The sort and the page are applied HERE rather than inside `cachedRegisterRows`, so every
+ * reordering and every Next click reads the one cached filtered set. An unknown sort column
+ * falls back to the register's default (`age_days` descending — oldest open first): ordering
+ * by a column that does not exist would leave the rows in `loadBaseRows` order while the
+ * payload claimed to be sorted, which is worse than refusing.
+ *
+ * The tiebreak is `vuln_key`, the ledger's own primary key, so the arrangement is TOTAL: two
+ * requests for the same page return the same rows, and a reader paging forward through a
+ * column of equal values cannot see one finding twice and miss another.
+ */
+export function getRegisterRows(p?: unknown): ApiResult {
+  return run(() => {
+    const params = (p ?? {}) as Rec;
+    const filters = registerRowFilters(p);
+    const model = cachedRegisterRows(p, filters);
+    const rows = (Array.isArray(model["rows"]) ? model["rows"] : []) as Rec[];
+
+    const asked = String(params["sort"] ?? "");
+    const sort = REGISTER_ROW_COLUMNS.includes(asked) ? asked : REGISTER_ROW_DEFAULT_SORT.sort;
+    const askedDir = String(params["dir"] ?? "").toLowerCase();
+    const dir: "asc" | "desc" = askedDir === "asc" || askedDir === "desc"
+      ? askedDir
+      : sort === REGISTER_ROW_DEFAULT_SORT.sort ? REGISTER_ROW_DEFAULT_SORT.dir : "asc";
+
+    const pageSize = registerRowsPageSize(params["pageSize"]);
+    const sorted = sortRegisterRows(rows, {
+      value: registerSortValue(sort),
+      descending: dir === "desc",
+      tiebreak: (r) => r[REGISTER_ROW_KEY],
+    });
+    const cut = pageOfRegisterRows(sorted, registerRowsPage(params["page"]), pageSize);
+
+    return {
+      asOf: model["asOf"],
+      // The column list TRAVELS WITH THE ROWS, so the client draws what the server said it
+      // sent rather than a hand-kept second copy of the same list.
+      columns: REGISTER_ROW_COLUMNS.slice(),
+      key: REGISTER_ROW_KEY,
+      rows: cut.rows,
+      total: sorted.length,
+      page: cut.page,
+      pageCount: cut.pageCount,
+      pageSize,
+      sort,
+      dir,
+      status: filters.status,
+      fix: filters.fix,
+      tier: filters.tier,
+      exposed: model["exposed"],
+      exposureFilterSupported: model["exposureFilterSupported"],
+      exposureKnown: model["exposureKnown"],
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+      population: model["population"],
+    };
+  });
+}
+
 /** Executive landing page in one round trip — the lean sibling of getMttrPage. The exec
  *  view paints only the KM-median hero (`mttr`) and the per-domain split (`byDomain`); it
  *  never reads the trend series, so this endpoint deliberately omits `cachedMttrTrendData`
@@ -1885,8 +2371,28 @@ const cachedExecutiveSeverityCounts = (p?: unknown) =>
 
 export function getExecutivePage(p?: unknown): ApiResult {
   const domain = String((p as Rec)?.["domain"] ?? "");
+  // THE EXACT THREE PARAMS THE OVERVIEW SENDS, rebuilt rather than forwarded.
+  //
+  // `cachedInsightsData` keys on {domain, supportGroup, supportGroups, severities, showNoFix,
+  // riskRuleVersion}; the last two it reads off settings itself, and the Overview's
+  // `insightsParams()` (client/js/pages/overview.js) sends exactly {domain, supportGroup,
+  // severities} — no `supportGroups`, so `readStringArray` answers `[]` on both sides. Passing
+  // those three and nothing else is therefore the SAME key, and the Executive lands on the
+  // entry the Overview warmed (or warms the one it will read) instead of computing a second
+  // copy of `baseVisible`.
+  //
+  // Rebuilt rather than forwarding `p` because forwarding would make the match an accident of
+  // what the Executive's client happens to send today: the moment that page gains a param the
+  // Overview does not have, the key would diverge silently and the sharing would be gone with
+  // no symptom but a slower first paint.
+  const insightsParams = {
+    domain,
+    supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+    severities: readSeverities(p),
+  };
   return run(() => ({
     mttr: execMttrSlice(cachedMttrData(p)),
+    ...(execInsightsSlice(cachedInsightsData(insightsParams)) ?? {}),
     // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
     // domain yields a single row, so a domain scope splits by support group within it instead.
     byDomain: execGroupSlice(
@@ -1921,12 +2427,13 @@ function movementNoteFor(win: program.MovementWindow): string {
 function scanHistoryData(): Rec {
   const scanRows = ledgerStore.loadScanRows();
   const scans = scanRows.slice().reverse(); // newest first
-  // KPI band only: drop no-fix findings when the toggle is off, so tracked/open/resolved/
-  // median match the rest of the dashboard. The scans table (+ delete flow) stays unfiltered.
+  // KPI band only: drop no-fix findings when the toggle is off, so tracked/open/resolved
+  // match the rest of the dashboard. The scans table (+ delete flow) stays unfiltered.
   const base = visibleBase(ledgerStore.loadBaseRows() as unknown as Rec[]) as unknown as BaseRow[];
   const open = base.filter((r) => r.status === "OPEN").length;
   const resolved = base.filter((r) => r.status === "RESOLVED").length;
-  const { overall } = mttrFromLedger(base as unknown as Rec[]);
+  // NO KM HERE, AND NO NAIVE MEDIAN EITHER — see the namespace comment below for where the
+  // fourth KPI card's statistic actually gets computed and why it cannot live in this function.
   // The decomposition runs over the SAME `base` the KPI band counts, so "the open count moved
   // N" and "Currently open" cannot describe two different populations on one page.
   const win = program.movementWindowScans(scanRows as unknown as Rec[], MOVEMENT_WINDOW_DAYS);
@@ -1946,7 +2453,6 @@ function scanHistoryData(): Rec {
       tracked: base.length,
       open,
       resolvedAllTime: resolved,
-      medianMttr: overall.mttr_median ?? null,
     },
   };
 }
@@ -1956,14 +2462,48 @@ const cachedScanHistoryData = () =>
   // off; params null → {showNoFix} so on/off states cache apart and no stale entry survives.
   // "scanHistory2" → "scanHistory3": the payload carries the movement decomposition now, and a
   // stale entry would serve the section's empty state over a window that is measurable.
-  durablyCached("scanHistory3", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
+  // "scanHistory3" → "scanHistory4": `kpis` DROPS `medianMttr` — the naive median over
+  // CLOSED rows only, which the fourth KPI card used to publish under the "Remediation
+  // half-life" label while the only series drawn under it (`km_median_days`, mttrTrendData)
+  // is the Kaplan–Meier estimate. Those are two different statistics over two different
+  // populations (the naive figure drops every still-open row), so a stale `scanHistory3`
+  // entry serving `medianMttr` under a KM-labelled card would render a real but WRONG number
+  // rather than an absence — bump so none can. The KM figure itself is deliberately NOT part
+  // of this durable blob: `kaplanMeier` right-censors every open finding at `Date.now()`
+  // (domain/remediation.ts's `openAge`), so it belongs to the class `readModelStore.ts`'s own
+  // header calls out as "drift with the clock at zero data change" and reserves for an
+  // L1-only cache with a short TTL — baking it into `durablyCached`'s Drive-backed L2 would
+  // let it go stale for up to the 7-day backstop between scans, which is exactly the mistake
+  // that header exists to prevent. `getScanHistory` below merges it in fresh, off
+  // `cachedMttrData()` (a plain `cached()`, 1h TTL) rather than a second `kaplanMeier(base)`
+  // pass: `mttrData(undefined)` scopes to `{domain:"", supportGroup:"", severities:null}`,
+  // which is `scopedBaseRows("","")` (the whole ledger, untouched) through `filterSeverities`
+  // (a no-op on `null`) through `visibleBase` — byte-for-byte this function's own `base` —
+  // so the two share both the population and the `showNoFix` gate, and reusing the MTTR
+  // page's already-cached estimate is the correct answer, not a shortcut.
+  durablyCached("scanHistory4", { showNoFix: settingsStore.getShowNoFix() }, scanHistoryData);
 
 export function getScanHistory(_p?: unknown): ApiResult {
   return run(() => {
     const d = cachedScanHistoryData() as Rec;
+    // kmMedian / kmMedianLowerBound: read off cachedMttrData()'s own KM estimate, OUTSIDE the
+    // durable read above — see the namespace comment on cachedScanHistoryData for why a KM
+    // figure may not enter that cache. cachedMttrData(undefined) is the whole-register, all-
+    // severities, current-showNoFix-toggle scope, which is exactly `scanHistoryData`'s own
+    // `base` population.
+    const mttr = cachedMttrData(undefined) as Rec;
+    const km = ((mttr["remediation"] as Rec | undefined)?.["km"] ?? null) as Rec | null;
     // The scans tab, narrowed to the ten columns the table draws. Projected here rather than
     // in the cached compute so `scanHistory2` keeps its shape and no namespace moves.
-    return { ...d, scans: scanRowsSlice(d["scans"]) };
+    return {
+      ...d,
+      scans: scanRowsSlice(d["scans"]),
+      kpis: {
+        ...(d["kpis"] as Rec),
+        kmMedian: km?.["median"] ?? null,
+        kmMedianLowerBound: km?.["medianLowerBound"] ?? null,
+      },
+    };
   });
 }
 

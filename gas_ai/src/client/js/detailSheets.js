@@ -21,8 +21,9 @@ import {
   sheetSection, skeleton, statusPill, uiIcon,
 } from "./ui.js";
 
-import { tipAnchor, truncTip } from "./ui.js";
+import { tipAnchor, tipLabel, truncTip } from "./ui.js";
 import { lookupGap } from "./codebook.js";
+import { issueLifecycleModel } from "./issueLifecycle.js";
 const NEIGHBOR_PREVIEW = 12;
 
 /** The combination's own name — "Toxic combination" alone doesn't say which one. */
@@ -739,7 +740,7 @@ export function openAssetSheet(assetId, opts = {}) {
             list.append(sheetRow({
               badge: sevBadge(f.severity),
               title: f.ruleName || f.name || f.ruleShortId,
-              meta: [el("span", { class: "small muted" }, f.ruleShortId || "—")],
+              meta: [el("span", { class: "small muted" }, f.ruleShortId || absentText)],
               fix: f.remediation,
               // The row is a door: the whole record — rule description, remediation
               // template, the Rego that decided this — is one fetch away rather than
@@ -994,6 +995,32 @@ function issueTitle(issue) {
     || "Issue";
 }
 
+/**
+ * The Lifecycle section, or null when there is no ledger row to draw.
+ *
+ * A `kv` list, deliberately the same primitive "At a glance" one section above uses rather
+ * than `sheetRow`: these are label/value facts, and `sheetRow` is the badge/title/note shape
+ * the issue and relationship LISTS take. The definition rides on the label through
+ * `tipLabel`, the same channel every other heading in this app routes to the key sheet —
+ * `el()` throws on `title`, and a native tooltip would not carry a route to the entry anyway.
+ */
+function lifecycleSection(life) {
+  if (!life || !life.rows.length) return null;
+  const pairs = [];
+  for (const row of life.rows) {
+    const label = row.help ? tipLabel(row.label, row.help) : row.label;
+    // The sync id rides beside the date, muted — the date stays the legible, primary
+    // reading and the id is the audit trail behind it. `issueLifecycleModel` stays DOM-free,
+    // so the composite node is built here, not there; a row with no `syncId` (every row but
+    // the two sightings) renders its plain string exactly as before.
+    const value = row.syncId
+      ? el("span", {}, row.value, el("span", { class: "small muted" }, " · " + row.syncId))
+      : row.value;
+    pairs.push(...kvRow(label, value));
+  }
+  return sheetSection("Lifecycle", el("dl", { class: "kv kv--cols2" }, ...pairs));
+}
+
 export function openIssueSheet(issueId, opts = {}) {
   // The asset sheet has always had this guard; the issue sheet had not, so a close mid-RPC
   // could paint into a torn-down drawer.
@@ -1006,8 +1033,14 @@ export function openIssueSheet(issueId, opts = {}) {
      * usual busy/fetch dance. A seeded paint never arms the next-record warm timer — on a
      * seeded door, stepping to the next record is already free.
      */
-    function paint(detail, seeded) {
+    function paint(detail, seeded, quiet) {
       const { issue, group } = detail;
+      // The register's own record of this row's lifetime, beside the row rather than inside
+      // it (`seedParity.test.ts` pins `issue` deep-equal to its list row). A SEEDED paint
+      // has none — the list rows carry the issue and never the ledger — so the section
+      // arrives with the revalidation below, which is the one place the seeded door is
+      // thinner than the fetched one.
+      const life = issueLifecycleModel(issue, detail.ledger);
       let provNode = null;
       clear(body);
 
@@ -1020,6 +1053,11 @@ export function openIssueSheet(issueId, opts = {}) {
       if (issue.status === "IN_PROGRESS") chips.push(statusPill("warn", "In progress"));
       if (issue.validatedAsExploitable) {
         chips.push(statusPill("bad", "Validated exploitable"));
+      }
+      // The lifecycle verdict rides with the other header chips, not below the fold: "Gone
+      // by" and "Returned" change what every date under them means.
+      if (life.chip) {
+        chips.push(statusPill(life.chip.kind, life.chip.text, [life.chip.help]));
       }
       chips.push(dueChip(issue.dueAt));
 
@@ -1075,6 +1113,12 @@ export function openIssueSheet(issueId, opts = {}) {
               ...kvIf("Assignee", issue.assignee),
               ...kvIf("Created", issue.createdAt ? fmtDate(issue.createdAt) : ""),
               ...kvIf("Due", issue.dueAt ? fmtDateTime(issue.dueAt) : ""))));
+          // "Created" one row above is WIZ's date; every date in here is this register's
+          // own sighting, and on a departed row the two can be a year apart. Its own
+          // section rather than four more rows in "At a glance", so the reader cannot read
+          // one clock's date under the other clock's heading.
+          const lifecycle = lifecycleSection(life);
+          if (lifecycle) pane.append(lifecycle);
         },
 
         fix(pane) {
@@ -1165,7 +1209,11 @@ export function openIssueSheet(issueId, opts = {}) {
             ...kvIf("Created", issue.createdAt ? fmtDate(issue.createdAt) : ""),
             ...kvIf("Updated", issue.updatedAt ? fmtDate(issue.updatedAt) : ""),
             ...kvIf("Due", issue.dueAt ? fmtDateTime(issue.dueAt) : ""),
-            ...kvIf("Resolved", issue.resolvedAt ? fmtDate(issue.resolvedAt) : ""),
+            // NOT `issue.resolvedAt` read straight. Where the ledger dated this row by
+            // DISAPPEARANCE the departure is an upper bound this register measured, and
+            // printing a date under the word "Resolved" beside it would relabel it as
+            // something Wiz reported. `issueLifecycleModel` owns that one decision.
+            ...(life.wizResolved ? kvRow(life.wizResolved.label, life.wizResolved.value) : []),
             ...kvIf("Resolution", issue.resolutionReason),
             ...kvIf("Resolved by", issue.resolvedBy),
           ));
@@ -1197,6 +1245,7 @@ export function openIssueSheet(issueId, opts = {}) {
         },
       };
 
+      railVisible(true);
       ctx.rail(issueSections(detail), (id, pane) => {
         const render1 = panes[id];
         if (render1) render1(pane);
@@ -1205,10 +1254,15 @@ export function openIssueSheet(issueId, opts = {}) {
       const cursor = opts.records
         ? recordCursor(opts.records.ids, opts.records.index)
         : { position: 0, total: 0 };
-      ctx.announce(
-        `${issueTitle(issue)} on ${issue.assetName}, ${issue.adjustedSeverity}.` +
-        (cursor.total ? ` Record ${cursor.position} of ${cursor.total}.` : ""),
-      );
+      // `quiet` is the ledger-only repaint below. The record did not change — only the
+      // section the seeded door could not carry did — and re-announcing an unchanged issue
+      // is exactly the double-announce the comparison down there exists to avoid.
+      if (!quiet) {
+        ctx.announce(
+          `${issueTitle(issue)} on ${issue.assetName}, ${issue.adjustedSeverity}.` +
+          (cursor.total ? ` Record ${cursor.position} of ${cursor.total}.` : ""),
+        );
+      }
 
       // Warm the next record after a dwell — but not on a seeded door: stepping through a
       // seeded list is already free, so there is nothing here worth prefetching.
@@ -1239,13 +1293,88 @@ export function openIssueSheet(issueId, opts = {}) {
             // is a one-field stand-in (comboNote's amplifierNote lookup), never shaped like
             // the server's real group object, so comparing the two wholesale would read as
             // "changed" on every single seeded open and double-announce an unchanged issue.
-            if (JSON.stringify(fresh.issue) !== JSON.stringify(detail.issue)) paint(fresh, false);
+            const issueChanged =
+              JSON.stringify(fresh.issue) !== JSON.stringify(detail.issue);
+            // AND the ledger, which that comparison cannot see. MEASURED in the browser: a
+            // seeded door (the asset sheet's Issues pane, combos' issue rows) opened on
+            // `iss-005` — the register's one reopened row — showed NO Lifecycle section at
+            // all, because the seed carries no ledger and the issue was byte-identical, so
+            // this branch never fired. The section is the whole package on that door.
+            const ledgerArrived = !detail.ledger && !!fresh.ledger;
+            if (issueChanged || ledgerArrived) show(fresh, false, !issueChanged);
           })
           .catch(() => {
             if (disposed) return;
             settle();
           });
       }
+    }
+
+    /**
+     * The sheet for an issue that has LEFT the register.
+     *
+     * `ai_issues` is overwritten on every sync and gated to OPEN / IN_PROGRESS, so this row
+     * is not in it — and until now that produced "Issue not found", which is what this sheet
+     * would say about an id that never existed. The ledger knows better: it holds the two
+     * sightings and the sync that first missed the row. Reached by the record cursor and by
+     * a sheet left open across a sync, which is exactly when a reader most needs to be told
+     * the difference between "gone" and "never here".
+     *
+     * NO FIX AND NO TICKETS PANES, and no rail at all. Every one of those sections is about
+     * what to DO with a live issue, and the live row is gone — `issueSections` builds them
+     * from `detail.issue`, which is null here, so they would render as eight empty states
+     * over a record the register can actually describe. The lifecycle IS the content.
+     */
+    function paintGone(detail) {
+      const life = issueLifecycleModel(null, detail.ledger);
+      clear(body);
+      // The rail is built by openSheet from its `rail` option and lives for the door's whole
+      // life, so leaving it unpopulated here left a dead 180px gutter beside a record with
+      // three facts in it. Hidden with `hidden`, not removed, and `paint` shows it again —
+      // an SWR repaint can put a reappeared issue back through the other branch.
+      railVisible(false);
+      ctx.setHeading({
+        title: "Issue no longer in the register",
+        subtitle: issueId,
+        icon: kindIconSvg("ISSUE", 18),
+        tone: categoryOf("ISSUE"),
+        actions: [
+          toolButton(copyButton(() => issueId, { label: "Copy ID", copiedLabel: "Copied" })),
+        ],
+        chips: life.chip ? [statusPill(life.chip.kind, life.chip.text, [life.chip.help])] : [],
+      });
+      body.append(sheetSection("What the register knows",
+        el("p", { class: "small", style: "margin:0" },
+          "This issue was in the register and is not any more. Wiz never reports a "
+          + "resolution to this register, so the date below is the sync that first stopped "
+          + "seeing it — an upper bound, not a measurement.")));
+      const lifecycle = lifecycleSection(life);
+      if (lifecycle) body.append(lifecycle);
+
+      const cursor = opts.records
+        ? recordCursor(opts.records.ids, opts.records.index)
+        : { position: 0, total: 0 };
+      ctx.announce(
+        "Issue " + issueId + " is no longer in the register." +
+        (cursor.total ? ` Record ${cursor.position} of ${cursor.total}.` : ""),
+      );
+    }
+
+    /** The section rail exists for as long as the door does; only the gone record hides it. */
+    function railVisible(on) {
+      const nav = ctx.sheet.querySelector(".sheet-rail");
+      if (nav) nav.hidden = !on;
+    }
+
+    /** One door, two records: the live row, or the ledger's account of a row that left. */
+    function show(detail, seeded, quiet) {
+      if (detail && !detail.issue && detail.ledger) {
+        // Never quiet: the record really did change — the issue left the register — and
+        // that is precisely what a reader who cannot see the drawer needs told.
+        paintGone(detail);
+        return;
+      }
+      paint(detail, seeded, quiet);
     }
 
     async function render() {
@@ -1264,7 +1393,7 @@ export function openIssueSheet(issueId, opts = {}) {
         // here would ignore that entry and re-pay the round trip it just spent.
         detail = await swrCall("api_getIssueDetail", { id: issueId }, (fresh) => {
           if (disposed) return;
-          paint(fresh, false);
+          show(fresh, false);
         });
       } catch (e) {
         if (disposed) return;
@@ -1284,7 +1413,7 @@ export function openIssueSheet(issueId, opts = {}) {
         ));
         return;
       }
-      paint(detail, false);
+      show(detail, false);
     }
     render();
   }, {
@@ -1526,8 +1655,8 @@ export function openConfigFindingSheet(findingId, opts = {}) {
           pane.append(el("dl", { class: "kv kv--cols2" },
             ...kvIf("Rule", f.ruleShortId),
             ...kvIf("Rule id", f.ruleId ? idValue(f.ruleId) : ""),
-            ...kvRow("Status", f.status || "—"),
-            ...kvRow("Result", f.result || "—"),
+            ...kvRow("Status", f.status || absentText),
+            ...kvRow("Result", f.result || absentText),
             ...kvIf("Counts as a gap", gap ? "Yes" : "No"),
             ...kvIf("Source", f.source),
             ...kvIf("First seen", f.firstSeenAt ? fmtDate(f.firstSeenAt) : ""),

@@ -26,7 +26,7 @@ import {
   type AarsHints,
 } from "../domain/graphEnrich";
 import { withDataFindingCounts } from "../domain/syncNormalize";
-import { domainTagKey } from "./props";
+import { domainTagKey, projectScope } from "./props";
 import type {
   ConfigRuleRow, DataFindingRow, ExploitationTier, FindingRow, FrameworkPolicyRow, FrameworkRow,
   GEdge, GNode, GraphDoc, IdentityFindingRow, IssueRow, NodeKind, NormalizedVulnFinding,
@@ -43,6 +43,7 @@ import {
 } from "../domain/config";
 import { buildAllFrameworkTrees } from "../domain/compliancePosture";
 import { dropUnselected, failingPolicyCount, scopeFiveRs } from "../domain/complianceScope";
+import { censusCompliancePosture, encodeCompliancePosture } from "../domain/complianceTrend";
 import {
   countProblemOutcomes,
   decideProblem,
@@ -1265,7 +1266,13 @@ export function persistSync(
   // ledger dating a departure a millisecond off the sync that noticed it is a discrepancy
   // nobody would ever find a cause for.
   const finishedAt = nowIso(now);
-  const registerScope = registerScopeSignature(settingsStore.getIssueCategories());
+  const registerScope = registerScopeSignature(
+    settingsStore.getIssueCategories(),
+    // The perimeter the battery APPLIED, resolved the same way every step resolved it — the
+    // setting alone would stamp `project` on a run that collected tenant-wide because the
+    // property was blank.
+    projectScope(),
+  );
 
   // THE LIFECYCLE LEDGER — after every evidence tab, before the commit record.
   //
@@ -1306,6 +1313,19 @@ export function persistSync(
   // count it — the per-project blob, the category counts and the KEV count — and computing
   // the gate three times is three chances for two of them to drift apart.
   const openIssuesThisSync = decidedIssues.filter(isUnresolvedIssue);
+
+  // THE FRAMEWORK TREES, BUILT ONCE. Two columns on the history row below read them — the
+  // failing-policy count and the posture census — and building them twice is two chances for
+  // one row to report a percentage and a failure count taken from different constructions of
+  // the same landscape.
+  //
+  // Unconditional, where `posture_fail_count` used to gate the call on `frameworkPolicies`:
+  // `buildAllFrameworkTrees` builds one tree per framework id it finds in `posture` and
+  // nothing else, so with no posture it returns an empty array either way, and the percentage
+  // a tree carries comes from the posture row rather than from the policy list. The gate
+  // stays where it belongs — on each COLUMN, which is where "we never asked" has to be told
+  // apart from "we asked and the answer was zero".
+  const frameworkTrees = buildAllFrameworkTrees(posture, frameworkPolicies, frameworks);
 
   // Commit record LAST.
   appendRows(TABS.syncHistory, [{
@@ -1375,11 +1395,30 @@ export function persistSync(
     // from "we never asked". The trend reader plots null as a gap.
     posture_fail_count: frameworkPolicies.length
       ? failingPolicyCount(dropUnselected(frameworkPolicies, scopeFiveRs(
-          buildAllFrameworkTrees(posture, frameworkPolicies, frameworks),
+          frameworkTrees,
           decidedFindings,
           aiAssetIds(assetNodes),
           settingsStore.getFiveRsPins(),
         )))
+      : null,
+    // EVERY FRAMEWORK'S PERCENTAGE AT THIS SYNC, with the subcategory coverage each one is a
+    // share of — the only record of compliance posture over time this sheet will ever hold.
+    // `framework_posture` above is overwritten wholesale on every commit, so a percentage Wiz
+    // computed last month exists nowhere once the next sync lands.
+    //
+    // Counted off the SAME trees `posture_fail_count` reads one line up, which is the point of
+    // building them once: the failing-policy count and the percentages beside it describe one
+    // construction of one landscape, and a second `buildAllFrameworkTrees` call here is how
+    // the two would come to describe different ones.
+    //
+    // NULL, NOT AN EMPTY CENSUS, when no posture was collected — the same refusal
+    // `posture_fail_count` makes and for the same reason. The posture steps are optional and
+    // per-framework, so "this tenant declined them" must not read as "every framework scored
+    // nothing", which is what an `{avg: null, frameworks: {}}` cell would draw as a point with
+    // no line. And null again when the census would not fit a cell (encodeCompliancePosture):
+    // a chart refinement must never be able to fail a commit.
+    compliance_posture_json: posture.length
+      ? encodeCompliancePosture(censusCompliancePosture(frameworkTrees))
       : null,
     // The posture distribution WITH its scope split — the third model's series.
     // `censusPostureTiers` reports tiers plus `withheld` (in scope, not yet measured) plus
@@ -2178,6 +2217,15 @@ export function resetData(): void {
   overwrite(TABS.findings, []);
   overwrite(TABS.dataFindings, []);
   overwrite(TABS.syncHistory, []);
+  // THE LEDGER TOO. `issueLedger.ts`'s own header calls this tab the one a SYNC never
+  // overwrites, and that rule is right for a sync — reconciling a history is not the same
+  // operation as discarding one. A reset is the second thing: the user is throwing away the
+  // register's whole history, and the ledger's dated departures and episodes are part of
+  // that history, not a record standing apart from it. Leaving it behind was the defect this
+  // line closes — a Reset followed by a Sync used to arrive with an empty sync history beside
+  // a real ledger, a combination `seedIssueLedger` refuses to seed into and that left the
+  // seeded trend rows carrying no `register_scope` (`syncJobs.ts`'s `seedDryRunHistory`).
+  overwrite(TABS.issueLedger, []);
   trashGraphSnapshot();
   // The durable read-model cache too. `commit()` below bumps the version, so every file in
   // there is already unreachable — but reset should mean reset rather than "unreachable and

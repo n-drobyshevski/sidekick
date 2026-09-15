@@ -21,9 +21,9 @@ read the tree as `"type": "module"`.
 | `api.js` | the `google.script.run` bridge and the `{ok,data}` envelope |
 | `store.js` | the bootstrap cache, the SWR RPC cache and hash routing |
 | `icons.js` | node-kind SVG (512 lines; only `ui/nodeCell.js` and `ui/uiIcons.js` reach it) |
-| `ui/` | 31 component modules plus `index.js`, the one import surface, and `helpPage.js` — a page, not a component, so deliberately not in the barrel |
+| `ui/` | 37 component modules plus `index.js`, the one import surface, `helpPage.js` — a page, not a component, so deliberately not in the barrel — and `settingsForm.js` — a DOM-free model reached only by direct path, deliberately not in the barrel either (see "The settings seam" below) |
 | `styles/` | nine stylesheets: `tokens.base.css` first, `overrides.css` last |
-| `test/contracts/` | eleven spec factories the apps register from their own test files |
+| `test/contracts/` | sixteen spec factories the apps register from their own test files |
 | `test/testConfig.js` | a manifest fixture, for tests that reach a module reading one |
 | `test/domStub.js` | a DOM small enough to render a component into, for a repo with no jsdom |
 
@@ -43,6 +43,22 @@ read the tree as `"type": "module"`.
   sheet below. This bullet used to claim that sheet is "the shape every sidekick's key sheet
   has"; it is not, and was not when it was written — see the exception below. It is the shape
   TWO of the three have.
+
+  The gas parity wave's P3.4b (2026-09-08) added a narrower exception, and it is not a new
+  category: `gas/` and `gas_devsecops/` each carried sixteen rule blocks in their own
+  `pages.css` that were byte for byte identical, flagged since P1.6 as promotion candidates in
+  gas's own sheet. A rule is page-shaped only while more than one app draws that page
+  differently; once both copies say the same thing, the duplicate is the thing worth removing.
+  `fixnext*`, `movement-rows/-row/-label/-counts/-block`, `sev-fan*`, `.page-header >
+  .kpi-card`, `chart-row--pair`, `toolbar-group`, `finding-actions`, `.kv dd > .code-block`,
+  `trend-aside*`, `rate-with-meter*`, `unclassified-card/-swatch` and `.section-label >
+  .heading-pill` moved into `styles/components.css`; `.table-wrap { position: relative }` and
+  the `.sev-fan`/`.chart-row--pair`/`.chart-row` narrow-viewport collapse moved into
+  `styles/tables.css` beside the rules they extend; the `.page-header` narrow-viewport
+  collapse moved into `styles/components.css` beside `.page-header`; and the rail status dot's
+  hit-target chrome (`.sidebar .rail-status-dot` / `.sidebar button.rail-status-dot`) moved
+  into `styles/base.css` beside `.rail-status-dot`. Both apps' own `pages.css` now hold only
+  the pages a sibling does not draw.
 
 ## The one page that IS shared, and the one that is not
 
@@ -187,6 +203,204 @@ each hands this module the result rather than a promise.
 The class prefix is `.health-`, not `.diag-`, because `gas_ai/src/client/js/ui/diagList.js`
 already owns `.diag-list` / `.diag-row` / `.diag-warn` for an unrelated concept.
 
+## The settings seam
+
+The settings-unification wave's thesis, in the words of `gas/src/domain/settingsImpact.ts`: "a
+figure that appears only after you save is not decision support, it is a receipt." Before that
+wave only `gas/`'s Settings page worked that way. Now `gas`, `gas_ai`, `gas_devsecops` and
+`gas_hub` (one tab, three URL fields) all draw through one kernel and one readout vocabulary.
+
+### The kernel — `ui/settingsForm.js`
+
+Three apps had grown the same eight functions independently: `normalizeTab`, `changedFields`,
+`settingsPatch`, `changeSummary`, `changeCountText`, `tabStatus`, `sameValue`, and `dirtyTabs`.
+`settingsForm({tabs, fields, defaultTab})` is the one answer, and it is a **factory** rather than
+eight free functions because each app has to close it over its own `{tabs, fields}` registry —
+which tab a field belongs to, which label a tab wears — the same shape `scopeKinds` and
+`diagnostics.js` already close a shared control over an app's own data, so every app's existing
+import of these names (`normalizeTab`, and so on) keeps resolving unchanged. `dirtyTabs` is not
+one of the seven the factory returns: it was dead in production in all three apps before this
+package (`tabStatus` had already replaced its only call site in each app's `pages/settings.js`),
+and its only remaining callers were each app's own test file, exercising a function nothing
+built calls. Promoting a dead function into a shared kernel would have made three apps agree to
+keep carrying it forever.
+
+The factory throws **twice, at construction**, rather than letting either mistake surface later
+as a bug a reader has to notice on screen: an unknown `defaultTab` (missing, or naming no tab in
+`tabs`) throws, and a field naming a `tab` that is not in `tabs` throws. Both are typos a
+hand-edited registry can make and neither has a safe fallback — guessing either one would hand a
+reader the wrong tab and never say so.
+
+**Reached by direct path — `gas_shared/ui/settingsForm.js` — never through `ui/index.js`.** This
+file has no `document` in it anywhere, the same as `ui/scopeModel.js` and `ui/tableModel.js`, but
+unlike those two it is deliberately outside the barrel: a settings-model test has no reason to
+pull the other 37 component modules (`dom.js`'s `el()` included) in behind eight pure functions,
+and every app's own settings-model file runs under plain Node with no jsdom to spare. The rule is
+asserted, not just stated — `test/contracts/settingsForm.js` checks the import specifier by
+regex against the app's own source, because the failure this guards against is a future edit
+that adds `settingsForm` to the barrel and repoints an app's import at `ui.js` "since it already
+has everything else," which would still resolve and pass every other assertion here. (An earlier
+claim that importing it through the barrel throws `document is not defined` was tested during
+this wave and is false — nothing else in `ui/index.js` touches `document` at import time either,
+so a barrel import would resolve cleanly in a suite with no jsdom. The reason to keep the direct
+path is the one above, a component count, not a crash — do not repeat the crash claim.)
+
+### The readout vocabulary — `ui/settingsReadouts.js`, `ui/splitBar.js`, `figures.js`'s `openAndTotal`
+
+Promoted from `gas/src/client/js/settingsReadouts.js` — gas was the only app whose Settings page
+told a reader, beside each control, what that control was doing to the register, before this
+wave. Four exports, plus the formatter that moved out beside `fmtCount`/`pct1`/`days1`:
+
+- **`impactSplitModel()` / `impactSplit()`** — the with/without split a display toggle draws.
+  `unit` is REQUIRED and throws without it: "findings" is right in `gas` and `gas_devsecops` and
+  wrong in `gas_ai`, the same refusal `diagnostics.js`'s `missingTone` and this module's own
+  `defaultTab` already use for a word that is never safe to guess. A zero-denominator share is
+  `absentText`, never `"0.0%"` — zero of zero is unmeasured, not zero percent, and the headline
+  drops its parenthetical entirely rather than print a percent sign over nothing measured.
+- **`severitySplitModel()`** — the shared half of a severity scan-scope bar. `inScope` is a
+  caller-supplied PREDICATE, `(sev) => boolean`, never a selected array: `gas_devsecops`'s
+  `fetchSeverities === []` means every severity requested, never none, and a shared `.includes()`
+  shim baked into this module would silently invert that register's most carefully argued
+  default the moment it reached this control. `unit` is refused the same way `impactSplitModel`'s
+  is.
+- **`tickTimeline()`** — a labelled tick sequence. It NEVER computes a tick's own state: `gas`'s
+  retention-window arithmetic (`wouldSeal`) is a domain decision and stays in `gas`'s own client
+  mirror, in a `retentionTicks()` this module does not know exists. A state carrying a glyph but
+  no word throws — fill is never the only cue.
+- **`createCutHistogram()`** — a bucketed distribution with a draggable cut line, generalised
+  from `gas`'s EPSS threshold histogram. Built EXACTLY ONCE; `update()` only ever rewrites what is
+  already there and never recreates the `<input type="range">`. This is load-bearing, not a style
+  choice: the range fires `input` continuously while dragged, and replacing that element mid-drag
+  silently aborts the drag — the browser stops delivering `input` events to a node once it leaves
+  the document. `test/contracts/settingsReadouts.js` isolates `update()`'s own body in a DOM
+  sweep and asserts it never calls the constructor, not just a comment saying so.
+- **`splitBar()`** (`ui/splitBar.js`) — the track both split models draw onto: one track, labelled
+  segments, the figures repeated in words in the caption beneath it, because a bar alone fails the
+  non-colour rule. It promoted alongside these, not because it had crossed an app boundary before
+  this wave (it had not — both call sites were gas's own), but because the placement rule below
+  puts it beside the primitives that build its input.
+- **`openAndTotal()`** (`ui/figures.js`, beside `fmtCount`/`pct1`/`days1`) — gas's "N (M all
+  time)" pair formatter, moved because it is a number formatter and not a DOM builder, and
+  because `severitySplitModel` needed it too. It is NOT `fmtCount`: a missing count reads as the
+  number `0`, never `absentText` — a deliberately different refusal that
+  `openAndTotal(undefined, undefined)` is contracted to hold (see the moved test cases in
+  `test/contracts/settingsReadouts.js`).
+
+### What stays app-local
+
+Anything that reads an app's own domain layer. `gas`'s risk cube (`riskCube.js`'s
+`breakdownFromCube`/`epssHistogram`/`openSlice`/`ruleIsEmpty`/`ruleSentence`) reads `RiskRule`,
+which means nothing in a sibling with no risk classifier. Each app keeps its own
+`settingsReadouts.js` client mirror composing the shared primitives over its own payload shape —
+`gas_ai`'s reads `fiveRsPins`/`categoryCube`/`rankCube`; `gas_devsecops`'s ports two functions
+(`atOrBelow`, `strandedOpenCount`) from `src/domain/settingsImpact.ts` byte-for-byte, because the
+client cannot import TypeScript, and pins them against the TS originals with a mirror test
+rather than trusting the two copies to stay in sync by hand.
+
+The **`(census, draft)` adapters** are the narrowest example. `severitySplitModel` needs a
+predicate, and every register's in-memory draft shape is an ARRAY (`fetchSeverities`), never a
+predicate. `gas`'s `severityScopeReadout(census, draft, selectable)` and `gas_devsecops`'s
+`severityScopeReadout(scope, census, requestedSeverities, selectable)` are each that one closure
+— `(sev) => draft.fetchSeverities.includes(sev)` — which is the one thing `severitySplitModel`
+may not do generically, since a shared `.includes()` baked into `gas_shared` would invert
+`gas_devsecops`'s `[]`-means-all default the instant it reached that register (see
+`severitySplitModel`'s own header). There is no arithmetic here `gas_shared` could hold; it is
+each register's own reading of its own draft shape.
+
+### The tab spine
+
+Register first, the app's own lanes in the middle, then Access, then System. Register decides
+which rows a register's issue-shaped figures are even computed over, so it comes before every tab
+that reads off that scope rather than trailing as a tab tacked onto the end — `gas_ai` used to
+open on Graph, and its own `settingsModel.js` header states why Register displaced it. `gas` had
+no Access tab at all before this wave; its roster sat on `System` beside the storage meter and
+the error log, which are read-only deployment facts rather than a decision about who may do
+what. The roster now gets its own tab, and a reader who may not edit it never sees a tab that
+renders nothing: `renderAccessPanel()` returns `null`, the tab is never built, and a stale
+`?tab=access` falls through `normalizeTab`'s two-argument form to Register.
+
+The spine is pinned in the shared contract as an **opt-in** `ctx.spine` check
+(`test/contracts/settingsForm.js`), not assumed from every registry that binds the kernel — an
+app that is not shaped like the spine names its way out rather than being silently exempt from
+the check. `gas_hub` is the one that does: `spine: false`, with the reason recorded in the
+registration call itself rather than left as an absence — it has three PANELS and no tabstrip at
+all (`test/shared.test.js`'s own comment), so there is no spine here for a drive-by to move back.
+
+### The placement rule
+
+Anything exported from `gas_shared/ui/` with a domain-free API gets its CSS in
+`styles/components.css`; `styles/settings.css` keeps only the form vocabulary — the panel, the
+labelled row, the switch, the tab strip, the save bar — none of which draws anything specific to
+a register. `splitBar`'s hatch, `tickTimeline`'s ticks and `createCutHistogram`'s bars draw
+nothing OS-vulnerability-specific either, which is why they moved to `components.css` rather than
+following `settings.css` over from `gas`.
+
+## Three primitives for a page with too many words
+
+The density wave's finding was that these registers are *correct* and *wordy*: a `denomNote`
+paragraph under every figure card (22 of them across three register pages, 13 on Secrets
+alone), a five-column table with a prose "Reading" column wherever two yes/no questions cross,
+and a figure that says where a number is but never where it is going. Three modules, all
+additive, all with a pure model half a contract can hold and a thin DOM half that cannot be
+wrong in an interesting way.
+
+**`ui/quad.js` — two yes/no questions crossed.** `quadModel({rows, cols, cells, total, unit})`
+returns the four corners in one fixed order with their shares, their "N of M *unit*" short
+forms and one `aria` sentence stating every corner in words; `quadTable(model, {ariaLabel,
+cellHelp})` draws them as a real table with `<th scope="col">` / `<th scope="row">` axes rather
+than as a grid of divs with a label bolted on. It knows nothing about severity — no `sev*`
+class, no import of `severity.js` — because the first caller is the secrets register, whose
+`test/pagesLit.test.js` gate 4/7 forbids a severity axis in that page's executable code, and a
+shared component is exactly the back door such a gate cannot see through. Two refusals rather
+than two defaults: an unmeasured `count` is `absentText` and contributes NO share (a zero in
+one corner of a 2x2 is a strong claim), and a corner with no `label` is refused outright,
+because `data-tone` is the third cue and never the first. The share is read against the
+caller's stated `total`, not against the sum of the corners — those are the same number only
+when the cross partitions the population, and the confusion matrix on the program lane leaves
+its unclassified rows outside.
+
+**`ui/sparkline.js` — a series as one line, at the size of a word.** `sparkPath(points, {w, h,
+pad})` is pure and returns `{d, n, gaps, first, last, min, max, end}`; `sparkline(points,
+{label, w, h, className})` wraps it in a `role="img"` SVG stroked in `currentColor`, with an
+emphasised end dot and no animation at all — so there is no `prefers-reduced-motion`
+alternative owed. It refuses each point BY TYPE before any cast, and the reason is the one
+CLAUDE.md has now recorded three times: `Number(null)`, `Number("")`, `Number([])` and
+`Number(false)` are all `0` and all finite, so the one-line `points.map(Number)
+.filter(Number.isFinite)` rewrite plots every scan that never ran on the floor of the chart
+and drags the whole line's scale down with it. A refused point is a GAP that keeps its x
+position and breaks the line — dropping it instead would fix the floor and get the slope
+wrong, which is the only thing a sparkline is read for. The `aria-label` always states first,
+last, low, high and the number of readings; a caller's own `label` NAMES the series and never
+replaces those figures. Its class is `.sparkline`, not `.spark`, because `gas` already owns
+`.spark` for the bordered per-tier card on its Overview page and its own sheet loads after
+`components.css` — the same collision, and the same resolution, as `.health-` over `.diag-`.
+The two CANVAS `sparkline(canvas, values)` functions in `gas`'s and `gas_devsecops`'s own
+`charts.js` are untouched: they are reached through a namespace so nothing resolves
+ambiguously, they are near-duplicates of each other, and folding them in here would be a
+behaviour change to two shipped charts rather than an addition.
+
+**`ui/figures.js` gains `figureCard` / `figureCardModel` — the denominator, one level down.**
+A rate without its denominator is not a measurement, so the sentence stays; what moves is
+where it is drawn. `figureCard({label, value, sub, chip, help, denominator})` builds the same
+`kpiCard` and PREPENDS the denominator to the tip lines on the card's own label (resolving
+`help` through the three shapes `tipLines()` already knows, so a `{term}` card keeps the
+book's copy *and* its route to the entry), then writes the sentence to `data-denominator` on
+the card node — the same claim `denomNote` has always made, and the reason a test can read
+what a reader reads. `denomNote` itself is untouched and still exported: a denominator printed
+over a table is still a paragraph. `figureCardModel` is the DOM-free half, and it takes an
+optional resolver for one narrow reason — `tipLines({term})` reaches
+`appConfig().findHelpEntry`, which THROWS when nothing configured it, and a contract that
+installed a manifest to get past that would install it for every other file sharing the
+vitest worker.
+
+**`--hatch`, and the class over it.** One token in `styles/tokens.base.css` holding the
+repeating-linear-gradient that means THIS PART IS NOT A MEASUREMENT, plus a `.hatch` utility
+in `components.css`. It is ink at an alpha rather than a hue, which is the one kind of fill
+forced-colors inverts toward the forced foreground while keeping its alpha — so it survives
+High Contrast without `forced-color-adjust: none` pinning near-black onto a possibly-black
+ground. It is for NEW work: `axisBar`'s hatch and `.sevbar-seg--empty`'s keep their own rules,
+because repointing them changes shipped pictures and belongs in its own measured round.
+
 ## The five-token accent contract
 
 The severity palette is byte-identical across all four surfaces — a severity means the same
@@ -300,6 +514,11 @@ registerTokenContract({ describe, it, expect, appRoot: new URL("../", import.met
 | `help.js` | `ui/helpPage.js`'s behaviour: the search field, the `?term=` deep link, `/` to focus, Escape to clear, and the pure `helpModel()` underneath it all. Registered by `gas/` and `gas_devsecops/`; `gas_ai/` keeps its own bespoke lexicon page and does not register this one — see "The one page that IS shared" above |
 | `relativeAge.js` | the one clock-relative label ("3 hours ago") — refuses null/undefined/blank/`[]`/`false` BEFORE any `Number()`/`Date.parse()` cast, with a perturbation proving the tempting cast-first rewrite fails on exactly those inputs |
 | `syncCaption.js` | the rail's freshness sentence — that `app.js` calls the shared `syncCaption()` rather than growing its own `Math.floor(Date.now() - Date.parse(...))` day-count back. `ctx.railHasSyncZone: false` (only `gas_hub`, which hands `createAppShell` no `railFooter` and has no freshness sentence at all) turns the first half into a NAMED skip and leaves the `Math.floor` prohibition running — a prohibition is exactly the kind of rule an app with no caption today can still break tomorrow |
+| `quad.js` | `ui/quad.js`'s 2x2: the fixed corner order, shares read against the STATED total rather than the corner sum, an unmeasured count that is absent and never a zero, and a refusal for any corner carrying a tone without a word. Three perturbations reproduce the tempting wrong version inline — a cast-first count, a defaulted label, a renormalised share — and show each one disagreeing with the shipped model on the same input |
+| `sparkline.js` | `ui/sparkline.js`'s path: every point refused by type BEFORE any cast, a gap that keeps its x position and breaks the line, and the label that always states first/last/low/high. Two perturbations, because there are two wrong answers here and only one of them is obvious — the cast-first rewrite (gaps plotted at 0, the floor moved) and the filter-them-out rewrite (the floor right, the slope wrong) |
+| `figureCard.js` | `ui/figures.js`'s `figureCard`: the denominator PREPENDED to the tip lines, stamped on `data-denominator`, and drawn as no paragraph. Perturbed three ways — dropped from the lines (the attribute check still passes and the reader is told nothing), appended instead of prepended (buried under a three-line glossary entry), and merged into a bare `{lines}` (identical on screen, and every migrated card loses its route to the book) |
+| `settingsForm.js` | `ui/settingsForm.js`'s kernel, run against every registry that binds it: this app's own `{tabs, fields}` registry is well-formed (every field names a real tab, no duplicate tab keys, every tab and field carries a non-empty label, and the malformed shapes actually throw), the kernel's fixed behaviour against one synthetic registry so the assertions are identical for every app rather than hand-derived from each one's own field names, the direct-import-path rule asserted as a specifier regex against the app's own source, the `tabStatus` key-presence-not-truthiness perturbation, and — opt-in via `ctx.spine` — the canonical Register · … · Access · System tab spine |
+| `settingsReadouts.js` | the shared half of `ui/settingsReadouts.js` and `ui/figures.js`'s `openAndTotal`: the zero-denominator refusal (`absentText`, never `"0.0%"`), the naive `Array#includes` perturbation showing why `severitySplitModel`'s `inScope` must be a predicate and never a selected array, the glyph-without-word refusal for `tickTimeline`, a build-once identity assertion that `createCutHistogram`'s `update()` never recreates the range input, and `openAndTotal`'s own suppress-when-equal and refuse-before-cast rules. Registered from `gas`, `gas_ai` and `gas_devsecops` — not `gas_hub`, which has no register population |
 
 `gas_devsecops/test/shared.test.js` is the worked example.
 
@@ -473,3 +692,14 @@ What was NOT re-run is the converter itself (`validate`, the DTS step and the pr
 screenshots): `.design-sync/adapter/node_modules` is a per-clone symlink into `.ds-sync/`
 that this worktree does not have. So the adapter is re-pointed and its inputs resolve; it has
 not been rendered since.
+
+**`parity.js`'s FORKABLE sweep only walks `src/client/js/` — never `test/`.** The
+settings-unification wave's P13 removed 23 test-file copies of `test/contracts/emptyStates.js`'s
+`code()` source-stripper, 13 of which had silently stopped stripping comments partway through a
+file (none had missed a real assertion — the defect was latent, not active, and was measured
+that way before the fix). Nothing about that package closed the gap that let it happen:
+`registerParityContract`'s FORKABLE walk (`walk(jsDir)`, `jsDir = resolve(root, "src/client/js")`)
+never looks inside `test/`, so a shipped helper — `code()`, or any of the settings kernel's seven
+names — can be re-forked into a new test file today and nothing in this suite will notice. Closing
+it means the walk covering `test/` too, or a second, narrower FORKABLE list scoped to test-only
+helpers; either is a real package, not a follow-up sentence.

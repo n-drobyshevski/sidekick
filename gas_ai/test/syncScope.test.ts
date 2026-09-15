@@ -88,3 +88,48 @@ describe("the battery's project scope", () => {
     }
   });
 });
+
+describe("the Fetch scope setting decides whether the property is applied at all", () => {
+  // FIRST in this block on purpose: nothing above it writes the settings tab, so this is the
+  // only place in the file where the stored value is genuinely absent.
+  it("is `project` on a workbook nobody has configured", () => {
+    expect((server.api.getSettings({}) as { data?: Rec }).data?.["syncScope"]).toBe("project");
+  });
+
+  it("drops the project filter from EVERY step under `tenant`, property and all", () => {
+    // The wiring, not the builders — this file's own header says why that distinction is
+    // the point. A setting honoured by `projectScope()` and ignored by one step would
+    // collect a register that is neither one perimeter nor all of them, and the two halves
+    // would each look individually correct.
+    props().setProperty("WIZ_PROJECT_ID_V2", PROJECT);
+    const res = server.api.setSettings({ syncScope: "tenant" }) as
+      { ok: boolean; error?: string; data?: Rec };
+    expect([res.ok, res.error]).toEqual([true, undefined]);
+    // Echoed back, so the Settings page repaints the stored value rather than its request.
+    expect(res.data?.["syncScope"]).toBe("tenant");
+
+    const inv = ((stepById("INVENTORY_AI")["variables"] as Rec)["filterBy"]) as Rec;
+    expect(Object.keys(inv)).toEqual(["type"]);
+    for (const id of ["AI_ASSET_PROPERTIES", "AGENTIC_IDENTITIES"]) {
+      const filterBy = ((stepById(id)["variables"] as Rec)["filterBy"]) as Rec;
+      expect(Object.keys(filterBy), id).not.toContain("project");
+    }
+    for (const id of [
+      "GUARDRAIL_GAPS", "RUNS_AS", "SA_FINDINGS", "SENSITIVE_DATA_ACCESS",
+      "LINEAGE", "HOST_EXPOSURE", "ENDPOINT_EXPOSURE", "IDENTITY_ACCESS",
+    ]) {
+      expect((stepById(id)["variables"] as Rec)?.["projectId"], id).toBeNull();
+    }
+  });
+
+  it("puts the filter back when the setting goes back, with no property edit", () => {
+    // The reason this is a setting rather than "clear WIZ_PROJECT_ID_V2": the property still
+    // records WHICH project, so returning to the narrow register is one control and not a
+    // trip to Project Settings with an id to re-paste.
+    props().setProperty("WIZ_PROJECT_ID_V2", PROJECT);
+    expect((server.api.setSettings({ syncScope: "tenant" }) as { ok: boolean }).ok).toBe(true);
+    expect((server.api.setSettings({ syncScope: "project" }) as { ok: boolean }).ok).toBe(true);
+    const filterBy = ((stepById("INVENTORY_AI")["variables"] as Rec)["filterBy"]) as Rec;
+    expect(filterBy["project"]).toEqual({ idV2: { equals: [PROJECT] } });
+  });
+});

@@ -2,7 +2,7 @@
 // mapping-rule health (fired vs matched under first-match-wins), domain coverage,
 // unassigned-resource explorer rows, and untagged-subscription rollups.
 //
-// GAS-first module (no Python fixture parity — the Streamlit side is discontinued).
+// GAS-first module with no Python fixture parity.
 // Pure functions over current-scan frame records: flat dotted keys
 // (vulnerableAsset.name / .subscriptionName / .subscriptionExternalId / .tags.<k>)
 // plus the server-attached _sev / _supportGroup / _domain. The engine mirrors
@@ -126,19 +126,39 @@ export interface RecordTrace {
  * alone, so a sealed episode that kept its tag bag is claimable by a `tag` rule. A trace that
  * still pinned such a record to Unassigned would contradict the verdict it exists to explain.
  */
-export function traceRecord(record: Rec, compiled: CompiledDomain[]): RecordTrace {
+export function traceRecord(
+  record: Rec,
+  compiled: CompiledDomain[],
+): RecordTrace {
   const tags = recordTags(record);
   const rules: RuleTrace[] = [];
   let assigned = UNASSIGNED;
   compiled.forEach((dom, domainIndex) => {
     dom.rules.forEach((rule, ruleIndex) => {
       if (rule === null) {
-        rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: true, matched: false, conditions: [] });
+        rules.push({
+          domainIndex,
+          domain: dom.name,
+          ruleIndex,
+          malformed: true,
+          matched: false,
+          conditions: [],
+        });
         return;
       }
-      const conditions = rule.map((spec, index) => ({ index, matched: conditionMatches(spec, record, tags) }));
+      const conditions = rule.map((spec, index) => ({
+        index,
+        matched: conditionMatches(spec, record, tags),
+      }));
       const matched = conditions.every((c) => c.matched);
-      rules.push({ domainIndex, domain: dom.name, ruleIndex, malformed: false, matched, conditions });
+      rules.push({
+        domainIndex,
+        domain: dom.name,
+        ruleIndex,
+        malformed: false,
+        matched,
+        conditions,
+      });
       if (matched && assigned === UNASSIGNED) assigned = dom.name;
     });
   });
@@ -165,8 +185,13 @@ export interface RuleHealth {
  * domain, or by an earlier rule in its own domain, shows matched > 0 but fired 0.
  * status: malformed (null rule) > dead (matched 0) > shadowed (fired 0) > ok.
  */
-export function ruleHealth(records: Rec[], compiled: CompiledDomain[]): RuleHealth[] {
-  const stats = compiled.map((dom) => dom.rules.map(() => ({ fired: 0, matched: 0 })));
+export function ruleHealth(
+  records: Rec[],
+  compiled: CompiledDomain[],
+): RuleHealth[] {
+  const stats = compiled.map((dom) =>
+    dom.rules.map(() => ({ fired: 0, matched: 0 })),
+  );
   for (const record of records) {
     const trace = traceRecord(record, compiled);
     for (const rt of trace.rules) {
@@ -174,7 +199,9 @@ export function ruleHealth(records: Rec[], compiled: CompiledDomain[]): RuleHeal
     }
     if (trace.assigned !== UNASSIGNED) {
       // First matching rule in trace order is the first rule of the winning domain.
-      const winner = trace.rules.find((rt) => rt.matched && rt.domain === trace.assigned);
+      const winner = trace.rules.find(
+        (rt) => rt.matched && rt.domain === trace.assigned,
+      );
       if (winner) stats[winner.domainIndex][winner.ruleIndex].fired += 1;
     }
   }
@@ -183,8 +210,21 @@ export function ruleHealth(records: Rec[], compiled: CompiledDomain[]): RuleHeal
     dom.rules.forEach((rule, ruleIndex) => {
       const { fired, matched } = stats[domainIndex][ruleIndex];
       const status: RuleStatus =
-        rule === null ? "malformed" : matched === 0 ? "dead" : fired === 0 ? "shadowed" : "ok";
-      out.push({ domainIndex, domain: dom.name, ruleIndex, fired, matched, status });
+        rule === null
+          ? "malformed"
+          : matched === 0
+            ? "dead"
+            : fired === 0
+              ? "shadowed"
+              : "ok";
+      out.push({
+        domainIndex,
+        domain: dom.name,
+        ruleIndex,
+        fired,
+        matched,
+        status,
+      });
     });
   });
   return out;
@@ -234,7 +274,10 @@ export interface CoverageSources {
  * something actually landed there, because on a live frame it is structurally empty (every open
  * finding carries a name and a subscription) and a permanent zero row would read as a bug.
  */
-function orderedWithTailsLast(names: string[], includeNotAttributable: boolean): string[] {
+function orderedWithTailsLast(
+  names: string[],
+  includeNotAttributable: boolean,
+): string[] {
   const seen = new Set<string>([UNASSIGNED, NOT_ATTRIBUTABLE]);
   const out: string[] = [];
   for (const n of names) {
@@ -253,7 +296,10 @@ function orderedWithTailsLast(names: string[], includeNotAttributable: boolean):
  * table shows dead domains), and the support-group resolved/unresolved split. Reads the
  * pre-attached _domain / _supportGroup; asset identity is `vulnerableAsset.name`.
  */
-export function coverage(records: Rec[], orderedDomainNames: string[]): Coverage {
+export function coverage(
+  records: Rec[],
+  orderedDomainNames: string[],
+): Coverage {
   const findingsByDomain = new Map<string, number>();
   const assetsByDomain = new Map<string, Set<string>>();
   const allAssets = new Set<string>();
@@ -293,13 +339,14 @@ export function coverage(records: Rec[], orderedDomainNames: string[]): Coverage
     if (present(r[SG_COL])) sgResolved += 1;
     else sgUnresolved += 1;
   }
-  const byDomain = orderedWithTailsLast(orderedDomainNames, bySource.missing > 0).map(
-    (domain) => ({
-      domain,
-      findings: findingsByDomain.get(domain) ?? 0,
-      assets: assetsByDomain.get(domain)?.size ?? 0,
-    }),
-  );
+  const byDomain = orderedWithTailsLast(
+    orderedDomainNames,
+    bySource.missing > 0,
+  ).map((domain) => ({
+    domain,
+    findings: findingsByDomain.get(domain) ?? 0,
+    assets: assetsByDomain.get(domain)?.size ?? 0,
+  }));
   return {
     totalFindings: records.length,
     totalAssets: allAssets.size,
@@ -473,7 +520,9 @@ function nearMisses(record: Rec, compiled: CompiledDomain[]): NearMiss[] {
   cand.sort(
     (a, b) =>
       b.nm.matchedConditions - a.nm.matchedConditions ||
-      a.nm.totalConditions - a.nm.matchedConditions - (b.nm.totalConditions - b.nm.matchedConditions) ||
+      a.nm.totalConditions -
+        a.nm.matchedConditions -
+        (b.nm.totalConditions - b.nm.matchedConditions) ||
       a.domainIndex - b.domainIndex ||
       a.nm.ruleIndex - b.nm.ruleIndex,
   );
@@ -485,8 +534,14 @@ function nearMisses(record: Rec, compiled: CompiledDomain[]): NearMiss[] {
  * from the first record seen for the asset, finding count and per-severity counts, and
  * the near-miss hints computed from that representative record. Sorted by findings desc.
  */
-export function unassignedResources(records: Rec[], compiled: CompiledDomain[]): UnassignedResource[] {
-  const groups = new Map<string, { rep: Rec; findings: number; sevCounts: Record<string, number> }>();
+export function unassignedResources(
+  records: Rec[],
+  compiled: CompiledDomain[],
+): UnassignedResource[] {
+  const groups = new Map<
+    string,
+    { rep: Rec; findings: number; sevCounts: Record<string, number> }
+  >();
   for (const r of records) {
     if (domainOf(r) !== UNASSIGNED) continue;
     const asset = assetKey(r);
@@ -509,7 +564,9 @@ export function unassignedResources(records: Rec[], compiled: CompiledDomain[]):
       nearMisses: nearMisses(g.rep, compiled),
     });
   }
-  rows.sort((a, b) => b.findings - a.findings || a.asset.localeCompare(b.asset));
+  rows.sort(
+    (a, b) => b.findings - a.findings || a.asset.localeCompare(b.asset),
+  );
   return rows;
 }
 
@@ -532,7 +589,13 @@ export interface UntaggedSubscription {
 export function untaggedSubscriptions(records: Rec[]): UntaggedSubscription[] {
   const groups = new Map<
     string,
-    { subscription: string; extId: string; assets: Set<string>; findings: number; sevCounts: Record<string, number> }
+    {
+      subscription: string;
+      extId: string;
+      assets: Set<string>;
+      findings: number;
+      sevCounts: Record<string, number>;
+    }
   >();
   for (const r of records) {
     if (present(r[SG_COL])) continue;
@@ -540,7 +603,17 @@ export function untaggedSubscriptions(records: Rec[]): UntaggedSubscription[] {
     const extId = flatVal(r, EXT_COL) ?? NONE;
     const key = `${subscription}\u0000${extId}`;
     let g = groups.get(key);
-    if (!g) groups.set(key, (g = { subscription, extId, assets: new Set(), findings: 0, sevCounts: {} }));
+    if (!g)
+      groups.set(
+        key,
+        (g = {
+          subscription,
+          extId,
+          assets: new Set(),
+          findings: 0,
+          sevCounts: {},
+        }),
+      );
     g.findings += 1;
     const asset = assetKey(r);
     if (asset) g.assets.add(asset);
@@ -620,7 +693,8 @@ export function unassignedLifecycles(
     if (domainOf(r) !== UNASSIGNED) continue;
     const asset = String(r[LEDGER_NAME_COL] ?? "") || NONE;
     let g = groups.get(asset);
-    if (!g) groups.set(asset, (g = { rep: r, open: 0, resolved: 0, lastSeen: null }));
+    if (!g)
+      groups.set(asset, (g = { rep: r, open: 0, resolved: 0, lastSeen: null }));
     // Same open test the rest of the app uses, read off the durable status column.
     if (String(r["status"] ?? "").toUpperCase() === "OPEN") g.open += 1;
     else g.resolved += 1;
@@ -648,7 +722,9 @@ export function unassignedLifecycles(
     });
   }
   out.sort(
-    (a, b) => (b.open + b.resolved) - (a.open + a.resolved) || a.asset.localeCompare(b.asset),
+    (a, b) =>
+      b.open + b.resolved - (a.open + a.resolved) ||
+      a.asset.localeCompare(b.asset),
   );
   return out.slice(0, topN);
 }
