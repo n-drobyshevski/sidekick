@@ -48,8 +48,12 @@ import {
   type Scope,
 } from "../domain/config";
 import { normalizeSeverity } from "../domain/severity";
-import { effectiveSlaTargets, withSettings } from "../domain/settingsLogic";
+import {
+  effectiveSlaTargets, withDomainView, withProjectView, withSettings,
+} from "../domain/settingsLogic";
 import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
+import { domainCatalogue, inDomain, noDomainCount } from "../domain/domainScope";
+import * as repoDomains from "./repoDomains";
 import * as settingsImpact from "../domain/settingsImpact";
 import type { Rec } from "../domain/util";
 import {
@@ -246,9 +250,19 @@ export interface Bootstrap {
    */
   scope: {
     projectView: string;
+    domainView: string;
     shown: number;
     register: number;
     unattributed: number;
+    /**
+     * Rows whose repository carries no `Wiz/Domain` tag — or whose repository the join map has
+     * never seen, because the map has not been refreshed. The switcher's caption must say this
+     * OUT LOUD for `unattributed`'s reason exactly: without it, "1,204 of 8,331" quietly
+     * attributes the other 7,127 to some other domain when the truth for most of them is that
+     * nobody tagged the repository. The two populations inside this one figure are separated by
+     * the Settings map-health readout (`repoDomains.mapHealth`), not here.
+     */
+    noDomain: number;
     syncProjectId: string | null;
   };
   /**
@@ -261,6 +275,13 @@ export interface Bootstrap {
    */
   filterOptions: {
     projectList: ReturnType<typeof projectCatalogue>;
+    /**
+     * The domains on offer — REGISTER-WIDE, for `projectList`'s reason unchanged, and derived
+     * from the ROWS rather than from the join map. A domain the map knows but this register
+     * holds no finding for is absent from the picker rather than present and answering zero;
+     * see `domainScope.domainCatalogue`.
+     */
+    domainList: ReturnType<typeof domainCatalogue>;
   };
 }
 
@@ -325,10 +346,22 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
   // every project. `scope.register` / `filterOptions.projectList` both read off this same
   // array so the register-wide side of the header can never disagree with itself.
   const allRows = ledgerStore.loadBaseRows();
+  // ATTACHED BEFORE ANYTHING COUNTS. `_domain` is resolved on read and never persisted (see
+  // domain/domainTag.ts), so every figure below — the catalogue, `shown`, `noDomain` — has to
+  // be taken from rows that have already been through the join. Doing it once here is also
+  // what keeps the register-wide side of the header self-consistent: `filterOptions.domainList`
+  // and `scope.noDomain` read the same array.
+  repoDomains.attachDomains(allRows as unknown as Rec[]);
   const projectView = settings.projectView || null;
+  const domainView = settings.domainView || null;
+  // At most one of the two is ever set — `withProjectView`/`withDomainView` clear each other —
+  // so this reads as a chain rather than an intersection. A stored pair carrying both would be
+  // a defect upstream, and silently intersecting them here would hide it.
   const shown = projectView
     ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length
-    : allRows.length;
+    : domainView
+      ? allRows.filter((r) => inDomain(r, domainView)).length
+      : allRows.length;
 
   return {
     product: "Wiz Sidekick DevSecOps",
@@ -351,14 +384,19 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
     settings,
     scope: {
       projectView: settings.projectView,
+      domainView: settings.domainView,
       shown,
       register: allRows.length,
       unattributed: unattributedCount(allRows),
+      noDomain: noDomainCount(allRows),
       // The FETCH scope, reported only — see `settingsLogic.ts`'s "TWO PROJECT SCOPES, TWO
       // HOMES". `projectScope()` is `[id] | null`; only the first element is ever set today.
       syncProjectId: projectScope()?.[0] ?? null,
     },
-    filterOptions: { projectList: projectCatalogue(allRows) },
+    filterOptions: {
+      projectList: projectCatalogue(allRows),
+      domainList: domainCatalogue(allRows),
+    },
   };
   });
 }
@@ -519,7 +557,49 @@ export function putSettings(p: { settings?: unknown }): ApiResult<ReturnType<typ
  * validated field would turn a retired project's stale name into a scope nobody can clear.
  */
 export function setProjectView(p: { projectView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
-  return mutate(() => saveSettings(withSettings(loadSettings(), { projectView: p.projectView } as never)));
+  return mutate(() => saveSettings(withProjectView(loadSettings(), p.projectView)));
+}
+
+/**
+ * Set the domain view scope alone — the sibling of `setProjectView`, and its mirror in every
+ * respect that matters: a separate endpoint for the same reason, an unvalidated value for the
+ * same reason (including `""`, and including a domain the register no longer holds).
+ *
+ * PICKING A DOMAIN CLEARS THE PROJECT, and vice versa. That is `withDomainView`'s job rather
+ * than this endpoint's, so the two scopes cannot drift into both being live by way of a caller
+ * that used the wrong helper — see `settingsLogic.withProjectView` for the argument.
+ */
+export function setDomainView(p: { domainView?: unknown }): ApiResult<ReturnType<typeof loadSettings>> {
+  return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)));
+}
+
+/**
+ * Refresh the repository → business-domain join map from Wiz.
+ *
+ * A MUTATION, NOT A SYNC, and the distinction is why this is its own endpoint rather than a
+ * phase of the scan battery. It writes no findings and reads no scan: it walks the tenant's
+ * tagged repositories through one graphSearch document and replaces a lookup table. It is also
+ * far cheaper than a scan and needs running on a different clock — when the tagging changes,
+ * not when the findings do.
+ *
+ * `mutate` is what holds the lock and bumps the data version, so every cached domain figure
+ * repaints against the new map rather than answering from the old attribution.
+ */
+export function refreshDomains(_p?: unknown): ApiResult<repoDomains.DomainRefresh> {
+  return mutate(() => repoDomains.refreshRepoDomains());
+}
+
+/**
+ * What the register is CURRENTLY joining against, without fetching anything.
+ *
+ * Separate from the refresh above because they answer different questions, and an operator
+ * looking at an empty domain switcher needs this one: a map with zero keys says "never
+ * refreshed", and a map with thousands of keys and a domain list that is still empty says the
+ * join is missing — a tag key that does not match, or repository identities that do not
+ * overlap the ones findings carry (see `repoDomains.recordIdentityTokens`).
+ */
+export function domainMapHealth(_p?: unknown): ApiResult<ReturnType<typeof repoDomains.mapHealth>> {
+  return run(() => repoDomains.mapHealth());
 }
 
 /**

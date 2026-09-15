@@ -103,7 +103,7 @@ export function sastModel(payload, opts) {
   // code the weakness is in — but it is still an attribute nobody remediates against, and it
   // sat beside `cwe`, which is the weakness axis a reader actually acts on. Three breakdown
   // cards where the third is never the one you open is a page paying rent on a habit.
-  const concentration = concentrationModel(p.concentration, ["cwe", "repo", "owner_project"]);
+  const concentration = concentrationModel(p.concentration, ["cwe", "repo", "owner_project", "domain"]);
   const weakness = concentration.find((c) => c.dim === "cwe") || null;
   const tiers = tierModel(p.tiers, RISK_TIER_ORDER, RISK_TIER_LABELS);
   const firstRun = registerFirstRunView(p.rowCount, opts && opts.synced, opts && opts.at);

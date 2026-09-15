@@ -1,7 +1,13 @@
 // Port of gas/test/insights.test.ts, reshaped for the three-scope register — see insights.ts's
-// header for the full list of what was dropped (exploitSummary, domain/supportGroup/atype/
-// cloud/os/subscription dimensions, GROUP_BASE_FIELDS) and why, and for the column renames
+// header for the full list of what was dropped (exploitSummary, supportGroup/atype/cloud/os/
+// subscription dimensions, GROUP_BASE_FIELDS) and why, and for the column renames
 // (cve -> identifier, asset_name -> repo_name, vuln_key -> finding_key, asset -> repo).
+//
+// `domain` was on that dropped list and is not any more: the tenant does tag its repositories
+// with `Wiz/Domain`, and the value now reaches rows through the join in
+// src/server/repoDomains.ts. It is a GROUP_COLUMNS dimension below. `oldestOpen`'s `byDomain`
+// view stays dropped — the concentration card already answers "which domain carries the most",
+// and "which domain holds the oldest" has not been asked for.
 //
 // No fixture parity here (insights.ts is GAS-first, same as gas/'s version) — every row below
 // is hand-built, same as gas/'s own suite.
@@ -125,7 +131,8 @@ describe("movement", () => {
 
 describe("oldestOpen", () => {
   // Base-row shape the aggregation reads: age_days + status + identifier/severity/repo_name/
-  // owner_project. No _domain/_supportGroup — dropped (host-only, see insights.ts's header).
+  // owner_project. No _supportGroup (host-only, see insights.ts's header), and no _domain —
+  // `oldestOpen` has no by-domain view, though `groupTree` does group by it.
   const brow = (over: Record<string, unknown> = {}) => ({
     identifier: "CVE-2024-0001", severity: "HIGH", status: "OPEN", repo_name: "web-1",
     owner_project: "proj-1", age_days: 10, scope: "sca", ...over,
@@ -193,15 +200,33 @@ describe("oldestOpen", () => {
   });
 });
 
-describe("GROUP_COLUMNS — exactly the D9 brief's five dims", () => {
-  it("maps each dimension to its flat ledger column", () => {
+describe("GROUP_COLUMNS — the D9 brief's five dims, plus the domain axis", () => {
+  it("maps each dimension to its flat row field", () => {
     expect(GROUP_COLUMNS).toEqual({
       repo: "repo_name",
       language: "language",
       owner_project: "owner_project",
+      // NOT A LEDGER COLUMN, and the leading underscore is the whole tell. `_domain` is
+      // attached to rows on read from the repository → domain join map
+      // (src/server/repoDomains.ts) and never written to the sheet; by the time any grouping
+      // runs it is a flat field like any other, which is why it needs no special lookup.
+      domain: "_domain",
       secret_kind: "secret_kind",
       cwe: "cwe",
     });
+  });
+
+  it("groups by domain off the attached field, bucketing untagged rows as (none)", () => {
+    // The one dimension whose blank is routine rather than exceptional: a repository nobody
+    // tagged, or a map nobody has refreshed. It has to land somewhere visible in a partition
+    // that is supposed to add up — see GROUP_COLUMNS' own note on why `(none)` is right here
+    // and wrong in the scope switcher.
+    const tree = groupTree([
+      rec({ repo_name: "a", _domain: "SAP" }),
+      rec({ repo_name: "b", _domain: "SAP" }),
+      rec({ repo_name: "c" }),
+    ] as unknown as Rec[], ["domain"]);
+    expect(tree.map((n) => [n.key, n.total])).toEqual([["SAP", 2], ["(none)", 1]]);
   });
 });
 

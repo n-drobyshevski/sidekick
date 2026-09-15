@@ -115,6 +115,32 @@
     }
   }
 
+  // ------------------------------------------------------------------ the domain map, faked
+  //
+  // The one piece of the register the sample battery cannot produce. A project rides in on the
+  // finding, so the project switcher fills itself from the seed; a domain is fetched separately
+  // from Wiz (`api_refreshDomains`), which this harness has no tenant for. `seedDomainMap`
+  // builds one over the repositories the seed just created — see its own header for why it is
+  // derived rather than hardcoded, and why it deliberately leaves a quarter of them untagged.
+  //
+  // ?nodomains reaches the OTHER state, the way ?noseed and ?noscope do: a register whose
+  // domain map has never been refreshed is every deployment's first condition, and it is the
+  // state the Settings card's "Never refreshed" pill and the switcher's missing Domains group
+  // are FOR. Without a way back to it, neither is ever seen locally.
+  if (query.has("nodomains")) {
+    console.log("[dev] ?nodomains — no domain map seeded; the Domains scope group stays empty.");
+  } else if (typeof Server.devSeed.seedDomainMap === "function") {
+    const dm = Server.devSeed.seedDomainMap();
+    if (dm.reason) {
+      console.log(`[dev] No domain map seeded: ${dm.reason}.`);
+    } else {
+      console.log(
+        `[dev] Seeded a domain map: ${dm.domains} domain(s) over ${dm.repos} repository key(s), `
+        + `${dm.unmapped} left untagged on purpose — ?nodomains to open with none.`,
+      );
+    }
+  }
+
   // ------------------------------------------------------------ the project scope, restored
   //
   // WHY THIS EXISTS, AND WHY IT IS NOT A PRODUCT CHANGE. The view-project scope is SERVER

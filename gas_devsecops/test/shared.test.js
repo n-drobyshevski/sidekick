@@ -195,13 +195,23 @@ describe("devsecops: the accent this register chose", () => {
 //
 // THE PAYLOAD TABLE IS WRITTEN DOWN FROM THE DELETED IMPLEMENTATION. `projectScopeControl`'s
 // `onChange` handed app.js a bare slug and `pickProjectScope` passed it to
-// `call("api_setProjectView", { projectView: slug })`. That object is what the one kind's
-// `payload(id)` builds now, and `renderAppbar` unwraps `.projectView` from it so
-// `pickProjectScope`'s own signature — and its two tests — did not change.
+// `call("api_setProjectView", { projectView: slug })`. That object is what the project kind's
+// `payload(id)` builds now — with one addition, below.
 //
-// ONE KIND, SO IT IS THE BARE ONE. There is no second dimension for a slug to collide with,
-// and `settingsStore.projectView` holds an unprefixed slug, so a stored scope survives the
-// move to the shared model untouched.
+// EVERY PAYLOAD NOW CARRIES BOTH FIELDS, ALWAYS, and that is the change the domain axis made
+// to this table. A pick is not "set this scope", it is "make this the scope" — the other
+// dimension has to be cleared, or a project and a domain could both be live and the header
+// could no longer answer "what am I looking at" in one line. Spelling both fields on every
+// payload makes the exclusion structural rather than a rule two call sites remember; the
+// server enforces the same thing independently in `settingsLogic.withProjectView` /
+// `withDomainView`, because a payload is a client artefact and the stored settings are not.
+//
+// THE PROJECT KIND STAYS THE BARE ONE. `settingsStore.projectView` holds an unprefixed slug
+// and always has, so a stored project scope survives the arrival of a second dimension
+// untouched. The domain kind carries `d:`, which is what keeps a domain named `VALUE-CHAIN`
+// from colliding with the project slug of the same name — exactly the collision
+// `scopeModel.js`'s prefix rule exists for, and the first time this register has been able to
+// have one.
 registerScopeContract({
   ...base,
   model: SCOPE_MODEL,
@@ -210,13 +220,21 @@ registerScopeContract({
   data: {
     filterOptions: {
       projectList: [{ slug: "value-chain", name: "VALUE-CHAIN", findings: 826, isFolder: false }],
+      domainList: [{ name: "SAP", findings: 412 }],
     },
-    scope: { register: 1204, shown: 826, projectView: "", unattributed: 17 },
+    scope: {
+      register: 1204, shown: 826, projectView: "", domainView: "", unattributed: 17,
+      noDomain: 233,
+    },
   },
   payloads: [
-    { kind: "project", id: "value-chain", payload: { projectView: "value-chain" } },
+    {
+      kind: "project", id: "value-chain",
+      payload: { projectView: "value-chain", domainView: "" },
+    },
+    { kind: "domain", id: "SAP", payload: { domainView: "SAP", projectView: "" } },
   ],
-  resetPayload: { projectView: "" },
+  resetPayload: { projectView: "", domainView: "" },
 });
 
 // =========================================================================================

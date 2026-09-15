@@ -55,6 +55,7 @@ vi.stubGlobal("UrlFetchApp", {
 vi.mock("../src/server/sheetsDb", () => ({
   TABS: { scans: "scans", settings: "settings", ledger: "finding_ledger", jobs: "jobs" },
   TAB_HEADERS: {}, SCHEMA_VERSION: 1,
+  ensureTab: () => null,
   readAll: () => [], readTail: () => [], overwrite: () => {}, appendRows: () => {},
   updateWhere: () => false, dataRowCount: () => 0, ensureTabs: () => {},
   cellCount: () => 0, ledgerSpreadsheet: () => ({ getName: () => "x" }),

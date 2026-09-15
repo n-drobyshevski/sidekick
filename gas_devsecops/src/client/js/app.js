@@ -450,23 +450,36 @@ async function requestStop(jobId) {
 // ------------------------------------------------------------------------- the scope seam
 
 // Re-entry guard: the combobox commits on a single click/Enter, but the round trip to
-// `api_setProjectView` and the `refresh()` after it are not instant, and the control does not
-// disable itself mid-pick. Without this a fast double-pick could fire two `setProjectView`
-// calls and two overlapping `refresh()`s racing to rebuild the same `<main>`.
+// `api_setProjectView` / `api_setDomainView` and the `refresh()` after it are not instant, and
+// the control does not disable itself mid-pick. Without this a fast double-pick could fire two
+// scope writes and two overlapping `refresh()`s racing to rebuild the same `<main>` — and with
+// two kinds it could fire them at two different endpoints, which is the same race with a
+// worse outcome: the loser's write lands second and silently wins.
 let scopePickInFlight = false;
 
 /**
- * The project-scope switcher's onPick: persist the new view scope, then let `refresh()` do
- * everything else. STORES NOTHING CLIENT-SIDE — the scope is server state (`settingsStore
- * .projectView`), so the client's only job here is to write it and invalidate what it cached.
+ * The scope switcher's onPick: persist the new view scope, then let `refresh()` do everything
+ * else. STORES NOTHING CLIENT-SIDE — the scope is server state (`settingsStore.projectView` /
+ * `.domainView`), so the client's only job here is to write it and invalidate what it cached.
  * A client-held copy would be a second source of truth for exactly the value this control
  * exists to keep singular.
+ *
+ * ONE ENDPOINT PER KIND, CHOSEN FROM THE PAYLOAD rather than from the option value, because
+ * the value's encoding is `scopeModel.js`'s business and decoding it a second time here is how
+ * the two drift. `scopePayload` already resolved the pick into the app's own `{projectView,
+ * domainView}` shape; which of the two this write is about is then just which field is set.
+ *
+ * THE RESET ROW CLEARS BOTH, and it reaches here with both fields `""`. That falls to
+ * `api_setProjectView`, whose `withProjectView` clears the domain as a matter of course — so
+ * one call discharges the whole reset and there is no second round trip to race with it.
  */
-async function pickProjectScope(slug) {
+async function pickScope(payload) {
   if (scopePickInFlight) return;
   scopePickInFlight = true;
   try {
-    await call("api_setProjectView", { projectView: slug });
+    const domainView = (payload && payload.domainView) || "";
+    if (domainView) await call("api_setDomainView", { domainView });
+    else await call("api_setProjectView", { projectView: (payload && payload.projectView) || "" });
     await refresh();
   } catch (e) {
     toast(String(e.message || e), "error");
@@ -478,14 +491,14 @@ async function pickProjectScope(slug) {
 /**
  * The header's scope control, or null.
  *
- * `null` (boot failed) or an empty `filterOptions.projectList` (nothing synced yet) both
- * resolve to `show: false` inside projectScopeView — see that module for why an empty picker
- * is a promise the register cannot keep.
+ * `null` (boot failed), or a payload with neither a project nor a domain to offer (nothing
+ * synced yet), both resolve to `show: false` inside projectScopeView — see that module for why
+ * an empty picker is a promise the register cannot keep.
  *
  * The control is `gas_shared/ui/scopeControl.js`; `ui/projectScope.js` says what this
- * register's one dimension is. `scopePayload` turns the picked option value back into the
- * `{projectView}` object `api_setProjectView` has always taken, so nothing below the seam
- * learned a new encoding.
+ * register's two dimensions are. `scopePayload` turns the picked option value back into the
+ * `{projectView, domainView}` object this app's endpoints take, so nothing below the seam
+ * learned a new encoding — including the `d:` prefix, which never leaves the shared model.
  */
 function appbarScope(data) {
   const kinds = scopeKinds(data);
@@ -493,7 +506,7 @@ function appbarScope(data) {
   return scopeControl(
     projectScopeView(data),
     { ...chrome, kinds },
-    (value) => pickProjectScope(scopePayload(kinds, chrome, value).projectView),
+    (value) => pickScope(scopePayload(kinds, chrome, value)),
   );
 }
 

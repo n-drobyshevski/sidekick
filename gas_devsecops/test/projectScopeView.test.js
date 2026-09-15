@@ -419,24 +419,38 @@ describe("app.js: the header mounts the scope control and owns the pick round-tr
     expect(body).toMatch(/scopeControl\(/);
     expect(body).toMatch(/projectScopeView\(data\)/);
     expect(body).toMatch(/scopeKinds\(data\)/);
-    // THE PICK STILL ARRIVES AS A SLUG. `scopePayload` rebuilds the `{projectView}` object
-    // this app's server contract has always taken, and the appbar unwraps it — so
-    // `pickProjectScope` below is unchanged and its two tests still hold it.
-    expect(body).toMatch(/pickProjectScope\(scopePayload\(kinds, chrome, value\)\.projectView\)/);
+    // THE PICK ARRIVES AS THE WHOLE PAYLOAD NOW, not as an unwrapped slug. With a second
+    // dimension there are two endpoints to choose between, and `{projectView, domainView}` is
+    // what carries that choice; unwrapping `.projectView` here would decode the pick in app.js
+    // and throw away the half that says which kind it was. The encoding itself — including the
+    // `d:` prefix — still never leaves `scopePayload`.
+    expect(body).toMatch(/pickScope\(scopePayload\(kinds, chrome, value\)\)/);
   });
 
-  it("pickProjectScope calls api_setProjectView, then refresh() — nothing else, and stores "
-    + "nothing client-side", () => {
-    const fn = APP_SRC.slice(APP_SRC.indexOf("async function pickProjectScope"));
+  it("pickScope routes to the endpoint the picked kind names, then refresh() — nothing else, "
+    + "and stores nothing client-side", () => {
+    const fn = APP_SRC.slice(APP_SRC.indexOf("async function pickScope"));
     const body = fn.slice(0, fn.indexOf("\n}\n"));
-    expect(body).toMatch(/call\("api_setProjectView",\s*\{\s*projectView:\s*slug\s*\}\)/);
+    expect(body).toMatch(/call\("api_setDomainView",\s*\{\s*domainView\s*\}\)/);
+    expect(body).toMatch(/call\("api_setProjectView",\s*\{\s*projectView:/);
     expect(body).toMatch(/await refresh\(\)/);
     // No bootstrapData/settings mutation held on a module-level variable inside this function.
     expect(body).not.toMatch(/bootstrapData\s*=/);
   });
 
-  it("guards re-entry so a fast double-pick cannot fire two setProjectView calls at once", () => {
-    const fn = APP_SRC.slice(APP_SRC.indexOf("async function pickProjectScope"));
+  // THE RESET MUST NOT COST TWO ROUND TRIPS. It arrives with both fields blank, and the
+  // project branch is what it falls to — `withProjectView` clears the domain server-side, so
+  // one call discharges the whole reset. A `pickScope` that fired both endpoints would race
+  // its own two writes, which is the failure the in-flight guard below cannot catch because
+  // both calls come from the same pick.
+  it("clears both kinds through a single call when the reset row is picked", () => {
+    const fn = APP_SRC.slice(APP_SRC.indexOf("async function pickScope"));
+    const body = fn.slice(0, fn.indexOf("\n}\n"));
+    expect(body).toMatch(/else await call\("api_setProjectView"/);
+  });
+
+  it("guards re-entry so a fast double-pick cannot fire two scope writes at once", () => {
+    const fn = APP_SRC.slice(APP_SRC.indexOf("async function pickScope"));
     const body = fn.slice(0, fn.indexOf("\n}\n"));
     expect(body).toMatch(/if \(scopePickInFlight\) return;/);
     expect(body).toMatch(/scopePickInFlight = true;/);
@@ -444,7 +458,7 @@ describe("app.js: the header mounts the scope control and owns the pick round-tr
   });
 
   it("toasts on failure rather than failing silently", () => {
-    const fn = APP_SRC.slice(APP_SRC.indexOf("async function pickProjectScope"));
+    const fn = APP_SRC.slice(APP_SRC.indexOf("async function pickScope"));
     const body = fn.slice(0, fn.indexOf("\n}\n"));
     expect(body).toMatch(/catch \(e\)/);
     expect(body).toMatch(/toast\(/);

@@ -24,6 +24,12 @@ export const TABS = {
   scans: "scans",
   // Repositories and their owning project hierarchy — the register's asset dimension.
   repos: "repos",
+  // The repository-identity → business-domain join, refreshed from Wiz separately from any
+  // scan (src/server/repoDomains.ts). ITS OWN TAB rather than a settings cell, for gas/'s
+  // measured reason: a settings value is one 50k cell, and a tenant with a few thousand
+  // repositories indexed under several identity tokens each overruns it. Lazily created —
+  // see `ensureTab` — so a deployment that has not re-run setup() still gets it on first use.
+  domainMap: "domain_map",
   compactions: "compactions",
   settings: "settings",
   jobs: "jobs",
@@ -168,6 +174,10 @@ export const TAB_HEADERS: Record<string, string[]> = {
     "repo_id", "repo_name", "branch", "platform", "default_branch",
     "owner_project", "owner_path", "projects_json", "first_seen", "last_seen",
   ],
+  // One row per identity token, not per repository: the join indexes a repository under every
+  // id/name/externalId it carries, because nothing here can verify which of them a finding's
+  // `repo_id` will turn out to be. See repoDomains.ts.
+  [TABS.domainMap]: ["token", "domain"],
   [TABS.compactions]: [
     "compaction_id", "ts", "floor_scan_id", "floor_ts", "scans_sealed",
     "episodes_created", "archive_bytes_freed", "checkpoint_ref",
@@ -229,6 +239,39 @@ export function ledgerSpreadsheet(): GoogleAppsScript.Spreadsheet.Spreadsheet {
 export function sheet(tab: string): GoogleAppsScript.Spreadsheet.Sheet {
   const sh = ledgerSpreadsheet().getSheetByName(tab);
   if (!sh) throw new Error(`Missing tab ${tab} — run setup().`);
+  return sh;
+}
+
+/**
+ * Create ONE declared tab if it is missing, with its frozen header row (idempotent).
+ *
+ * `ensureTabs` above runs from `setup()` only, which is right for a schema every sync already
+ * depends on: a tab that the scan walk writes to is a tab a deployment cannot be without, and
+ * finding out at setup is better than finding out mid-scan. A tab a LATER feature introduces
+ * is a different case — an existing deployment is entitled to keep working without re-running
+ * setup, and the only alternative to this is `sheet()` throwing "run setup()" at an operator
+ * who has done nothing wrong. So the feature that needs such a tab ensures it at its own first
+ * touch, and nothing else changes.
+ *
+ * Refuses a tab `TAB_HEADERS` does not declare, rather than creating a headerless one: every
+ * read and write here maps columns by header NAME, so a tab with no declared headers is a tab
+ * whose every access misfiles, and a typo'd name must fail where it is written.
+ */
+export function ensureTab(tab: string): GoogleAppsScript.Spreadsheet.Sheet {
+  const headers = TAB_HEADERS[tab];
+  if (!headers) throw new Error(`Tab "${tab}" is not declared in TAB_HEADERS.`);
+  const ss = ledgerSpreadsheet();
+  const existing = ss.getSheetByName(tab);
+  if (existing) {
+    ensureHeaders(existing, tab); // append any headers a newer schema added
+    return existing;
+  }
+  const sh = ss.insertSheet(tab);
+  // Plain-text format everywhere, for `ensureTabs`' reason unchanged: ISO timestamps and JSON
+  // blobs round-trip byte-stable instead of becoming Date cells in the sheet's locale.
+  sh.getRange(1, 1, sh.getMaxRows(), sh.getMaxColumns()).setNumberFormat("@");
+  sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+  sh.setFrozenRows(1);
   return sh;
 }
 

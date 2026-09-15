@@ -49,6 +49,7 @@ vi.mock("../src/server/sheetsDb", async (importOriginal) => {
     appendRows: (tab: string, rows: Row[]) => {
       tables[tab] = [...(tables[tab] ?? []), ...rows.map((r) => project(tab, r))];
     },
+    ensureTab: () => null,
     readAll: (tab: string) => { reads.full++; return tables[tab] ?? []; },
     // The tail read `getJob` uses. Counted separately so a spec can assert that polling a job
     // no longer touches the whole tab.

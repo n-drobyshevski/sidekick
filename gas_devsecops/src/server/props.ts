@@ -11,6 +11,12 @@ export const PROP_KEYS = {
   wizAuthUrl: "WIZ_AUTH_URL",
   wizApiUrl: "WIZ_API_URL",
   wizProjectIdV2: "WIZ_PROJECT_ID_V2",
+  // The repository tag key whose VALUE is a business domain. Unset means `Wiz/Domain`, which
+  // is what this tenant writes; a property rather than a setting because it is a fact about
+  // the tenant's tagging convention, not a per-operator view preference — the same tier
+  // WIZ_PROJECT_ID_V2 sits in. See domain/domainTag.ts for why it is resolved on READ: a key
+  // baked into the ledger would make correcting a typo cost a full re-scan.
+  wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
   // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.

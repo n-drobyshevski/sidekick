@@ -52,6 +52,30 @@ reporting new/resolved/reopened of 0/0/0. See [PROBE_FINDINGS.md](PROBE_FINDINGS
   and per-severity KM curves. Each page says which figure it cannot draw instead of drawing a
   zero.
 
+**Two ways to slice it, and neither is nested inside the other.** The app header carries one
+scope control with two dimensions: a **project** (where Wiz files the repository — business
+units, support groups and leaves, read off `projects_json`) and a **business domain** (who the
+tenant says owns it, from the repository's `Wiz/Domain` tag). Picking either clears the other,
+because a header that carries two scopes cannot answer "what am I looking at" in one line.
+
+The domain arrives by a different route than the project, and the difference is the whole
+design: `projects[]` is in all three query documents, so it rides in on every finding, but
+**none of the three can select an asset's tags**. `VulnerableAssetRepositoryBranch` is the one
+member of the `vulnerableAsset` union that Wiz's own console query omits `tags` from — it is
+on the other twelve — and a field the schema lacks fails the whole document, so asking anyway
+would stop SCA syncing. So `src/server/repoDomains.ts` graphSearches the tenant's tagged
+repository entities separately, builds a repository-identity → domain map on the `domain_map`
+tab, and attaches `_domain` to rows **on read**, never baked into the ledger. That is the same
+shape `gas/src/server/supportGroups.ts` already uses for a `Wiz/provisioning` tag that lives on
+a subscription findings carry without its tags.
+
+Two consequences a reader meets on screen. The map is refreshed from **Settings → System →
+Business domains**, on its own clock rather than with a sync — tagging changes when tagging
+changes, not when findings do. And until it is refreshed there are no domains: the switcher
+simply has no Domains group, the caption counts the rows as `have no domain`, and the Settings
+card says *Never refreshed* rather than letting an unrefreshed map look like an untagged
+tenant. An unreachable map degrades the same way rather than taking the pages down with it.
+
 **The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
 `src/server/readModels.ts`'s `registerRowsModel` (through `serverCache.ts`'s durable, 1-hour
 memo) derives the full filtered/sorted set once and slices it per request: `page` and
@@ -213,6 +237,8 @@ Credentials go in `.env.local` or `dev/.env.local` (both git-ignored; `dev/` win
 WIZ_API_URL=https://api.<dc>.app.wiz.io/graphql
 WIZ_API_TOKEN=...          # or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET
 WIZ_PROJECT_ID_V2=...      # optional; scopes every query
+WIZ_DOMAIN_TAG_KEY=...     # optional; the repository tag whose value is a business domain
+                           # (default Wiz/Domain) — see "Two ways to slice it" below
 ```
 
 **The two questions it exists to answer.**

@@ -860,6 +860,89 @@ export async function renderSettings(host, params, ctx) {
     return wrap;
   }
 
+  /**
+   * The repository → business-domain join, and whether it is actually joining.
+   *
+   * WHY THIS CARD EXISTS AT ALL. The domain scope in the app header and the "By business
+   * domain" breakdowns are drawn from a map this register fetches SEPARATELY from any sync —
+   * the three finding documents cannot select an asset's tags, so the tag comes from its own
+   * graphSearch over repository entities (src/domain/domainTag.ts records why). That makes the
+   * map a thing that can be silently absent, and an absent map and an untagged tenant look
+   * identical from every other screen: no domain rows in the switcher, `(none)` everywhere in
+   * the breakdown. This is the one place those two are told apart.
+   *
+   * THREE STATES, AND THE THIRD IS THE ONE WORTH DRAWING A CARD FOR:
+   *
+   *   zero keys              never refreshed — press the button
+   *   keys AND domains       the map is loaded; the switcher should be offering these
+   *   keys but no domains    unreachable, or the tag key matches nothing
+   *
+   * The tag key is printed either way, because a map that found nothing and a map built
+   * against the wrong `WIZ_DOMAIN_TAG_KEY` are the same picture with different causes, and the
+   * key is the fact that separates them.
+   */
+  function domainMapCard() {
+    const wrap = el("div", { class: "settings-inline" });
+    const paint = (state) => {
+      clear(wrap);
+      if (state && state.pending) {
+        wrap.append(statusPill("neutral", "Refreshing…"));
+        return;
+      }
+      if (state && state.error) {
+        wrap.append(statusPill("bad", "Refresh failed"),
+          el("span", { class: "muted small" }, state.error));
+      } else if (state && state.health) {
+        const h = state.health;
+        const keys = Number(h.keys) || 0;
+        const domains = Number(h.domains) || 0;
+        if (!keys) {
+          // NEUTRAL, NOT BAD. Nothing is broken — the map has simply never been fetched, which
+          // is every deployment's state until someone presses the button once.
+          wrap.append(statusPill("neutral", "Never refreshed"));
+        } else if (!domains) {
+          wrap.append(statusPill("bad", "No domains found"));
+        } else {
+          wrap.append(statusPill("ok",
+            `${fmtCount(domains)} domain(s) across ${fmtCount(keys)} repository key(s)`));
+        }
+        wrap.append(el("span", { class: "muted small" }, `Tag key: ${h.tagKey}`));
+      } else {
+        wrap.append(statusPill("neutral", "Not checked"));
+      }
+      const btn = el("button", {
+        class: "linklike",
+        disabled: !boot.hasCredentials || (state && state.pending) ? true : null,
+        onclick: async () => {
+          btn.disabled = true;
+          paint({ pending: true });
+          try {
+            const res = await call("api_refreshDomains", {});
+            paint({ health: { keys: res.keys, domains: res.domains, tagKey: res.tagKey } });
+            toast(res.repos
+              ? `${fmtCount(res.repos)} tagged repository(s), ${fmtCount(res.domains)} domain(s).`
+              : `No repository carries a ${res.tagKey} tag.`);
+            // The map moved, so every domain figure the shell is holding is stale — including
+            // the header switcher's own list, which is built from the bootstrap payload.
+            invalidateBootstrap();
+            if (ctx && ctx.refresh) ctx.refresh();
+          } catch (e) {
+            paint({ error: String(e.message || e).slice(0, 200) });
+          }
+        },
+      }, "Refresh domains");
+      wrap.append(btn);
+    };
+    paint(null);
+    // The CURRENT state, fetched without touching Wiz — `api_domainMapHealth` reads the stored
+    // map and nothing else, so opening Settings costs no tenant call. Fired after the first
+    // paint for `loadImpact`'s reason: the control already works, this only adds a caption.
+    call("api_domainMapHealth", {})
+      .then((health) => paint({ health }))
+      .catch(() => { /* the neutral "Not checked" pill above is already true */ });
+    return wrap;
+  }
+
   function buildSystemPanel() {
     const scheduleId = "settings-sync-hour";
     const scheduleErrorId = `${scheduleId}-error`;
@@ -1037,6 +1120,13 @@ export async function renderSettings(host, params, ctx) {
     // beside each other under the one "Deployment" heading.
     diagnostics.grid.append(diagnosticCard({
       key: "wizConnection", label: "Wiz connection", body: connectionCard(),
+    }));
+    // Beside the connection rather than on the Register tab: like the two credential facts
+    // above it, this is a statement about what the deployment can currently REACH, not a knob
+    // a reader sets. It is also the only card here whose button costs a tenant call, which is
+    // why it sits next to the other one that does.
+    diagnostics.grid.append(diagnosticCard({
+      key: "domainMap", label: "Business domains", body: domainMapCard(),
     }));
 
     clear(panels.system).append(

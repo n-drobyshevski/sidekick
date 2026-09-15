@@ -139,6 +139,8 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
         },
         dataRowCount: (tab: string) => (tables[tab] ?? []).length,
         trimSurplusRows: () => 0,
+        // The domain map's tab is created lazily in the real module; `tables` needs no creating.
+        ensureTab: () => null,
       };
     });
 
@@ -174,7 +176,8 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
 
     const devSeed = await import("../src/server/devSeed");
     const ledgerStore = await import("../src/server/ledgerStore");
-    return { devSeed, ledgerStore };
+    const repoDomains = await import("../src/server/repoDomains");
+    return { devSeed, ledgerStore, repoDomains, tables };
   }
 
   it("walks all three SAMPLE_SYNCS through slimRecord -> persistSync and reports the counts", async () => {
@@ -193,6 +196,37 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
     const byScope: Record<string, number> = {};
     for (const row of Object.values(ledger)) byScope[row.scope] = (byScope[row.scope] ?? 0) + 1;
     expect(byScope).toEqual({ sca: 400, sast: 40, secrets: 114 });
+  });
+
+  // THE DOMAIN AXIS, END TO END OVER THE REAL SEED. Everything else about the join is held in
+  // test/repoDomains.test.ts against hand-built rows; what those cannot prove is the thing the
+  // join actually risks — that the tokens a map is built under OVERLAP the ones the ledger's
+  // rows carry. Here the map is derived from the seeded repositories and then asked to place
+  // those same rows, which is the one arrangement where a mismatch would show up as silence.
+  it("seedDomainMap builds a map that actually places the seeded rows", async () => {
+    const { devSeed, ledgerStore, repoDomains } = await mockSeamsAndImportDevSeed();
+    devSeed.seedSampleLedger();
+
+    const result = devSeed.seedDomainMap();
+    expect(result.reason).toBeUndefined();
+    expect(result.domains).toBeGreaterThan(1); // or the switcher has no choice to offer
+    expect(result.repos).toBeGreaterThan(0);
+    // A QUARTER LEFT UNTAGGED ON PURPOSE — the harness has to show the `noDomain` caption and
+    // the `(none)` breakdown bucket, not a fiction in which everything is attributed.
+    expect(result.unmapped).toBeGreaterThan(0);
+
+    const rows = Object.values(ledgerStore.loadState().ledger) as unknown as Record<string, unknown>[];
+    repoDomains.resetDomainMapMemo();
+    repoDomains.attachDomains(rows);
+
+    const placed = rows.filter((r) => typeof r["_domain"] === "string" && r["_domain"]);
+    // THE ASSERTION THAT MATTERS: the join placed rows at all. A token mismatch — the failure
+    // mode the map's several-identities indexing exists to survive — reads as exactly zero.
+    expect(placed.length).toBeGreaterThan(0);
+    const names = new Set(placed.map((r) => r["_domain"]));
+    expect(names.size).toBe(result.domains);
+    // And it did NOT place everything, so both halves of the picture are exercised.
+    expect(placed.length).toBeLessThan(rows.length);
   });
 
   it("a second call is idempotent — persistSync replays per (scan_id, scope), seeded stays 554", async () => {

@@ -458,6 +458,10 @@ const DIM_LABELS = {
   repo: "By repository",
   language: "By language",
   owner_project: "By owning project",
+  // "Owning" is deliberately not repeated here even though a domain owns too. The project
+  // hierarchy is where Wiz FILES a repository; the domain is the business the tenant tagged it
+  // with. Two cards both captioned "owning" would read as two answers to one question.
+  domain: "By business domain",
   cwe: "By weakness class",
   secret_kind: "By secret kind",
 };
@@ -1132,7 +1136,7 @@ export function scaModel(payload, opts) {
     // empty one; both copies have to agree. (Passing no list at all falls back to
     // `Object.keys(perDim)` — the server's order — which would remove the duplication, but it
     // also hands the page's card order to the payload, so the explicit list stays.)
-    concentration: concentrationModel(p.concentration, ["repo", "owner_project"]),
+    concentration: concentrationModel(p.concentration, ["repo", "owner_project", "domain"]),
     oldest: oldestFindingsModel(p.oldest),
     oldestRepos: oldestReposModel(p.oldest),
     movement: movementModel(p.movement, p.latestScan),
