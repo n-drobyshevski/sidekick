@@ -1788,11 +1788,19 @@ export function programModel(p?: ModelParams): Rec {
 // --------------------------------------------------------------------------------------- //
 
 /**
- * The estate: repositories as the asset, and the language cut beside them.
+ * The estate: repositories as the asset, and the same measurements rolled up to the product
+ * the tenant owns them by.
  *
- * BOTH GROUPINGS AND BOTH POPULATIONS. `assetProfile` groups on `language` (brick's own
- * fixture pins that) or on `repo`; `assetProfilePopulations` stacks the `all` and `high_risk`
- * cuts. "How much does a typical repository carry" and "are we closing high risk faster than
+ * BOTH GRAINS AND BOTH POPULATIONS. `assetProfile` groups on `repo` or on `product`;
+ * `assetProfilePopulations` stacks the `all` and `high_risk` cuts.
+ *
+ * THE LANGUAGE CUT IS GONE FROM THIS PAYLOAD, and the reason is the same one that removed it
+ * from both code registers' concentration lists (`CONCENTRATION_DIMS` above): a repository's
+ * language is not something anyone remediates against, and grouping by it restated the
+ * repository card one level coarser. What replaced it is the grain the tenant actually owns
+ * work by — a product — so one table with a repo/product switch says what two tables used to,
+ * and says the second half of it usefully. `assets.ts` KEEPS its `language` grouping: brick's
+ * fixture pins that shape, and the parity is worth more than the branch costs. "How much does a typical repository carry" and "are we closing high risk faster than
  * it arrives" routinely disagree, and which one an unlabelled number meant is not recoverable
  * afterwards — so every row carries `population` and the page must filter on it.
  *
@@ -1819,7 +1827,7 @@ function buildRepos(n: NormParams): Rec {
     showNoFix: n.showNoFix,
     rowCount: visible.length,
     byRepo: assetProfilePopulations(rows, { ...opts, groupBy: "repo" }),
-    byLanguage: assetProfilePopulations(rows, { ...opts, groupBy: "language" }),
+    byProduct: assetProfilePopulations(rows, { ...opts, groupBy: "product" }),
     // `visible`, NOT the re-censored `rows` copy: this module never reads `age_days`, so
     // handing it the rewritten rows would only hide which population it actually measured.
     coldZone: coldZoneProfile(visible, {

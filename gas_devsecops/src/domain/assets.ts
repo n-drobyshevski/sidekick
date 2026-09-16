@@ -63,7 +63,18 @@ const DAYS_PER_MONTH = 30.4375;
 // --------------------------------------------------------------------------- input shape
 
 /** How the assets are bucketed on the page. */
-export type AssetGroupBy = "language" | "repo";
+export type AssetGroupBy = "language" | "repo" | "product";
+
+/**
+ * The label a group of repositories the tenant filed under NO product is published under.
+ *
+ * NOT `ASSET_GROUP_UNKNOWN`, which is what `assetGroupOf` folds a blank LANGUAGE to, and the
+ * divergence is deliberate: the Repositories page draws this table beside the cold zone's own
+ * per-product roll-up (`coldZone.COLD_PRODUCT_NONE`), and the same population labelled
+ * "UNKNOWN" in one table and "(no product)" in the other reads as two different groups. One
+ * page, one word for one thing. `language` keeps `UNKNOWN` because brick's fixture pins it.
+ */
+export const ASSET_PRODUCT_NONE = "(no product)";
 
 /**
  * The projection this module reads. A `BaseRow` satisfies it structurally, which is the
@@ -79,12 +90,30 @@ export type AssetGroupBy = "language" | "repo";
 export type AssetRow = RiskRow &
   Pick<
     BaseRow,
-    "repo_id" | "repo_name" | "language" | "first_seen" | "resolved_at" | "mttr_days" | "age_days"
+    | "repo_id"
+  | "repo_name"
+  | "language"
+  // Attached on read from the tenant's naming convention (`projectScope.attachProjectGrain`),
+  // never a stored column — which is why it is optional here and why a row that carries none
+  // is a real group rather than a dropped one.
+  | "_product"
+  | "first_seen"
+  | "resolved_at"
+  | "mttr_days"
+  | "age_days"
   >;
 
 export interface AssetProfileOptions {
-  /** brick groups on `language` (the fixture pins that); `repo` gives the repos page one row
-   *  per repository, carrying `repo_name` in `asset_label` for display. Default `language`. */
+  /**
+   * brick groups on `language` (the fixture pins that); `repo` gives the repos page one row
+   * per repository, carrying `repo_name` in `asset_label` for display; `product` gives it one
+   * row per product, the tenant's ownership grain (`domain/projectGrain.ts`). Default
+   * `language`.
+   *
+   * `language` IS KEPT THOUGH NO PAGE DRAWS IT ANY MORE. It is the shape the brick fixture
+   * pins (`test/assets.test.ts`), so removing it would delete the port's parity with the
+   * pipeline to save a branch nobody pays for.
+   */
   groupBy?: AssetGroupBy;
   /**
    * The earliest scan on record — when this register started WATCHING. `null` is a legitimate,
@@ -222,6 +251,15 @@ function assetGroupOf(value: unknown): string {
   return blank(value) ? ASSET_GROUP_UNKNOWN : String(value);
 }
 
+/** The group key for one row under the chosen grain. */
+function groupKeyOf(row: AssetRow, assetId: string, groupBy: AssetGroupBy): string {
+  if (groupBy === "repo") return assetId;
+  if (groupBy === "product") {
+    return blank(row._product) ? ASSET_PRODUCT_NONE : String(row._product);
+  }
+  return assetGroupOf(row.language);
+}
+
 // --------------------------------------------------------------------------- per asset
 
 /** One row per asset: its density, its foothold, its coverage and its net flow. */
@@ -259,7 +297,7 @@ function perAsset(rows: Classified[], windowStart: number | null, groupBy: Asset
   const byKey = new Map<string, PerAsset>();
   for (const { row, risk } of rows) {
     const assetId = String(row.repo_id).trim();
-    const group = groupBy === "repo" ? assetId : assetGroupOf(row.language);
+    const group = groupKeyOf(row, assetId, groupBy);
     const key = assetId + " " + group;
     let a = byKey.get(key);
     if (!a) {
@@ -480,7 +518,7 @@ export function assetProfile(rows: AssetRow[], opts: AssetProfileOptions): Asset
   }
   const findingsByGroup = new Map<string, AssetRow[]>();
   for (const { row } of kept) {
-    const g = groupBy === "repo" ? String(row.repo_id).trim() : assetGroupOf(row.language);
+    const g = groupKeyOf(row, String(row.repo_id).trim(), groupBy);
     const list = findingsByGroup.get(g);
     if (list) list.push(row);
     else findingsByGroup.set(g, [row]);

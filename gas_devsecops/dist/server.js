@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "5f4b1107a993" : "dev";
+  var BUILD_ID = true ? "be2ac59568d3" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -6959,6 +6959,7 @@ var Server = (() => {
   // src/domain/assets.ts
   var DAY_MS9 = 864e5;
   var DAYS_PER_MONTH = 30.4375;
+  var ASSET_PRODUCT_NONE = "(no product)";
   function isOpen6(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
@@ -6976,11 +6977,18 @@ var Server = (() => {
   function assetGroupOf(value) {
     return blank2(value) ? ASSET_GROUP_UNKNOWN : String(value);
   }
+  function groupKeyOf(row, assetId, groupBy) {
+    if (groupBy === "repo") return assetId;
+    if (groupBy === "product") {
+      return blank2(row._product) ? ASSET_PRODUCT_NONE : String(row._product);
+    }
+    return assetGroupOf(row.language);
+  }
   function perAsset(rows, windowStart, groupBy) {
     const byKey = /* @__PURE__ */ new Map();
     for (const { row, risk } of rows) {
       const assetId = String(row.repo_id).trim();
-      const group = groupBy === "repo" ? assetId : assetGroupOf(row.language);
+      const group = groupKeyOf(row, assetId, groupBy);
       const key = assetId + "\0" + group;
       let a = byKey.get(key);
       if (!a) {
@@ -7129,7 +7137,7 @@ var Server = (() => {
     }
     const findingsByGroup = /* @__PURE__ */ new Map();
     for (const { row } of kept) {
-      const g = groupBy === "repo" ? String(row.repo_id).trim() : assetGroupOf(row.language);
+      const g = groupKeyOf(row, String(row.repo_id).trim(), groupBy);
       const list = findingsByGroup.get(g);
       if (list) list.push(row);
       else findingsByGroup.set(g, [row]);
@@ -8434,7 +8442,7 @@ var Server = (() => {
       showNoFix: n2.showNoFix,
       rowCount: visible.length,
       byRepo: assetProfilePopulations(rows, { ...opts, groupBy: "repo" }),
-      byLanguage: assetProfilePopulations(rows, { ...opts, groupBy: "language" }),
+      byProduct: assetProfilePopulations(rows, { ...opts, groupBy: "product" }),
       // `visible`, NOT the re-censored `rows` copy: this module never reads `age_days`, so
       // handing it the rewritten rows would only hide which population it actually measured.
       coldZone: coldZoneProfile(visible, {

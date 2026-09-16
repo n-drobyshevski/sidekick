@@ -1239,6 +1239,58 @@ describe("repos: coldestShareNote — the marks counted, and the clamp that deci
   });
 });
 
+// =========================================================================================
+//  repos: ONE grouped table with a repo/product switch — and no language table at all
+// =========================================================================================
+//
+// SOURCE-AS-TEXT, for this file's usual reason: no jsdom here, and what can go wrong is
+// WHICH payload cut the table reads and WHETHER the switch repaints instead of refetching.
+
+describe("repos: the grouped table is one table with two grains", () => {
+  const section = REPOS_SRC.slice(
+    REPOS_SRC.indexOf("function renderGroupTable"),
+    REPOS_SRC.indexOf("function renderHalfLifeChart"),
+  );
+
+  it("reads BOTH cuts from the one payload, so the switch is a repaint and not a refetch", () => {
+    expect(section).toMatch(/model\.byProduct && model\.byProduct\.all/);
+    expect(section).toMatch(/model\.byRepo && model\.byRepo\.all/);
+    // A refetch here would make a grain flip cost a round trip for data already on the page.
+    expect(section).not.toMatch(/swrCall|api_getReposPage/);
+  });
+
+  it("names the row header for the grain, and the control agrees word for word", () => {
+    expect(section).toMatch(/label: isRepo \? "Repository" : "Product"/);
+    expect(REPOS_SRC).toMatch(/value: "repo",\s*\n\s*label: "Repository"/);
+    expect(REPOS_SRC).toMatch(/value: "product",\s*\n\s*label: "Product"/);
+  });
+
+  it("the product side carries a Repos column and the repository side does not", () => {
+    // Without it a reader cannot tell a product whose single repository is dense from one
+    // whose twenty are. On the repository side the answer is always one, so the column would
+    // be a column of ones.
+    expect(section).toMatch(/if \(!isRepo\) \{\s*\n\s*columns\.push\(\{ key: "assets", label: "Repos"/);
+  });
+
+  it("draws the switch even where the grain has nothing measured", () => {
+    // A reader who lands on an empty grain has to be able to get back to the one that has
+    // something; a control that appeared only on success would strand them.
+    const beforeEmpty = section.slice(0, section.indexOf("if (!rows.length)"));
+    expect(beforeEmpty).toMatch(/repoHost\.append\(grainSwitch\(\)\)/);
+  });
+
+  it("the language table is gone from the page entirely — heading, host and payload", () => {
+    // Deleted rather than hidden: a repository's language is not something anyone remediates
+    // against, and grouping the same measurements by it restated the repository table one
+    // level coarser. `assets.ts` keeps its `language` grouping for brick's fixture parity;
+    // this page simply never asks for it.
+    expect(REPOS_SRC).not.toMatch(/byLanguage/);
+    expect(REPOS_SRC).not.toMatch(/langHost/);
+    expect(REPOS_SRC).not.toMatch(/sectionLabel\("By language"\)/);
+    expect(REPOS_SRC).not.toMatch(/label: .*"Language"/);
+  });
+});
+
 describe("repos: the mode reaches the section, the column and the canvas", () => {
   // SOURCE-AS-TEXT, for the same reason the notice-vs-error check above is: no jsdom here, and
   // what can go wrong is WHERE the sentence is appended and WHETHER the canvas is told.
