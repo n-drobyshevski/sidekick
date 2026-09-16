@@ -122,12 +122,40 @@ block (the only `h1`, which waits on no RPC), then a metric header from the shar
 `pageHeader()`: the hero stat ("Remediation half-life", read through `kmHalfLifeView` so a
 censored curve prints "at least N days" and an unread ledger prints "Not measured"), a
 movement aside of per-severity rows against the newest scan a week or more older, and a
-stat strip closed by a hairline; then Fix next, a ranked table of (tier, owner) groups (an ordered list until the prose round of 2026-09-16 — see §9) with
-its denominator ("25 of 70 open findings ranked") and a disclosure naming every unranked
-reason with its count; then the open severity strip with its key row; then the by-domain
-table; then the last-scan block. The centred 720px `.exec` column and the page-level Run
+stat strip closed by a hairline; then the open severity strip with its key row; then the
+by-domain table; then the last-scan block; and LAST, behind its own heading, Fix next — a
+ranked table of (tier, owner) groups (an ordered list until the prose round of 2026-09-16 —
+see §9) with its denominator ("25 of 70 open findings ranked") and a disclosure naming every
+unranked reason with its count. The centred 720px `.exec` column and the page-level Run
 scan button are gone (one control in one place, the rail), and so is every `.exec*` and
-`.hero*` rule. An honesty statement (a bound, a refusal, a cut, the population caveat)
+`.hero*` rule.
+
+**Fix next moved to the foot of the page and became collapsible, and both halves of that are
+one decision.** It sat directly under the hero for its whole life on the argument that the
+hero states the register's claim about itself and the ranking states what follows from it.
+What that order actually did was put the page's longest block — eight rows of eight columns,
+its denominator, its disclosure and up to three task notes — between the one figure a leader
+opens this page for and every other figure that qualifies it. The severity strip, the
+by-domain split and the last-scan caption are one glance each and now sit together; the
+ranked list is a WORKLIST, a different reader on a different errand, and it is at the end,
+shut, opened on purpose. `gas_shared/ui/sheet.js`'s `collapsibleSection` is the component —
+a `<details>` whose `<summary>` holds the h2 itself, so the heading is the toggle and the
+definition rides on a `tipMark()` "?" beside it rather than turning the whole heading into a
+`.tip-trigger` that would both toggle the section AND route to the book on one click.
+
+**Folding a section is not the same as moving a statement one level down, and §6's rule
+survives intact.** "An honesty statement stays on the surface" is a rule about a section's
+INTERIOR: never show a figure while its caveat sits behind a signifier. Everything inside Fix
+next folds together — the cap note and the exposure refusal with the table they qualify — so
+there is no state in which the list is legible and its constraints are not. The one line that
+does have to be readable while the section is shut is its denominator, and that is why
+`rankedShort` moved UP onto the heading (as `collapsibleSection`'s `hint`) instead of staying
+a paragraph under the table. `test/wordsOneLevelDown.test.js` still holds `cutNote`,
+`exposureNote` and `rankedShort` out of any `disclosure(`; `test/executiveFixNext.test.js`
+holds the new half — `fixHost` last in `main.append`, the section built through
+`collapsibleSection`, and the two notes appended to the section's body rather than outside it.
+The open state is the page's (`fixOpen`, because swrCall paints twice on a warm cache) and is
+remembered per reader under the app's own storage prefix. An honesty statement (a bound, a refusal, a cut, the population caveat)
 stays on the surface; an explanation moves onto the nearest label's tip or into the
 disclosure. Measured against the DevSecOps front door on its own harness (272 words, 2
 prose blocks): 276 words, 9 prose blocks, the difference being the eight ranked meta lines,

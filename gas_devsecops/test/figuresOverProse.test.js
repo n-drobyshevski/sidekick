@@ -457,7 +457,14 @@ describe("the honesty statements stayed on the page, not in a tip", () => {
   });
 
   it("the fix-next cap is still a line on the page", () => {
-    expect(EXEC_SRC).toMatch(/if \(view\.cutNote\) fixHost\.append/);
+    // `fix` IS THE SECTION'S OWN BODY, not a different surface: since the ranked list moved to
+    // the foot of the page and behind `collapsibleSection`, everything that was appended to
+    // `fixHost` is appended to `section.body` instead. The claim is unchanged — the cap is a
+    // `<p>` beside the list it qualifies, never a tip and never inside the disclosure — so the
+    // pin follows the host rename rather than being relaxed. `disclosure(` is named here too,
+    // so a cap that later slid inside the accounting still fails.
+    expect(EXEC_SRC).toMatch(/if \(view\.cutNote\) fix\.append/);
+    expect(EXEC_SRC).toMatch(/if \(view\.cutNote\) fix\.append\(el\("p", \{ class: "small muted" \}, view\.cutNote\)\);/);
   });
 
   it("the vendor-wait bar still states the zero-length waits in words", () => {

@@ -51,7 +51,7 @@
 
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  clear, dataTable, disclosure, el, emptyState, errorState, fmtCount,
+  clear, collapsibleSection, dataTable, disclosure, el, emptyState, errorState, fmtCount,
   fmtDate, fmtDateTime, fmtDays, fmtSpan, heroStat, num, pageHeader, pluralize, relativeAge,
   scopeBar, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
   FINE_UNITS, unitRow, unitScale,
@@ -798,12 +798,25 @@ export async function renderExecutive(main, _params, ctx) {
 
   const noticeHost = el("div", {});
   const heroHost = el("div", {});
-  // Directly under the hero and ABOVE the severity picture: the hero states the register's
-  // claim about itself, this states what follows from it, and only then comes the description.
-  const fixHost = el("div", {});
   const sevHost = el("div", {});
   const byDomainHost = el("div", {});
   const scanHost = el("div", {});
+  // LAST ON THE PAGE, AND SHUT. It sat directly under the hero for its whole life on the
+  // argument that the hero states the register's claim about itself and this states what
+  // follows from it. That order put the page's single longest block — an eight-row table of
+  // eight columns, its denominator, its disclosure and up to three task notes — between the
+  // one figure a leader opens this page for and every other figure that qualifies it. The
+  // severity strip, the by-domain split and the last-scan caption are all one glance each and
+  // are now all above the fold together; the ranked list is a WORKLIST, which is a different
+  // reader on a different errand, and it is where a worklist belongs: at the end, behind its
+  // own heading, opened on purpose.
+  //
+  // `fixOpen` OUTLIVES THE PAINT. swrCall paints twice on a warm cache (the stored answer,
+  // then the fresh one), so a section whose open state lived on the node would snap shut under
+  // a reader who had just expanded it. The flag is the page's; the node is handed it and hands
+  // back every change.
+  const fixHost = el("div", {});
+  let fixOpen = false;
   // THE TITLE BLOCK IS STATIC, AND THE h1 DOES NOT WAIT ON AN RPC. The metric header below is
   // built inside `renderHero`, which runs only once the fetch resolves — so the loading
   // skeleton and the fetch-failure errorState each rendered a page with NO `<h1>` in it at
@@ -815,7 +828,7 @@ export async function renderExecutive(main, _params, ctx) {
   // the first of them. Null when nothing is scoped.
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
-  main.append(noticeHost, heroHost, fixHost, sevHost, byDomainHost, scanHost);
+  main.append(noticeHost, heroHost, sevHost, byDomainHost, scanHost, fixHost);
 
   // This is the default landing page, so a single failing section must never blank the whole
   // view. Each section renders inside a guard: on error it logs a tagged trace (so a
@@ -1097,21 +1110,33 @@ export async function renderExecutive(main, _params, ctx) {
   // ------------------------------------------------------------------------- fix next
 
   /**
-   * The ranked list, as an ordered list of GROUPS.
+   * The ranked list of GROUPS — last on the page, and behind its own heading.
    *
    * NO CHART AND NO CANVAS, which is the module header's hard rule and is not relaxed for a
-   * ranking. `<ol>` is the right element because the order IS the claim — a reader using a
-   * screen reader hears "1 of 8" and gets the same argument the page is making visually.
+   * ranking. The order IS the claim, so it is a table with a rank column rather than a stack
+   * of divs: a screen reader hears "row 1 of 8" and gets the same argument the page is making
+   * visually. (It was an `<ol>` until the prose round — see DESIGN.md §9.)
    *
    * EVERY ROW CARRIES ITS UNITS. "7" is not a figure; "7 open findings" is. A group whose
    * rows have no readable age, no CVE and no single domain simply says less, rather than
    * printing a dash where each of those would have gone.
+   *
+   * COLLAPSIBLE, AND SHUT UNTIL A READER OPENS IT. This is the page's one WORKLIST — a
+   * different reader on a different errand from the leader the hero is written for — and it
+   * is also its longest block by a wide margin. Everything it holds folds together, the
+   * caveats with the figures they qualify, so nothing in it is ever on screen without its
+   * caveat; the denominator rides on the heading so the shut section still says how much of
+   * the backlog is behind it. See the host declaration above for why `fixOpen` is the page's
+   * and not the node's.
    */
   function renderFixNext(payload) {
     const view = fixNextView(payload, boot);
     clear(fixHost);
     if (!view.show) {
       if (view.missing) {
+        // NOT COLLAPSIBLE, and that is not an inconsistency. There is no section here to fold
+        // — one sentence saying why the list is absent is the whole block, and a toggle over
+        // a single sentence is a control that hides an honesty statement and buys nothing.
         fixHost.append(sectionLabel("Fix next", { term: "fix-next" }));
         fixHost.append(el("p", { class: "small muted" }, view.missingNote));
       }
@@ -1128,13 +1153,28 @@ export async function renderExecutive(main, _params, ctx) {
     // them — the same "own copy first, book's copy behind it" order `figureCard`'s
     // `figureCardModel` uses for a denominator.
     const fixNextEntry = findEntry("fix-next");
-    fixHost.append(sectionLabel("Fix next", {
-      term: "fix-next",
-      lines: [...(fixNextEntry ? fixNextEntry.lines : []), view.linkNote],
-    }));
+    // THE DENOMINATOR IS THE SHUT SECTION'S OWN CAPTION. "25 of 70 open findings ranked" used
+    // to sit under the table as a surface paragraph; it is the one line that tells a reader
+    // what is behind the toggle and how much of the backlog it speaks for, so it rides on the
+    // heading instead and is legible whether the section is open or closed. It is NOT moved
+    // behind a signifier — the disclosure under it still holds the four reasons, exactly as
+    // before — it moved UP, onto the thing it measures.
+    const section = collapsibleSection("Fix next", {
+      help: {
+        term: "fix-next",
+        lines: [...(fixNextEntry ? fixNextEntry.lines : []), view.linkNote],
+      },
+      hint: view.rankedShort,
+      open: fixOpen,
+      // Per reader, across visits — the flag above only survives this page's own repaints.
+      remember: "execFixNext",
+      onToggle: (o) => { fixOpen = o; },
+    });
+    fixHost.append(section.node);
+    const fix = section.body;
 
     if (view.empty) {
-      fixHost.append(emptyState("Nothing is ranked.", view.emptyReason));
+      fix.append(emptyState("Nothing is ranked.", view.emptyReason));
     } else {
       // A RANKED TABLE, NOT AN ORDERED LIST — and the order is still the claim. The `<ol>`
       // this replaces drew each group as a pill, a link and a `·`-joined meta sentence ("2
@@ -1156,7 +1196,7 @@ export async function renderExecutive(main, _params, ctx) {
         view.items.reduce((m, it) => (it.count > m ? it.count : m), 0),
         { units: FINE_UNITS, maxMarks: 12 },
       );
-      fixHost.append(dataTable({
+      fix.append(dataTable({
         className: "fixnext-table",
         columns: [
           { key: "rank", label: "#", className: "num", cell: (r) => String(r.rank) },
@@ -1214,20 +1254,21 @@ export async function renderExecutive(main, _params, ctx) {
       }));
     }
 
-    // The two numbers on the surface; the four reasons behind the rest in a closed
-    // `disclosure` under it. NOT a tip: the sentence is an ACCOUNTING, and a hover card is
-    // the wrong shape for something a reader may want to read twice and compare against the
-    // register pages.
-    fixHost.append(el("p", { class: "small muted" }, view.rankedShort));
-    fixHost.append(disclosure(
+    // The four reasons behind the unranked rest, in a closed `disclosure`. NOT a tip: the
+    // sentence is an ACCOUNTING, and a hover card is the wrong shape for something a reader
+    // may want to read twice and compare against the register pages. The two numbers it
+    // accounts for are on the section's own heading now — see `hint` above.
+    fix.append(disclosure(
       "Why the rest are not ranked",
       el("p", { class: "small muted" }, view.unrankedSentence),
     ));
-    // KEPT ON THE SURFACE. A cap is a task constraint — the reader is looking at a list that
-    // stops before the backlog does — and so is a tier that could not be measured at all.
-    if (view.cutNote) fixHost.append(el("p", { class: "small muted" }, view.cutNote));
+    // KEPT ON THIS SECTION'S SURFACE. A cap is a task constraint — the reader is looking at a
+    // list that stops before the backlog does — and so is a tier that could not be measured at
+    // all. Neither is behind a second signifier: they fold with the table they qualify, which
+    // is the one arrangement in which a figure is never on screen without its caveat.
+    if (view.cutNote) fix.append(el("p", { class: "small muted" }, view.cutNote));
     if (view.exposureNote) {
-      fixHost.append(el("p", { class: "small muted" }, view.exposureNote));
+      fix.append(el("p", { class: "small muted" }, view.exposureNote));
     }
     // `view.linkNote` ITSELF IS UNCHANGED AND STILL ON THE VIEW MODEL — only the render moved,
     // onto the heading's own tip above. See that append for why.
