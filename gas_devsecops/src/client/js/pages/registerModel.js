@@ -168,7 +168,13 @@ export const REGISTERS = {
       { key: "component", label: "Location", kind: "text", sortable: true },
       { key: "language", label: "Language", kind: "text", sortable: true },
       { key: "repo_name", label: "Repository", kind: "text", sortable: true },
-      { key: "owner_project", label: "Owner", kind: "text", sortable: true },
+      // NO OWNERSHIP COLUMN. There was an `owner_project` one here, labelled "Owner"; it was
+      // never in `pagePayload.ts`'s REGISTER_ROW_COLUMNS.sast, so no row ever carried it and
+      // the live table never drew it. Removed rather than wired up: `owner_project` held a
+      // product for most rows and a support group for the rest (src/domain/projectGrain.ts),
+      // so keeping it would have made this a third name for a grain the rest of the app now
+      // states in two. If this table wants ownership, it wants `_product` — which is a
+      // published column's worth of work, not a label change.
       { key: "first_seen", label: "Created", kind: "date", sortable: true },
       { key: "status", label: "State", kind: "provenance", sortable: true },
     ],

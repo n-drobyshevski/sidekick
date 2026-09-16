@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "f7bdc610b3cd" : "dev";
+  var BUILD_ID = true ? "c203803b7326" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";

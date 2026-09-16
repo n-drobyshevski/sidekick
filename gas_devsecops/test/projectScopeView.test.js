@@ -15,7 +15,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import {
-  SUPPORT_GROUP_PREFIXES, isSupportGroup, projectKind, projectScopeView, scopeOptions,
+  PRODUCT_SEGMENT, SUPPORT_GROUP_PREFIXES, isProduct, isSupportGroup, projectKind,
+  projectScopeView, scopeOptions,
 } from "../src/client/js/ui/projectScope.js";
 import { UI_ICON_NAMES } from "../../gas_shared/ui/uiIcons.js";
 
@@ -44,6 +45,28 @@ const SHARED_UI_SRC = readFileSync(
 describe("isSupportGroup matches the FIRST NAME SEGMENT, never a bare prefix or substring", () => {
   it("SUPPORT_GROUP_PREFIXES is exactly CS, CE, LU", () => {
     expect(SUPPORT_GROUP_PREFIXES).toEqual(["CS", "CE", "LU"]);
+  });
+
+  // THE MIRROR. `src/domain/projectGrain.ts` is the single home of this vocabulary — the
+  // server reads it, and the concentration cards, the cold-zone roll-up and the fix-next line
+  // are all grouped by it. The client cannot import TypeScript, so it keeps a copy; without
+  // this check a fourth prefix added in one place and not the other would ship silently, and
+  // the switcher would offer a grouping the tables do not use.
+  it("mirrors src/domain/projectGrain.ts — the same prefixes and the same product marker", () => {
+    const grain = readFileSync(
+      new URL("../src/domain/projectGrain.ts", import.meta.url), "utf8",
+    );
+    const prefixes = /SUPPORT_GROUP_PREFIXES:\s*readonly string\[\]\s*=\s*\[([^\]]*)\]/
+      .exec(grain);
+    expect(prefixes, "could not find SUPPORT_GROUP_PREFIXES in projectGrain.ts").toBeTruthy();
+    const declared = prefixes[1].split(",")
+      .map((t) => t.trim().replace(/^"|"$/g, ""))
+      .filter(Boolean);
+    expect(declared).toEqual(SUPPORT_GROUP_PREFIXES);
+
+    const segment = /PRODUCT_SEGMENT\s*=\s*"([^"]+)"/.exec(grain);
+    expect(segment, "could not find PRODUCT_SEGMENT in projectGrain.ts").toBeTruthy();
+    expect(segment[1]).toBe(PRODUCT_SEGMENT);
   });
 
   it("accepts CE-TRANSPORT — the prefix as the whole first segment", () => {
@@ -86,21 +109,37 @@ describe("isSupportGroup matches the FIRST NAME SEGMENT, never a bare prefix or 
 //  projectKind — the name rule beats isFolder
 // =========================================================================================
 
-describe("projectKind: the name rule wins over isFolder", () => {
+describe("projectKind: the name rules win over isFolder", () => {
   it("a folder named CS-… is a support group, not a business unit", () => {
     expect(projectKind({ name: "CS-LOG-ZEN-ECOM", isFolder: true })).toBe("support");
   });
 
-  it("isFolder: true (and not a support name) is a business unit", () => {
+  it("isFolder: true (and neither name rule) is a business unit", () => {
     expect(projectKind({ name: "VALUE-CHAIN", isFolder: true })).toBe("unit");
   });
 
-  it("isFolder: false (and not a support name) is a project (leaf)", () => {
-    expect(projectKind({ name: "product-tattoo-idp", isFolder: false })).toBe("project");
+  it("isFolder: false (and neither name rule) is a project (leaf)", () => {
+    expect(projectKind({ name: "checkout-svc", isFolder: false })).toBe("project");
   });
 
-  it("isFolder: undefined (and not a support name) is unknown — never coerced to leaf", () => {
-    expect(projectKind({ name: "product-KCONNECT" })).toBe("unknown");
+  it("isFolder: undefined (and neither name rule) is unknown — never coerced to leaf", () => {
+    expect(projectKind({ name: "checkout-svc" })).toBe("unknown");
+  });
+
+  // THE FLIP THIS CHANGE EXISTS FOR. `product-tattoo-idp` used to be "a leaf", and
+  // `product-KCONNECT` — a product Wiz reported without `isFolder` — used to be "unknown" and
+  // was shown under "Not yet recorded". Both are products, and Wiz never said so: the tenant's
+  // naming did.
+  it("a product- name is a product whatever isFolder says, INCLUDING when it says nothing", () => {
+    expect(projectKind({ name: "product-tattoo-idp", isFolder: false })).toBe("product");
+    expect(projectKind({ name: "product-KCONNECT" })).toBe("product");
+    expect(projectKind({ name: "product-legacy", isFolder: true })).toBe("product");
+  });
+
+  it("the product rule uses the SAME first-segment splitter as the support-group rule", () => {
+    expect(isProduct("product-x")).toBe(true);
+    expect(isProduct("owner-product-x")).toBe(false);   // kills `includes`
+    expect(isProduct("production-tools")).toBe(false);  // kills `startsWith`
   });
 });
 
@@ -109,14 +148,20 @@ describe("projectKind: the name rule wins over isFolder", () => {
 // =========================================================================================
 
 const P_UNIT = { slug: "value-chain", name: "VALUE-CHAIN", isFolder: true, findings: 826 };
-const P_LEAF = { slug: "product-tattoo-idp", name: "product-tattoo-idp", isFolder: false, findings: 40 };
-const P_SUPPORT = { slug: "ce-transport", name: "CE-TRANSPORT", isFolder: true, findings: 12 };
-// No isFolder at all. NOT the tenant's connector tag, which used to be this fixture and
-// cannot be one any more: `domain/projectScope.ts::parseProjects` drops organisation-wide
-// projects (config.ts's ORG_WIDE_PROJECTS), so `filterOptions.projectList` can never carry
-// one — a fixture that kept it would be pinning this file's behaviour on input it will never
-// receive.
-const P_UNKNOWN = { slug: "product-kconnect", name: "product-KCONNECT", findings: 5 };
+const P_SUPPORT = {
+  slug: "ce-transport", name: "CE-TRANSPORT", isFolder: true, findings: 12,
+  supportGroup: null, supportGroupCount: 0,
+};
+// A PRODUCT, under the support group above it. `supportGroup`/`supportGroupCount` come from
+// `domain/projectScope.ts::projectCatalogue`, which learns the edge from co-occurrence — a
+// support group and a product on the same row.
+const P_LEAF = {
+  slug: "product-tattoo-idp", name: "product-tattoo-idp", isFolder: false, findings: 40,
+  supportGroup: "CE-TRANSPORT", supportGroupCount: 1,
+};
+// A plain leaf following NEITHER convention — this is what the `isFolder` gate is still for
+// now that both name rules are ungated. No isFolder at all.
+const P_UNKNOWN = { slug: "checkout-svc", name: "checkout-svc", findings: 5 };
 
 describe("scopeOptions: the anyRecorded gate", () => {
   it("isFolder: undefined across the WHOLE list claims no folder group at all — flat, not "
@@ -125,29 +170,115 @@ describe("scopeOptions: the anyRecorded gate", () => {
     for (const r of rows) expect(r.group).toBe("");
   });
 
-  it("support groups still group even when NOTHING in the register has recorded isFolder", () => {
-    // Neither row here carries isFolder at all, so anyRecorded is false for this list —
-    // unlike P_SUPPORT above, which sets isFolder: true and would trip the gate on its own.
+  it("the NAME-derived kinds still group when NOTHING in the register has recorded isFolder", () => {
+    // Neither name rule needs anything from Wiz, so neither is gated. P_SUPPORT sets
+    // isFolder: true and would trip the gate on its own, so this fixture drops the flag.
     const supportNoFlag = { slug: "ce-transport", name: "CE-TRANSPORT", findings: 12 };
-    const rows = scopeOptions([supportNoFlag, P_UNKNOWN]);
-    const support = rows.find((r) => r.value === "ce-transport");
-    expect(support.group).toBe("Support groups");
-    const unknown = rows.find((r) => r.value === "product-kconnect");
-    expect(unknown.group).toBe(""); // still flat: nobody recorded isFolder
+    const productNoFlag = {
+      slug: "product-a", name: "product-a", findings: 3,
+      supportGroup: "CE-TRANSPORT", supportGroupCount: 1,
+    };
+    const rows = scopeOptions([supportNoFlag, productNoFlag, P_UNKNOWN]);
+    expect(rows.find((r) => r.value === "ce-transport").group).toBe("CE-TRANSPORT");
+    expect(rows.find((r) => r.value === "product-a").group).toBe("CE-TRANSPORT");
+    expect(rows.find((r) => r.value === "checkout-svc").group).toBe(""); // still flat
   });
 
   it("once ANY row has recorded isFolder, the folder groups appear for the rows that have it", () => {
-    const rows = scopeOptions([P_UNIT, P_LEAF, P_UNKNOWN]);
+    const plainLeaf = { slug: "svc", name: "svc", isFolder: false, findings: 2 };
+    const rows = scopeOptions([P_UNIT, plainLeaf, P_UNKNOWN]);
     expect(rows.find((r) => r.value === "value-chain").group).toBe("Business units");
-    expect(rows.find((r) => r.value === "product-tattoo-idp").group).toBe("Projects");
+    expect(rows.find((r) => r.value === "svc").group).toBe("Projects");
     // unknown still gets its own bucket rather than being folded into Projects or Business units
-    expect(rows.find((r) => r.value === "product-kconnect").group).toBe("Not yet recorded");
+    expect(rows.find((r) => r.value === "checkout-svc").group).toBe("Not yet recorded");
+  });
+});
+
+// =========================================================================================
+//  ONE HEADING PER SUPPORT GROUP — the containment, shown without a tree
+// =========================================================================================
+//
+// The shared combobox emits a heading whenever the `group` string changes while walking a
+// pre-sorted list (gas_shared/ui/combobox.js), so this nesting is produced entirely by the
+// sort and costs `gas_shared` — and therefore gas and gas_ai — nothing.
+
+describe("scopeOptions: a support group is its own heading, with its products under it", () => {
+  const prod = (slug, name, group) => ({
+    slug, name, isFolder: false, findings: 10, supportGroup: group, supportGroupCount: group ? 1 : 0,
+  });
+
+  it("files each product under its group's heading, and the group leads its own", () => {
+    const rows = scopeOptions([
+      prod("product-b", "product-b", "CE-TRANSPORT"),
+      P_SUPPORT,
+      prod("product-a", "product-a", "CE-TRANSPORT"),
+    ]);
+    expect(rows.map((r) => r.group)).toEqual(["CE-TRANSPORT", "CE-TRANSPORT", "CE-TRANSPORT"]);
+    // The group first — picking it reaches everything below, so it is offered before the
+    // parts — then its products by name.
+    expect(rows.map((r) => r.value)).toEqual(["ce-transport", "product-a", "product-b"]);
+  });
+
+  it("names the group's own row for what picking it DOES, not just for the group", () => {
+    // A bare repeat under a heading bearing the same name reads as a duplicate row.
+    const rows = scopeOptions([P_SUPPORT]);
+    expect(rows[0].label).toBe("CE-TRANSPORT (everything)");
+    expect(rows[0].hint).toBe("Support group · 12 findings");
+  });
+
+  it("groups are alphabetical and each heading is emitted exactly once", () => {
+    const rows = scopeOptions([
+      prod("p-lu", "product-lu", "LU-OPS"),
+      prod("p-ce", "product-ce", "CE-TRANSPORT"),
+      { ...P_SUPPORT, slug: "lu-ops", name: "LU-OPS" },
+      P_SUPPORT,
+    ]);
+    const seen = [];
+    for (const r of rows) {
+      if (r.group && seen[seen.length - 1] !== r.group) seen.push(r.group);
+    }
+    expect(seen).toEqual(["CE-TRANSPORT", "LU-OPS"]);
+    expect(new Set(seen).size).toBe(seen.length);
+  });
+
+  it("a product NOBODY filed under a group goes to its own bucket, not under a guess", () => {
+    const rows = scopeOptions([prod("orphan", "product-orphan", null)]);
+    expect(rows[0].group).toBe("Products without a support group");
+    expect(rows[0].hint).toBe("10 findings");
+  });
+
+  it("a product TWO groups claim goes to the same bucket, and the hint says why", () => {
+    // Two situations, one bucket, but not one sentence: "nobody filed it" and "two groups
+    // claim it" are different problems, and only the second is the tenant's to fix.
+    const rows = scopeOptions([{
+      slug: "split", name: "product-split", isFolder: false, findings: 7,
+      supportGroup: null, supportGroupCount: 2,
+    }]);
+    expect(rows[0].group).toBe("Products without a support group");
+    expect(rows[0].hint).toBe("2 support groups · 7 findings");
+  });
+
+  it("a support group with no products still gets its heading and its one row", () => {
+    const rows = scopeOptions([P_SUPPORT]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].group).toBe("CE-TRANSPORT");
   });
 });
 
 describe("scopeOptions: ordering emits each heading once", () => {
-  it("sorts units, then support groups, then projects, then unknowns — never interleaved", () => {
-    const rows = scopeOptions([P_LEAF, P_SUPPORT, P_UNKNOWN, P_UNIT]);
+  it("units, then the support groups with their products, then orphan products, then plain "
+    + "leaves, then unknowns — never interleaved", () => {
+    const rows = scopeOptions([
+      P_LEAF,
+      P_SUPPORT,
+      P_UNKNOWN,
+      P_UNIT,
+      { slug: "svc", name: "svc", isFolder: false, findings: 2 },
+      {
+        slug: "orphan", name: "product-orphan", isFolder: false, findings: 1,
+        supportGroup: null, supportGroupCount: 0,
+      },
+    ]);
     const seenGroups = [];
     for (const r of rows) {
       if (r.group && seenGroups[seenGroups.length - 1] !== r.group) seenGroups.push(r.group);
@@ -155,7 +286,13 @@ describe("scopeOptions: ordering emits each heading once", () => {
     // Every group name appears exactly once in the walk order — a fragmented heading would
     // show the same name twice, non-adjacently.
     expect(new Set(seenGroups).size).toBe(seenGroups.length);
-    expect(seenGroups).toEqual(["Business units", "Support groups", "Projects", "Not yet recorded"]);
+    expect(seenGroups).toEqual([
+      "Business units",
+      "CE-TRANSPORT",
+      "Products without a support group",
+      "Projects",
+      "Not yet recorded",
+    ]);
   });
 
   it("is stable within a kind (keeps the server's incoming order for ties)", () => {
@@ -191,12 +328,15 @@ describe("scopeOptions: hints declare folder-ness in words, and the icon is deco
     expect(row.hint).toBe("1 finding");
   });
 
-  it("units and support groups draw the two-folder glyph; leaves and unknowns draw one", () => {
+  it("units and support groups draw the two-folder glyph; products, leaves and unknowns "
+    + "draw one", () => {
     const rows = scopeOptions([P_UNIT, P_SUPPORT, P_LEAF, P_UNKNOWN]);
     expect(rows.find((r) => r.value === "value-chain").icon).toBe("folders");
     expect(rows.find((r) => r.value === "ce-transport").icon).toBe("folders");
+    // A PRODUCT TAKES THE SINGLE FOLDER: it holds repositories, not projects, and the doubled
+    // mark is reserved for the two kinds that reach a subtree of other projects.
     expect(rows.find((r) => r.value === "product-tattoo-idp").icon).toBe("folder");
-    expect(rows.find((r) => r.value === "product-kconnect").icon).toBe("folder");
+    expect(rows.find((r) => r.value === "checkout-svc").icon).toBe("folder");
   });
 });
 

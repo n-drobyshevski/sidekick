@@ -230,6 +230,52 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
     expect(rows.every((r) => r.owner_project !== null)).toBe(true);
   });
 
+  // THE TWO PROJECT GRAINS, END TO END OVER THE REAL SEED. dev/sampleData.dev.ts models the
+  // tenant's shape — every repository under a CS/CE/LU support group, most under a
+  // `product-…` product, one support group covering TWO products, one repository with no
+  // product and one product filed under two groups. That last pair is why this is worth
+  // asserting here rather than only against hand-built rows: those are the branches a seed
+  // that modelled the happy path alone would leave permanently unexercised.
+  it("the seed resolves both grains, and one support group covers several products", async () => {
+    const { devSeed, ledgerStore } = await mockSeamsAndImportDevSeed();
+    const { attachProjectGrain, projectCatalogue } = await import("../src/domain/projectScope");
+    devSeed.seedSampleLedger();
+
+    // The two grains are attached IN MEMORY, so a ledger row does not declare them — which is
+    // the point of the design and the reason for this cast.
+    const rows = Object.values(ledgerStore.loadState().ledger) as unknown as Array<{
+      projects_json: string | null;
+      owner_project: string | null;
+      owner_path: string | null;
+      _supportGroup?: string | null;
+      _product?: string | null;
+    }>;
+    attachProjectGrain(rows);
+
+    // EVERY repository names a support group — that is the tenant's claim, and the seed's.
+    expect(rows.every((r) => typeof r._supportGroup === "string" && r._supportGroup)).toBe(true);
+
+    // ONE GROUP, MANY PRODUCTS. Without this the support-group breakdown would be a second
+    // spelling of the product breakdown and no test would notice.
+    const byGroup = new Map<string, Set<string>>();
+    for (const r of rows) {
+      if (typeof r._supportGroup !== "string" || typeof r._product !== "string") continue;
+      const set = byGroup.get(r._supportGroup) ?? new Set<string>();
+      set.add(r._product);
+      byGroup.set(r._supportGroup, set);
+    }
+    expect([...byGroup.values()].some((products) => products.size > 1)).toBe(true);
+
+    // AND THE TWO REFUSALS ARE REACHABLE. A repository the tenant filed under no product
+    // answers none rather than borrowing its support group's name…
+    expect(rows.some((r) => r._product === undefined)).toBe(true);
+    // …and a product two groups claim names neither, which the catalogue reports as a count.
+    const cat = projectCatalogue(rows);
+    expect(cat.some((c) => c.supportGroupCount > 1 && c.supportGroup === null)).toBe(true);
+    // The org-wide connector tag is in none of it — parseProjects drops it first.
+    expect(cat.every((c) => c.slug !== "github-dktunited")).toBe(true);
+  });
+
   // THE DOMAIN AXIS, END TO END OVER THE REAL SEED. Everything else about the join is held in
   // test/repoDomains.test.ts against hand-built rows; what those cannot prove is the thing the
   // join actually risks — that the tokens a map is built under OVERLAP the ones the ledger's

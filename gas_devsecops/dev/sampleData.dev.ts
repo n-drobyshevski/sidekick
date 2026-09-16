@@ -104,18 +104,63 @@ const UNOBSERVED_REPO: RepoSpec =
 const SLOW_REPO: RepoSpec =
   { id: "repo-11", name: "dktunited/warehouse-sync", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" };
 
+// The tenant's project shape, as the harness must model it or every new surface looks broken.
+//
+// A repository is filed under a CS/CE/LU SUPPORT GROUP and under a `product-…` PRODUCT, and
+// ONE SUPPORT GROUP HOLDS MANY PRODUCTS (src/domain/projectGrain.ts). A business unit may sit
+// beside them. The pool below is built so the harness can actually exercise every branch of
+// that, rather than passing because the case never arrives:
+//
+//   * `CE-TRANSPORT` covers TWO products — without that, the support-group roll-up would be a
+//     second spelling of the product breakdown and nothing would prove it is not.
+//   * one entry has NO product at all, so the `(no product)` bucket and `productOf`'s
+//     `owner_project` fallback are both on screen.
+//   * one product sits under TWO support groups, so the switcher's `2 support groups` hint and
+//     the cold-zone table's em dash are reachable.
 interface ProjectSpec {
-  folder: string;
-  folderSlug: string;
-  leaf: string;
-  leafSlug: string;
+  /** A business unit, where the tenant filed one. Neither name rule claims it. */
+  unit?: string;
+  unitSlug?: string;
+  /** The CS/CE/LU support group. Present on every repository, as in the tenant. */
+  support: string;
+  supportSlug: string;
+  /** A SECOND support group, on the one entry that is filed under two. */
+  support2?: string;
+  support2Slug?: string;
+  /** The `product-…` project, absent on the one entry that follows no convention. */
+  product?: string;
+  productSlug?: string;
 }
 
 const PROJECT_POOL: readonly ProjectSpec[] = [
-  { folder: "VALUE-CHAIN", folderSlug: "value-chain", leaf: "product-tattoo-idp", leafSlug: "tattoo-idp" },
-  { folder: "CE-TRANSPORT", folderSlug: "ce-transport", leaf: "checkout-svc", leafSlug: "checkout-svc" },
-  { folder: "PLATFORM", folderSlug: "platform", leaf: "payments-core", leafSlug: "payments-core" },
-  { folder: "GROWTH", folderSlug: "growth", leaf: "notifications-team", leafSlug: "notifications-team" },
+  {
+    unit: "VALUE-CHAIN", unitSlug: "value-chain",
+    support: "CE-TRANSPORT", supportSlug: "ce-transport",
+    product: "product-tattoo-idp", productSlug: "product-tattoo-idp",
+  },
+  {
+    // The second product under CE-TRANSPORT — this is the one that makes the support-group
+    // card a roll-up rather than a restatement.
+    support: "CE-TRANSPORT", supportSlug: "ce-transport",
+    product: "product-checkout", productSlug: "product-checkout",
+  },
+  {
+    unit: "PLATFORM", unitSlug: "platform",
+    support: "CS-LOG-ZEN-ECOM", supportSlug: "cs-log-zen-ecom",
+    product: "product-payments", productSlug: "product-payments",
+  },
+  {
+    // NO PRODUCT. The repository still names a support group, so it is not unowned — it is
+    // unowned at the finer grain, which is a different and visible thing.
+    support: "LU-OPS", supportSlug: "lu-ops",
+  },
+  {
+    // ONE PRODUCT, TWO SUPPORT GROUPS. The tenant's convention broken for one repository, which
+    // is a state the app must be able to SAY rather than resolve by picking.
+    support: "CS-LOG-ZEN-ECOM", supportSlug: "cs-log-zen-ecom",
+    support2: "LU-OPS", support2Slug: "lu-ops",
+    product: "product-notifications", productSlug: "product-notifications",
+  },
 ];
 
 // The connector tag the tenant puts on EVERY repository — seeded here for the same reason the
@@ -127,12 +172,26 @@ const ORG_TAG: Rec =
   { id: "proj-org", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" };
 
 function projectsFor(idx: number): Rec[] {
-  const p = PROJECT_POOL[idx % PROJECT_POOL.length]!;
-  return [
-    { id: `proj-folder-${idx % PROJECT_POOL.length}`, name: p.folder, isFolder: true, slug: p.folderSlug },
-    { id: `proj-leaf-${idx % PROJECT_POOL.length}`, name: p.leaf, isFolder: false, slug: p.leafSlug },
-    ORG_TAG,
-  ];
+  const at = idx % PROJECT_POOL.length;
+  const p = PROJECT_POOL[at]!;
+  const out: Rec[] = [];
+  if (p.unit !== undefined) {
+    out.push({ id: `proj-unit-${at}`, name: p.unit, isFolder: true, slug: p.unitSlug! });
+  }
+  out.push({ id: `proj-support-${p.supportSlug}`, name: p.support, isFolder: true, slug: p.supportSlug });
+  if (p.support2 !== undefined) {
+    out.push({
+      id: `proj-support-${p.support2Slug}`, name: p.support2, isFolder: true, slug: p.support2Slug!,
+    });
+  }
+  if (p.product !== undefined) {
+    // isFolder DELIBERATELY ABSENT on the products, not false: Wiz omits it often enough that
+    // the tri-state is load-bearing, and a product classified only by its name is exactly the
+    // case the old "first non-folder" rule got wrong.
+    out.push({ id: `proj-product-${p.productSlug}`, name: p.product, slug: p.productSlug! });
+  }
+  out.push(ORG_TAG);
+  return out;
 }
 
 const SCA_PACKAGES: readonly string[] = [
