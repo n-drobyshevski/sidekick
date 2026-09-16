@@ -1001,7 +1001,15 @@ export async function renderRepos(host, _params, _ctx) {
       // coarser. What sits beside the repository now is the grain the tenant owns work by, so
       // the switch flips between "which repository carries this" and "which product does",
       // over identical columns.
-      sectionLabel("By repository or product"),
+      //
+      // NAMED FOR ITS QUESTION, NOT FOR ITS GRAIN, and that is the whole reason it is not
+      // "By repository or product". The switch inside it already says which grain a row is
+      // ("One row per: Repository | Product"), so a heading repeating that says nothing twice
+      // — and it collided on screen with the cold zone's own "By product" roll-up above,
+      // leaving two headings that both answered "how is this grouped?" and neither "what does
+      // this tell me?". They are different questions: the cold zone asks who has gone quiet,
+      // this asks how much is here and how fast it clears.
+      sectionLabel("Backlog and clearance"),
       repoHost,
       sectionLabel("Half-life"),
       chartsHost,

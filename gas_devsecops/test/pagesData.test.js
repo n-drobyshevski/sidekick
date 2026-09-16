@@ -1279,6 +1279,18 @@ describe("repos: the grouped table is one table with two grains", () => {
     expect(beforeEmpty).toMatch(/repoHost\.append\(grainSwitch\(\)\)/);
   });
 
+  it("is headed by its QUESTION, and leaves the grain to the switch inside it", () => {
+    // The control already says which grain a row is, so a heading repeating it says nothing
+    // twice — and "By repository or product" collided on screen with the cold zone's own
+    // "By product" roll-up, leaving two headings that both answered "how is this grouped?"
+    // and neither "what does this tell me?".
+    expect(REPOS_SRC).toMatch(/sectionLabel\("Backlog and clearance"\)/);
+    expect(REPOS_SRC).not.toMatch(/sectionLabel\("By repository/);
+    // The cold zone's roll-up is untouched: it answers who has gone quiet, which this does
+    // not, and it stays legible under its own section heading.
+    expect(REPOS_SRC).toMatch(/"By product"/);
+  });
+
   it("the language table is gone from the page entirely — heading, host and payload", () => {
     // Deleted rather than hidden: a repository's language is not something anyone remediates
     // against, and grouping the same measurements by it restated the repository table one
