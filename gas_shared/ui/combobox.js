@@ -13,6 +13,80 @@ let _comboboxSeq = 0;
 /** How many matches the list will render before it stops and says so. Rebuilding runs
  *  synchronously on every keystroke, and the asset picker's list is the whole landscape. */
 const COMBOBOX_MATCH_CAP = 100;
+
+/**
+ * Share the cap across the groups present, so it can never DELETE a whole group.
+ *
+ * THE DEFECT THIS FIXES was found on a live tenant. A plain `matches.slice(0, CAP)` takes the
+ * first N rows in list order, and the scope switcher's order is every row of the first kind
+ * and then every row of the second — so a register with 437 repositories and 3 business
+ * domains rendered 100 project rows and NOT ONE domain. The Domains heading never appeared,
+ * and the only thing on screen was "Showing 100 of 440", which reads as "this list is long"
+ * when the truth was "a whole dimension is missing".
+ *
+ * Those two are not the same failure and must not look the same. A truncated TAIL inside a
+ * group is fine: the group is on screen, its heading says what it is, and the notice plus the
+ * search box are enough to reach the rest. A group that is entirely absent is unreachable by
+ * a reader who cannot know it exists to search for it.
+ *
+ * So every group that has matches gets a floor share of the cap first, and whatever is left
+ * over goes back to the groups that still have rows, in list order. A single-group list is
+ * unchanged by construction — it takes the whole cap, which is the old `slice` exactly.
+ *
+ * Order is PRESERVED, not re-sorted: the caller decided what comes first (see
+ * `scopeModel.js` — the kinds are rendered in the order the app declares them), and the
+ * heading logic below emits a heading whenever the group changes while walking that order.
+ */
+export function shareCapAcrossGroups(matches, cap = COMBOBOX_MATCH_CAP) {
+  if (matches.length <= cap) return matches;
+
+  // Buckets in first-appearance order. An ungrouped row's "" is a bucket like any other —
+  // it is a real section of the list, it just has no heading.
+  const order = [];
+  const byGroup = new Map();
+  for (const o of matches) {
+    const key = o.group || "";
+    let bucket = byGroup.get(key);
+    if (!bucket) {
+      byGroup.set(key, (bucket = []));
+      order.push(key);
+    }
+    bucket.push(o);
+  }
+  if (order.length === 1) return matches.slice(0, cap);
+
+  // Pass one: the floor share, and never more than a group actually has. A group smaller
+  // than its share hands the difference straight back to pass two rather than holding slots
+  // it cannot fill.
+  const take = new Map();
+  const share = Math.floor(cap / order.length);
+  let used = 0;
+  for (const key of order) {
+    const n = Math.min(share, byGroup.get(key).length);
+    take.set(key, n);
+    used += n;
+  }
+  // Pass two: the remainder, in list order, to whoever still has rows. One row at a time
+  // rather than in blocks, so a long first group cannot swallow the whole remainder while a
+  // later one is still short.
+  let left = cap - used;
+  while (left > 0) {
+    let placed = false;
+    for (const key of order) {
+      if (left === 0) break;
+      const n = take.get(key);
+      if (n >= byGroup.get(key).length) continue;
+      take.set(key, n + 1);
+      left -= 1;
+      placed = true;
+    }
+    if (!placed) break; // every group is fully shown; the cap was never the binding limit
+  }
+
+  const out = [];
+  for (const key of order) out.push(...byGroup.get(key).slice(0, take.get(key)));
+  return out;
+}
 const COMBOBOX_DEBOUNCE_MS = 120;
 
 /**
@@ -261,7 +335,9 @@ export function filterCombobox({
     if (shownPinned.length) rows[rows.length - 1].node.classList.add("combobox-option--last-pinned");
 
     const matches = matching();
-    const shown = matches.slice(0, COMBOBOX_MATCH_CAP);
+    // NOT a plain slice — see `shareCapAcrossGroups`: taking the first N in list order can
+    // drop an entire group, and a missing dimension is a different failure from a long list.
+    const shown = shareCapAcrossGroups(matches, COMBOBOX_MATCH_CAP);
     let group = "";
     for (const o of shown) {
       // A header only earns its place when the group below it is non-empty, which the

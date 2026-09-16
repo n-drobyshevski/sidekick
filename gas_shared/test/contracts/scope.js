@@ -22,6 +22,7 @@
 // which is what makes the table a check rather than a restatement.
 
 import { UI_ICON_NAMES } from "../../ui/uiIcons.js";
+import { shareCapAcrossGroups } from "../../ui/combobox.js";
 
 /**
  * @param {object}   ctx
@@ -50,6 +51,74 @@ export function registerScopeContract(ctx) {
   const kinds = ctx.scopeKinds(ctx.data);
   const chrome = ctx.scopeChrome(ctx.data);
   const emptyKinds = ctx.emptyKinds || [];
+
+  // =======================================================================================
+  //  Every kind the register declares has to be REACHABLE, not merely produced
+  // =======================================================================================
+  //
+  // FOUND ON A LIVE TENANT, and every other spec in this file stayed green through it. The
+  // model built the options correctly, the payloads were exact, the icons resolved — and the
+  // header still offered no Domains group, because the combobox rendered the first 100 rows
+  // of a list that held 437 projects before the first domain. The register declared two
+  // dimensions and a reader could only ever see one.
+  //
+  // A control that silently drops a whole kind is not a long list, and "Showing 100 of 440"
+  // describes the wrong failure. So the rendering cap is held here, beside the kinds it can
+  // erase, rather than only in the combobox's own file: this is the seam where an app's
+  // dimensions become something a person can pick.
+  describe(app + ": the rendering cap cannot erase a declared kind", () => {
+    it("keeps every group on screen when one of them is far longer than the cap", () => {
+      // The live shape: one enormous group, one small one, in that order.
+      const many = Array.from({ length: 437 }, (_, i) => ({ value: `p-${i}`, group: "Projects" }));
+      const few = [
+        { value: "SAP", group: "Domains" },
+        { value: "CROSS", group: "Domains" },
+        { value: "VALUE-CHAIN", group: "Domains" },
+      ];
+      const shown = shareCapAcrossGroups([...many, ...few], 100);
+
+      expect(shown.length).toBe(100);
+      // THE ASSERTION THE LIVE TENANT NEEDED: the short group survives in full.
+      expect(shown.filter((o) => o.group === "Domains")).toHaveLength(3);
+      // And the long one still fills what is left, rather than being cut to an equal share.
+      expect(shown.filter((o) => o.group === "Projects")).toHaveLength(97);
+      // Order is preserved — the heading logic emits a heading on each group change while
+      // walking this list, so a re-sort here would fragment the headings.
+      expect(shown[0].group).toBe("Projects");
+      expect(shown[shown.length - 1].group).toBe("Domains");
+    });
+
+    it("is the plain truncation it always was when there is only one group", () => {
+      const one = Array.from({ length: 250 }, (_, i) => ({ value: `p-${i}`, group: "Projects" }));
+      expect(shareCapAcrossGroups(one, 100)).toEqual(one.slice(0, 100));
+      // Ungrouped rows are one bucket too, so a flat list is unchanged as well.
+      const flat = Array.from({ length: 250 }, (_, i) => ({ value: `p-${i}` }));
+      expect(shareCapAcrossGroups(flat, 100)).toEqual(flat.slice(0, 100));
+    });
+
+    it("returns everything untouched when the cap is not the binding limit", () => {
+      const small = [{ value: "a", group: "A" }, { value: "b", group: "B" }];
+      expect(shareCapAcrossGroups(small, 100)).toBe(small);
+    });
+
+    it("shares fairly when several groups all overflow", () => {
+      const g = (name, n) => Array.from({ length: n }, (_, i) => ({ value: `${name}-${i}`, group: name }));
+      const shown = shareCapAcrossGroups([...g("A", 200), ...g("B", 200), ...g("C", 200)], 99);
+      expect(shown.length).toBe(99);
+      for (const name of ["A", "B", "C"]) {
+        expect(shown.filter((o) => o.group === name), name).toHaveLength(33);
+      }
+    });
+
+    it("hands a small group's unused slots back rather than holding them empty", () => {
+      const g = (name, n) => Array.from({ length: n }, (_, i) => ({ value: `${name}-${i}`, group: name }));
+      // B can only fill 2 of its 50-row share; those 48 slots must reach A, not vanish.
+      const shown = shareCapAcrossGroups([...g("A", 500), ...g("B", 2)], 100);
+      expect(shown.length).toBe(100);
+      expect(shown.filter((o) => o.group === "B")).toHaveLength(2);
+      expect(shown.filter((o) => o.group === "A")).toHaveLength(98);
+    });
+  });
 
   describe(app + ": the scope kinds this register declares", () => {
     it("gives every kind a key, a glyph, and the four functions the model calls", () => {
