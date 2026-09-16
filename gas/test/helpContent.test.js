@@ -61,6 +61,14 @@ const EXPECTED_IDS = [
   "kev", "known-exploit", "epss", "sla-edge", "returned",
   "rail-status", "compaction", "sealed", "episode", "unclassified", "reconstructed",
   "internet-exposed", "age", "actionable-age",
+  // THE COLD ZONE'S FOUR. `cold-zone`, `idle` and `unobserved` are ported from
+  // gas_devsecops/helpContent.js and reworded to this grain (asset, support group, one
+  // remediation column); `coldest-share` is the support-group half of relative mode, and it is
+  // its own entry rather than a third line on `cold-zone` because the tip card renders only the
+  // first two lines. `returned` was already here and the Cold zone page's Last movement column
+  // reaches for it unchanged — a reopen clears the resolved date, which is why an asset with
+  // returns can show no movement at all.
+  "cold-zone", "coldest-share", "unobserved", "idle",
 ];
 
 // Long enough for the three-line entries in the file (the longest first-two line today is 218
@@ -276,6 +284,10 @@ describe("os: the seeded entries reach their call sites", () => {
   const SOURCES = [
     "app.js", "pages/attribution.js", "pages/executive.js", "pages/mttr.js",
     "pages/overview.js", "pages/program.js", "pages/history.js", "pages/data.js",
+    // The Cold zone page joined the list with its own four entries. It restates none of the
+    // sentences below — its glossary triggers all carry `term:` and nothing else — which is
+    // exactly the claim the second `it()` in this block makes about every file in it.
+    "pages/coldZone.js",
   ].map(src).join("\n");
 
   // The original 21 (P7) plus the two later additions (sla-band, capacity) — the ids THIS

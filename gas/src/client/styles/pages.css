@@ -715,3 +715,81 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
   text-align: center; font-size: var(--fs-label); padding: 0 var(--space-5);
   height: auto; border: none; border-radius: 0;
 }
+
+/* ------------------------------------------------- Cold zone: a verdict as a dot and a word
+   PORTED from gas_devsecops/src/client/styles/pages.css (which credits gas_ai's original
+   `.cap-verdict`), rule and reasoning intact: the WORD is the signal and the dot only repeats
+   it. States told apart by hue alone survive neither greyscale nor a dichromat, and the verdict
+   is the one thing a reader takes away from a row. Sized and spaced like gas_shared's
+   `.rail-status-dot` (styles/base.css), so the app has one dot vocabulary.
+
+   NOT PROMOTED TO gas_shared. One app draws it today; a second consumer is what promotes a
+   rule, and gas_devsecops's copy is not reachable from here. */
+.verdict-mark { display: inline-flex; align-items: center; gap: var(--space-2); }
+.verdict-word { font-size: var(--fs-lead); font-weight: 650; }
+.verdict-dot {
+  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
+  background: var(--text-3);
+}
+.verdict-dot--ok { background: var(--ok); }
+.verdict-dot--neutral { background: var(--text-3); }
+.verdict-dot--bad { background: var(--bad); }
+/* The fourth tone, and the cold zone's support-group rollup is why it exists. `partly-cold` —
+   some of a group's assets have gone quiet, not all of them — is a different claim from
+   `fully-cold`, and the two collapsed into one red dot would lose the only distinction the
+   group table's verdict column exists to draw. The WORD still carries it either way; this is
+   the tone that repeats it. */
+.verdict-dot--warn { background: var(--warn); }
+
+/* ------------------------------ Cold zone: the support-group x idle-bucket heat table
+   An app-local table (`table.data.heat`), not a component: this is the one grid in the app
+   whose cells carry an ordinal shade, and nothing in `gas_shared` draws one. Adding a shading
+   channel to the shared table would put it in front of every register that has no use for one.
+
+   THE RAMP IS NEUTRAL INK, AND THAT IS A RULE RATHER THAN A PREFERENCE. The severity palette is
+   the other ordinal scale a reader of this register already knows the meaning of, and idle time
+   is not severity: borrowing red/orange/amber here would have a 70-day-idle cell read as
+   "HIGH". The brand is out too — `--accent` is the one hue this app reserves for "the thing
+   being pointed at", and four steps of it would spend that signal on a background. What is left
+   is ink at four alphas over the page's own ground: a scale with no second meaning to mistake
+   it for.
+
+   AND THE COUNT IS ALWAYS PRINTED. The shade is the redundancy, never the reading: every cell
+   spells its asset count and, under it, the open findings sitting in that bucket, so the grid
+   survives greyscale, a dichromat, and the forced-colors rule below that strips the fills
+   outright (`background` is one of the properties forced-colors mode overrides, so the alphas
+   would land on a system ground they were never measured against). */
+/* The caption is the grid's method sentence and reads as prose, so it is left-aligned and sits
+   above the header rather than centred over it the way a browser's default caption does. No
+   other table in this app has one — `dataTable` puts its explanation in a `<p>` beside the
+   table — but this grid's columns move with the operator's threshold, and a sentence a reader
+   might not connect to the table it belongs to is worse than no sentence. */
+table.data.heat caption {
+  caption-side: top; text-align: left; padding: 0 0 var(--space-2);
+}
+/* A support-group name is a row LABEL, not a column heading: the base `table.data th` rule
+   dresses every `th` as an uppercase micro-label, which is right above a column of numbers and
+   wrong in front of one. Only the alignment, weight and case are restored; the ground stays. */
+table.data.heat th[scope="row"] {
+  font-size: var(--fs-body); font-weight: 600; letter-spacing: normal;
+  text-transform: none; color: var(--ink);
+}
+.heat-cell[data-level="0"] { background: transparent; }
+.heat-cell[data-level="1"] { background: rgba(23, 23, 23, 0.06); }
+.heat-cell[data-level="2"] { background: rgba(23, 23, 23, 0.12); }
+.heat-cell[data-level="3"] { background: rgba(23, 23, 23, 0.20); }
+.heat-cell[data-level="4"] { background: rgba(23, 23, 23, 0.30); }
+/* The open-findings line under the count, on its own line rather than trailing it: a cell is a
+   figure and its denominator-in-miniature, and inline they read as one run-on number. */
+.heat-cell > .small { display: block; }
+@media (forced-colors: active) {
+  .heat-cell { background: transparent; }
+}
+
+/* ------------------------------------------------------- Cold zone: the verdict census
+   The one modifier on gas_shared's `.isotype-wrap`. The census is a part-to-whole over every
+   asset in the register, and a lattice stretched to the full page width reads as a banner
+   rather than as a countable set of marks — the cells stay the size the component chose and the
+   rows get longer, which is exactly the direction that makes them hard to count. Capped so the
+   block stays a picture a reader can take in at once; the key row under it wraps as it likes. */
+.cold-census { max-width: 44rem; }

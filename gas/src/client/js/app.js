@@ -28,6 +28,7 @@ import { renderExecutive } from "./pages/executive.js";
 import { renderOverview } from "./pages/overview.js";
 import { renderMttr } from "./pages/mttr.js";
 import { renderProgram } from "./pages/program.js";
+import { renderColdZone } from "./pages/coldZone.js";
 import { renderHistory } from "./pages/history.js";
 import { renderData } from "./pages/data.js";
 import { renderSettings } from "./pages/settings.js";
@@ -129,6 +130,13 @@ const PAGES = {
   mttr: { title: "MTTR & SLA", group: "Security", render: renderMttr },
   program: { title: "Program performance", group: "Security", render: renderProgram },
   overview: { title: "OS vulnerabilities", group: "Security", render: renderOverview },
+  // LAST IN THE SECURITY LANE, AND AFTER THE REGISTER IT READS. Executive, MTTR and Program
+  // performance ask how fast risk is closing; OS vulnerabilities is the register itself. This
+  // one asks the other question — where has it stopped — and it belongs after the register
+  // rather than before it, because "these assets have gone quiet" is a reading OF the list a
+  // reader has just been shown, not a way into it. The lane stays contiguous either way, which
+  // navModel.railItems requires.
+  coldZone: { title: "Cold zone", group: "Security", render: renderColdZone },
   data: { title: "Data", group: "Data", render: renderData },
   // `history`, not `scan_history`, and the rename is what makes the route table checkable.
   // gas_shared/test/contracts/navGroups.js resolves each route to `pages/<route>.js`, and
