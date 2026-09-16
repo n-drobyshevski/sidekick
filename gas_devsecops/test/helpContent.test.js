@@ -184,10 +184,14 @@ describe("the measurement decisions in the new entries", () => {
     expect(t).not.toMatch(/censored, not excluded/);
   });
 
-  it("foothold: one open high-risk finding is enough, on a repo or a language group", () => {
+  it("foothold: one open high-risk finding is enough, on a repo or the product over it", () => {
     const t = text("foothold");
     expect(t).toMatch(/repository|repo/);
-    expect(t).toMatch(/language/);
+    // The second grain the Repositories table offers. It used to be a language group; that
+    // table is gone, and an entry naming a grouping the page no longer draws would send a
+    // reader looking for a table that is not there.
+    expect(t).toMatch(/product/);
+    expect(t).not.toMatch(/language/);
     expect(t).toMatch(/high-risk/);
   });
 

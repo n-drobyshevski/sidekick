@@ -5,8 +5,12 @@
 // it is built straight from `domain/assets.ts::assetProfile` — a D6 port of
 // brick/metrics.py's asset-centric family — through `readModels.reposModel`, which
 // runs the same estimator twice: `groupBy: "repo"` (one row per repository) and
-// `groupBy: "language"` (one row per language, the only grain where percentiles across
-// several repos are not trivially one point).
+// `groupBy: "product"` (one row per product — the tenant's ownership grain, and the one where
+// percentiles across several repos are not trivially one point). The two are the two sides of
+// ONE table's switch. A `language` grain exists in `assets.ts` and is what brick's fixture
+// pins, but no page draws it: a repository's language is not something anyone remediates
+// against, and grouping the same measurements by it restated the repository table one level
+// coarser.
 //
 // DENSITY IS NEVER A MEAN. `AssetProfileRow` publishes `density_p25/p50/p75` and no mean —
 // v5 Fig. 10's distribution is "many with <10 but some >1000", and a mean would move when a
@@ -53,7 +57,8 @@ import { pagedTable } from "./sca.js";
 import {
   absentText, boundedDays, chartTable, chartTableModel, clear, days1, denomNote, el,
   emptyState, errorState, figureCard, firstRunNotice, fmtCount, fmtDate, fmtDays, meter,
-  num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, skeletonStack, statusPill,
+  num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, segmented, skeletonStack,
+  statusPill,
   uiIcon, MAX_EXACT_CELLS, unitChartModel, unitGrid, unitKeyRow,
   tipLabel,
 } from "../ui.js";
@@ -88,7 +93,7 @@ export function overallRow(result) {
   return rows.find((r) => r.asset_group === OVERALL) || null;
 }
 
-/** Every group row except `OVERALL` — the per-repo or per-language breakdown. */
+/** Every group row except `OVERALL` — the per-repo or per-product breakdown. */
 export function groupRows(result) {
   const rows = result && Array.isArray(result.rows) ? result.rows : [];
   return rows.filter((r) => r.asset_group !== OVERALL);
@@ -883,7 +888,7 @@ export function coldScatterPoints(view) {
   return points;
 }
 
-/** One row of the per-repo / per-language table, formatted for `pagedTable`'s columns. */
+/** One row of the per-repo / per-product table, formatted for `pagedTable`'s columns. */
 export function tableRow(row) {
   const foothold = num(row.assets_with_high_risk_pct);
   return {
@@ -906,7 +911,7 @@ export function tableRow(row) {
  * `<span>` around it so it can be tested without a DOM.
  *
  * ONLY THE TWO ENDS GET A GLYPH. `tableRow.footholdText` is "Yes" at 100%, "No" at 0%, a
- * plain percentage in between (a language grouping several repositories, most of which will
+ * plain percentage in between (a product made of several repositories, most of which will
  * never land on an exact 0 or 100), and `absentText` when nothing was measured — a percentage
  * is not a verdict, so it stays plain text rather than borrowing a glyph that would claim one.
  */
@@ -918,7 +923,7 @@ export function footholdCellKind(footholdText) {
 }
 
 /**
- * The percentage a repository/language's coverage meter may be filled to — or NULL, which
+ * The percentage a repository's (or product's) coverage meter may be filled to — or NULL, which
  * draws no meter. Mirrors `pages/program.js`'s `signalMeterPct`: the refusal happens on the
  * value `tableRow` already read through `num()` (refuse-before-cast), never on a second,
  * confident `Number(...)` taken at render time — `meter(Number(row.coverageP50))` would draw
@@ -967,7 +972,13 @@ export async function renderRepos(host, _params, _ctx) {
   const densityHost = el("div", { class: "kpi-row" });
   const coldHost = el("div", {});
   const repoHost = el("div", {});
-  const langHost = el("div", {});
+  // WHICH GRAIN THE ONE TABLE IS SHOWING. Client-side only: both cuts are in the payload
+  // already (`byRepo` and `byProduct`), so flipping it is a repaint and never a refetch —
+  // which is the whole reason it can be a switch rather than two tables.
+  let groupGrain = "repo";
+  // The last payload painted, so the switch can repaint the table without a refetch. Set by
+  // `paint` below; null until the first successful load, which is why `grainSwitch` guards.
+  let lastModel = null;
   const chartsHost = el("div", { class: "chart-row" });
   // ONE WRAPPER FOR EVERY SECTION BELOW THE DENSITY CARDS, so a first run can clear four
   // headings and their content together in one call — the same "label lives with its box"
@@ -984,10 +995,14 @@ export async function renderRepos(host, _params, _ctx) {
       // repositories nobody is working on has already been told the wrong thing first.
       sectionLabel("Cold zone", { term: "cold-zone" }),
       coldHost,
-      sectionLabel("By repository"),
+      // ONE TABLE, TWO GRAINS. This was two sections — "By repository" and "By language" —
+      // and the second is gone: a repository's language is not something anyone remediates
+      // against, and grouping the same measurements by it restated the first table one level
+      // coarser. What sits beside the repository now is the grain the tenant owns work by, so
+      // the switch flips between "which repository carries this" and "which product does",
+      // over identical columns.
+      sectionLabel("By repository or product"),
       repoHost,
-      sectionLabel("By language"),
-      langHost,
       sectionLabel("Half-life"),
       chartsHost,
     );
@@ -1011,13 +1026,13 @@ export async function renderRepos(host, _params, _ctx) {
     // re-attaches them the next time this runs non-first (see history.js for the identical
     // shape).
     if (first) {
-      [coldHost, repoHost, langHost, chartsHost, sectionsHost].forEach(clear);
+      [coldHost, repoHost, chartsHost, sectionsHost].forEach(clear);
       return;
     }
     ensureSections();
+    lastModel = model;
     renderColdZone(model);
-    renderGroupTable(repoHost, model && model.byRepo && model.byRepo.all, "repository", "repositories");
-    renderGroupTable(langHost, model && model.byLanguage && model.byLanguage.all, "language", "languages");
+    renderGroupTable(model);
     renderHalfLifeChart(model);
   };
 
@@ -1026,7 +1041,7 @@ export async function renderRepos(host, _params, _ctx) {
   } catch (e) {
     console.error("[repos] api_getReposPage failed:", e);
     // errorState, because this IS a failure: the RPC did not answer. Every other absence on
-    // this page — an unmeasured cold zone, a language with no rows, a repository whose curve
+    // this page — an unmeasured cold zone, a grain with no rows, a repository whose curve
     // never fell to half — renders through `emptyState` instead, and the split between the two
     // is the whole reason this call site is spelled out rather than shared.
     clear(densityHost).append(errorState(
@@ -1453,19 +1468,43 @@ export async function renderRepos(host, _params, _ctx) {
       .catch(() => chartUnavailable(canvas));
   }
 
-  function renderGroupTable(target, result, singular, plural) {
-    const rows = groupRows(result).map(tableRow).sort((a, b) => b.openFindings - a.openFindings);
-    clear(target);
+  /**
+   * The one grouped table, and the switch that says which grain it is counting.
+   *
+   * IDENTICAL COLUMNS ON BOTH SIDES, which is what makes this a switch rather than two
+   * tables wearing one heading: every figure here is a property of a POPULATION OF
+   * REPOSITORIES — how dense, whether any offers a foothold, how much of what deserved
+   * remediation got it, how fast a finding dies, whether closing keeps up with arriving —
+   * and a product is just a bigger population of the same thing. Only the row header and the
+   * denominator sentence change words.
+   *
+   * ONE EXTRA COLUMN ON THE PRODUCT SIDE, and it is the honest one: `Repos`, how many
+   * repositories the product is made of. Without it a reader cannot tell a product whose
+   * single repository is dense from one whose twenty are. The repository side needs no such
+   * column — the answer is always one.
+   */
+  function renderGroupTable(model) {
+    const cut = groupGrain === "product"
+      ? (model && model.byProduct && model.byProduct.all)
+      : (model && model.byRepo && model.byRepo.all);
+    const isRepo = groupGrain !== "product";
+    const singular = isRepo ? "repository" : "product";
+    const plural = isRepo ? "repositories" : "products";
+    const rows = groupRows(cut).map(tableRow).sort((a, b) => b.openFindings - a.openFindings);
+    clear(repoHost);
+    // THE SWITCH IS DRAWN EVEN WHERE THE TABLE IS EMPTY. A reader who lands on a grain with
+    // nothing measured has to be able to get back to the one that has something; a control
+    // that appeared only on success would strand them.
+    repoHost.append(grainSwitch());
     if (!rows.length) {
-      target.append(emptyState(
+      repoHost.append(emptyState(
         `No ${plural} measured yet.`,
         `It appears once a sync has saved a finding against at least one ${singular}.`,
       ));
       return;
     }
-    const isRepo = singular === "repository";
     const columns = [
-      { key: "label", label: isRepo ? "Repository" : "Language", cell: (r) => r.label },
+      { key: "label", label: isRepo ? "Repository" : "Product", cell: (r) => r.label },
     ];
     if (!isRepo) {
       columns.push({ key: "assets", label: "Repos", className: "num", cell: (r) => fmtCount(r.assets) });
@@ -1475,7 +1514,7 @@ export async function renderRepos(host, _params, _ctx) {
       {
         key: "foothold", label: "Foothold", className: "num", help: { term: "foothold" },
         // A verdict at the two ends (Yes/No) draws a glyph AND the word — colour never
-        // carries it alone, per R5. A percentage in between (a language spanning several
+        // carries it alone, per R5. A percentage in between (a product made of several
         // repositories) is not a verdict and stays plain text; absent stays this app's one
         // absence mark. `footholdCellKind` is the pure decision this reads.
         cell: (r) => {
@@ -1513,7 +1552,7 @@ export async function renderRepos(host, _params, _ctx) {
       },
     );
     // PAGED, like every other unbounded table in this app. `rows` is one row per repository
-    // (or per language) and the estate is not small: the whole list was rendered at once
+    // (or per product) and the estate is not small: the whole list was rendered at once
     // here, so a reader met several hundred rows with no footer, no page size and nothing
     // saying how many there were beyond the count line below. `pagedTable` (sca.js) sorts
     // and pages client-side, which is right for a list the page already holds in full —
@@ -1522,7 +1561,7 @@ export async function renderRepos(host, _params, _ctx) {
     // THE SORT IS THE ONE THIS TABLE ALREADY HAD: most open findings first, tie-broken on
     // the group key so equal counts do not reshuffle between paints. `rows` arrives sorted
     // that way and `sortRows` re-states it rather than changing it.
-    target.append(pagedTable({
+    repoHost.append(pagedTable({
       columns,
       rows,
       sortSpec: { value: (r) => r.openFindings, descending: true, tiebreak: (r) => r.key },
@@ -1532,7 +1571,41 @@ export async function renderRepos(host, _params, _ctx) {
     // page holds; the pager above it states which slice of that set is on screen. Leaving
     // the old word would have the two lines disagree — "312 repositories shown" directly
     // under a footer reading 1-25 of 312.
-    target.append(denomNote(`${fmtCount(rows.length)} ${rows.length === 1 ? singular : plural} measured.`));
+    repoHost.append(denomNote(`${fmtCount(rows.length)} ${rows.length === 1 ? singular : plural} measured.`));
+  }
+
+  /**
+   * The grain switch. Repaints in place — it never refetches, because both cuts already
+   * travelled in the one payload this page loaded.
+   *
+   * NAMED FOR WHAT A ROW IS, not for what the switch does: "Repository" and "Product" are the
+   * row headers the reader will get, so the control and the column agree word for word.
+   */
+  function grainSwitch() {
+    return el("div", { class: "toolbar-group" },
+      el("span", { class: "small muted" }, "One row per"),
+      segmented({
+        options: [
+          {
+            value: "repo",
+            label: "Repository",
+            title: "One row per repository — how much each carries and how fast it clears it.",
+          },
+          {
+            value: "product",
+            label: "Product",
+            title: "The same measurements over every repository the tenant files under one "
+              + "product. A repository filed under none is counted under (no product).",
+          },
+        ],
+        value: groupGrain,
+        ariaLabel: "Group the table by",
+        onChange: (v) => {
+          if (v === groupGrain) return;
+          groupGrain = v;
+          if (lastModel) renderGroupTable(lastModel);
+        },
+      }));
   }
 
   function renderHalfLifeChart(model) {

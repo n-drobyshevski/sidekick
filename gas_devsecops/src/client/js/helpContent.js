@@ -168,7 +168,7 @@ const ENTRIES = [
     id: "foothold",
     term: "Foothold",
     lines: [
-      "An asset — a repository or a language group — carrying at least one open high-risk finding.",
+      "An asset — a repository, or a product made of several — carrying at least one open high-risk finding.",
       "One is enough: a foothold is a yes/no property of the asset, not a count.",
     ],
   },

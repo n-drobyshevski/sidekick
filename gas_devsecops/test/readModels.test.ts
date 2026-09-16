@@ -1079,11 +1079,17 @@ describe("programModel", () => {
 // --------------------------------------------------------------------------------------- //
 
 describe("reposModel", () => {
-  it("profiles both groupings and both populations", () => {
+  it("profiles both grains and both populations", () => {
     const m = reposModel(ALL) as any;
     expect(m.byRepo.groupBy).toBeUndefined(); // populations wrap two results
     expect(m.byRepo.all.groupBy).toBe("repo");
-    expect(m.byLanguage.all.groupBy).toBe("language");
+    // THE PRODUCT CUT REPLACED THE LANGUAGE ONE. A repository's language is not something
+    // anyone remediates against, and grouping the same measurements by it restated the
+    // repository table one level coarser; a product is the grain the tenant owns work by, so
+    // the two cuts are now the two sides of ONE table's switch. `assets.ts` keeps its
+    // `language` grouping — brick's fixture pins that shape — it is just not served here.
+    expect(m.byProduct.all.groupBy).toBe("product");
+    expect(m.byLanguage).toBeUndefined();
     expect(m.byRepo.rows.some((r: any) => r.population === "all")).toBe(true);
     expect(m.byRepo.rows.some((r: any) => r.population === "high_risk")).toBe(true);
   });
