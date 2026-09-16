@@ -127,7 +127,8 @@ export const PAGE_DEFAULT_COLD_FLOOR_DAYS = 14;
 // this page happened to load with. `test/pagesSettings.test.js` pins the exclusion.
 export const SETTINGS_KEYS = [
   "scopes", "fetchSeverities", "slaTargets", "coldAfterDays", "coldZoneMode",
-  "coldTargetSharePct", "coldFloorDays", "excludeEndOfLife", "showExperimental",
+  "coldTargetSharePct", "coldFloorDays", "excludeEndOfLifeFromColdZone",
+  "excludeEndOfLifeFromMttr", "showExperimental",
   "syncSchedule", "autoCompact", "retentionDays",
 ];
 
@@ -152,8 +153,8 @@ export { DEFAULT_TAB, changeCountText, changeSummary, changedFields, normalizeTa
 // ============================================================================ pure view model
 
 /**
- * Lift api_getSettings's payload into a flat draft over exactly the eleven page-editable
- * Settings fields, defensively — a malformed cell must not crash the page (the server's own `cleanSettings`
+ * Lift api_getSettings's payload into a flat draft over every page-editable
+ * Settings field, defensively — a malformed cell must not crash the page (the server's own `cleanSettings`
  * carries the same never-throw contract; this is its client-side mirror, not a replacement
  * for it). Arrays and per-scope records are copied, never aliased, so editing the draft can
  * never mutate a payload a background revalidation is still holding.
@@ -192,8 +193,10 @@ export function draftFromSettings(settings) {
       ? Number(s.coldFloorDays)
       : PAGE_DEFAULT_COLD_FLOOR_DAYS,
     // Only a literal `true`, mirroring the server's own `cleanSettings`: a settings cell
-    // holding a string or a number is not consent to delete repositories from a page.
-    excludeEndOfLife: s.excludeEndOfLife === true,
+    // holding a string or a number is not consent to delete repositories from a measurement.
+    // Two independent reads — neither switch is a default for the other.
+    excludeEndOfLifeFromColdZone: s.excludeEndOfLifeFromColdZone === true,
+    excludeEndOfLifeFromMttr: s.excludeEndOfLifeFromMttr === true,
     showExperimental: s.showExperimental === true,
     syncSchedule: Number.isFinite(Number(s.syncSchedule)) ? Number(s.syncSchedule) : DEFAULT_SYNC_HOUR,
     autoCompact: s.autoCompact === true,
@@ -935,6 +938,38 @@ export async function renderSettings(host, params, ctx) {
       return el("div", {}, row, divergenceEl, cutline ? cutline.node : null);
     });
 
+    // ---- who the remediation-speed figures are measured over, under the windows they are
+    // measured against.
+    //
+    // HERE AND NOT BESIDE ITS TWIN AT THE BOTTOM OF THE PANEL, deliberately. The two switches
+    // read almost identically and reach completely different families, so the thing that keeps
+    // them apart is not their wording — it is that each one sits with the figures it governs.
+    // This one closes the SLA block, whose windows these figures are measured against; the
+    // cold-zone one closes the cold-zone block. Stacked together they would read as one
+    // decision with two checkboxes.
+    const mttrEolSwitch = switchToggle({
+      checked: draft.excludeEndOfLifeFromMttr,
+      id: "settings-exclude-eol-mttr",
+      ariaLabel: "Exclude end-of-life repositories from the remediation-speed figures",
+      onChange: (on) => { draft.excludeEndOfLifeFromMttr = on; syncDirty(); },
+    });
+    body.push(settingRow({
+      // THE LABEL NAMES THE FAMILY, because the two switches are otherwise the same words
+      // twice on one tab. Their descriptions differ and their positions differ, but a reader
+      // scanning bold labels down the panel would see "End-of-life repositories" twice and
+      // have no idea which one they were about to flip. The parenthetical is the disambiguator
+      // that survives that scan; the glossary term stays on the leading phrase.
+      label: glossaryTip("End-of-life repositories (remediation speed)", "end-of-life"),
+      htmlFor: "settings-exclude-eol-mttr",
+      description: "Leave repositories the tenant has retired out of the half-life, the SLA "
+        + "attainment and the open-age distribution. A finished repository distorts them from "
+        + "both ends: its closes are archival rather than work, and its open findings will "
+        + "never be fixed, so they age inside the backlog forever. Their findings stay in "
+        + "every count of what is open. Read off each repository's lifecycle tag — if System "
+        + "reports no lifecycles placed, this excludes nothing.",
+      control: mttrEolSwitch.node,
+    }));
+
     // ---- the cold zone, AFTER the per-severity rows and inside the same panel.
     //
     // Same tab, not the same kind of deadline: the rows above promise a window for ONE
@@ -1140,19 +1175,20 @@ export async function renderSettings(host, params, ctx) {
     // repository-tag card is where that is diagnosable, and the sentence points at it rather
     // than leaving an operator to conclude the switch is broken.
     const eolSwitch = switchToggle({
-      checked: draft.excludeEndOfLife,
+      checked: draft.excludeEndOfLifeFromColdZone,
       id: "settings-exclude-eol",
       ariaLabel: "Exclude end-of-life repositories",
-      onChange: (on) => { draft.excludeEndOfLife = on; syncDirty(); },
+      onChange: (on) => { draft.excludeEndOfLifeFromColdZone = on; syncDirty(); },
     });
     body.push(settingRow({
-      label: glossaryTip("End-of-life repositories", "end-of-life"),
+      label: glossaryTip("End-of-life repositories (cold zone)", "end-of-life"),
       htmlFor: "settings-exclude-eol",
       description: "Leave repositories the tenant has retired out of the cold zone. Nobody is "
         + "closing findings on a finished repository because nobody is meant to, so counting "
-        + "them as cold crowds out the ones that really have gone quiet. Their findings stay "
-        + "in every other figure this register publishes. Read off each repository's lifecycle "
-        + "tag — if System reports no lifecycles placed, this excludes nothing.",
+        + "them as cold crowds out the ones that really have gone quiet. This reaches the cold "
+        + "zone only — the remediation-speed switch above is separate. Read off each "
+        + "repository's lifecycle tag — if System reports no lifecycles placed, this excludes "
+        + "nothing.",
       control: eolSwitch.node,
     }));
 

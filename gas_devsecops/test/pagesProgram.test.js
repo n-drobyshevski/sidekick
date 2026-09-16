@@ -33,7 +33,8 @@ import {
   executiveHeroView, executiveMovementView, executiveRegisterView, executiveSeverityView,
 } from "../src/client/js/pages/executive.js";
 import {
-  actionableClockView, awaitingView, fmtCount, fmtDays, kmHalfLifeView, mttrHeroView,
+  actionableClockView, awaitingView, endOfLifeExclusionNote, fmtCount, fmtDays, kmHalfLifeView,
+  mttrHeroView,
   mttrSeverityRows, rateView, resolutionBucketView, rmstView, slaSeverityRows,
 } from "../src/client/js/pages/mttr.js";
 import {
@@ -725,5 +726,84 @@ describe("the three pages are wired", () => {
     for (const [name, src] of Object.entries(SRC)) {
       expect(src, name + " hard-codes the fill-only accent").not.toContain("#ffcb13");
     }
+  });
+});
+
+// =========================================================================================
+//  endOfLifeExclusionNote — one sentence, five pages
+// =========================================================================================
+//
+// The MTTR & SLA page, the Executive, Scan history, Coverage & efficiency and Secrets each draw
+// a figure the same switch narrows. Five hand-written sentences would be five chances for one
+// of them to describe a different population than it measured, so there is one — and these
+// cases are mostly about the two things it must never do: claim more than it narrowed, and say
+// anything at all about a tenant whose lifecycle tag this register never learned.
+
+describe("endOfLifeExclusionNote", () => {
+  const block = (over) => ({ excluded: false, repos: 0, excludedRepos: 0, excludedRows: 0, ...over });
+
+  it("says nothing when no repository here is retired, in EITHER setting", () => {
+    // `unmeasurableNote`'s rule — a sentence about zero repositories is noise — and it is also
+    // the honest reading where the lifecycle tag matched nothing: nothing known, nothing said.
+    expect(endOfLifeExclusionNote(block({ repos: 0, excluded: false }))).toBeNull();
+    expect(endOfLifeExclusionNote(block({ repos: 0, excluded: true }))).toBeNull();
+    expect(endOfLifeExclusionNote(null)).toBeNull();
+    expect(endOfLifeExclusionNote(undefined)).toBeNull();
+    // A payload that predates the block entirely.
+    expect(endOfLifeExclusionNote({})).toBeNull();
+  });
+
+  // Perturbation, run and reverted: returning null whenever `excluded` is false — the
+  // "nothing was removed, so there is nothing to say" reading — fails this case with
+  // `expected null to contain 'still counted'`, and takes the discoverability of the whole
+  // setting with it.
+  it("OFF, it says the retired repositories are in the figure and where the switch is", () => {
+    const note = endOfLifeExclusionNote(block({ repos: 3 }));
+    expect(note).toContain("3 repositories");
+    expect(note).toContain("still counted in these figures");
+    expect(note).toContain("Deadlines");
+    expect(note).not.toContain("left out");
+  });
+
+  it("ON, it says what left and how much went with it", () => {
+    const note = endOfLifeExclusionNote(
+      block({ excluded: true, repos: 3, excludedRepos: 3, excludedRows: 41 }),
+    );
+    expect(note).toContain("3 repositories left out of these figures");
+    expect(note).toContain("41 findings");
+    // THE LIMIT OF THE CLAIM, in the same breath. It is the one promise true in all four
+    // combinations of the two switches: neither ever touches a count of what is open.
+    expect(note).toContain("Still counted in every count of what is open");
+  });
+
+  // Perturbation, run and reverted: hard-coding "these figures" in place of the `what`
+  // parameter fails this case with `expected '…these figures…' to contain 'the half-life
+  // figures'` — and on the Executive that sentence would claim the severity tiles moved,
+  // which is exactly what the builder there takes care not to do.
+  it("NAMES THE FAMILY IT REACHES, because the pages do not all narrow the same figures", () => {
+    const on = { excluded: true, repos: 2, excludedRepos: 2, excludedRows: 9 };
+    expect(endOfLifeExclusionNote(block(on), "the half-life figures"))
+      .toContain("left out of the half-life figures");
+    expect(endOfLifeExclusionNote(block({ repos: 2 }), "the capacity rates"))
+      .toContain("still counted in the capacity rates");
+  });
+
+  it("counts in singular where one repository or one finding is what happened", () => {
+    expect(endOfLifeExclusionNote(block({ repos: 1 }))).toContain("1 repository here is");
+    expect(endOfLifeExclusionNote(
+      block({ excluded: true, repos: 1, excludedRepos: 1, excludedRows: 1 }),
+    )).toContain("1 repository left out of these figures as end of life, with 1 finding.");
+  });
+
+  // Perturbation, run and reverted: `Number(block.repos || 0)` in place of `num` fails this
+  // case on `{}` with `expected 'NaN repositories…' to be null`.
+  it("reads the count through this package's refuse-before-cast reader, never a bare cast", () => {
+    for (const repos of [null, undefined, {}, NaN, [], false]) {
+      expect(endOfLifeExclusionNote(block({ repos })), String(repos)).toBeNull();
+    }
+    // A numeric string is a value `num` accepts everywhere else in this package, so it is not
+    // a refusal here either — the guard is against null, junk and NaN, not against a shape
+    // the rest of the app already reads.
+    expect(endOfLifeExclusionNote(block({ repos: "3" }))).toContain("3 repositories");
   });
 });

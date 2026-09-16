@@ -472,7 +472,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "3fb1e1b295a9" : "dev";
+  var BUILD_ID = true ? "7a511839f8a8" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -3444,7 +3444,8 @@ var Server = (() => {
     coldZoneMode: DEFAULT_COLD_ZONE_MODE,
     coldTargetSharePct: DEFAULT_COLD_TARGET_SHARE_PCT,
     coldFloorDays: DEFAULT_COLD_FLOOR_DAYS,
-    excludeEndOfLife: false,
+    excludeEndOfLifeFromColdZone: false,
+    excludeEndOfLifeFromMttr: false,
     showExperimental: false,
     syncSchedule: DEFAULT_SYNC_HOUR,
     autoCompact: false,
@@ -3541,8 +3542,10 @@ var Server = (() => {
       coldTargetSharePct: cleanColdTargetSharePct(r.coldTargetSharePct),
       coldFloorDays: cleanColdFloorDays(r.coldFloorDays),
       // Junk (a string, a number, undefined) coerces to false, same as the two booleans below —
-      // only a literal `true` removes repositories from the cold zone.
-      excludeEndOfLife: r.excludeEndOfLife === true,
+      // only a literal `true` removes repositories from a measurement. Two independent switches,
+      // two independent reads: neither is a default for the other.
+      excludeEndOfLifeFromColdZone: r.excludeEndOfLifeFromColdZone === true,
+      excludeEndOfLifeFromMttr: r.excludeEndOfLifeFromMttr === true,
       showExperimental: r.showExperimental === true,
       syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
       // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
@@ -3578,8 +3581,11 @@ var Server = (() => {
       // decides which repositories the line is derived FROM, so a caller that read the mode here
       // and this flag from the settings row directly could derive a relative line over one
       // population and then draw the table over another.
-      excludeEndOfLife: (settings == null ? void 0 : settings.excludeEndOfLife) === true
+      excludeEndOfLife: (settings == null ? void 0 : settings.excludeEndOfLifeFromColdZone) === true
     };
+  }
+  function effectiveExcludeEndOfLifeFromMttr(settings) {
+    return (settings == null ? void 0 : settings.excludeEndOfLifeFromMttr) === true;
   }
 
   // src/server/sheetsDb.ts
@@ -7749,7 +7755,11 @@ var Server = (() => {
       coldZoneMode: cold.mode,
       coldTargetSharePct: cold.targetSharePct,
       coldFloorDays: cold.floorDays,
-      coldExcludeEndOfLife: cold.excludeEndOfLife
+      coldExcludeEndOfLife: cold.excludeEndOfLife,
+      // ITS OWN DOOR, not a sixth field on `effectiveColdZoneSettings`. That bundle exists
+      // because `coldZoneProfile`'s options must travel together; this one travels with none of
+      // them and governs a different family on five other pages.
+      mttrExcludeEndOfLife: effectiveExcludeEndOfLifeFromMttr(settings)
     };
   }
   function keyOf(n2) {
@@ -7853,6 +7863,39 @@ var Server = (() => {
     }
     return { rows: kept, excludedSecrets };
   }
+  function liveRepoRows(rows, exclude) {
+    var _a;
+    const retired = /* @__PURE__ */ new Set();
+    const kept = [];
+    let excludedRows = 0;
+    for (const r of rows) {
+      if (!isEndOfLife(r._lifecycle)) {
+        kept.push(r);
+        continue;
+      }
+      const id = String((_a = r.repo_id) != null ? _a : "").trim();
+      if (id) retired.add(id);
+      if (!exclude) {
+        kept.push(r);
+        continue;
+      }
+      excludedRows += 1;
+    }
+    return {
+      rows: exclude ? kept : rows,
+      endOfLifeRepos: retired.size,
+      excludedRepos: exclude ? retired.size : 0,
+      excludedRows
+    };
+  }
+  function endOfLifeBlock(cut, exclude) {
+    return {
+      excluded: exclude,
+      repos: cut.endOfLifeRepos,
+      excludedRepos: cut.excludedRepos,
+      excludedRows: cut.excludedRows
+    };
+  }
   function atLedgerClock(rows, asOf) {
     return rows.map((r) => {
       if (!isOpen8(r.status)) return r;
@@ -7929,8 +7972,9 @@ var Server = (() => {
   function buildMttr(n2) {
     var _a;
     const snap = baseSnapshot();
-    const scoped = scopedRows(snap.rows, n2);
-    const rows = visibleRows(snap.rows, n2);
+    const cut = liveRepoRows(visibleRows(snap.rows, n2), n2.mttrExcludeEndOfLife);
+    const scoped = liveRepoRows(scopedRows(snap.rows, n2), n2.mttrExcludeEndOfLife).rows;
+    const rows = cut.rows;
     const { perSev, overall } = mttrFromLedger(
       rows,
       { now: snap.now, slaTargets: n2.slaTargets }
@@ -7964,6 +8008,10 @@ var Server = (() => {
       severities: n2.severities,
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
+      // WHO THIS PAGE MEASURED OVER, published whether or not anybody was removed — the figure
+      // that makes the setting discoverable rather than hidden, and the only way a reader can
+      // check a denominator that quietly shrank.
+      endOfLife: endOfLifeBlock(cut, n2.mttrExcludeEndOfLife),
       perSev,
       overall,
       slaPct,
@@ -8031,7 +8079,12 @@ var Server = (() => {
   }
   function mttrModel(p) {
     const n2 = norm(p);
-    return cached("dsMttr2", { ...keyOf(n2), slaTargets: n2.slaTargets }, () => buildMttr(n2), CLOCK_TTL_SEC);
+    return cached(
+      "dsMttr2",
+      { ...keyOf(n2), slaTargets: n2.slaTargets, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => buildMttr(n2),
+      CLOCK_TTL_SEC
+    );
   }
   function buildExecutive(n2) {
     var _a;
@@ -8047,9 +8100,10 @@ var Server = (() => {
       const s2 = normalizeSeverity(r.severity);
       counts[s2] = ((_a = counts[s2]) != null ? _a : 0) + 1;
     }
+    const execCut = liveRepoRows(rows, n2.mttrExcludeEndOfLife);
     const byScope3 = (n2.scope ? [n2.scope] : [...SCOPES]).map((scope) => {
       const sub = rows.filter((r) => r.scope === scope);
-      const km = kaplanMeier(sub);
+      const km = kaplanMeier(execCut.rows.filter((r) => r.scope === scope));
       return {
         group: scope,
         dimension: "scope",
@@ -8068,7 +8122,16 @@ var Server = (() => {
       showNoFix: n2.showNoFix,
       severityCounts: { counts, open, total: rows.length },
       byScope: { dimension: "scope", rows: byScope3 },
-      weekTrend: weekTrend(scoped, n2, snap.now),
+      // The half-life half of this payload, and the count of what it left out. Named for the
+      // family rather than for the page, because the page draws both kinds of figure.
+      endOfLife: endOfLifeBlock(execCut, n2.mttrExcludeEndOfLife),
+      // The week-over-week half-life delta is a duration, so it is cut like the hero it sits
+      // beside — otherwise "half-life down 4 days" could be the exclusion rather than any work.
+      weekTrend: weekTrend(
+        liveRepoRows(scoped, n2.mttrExcludeEndOfLife).rows,
+        n2,
+        snap.now
+      ),
       // What to do next, and what the list left out. One call, one pass over the rows the
       // severity tiles already counted, so the ranked figure and the tiles cannot disagree.
       // `slaTargets` is the EFFECTIVE map so tier 2/3's "past SLA" gate — and therefore
@@ -8209,7 +8272,15 @@ var Server = (() => {
         coldAfterDays: n2.coldAfterDays,
         coldZoneMode: n2.coldZoneMode,
         coldTargetSharePct: n2.coldTargetSharePct,
-        coldFloorDays: n2.coldFloorDays
+        coldFloorDays: n2.coldFloorDays,
+        // BOTH END-OF-LIFE SWITCHES JOIN THE KEY, on this file's standing rule that a param the
+        // compute reads has to be in the key. The cold-zone one was missing while its four
+        // siblings were present — `settingsStore.saveSettings` bumps the data version, so that
+        // was an invariant broken rather than a stale read anyone could observe, but an
+        // invariant that is true of four fields out of five is no rule at all for whoever adds
+        // the sixth.
+        coldExcludeEndOfLife: n2.coldExcludeEndOfLife,
+        mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife
       },
       () => buildExecutive(n2),
       CLOCK_TTL_SEC
@@ -8452,6 +8523,7 @@ var Server = (() => {
     const snap = baseSnapshot();
     const rows = visibleRows(snap.rows, { ...n2, scope: "secrets", severities: null });
     const secretRows = rows;
+    const secretsCut = liveRepoRows(rows, n2.mttrExcludeEndOfLife);
     const fold = latestSecretsTwins();
     return {
       asOf: snap.now,
@@ -8465,7 +8537,11 @@ var Server = (() => {
       open: rows.filter((r) => isOpen8(r.status)).length,
       coverage: validationCoverage(secretRows),
       validity: postDetectionValidityRate(secretRows),
-      timeToRevoke: timeToRevoke(secretRows, { now: snap.now }),
+      timeToRevoke: timeToRevoke(
+        secretsCut.rows,
+        { now: snap.now }
+      ),
+      endOfLife: endOfLifeBlock(secretsCut, n2.mttrExcludeEndOfLife),
       removalVsRotation: removalVsRotation(secretRows),
       segments: {
         validation_state: bySegment(secretRows, "validation_state"),
@@ -8486,7 +8562,9 @@ var Server = (() => {
     const n2 = norm(p);
     return cached(
       "dsSecrets1",
-      { scope: "secrets", showNoFix: n2.showNoFix },
+      // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
+      // because nothing does. One rule, both directions.
+      { scope: "secrets", showNoFix: n2.showNoFix, mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
       () => buildSecrets(n2),
       CLOCK_TTL_SEC
     );
@@ -8495,7 +8573,8 @@ var Server = (() => {
     const snap = baseSnapshot();
     const clock = ledgerClock(n2.scope);
     const visible = visibleRows(snap.rows, n2);
-    const { rows, excludedSecrets } = classifiableRows(visible);
+    const live = liveRepoRows(visible, n2.mttrExcludeEndOfLife);
+    const { rows, excludedSecrets } = classifiableRows(live.rows);
     const riskRows = rows;
     const scans = loadScanRows();
     const capacityRows = rows;
@@ -8522,6 +8601,7 @@ var Server = (() => {
       showNoFix: n2.showNoFix,
       rowCount: rows.length,
       excludedSecrets,
+      endOfLife: endOfLifeBlock(live, n2.mttrExcludeEndOfLife),
       rules: {
         sca: { rule: DEFAULT_RISK_RULE, sentence: ruleSentence(DEFAULT_RISK_RULE) },
         sast: { rule: DEFAULT_SAST_RISK_RULE, sentence: ruleSentence(DEFAULT_SAST_RISK_RULE) },
@@ -8557,7 +8637,9 @@ var Server = (() => {
     };
   }
   function programTrendFor(n2, all) {
-    const { rows } = classifiableRows(scopedRows(all, n2));
+    const { rows } = classifiableRows(
+      liveRepoRows(scopedRows(all, n2), n2.mttrExcludeEndOfLife).rows
+    );
     return loadProgramTrend(void 0, {
       severities: n2.severities,
       base: rows,
@@ -8566,7 +8648,11 @@ var Server = (() => {
   }
   function programModel(p) {
     const n2 = norm(p);
-    return durablyCached("dsProgram2", keyOf(n2), () => buildProgram(n2));
+    return durablyCached(
+      "dsProgram2",
+      { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => buildProgram(n2)
+    );
   }
   function buildRepos(n2) {
     const snap = baseSnapshot();
@@ -8608,7 +8694,12 @@ var Server = (() => {
         coldAfterDays: n2.coldAfterDays,
         coldZoneMode: n2.coldZoneMode,
         coldTargetSharePct: n2.coldTargetSharePct,
-        coldFloorDays: n2.coldFloorDays
+        coldFloorDays: n2.coldFloorDays,
+        // The fifth cold-zone field, which belonged here from the day it shipped — see
+        // `executiveModel`'s key for the rule it was one field short of. This page draws no
+        // remediation-speed aggregate, so `mttrExcludeEndOfLife` is deliberately NOT here: a
+        // param the compute does not read never joins a key either.
+        coldExcludeEndOfLife: n2.coldExcludeEndOfLife
       },
       () => buildRepos(n2)
     );
@@ -8637,6 +8728,7 @@ var Server = (() => {
     const scansAll = loadScanRows();
     const scans = (n2.scope ? scansAll.filter((s2) => s2.scope === n2.scope) : scansAll).slice().reverse();
     const rows = visibleRows(snap.rows, n2);
+    const historyCut = liveRepoRows(rows, n2.mttrExcludeEndOfLife);
     const movementRows = movementPopulation(snap.rows, n2);
     const movement2 = {};
     const movementNote = {};
@@ -8679,8 +8771,12 @@ var Server = (() => {
         // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
         // than no key", applied to a payload field) — so `km` is the only median this page can
         // publish, and where the curve never reaches half `medianLowerBound` is what is true.
-        km: shipKM(kaplanMeier(rows))
+        // THE ONE SPEED FIGURE ON THIS PAGE, so the one thing the exclusion touches here. The
+        // three counts above it are what the register HOLDS and stay whole; this is how long a
+        // finding lived, and a repository nobody is meant to remediate has no business in it.
+        km: shipKM(kaplanMeier(historyCut.rows))
       },
+      endOfLife: endOfLifeBlock(historyCut, n2.mttrExcludeEndOfLife),
       // `mttrPageTrendSlice` reads both of these keys.
       history: listHistory(),
       trend: trendFor(n2, snap.rows),
@@ -8697,7 +8793,7 @@ var Server = (() => {
     return loadTrend({
       severities: n2.severities,
       showNoFix: n2.showNoFix,
-      base: scopedRows(all, n2),
+      base: liveRepoRows(scopedRows(all, n2), n2.mttrExcludeEndOfLife).rows,
       ...n2.scope ? { scope: n2.scope } : {}
     });
   }
@@ -8718,7 +8814,11 @@ var Server = (() => {
   }
   function historyModel(p) {
     const n2 = norm(p);
-    return durablyCached("dsHistory2", keyOf(n2), () => buildHistory(n2));
+    return durablyCached(
+      "dsHistory2",
+      { ...keyOf(n2), mttrExcludeEndOfLife: n2.mttrExcludeEndOfLife },
+      () => buildHistory(n2)
+    );
   }
   function cellsByTab() {
     const tabs = [];
@@ -9657,6 +9757,13 @@ var Server = (() => {
         // `asOf` above, and a figure that is measured on a different clock has to say so.
         coldZone: exec["coldZone"],
         coldZoneAsOfSource: exec["coldZoneAsOfSource"],
+        // WHO THE HALF-LIFE WAS MEASURED OVER, and the one key on this payload that describes a
+        // NARROWER population than the keys around it. `severityCounts` and `tiers` cover every
+        // repository; the hero above them does not when the remediation-speed exclusion is on,
+        // and the page's one sentence is what stops a reader reading the two as one estate.
+        // ENUMERATED like everything else here — this payload is an allowlist, so a block that
+        // is not named is a block the page never sees.
+        endOfLife: exec["endOfLife"],
         tiers: exec["tiers"],
         signalCoverage: exec["signalCoverage"]
       };
@@ -9754,6 +9861,9 @@ var Server = (() => {
         movement: h["movement"],
         movementNote: h["movementNote"],
         trends: historyTrendSlice(h),
+        // Narrows `kpis.km` and `trends`, and NOTHING else on this payload — the same split
+        // `scanScopeApplies` below already describes for the view scope, one population over.
+        endOfLife: h["endOfLife"],
         // `scans` and `perScope` above are per-scan/per-day facts with no project dimension —
         // see `readModels.ts::buildHistory`'s own comment. `kpis` and `trends` DO narrow to the
         // view-project scope; these two flags name exactly which keys in THIS payload do not, so

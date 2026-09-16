@@ -207,6 +207,60 @@ export function mttrHeroView(mttr) {
 }
 
 /**
+ * What the end-of-life setting is doing to a remediation-speed figure, in one sentence — or
+ * null. THE ONE COPY, imported by every page that draws one.
+ *
+ * FIVE PAGES, ONE SENTENCE, and that is the point rather than a convenience. The MTTR page,
+ * the Executive, Scan history, Coverage & efficiency and Secrets each publish a figure the
+ * same switch narrows; five hand-written sentences is five chances for one of them to describe
+ * a different population than it measured. `mttr.js` is already this package's shared home for
+ * remediation view logic — `executive.js` and `history.js` both import `kmHalfLifeView` from
+ * here — so the note lives beside it.
+ *
+ * TWO SENTENCES FOR TWO SETTINGS, mirroring `repos.js`'s `endOfLifeNote` for the cold zone.
+ * Off, it says the retired repositories are in this figure and where the switch is — a reader
+ * cannot ask for a measurement they do not know is on offer. On, it says what left and how much
+ * went with it, because a share whose denominator quietly shrank is a share nobody can check.
+ *
+ * `what` NAMES THE FAMILY THIS PAGE DRAWS, and it is a parameter rather than a constant because
+ * the pages do not all reach the same figures. On the Executive the switch narrows the
+ * half-life and leaves every severity count whole, so a sentence saying "these figures" there
+ * would claim the tiles moved too. Naming the family is what lets the second clause — "still
+ * counted in every count of what is open" — be true on all five. It is subject-free on
+ * purpose: "they" would have to agree with a count that is sometimes one finding.
+ *
+ * NULL WHEN NO REPOSITORY HERE IS RETIRED, in either setting: `unmeasurableNote`'s rule, and
+ * the honest reading on a tenant whose lifecycle tag this register never learned. Nothing is
+ * known, so nothing is claimed — Settings > System is where THAT is diagnosable.
+ *
+ * @param {{excluded?: boolean, repos?: number, excludedRepos?: number,
+ *          excludedRows?: number}|null|undefined} block  a payload `endOfLife` block
+ * @param {string} what  the family this page draws, e.g. "the half-life figures"
+ * @returns {string|null}
+ */
+export function endOfLifeExclusionNote(block, what = "these figures") {
+  if (!block) return null;
+  // `num` — this package's ONE refuse-before-cast reader, not a bare `Number()`. `Number(null)`
+  // is 0 and 0 is finite, so a cast-first version would read a missing block as "zero retired
+  // repositories", which happens to be the right answer and for the wrong reason; `{}` and
+  // `NaN` it would get wrong outright.
+  const total = num(block.repos, 0);
+  if (total <= 0) return null;
+  // `pluralize` appends an -s, which "repository" does not take — the same explicit form
+  // `repos.js`'s own note uses.
+  const repos = (n) => fmtCount(n) + " " + (n === 1 ? "repository" : "repositories");
+  if (block.excluded !== true) {
+    return repos(total) + (total === 1 ? " here is" : " here are") + " end of life and still"
+      + " counted in " + what + ". Settings, under Deadlines, can leave them out.";
+  }
+  const cut = num(block.excludedRepos, 0);
+  const rows = num(block.excludedRows, 0);
+  return repos(cut) + " left out of " + what + " as end of life, with "
+    + fmtCount(rows) + " " + pluralize(rows, "finding") + ". Still counted in every count of"
+    + " what is open.";
+}
+
+/**
  * The half-life trend, as ONE array read by two things.
  *
  * `renderTrend` plots it as a line at the bottom of the page; `renderHero` draws the same
@@ -963,6 +1017,13 @@ export async function renderMttr(host, params, _ctx) {
         ...(awaiting.show ? [awaitingStatRow(awaiting)] : []),
       ],
     }));
+    // WHO THIS PAGE MEASURED OVER, under the figure it measured. This page had no page-level
+    // population sentence at all before now — it does not even say when it is scoped to one
+    // register — so this is the first, and it stays one line for that reason. Every section
+    // below reads the same `rows`, so one sentence here covers the page rather than each
+    // section repeating it.
+    const eol = endOfLifeExclusionNote(mttr && mttr.endOfLife);
+    if (eol) heroHost.append(el("p", { class: "small muted" }, eol));
   }
 
   /**

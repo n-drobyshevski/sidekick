@@ -903,6 +903,24 @@ describe("each read model reaches its slice", () => {
     expect(Object.keys(row).sort()).toEqual(["group", "kmMedian", "open"]);
   });
 
+  // THE GAP THIS CLOSES, AND IT IS ONE THIS CHANGE ACTUALLY FELL INTO. `getExecutivePage` and
+  // `getScanHistory` build their payloads from an ENUMERATED key list, so a block a model
+  // publishes and the list does not name never reaches the page — the server was right, the
+  // read model was right, every unit test was green, and the sentence simply did not render.
+  // Only an endpoint-level assertion can see that, which is what this whole describe block is
+  // for; these two blocks were missing from it.
+  it("the end-of-life block survives the two ENUMERATED payloads", async () => {
+    const { api } = await syncedRegister();
+    const exec = (api.getExecutivePage({}) as unknown as Rec)["data"] as Rec;
+    const hist = (api.getScanHistory({}) as unknown as Rec)["data"] as Rec;
+    for (const [name, payload] of [["executive", exec], ["history", hist]] as const) {
+      const block = payload["endOfLife"] as Rec | undefined;
+      expect(block, `${name} drops the end-of-life block`).toBeDefined();
+      expect(Object.keys(block!).sort())
+        .toEqual(["excluded", "excludedRepos", "excludedRows", "repos"]);
+    }
+  });
+
   it("getExecutivePage: the cold zone ships as the headline, arrays and all left behind", async () => {
     // There is no slice for this one, and there must not be: `executiveModel` calls
     // `coldZoneHeadline` so the per-repository and per-project arrays never enter the payload

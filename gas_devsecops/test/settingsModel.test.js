@@ -218,6 +218,47 @@ describe("coldAfterDays lives on Deadlines", () => {
   });
 });
 
+// THE TWO END-OF-LIFE SWITCHES, WHICH HAD NO PIN AT ALL. Every other Deadlines field is held
+// to its tab and its label here; these were added later and the pattern stopped one field
+// short, so the gap is closed at the same time the second one arrives.
+describe("the two end-of-life switches live on Deadlines, and are told apart by their labels", () => {
+  it("are registered under the deadlines tab", () => {
+    expect(SETTING_FIELDS.excludeEndOfLifeFromColdZone.tab).toBe("deadlines");
+    expect(SETTING_FIELDS.excludeEndOfLifeFromMttr.tab).toBe("deadlines");
+  });
+
+  // Perturbation, run and reverted: giving both the label "end-of-life exclusion" fails this
+  // case — and on screen it would leave the save bar saying a reader changed "end-of-life
+  // exclusion" with no way to tell which of the two figures moved.
+  it("EACH LABEL NAMES THE FAMILY IT REACHES, because the save bar is where they are told apart", () => {
+    const cold = SETTING_FIELDS.excludeEndOfLifeFromColdZone.label;
+    const mttr = SETTING_FIELDS.excludeEndOfLifeFromMttr.label;
+    expect(cold).not.toBe(mttr);
+    expect(cold).toContain("cold-zone");
+    expect(mttr).toContain("remediation-speed");
+  });
+
+  it("changeSummary names whichever one moved, under the tab that owns it", () => {
+    const summary = changeSummary(["excludeEndOfLifeFromMttr"]);
+    expect(summary.map((e) => e.field)).toEqual(["excludeEndOfLifeFromMttr"]);
+    expect(summary[0].tab).toBe("deadlines");
+    expect(summary[0].tabLabel).toBe("Deadlines");
+  });
+
+  it("marks ONLY Deadlines dirty, and flipping one never marks the other", () => {
+    const saved = { excludeEndOfLifeFromColdZone: false, excludeEndOfLifeFromMttr: false };
+    const status = tabStatus(
+      { ...saved, excludeEndOfLifeFromMttr: true }, saved, {}, TAB_FIELDS,
+    );
+    expect(status.deadlines.dirty).toBe(true);
+    expect(status.system.dirty).toBe(false);
+    // THE INDEPENDENCE, at the registry level: two fields, so a draft that moved one carries
+    // exactly one changed field rather than a pair the save bar would report together.
+    expect(changeSummary(["excludeEndOfLifeFromMttr"]).map((e) => e.field))
+      .toEqual(["excludeEndOfLifeFromMttr"]);
+  });
+});
+
 // The relative mode's three fields live on Deadlines for the window's reason and one more: the
 // mode DECIDES which of these controls is on screen at all, so a registry that housed them on
 // different tabs would let the save bar offer "jump to" a tab whose control the current mode

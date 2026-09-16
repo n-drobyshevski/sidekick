@@ -188,9 +188,9 @@ here and `test/vocabulary.test.js` holds the copy to it.
 | `repos` | Repositories | Data | Where does the backlog sit, which repos have gone cold, who owns them? |
 | `history` | Scan history | Data | What was actually measured, when? |
 | `data` | Storage | Data | What is stored, what can be exported, what can be reset? |
-| `settings` | Settings | — | Register, SLA windows, the cold-zone mode and its end-of-life exclusion, access, system. |
+| `settings` | Settings | — | Register, SLA windows, the cold-zone mode, the two end-of-life exclusions, access, system. |
 
-### The cold zone, and the one population an operator may remove
+### Retired repositories, and the two places an operator may remove them
 
 The Repositories page's cold zone answers **where has remediation stopped** rather than how
 much is open: a repository with open findings and no close, removal or rotation for at least
@@ -198,22 +198,47 @@ the window. The line is drawn either as a **fixed** number of idle days or **rel
 idlest share of the estate with a floor under it; both produce one effective threshold and
 nothing downstream branches on which.
 
-**End-of-life repositories can be left out, and that is the only exclusion on offer.** A
-repository the tenant has retired answers this question with a silence that means the opposite
-of what the section reads into it — nobody is closing findings on it because nobody is meant
-to — so counting it as cold describes a decision rather than a team, and crowds out the
-repositories that really have gone quiet. **Settings → Deadlines** turns it on; it is **off by
-default**, and off the retired repositories stay in the table with their lifecycle printed
-beside the verdict so a reader can dismiss them without the app deciding for them.
+**End-of-life repositories can be left out of it.** A repository the tenant has retired answers
+this question with a silence that means the opposite of what the section reads into it — nobody
+is closing findings on it because nobody is meant to — so counting it as cold describes a
+decision rather than a team, and crowds out the repositories that really have gone quiet.
+**Settings → Deadlines** turns it on; it is **off by default**, and off the retired repositories
+stay in the table with their lifecycle printed beside the verdict so a reader can dismiss them
+without the app deciding for them.
 
-Three refusals keep it honest. It **never guesses**: only a positively recognised end-of-life
-value excludes, so a missing tag, an unfamiliar word, or a lifecycle key that matches nothing
-excludes nothing at all. It **never happens silently**: the section says how many repositories
-left and how many open findings went with them, because a share whose denominator quietly
-shrank is a share nobody can check — and with the setting off it says how many retired
-repositories are being counted, which is how an operator finds the switch. And it **reaches the
-cold zone alone**: those findings stay in every backlog, density, severity and SLA figure the
-register publishes. What is being removed is a reading about engagement, not a finding.
+**A second, independent switch does the same for the remediation-speed figures** — the
+half-life and its survival curve, the SLA attainment, the open-age distribution, the capacity
+rates and the time to revoke, on **MTTR & SLA**, **Executive**, **Coverage & efficiency**,
+**Scan history** and **Secrets**. The argument is a different one: the cold zone measures
+*silence*, while these measure *how long a finding lived*, and a retired repository distorts
+them from both ends at once — its closes are archival rather than work, and its open findings
+will never be fixed, so they age inside the backlog forever. It is a separate setting because
+either is useful without the other, and because the two make separate claims. `PRODUCT.md`'s
+seventh principle already makes the neighbouring argument for the vendor wait: *waiting for a
+vendor is not remediation time*.
+
+Both are **aggregates only**. A per-repository half-life on the Repositories page is that
+repository's own fact rather than a claim about the estate, so that table is untouched — which
+is also what keeps its Lifecycle column able to show the retired repositories it was added for.
+
+Three refusals keep each of them honest. Neither **ever guesses**: only a positively recognised
+end-of-life value excludes, so a missing tag, an unfamiliar word, or a lifecycle key that
+matches nothing excludes nothing at all. Neither **ever happens silently**: each surface says
+how many repositories left and how much went with them, because a share whose denominator
+quietly shrank is a share nobody can check — and with a switch off it says how many retired
+repositories are being counted, which is how an operator finds it. And **neither touches a
+count of what is open**: a retired repository's findings stay in every backlog, density and
+severity figure the register publishes, in every combination of the two. What is removed is a
+reading, never a finding.
+
+Where they live in the code is the one asymmetry worth knowing. The cold zone owns its own
+exclusion inside `domain/coldZone.ts`, because relative mode *derives* its line from the
+surviving population and a cut applied afterwards would move the line and then hide what moved
+it. The remediation-speed one is a row filter at the read-model boundary
+(`readModels.ts`'s `liveRepoRows`), because nothing in that family has such a feedback loop —
+and because `remediation.ts`'s Kaplan–Meier and `program.ts`'s capacity are pinned
+byte-for-byte against brick's PySpark output, so a filter inside either would break the port's
+parity with the pipeline over a setting the pipeline does not have.
 
 ### Why SAST, SCA and secrets are three pages
 

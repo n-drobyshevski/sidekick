@@ -1850,6 +1850,19 @@ describe("repos: endOfLifeNote", () => {
     expect(note).not.toContain("left out");
   });
 
+  // BOTH SENTENCES NAME THE COLD ZONE. There are two of these switches now and they are
+  // independent (`mttr.js`'s `endOfLifeExclusionNote` is the other), so a note that claimed
+  // its own exclusion was the only one would be false the moment a reader turned the other on.
+  it("names the family it reaches, in BOTH settings", () => {
+    const off = endOfLifeNote(view({ end_of_life_repos: 3, exclude_end_of_life: false }));
+    const on = endOfLifeNote(view({
+      end_of_life_repos: 3, exclude_end_of_life: true,
+      excluded_end_of_life: 3, excluded_open_findings: 41,
+    }));
+    expect(off).toContain("the cold zone");
+    expect(on).toContain("the cold zone");
+  });
+
   it("ON, it says what left and how much backlog went with it", () => {
     const note = endOfLifeNote(view({
       end_of_life_repos: 3, exclude_end_of_life: true,
@@ -1857,9 +1870,10 @@ describe("repos: endOfLifeNote", () => {
     }));
     expect(note).toContain("3 repositories left out");
     expect(note).toContain("41 open findings");
-    // THE LIMIT OF THE CLAIM, said in the same breath: the exclusion reaches this section and
-    // nothing else, so a reader does not conclude their backlog figures moved too.
-    expect(note).toContain("every other figure");
+    // THE LIMIT OF THE CLAIM, said in the same breath — and worded so it survives the OTHER
+    // switch being on too: neither exclusion ever touches a count of what is open, which is
+    // the one promise that is true in all four combinations.
+    expect(note).toContain("Still counted in every count of what is open");
   });
 
   it("counts in singular where one repository or one finding is what happened", () => {
@@ -1868,7 +1882,7 @@ describe("repos: endOfLifeNote", () => {
     expect(endOfLifeNote(view({
       end_of_life_repos: 1, exclude_end_of_life: true,
       excluded_end_of_life: 1, excluded_open_findings: 1,
-    }))).toContain("1 repository left out as end of life, with 1 open finding.");
+    }))).toContain("1 repository left out of the cold zone as end of life, with 1 open finding.");
   });
 
   it("survives a register with no clock, where the count is real and nothing else is", () => {

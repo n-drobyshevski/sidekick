@@ -38,7 +38,7 @@ import {
   pageHeader, pluralize, quadModel, quadTable, sectionLabel, skeleton, statRow, statusPill,
   tipLabel,
 } from "../ui.js";
-import { fmtCount, fmtDays } from "./mttr.js";
+import { endOfLifeExclusionNote, fmtCount, fmtDays } from "./mttr.js";
 // `chartCard` — the chart-card shell with its eager data-table alternative and its
 // bundle-refused fallback — is `pages/sca.js`'s, the same way `fmtCount`/`fmtDays` above are
 // `pages/mttr.js`'s. The capacity section is the first chart on this page that has a table
@@ -721,6 +721,14 @@ export async function renderProgram(host, params, _ctx) {
         },
       )));
     }
+    // THE SECOND POPULATION THIS PAGE MAY NOT MEASURE, said in the same place as the first.
+    // Secrets are refused because the rule cannot score them; retired repositories are left
+    // out because the operator asked. Two exclusions, one spot on the page, so a reader
+    // checking a denominator finds both or neither.
+    const eol = endOfLifeExclusionNote(
+      program && program.endOfLife, "the coverage and capacity figures",
+    );
+    if (eol) heroHost.append(el("p", { class: "small muted" }, eol));
   }
 
   /**

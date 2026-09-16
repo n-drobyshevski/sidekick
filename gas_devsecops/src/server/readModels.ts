@@ -144,13 +144,18 @@ import {
   type ColdZoneMode,
   type Scope,
 } from "../domain/config";
-import { effectiveColdZoneSettings, effectiveSlaTargets } from "../domain/settingsLogic";
+import {
+  effectiveColdZoneSettings,
+  effectiveExcludeEndOfLifeFromMttr,
+  effectiveSlaTargets,
+} from "../domain/settingsLogic";
 import { coldZoneHeadline, coldZoneProfile, type NewestScan } from "../domain/coldZone";
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
 import { attachProjectGrain, inProject, parseProjects } from "../domain/projectScope";
 import { inDomain } from "../domain/domainScope";
+import { isEndOfLife } from "../domain/lifecycleTag";
 import { attachRepoTags } from "./repoTags";
 import { clampInt, parseTs, type Rec } from "../domain/util";
 import {
@@ -332,6 +337,21 @@ interface NormParams {
    * shares of two different estates.
    */
   coldExcludeEndOfLife: boolean;
+  /**
+   * Whether the REMEDIATION-SPEED figures leave retired repositories out — the half-life and
+   * its curve, the SLA attainment, the open-age distribution, the capacity rates, the time to
+   * revoke. `settingsLogic.effectiveExcludeEndOfLifeFromMttr`, off the same `loadSettings()`
+   * call as everything above it.
+   *
+   * NOT A `ModelParams` FIELD, for `coldExcludeEndOfLife`'s reason with the same force: this
+   * changes WHO IS MEASURED, and the Executive's hero half-life and the MTTR page's are the
+   * same number read twice. A per-page override is exactly how they would stop being.
+   *
+   * ITS OWN FIELD, NOT THE COLD-ZONE ONE REUSED. The two settings are independent by design
+   * (see `Settings.excludeEndOfLifeFromMttr`); collapsing them here would make the page that
+   * reads one silently obey the other.
+   */
+  mttrExcludeEndOfLife: boolean;
 }
 
 /**
@@ -374,6 +394,10 @@ function norm(p?: ModelParams): NormParams {
     coldTargetSharePct: cold.targetSharePct,
     coldFloorDays: cold.floorDays,
     coldExcludeEndOfLife: cold.excludeEndOfLife,
+    // ITS OWN DOOR, not a sixth field on `effectiveColdZoneSettings`. That bundle exists
+    // because `coldZoneProfile`'s options must travel together; this one travels with none of
+    // them and governs a different family on five other pages.
+    mttrExcludeEndOfLife: effectiveExcludeEndOfLifeFromMttr(settings),
   };
 }
 
@@ -600,6 +624,97 @@ function classifiableRows(rows: BaseRow[]): { rows: BaseRow[]; excludedSecrets: 
 }
 
 /**
+ * What the remediation-speed figures measure over: the rows handed in, minus the ones on
+ * repositories the tenant has RETIRED — and the counts that say what happened.
+ *
+ * `classifiableRows`' TWIN, above, and deliberately the same shape: *"secrets are removed and
+ * counted, never coerced"* is the rule this file already keeps for a population an estimator
+ * must not see, and this is a second population with a second reason.
+ *
+ * WHY THE FILTER IS HERE AND NOT INSIDE THE ESTIMATORS, which is the design decision this
+ * function embodies rather than merely implements:
+ *
+ *   * `remediation.kaplanMeier` is pinned byte-for-byte against brick's PySpark output
+ *     (`test/fixtures/brick/km.json`), and `program.capacityByMonth` against `capacity.json`.
+ *     A population filter inside either would break the port's parity with the pipeline over a
+ *     setting the pipeline does not have.
+ *   * `insights.ts` states the convention outright at `slaConsumedDeciles`: its only caller
+ *     "hands it rows `visibleRows` has ALREADY narrowed… A caller wanting one register filters
+ *     before the call."
+ *   * It is possible here and was not in the cold zone. `coldZoneProfile` had to own its own
+ *     exclusion because relative mode DERIVES its line from the surviving population, so a cut
+ *     applied afterwards would move the line and then hide what moved it. Nothing in this
+ *     family has that feedback loop: every figure is a function of the rows it is given.
+ *
+ * COUNTED IN BOTH SETTINGS. `endOfLifeRepos` is the retired population whether or not the
+ * caller asked for it to go, which is what makes the setting discoverable instead of hidden —
+ * `coldZone.ts` publishes the same figure for the same reason, and `remediation.ts`'s
+ * `LatencySegments` states the general rule: what a population lost is "reported beside the
+ * estimate rather than inferred from it", because a reader cannot otherwise tell a small
+ * register from a badly-measured one.
+ *
+ * NEVER GUESSES. Only a positively recognised end-of-life reading removes anything
+ * (`lifecycleTag.isEndOfLife`): a row whose repository carries no lifecycle tag, or one in a
+ * vocabulary this register has not been taught, stays in. Absence is never retirement.
+ *
+ * REPOSITORIES ARE COUNTED DISTINCTLY, by `repo_id`, because the sentence this feeds says "N
+ * repositories" and a register has thousands of rows across tens of them. Rows with a blank
+ * `repo_id` belong to no repository and can never be retired, so they pass through untouched.
+ */
+function liveRepoRows(
+  rows: BaseRow[],
+  exclude: boolean,
+): { rows: BaseRow[]; endOfLifeRepos: number; excludedRepos: number; excludedRows: number } {
+  const retired = new Set<string>();
+  const kept: BaseRow[] = [];
+  let excludedRows = 0;
+  for (const r of rows) {
+    if (!isEndOfLife(r._lifecycle)) {
+      kept.push(r);
+      continue;
+    }
+    const id = String(r.repo_id ?? "").trim();
+    if (id) retired.add(id);
+    if (!exclude) {
+      kept.push(r);
+      continue;
+    }
+    excludedRows += 1;
+  }
+  return {
+    rows: exclude ? kept : rows,
+    endOfLifeRepos: retired.size,
+    excludedRepos: exclude ? retired.size : 0,
+    excludedRows,
+  };
+}
+
+/** The `liveRepoRows` result as the five payloads carry it. Spelled once, so the client's one
+ *  shared sentence reads the same keys wherever it is drawn. */
+interface EndOfLifeBlock {
+  /** The setting, echoed — the note says a different thing in each state. */
+  excluded: boolean;
+  /** Retired repositories these rows touched, counted in BOTH settings. */
+  repos: number;
+  /** Of those, how many actually left: `repos` when the switch is on, 0 when it is off. */
+  excludedRepos: number;
+  /** Findings that went with them — the measurement this read is no longer about. */
+  excludedRows: number;
+}
+
+function endOfLifeBlock(
+  cut: { endOfLifeRepos: number; excludedRepos: number; excludedRows: number },
+  exclude: boolean,
+): EndOfLifeBlock {
+  return {
+    excluded: exclude,
+    repos: cut.endOfLifeRepos,
+    excludedRepos: cut.excludedRepos,
+    excludedRows: cut.excludedRows,
+  };
+}
+
+/**
  * Re-censor open rows at the LEDGER clock.
  *
  * `age_days` on a base row is `(now − first_seen)`, computed at load against the wall clock.
@@ -765,8 +880,13 @@ function latencySummary(rows: BaseRow[], now: number, scope: Scope | undefined):
  */
 function buildMttr(n: NormParams): Rec {
   const snap = baseSnapshot();
-  const scoped = scopedRows(snap.rows, n);
-  const rows = visibleRows(snap.rows, n);
+  // EVERY BLOCK ON THIS PAGE IS A REMEDIATION-SPEED FIGURE, so the cut is taken once here and
+  // the two row variables below are what it produced — there is no figure on this page the
+  // exclusion should reach and does not, and none it should spare. `scoped` is cut too: it
+  // feeds the vendor-latency estimate, which is a duration like the rest.
+  const cut = liveRepoRows(visibleRows(snap.rows, n), n.mttrExcludeEndOfLife);
+  const scoped = liveRepoRows(scopedRows(snap.rows, n), n.mttrExcludeEndOfLife).rows;
+  const rows = cut.rows;
 
   const { perSev, overall } = mttrFromLedger(
     rows as unknown as Rec[],
@@ -824,6 +944,10 @@ function buildMttr(n: NormParams): Rec {
     severities: n.severities,
     showNoFix: n.showNoFix,
     rowCount: rows.length,
+    // WHO THIS PAGE MEASURED OVER, published whether or not anybody was removed — the figure
+    // that makes the setting discoverable rather than hidden, and the only way a reader can
+    // check a denominator that quietly shrank.
+    endOfLife: endOfLifeBlock(cut, n.mttrExcludeEndOfLife),
     perSev,
     overall,
     slaPct,
@@ -903,7 +1027,15 @@ export function mttrModel(p?: ModelParams): Rec {
   // would keep serving the OLD attainment figures for up to `CLOCK_TTL_SEC`, off a cache entry
   // whose params look identical to the one now in effect. `secretsModel`'s own key (below)
   // shows the mirror rule: a param the compute does not read never joins a key either.
-  return cached("dsMttr2", { ...keyOf(n), slaTargets: n.slaTargets }, () => buildMttr(n), CLOCK_TTL_SEC);
+  // `mttrExcludeEndOfLife` joins it on the identical argument one clause later: it decides
+  // which repositories every figure below is measured over, so an operator flipping it and
+  // reloading would otherwise read the OLD half-life off an entry whose params look the same.
+  return cached(
+    "dsMttr2",
+    { ...keyOf(n), slaTargets: n.slaTargets, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    () => buildMttr(n),
+    CLOCK_TTL_SEC,
+  );
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -940,9 +1072,18 @@ function buildExecutive(n: NormParams): Rec {
     counts[s] = (counts[s] ?? 0) + 1;
   }
 
+  // THE CUT REACHES THE HALF-LIFE AND NOTHING ELSE ON THIS PAGE, and that asymmetry is the
+  // whole care this block needs. `severityCounts`, `tiers`, `movement` and `fixNext` below are
+  // counts of what is OPEN, and a retired repository's open findings are real — removing them
+  // would shrink the backlog this page reports, which is the one thing the exclusion promises
+  // not to do. So it is applied here, to the KM input, and the page says so in one sentence.
+  //
+  // `total` / `open` / `resolved` / `awaiting` stay over the whole `sub` for the same reason:
+  // they are states, not durations.
+  const execCut = liveRepoRows(rows, n.mttrExcludeEndOfLife);
   const byScope = (n.scope ? [n.scope] : [...SCOPES]).map((scope) => {
     const sub = rows.filter((r) => r.scope === scope);
-    const km = kaplanMeier(sub);
+    const km = kaplanMeier(execCut.rows.filter((r) => r.scope === scope));
     return {
       group: scope,
       dimension: "scope",
@@ -962,7 +1103,14 @@ function buildExecutive(n: NormParams): Rec {
     showNoFix: n.showNoFix,
     severityCounts: { counts, open, total: rows.length },
     byScope: { dimension: "scope", rows: byScope },
-    weekTrend: weekTrend(scoped, n, snap.now),
+    // The half-life half of this payload, and the count of what it left out. Named for the
+    // family rather than for the page, because the page draws both kinds of figure.
+    endOfLife: endOfLifeBlock(execCut, n.mttrExcludeEndOfLife),
+    // The week-over-week half-life delta is a duration, so it is cut like the hero it sits
+    // beside — otherwise "half-life down 4 days" could be the exclusion rather than any work.
+    weekTrend: weekTrend(
+      liveRepoRows(scoped, n.mttrExcludeEndOfLife).rows, n, snap.now,
+    ),
     // What to do next, and what the list left out. One call, one pass over the rows the
     // severity tiles already counted, so the ranked figure and the tiles cannot disagree.
     // `slaTargets` is the EFFECTIVE map so tier 2/3's "past SLA" gate — and therefore
@@ -1162,6 +1310,14 @@ export function executiveModel(p?: ModelParams): Rec {
       coldZoneMode: n.coldZoneMode,
       coldTargetSharePct: n.coldTargetSharePct,
       coldFloorDays: n.coldFloorDays,
+      // BOTH END-OF-LIFE SWITCHES JOIN THE KEY, on this file's standing rule that a param the
+      // compute reads has to be in the key. The cold-zone one was missing while its four
+      // siblings were present — `settingsStore.saveSettings` bumps the data version, so that
+      // was an invariant broken rather than a stale read anyone could observe, but an
+      // invariant that is true of four fields out of five is no rule at all for whoever adds
+      // the sixth.
+      coldExcludeEndOfLife: n.coldExcludeEndOfLife,
+      mttrExcludeEndOfLife: n.mttrExcludeEndOfLife,
     },
     () => buildExecutive(n),
     CLOCK_TTL_SEC,
@@ -1634,6 +1790,10 @@ function buildSecrets(n: NormParams): Rec {
   // its fields, for the same reason `registerRowsModel` does — see that call's comment.
   const rows = visibleRows(snap.rows, { ...n, scope: "secrets", severities: null });
   const secretRows = rows as unknown as SecretRow[];
+  // ONE FIGURE ON THIS PAGE IS A DURATION, and it is the only one the exclusion reaches. The
+  // coverage, the validity rate, the removal-vs-rotation split and every segment are counts of
+  // what the register HOLDS — a leaked credential in a retired repository is still leaked.
+  const secretsCut = liveRepoRows(rows, n.mttrExcludeEndOfLife);
   const fold = latestSecretsTwins();
 
   return {
@@ -1648,7 +1808,10 @@ function buildSecrets(n: NormParams): Rec {
     open: rows.filter((r) => isOpen(r.status)).length,
     coverage: validationCoverage(secretRows),
     validity: postDetectionValidityRate(secretRows),
-    timeToRevoke: timeToRevoke(secretRows, { now: snap.now }),
+    timeToRevoke: timeToRevoke(
+      secretsCut.rows as unknown as SecretRow[], { now: snap.now },
+    ),
+    endOfLife: endOfLifeBlock(secretsCut, n.mttrExcludeEndOfLife),
     removalVsRotation: removalVsRotation(secretRows),
     segments: {
       validation_state: bySegment(secretRows, "validation_state"),
@@ -1672,7 +1835,9 @@ export function secretsModel(p?: ModelParams): Rec {
   // would mint one entry per severity selection, all holding the same bytes.
   return cached(
     "dsSecrets1",
-    { scope: "secrets", showNoFix: n.showNoFix },
+    // `mttrExcludeEndOfLife` is here because `timeToRevoke` reads it; `severities` is not
+    // because nothing does. One rule, both directions.
+    { scope: "secrets", showNoFix: n.showNoFix, mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
     () => buildSecrets(n),
     CLOCK_TTL_SEC,
   );
@@ -1705,7 +1870,12 @@ function buildProgram(n: NormParams): Rec {
   const snap = baseSnapshot();
   const clock = ledgerClock(n.scope);
   const visible = visibleRows(snap.rows, n);
-  const { rows, excludedSecrets } = classifiableRows(visible);
+  // TWO POPULATIONS THIS PAGE MAY NOT MEASURE, COMPOSED IN ORDER. Secrets are refused because
+  // `program.resolveRule` throws on them; retired repositories are refused because the operator
+  // asked. Both are counted and published beside the rates they changed — `excludedSecrets` has
+  // always been, and the second one joins it rather than hiding behind it.
+  const live = liveRepoRows(visible, n.mttrExcludeEndOfLife);
+  const { rows, excludedSecrets } = classifiableRows(live.rows);
   const riskRows = rows as unknown as RiskRow[];
 
   const scans = loadScanRows() as unknown as Rec[];
@@ -1739,6 +1909,7 @@ function buildProgram(n: NormParams): Rec {
     showNoFix: n.showNoFix,
     rowCount: rows.length,
     excludedSecrets,
+    endOfLife: endOfLifeBlock(live, n.mttrExcludeEndOfLife),
     rules: {
       sca: { rule: DEFAULT_RISK_RULE, sentence: ruleSentence(DEFAULT_RISK_RULE) },
       sast: { rule: DEFAULT_SAST_RISK_RULE, sentence: ruleSentence(DEFAULT_SAST_RISK_RULE) },
@@ -1777,7 +1948,9 @@ function buildProgram(n: NormParams): Rec {
 function programTrendFor(n: NormParams, all: BaseRow[]): Rec[] {
   // The trend takes the PRE-toggle rows: `loadProgramTrend` has no as-of no-fix mode, and the
   // population it replays is the classifiable one.
-  const { rows } = classifiableRows(scopedRows(all, n));
+  const { rows } = classifiableRows(
+    liveRepoRows(scopedRows(all, n), n.mttrExcludeEndOfLife).rows,
+  );
   return loadProgramTrend(undefined, {
     severities: n.severities,
     base: rows,
@@ -1790,7 +1963,11 @@ export function programModel(p?: ModelParams): Rec {
   // "dsProgram1" -> "dsProgram2": `capacity` gained `closedPerMonthMean`. The durable copy
   // has no TTL to age it out, so a shape change has to move the name or the page draws the
   // absent mark beside a live close rate until the next commit rewrites the file.
-  return durablyCached("dsProgram2", keyOf(n), () => buildProgram(n));
+  return durablyCached(
+    "dsProgram2",
+    { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    () => buildProgram(n),
+  );
 }
 
 // --------------------------------------------------------------------------------------- //
@@ -1883,6 +2060,11 @@ export function reposModel(p?: ModelParams): Rec {
       coldZoneMode: n.coldZoneMode,
       coldTargetSharePct: n.coldTargetSharePct,
       coldFloorDays: n.coldFloorDays,
+      // The fifth cold-zone field, which belonged here from the day it shipped — see
+      // `executiveModel`'s key for the rule it was one field short of. This page draws no
+      // remediation-speed aggregate, so `mttrExcludeEndOfLife` is deliberately NOT here: a
+      // param the compute does not read never joins a key either.
+      coldExcludeEndOfLife: n.coldExcludeEndOfLife,
     },
     () => buildRepos(n),
   );
@@ -1966,6 +2148,7 @@ function buildHistory(n: NormParams): Rec {
     .reverse(); // newest first, as the table draws it
 
   const rows = visibleRows(snap.rows, n);
+  const historyCut = liveRepoRows(rows, n.mttrExcludeEndOfLife);
 
   const movementRows = movementPopulation(snap.rows, n);
   const movement: Rec = {};
@@ -2012,8 +2195,12 @@ function buildHistory(n: NormParams): Rec {
       // reads is the next reader's trap (CLAUDE.md's "a settings key nothing reads is worse
       // than no key", applied to a payload field) — so `km` is the only median this page can
       // publish, and where the curve never reaches half `medianLowerBound` is what is true.
-      km: shipKM(kaplanMeier(rows)),
+      // THE ONE SPEED FIGURE ON THIS PAGE, so the one thing the exclusion touches here. The
+      // three counts above it are what the register HOLDS and stay whole; this is how long a
+      // finding lived, and a repository nobody is meant to remediate has no business in it.
+      km: shipKM(kaplanMeier(historyCut.rows)),
     },
+    endOfLife: endOfLifeBlock(historyCut, n.mttrExcludeEndOfLife),
     // `mttrPageTrendSlice` reads both of these keys.
     history: listHistory(),
     trend: trendFor(n, snap.rows),
@@ -2037,10 +2224,16 @@ function trendFor(n: NormParams, all: BaseRow[]): Rec[] {
   // PRE-TOGGLE rows on purpose: `loadTrend` excludes no-fix findings AS OF each date, so a
   // finding whose fix landed in March re-enters the series at March. Filtering up front would
   // delete it from the whole history instead.
+  // THE LIFECYCLE HAS NO DATE, so unlike the no-fix rule above it cannot be applied as-of each
+  // point: the tag says what a repository is NOW, not what it was in March. The exclusion is
+  // therefore taken over the whole series — a repository retired today was never in it — and
+  // that asymmetry with the line directly above is deliberate rather than an oversight.
+  // (`loadTrend` re-projects to seven columns and `_lifecycle` does not survive the projection,
+  // so the cut has to be here in any case.)
   return loadTrend({
     severities: n.severities,
     showNoFix: n.showNoFix,
-    base: scopedRows(all, n),
+    base: liveRepoRows(scopedRows(all, n), n.mttrExcludeEndOfLife).rows,
     ...(n.scope ? { scope: n.scope } : {}),
   });
 }
@@ -2067,7 +2260,11 @@ export function historyModel(p?: ModelParams): Rec {
   // per register. A warm dsHistory1 entry carries neither, and this page's new section would
   // draw its empty state — "no movement decomposition in this payload" — over a window that is
   // perfectly measurable, for up to a week of durable-store MAX_AGE.
-  return durablyCached("dsHistory2", keyOf(n), () => buildHistory(n));
+  return durablyCached(
+    "dsHistory2",
+    { ...keyOf(n), mttrExcludeEndOfLife: n.mttrExcludeEndOfLife },
+    () => buildHistory(n),
+  );
 }
 
 // --------------------------------------------------------------------------------------- //
