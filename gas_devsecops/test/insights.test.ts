@@ -131,11 +131,14 @@ describe("movement", () => {
 
 describe("oldestOpen", () => {
   // Base-row shape the aggregation reads: age_days + status + identifier/severity/repo_name/
-  // owner_project. No _supportGroup (host-only, see insights.ts's header), and no _domain —
-  // `oldestOpen` has no by-domain view, though `groupTree` does group by it.
+  // _product. `_product` is ATTACHED ON READ (projectScope.attachProjectGrain) rather than
+  // being a column, which is why the fixture sets it directly — and it replaced
+  // `owner_project` here, whose grain depended on the order Wiz returned `projects[]` in. No
+  // `_supportGroup`: this view has no by-group ranking, though `groupTree` can group by it.
+  // No `_domain` either — `oldestOpen` has no by-domain view.
   const brow = (over: Record<string, unknown> = {}) => ({
     identifier: "CVE-2024-0001", severity: "HIGH", status: "OPEN", repo_name: "web-1",
-    owner_project: "proj-1", age_days: 10, scope: "sca", ...over,
+    _product: "product-one", age_days: 10, scope: "sca", ...over,
   });
 
   it("findings: sorted by age desc, capped at topN, resolved & null-age excluded", () => {
@@ -148,7 +151,7 @@ describe("oldestOpen", () => {
     ] as never, 2);
     expect(findings.map((f) => f.identifier)).toEqual(["old", "mid"]);
     expect(findings[0]).toEqual({
-      identifier: "old", repo: "web-1", ownerProject: "proj-1", severity: "HIGH", ageDays: 400,
+      identifier: "old", repo: "web-1", product: "product-one", severity: "HIGH", ageDays: 400,
     });
   });
 
@@ -162,7 +165,7 @@ describe("oldestOpen", () => {
     ] as never);
     expect(byRepo).toHaveLength(1);
     expect(byRepo[0]).toEqual({
-      key: "web-1", agedCount: 2, openCount: 4, oldestDays: 120, ownerProject: "proj-1",
+      key: "web-1", agedCount: 2, openCount: 4, oldestDays: 120, product: "product-one",
     });
   });
 
@@ -176,14 +179,14 @@ describe("oldestOpen", () => {
     expect(byRepo.map((g) => g.key)).toEqual(["B", "A", "(none)", "C"]);
   });
 
-  it("asset-view attribution: byRepo carries a representative ownerProject", () => {
+  it("asset-view attribution: byRepo carries a representative product", () => {
     const rows = [
-      brow({ repo_name: "host-a", owner_project: "proj-x", age_days: 100 }),
-      brow({ repo_name: "host-a", owner_project: "proj-x", age_days: 50 }),
+      brow({ repo_name: "host-a", _product: "product-x", age_days: 100 }),
+      brow({ repo_name: "host-a", _product: "product-x", age_days: 50 }),
     ];
     const { findings, byRepo } = oldestOpen(rows as never);
-    expect(findings[0]!.ownerProject).toBe("proj-x");
-    expect(byRepo[0]).toMatchObject({ key: "host-a", ownerProject: "proj-x" });
+    expect(findings[0]!.product).toBe("product-x");
+    expect(byRepo[0]).toMatchObject({ key: "host-a", product: "product-x" });
   });
 
   it("scope filter narrows the population before ranking", () => {
@@ -200,16 +203,25 @@ describe("oldestOpen", () => {
   });
 });
 
-describe("GROUP_COLUMNS — the D9 brief's five dims, plus the domain axis", () => {
+describe("GROUP_COLUMNS — the D9 brief's five dims, the domain axis, and the two project grains", () => {
   it("maps each dimension to its flat row field", () => {
     expect(GROUP_COLUMNS).toEqual({
       repo: "repo_name",
       language: "language",
+      // DEMOTED, NOT REMOVED. No card draws it any more — `product` and `support_group` below
+      // replaced it, because its grain depended on the order Wiz returned `projects[]` in. It
+      // stays because `projectGrain.productOf` falls back to it for rows written before
+      // `projects_json` existed and for sealed episodes, which carry nothing else; deleting
+      // the key would delete that fallback's name from the register's vocabulary.
       owner_project: "owner_project",
-      // NOT A LEDGER COLUMN, and the leading underscore is the whole tell. `_domain` is
-      // attached to rows on read from the repository → domain join map
-      // (src/server/repoDomains.ts) and never written to the sheet; by the time any grouping
-      // runs it is a flat field like any other, which is why it needs no special lookup.
+      // THREE FIELDS THAT ARE NOT LEDGER COLUMNS, and the leading underscore is the whole
+      // tell. `_domain` is attached on read from the repository → domain join map
+      // (src/server/repoDomains.ts); `_product` and `_supportGroup` are attached on read by
+      // `projectScope.attachProjectGrain` from the tenant's own naming convention. None is
+      // ever written to the sheet, and by the time any grouping runs all three are flat
+      // fields like any other, which is why none needs a special lookup.
+      product: "_product",
+      support_group: "_supportGroup",
       domain: "_domain",
       secret_kind: "secret_kind",
       cwe: "cwe",

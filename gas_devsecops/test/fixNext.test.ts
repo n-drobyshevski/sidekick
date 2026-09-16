@@ -27,7 +27,10 @@ interface RowSpec {
   status?: string;
   age?: number | null;
   repo?: string | null;
+  /** `_product` — attached on read (projectScope.attachProjectGrain), never a column. */
   owner?: string | null;
+  /** `_supportGroup` — likewise. Defaults to one group, so disagreement has to be asked for. */
+  group?: string | null;
   fixAvailable?: boolean;
   validation?: string | null;
 }
@@ -72,10 +75,15 @@ function row(spec: RowSpec, i: number): BaseRow {
     validation_state: spec.validation === undefined ? null : spec.validation,
     validated_at: null,
     confidence: null,
-    owner_project: spec.owner === undefined ? "payments" : spec.owner,
+    owner_project: null,
     owner_path: null,
     tags_json: null,
     projects_json: null,
+    // The two grains the ranking reads. Attached on read from the tenant's naming convention
+    // rather than stored, which is why the fixture sets them directly — `owner_project` above
+    // is the conflated column they replaced and no longer reaches this path.
+    _product: spec.owner === undefined ? "product-payments" : spec.owner,
+    _supportGroup: spec.group === undefined ? "CE-TRANSPORT" : spec.group,
     mttr_days: null,
     age_days: spec.age === undefined ? 100 : spec.age,
     // sast and secrets collapse this onto first_seen in `ledgerCore.baseRows`, so only sca
@@ -167,23 +175,52 @@ describe("the three tiers", () => {
     ]);
   });
 
-  it("groups by repository and carries the oldest age and the one owning project", () => {
+  it("groups by repository and carries the oldest age and the one product", () => {
     const a = out.groups[0]!;
     expect(a.repo).toBe("repo-a");
     expect(a.count).toBe(2);
     expect(a.oldestAgeDays).toBe(400);
-    expect(a.owner_project).toBe("payments");
+    expect(a.product).toBe("product-payments");
+    expect(a.supportGroup).toBe("CE-TRANSPORT");
     expect(a.route).toBe("secrets");
     expect(a.params).toEqual({ scope: "secrets", repo: "repo-a" });
   });
 
-  it("refuses to name an owner where the group's rows disagree", () => {
+  it("refuses to name a product where the group's rows disagree", () => {
     const mixed = fixNext(rows(
-      { scope: "secrets", validation: "VALID", repo: "repo-a", owner: "payments" },
-      { scope: "secrets", validation: "VALID", repo: "repo-a", owner: "billing" },
+      { scope: "secrets", validation: "VALID", repo: "repo-a", owner: "product-payments" },
+      { scope: "secrets", validation: "VALID", repo: "repo-a", owner: "product-billing" },
     ), { now: NOW });
     expect(mixed.groups[0]!.count).toBe(2);
-    expect(mixed.groups[0]!.owner_project).toBeNull();
+    expect(mixed.groups[0]!.product).toBeNull();
+  });
+
+  it("but still names the SUPPORT GROUP the disagreeing products share", () => {
+    // The coarser grain is the more likely of the two to agree, and it is who you escalate
+    // to — so a group that cannot name one product is not therefore ownerless.
+    const mixed = fixNext(rows(
+      { scope: "secrets", validation: "VALID", repo: "repo-a", owner: "product-payments" },
+      { scope: "secrets", validation: "VALID", repo: "repo-a", owner: "product-billing" },
+    ), { now: NOW });
+    expect(mixed.groups[0]!.product).toBeNull();
+    expect(mixed.groups[0]!.supportGroup).toBe("CE-TRANSPORT");
+  });
+
+  it("refuses BOTH where even the support groups disagree — the convention has broken", () => {
+    const mixed = fixNext(rows(
+      { scope: "secrets", validation: "VALID", repo: "repo-a", owner: "product-payments", group: "CE-TRANSPORT" },
+      { scope: "secrets", validation: "VALID", repo: "repo-a", owner: "product-billing", group: "CS-LOG-ZEN-ECOM" },
+    ), { now: NOW });
+    expect(mixed.groups[0]!.product).toBeNull();
+    expect(mixed.groups[0]!.supportGroup).toBeNull();
+  });
+
+  it("a row carrying neither grain leaves both null rather than inventing one", () => {
+    const none = fixNext(rows(
+      { scope: "secrets", validation: "VALID", repo: "repo-z", owner: null, group: null },
+    ), { now: NOW });
+    expect(none.groups[0]!.product).toBeNull();
+    expect(none.groups[0]!.supportGroup).toBeNull();
   });
 
   // PERTURBATION (a), run 2026-09-04 then reverted. `secretIsLive` in src/server/fixNext.ts

@@ -294,19 +294,29 @@ describe("openBySeverityTrend", () => {
 describe("groupKeyOf / GROUP_COLUMNS", () => {
   // The dimension list is insights.GROUP_COLUMNS, imported rather than restated so the trend
   // and the breakdown tree can never name a different set (D8 brief rule 1).
-  it("is exactly the register's six dimensions", () => {
+  it("is exactly the register's eight dimensions", () => {
+    // Six until the tenant's project hierarchy was read properly. `product` and
+    // `support_group` are the two grains `owner_project` used to conflate — see
+    // src/domain/projectGrain.ts — and `owner_project` itself stays as their fallback.
     expect(Object.keys(GROUP_COLUMNS).sort())
-      .toEqual(["cwe", "domain", "language", "owner_project", "repo", "secret_kind"]);
+      .toEqual([
+        "cwe", "domain", "language", "owner_project", "product", "repo", "secret_kind",
+        "support_group",
+      ]);
   });
 
   it("reads each dimension's own ledger column", () => {
     const row = {
       repo_name: "svc-api", language: "python", owner_project: "platform",
       secret_kind: "PASSWORD", cwe: "CWE-79",
+      // Attached on read, never columns — the grouping cannot tell the difference.
+      _product: "product-tattoo-idp", _supportGroup: "CE-TRANSPORT",
     };
     expect(groupKeyOf("repo")(row)).toBe("svc-api");
     expect(groupKeyOf("language")(row)).toBe("python");
     expect(groupKeyOf("owner_project")(row)).toBe("platform");
+    expect(groupKeyOf("product")(row)).toBe("product-tattoo-idp");
+    expect(groupKeyOf("support_group")(row)).toBe("CE-TRANSPORT");
     expect(groupKeyOf("secret_kind")(row)).toBe("PASSWORD");
     expect(groupKeyOf("cwe")(row)).toBe("CWE-79");
   });

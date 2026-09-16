@@ -261,4 +261,25 @@ export type BaseRow = LedgerRow & {
    * count is reported instead of a synthetic "Untagged" owner.
    */
   _domain?: string | null;
+  /**
+   * The tenant's two ownership grains — LIKEWISE ATTACHED IN MEMORY, NEVER COLUMNS.
+   *
+   * A repository is filed under a CS/CE/LU support group and under a `product-…` product, and
+   * one support group holds many products. `src/domain/projectGrain.ts` carries the rules that
+   * read both off a row's projects; `projectScope.attachProjectGrain` writes them here, and
+   * `readModels.baseSnapshot` is the one place it is called.
+   *
+   * NOT `owner_project`, which is a stored column and a single string: its grain depended on
+   * the order Wiz returned `projects[]` in, so it held a product for most rows and a support
+   * group for the rest. It survives as the fallback these two are derived from when a row
+   * predates `projects_json` — see `projectGrain.productOf`, which refuses that fallback
+   * precisely when it can prove the value is the wrong grain.
+   *
+   * OPTIONAL, AND THE ABSENCE IS MEANINGFUL, for `_domain`'s reason with one difference: this
+   * pair is a pure function of the row rather than a join, so unset never means "the lookup
+   * has not been refreshed". It means the row carries no such attribution, which is a finding
+   * the pages report as its own bucket rather than defaulting to a placeholder owner.
+   */
+  _supportGroup?: string | null;
+  _product?: string | null;
 };

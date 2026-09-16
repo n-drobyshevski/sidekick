@@ -20,6 +20,7 @@
 // UI/API package build on this module, never the other way around.
 
 import { isOrgWideProject } from "./config";
+import { isProduct, isSupportGroup, productOf, supportGroupOf } from "./projectGrain";
 import type { Rec } from "./util";
 
 /**
@@ -98,6 +99,23 @@ export interface ProjectCatalogueEntry {
   isFolder?: boolean;
   /** Rows in the CURRENT register carrying this project. Not a Wiz-side total. */
   findings: number;
+  /**
+   * For a PRODUCT: the support group it sits inside, or `null` when nobody can say.
+   *
+   * `null` covers two different situations that the switcher must not merge with each other
+   * and must not merge with "this is not a product": no support group co-occurred with it at
+   * all, or SEVERAL did. `supportGroupCount` is what tells them apart, and the picker says
+   * `2 support groups` rather than picking one — see the field below.
+   */
+  supportGroup: string | null;
+  /**
+   * How many distinct support groups this product was seen under. `0` for everything that is
+   * not a product, and for a product nothing was ever filed beside.
+   *
+   * PRESENT ON EVERY ENTRY, not only on products, so the payload has one shape and a reader
+   * never has to test for the key's existence before testing its value.
+   */
+  supportGroupCount: number;
 }
 
 /**
@@ -112,21 +130,58 @@ export interface ProjectCatalogueEntry {
  * whose scan predates the field, or whose API response omitted `isFolder` on this project on
  * this observation, must not blank out what an earlier or later row already measured, and
  * once a project is known to be a folder or a leaf nothing here un-learns it.
+ *
+ * THE PARENT EDGE COMES FROM CO-OCCURRENCE, and this is the only place it could. Wiz reports
+ * no ancestry — but it flattens the WHOLE chain onto every finding, so a support group and a
+ * product appearing on the same row ARE an edge, observed rather than assumed. Collected in
+ * the pass this function already makes, so it costs no second parse.
+ *
+ * A PRODUCT SEEN UNDER TWO SUPPORT GROUPS NAMES NEITHER. A catalogue entry is a summary over
+ * many rows, and a picker hint reading `Product · CE-TRANSPORT` on a product that actually
+ * spans two groups is a false structural claim a reader will act on. Same posture as
+ * `server/fixNext.ts`, which already declines to name an owner when a ranked group disagrees.
+ * Note this is the OPPOSITE of what `projectGrain.supportGroupOf` does for a single ROW, and
+ * deliberately: a row that carries two groups really is inside both and must still land in a
+ * bucket, or the breakdown stops adding up.
  */
 export function projectCatalogue(
   rows: readonly ProjectsCarrier[],
 ): ProjectCatalogueEntry[] {
   const bySlug = new Map<string, ProjectCatalogueEntry>();
+  const parentsOf = new Map<string, Set<string>>();
   for (const row of rows) {
-    for (const p of parseProjects(row.projects_json)) {
+    const projects = parseProjects(row.projects_json);
+    const groups = projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name);
+    for (const p of projects) {
+      if (groups.length && isProduct(p.name)) {
+        let parents = parentsOf.get(p.slug);
+        if (!parents) {
+          parents = new Set<string>();
+          parentsOf.set(p.slug, parents);
+        }
+        for (const g of groups) parents.add(g);
+      }
       const seen = bySlug.get(p.slug);
       if (!seen) {
-        bySlug.set(p.slug, { slug: p.slug, name: p.name, isFolder: p.isFolder, findings: 1 });
+        bySlug.set(p.slug, {
+          slug: p.slug,
+          name: p.name,
+          isFolder: p.isFolder,
+          findings: 1,
+          supportGroup: null,
+          supportGroupCount: 0,
+        });
         continue;
       }
       seen.findings += 1;
       if (seen.isFolder === undefined && p.isFolder !== undefined) seen.isFolder = p.isFolder;
     }
+  }
+  for (const [slug, parents] of parentsOf) {
+    const entry = bySlug.get(slug);
+    if (!entry) continue;
+    entry.supportGroupCount = parents.size;
+    entry.supportGroup = parents.size === 1 ? [...parents][0]! : null;
   }
   return [...bySlug.values()].sort((a, b) =>
     a.isFolder === b.isFolder ? a.name.localeCompare(b.name) : a.isFolder ? -1 : 1,
@@ -172,4 +227,51 @@ export function unattributedCount(rows: readonly ProjectsCarrier[]): number {
     if (parseProjects(row.projects_json).length === 0) count += 1;
   }
   return count;
+}
+
+// --------------------------------------------------------------------------- #
+//  the two grains: support group and product, attached on read
+// --------------------------------------------------------------------------- #
+
+/** The shape `attachProjectGrain` reads and writes. Any ledger/base row satisfies it. */
+export interface ProjectGrainCarrier extends ProjectsCarrier {
+  owner_project?: string | null;
+  owner_path?: string | null;
+  _supportGroup?: string | null;
+  _product?: string | null;
+}
+
+/**
+ * Attach `_supportGroup` and `_product` to each row (in place).
+ *
+ * TWO DIMENSIONS, NOT ONE COLUMN. The tenant files every repository under a CS/CE/LU SUPPORT
+ * GROUP and under a `product-…` PRODUCT, and one support group holds many products
+ * (`projectGrain.ts` carries the vocabulary and the full argument). `owner_project` collapsed
+ * both into a single string whose grain depended on the order Wiz returned the array in; these
+ * two fields are what every breakdown, ranking and roll-up groups by instead.
+ *
+ * ATTACHED, NEVER A COLUMN — the same choice `_domain` made, for a stronger version of the
+ * same reason. A prefix rule is the tenant's vocabulary, and vocabulary changes: a fourth
+ * support-group prefix, a renamed product marker, a repository re-filed in Wiz. Baked into the
+ * ledger, each of those would cost a full re-scan to correct, and — because reconcile merges
+ * these columns latest-wins-NEVER-ERASED — a stale value would keep winning even then. This
+ * register has already paid that bill once: `ledgerStore.ownerOf` and `scrubOrgWideOwners`
+ * exist only because `ORG_WIDE_PROJECTS` was applied to a stored column. Derived on read, a
+ * corrected rule is one edit and a page reload.
+ *
+ * NEVER A NO-OP, unlike `repoDomains.attachDomains`. That one is gated on a join map that may
+ * never have been refreshed, so it legitimately leaves every row unset; this is a pure
+ * function of the row and always answers what the row can support. A field left UNSET here
+ * therefore means the row genuinely carries no such attribution — which is a finding, not a
+ * gap in the plumbing, and is reported as its own bucket rather than defaulted to a
+ * placeholder.
+ */
+export function attachProjectGrain(rows: readonly ProjectGrainCarrier[]): void {
+  for (const row of rows) {
+    const projects = parseProjects(row.projects_json);
+    const group = supportGroupOf(projects, row.owner_path);
+    const product = productOf(projects, row.owner_project);
+    if (group !== null) row._supportGroup = group;
+    if (product !== null) row._product = product;
+  }
 }

@@ -386,9 +386,20 @@ export function fixNextView(payload, boot) {
       // Never "(unknown)": a finding carrying no repository is a gap in attribution, and the
       // em dash is this register's one mark for that.
       repoText: repo === null ? absentText : repo,
-      ownerProject: g.owner_project === null || g.owner_project === undefined
+      product: g.product === null || g.product === undefined ? null : String(g.product),
+      supportGroup: g.supportGroup === null || g.supportGroup === undefined
         ? null
-        : String(g.owner_project),
+        : String(g.supportGroup),
+      // WHO THIS IS FOR, IN THREE STATES RATHER THAN TWO. The product is the grain a reader
+      // acts on; the support group above it is who they escalate to, and it is the more
+      // likely of the two to agree across a repository's rows — so a group that cannot name
+      // one product is not therefore ownerless. Only when neither agrees is there no owner to
+      // print, and that itself says the tenant's convention has broken for this repository.
+      ownerText: g.product !== null && g.product !== undefined
+        ? String(g.product)
+        : (g.supportGroup !== null && g.supportGroup !== undefined
+          ? String(g.supportGroup) + " (support group)"
+          : "no single owner"),
       count,
       countText: fmtCount(count) + " open " + pluralize(count, "finding"),
       oldestDays: num(g.oldestAgeDays),
@@ -963,9 +974,7 @@ export async function renderExecutive(host, params, _ctx) {
             }, it.repoText === absentText ? absent() : it.repoText)),
           el("div", { class: "fixnext-meta small muted" },
             it.scopeLabel + " · " + it.countText + " · " + it.oldestText
-            + " · " + (it.ownerProject === null
-              ? "no single owning project"
-              : it.ownerProject)),
+            + " · " + it.ownerText),
         ));
       }
       fixHost.append(list);

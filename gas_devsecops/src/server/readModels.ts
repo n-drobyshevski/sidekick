@@ -149,7 +149,7 @@ import { coldZoneHeadline, coldZoneProfile, type NewestScan } from "../domain/co
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
-import { inProject, parseProjects } from "../domain/projectScope";
+import { attachProjectGrain, inProject, parseProjects } from "../domain/projectScope";
 import { inDomain } from "../domain/domainScope";
 import { attachDomains } from "./repoDomains";
 import { clampInt, parseTs, type Rec } from "../domain/util";
@@ -408,6 +408,16 @@ let baseMemo: BaseSnapshot | undefined;
  * `refreshRepoDomains` bumps the data version, so a refreshed map invalidates this memo by the
  * same mechanism a sync does — the map is never joined against stale rows, nor rows against a
  * stale map.
+ *
+ * THE TWO PROJECT GRAINS ATTACH HERE TOO, for exactly the argument above — `_supportGroup` and
+ * `_product` are derived on read, so a model reading rows that never passed through
+ * `attachProjectGrain` would report the whole register where another reported one product.
+ *
+ * ONE DIFFERENCE WORTH STATING, because it changes what an unset field MEANS. The domain join
+ * is gated on a map that may never have been refreshed, so `attachDomains` can legitimately
+ * be a whole-register no-op. `attachProjectGrain` is a pure function of the row and never is:
+ * a row without `_product` is a row the tenant filed under no product, not a row the plumbing
+ * has not reached yet.
  */
 function baseSnapshot(): BaseSnapshot {
   const version = dataVersion();
@@ -415,6 +425,7 @@ function baseSnapshot(): BaseSnapshot {
     const now = Date.now();
     const rows = loadBaseRows({ now });
     attachDomains(rows as unknown as Rec[]);
+    attachProjectGrain(rows);
     baseMemo = { version, now, rows };
   }
   return baseMemo;
@@ -1194,9 +1205,21 @@ const CONCENTRATION_DIMS: Record<Scope, string[]> = {
   // reason (the join map has never been refreshed), and the card that results says `(none)`
   // for every row rather than disappearing — which is the honest shape, and is why
   // `concentrationModel` keeping zero-row cards is left alone rather than special-cased.
-  sca: ["repo", "owner_project", "domain"],
-  sast: ["repo", "cwe", "owner_project", "domain"],
-  secrets: ["repo", "secret_kind", "owner_project", "domain"],
+  //
+  // `owner_project` IS GONE, REPLACED BY TWO CARDS, and that is the correction this list
+  // exists to record. The tenant files every repository under a CS/CE/LU SUPPORT GROUP and
+  // under a `product-…` PRODUCT (src/domain/projectGrain.ts), and `owner_project` held
+  // whichever of the two Wiz happened to return first — so a single card was ranking products
+  // against support groups and calling the mixture "By owning project".
+  //
+  // BOTH GRAINS ARE LISTED, and neither is a restatement of the other in `language`'s sense.
+  // One support group holds MANY products, so the group's total is a roll-up the product card
+  // cannot express: the product card names the worst single product, and only the group card
+  // can show that three mediocre products under one group add up to the largest backlog
+  // anyone owns. It is also the escalation grain — you tell a support group, not a product.
+  sca: ["repo", "product", "support_group", "domain"],
+  sast: ["repo", "cwe", "product", "support_group", "domain"],
+  secrets: ["repo", "secret_kind", "product", "support_group", "domain"],
 };
 
 function buildRegister(scope: Scope, n: NormParams): Rec {

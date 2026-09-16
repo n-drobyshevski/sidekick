@@ -460,6 +460,52 @@ describe("ownership from projects[] (all three scopes)", () => {
   });
 
   // ------------------------------------------------------------------------- #
+  //  the PRODUCT is preferred over "the first leaf" (projectGrain.ts)
+  // ------------------------------------------------------------------------- #
+  //
+  // The tenant names a product `product-…` and files every repository under a CS/CE/LU
+  // support group too. "First non-folder" therefore decided the GRAIN by API order: the
+  // product on a node where Wiz called the support group a folder, the support group on one
+  // where it did not. The fixture above happens to get the right answer under both rules,
+  // which is exactly why it could not catch this.
+  //
+  // Perturbation, run and reverted: dropping the `product` preference from `ownerProject`
+  // fails the first two cases below with `expected 'CE-TRANSPORT' to be 'product-TATTOO-idp'`
+  // and `expected 'checkout-svc' to be 'product-KCONNECT'`, and leaves the other two green.
+
+  it("prefers the product even when a support group is reported as an EARLIER leaf", () => {
+    const supportFirst = [
+      { id: "p3", name: "CE-TRANSPORT", isFolder: false, slug: "ce-transport" },
+      { id: "p2", name: "product-TATTOO-idp", isFolder: false, slug: "product-tattoo-idp" },
+    ];
+    expect(ownerProject({ projects: supportFirst })).toBe("product-TATTOO-idp");
+  });
+
+  it("prefers the product even when Wiz omitted isFolder on it entirely", () => {
+    // Tri-state: a product with no flag used to lose to any leaf that had one.
+    const noFlag = [
+      { id: "p9", name: "checkout-svc", isFolder: false, slug: "checkout-svc" },
+      { id: "p2", name: "product-KCONNECT", slug: "product-kconnect" },
+    ];
+    expect(ownerProject({ projects: noFlag })).toBe("product-KCONNECT");
+  });
+
+  it("a repository OUTSIDE the convention keeps today's first-non-folder answer", () => {
+    const noProduct = [
+      { id: "f", name: "PLATFORM", isFolder: true, slug: "platform" },
+      { id: "l", name: "checkout-svc", isFolder: false, slug: "checkout-svc" },
+    ];
+    expect(ownerProject({ projects: noProduct })).toBe("checkout-svc");
+  });
+
+  it("a repository whose ONLY attribution is a support group still names it", () => {
+    // NOT nulled here: this column is what a sealed episode is attributed by, and compaction
+    // keeps nothing else. The read side refuses it instead — see projectGrain.productOf.
+    expect(ownerProject({ projects: [{ id: "p3", name: "CE-TRANSPORT", isFolder: true, slug: "ce-transport" }] }))
+      .toBe("CE-TRANSPORT");
+  });
+
+  // ------------------------------------------------------------------------- #
   //  the organisation-wide tag is never an owner (config.ts's ORG_WIDE_PROJECTS)
   // ------------------------------------------------------------------------- #
   //
