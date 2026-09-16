@@ -344,6 +344,22 @@
    it saying what was not measured — the same rule `data-tone` obeys two sections down. */
 .hatch { background-image: var(--hatch); }
 
+/* --------------------------------------------------------------------- scope chips */
+/* A register's provenance — "In scope 107", the gate, every filter word — as one chip per
+   part rather than one " · "-joined sentence. The model (`populationLine`, in each register's
+   own page model) already returns the parts; only the drawing changed. The joined sentence
+   stays as the group's aria-label, so a screen reader hears the provenance whole while a
+   sighted reader scans a row of facts. The lead chip is the count, in tabular figures. */
+.scope-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); }
+.scope-chip {
+  display: inline-flex; align-items: center;
+  padding: var(--space-half) var(--space-2);
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+  font-size: var(--fs-label); line-height: 1.4;
+}
+.scope-chip--lead { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
 /* ---------------------------------------------------------------------- unit chart */
 /* Countable quantity as countable marks (ui/unitChart.js), in two layouts that share one
    mark. PROMOTED from gas_devsecops/src/client/styles/pages.css, where the tally shipped
@@ -1846,6 +1862,17 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
 .splitbar__seg--INFO { background: var(--sev-info); }
 .splitbar__seg--UNKNOWN { background: var(--sev-unknown); }
 .splitbar__seg--in { background: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-edge); }
+/* The key row under a severity split (ui/splitBar.js, given `keys`): one key per severity,
+   swatch + word + figure, in place of the joined caption sentence. The swatch reuses the
+   segment fill classes above so a key's colour is the bar's colour; an out-of-scope severity
+   keeps its severity swatch and adds the word ("not scanned") beside its figure. */
+.splitbar__keys { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin-top: var(--space-2); }
+.splitbar__key { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-label); }
+.splitbar__swatch { width: 9px; height: 9px; border-radius: 1px; flex: none; }
+.splitbar__key-label { font-weight: 600; }
+.splitbar__key-out { color: var(--text-3); }
+.splitbar__key--out .splitbar__key-label { color: var(--text-2); font-weight: 500; }
+.splitbar__sum { margin: var(--space-1) 0 0; }
 /* Excluded/"not counted": a hatched neutral rather than a second solid hue, so "not counted"
    reads as an absence rather than a category competing with the severities beside it.
    THE LITERAL GRADIENT, CARRIED ACROSS UNCHANGED. This predates the --hatch token in

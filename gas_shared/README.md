@@ -449,6 +449,17 @@ tree-shaken `unitChartModel` until a second register called it — so the failur
 two apps later. `test/contracts/unitChart.js` sweeps the module's comment-stripped source for
 one now.
 
+**Two forms that replaced sentences, from the prose round (2026-09-16).** `splitBar` given
+`keys` (which `severitySplitModel` now returns beside its `caption`) draws one key per severity
+under the track — swatch, word, figure, "not scanned" beside an out-of-scope one — and the
+model's `summary` beneath them, and prints the caption nowhere. The caption is still built and
+still the bar's spoken form; what changed is that a 45-word sentence on every Settings page in
+two registers is a row of facts a reader scans. A caller passing only `caption` (the two-way
+impact split) is drawn byte-identically. And `.scope-chips` / `.scope-chip` in
+`components.css` draw a register's provenance line — `populationLine`'s `parts`, one chip
+each, the lead chip the count — with the joined sentence as the group's `aria-label`. Both are
+CSS-and-model changes only; neither is a new module.
+
 **`--hatch`, and the class over it.** One token in `styles/tokens.base.css` holding the
 repeating-linear-gradient that means THIS PART IS NOT A MEASUREMENT, plus a `.hatch` utility
 in `components.css`. It is ink at an alpha rather than a hue, which is the one kind of fill

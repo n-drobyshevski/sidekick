@@ -122,7 +122,7 @@ block (the only `h1`, which waits on no RPC), then a metric header from the shar
 `pageHeader()`: the hero stat ("Remediation half-life", read through `kmHalfLifeView` so a
 censored curve prints "at least N days" and an unread ledger prints "Not measured"), a
 movement aside of per-severity rows against the newest scan a week or more older, and a
-stat strip closed by a hairline; then Fix next, an ordered list of (tier, owner) groups with
+stat strip closed by a hairline; then Fix next, a ranked table of (tier, owner) groups (an ordered list until the prose round of 2026-09-16 — see §9) with
 its denominator ("25 of 70 open findings ranked") and a disclosure naming every unranked
 reason with its count; then the open severity strip with its key row; then the by-domain
 table; then the last-scan block. The centred 720px `.exec` column and the page-level Run
@@ -227,3 +227,56 @@ all three runs start at x=436.
   bar has a deliberate minimum-width floor for it. At the strip's own unit a small rung rounds
   to zero tenths and `unitRow` correctly draws nothing; the module refuses a `minMark` option
   for exactly this reason. The prose under each rung is the thing to move, onto the label's tip.
+
+## 10. The prose round, and what it replaced with what
+
+§9's round added pictures and moved `proseBlocks` on no route. That was the wrong metric to
+leave alone — the brief was to reduce prose blocks, and to replace what is too crucial to
+delete with a form a reader scans rather than parses. Same command, same seed, both columns one
+run's output; cells read `words / proseBlocks / proseWords / numbers / tableCells / visuals /
+tips`. No route overflows at any width it did not before (the 364px at 360 is pre-existing on
+every route).
+
+| route | before | after |
+|---|---|---|
+| executive | 276 / **9** / **149** / 99 / 21 / 1 / 11 | 142 / **1** / **15** / 107 / **85** / **12** / 12 |
+| program | 416 / **8** / **269** / 121 / 76 / 9 / 24 | 180 / **1** / **21** / 116 / 76 / 9 / 26 |
+| overview | 556 / **8** / **195** / 201 / 210 / 10 / 11 | 419 / **1** / **20** / 198 / 210 / 11 / 16 |
+| data | 458 / **7** / **283** / 65 / 46 / 0 / 3 | 250 / **1** / **26** / 65 / 46 / 0 / 9 |
+| settings | 227 / 3 / 84 / 26 / 0 / 0 / 0 | 227 / 2 / 44 / 26 / 0 / 0 / 0 |
+| mttr, history, attribution, help | unchanged | unchanged |
+
+**Fix next is a ranked table, and that is where the front door's prose went.** Eight of its
+nine prose blocks were the eight `<li>`s of the ranked list — a pill, a link and a `·`-joined
+meta sentence each, which the density walker counts as prose because an `<li>` is one. The
+same eight groups are eight rows of a `dataTable` now (`tableCells` 21 → 85): rank, tier, group,
+open, hosts, leading CVE, oldest, domain, so the ages compare down one column and the counts
+down another instead of being fished out of eight sentences. The open column carries a
+`unitRow` tally at one unit for the table (`visuals` 1 → 12) — the shipped DevSecOps Executive
+pattern. `test/executiveFixNext.test.js` pinned the `<ol>` "because the order is the claim"; a
+rank column makes the same claim ("row 1 of 8") and the pin now asserts the table. `it.meta`
+stays on the view and on every link's accessible name.
+
+**Everything else that moved was an explanation, and it moved onto the thing it explains.**
+Chart captions became the chart heading's `tipLabel` lines (Overview's tier trend, aging and
+SLA-window cards; Program's rule-sensitivity scatter); section intros became `sectionLabel`
+lines (Program's capacity and track-record sections, the latter carrying `capNote` too); the
+Data page's three cleanup panels keep a one-clause description and carry the full rationale on
+their titles, and its three import/export notes keep a lead phrase. Two facts that were
+sentences became figures: the awaiting-a-vendor-fix note is a `statRow` with its share of open
+as the meter, and the unrecognized-severity note is a `statusPill` with the caveat behind it.
+Program's "A finding is high risk when …" lost its first three words and gained the overlap
+caveat on the rule's own text. The `tips` column rising on every moved route is the check that
+nothing was deleted — each moved sentence is one keyboard-reachable, signified trigger.
+
+**Two things this round tried and took back.** A stat card for the capacity means duplicated
+the page header's own "Monthly close rate" and "Closed per month" rows; it went, and the one
+fact the header lacks — the base the means are taken over — is the section label's tip. And
+`test/chartTable.test.js`'s model-ident heuristic read the first `*TableModel(` in a 2,000
+character window, which, once two captions came off the Overview's tier and aging cards, was
+the neighbouring card's; it reads the call NEAREST the `chartTable(` now (either side —
+mttr.js builds one model into a variable just before its call).
+
+**What stays.** `mttr` (5 blocks: the SLA-edge legend, the reconstructed-days note, the
+vendor-fix exclusion and two chart captions) is the heaviest-tested page in the app and is the
+next round's. `attribution`'s and `history`'s section notes (3 and 2) are scope statements.

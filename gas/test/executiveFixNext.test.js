@@ -502,10 +502,15 @@ describe("os: the front door still draws no chart", () => {
     expect(SRC).not.toMatch(/from "\.\.\/chartsLoader\.js"/);
   });
 
-  it("draws the ranked list as an ordered list, because the order is the claim", () => {
-    // A reader on a screen reader hears "1 of 8" and gets the same argument the page makes
-    // visually. A `<ul>` or a stack of divs is the same pixels and a different statement.
-    expect(SRC).toContain('el("ol", { class: "fixnext" })');
+  it("draws the ranked list as a table with a rank column, because the order is the claim", () => {
+    // It was an `<ol>`, so a screen reader heard "1 of 8". A table with a rank column says the
+    // same thing ("row 1 of 8", and the number in the first cell) and gives every fact its own
+    // column instead of one `·`-joined sentence per group — eight of which were eight of this
+    // page's nine prose blocks under the density walker. A stack of divs would be the same
+    // pixels and no statement at all, which is what this pin is against.
+    expect(SRC).toContain('className: "fixnext-table"');
+    expect(SRC).toMatch(/key: "rank",\s*label: "#"/);
+    expect(SRC).not.toContain('el("ol", { class: "fixnext" })');
   });
 
   it("has no page-level Run scan button left to disagree with the rail's", () => {

@@ -55,6 +55,7 @@ import {
   fmtDate, fmtDateTime, fmtDays, fmtSpan, heroStat, num, pageHeader, pluralize, relativeAge,
   scopeBar, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
   FINE_UNITS, unitRow, unitScale,
+  absent, days1,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -1135,24 +1136,82 @@ export async function renderExecutive(main, _params, ctx) {
     if (view.empty) {
       fixHost.append(emptyState("Nothing is ranked.", view.emptyReason));
     } else {
-      const list = el("ol", { class: "fixnext" });
-      for (const it of view.items) {
-        list.append(el("li", { class: "fixnext-item" },
-          el("div", { class: "fixnext-head" },
-            statusPill(it.kind, it.tierLabel),
-            el("a", {
-              class: "linklike fixnext-repo",
-              href: it.href,
-              "aria-label": it.tierLabel + " — " + it.ownerText + ", " + it.meta + ". "
-                + it.linkLabel,
-            }, it.ownerText),
-            it.ownerKindWord
-              ? el("span", { class: "small muted" }, it.ownerKindWord)
-              : null),
-          el("div", { class: "fixnext-meta small muted" }, it.meta),
-        ));
-      }
-      fixHost.append(list);
+      // A RANKED TABLE, NOT AN ORDERED LIST — and the order is still the claim. The `<ol>`
+      // this replaces drew each group as a pill, a link and a `·`-joined meta sentence ("2
+      // open findings · 1 host · CVE-2026-90001 (1) · oldest 210 days · domain CROSS"), which
+      // is five facts in five different units set as one run of prose. Eight of them were
+      // eight of this page's nine prose blocks under the density walker, and a reader
+      // comparing "oldest 210 days" against "oldest 46 days" three rows down was scanning
+      // sentences for a number. A table gives every fact its own column, so the ages compare
+      // down one column and the counts down another; the rank column keeps "1 of 8" as a
+      // statement a screen reader makes ("row 1 of 8"), which is what the `<ol>` was for.
+      //
+      // THE OPEN COLUMN CARRIES A TALLY, one unit for the whole table (the shipped DevSecOps
+      // Executive pattern), so the magnitudes read against each other at a glance. The fine
+      // ladder, capped at twelve marks, because these are small counts in a narrow column.
+      //
+      // `it.meta` STAYS ON THE VIEW and on every link's accessible name: the sentence is still
+      // the right shape for a screen reader announcing one row, and the tests pin it.
+      const tableUnit = unitScale(
+        view.items.reduce((m, it) => (it.count > m ? it.count : m), 0),
+        { units: FINE_UNITS, maxMarks: 12 },
+      );
+      fixHost.append(dataTable({
+        className: "fixnext-table",
+        columns: [
+          { key: "rank", label: "#", className: "num", cell: (r) => String(r.rank) },
+          { key: "tier", label: "Tier", cell: (r) => statusPill(r.kind, r.tierLabel) },
+          {
+            key: "owner",
+            label: "Group",
+            cell: (r) => el("span", {},
+              el("a", {
+                class: "linklike fixnext-repo",
+                href: r.href,
+                "aria-label": r.tierLabel + " — " + r.ownerText + ", " + r.meta + ". "
+                  + r.linkLabel,
+              }, r.ownerText),
+              r.ownerKindWord ? el("span", { class: "small muted" }, r.ownerKindWord) : null),
+          },
+          {
+            key: "count",
+            label: "Open",
+            className: "num",
+            cell: (r) => el("span", {},
+              unitRow(r.count, {
+                unit: tableUnit,
+                label: fmtCount(r.count) + " open, one mark per "
+                  + (tableUnit === 1 ? "finding" : fmtCount(tableUnit) + " findings"),
+              }),
+              el("span", { class: "num" }, fmtCount(r.count))),
+          },
+          {
+            key: "assets",
+            label: "Hosts",
+            className: "num",
+            cell: (r) => (r.assets > 0 ? fmtCount(r.assets) : absent()),
+          },
+          {
+            key: "cve",
+            label: "Leading CVE",
+            help: ["The CVE carried by the most findings in the group, and how many of them."],
+            cell: (r) => (r.topCve
+              ? el("span", {}, r.topCve.cve, " ",
+                el("span", { class: "small muted num" }, "(" + fmtCount(r.topCve.count) + ")"))
+              : absent()),
+          },
+          {
+            key: "oldest",
+            label: "Oldest",
+            className: "num",
+            // `days1` in a cell, `fmtDays` in a sentence — the grain is the context's, and the
+            // meta sentence on the link keeps its worded whole days.
+            cell: (r) => (r.oldestDays === null ? absent() : days1(r.oldestDays)),
+          },
+          { key: "domain", label: "Domain", cell: (r) => (r.domain === null ? absent() : r.domain) },
+        ],
+        rows: view.items,
+      }));
     }
 
     // The two numbers on the surface; the four reasons behind the rest in a closed

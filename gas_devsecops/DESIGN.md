@@ -177,3 +177,32 @@ they are not restatements — `coldModeCaption` says which line drew the zone, `
 says idle time was never measured and the figure is a lower bound, and the repository-list note
 says what the list excludes. Those are honesty statements, and this register's own rule puts an
 honesty statement on the surface and only an explanation one level down.
+
+### Prose round (2026-09-16)
+
+The round above added a picture and left `proseBlocks` where it was. This one reduces it,
+replacing what is too crucial to delete with a form a reader scans. Same command, same seed;
+only the routes that moved are shown, and no route overflows at any width it did not before.
+
+| route | before | after |
+|---|---|---|
+| repos | 210 / **3** / **105** / 211 / 36 / 20 | 223 / **1** / **28** / 221 / 37 / 22 |
+| sca | 274 / **1** / **27** / 337 / 13 / 19 | 274 / **0** / **0** / 337 / 13 / 19 |
+| settings | 284 / **6** / **188** / 39 / 0 / 2 | 284 / **3** / **71** / 39 / 0 / 2 |
+
+(Cells read `words / proseBlocks / proseWords / numbers / visuals / tips`.)
+
+**Three forms replaced three sentences, and two of them are shared now.** The register
+provenance line ("In scope 400 · gate: all severities · only packages with a published fixed
+version · …") is a row of `.scope-chips` on `sca`, `sast` and `secrets` — `populationLine`
+already returned its parts, only the drawing changed, and the joined sentence is the group's
+`aria-label`. The three severity scan-scope bars on Settings draw a key row under the track
+(`splitBar` given the model's new `keys`) instead of a 45-word caption: swatch, word, figure
+per severity, the out-of-scope ones hatched with "not scanned" beside their figure, and one
+summary line under the keys. `repos`'s 51-word heat-map caption and 27-word list note each kept
+the clause a reader needs without hovering and put the rest on the nearest heading.
+
+**The one paragraph that stays is pinned on purpose.** `renderColdZone` prints
+`denomNote(coldModeCaption(view))` first, in all three branches, and `test/pagesData.test.js`
+asserts exactly that: the sentence that says which line drew the zone goes above the figures it
+qualifies. This round does not overrule that test.

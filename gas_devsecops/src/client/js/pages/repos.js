@@ -53,6 +53,7 @@ import {
   emptyState, errorState, figureCard, firstRunNotice, fmtCount, fmtDate, fmtDays, meter,
   num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, skeletonStack, statusPill,
   uiIcon, MAX_EXACT_CELLS, unitChartModel, unitGrid, unitKeyRow,
+  tipLabel,
 } from "../ui.js";
 // `verdictMark` is `pages/program.js`'s own dot-and-word for a capacity verdict, promoted to
 // `ui/verdict.js` in this same wave so this page's Capacity column can draw the identical
@@ -1209,14 +1210,19 @@ export async function renderRepos(host, _params, _ctx) {
     };
     for (const r of heat.rows) body.append(paintRow(r));
     if (heat.totals) body.append(paintRow(heat.totals));
-    coldHost.append(el("h3", { class: "section-label" }, "Idle time by project"));
+    // The caption keeps what the cells COUNT; what the last column means and who is in no
+    // column are the heading's tip — the 51-word caption was the page's largest prose block.
+    coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by project", {
+      lines: [
+        "The last column is the repositories with no movement on record yet — not idle for"
+        + " zero days, but not yet measurable.",
+        "Unobserved repositories and repositories with nothing open are in no column.",
+      ],
+    })));
     coldHost.append(el("div", { class: "table-wrap" },
       el("table", { class: "data heat" },
         el("caption", { class: "small muted" },
-          "Repositories per project by how long they have been idle, and the open findings"
-          + " sitting in each band. The last column is the repositories with no movement on"
-          + " record yet — not idle for zero days, but not yet measurable. Unobserved"
-          + " repositories and repositories with nothing open are in no column."),
+          "Repositories per project by idle band, with the open findings in each."),
         el("thead", {}, head),
         body)));
   }
@@ -1278,11 +1284,18 @@ export async function renderRepos(host, _params, _ctx) {
       // first inside each, and that order is the section's whole argument.
       emptyText: "No repository is cold, and none has dropped out of the scanner.",
     }));
-    coldHost.append(denomNote(
-      `${fmtCount(rows.length)} ${rows.length === 1 ? "repository" : "repositories"} listed:`
-      + " every cold one and every one the scanner has lost sight of. Warm, clear and"
-      + " not-yet-measurable repositories are counted above and not listed here.",
-    ));
+    // WHICH VERDICTS ARE IN THE LIST, as a short lead with the exclusions behind it. It was a
+    // 27-word paragraph; the two words a reader needs without hovering are "cold" and "out of
+    // sight", and the census above already draws every verdict with its count.
+    coldHost.append(el("p", { class: "small muted" }, tipLabel(
+      `${fmtCount(rows.length)} listed: cold, and out of sight`,
+      {
+        lines: [
+          "Every cold repository and every one the scanner has lost sight of.",
+          "Warm, clear and not-yet-measurable repositories are counted above and not listed here.",
+        ],
+      },
+    )));
   }
 
   /**

@@ -741,3 +741,31 @@ nobody asked for.
 restating the table under it, and it is — but it is already passed as a `sectionLabel(..., {
 lines })`, which is a tip. It is one level down, which is where this register's ladder already
 puts an explanation, and it costs the surface nothing.
+
+### Prose round (2026-09-16)
+
+The unit-chart round above added pictures and moved `proseBlocks` on no route at all. That was
+the wrong metric to leave alone: the brief was to reduce prose blocks, and to replace what is
+too crucial to delete with a form a reader scans rather than parses. Same command, same seed,
+same `--experimental` flag; only the two routes that moved are shown, every other route is
+byte-identical on all ten metrics and no route overflows at 1280, 640 or 360px.
+
+| route | before | after |
+|---|---|---|
+| inventory | 413 / **10** / **266** / 124 / 165 / 39 / 7 | 203 / **3** / **56** / 119 / 165 / 39 / **13** |
+| scans | 462 / **7** / **190** / 138 / 126 / 10 / 16 | 332 / **2** / **45** / 135 / 126 / 11 / **20** |
+
+**Every moved sentence was an explanation of a picture, and it now rides on the picture's own
+heading.** `inventory`'s four posture cards each carried up to two `.chart-note` paragraphs
+under the canvas — which series have gaps ("gaps, not zeros"), what the foot line qualified,
+what "opened" and "closed" count — and the "Counts over time" card carried two more. They are
+the `<h3>`'s `tipLabel` lines now (`tips` 7 → 13: every moved sentence is reachable by
+keyboard from the heading it explains, and the `tipsSignified` column says each trigger has a
+resting affordance). The "N syncs" line under each heading is the one surface note a card
+keeps. `scans` did the same for the diagram legend and the sync-cadence paragraph (section
+labels), and cut the two chipset lead-ins to their five words with the reason behind them.
+
+**What stays, and why.** `settings` (11 blocks) is decision support — the sentences that say
+what a draft would do before it is saved are this register's own thesis and not restatements.
+`combos`, `compliance` and `data` (4 each) carry the hero qualifier, a rail key and two prune
+notes; they are the next round's, not this one's.

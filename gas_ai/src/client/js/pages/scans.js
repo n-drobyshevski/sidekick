@@ -40,6 +40,7 @@ import {
   fmtDate, fmtDateTime, appendAll, heroLines, heroStat, pageHeader,
   meter, motionOk, onPageTeardown, plural, registerWideNote, sectionLabel, skeleton, statRow,
   unitChartModel, unitGrid,
+  tipLabel,
 } from "../ui.js";
 import { AXIS_KNOWN_WARNING, REACH_AXES, REACH_VS_SCAN_AREA_NOTE } from "../reachContent.js";
 
@@ -171,20 +172,25 @@ export async function renderScans(main, params, ctx) {
     let diagram = null;
     guard("the provenance diagram", diagramHost, () => {
       diagram = provenanceDiagram(ranked, tally);
+      // The glyph blurbs and the dashed-path sentence are the section label's tip: the keys
+      // under the coverage census already carry each state's word and count.
       diagramHost.append(
-        sectionLabel("How a scan becomes a screen"),
+        sectionLabel("How a scan becomes a screen", { lines: [diagramLegend(tally)] }),
         diagram.node,
-        diagramLegend(tally),
       );
     });
 
     guard("the register", registerHost, () => registerHost.append(
-      sectionLabel("The register", { term: "register-scope" }),
+      sectionLabel("The register", {
+        term: "register-scope",
+        lines: [
+          "Sync cadence: daily at 05:00 Europe/Paris plus on-demand “Sync now”.",
+          "Every figure is the one the last sync produced, read through the project view"
+          + " currently set; an area with no figure says so rather than carrying a number from"
+          + " somewhere else.",
+        ],
+      }),
       register(ranked, diagram),
-      el("p", { class: "small muted", style: "margin-top:14px" },
-        "Sync cadence: daily at 05:00 Europe/Paris plus on-demand “Sync now”. Every figure above " +
-        "is the one the last sync produced, read through the project view currently set; " +
-        "an area with no figure says so rather than carrying a number from somewhere else."),
     ));
 
     guard("landscape reach", reachHost, () => reachHost.append(reachSection(assets.reach)));
@@ -285,12 +291,11 @@ export async function renderScans(main, params, ctx) {
   }
 
   function diagramLegend(tally) {
-    return el("p", { class: "small muted cov-diagram-note" },
-      COVERAGE.live.glyph + " " + COVERAGE.live.blurb + " · " +
+    return COVERAGE.live.glyph + " " + COVERAGE.live.blurb + " · " +
       COVERAGE.partial.glyph + " " + COVERAGE.partial.blurb + " · " +
       COVERAGE.unscanned.glyph + " " + COVERAGE.unscanned.blurb +
       ". A dashed node and edge mark a path that would exist if the query ran. " +
-      plural(tally.live + tally.partial, "area") + " feed the sync.");
+      plural(tally.live + tally.partial, "area") + " feed the sync.";
   }
 
   // ------------------------------------------------------------------- the register
@@ -456,10 +461,14 @@ export async function renderScans(main, params, ctx) {
       statRow(
         "Impact-tagged",
         known ? tagged.covered + " of " + tagged.total : absentText,
-        "carry a Wiz business-impact tier — read off the asset's own projects on the "
-        + "inventory hop, so this measures the tenant's tagging discipline, not what this "
-        + "pipeline reached",
+        "carry a Wiz business-impact tier",
         pct,
+        {
+          lines: [
+            "Read off the asset's own projects on the inventory hop, so this measures the"
+            + " tenant's tagging discipline, not what this pipeline reached.",
+          ],
+        },
       ),
     );
   }
@@ -540,8 +549,9 @@ export async function renderScans(main, params, ctx) {
     if (edges.dead.length) {
       wrap.append(
         el("p", { class: "small muted", style: "margin-top:8px" },
-          "Declared but produced by nothing — each one is a class of question this product " +
-          "looks able to answer and cannot:"),
+          tipLabel("Declared, produced by nothing:", {
+            lines: ["Each one is a class of question this product looks able to answer and cannot."],
+          })),
         el("div", { class: "chipset" },
           ...edges.dead.map((t) => el("span", { class: "chip reach-chip-dead" }, t)),
         ),
@@ -550,7 +560,9 @@ export async function renderScans(main, params, ctx) {
     if (edges.synthetic.length) {
       wrap.append(
         el("p", { class: "small muted", style: "margin-top:8px" },
-          "Drawn at read time rather than stored, so absent here by design — not a gap:"),
+          tipLabel("Derived at read time, not stored:", {
+            lines: ["Absent from the persisted graph by design — not a gap."],
+          })),
         el("div", { class: "chipset" },
           ...edges.synthetic.map((t) => el("span", { class: "chip" }, t)),
         ),
