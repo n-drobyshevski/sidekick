@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "c203803b7326" : "dev";
+  var BUILD_ID = true ? "62f6e20a67b1" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -4840,6 +4840,8 @@ var Server = (() => {
       const product = productOf(projects, row.owner_project);
       if (group !== null) row._supportGroup = group;
       if (product !== null) row._product = product;
+      const groups = projects.filter((p) => isSupportGroup(p.name)).length;
+      if (groups > 1) row._supportGroups = groups;
     }
   }
 
@@ -6328,6 +6330,7 @@ var Server = (() => {
       repoName: null,
       product: null,
       supportGroup: null,
+      supportGroupSplit: false,
       scopes: /* @__PURE__ */ new Set(),
       rowsByScope: /* @__PURE__ */ new Map(),
       open: 0,
@@ -6348,6 +6351,7 @@ var Server = (() => {
     if (acc.supportGroup === null && !blank(row._supportGroup)) {
       acc.supportGroup = String(row._supportGroup);
     }
+    if (Number(row._supportGroups) > 1) acc.supportGroupSplit = true;
     acc.scopes.add(row.scope);
     const bucket = acc.rowsByScope.get(row.scope);
     if (bucket) bucket.push(row);
@@ -6592,6 +6596,7 @@ var Server = (() => {
         repo_name: acc.repoName,
         product: acc.product,
         support_group: acc.supportGroup,
+        support_group_split: acc.supportGroupSplit,
         open_findings: acc.open,
         open_high_risk: acc.openHigh,
         oldest_open_age_days: acc.oldestOpenFirstSeen === null ? null : daysBetween(acc.oldestOpenFirstSeen, nowMs),
@@ -6697,13 +6702,18 @@ var Server = (() => {
       }
       const verdict = withOpen === 0 ? "clear" : coldRepos === withOpen ? "fully-cold" : coldRepos > 0 ? "partly-cold" : "warm";
       const groups = /* @__PURE__ */ new Set();
-      for (const r of list) if (r.support_group !== null) groups.add(r.support_group);
+      let split = false;
+      for (const r of list) {
+        if (r.support_group !== null) groups.add(r.support_group);
+        if (r.support_group_split) split = true;
+      }
+      const groupCount = split ? Math.max(groups.size, 2) : groups.size;
       out.push({
         product,
         label: product != null ? product : COLD_PRODUCT_NONE,
         // One name only when they all agree — see the field's own comment.
-        support_group: groups.size === 1 ? [...groups][0] : null,
-        support_groups: groups.size,
+        support_group: groupCount === 1 ? [...groups][0] : null,
+        support_groups: groupCount,
         repos: list.length,
         repos_observed: observed,
         repos_unobserved: unobserved,

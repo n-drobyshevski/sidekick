@@ -281,5 +281,14 @@ export type BaseRow = LedgerRow & {
    * the pages report as its own bucket rather than defaulting to a placeholder owner.
    */
   _supportGroup?: string | null;
+  /**
+   * How many support groups this row carries, set only when it is MORE THAN ONE.
+   *
+   * `_supportGroup` is a single name because a breakdown bucket has to land somewhere — a row
+   * inside two groups really is inside both, and dropping it would stop the partition adding
+   * up. This is how anything that SUMMARISES (the cold zone's per-product escalation column)
+   * learns that the single name is not the whole answer and declines to publish it.
+   */
+  _supportGroups?: number;
   _product?: string | null;
 };

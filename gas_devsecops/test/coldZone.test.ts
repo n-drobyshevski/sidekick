@@ -420,6 +420,22 @@ describe("the support group a product escalates to", () => {
     expect(team.support_groups).toBe(2);
   });
 
+  it("REFUSES where ONE repository is itself filed under two groups — the union undercounts", () => {
+    // Caught by running the harness, not by a unit test: the per-ROW pick is deterministic,
+    // so both repositories of such a product pick the SAME name and the union sees one group.
+    // Without `_supportGroups` the column would have asserted an escalation path for a product
+    // the tenant filed under two — the exact claim `projectCatalogue` already refuses.
+    const out = profile([
+      row({ repo_id: "r1", repo_name: "r1", _product: "product-a", _supportGroup: "CE-TRANSPORT", _supportGroups: 2 }),
+      row({ repo_id: "r2", repo_name: "r2", _product: "product-a", _supportGroup: "CE-TRANSPORT", _supportGroups: 2 }),
+    ]);
+    const team = teamOf(out, "product-a");
+    expect(team.support_group).toBeNull();
+    // Floored at two: the honest answer is "more than one", and the column's job is only to
+    // stop asserting one.
+    expect(team.support_groups).toBe(2);
+  });
+
   it("a product nobody filed under a group names none, and counts zero", () => {
     // Distinct from the disagreement above, and only `support_groups` can tell them apart.
     const out = profile([

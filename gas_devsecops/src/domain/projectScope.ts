@@ -238,6 +238,16 @@ export interface ProjectGrainCarrier extends ProjectsCarrier {
   owner_project?: string | null;
   owner_path?: string | null;
   _supportGroup?: string | null;
+  /**
+   * How many distinct support groups this ROW carries, when more than one does.
+   *
+   * `_supportGroup` above is a single name because a breakdown bucket has to land somewhere —
+   * a row inside two groups really is inside both, and dropping it would stop the partition
+   * adding up. But a row inside two groups cannot be SUMMARISED as belonging to one, and
+   * anything that publishes a per-product escalation path (`coldZone.rollUp`) needs to know
+   * the difference. Set only when it is greater than 1, so its absence is the ordinary case.
+   */
+  _supportGroups?: number;
   _product?: string | null;
 }
 
@@ -273,5 +283,7 @@ export function attachProjectGrain(rows: readonly ProjectGrainCarrier[]): void {
     const product = productOf(projects, row.owner_project);
     if (group !== null) row._supportGroup = group;
     if (product !== null) row._product = product;
+    const groups = projects.filter((p) => isSupportGroup(p.name)).length;
+    if (groups > 1) row._supportGroups = groups;
   }
 }

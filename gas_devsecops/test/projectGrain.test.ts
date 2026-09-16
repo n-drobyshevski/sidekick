@@ -133,6 +133,8 @@ describe("supportGroupOf", () => {
     expect(supportGroupOf([...two].reverse())).toBe("CE-TRANSPORT");
   });
 
+  // Perturbation, run and reverted: returning null instead of scanning `owner_path` fails
+  // this case and the attach case with `expected null to be 'CE-TRANSPORT'`.
   it("falls back to the owner_path bag for a row written before projects_json existed", () => {
     expect(supportGroupOf([], "CE-TRANSPORT / VALUE-CHAIN")).toBe("CE-TRANSPORT");
     // owner_path is sorted alphabetically, so the support group is not reliably first.
@@ -185,6 +187,9 @@ describe("productOf", () => {
     expect(productOf([], "payments-core")).toBe("payments-core");
   });
 
+  // Perturbation, run and reverted: dropping the `isSupportGroup(owner)` clause from
+  // `productOf`'s fallback fails this case with `expected 'CE-TRANSPORT' to be null`, and
+  // takes test/projectScope.test.ts's attach case with it.
   it("BUT IT REFUSES A SUPPORT GROUP — the one case it can prove is the wrong grain", () => {
     // This is the whole point. `owner_project` holds a support group for any row where Wiz
     // reported one as a leaf ahead of the product; taking it here would put a support group in

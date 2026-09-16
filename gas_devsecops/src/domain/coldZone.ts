@@ -146,6 +146,7 @@ export type ColdRow = RiskRow &
     // groups. Taking `_product` here means the compiler proves the old column left this path.
     | "_product"
     | "_supportGroup"
+    | "_supportGroups"
     | "scope"
     | "status"
     | "first_seen"
@@ -221,6 +222,15 @@ export interface ColdRepoRow {
   product: string | null;
   /** `_supportGroup` — the group this product escalates to. NULL when the row names none. */
   support_group: string | null;
+  /**
+   * TRUE where the repository itself is filed under SEVERAL support groups.
+   *
+   * `support_group` above is one name because a breakdown bucket has to land somewhere; this
+   * says that one name is not the whole answer, so the roll-up can decline to publish it as an
+   * escalation path. Without it a product whose single repository sits under two groups would
+   * be summarised under whichever one sorted first.
+   */
+  support_group_split: boolean;
   open_findings: number;
   open_high_risk: number;
   /** Age of the oldest OPEN finding, from `first_seen` against `now`. Never from `age_days`. */
@@ -468,6 +478,7 @@ interface RepoAcc {
   repoName: string | null;
   product: string | null;
   supportGroup: string | null;
+  supportGroupSplit: boolean;
   scopes: Set<Scope>;
   rowsByScope: Map<Scope, ColdRow[]>;
   open: number;
@@ -511,6 +522,7 @@ function newAcc(repoId: string): RepoAcc {
     repoName: null,
     product: null,
     supportGroup: null,
+    supportGroupSplit: false,
     scopes: new Set(),
     rowsByScope: new Map(),
     open: 0,
@@ -540,6 +552,10 @@ function foldRow(acc: RepoAcc, row: ColdRow, risk: RiskClass): void {
   if (acc.supportGroup === null && !blank(row._supportGroup)) {
     acc.supportGroup = String(row._supportGroup);
   }
+  // Sticky: one observation of a repository under several groups is enough to stop the
+  // roll-up naming one, and a later row that happened to carry a single group does not
+  // un-learn it.
+  if (Number(row._supportGroups) > 1) acc.supportGroupSplit = true;
   acc.scopes.add(row.scope);
   const bucket = acc.rowsByScope.get(row.scope);
   if (bucket) bucket.push(row);
@@ -898,6 +914,7 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
       repo_name: acc.repoName,
       product: acc.product,
       support_group: acc.supportGroup,
+      support_group_split: acc.supportGroupSplit,
       open_findings: acc.open,
       open_high_risk: acc.openHigh,
       oldest_open_age_days:
@@ -1033,14 +1050,22 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
       withOpen === 0 ? "clear" : coldRepos === withOpen ? "fully-cold" : coldRepos > 0 ? "partly-cold" : "warm";
 
     const groups = new Set<string>();
-    for (const r of list) if (r.support_group !== null) groups.add(r.support_group);
+    let split = false;
+    for (const r of list) {
+      if (r.support_group !== null) groups.add(r.support_group);
+      if (r.support_group_split) split = true;
+    }
+    // A repository filed under several groups makes the union below an UNDERCOUNT, so the
+    // count is floored at two: the honest answer is "more than one", and the column's job is
+    // only to stop asserting one.
+    const groupCount = split ? Math.max(groups.size, 2) : groups.size;
 
     out.push({
       product,
       label: product ?? COLD_PRODUCT_NONE,
       // One name only when they all agree — see the field's own comment.
-      support_group: groups.size === 1 ? [...groups][0]! : null,
-      support_groups: groups.size,
+      support_group: groupCount === 1 ? [...groups][0]! : null,
+      support_groups: groupCount,
       repos: list.length,
       repos_observed: observed,
       repos_unobserved: unobserved,

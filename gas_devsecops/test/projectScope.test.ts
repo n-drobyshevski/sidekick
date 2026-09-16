@@ -191,6 +191,8 @@ describe("projectCatalogue: the parent edge", () => {
     expect(under("CS-LOG-ZEN-ECOM")).toEqual(["product-c"]);
   });
 
+  // Perturbation, run and reverted: relaxing the collapse to `parents.size ? [...][0]` fails
+  // this case with `expected 'CE-TRANSPORT' to be null` and the dev-seed end-to-end with it.
   it("REFUSES to name one where two groups claim the same product, and says how many", () => {
     // A summary over many rows: a hint reading `Product · CE-TRANSPORT` on a product that
     // actually spans two groups is a false structural claim a reader will act on. Only
@@ -446,6 +448,29 @@ describe("attachProjectGrain", () => {
     attachProjectGrain(rows);
     expect("_product" in rows[0]!).toBe(false);
     expect("_supportGroup" in rows[0]!).toBe(false);
+  });
+
+  it("counts the support groups only when there is more than one — absence is the norm", () => {
+    // The per-row pick is deterministic and always lands somewhere, so this count is the only
+    // thing that can tell a summary (coldZone's escalation column) that the single name it
+    // was handed is not the whole answer.
+    const one = [rowWith([
+      { slug: "ce-transport", name: "CE-TRANSPORT", isFolder: true },
+      { slug: "product-a", name: "product-a", isFolder: false },
+    ])];
+    attachProjectGrain(one);
+    expect("_supportGroups" in one[0]!).toBe(false);
+
+    const two = [rowWith([
+      { slug: "ce-transport", name: "CE-TRANSPORT", isFolder: true },
+      { slug: "lu-ops", name: "LU-OPS", isFolder: true },
+      { slug: "product-a", name: "product-a", isFolder: false },
+    ])];
+    attachProjectGrain(two);
+    // Still bucketed — lowest name wins, so the breakdown keeps adding up…
+    expect(two[0]!._supportGroup).toBe("CE-TRANSPORT");
+    // …and the count is what stops a SUMMARY repeating that pick as a structural claim.
+    expect(two[0]!._supportGroups).toBe(2);
   });
 
   it("the org-wide connector tag reaches neither grain — parseProjects dropped it first", () => {

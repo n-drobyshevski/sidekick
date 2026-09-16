@@ -171,8 +171,20 @@ const PROJECT_POOL: readonly ProjectSpec[] = [
 const ORG_TAG: Rec =
   { id: "proj-org", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" };
 
-function projectsFor(idx: number): Rec[] {
-  const at = idx % PROJECT_POOL.length;
+/**
+ * KEYED ON THE REPOSITORY, NOT THE FINDING, and that is a correction rather than a preference.
+ * Wiz files a REPOSITORY under projects; every finding on it carries the same flattened list.
+ * Keying this on a finding index — which it used to be — gave one repository several different
+ * owners across its own findings, which no tenant can produce, and it hid a state the register
+ * has to be able to show: `coldZone.foldRow` takes the first non-blank grain per repository, so
+ * a repository that should have answered "no product" always found one on some other finding
+ * of its own and the `(no product)` bucket could never appear in the dev harness.
+ *
+ * The digits of the id are the key, so the mapping is stable across scans and across runs.
+ */
+function projectsFor(repoId: string): Rec[] {
+  const digits = String(repoId).replace(/\D/g, "");
+  const at = (digits === "" ? 0 : Number(digits)) % PROJECT_POOL.length;
   const p = PROJECT_POOL[at]!;
   const out: Rec[] = [];
   if (p.unit !== undefined) {
@@ -366,7 +378,7 @@ function scaRawNode(spec: ScaSpec, scanTs: string, resolved: boolean): Rec {
       tags: { team: repo.name.split("/")[1] ?? "platform" },
     },
     artifactType: { codeLibraryLanguage: repo.language },
-    projects: projectsFor(spec.idx),
+    projects: projectsFor(repo.id),
   };
 }
 
@@ -497,7 +509,7 @@ function sastRawNode(spec: SastSpec, scanTs: string): Rec {
     firstDetectedAtSource: null,
     resource: { id: spec.repo.id, name: `${spec.repo.name}/${spec.repo.branch}`, type: "REPOSITORY_BRANCH" },
     weaknesses: [{ id: spec.cwe, name: spec.name }],
-    projects: projectsFor(spec.idx + 1),
+    projects: projectsFor(spec.repo.id),
     vcsDetails: { commitHash: `c${(spec.idx + 1).toString(16).padStart(7, "0")}` },
     // This tenant's measured reality (CLAUDE.md): every node's aiAnalysis is null.
     aiAnalysis: null,
@@ -645,7 +657,7 @@ function secretRawNode(spec: SecretRawSpec, scanTs: string): Rec {
       cloudPlatform: spec.repo.cloudPlatform,
     },
     vcsDetails: { initialCommitHash: `s${(spec.physicalIndex + 1).toString(16).padStart(7, "0")}` },
-    projects: projectsFor(spec.physicalIndex + 2),
+    projects: projectsFor(spec.repo.id),
   };
 }
 
