@@ -700,39 +700,85 @@ export function heatLevel(count, max) {
 }
 
 /**
- * The product × idle-bucket grid: the columns from the payload, one row per product, and a
- * totals row under them.
+ * The repository × idle-bucket grid: the columns from the payload, one row per REPOSITORY, and
+ * a totals row under them.
  *
- * THE TOTALS ROW CARRIES NO SHADE, deliberately. The ramp compares products with each other,
- * and the totals are the sum of every one of them — shaded on the same scale, every cell in
- * that row would saturate at the darkest step and say nothing except "this row is bigger",
- * which the reader can already see from the numbers. Level 0 across the row; the counts are
- * printed exactly as they are everywhere else.
+ * ONE LIT CELL PER ROW, AND THAT IS THE SHAPE OF THE DATA rather than a rendering choice. A
+ * repository has exactly ONE idle reading, so it sits in exactly one band — where the
+ * per-product grid this replaced showed a real distribution (a product's repositories spread
+ * across the bands), a per-repository row can only mark a position. The other four cells are
+ * left BLANK rather than printed as `0`: a zero would claim four measurements that were never
+ * taken, and "absent is never zero" is the rule that is actually at stake in a row where the
+ * absence is structural.
+ *
+ * SO THE CELL CARRIES THE BACKLOG, NOT A COUNT OF ONE. `1` in every lit cell would be noise —
+ * the row IS one repository — and it would flatten the ramp, since a scale whose maximum is
+ * one shades every lit cell identically. The number that varies, and the one a reader is
+ * actually comparing across rows, is how many open findings sit at that position. The totals
+ * row keeps BOTH figures, because there it is a summary over many repositories and "how many
+ * repositories are in this band" is a real question again.
+ *
+ * SORTED LONGEST-IDLE FIRST, then by backlog, then by name. The grid grows with the estate now
+ * that a row is a repository rather than a product, so the order has to put the end of it that
+ * anyone is looking for at the top; the tie-breaks are total so two paints over one payload
+ * cannot reshuffle.
+ *
+ * A REPOSITORY IN NO BAND IS IN NO ROW. `bucket` is null for the unobserved and for those with
+ * nothing open — they have no idle position to draw — and the heading's tip says so, the same
+ * contract the per-product grid kept for its columns.
+ *
+ * THE TOTALS ROW CARRIES NO SHADE, deliberately. The ramp compares repositories with each
+ * other, and the totals are the sum of every one of them — shaded on the same scale, every
+ * cell in that row would saturate at the darkest step and say nothing except "this row is
+ * bigger", which the reader can already see from the numbers.
  *
  * Returns null where there is no grid to draw — no columns (nothing measurable) or no
- * products. A caller draws nothing rather than an empty table.
+ * repository in any band. A caller draws nothing rather than an empty table.
  */
 export function heatModel(view) {
   const columns = view && Array.isArray(view.bucketLabels) ? view.bucketLabels : null;
-  const teams = view && Array.isArray(view.teams) ? view.teams : [];
-  if (!columns || !columns.length || !teams.length) return null;
-  const cellsOf = (row) => columns.map((_, i) => ({
-    count: num(row && Array.isArray(row.buckets) ? row.buckets[i] : null, 0),
-    open: num(row && Array.isArray(row.bucket_open) ? row.bucket_open[i] : null, 0),
-  }));
-  const rows = teams.map((t) => ({
-    key: t.product === null || t.product === undefined ? NO_PRODUCT : String(t.product),
-    label: t.label || NO_PRODUCT,
-    cells: cellsOf(t),
-  }));
+  const repos = view && Array.isArray(view.repos) ? view.repos : [];
+  if (!columns || !columns.length) return null;
+  const placed = repos.filter((r) => {
+    const bucket = num(r && r.bucket);
+    return bucket !== null && bucket >= 0 && bucket < columns.length;
+  });
+  if (!placed.length) return null;
+  const rows = placed
+    .map((r) => {
+      const bucket = num(r.bucket);
+      const open = num(r.open_findings, 0);
+      const label = r.repo_name === null || r.repo_name === undefined || r.repo_name === ""
+        ? String(r.repo_id ?? "")
+        : String(r.repo_name);
+      return {
+        key: String(r.repo_id ?? label),
+        label,
+        bucket,
+        open,
+        cells: columns.map((_, i) => (i === bucket
+          ? { count: 1, open, lit: true }
+          : { count: 0, open: 0, lit: false })),
+      };
+    })
+    .sort((a, b) => (b.bucket - a.bucket) || (b.open - a.open) || a.label.localeCompare(b.label));
   let max = 0;
-  for (const row of rows) for (const cell of row.cells) if (cell.count > max) max = cell.count;
-  for (const row of rows) for (const cell of row.cells) cell.level = heatLevel(cell.count, max);
+  for (const row of rows) if (row.open > max) max = row.open;
+  for (const row of rows) {
+    for (const cell of row.cells) cell.level = cell.lit ? heatLevel(cell.open, max) : 0;
+  }
   const totals = view.totals
     ? {
         key: "__all__",
-        label: "All products",
-        cells: cellsOf(view.totals).map((c) => ({ ...c, level: 0 })),
+        label: "All repositories",
+        bucket: null,
+        open: 0,
+        cells: columns.map((_, i) => ({
+          count: num(Array.isArray(view.totals.buckets) ? view.totals.buckets[i] : null, 0),
+          open: num(Array.isArray(view.totals.bucket_open) ? view.totals.bucket_open[i] : null, 0),
+          lit: true,
+          level: 0,
+        })),
       }
     : null;
   return { columns: columns.slice(), rows, totals, max };
@@ -1208,7 +1254,7 @@ export async function renderRepos(host, _params, _ctx) {
   }
 
   /**
-   * The product × idle-bucket grid.
+   * The repository × idle-bucket grid.
    *
    * HAND-BUILT RATHER THAN `dataTable`, and that is the exception this page makes rather than
    * a component it is missing: no table in `gas_shared` takes a per-cell ordinal shade, and
@@ -1223,36 +1269,51 @@ export async function renderRepos(host, _params, _ctx) {
   function renderColdHeat(view) {
     const heat = heatModel(view);
     if (!heat) return;
-    const head = el("tr", {}, el("th", { scope: "col" }, "Product"));
+    const head = el("tr", {}, el("th", { scope: "col" }, "Repository"));
     for (const label of heat.columns) head.append(el("th", { scope: "col", class: "num" }, label));
     const body = el("tbody", {});
-    const paintRow = (r) => {
+    // A REPOSITORY ROW PRINTS ONLY WHERE IT SITS. One idle reading means one lit cell; the
+    // rest are empty, not zero (see `heatModel`). The totals row prints both figures in every
+    // cell, because there a count of repositories is a real question again.
+    const paintRepo = (r) => {
       const tr = el("tr", {}, el("th", { scope: "row" }, r.label));
       for (const cell of r.cells) {
-        tr.append(el("td", {
-          class: "num heat-cell",
-          // Every cell prints its own count and the open findings under it, shaded or not:
-          // the shade repeats the number, it never replaces it.
-          "data-level": String(cell.level),
-        }, fmtCount(cell.count), el("span", { class: "small muted" }, `${fmtCount(cell.open)} open`)));
+        tr.append(cell.lit
+          ? el("td", {
+            class: "num heat-cell",
+            // The shade repeats the number, it never replaces it.
+            "data-level": String(cell.level),
+          }, el("span", { class: "small muted" }, `${fmtCount(cell.open)} open`))
+          : el("td", { class: "num heat-cell", "data-level": "0" }));
       }
       return tr;
     };
-    for (const r of heat.rows) body.append(paintRow(r));
-    if (heat.totals) body.append(paintRow(heat.totals));
+    const paintTotals = (r) => {
+      const tr = el("tr", {}, el("th", { scope: "row" }, r.label));
+      for (const cell of r.cells) {
+        tr.append(el("td", { class: "num heat-cell", "data-level": String(cell.level) },
+          fmtCount(cell.count),
+          el("span", { class: "small muted" }, `${fmtCount(cell.open)} open`)));
+      }
+      return tr;
+    };
+    for (const r of heat.rows) body.append(paintRepo(r));
+    if (heat.totals) body.append(paintTotals(heat.totals));
     // The caption keeps what the cells COUNT; what the last column means and who is in no
-    // column are the heading's tip — the 51-word caption was the page's largest prose block.
-    coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by product", {
+    // row are the heading's tip — the 51-word caption was the page's largest prose block.
+    coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by repo", {
       lines: [
         "The last column is the repositories with no movement on record yet — not idle for"
         + " zero days, but not yet measurable.",
-        "Unobserved repositories and repositories with nothing open are in no column.",
+        "Unobserved repositories and repositories with nothing open have no idle reading, so"
+        + " they are in no row.",
       ],
     })));
     coldHost.append(el("div", { class: "table-wrap" },
       el("table", { class: "data heat" },
         el("caption", { class: "small muted" },
-          "Repositories per product by idle band, with the open findings in each."),
+          "One row per repository, in the idle band its reading falls in, with the open"
+          + " findings sitting there. The last row is every repository together."),
         el("thead", {}, head),
         body)));
   }
