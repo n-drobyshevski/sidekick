@@ -1839,6 +1839,58 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
    spacing only. */
 .section-label > .heading-pill { margin-left: var(--space-2); font-weight: 400; }
 
+/* ------------------------------------------------------- a section behind its own heading
+
+   gas_shared/ui/sheet.js's `collapsibleSection`: the heading, the caret and any state word
+   stay on the page; the table and the notes under them fold away. NOT `.chart-table`'s or
+   `.why`'s dress — both of those are small muted controls that sit UNDER the thing they
+   qualify, and a page's own section heading is neither small nor muted. The summary therefore
+   carries no box, no tint and no weight of its own: it is the h2 it already was, with a caret
+   in front of it.
+
+   THE ROW IS A FLEX LINE because `<summary>` is `display: list-item` and an `<h2>` child of
+   one would otherwise sit on its own line under the marker. `list-style: none` (plus the
+   -webkit pseudo) is what removes the native triangle so `.section-collapse__caret` is the
+   only one drawn.
+
+   The h2 keeps `.section-label`'s type and loses its margins: the vertical rhythm belongs to
+   the `<details>` now, so a closed section and an open one space the same against what is
+   above them. The focus ring is base.css's own `summary:focus-visible` rule, deliberately not
+   restated — one definition, one place to keep it. */
+.section-collapse { margin: var(--space-6) 0 0; }
+.section-collapse > summary {
+  cursor: pointer; list-style: none; user-select: none;
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--space-2);
+}
+.section-collapse > summary::-webkit-details-marker { display: none; }
+.section-collapse__title { margin: 0; }
+.section-collapse > summary:hover .section-collapse__title { color: var(--accent-text); }
+/* A 16px stroked chevron (ui/uiIcons.js), toned against the heading it opens rather than
+   against `.chart-table`'s small muted control — see the component for why this one is not the
+   "▸" the other three disclosures draw. It never carries the meaning on its own:
+   `<details>`/`<summary>` is the state a screen reader is told, and the chevron is the sighted
+   cue for it. `align-self: center` because the row is a baseline line and a glyph box has no
+   baseline worth aligning to; `inline-flex` so the svg does not sit on a text baseline inside
+   its own wrapper either. */
+.section-collapse__caret {
+  display: inline-flex; color: var(--text-3); align-self: center;
+}
+.section-collapse > summary:hover .section-collapse__caret { color: var(--accent-text); }
+.section-collapse--motion .section-collapse__caret {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.section-collapse[open] > summary .section-collapse__caret { transform: rotate(90deg); }
+/* A "25 of 70 open findings ranked" beside the heading — what the reader is choosing whether
+   to open, said while it is shut. NOT pushed to the far end of the line with `margin-left:
+   auto`, which is what it did first: on a 1140px column the sentence landed a screen away from
+   the name it qualifies and read as page furniture. It sits next to the "?" instead, where it
+   reads as the heading's own caption, and wraps under the name on a narrow viewport rather
+   than squeezing it. */
+.section-collapse__hint { min-width: 0; }
+/* `h2.section-label`'s own bottom margin, moved onto the body: the gap under the heading is
+   the section's, so it exists only when the section is open. */
+.section-collapse__body { margin-top: var(--space-3); }
+
 /* ---------------------------------------------------------------------------- split bar */
 /* gas_shared/ui/splitBar.js: one track split into labelled segments, the caption beneath
    repeating every figure in words — the bar illustrates, the caption is the record a screen

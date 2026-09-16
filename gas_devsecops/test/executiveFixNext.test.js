@@ -299,3 +299,50 @@ describe("the front door still draws no chart", () => {
     expect(SRC).toContain('el("ol", { class: "fixnext" })');
   });
 });
+
+// ------------------------------------------------- where the ranked list sits, and how
+
+/**
+ * The host order, as the page itself declares it — `host.append(...)`'s argument list is the
+ * DOM order, so this is the one line that decides what a reader meets first. The literal spans
+ * two lines here, hence the `[\s\S]`.
+ */
+function hostOrder(src) {
+  const m = src.match(/host\.append\(([\s\S]*?)\);/);
+  return m
+    ? m[1].split(",").map((s) => s.trim()).filter((s) => s.endsWith("Host"))
+    : [];
+}
+
+describe("Fix next is the page's LAST block, and it is collapsible", () => {
+  it("appends fixHost after every other host, the last-sync caption included", () => {
+    expect(hostOrder(SRC)).toEqual([
+      "noticeHost", "heroHost", "coldHost", "sevHost", "registerHost", "scanHost", "fixHost",
+    ]);
+    // Perturbed, because "is fixHost in the list" would pass on the arrangement this replaces.
+    // The ranked list spent its whole life directly under the hero, which put the page's
+    // longest block between the one figure this page opens with and the three one-glance
+    // blocks that qualify it.
+    const before = "  host.append(\n    pageHeader({ route: \"executive\" }),\n"
+      + "    noticeHost, heroHost, fixHost, coldHost, sevHost, registerHost, scanHost,\n  );";
+    expect(hostOrder(before).at(-1)).toBe("scanHost");
+    expect(hostOrder(SRC).at(-1)).toBe("fixHost");
+  });
+
+  it("builds the section through collapsibleSection, with the page holding the open flag", () => {
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toContain('collapsibleSection("Fix next", {');
+    expect(fn).toMatch(/open: fixOpen,/);
+    expect(fn).toMatch(/onToggle: \(o\) => \{ fixOpen = o; \},/);
+    // Remembered per reader across visits — the closure flag only survives this page's own
+    // repaints, and swrCall paints twice on a warm cache.
+    expect(fn).toMatch(/remember: "execFixNext",/);
+  });
+
+  it("puts the denominator on the heading, so a SHUT section still says what it holds", () => {
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toMatch(/hint: view\.rankedShort,/);
+    // And it is no longer ALSO a paragraph under the list — one statement, one place.
+    expect(fn).not.toContain('el("p", { class: "small muted" }, view.rankedShort)');
+  });
+});
