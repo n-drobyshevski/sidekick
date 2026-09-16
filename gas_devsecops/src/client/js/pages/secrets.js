@@ -74,6 +74,7 @@ import {
   registerRowsTable, renderRegisterPage, sectionCard, statusSegment, textCell,
 } from "./sca.js";
 import { populationLine } from "./registerModel.js";
+import { endOfLifeExclusionNote } from "./mttr.js";
 
 /**
  * The measurement note about the twin fold, as one string.
@@ -352,6 +353,9 @@ export function secretsModel(payload, opts) {
   const vm = {
     scope: "secrets",
     firstRun,
+    // Who the time-to-revoke estimate was measured over — through the model like every other
+    // block here, rather than reached for out of the payload at render time.
+    endOfLife: sec.endOfLife || null,
     asOf: reg.asOf ?? sec.asOf ?? null,
     rowCount: num(sec.rowCount, num(reg.rowCount)),
     open: num(sec.open, num(reg.open)),
@@ -1124,6 +1128,7 @@ function paintSecrets(host, vm, filters) {
   ));
 
   // ------------------------------------------------------------------- time to revoke
+  const eolNote = endOfLifeExclusionNote(vm.endOfLife, "the time-to-revoke figures");
   // THE 43-WORD LEDE IS THE HEADING'S DEFINITION. What the clock measures FROM and TO, and
   // why an unchecked credential is outside it, is what "time to revoke" MEANS here. The
   // excluded count itself does not move: it is the fourth card, in words, with its own
@@ -1175,6 +1180,11 @@ function paintSecrets(host, vm, filters) {
           + "exactly what an unvalidated row cannot support.",
       }),
     ),
+    // THE SECOND EXCLUSION, IN THE SECTION THAT ALREADY HAS ONE. This card's own "excluded,
+    // not censored" is about rows nobody checked; this sentence is about repositories nobody
+    // maintains. Both narrow this estimate and neither touches the counts above it — a leaked
+    // credential in a retired repository is still leaked.
+    eolNote ? el("p", { class: "small muted" }, eolNote) : null,
     vm.timeToRevoke.curve.length
       ? chartCard(
         "Survival of a committed credential",

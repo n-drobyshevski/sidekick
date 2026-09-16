@@ -116,14 +116,14 @@ describe("the locally-duplicated constants match the domain values they mirror",
 //  2. draftFromSettings carries the full eight-key contract
 // =========================================================================================
 
-describe("draftFromSettings never drops one of the eight page-editable Settings fields", () => {
+describe("draftFromSettings never drops one of the page-editable Settings fields", () => {
   // The two VIEW SCOPES this page does not own. Both are app-header chrome written through
   // their own endpoints (`api_setProjectView` / `api_setDomainView`), one field at a time —
   // see the module header just above SETTINGS_KEYS in pages/settings.js. So the exact-set
   // check below is "every Settings key EXCEPT the two this page does not own".
   const VIEW_SCOPES = ["projectView", "domainView"];
 
-  it("SETTINGS_KEYS names exactly the eight PAGE-EDITABLE fields Settings declares", () => {
+  it("SETTINGS_KEYS names exactly the PAGE-EDITABLE fields Settings declares", () => {
     const pageEditable = Object.keys(DEFAULT_SETTINGS)
       .filter((k) => VIEW_SCOPES.indexOf(k) < 0);
     expect([...SETTINGS_KEYS].sort()).toEqual(pageEditable.sort());
@@ -143,11 +143,11 @@ describe("draftFromSettings never drops one of the eight page-editable Settings 
     },
   );
 
-  it("produces exactly those eight keys from a real Settings object", () => {
+  it("produces exactly those keys from a real Settings object", () => {
     expect(Object.keys(draftFromSettings(DEFAULT_SETTINGS)).sort()).toEqual([...SETTINGS_KEYS].sort());
   });
 
-  it("produces exactly those eight keys from nothing at all", () => {
+  it("produces exactly those keys from nothing at all", () => {
     expect(Object.keys(draftFromSettings(null)).sort()).toEqual([...SETTINGS_KEYS].sort());
     expect(Object.keys(draftFromSettings(undefined)).sort()).toEqual([...SETTINGS_KEYS].sort());
     expect(Object.keys(draftFromSettings({})).sort()).toEqual([...SETTINGS_KEYS].sort());
@@ -682,11 +682,15 @@ describe("tab plumbing", () => {
     expect(normalizeTab(null)).toBe(DEFAULT_TAB);
   });
 
-  it("BATCHED_KEYS is eleven of the twelve fields — showExperimental is deliberately excluded", () => {
+  it("BATCHED_KEYS is every batched field — showExperimental is deliberately excluded", () => {
     expect(BATCHED_KEYS.sort()).toEqual(
       [
         "scopes", "fetchSeverities", "slaTargets", "coldAfterDays",
-        "coldZoneMode", "coldTargetSharePct", "coldFloorDays", "excludeEndOfLife",
+        "coldZoneMode", "coldTargetSharePct", "coldFloorDays",
+        // TWO END-OF-LIFE SWITCHES, INDEPENDENT, and both named for the family they reach.
+        // A bare `excludeEndOfLife` beside a suffixed sibling would read as "the general one
+        // and a special case"; neither implies the other.
+        "excludeEndOfLifeFromColdZone", "excludeEndOfLifeFromMttr",
         "syncSchedule", "autoCompact", "retentionDays",
       ].sort(),
     );

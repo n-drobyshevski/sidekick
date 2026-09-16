@@ -426,6 +426,13 @@ export function productCountNote(view, rowCount) {
  * retired repositories are in here, and where the switch is: this section's whole argument is
  * that a long silence means somebody stopped, and for these repositories it does not.
  *
+ * BOTH SENTENCES NAME THE COLD ZONE, because there are now two of these switches and they are
+ * independent — `mttr.js`'s `endOfLifeExclusionNote` says the same two things about the
+ * remediation-speed figures. A note claiming its exclusion was the only one, or that the rows
+ * it removed are "counted in every other figure this register publishes", would be false the
+ * moment a reader turned the other one on. What stays true in every combination is that
+ * neither switch touches a count of what is open, so that is what the second clause says.
+ *
  * NULL WHEN THERE ARE NONE, in either setting — `unmeasurableNote`'s rule. A sentence about
  * zero repositories is noise, and it is also the honest reading on a tenant whose lifecycle
  * tag this register never learned: nothing is known, so nothing is claimed. Settings > System
@@ -441,14 +448,14 @@ export function endOfLifeNote(view) {
   if (!total) return null;
   const repos = (n) => `${fmtCount(n)} ${n === 1 ? "repository" : "repositories"}`;
   if (view.excludeEndOfLife !== true) {
-    return `${repos(total)} here ${total === 1 ? "is" : "are"} end of life and still counted.`
-      + " Settings, under Deadlines, can leave them out.";
+    return `${repos(total)} here ${total === 1 ? "is" : "are"} end of life and still counted in`
+      + " the cold zone. Settings, under Deadlines, can leave them out.";
   }
   const cut = num(view.excludedEndOfLife, 0);
   const open = num(view.excludedOpenFindings, 0);
   const findings = `${fmtCount(open)} open ${open === 1 ? "finding" : "findings"}`;
-  return `${repos(cut)} left out as end of life, with ${findings}.`
-    + " They are counted in every other figure this register publishes.";
+  return `${repos(cut)} left out of the cold zone as end of life, with ${findings}.`
+    + " Still counted in every count of what is open.";
 }
 
 /**

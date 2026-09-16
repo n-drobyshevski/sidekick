@@ -41,7 +41,7 @@ import {
 // could describe the same estimate differently. It lives on the page that owns the clock.
 // `fmtCount`/`fmtDays` themselves come from `../ui.js` now, not from `./mttr.js` — see
 // `ui/figures.js`'s module header.
-import { kmHalfLifeView, rateView } from "./mttr.js";
+import { endOfLifeExclusionNote, kmHalfLifeView, rateView } from "./mttr.js";
 
 // ------------------------------------------------------------------------- view models
 
@@ -780,7 +780,14 @@ export async function renderExecutive(host, params, _ctx) {
     clear(heroHost);
 
     const stats = [
-      statRow("Tracked", fmtCount(view.tracked), "lifecycles in the ledger"),
+      // "IN THIS ESTIMATE", NOT "IN THE LEDGER". This figure is the estimator's population and
+      // always was — a scope or severity filter already narrowed it — but until the
+      // remediation-speed exclusion existed the loose wording never produced a visible
+      // contradiction. It does now: with the switch on, this reads 477 while "413 open of 554
+      // tracked" sits under the severity bar on the same page, and both are right about
+      // different populations. Naming the population is what tells them apart; the note under
+      // the hero is what says why they differ.
+      statRow("Tracked", fmtCount(view.tracked), "lifecycles in this estimate"),
       statRow("Resolved", fmtCount(view.resolved), "closed findings — the estimator's events"),
       statRow(
         "Still open",
@@ -801,6 +808,12 @@ export async function renderExecutive(host, params, _ctx) {
       stats: first && first.show ? [] : stats,
     }));
     heroHost.append(curveNote());
+    // THE ONE PAGE WHERE THE SENTENCE HAS TO NAME ITS FAMILY. The switch narrows the half-life
+    // above and leaves every severity tile below whole — a retired repository's open findings
+    // are real and stay in the backlog — so a note reading "these figures" here would claim
+    // the tiles moved too. `endOfLifeExclusionNote`'s `what` parameter exists for exactly this.
+    const eol = endOfLifeExclusionNote(payload && payload.endOfLife, "the half-life figures");
+    if (eol) heroHost.append(el("p", { class: "small muted" }, eol));
   }
 
   /**

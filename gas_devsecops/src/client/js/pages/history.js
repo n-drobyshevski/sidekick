@@ -69,7 +69,7 @@ import { movementBarsModel, movementBlocks } from "./historyModel.js";
 // come to disagree again. Reaching across a page module is the established shape here
 // (`program.js` imports `fmtCount`/`fmtDays` from mttr.js already; `chartCard` below comes
 // from `sca.js`); mttr.js has no module-level side effects and no import path back here.
-import { kmHalfLifeView } from "./mttr.js";
+import { endOfLifeExclusionNote, kmHalfLifeView } from "./mttr.js";
 // The chart-card shell with its eager data-table alternative and its "chart unavailable"
 // fallback, reached ACROSS a page module the way `program.js` already reaches for it. It is
 // declared in sca.js because that is where it was first needed; a fourth copy here would be
@@ -713,6 +713,13 @@ export async function renderHistory(host, _params, _ctx) {
         { unit: "days", caption: kmSparkCaption },
       ),
     );
+    // Beside the three counts it does NOT touch. `tracked`, `open` and `resolved` are what the
+    // register holds; the half-life and the trend beneath it are how long a finding lived, and
+    // those are the two the switch narrows.
+    const eol = endOfLifeExclusionNote(
+      payload && payload.endOfLife, "the half-life figures",
+    );
+    if (eol) kpiHost.append(el("p", { class: "small muted" }, eol));
   }
 
   /**

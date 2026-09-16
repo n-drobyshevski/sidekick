@@ -10,7 +10,8 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_SETTINGS, DEFAULT_SYNC_HOUR, cleanSettings, effectiveColdAfterDays,
-  effectiveColdZoneSettings, effectiveSlaTargets, validateSettings, withSettings,
+  effectiveColdZoneSettings, effectiveExcludeEndOfLifeFromMttr, effectiveSlaTargets,
+  validateSettings, withSettings,
 } from "../src/domain/settingsLogic";
 import {
   COLD_AFTER_DAYS_MAX, COLD_AFTER_DAYS_MIN, COLD_FLOOR_DAYS_MAX, COLD_FLOOR_DAYS_MIN,
@@ -534,7 +535,7 @@ describe("effectiveColdZoneSettings, the one door to coldZoneProfile", () => {
   it("applies each field's own cleaner — junk defaults, a real number is clamped", () => {
     expect(effectiveColdZoneSettings({
       coldZoneMode: " RELATIVE ", coldAfterDays: 400, coldTargetSharePct: 80, coldFloorDays: 0,
-      excludeEndOfLife: true,
+      excludeEndOfLifeFromColdZone: true,
     })).toEqual({
       mode: "relative",
       coldAfterDays: COLD_AFTER_DAYS_MAX,
@@ -546,16 +547,19 @@ describe("effectiveColdZoneSettings, the one door to coldZoneProfile", () => {
       coldZoneMode: "warm", coldAfterDays: "junk", coldTargetSharePct: {}, coldFloorDays: [],
       // ONLY A LITERAL `true` EXCLUDES. Deleting repositories from a page on the strength of a
       // truthy string is the one coercion this field must never make.
-      excludeEndOfLife: "true",
+      excludeEndOfLifeFromColdZone: "true",
     })).toEqual(ALL_DEFAULTS);
-    expect(effectiveColdZoneSettings({ excludeEndOfLife: 1 }).excludeEndOfLife).toBe(false);
-    expect(effectiveColdZoneSettings({ excludeEndOfLife: true }).excludeEndOfLife).toBe(true);
+    expect(effectiveColdZoneSettings({ excludeEndOfLifeFromColdZone: 1 }).excludeEndOfLife).toBe(false);
+    expect(effectiveColdZoneSettings({ excludeEndOfLifeFromColdZone: true }).excludeEndOfLife).toBe(true);
+    // AND IT READS ONLY ITS OWN FIELD. The MTTR switch is a separate decision; a door that
+    // answered for both would make one page silently obey the other page's setting.
+    expect(effectiveColdZoneSettings({ excludeEndOfLifeFromMttr: true }).excludeEndOfLife).toBe(false);
   });
 
   it("reads a real Settings object back unchanged", () => {
     const s = withSettings(DEFAULT_SETTINGS, {
       coldZoneMode: "relative", coldAfterDays: 120, coldTargetSharePct: 35, coldFloorDays: 30,
-      excludeEndOfLife: true,
+      excludeEndOfLifeFromColdZone: true,
     });
     expect(effectiveColdZoneSettings(s)).toEqual({
       mode: "relative", coldAfterDays: 120, targetSharePct: 35, floorDays: 30,
@@ -642,7 +646,7 @@ describe("projectView, the view scope", () => {
 describe("tabStatus: per-tab dirty and invalid state", () => {
   const saved = draftFromSettings(DEFAULT_SETTINGS);
 
-  it("TAB_FIELDS names exactly the seven real batched fields, and only real tab keys", () => {
+  it("TAB_FIELDS names exactly the real batched fields, and only real tab keys", () => {
     // The "cannot drift" claim, checked as data rather than assumed: the pure module's map
     // and the DOM half's own BATCHED_KEYS (pages/settings.js's Object.keys(FIELD_TABS), which
     // is now `= TAB_FIELDS`) must name the exact same field set.
@@ -721,8 +725,10 @@ describe("tabStatus: per-tab dirty and invalid state", () => {
       "coldZoneMode", "coldTargetSharePct", "coldFloorDays",
       // The fifth cold-zone field, driven from the same panel by a `switchToggle` rather than
       // by a number input — and the only one of the five that is not read by a mode branch, so
-      // it is on screen in both modes and belongs in this sweep for both.
-      "excludeEndOfLife",
+      // it is on screen in both modes and belongs in this sweep for both. Its twin sits in the
+      // same panel, above the cold-zone block rather than below it, beside the SLA windows the
+      // figures it governs are measured against.
+      "excludeEndOfLifeFromColdZone", "excludeEndOfLifeFromMttr",
       "syncSchedule", "autoCompact", "retentionDays",
     ];
     for (const field of fieldsSourceActuallyDrivesTheDraftFor) {
@@ -794,4 +800,74 @@ describe("tabStatus: per-tab dirty and invalid state", () => {
   // block, stayed green — (a)/(b)/(c) exercise `slaTargets`, not `retentionDays`, so a hole in
   // TAB_FIELDS for an unrelated field is invisible to them. Reverted immediately after the
   // observation; both files were back to fully green (40/40, 49/49) on the next run.
+});
+
+// =========================================================================================
+//  excludeEndOfLifeFromMttr — the second switch, and its own door
+// =========================================================================================
+//
+// TWO SWITCHES, TWO ARGUMENTS, AND NEITHER IS A DEFAULT FOR THE OTHER. The cold-zone one
+// removes retired repositories from a reading about SILENCE; this one removes them from
+// readings about HOW LONG A FINDING LIVED. A reader can want either without the other, and the
+// thing that makes that true in code is that the two fields are read separately — which is
+// what these cases hold.
+
+describe("excludeEndOfLifeFromMttr", () => {
+  it("defaults to false, so every deployment behaves as it did until someone opts in", () => {
+    expect(DEFAULT_SETTINGS.excludeEndOfLifeFromMttr).toBe(false);
+    expect(effectiveExcludeEndOfLifeFromMttr(DEFAULT_SETTINGS)).toBe(false);
+  });
+
+  it("degrades a partial or absent settings object to false rather than to undefined", () => {
+    // readModels.test.ts's `loadSettings()` mock hands back exactly this kind of partial row.
+    for (const v of [null, undefined, {}, { coldAfterDays: 90 }]) {
+      expect(effectiveExcludeEndOfLifeFromMttr(v), JSON.stringify(v)).toBe(false);
+    }
+  });
+
+  it("ONLY A LITERAL `true` TURNS IT ON — a truthy string is not consent", () => {
+    expect(effectiveExcludeEndOfLifeFromMttr({ excludeEndOfLifeFromMttr: true })).toBe(true);
+    for (const v of ["true", 1, {}, [], "yes"]) {
+      expect(
+        effectiveExcludeEndOfLifeFromMttr({ excludeEndOfLifeFromMttr: v }),
+        String(v),
+      ).toBe(false);
+    }
+    expect(cleanSettings({ excludeEndOfLifeFromMttr: "true" }).excludeEndOfLifeFromMttr)
+      .toBe(false);
+    expect(cleanSettings({ excludeEndOfLifeFromMttr: true }).excludeEndOfLifeFromMttr)
+      .toBe(true);
+  });
+
+  // Perturbation, run and reverted: reading `excludeEndOfLifeFromColdZone` in either function
+  // fails this case — and on screen it would make one page silently obey the other page's
+  // setting, which is the one thing two independent switches must never do.
+  it("THE TWO SWITCHES ARE READ SEPARATELY, in both directions", () => {
+    const coldOnly = cleanSettings({ excludeEndOfLifeFromColdZone: true });
+    expect(coldOnly.excludeEndOfLifeFromColdZone).toBe(true);
+    expect(coldOnly.excludeEndOfLifeFromMttr).toBe(false);
+    expect(effectiveExcludeEndOfLifeFromMttr(coldOnly)).toBe(false);
+    expect(effectiveColdZoneSettings(coldOnly).excludeEndOfLife).toBe(true);
+
+    const mttrOnly = cleanSettings({ excludeEndOfLifeFromMttr: true });
+    expect(mttrOnly.excludeEndOfLifeFromColdZone).toBe(false);
+    expect(mttrOnly.excludeEndOfLifeFromMttr).toBe(true);
+    expect(effectiveExcludeEndOfLifeFromMttr(mttrOnly)).toBe(true);
+    expect(effectiveColdZoneSettings(mttrOnly).excludeEndOfLife).toBe(false);
+  });
+
+  it("is NOT part of the cold zone's bundle — that type carries what must travel together", () => {
+    // `EffectiveColdZone` exists because `coldZoneProfile` throws on a relative mode with no
+    // target. This flag travels with none of those, so a sixth field there would suggest the
+    // two decisions are one.
+    expect(Object.keys(effectiveColdZoneSettings(DEFAULT_SETTINGS)).sort()).toEqual([
+      "coldAfterDays", "excludeEndOfLife", "floorDays", "mode", "targetSharePct",
+    ]);
+  });
+
+  it("survives a withSettings round trip, like every other batched field", () => {
+    const next = withSettings(DEFAULT_SETTINGS, { excludeEndOfLifeFromMttr: true });
+    expect(next.excludeEndOfLifeFromMttr).toBe(true);
+    expect(next.excludeEndOfLifeFromColdZone).toBe(false);
+  });
 });

@@ -128,6 +128,11 @@ export interface Settings {
    * on their estate, and "does a repository we retired count" is the same decision one step
    * earlier.
    *
+   * NAMED FOR WHAT IT EXCLUDES FROM, because there are now two of these and they are
+   * independent (`excludeEndOfLifeFromMttr` below). A bare `excludeEndOfLife` beside a suffixed
+   * sibling would read as "the general one and a special case", which is the opposite of
+   * true: neither implies the other, and the arguments for them are different.
+   *
    * DEFAULT FALSE, `autoCompact`'s precedent exactly: a fresh install and every deployment that
    * predates this field behave identically until an operator opts in. That direction is the
    * conservative one here rather than merely the compatible one — off, a retired repository is
@@ -140,7 +145,35 @@ export interface Settings {
    * `autoCompact` beside it: a string, a number or a missing cell is not consent to delete
    * repositories from a page.
    */
-  excludeEndOfLife: boolean;
+  excludeEndOfLifeFromColdZone: boolean;
+  /**
+   * Leave END-OF-LIFE repositories out of the REMEDIATION-SPEED figures: the half-life and its
+   * survival curve, the SLA attainment and the open-age distribution, the capacity rates and
+   * the time to revoke — on the MTTR & SLA, Executive, Coverage & efficiency, Scan history and
+   * Secrets pages.
+   *
+   * A SECOND SWITCH, NOT A BROADER ONE, because it rests on a different argument. The cold zone
+   * measures SILENCE, and a retired repository's silence says nothing about anybody's
+   * engagement. These figures measure HOW LONG A FINDING LIVED, and a retired repository
+   * distorts them from both ends at once: its closes are archival rather than work, and its
+   * open findings will never be fixed, so they age forever inside the distribution and the SLA
+   * backlog. `PRODUCT.md`'s seventh principle already makes the neighbouring argument for the
+   * vendor wait — "waiting for a vendor is not remediation time" — and work nobody is meant to
+   * do is the same kind of claim.
+   *
+   * Either switch is useful without the other, which is why they are two. A reader can silence
+   * the cold zone's false alarm and still want the register's headline median taken over the
+   * whole estate, and a reader who trusts their cold zone can still want the median measured
+   * over the repositories somebody is actually maintaining.
+   *
+   * AGGREGATES ONLY. It narrows figures that are one number about MANY repositories. A
+   * per-repository half-life on the Repositories page is that repository's own fact, not a
+   * claim about the estate, so the table there is untouched — which is also what keeps its
+   * Lifecycle column able to show the retired repositories it was added for.
+   *
+   * DEFAULT FALSE and literal-`true`-only, for its sibling's reasons unchanged.
+   */
+  excludeEndOfLifeFromMttr: boolean;
   /** Show routes flagged experimental in the nav. */
   showExperimental: boolean;
   /**
@@ -218,7 +251,8 @@ export const DEFAULT_SETTINGS: Settings = {
   coldZoneMode: DEFAULT_COLD_ZONE_MODE,
   coldTargetSharePct: DEFAULT_COLD_TARGET_SHARE_PCT,
   coldFloorDays: DEFAULT_COLD_FLOOR_DAYS,
-  excludeEndOfLife: false,
+  excludeEndOfLifeFromColdZone: false,
+  excludeEndOfLifeFromMttr: false,
   showExperimental: false,
   syncSchedule: DEFAULT_SYNC_HOUR,
   autoCompact: false,
@@ -438,8 +472,10 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     coldTargetSharePct: cleanColdTargetSharePct(r.coldTargetSharePct),
     coldFloorDays: cleanColdFloorDays(r.coldFloorDays),
     // Junk (a string, a number, undefined) coerces to false, same as the two booleans below —
-    // only a literal `true` removes repositories from the cold zone.
-    excludeEndOfLife: r.excludeEndOfLife === true,
+    // only a literal `true` removes repositories from a measurement. Two independent switches,
+    // two independent reads: neither is a default for the other.
+    excludeEndOfLifeFromColdZone: r.excludeEndOfLifeFromColdZone === true,
+    excludeEndOfLifeFromMttr: r.excludeEndOfLifeFromMttr === true,
     showExperimental: r.showExperimental === true,
     syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
     // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
@@ -609,7 +645,12 @@ export interface EffectiveColdZone {
   coldAfterDays: number;
   targetSharePct: number;
   floorDays: number;
-  /** Whether retired repositories are left out of the measurement. See `Settings`. */
+  /**
+   * Whether retired repositories are left out of the cold zone — `Settings`'s
+   * `excludeEndOfLifeFromColdZone`. The field keeps the short name INSIDE this type because the
+   * type is already cold-zone-scoped, and `coldZoneProfile`'s own option is spelled this way
+   * too; the long name exists on `Settings`, where the two switches sit side by side.
+   */
   excludeEndOfLife: boolean;
 }
 
@@ -626,10 +667,10 @@ export interface EffectiveColdZone {
  * unconstructible: the mode is always accompanied.
  *
  * THE SAME DEGRADATION `effectiveSlaTargets` AND THE OLD `effectiveColdAfterDays` ALREADY GAVE,
- * now over four fields instead of one: a `Settings`-shaped value that never went through
+ * now over five fields instead of one: a `Settings`-shaped value that never went through
  * `cleanSettings` — a hand-built fixture, `test/readModels.test.ts`'s deliberately PARTIAL
  * `loadSettings()` mock, a bootstrap payload trimmed to one field, `null` itself — comes back
- * as the four shared defaults rather than as `undefined`s the profile refuses. Each field is
+ * as the five shared defaults rather than as `undefined`s the profile refuses. Each field is
  * read through the exact cleaner `cleanSettings` applies, so the figure a page publishes and
  * the figure the settings row displays can never disagree.
  *
@@ -641,7 +682,8 @@ export function effectiveColdZoneSettings(
   settings:
     | Partial<Pick<
       Settings,
-      "coldAfterDays" | "coldZoneMode" | "coldTargetSharePct" | "coldFloorDays" | "excludeEndOfLife"
+      "coldAfterDays" | "coldZoneMode" | "coldTargetSharePct" | "coldFloorDays"
+      | "excludeEndOfLifeFromColdZone"
     >>
     | null
     | undefined,
@@ -655,6 +697,29 @@ export function effectiveColdZoneSettings(
     // decides which repositories the line is derived FROM, so a caller that read the mode here
     // and this flag from the settings row directly could derive a relative line over one
     // population and then draw the table over another.
-    excludeEndOfLife: settings?.excludeEndOfLife === true,
+    excludeEndOfLife: settings?.excludeEndOfLifeFromColdZone === true,
   };
+}
+
+/**
+ * Whether the remediation-speed figures leave retired repositories out — the ONE door between a
+ * stored settings row and `readModels`' `liveRepoRows`.
+ *
+ * ITS OWN READER RATHER THAN A SIXTH FIELD ON `EffectiveColdZone`, and the distinction is the
+ * whole point of there being two switches. That type exists because `coldZoneProfile`'s four
+ * options must TRAVEL TOGETHER — a relative mode with no target throws — and this flag travels
+ * with none of them: it governs a different family, on five different pages, and putting it in
+ * the cold zone's bundle would quietly suggest the two are one decision.
+ *
+ * A FUNCTION RATHER THAN A FIELD READ, for `effectiveColdAfterDays`' reason: a `Settings`-shaped
+ * value that never went through `cleanSettings` — a hand-built fixture, `test/readModels.test.ts`'s
+ * deliberately PARTIAL `loadSettings()` mock, `null` itself — comes back as the shared default
+ * rather than as an `undefined` a caller would read as falsy by accident rather than by rule.
+ * The coercion is `cleanSettings`' exact one, so the figure a page publishes and the switch a
+ * reader sees can never disagree.
+ */
+export function effectiveExcludeEndOfLifeFromMttr(
+  settings: Partial<Pick<Settings, "excludeEndOfLifeFromMttr">> | null | undefined,
+): boolean {
+  return settings?.excludeEndOfLifeFromMttr === true;
 }

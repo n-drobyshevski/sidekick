@@ -716,6 +716,13 @@ export function getExecutivePage(p?: unknown): ApiResult {
       // `asOf` above, and a figure that is measured on a different clock has to say so.
       coldZone: exec["coldZone"],
       coldZoneAsOfSource: exec["coldZoneAsOfSource"],
+      // WHO THE HALF-LIFE WAS MEASURED OVER, and the one key on this payload that describes a
+      // NARROWER population than the keys around it. `severityCounts` and `tiers` cover every
+      // repository; the hero above them does not when the remediation-speed exclusion is on,
+      // and the page's one sentence is what stops a reader reading the two as one estate.
+      // ENUMERATED like everything else here — this payload is an allowlist, so a block that
+      // is not named is a block the page never sees.
+      endOfLife: exec["endOfLife"],
       tiers: exec["tiers"],
       signalCoverage: exec["signalCoverage"],
     };
@@ -903,6 +910,9 @@ export function getScanHistory(p?: unknown): ApiResult {
       movement: h["movement"],
       movementNote: h["movementNote"],
       trends: historyTrendSlice(h),
+      // Narrows `kpis.km` and `trends`, and NOTHING else on this payload — the same split
+      // `scanScopeApplies` below already describes for the view scope, one population over.
+      endOfLife: h["endOfLife"],
       // `scans` and `perScope` above are per-scan/per-day facts with no project dimension —
       // see `readModels.ts::buildHistory`'s own comment. `kpis` and `trends` DO narrow to the
       // view-project scope; these two flags name exactly which keys in THIS payload do not, so

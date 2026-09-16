@@ -71,6 +71,11 @@ const H = vi.hoisted(() => ({
   /** `settingsStore.loadSettings().coldFloorDays` — `undefined` degrades to 14. Same seam,
    *  same reason. */
   coldFloorDays: undefined as number | undefined,
+  /** `settingsStore.loadSettings().excludeEndOfLifeFromMttr` — read through
+   *  `settingsLogic.effectiveExcludeEndOfLifeFromMttr`, its OWN door rather than the cold
+   *  zone's bundle. `undefined` (the default) is "nothing saved", which degrades to false —
+   *  so every test written before this switch existed still measures the whole estate. */
+  excludeEndOfLifeFromMttr: undefined as boolean | undefined,
   /** `historyStore`'s per-UTC-day blobs, ascending — one file per day, latest write wins.
    *  `secretsModel` reads its twin fold off the NEWEST one; `historyModel` ships the array. */
   history: [] as { date: string; stats: unknown }[],
@@ -161,7 +166,7 @@ vi.mock("../src/server/settingsStore", () => ({
   loadSettings: () => ({
     projectView: H.projectView, slaTargets: H.slaTargets, coldAfterDays: H.coldAfterDays,
     coldZoneMode: H.coldZoneMode, coldTargetSharePct: H.coldTargetSharePct,
-    coldFloorDays: H.coldFloorDays,
+    coldFloorDays: H.coldFloorDays, excludeEndOfLifeFromMttr: H.excludeEndOfLifeFromMttr,
   }),
 }));
 
@@ -363,6 +368,7 @@ beforeEach(() => {
   H.coldZoneMode = undefined;
   H.coldTargetSharePct = undefined;
   H.coldFloorDays = undefined;
+  H.excludeEndOfLifeFromMttr = undefined;
   H.history = [{ date: "2026-03-01", stats: { open: 5 } }];
   H.historyReads.length = 0;
   seed();
@@ -1646,3 +1652,177 @@ describe("warmReadModels", () => {
   });
 });
 
+
+// --------------------------------------------------------------------------------------- //
+//  The remediation-speed end-of-life exclusion
+// --------------------------------------------------------------------------------------- //
+//
+// THE SECOND OF TWO INDEPENDENT SWITCHES. The cold zone's lives inside `coldZoneProfile`,
+// because relative mode derives its line from the surviving population; this one lives at the
+// read-model boundary, because nothing in this family has that feedback loop and because
+// `remediation.kaplanMeier` and `program.capacityByMonth` are pinned against brick's PySpark
+// output — a population filter inside either would break the port's parity with the pipeline.
+//
+// WHAT EACH BLOCK GUARDS, since several look alike:
+//
+//   the figure moves        a half-life computed over the whole estate and one computed over
+//                           the live half are different numbers. If they are not, the filter
+//                           is not reaching the estimator.
+//   the counts do NOT       this is the one that matters. A retired repository's open
+//                           findings are real, and the Executive's severity tiles, Program's
+//                           row count and Secrets' coverage must not move when the switch
+//                           does. The promise the setting makes is exactly this.
+//   published both ways     `repos` counts the retired population whether or not anybody was
+//                           removed — the figure that makes the setting discoverable.
+//   the key carries it      a param the compute reads has to be in the cache key, or an
+//                           operator flips the switch and reads the old figure back.
+
+describe("the remediation-speed end-of-life exclusion", () => {
+  /** A repository with one long-closed finding and one still open. */
+  function repo(id: string, lifecycle: string | null, mttrDays: number): BaseRow[] {
+    const first = "2026-01-01T00:00:00Z";
+    const resolved = new Date(Date.parse(first) + mttrDays * DAY).toISOString();
+    return [
+      row({
+        finding_key: `${id}-closed`, scope: "sca", repo_id: id, repo_name: id,
+        first_seen: first, resolved_at: resolved,
+        ...(lifecycle === null ? {} : { _lifecycle: lifecycle }),
+      }),
+      row({
+        finding_key: `${id}-open`, scope: "sca", repo_id: id, repo_name: id,
+        first_seen: first,
+        ...(lifecycle === null ? {} : { _lifecycle: lifecycle }),
+      }),
+    ];
+  }
+
+  /** Two live repositories that close fast, one retired one that took a year. */
+  function estate(): void {
+    H.rows = [
+      ...repo("r-live-a", "IN_PRODUCTION", 5),
+      ...repo("r-live-b", null, 7),
+      ...repo("r-dead", "END_OF_LIFE", 300),
+    ];
+  }
+
+  // Perturbation, run and reverted: dropping the `liveRepoRows` wrap from `buildMttr` — taking
+  // `visibleRows(...)` straight — fails this case with the two medians equal.
+  it("MTTR: the half-life is measured over the live estate when the switch is on", () => {
+    estate();
+    const whole = mttrModel(ALL) as Record<string, any>;
+    __resetModelMemosForTest();
+    H.store.clear();
+    H.excludeEndOfLifeFromMttr = true;
+    const cut = mttrModel(ALL) as Record<string, any>;
+
+    expect(whole.rowCount).toBe(6);
+    expect(cut.rowCount).toBe(4);
+    // The retired repository's 300-day close is what the whole-estate figure is carrying.
+    expect(cut.remediation.km.median).not.toBe(whole.remediation.km.median);
+    expect(cut.remediation.km.median!).toBeLessThan(whole.remediation.km.median!);
+  });
+
+  it("MTTR: publishes the retired population in BOTH settings, and what left in one", () => {
+    estate();
+    const whole = mttrModel(ALL) as Record<string, any>;
+    // COUNTED WITH THE SWITCH OFF — the figure that makes the setting discoverable rather
+    // than hidden behind a settings tab nobody opened.
+    expect(whole.endOfLife).toEqual({
+      excluded: false, repos: 1, excludedRepos: 0, excludedRows: 0,
+    });
+
+    __resetModelMemosForTest();
+    H.store.clear();
+    H.excludeEndOfLifeFromMttr = true;
+    const cut = mttrModel(ALL) as Record<string, any>;
+    expect(cut.endOfLife).toEqual({
+      excluded: true, repos: 1, excludedRepos: 1, excludedRows: 2,
+    });
+  });
+
+  // TWO PERTURBATIONS, both run and reverted, because this block guards a boundary rather than
+  // a value and only one of them is caught by a figure moving:
+  //   * filtering `rows` at the TOP of `buildExecutive` (so `const rows = liveRepoRows(...)`)
+  //     fails the severity-count assertions with `expected 2 to be 3` — the exact promise the
+  //     setting makes, broken.
+  //   * filtering `sub` inside the `byScope` map instead of only the KM input fails the
+  //     per-register count assertions below with `expected 2 to be 3` on `open`. The
+  //     half-life assertion alone passes under it, which is why the counts are asserted at
+  //     BOTH grains rather than only at the page's total.
+  it("EXECUTIVE: the half-life moves and every count DOES NOT", () => {
+    estate();
+    const whole = executiveModel(ALL) as Record<string, any>;
+    __resetModelMemosForTest();
+    H.store.clear();
+    H.excludeEndOfLifeFromMttr = true;
+    const cut = executiveModel(ALL) as Record<string, any>;
+
+    const scaOf = (m: Record<string, any>) =>
+      m.byScope.rows.find((r: any) => r.group === "sca");
+    expect(scaOf(cut).kmMedian).not.toBe(scaOf(whole).kmMedian);
+
+    // A retired repository's open findings are real and stay in the backlog. This is the
+    // whole reason the cut in `buildExecutive` is applied to the KM input alone.
+    expect(whole.severityCounts.open).toBe(3);
+    expect(cut.severityCounts.open).toBe(3);
+    expect(cut.severityCounts.total).toBe(whole.severityCounts.total);
+
+    // AND AT THE PER-REGISTER GRAIN, on the same rows the half-life above was read off. The
+    // table draws `total` / `open` / `resolved` beside `kmMedian`, so a filter that reached
+    // the row's counts would have one cell measured over a different estate than its
+    // neighbour — the failure the split inside that map exists to prevent.
+    expect(scaOf(cut).total).toBe(scaOf(whole).total);
+    expect(scaOf(cut).open).toBe(scaOf(whole).open);
+    expect(scaOf(cut).resolved).toBe(scaOf(whole).resolved);
+
+    expect(cut.endOfLife.excludedRepos).toBe(1);
+  });
+
+  it("PROGRAM and SECRETS carry the block beside the exclusion each already had", () => {
+    estate();
+    const prog = programModel(ALL) as Record<string, any>;
+    // Beside `excludedSecrets`, which has always been published for the same reason.
+    expect(prog.endOfLife).toEqual({
+      excluded: false, repos: 1, excludedRepos: 0, excludedRows: 0,
+    });
+    expect(prog).toHaveProperty("excludedSecrets");
+    expect((secretsModel(ALL) as Record<string, any>).endOfLife).toBeDefined();
+  });
+
+  it("HISTORY narrows the half-life KPI and the trend it passes, not the counts", () => {
+    estate();
+    const whole = historyModel(ALL) as Record<string, any>;
+    __resetModelMemosForTest();
+    H.store.clear();
+    H.trendCalls.length = 0;
+    H.excludeEndOfLifeFromMttr = true;
+    const cut = historyModel(ALL) as Record<string, any>;
+
+    expect(cut.kpis.km.median).not.toBe(whole.kpis.km.median);
+    // `tracked` / `open` / `resolvedAllTime` are what the register HOLDS.
+    expect(cut.kpis.tracked).toBe(whole.kpis.tracked);
+    expect(cut.kpis.open).toBe(whole.kpis.open);
+    // THE TREND IS FILTERED WHOLE. A lifecycle carries no date, so unlike the no-fix rule it
+    // cannot be applied as-of each point — the base handed to `loadTrend` is already cut.
+    const base = H.trendCalls[H.trendCalls.length - 1].base as BaseRow[];
+    expect(base.some((r) => r.repo_id === "r-dead")).toBe(false);
+    expect(base.some((r) => r.repo_id === "r-live-a")).toBe(true);
+  });
+
+  // Perturbation, run and reverted: leaving `mttrExcludeEndOfLife` out of `mttrModel`'s key
+  // fails this case — both params objects come back identical, which is exactly the stale
+  // read the file's own caching rule exists to prevent.
+  it("the flag joins every key whose compute reads it, and no key that does not", () => {
+    estate();
+    mttrModel(ALL);
+    reposModel(ALL);
+    const mttrKey = H.cacheCalls.find((c) => c.name === "dsMttr2")!.params as Record<string, any>;
+    const reposKey = H.cacheCalls.find((c) => c.name === "dsRepos2")!.params as Record<string, any>;
+    expect(mttrKey.mttrExcludeEndOfLife).toBe(false);
+    // The Repositories page draws no remediation-speed aggregate, so the flag is deliberately
+    // absent from its key — a param the compute does not read never joins one either.
+    expect("mttrExcludeEndOfLife" in reposKey).toBe(false);
+    // And the cold-zone flag, which belonged in that key from the day it shipped.
+    expect(reposKey.coldExcludeEndOfLife).toBe(false);
+  });
+});

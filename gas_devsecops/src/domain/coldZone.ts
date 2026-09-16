@@ -55,7 +55,14 @@
 //     strength of a missing scan row) and the scope is named in `scopes_without_scan`.
 //
 // -------------------------------------------------------------------------------------
-// ONE POPULATION THE OPERATOR MAY REMOVE, AND IT IS THE ONLY ONE. `excludeEndOfLife` drops
+// ONE POPULATION THE OPERATOR MAY REMOVE, AND IT IS THE ONLY ONE THIS MODULE OFFERS —
+// `readModels.ts`'s `liveRepoRows` is a SECOND, INDEPENDENT exclusion over the same
+// repositories, and it governs the remediation-speed figures rather than anything here. The
+// two are separate settings on purpose (`settingsLogic.ts` carries the argument), and the
+// reason this one lives inside the module while that one is a row filter at the read-model
+// boundary is Rule 0 below: relative mode DERIVES its line from the surviving population, so
+// the cut has to happen before the derivation rather than after the table is built.
+// `excludeEndOfLife` drops
 // the repositories the tenant has RETIRED (`src/domain/lifecycleTag.ts`, read off the
 // repository's `lifecycle` tag) before anything here is measured. It is off by default, and
 // it is the one exclusion this module offers, because it is the one population whose silence
@@ -74,7 +81,9 @@
 //     checked rather than merely believed.
 //   * It never reaches the rest of the register. A retired repository's findings are real and
 //     stay in every backlog, density and severity figure this app publishes; what is being
-//     removed is a reading about ENGAGEMENT, not a finding.
+//     removed is a reading about ENGAGEMENT, not a finding. (The remediation-speed switch
+//     makes the same promise about the same counts, so it holds in every combination of the
+//     two — which is why neither note claims the other figures are untouched outright.)
 //   * It never narrows `scopes_without_scan`, which is a fact about scan coverage rather than
 //     about this population — a coverage warning must not disappear because of a display
 //     setting.

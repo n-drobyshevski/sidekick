@@ -419,7 +419,7 @@ const ENTRIES = [
     term: "Lifecycle",
     lines: [
       "Where the tenant says a repository is in its life \u2014 in production, in development, end of life. Read off the repository's lifecycle tag in Wiz, printed as written.",
-      "Blank means no lifecycle is known: either the repository carries no such tag, or the tag map has never been refreshed. It is never read as \u201calive\u201d, and it never excludes a repository from anything.",
+      "Blank means no lifecycle is known: either the repository carries no such tag, or the tag map has never been refreshed. It is never read as \u201calive\u201d, and a blank tag excludes a repository from nothing.",
       "Refresh it from Settings > System, which also reports how many repositories the key actually placed.",
     ],
   },
@@ -430,9 +430,9 @@ const ENTRIES = [
     id: "end-of-life",
     term: "End of life",
     lines: [
-      "A repository the tenant has retired, by its lifecycle tag. Nobody is closing findings on one because nobody is meant to, so its silence does not mean what the cold zone reads into a silence.",
-      "Settings > Deadlines can leave these out of the cold zone. Off by default, and it never guesses: only a recognised end-of-life value excludes, never a blank tag or an unfamiliar word.",
-      "The exclusion reaches the cold zone alone. Their findings stay in every backlog, density and severity figure this register publishes.",
+      "A repository the tenant has retired, by its lifecycle tag. Nobody is closing findings on one because nobody is meant to, so both its silence and its clock mean something other than they look like.",
+      "Settings > Deadlines carries two switches: one leaves these out of the cold zone, the other out of the remediation-speed figures. Both off by default, and neither guesses at an unfamiliar word.",
+      "Whichever is on, a retired repository's findings stay in every count of what is open \u2014 the backlog, the density and the severity breakdowns are untouched by either.",
     ],
   },
   {
