@@ -153,10 +153,47 @@ const PENDING = "…";
  * is what `sevSegmentBar` needs, and deriving one from the other at the call site would put a
  * parse in front of a figure that was a number the whole way down.
  *
+ * THE MOVEMENT STRIP SUPERSEDES THIS BLOCK WHENEVER IT CAN BE DRAWN, and that is what
+ * `movement` decides. The two describe ONE population — `api.ts` builds both from the same
+ * `baseVisible` rows under the same severity gate — and the movement strip says strictly more
+ * about it: a row per severity with the open count, a `unitRow` tally of that count, the
+ * previous count and the direction. Drawn together, this page stated 27 CRITICAL and 39 HIGH
+ * twice, a screen apart, in two different pictures — and only the copy down here had to
+ * apologise for its own arithmetic, because dropping UNKNOWN from the key row is what makes
+ * 27 + 39 = 66 sit under a hero that counts 70. The movement rows carry UNKNOWN and sum to
+ * their own total; there is nothing to reconcile up there.
+ *
+ * SO IT IS A FALLBACK, NOT A DELETION. `openMovement` needs two scans at least seven days
+ * apart (`insights.ts`), which a register in its first week does not have — and in that state
+ * the movement strip prints "No open-backlog comparison" and this block is the ONLY thing on
+ * the front door that breaks the open backlog down at all. Exactly one of the two is on the
+ * page at any time, and it is always the richer one available.
+ *
+ * WHAT THAT COSTS, STATED RATHER THAN HIDDEN. With no severity gate in force, `openMovement`
+ * publishes only the severities PRESENT at either endpoint, so a level the register held
+ * nothing in all week loses the "LOW 0" key the paragraph above insists on. That rule still
+ * governs this block wherever it IS drawn; what is given up is a zero for a level nobody has
+ * a finding in this week or last, which is the emptiest bucket on the page.
+ *
+ * `movement` UNDEFINED MEANS "NOT COMPARABLE", so a caller that does not pass it gets the
+ * block — the shape every test in test/executiveView.test.js was written against.
+ *
  * @param {{order: string[], scope: string[], bootCounts: object,
- *          payload: object|null|undefined, scoped: boolean}} args
+ *          payload: object|null|undefined, scoped: boolean,
+ *          movement?: object|null}} args
  */
-export function executiveSeverityView({ order, scope, bootCounts, payload, scoped }) {
+export function executiveSeverityView({ order, scope, bootCounts, payload, scoped, movement }) {
+  // READ THROUGH `openMovementView`, never through a second copy of its rule. Whether a
+  // comparison exists is `insights.openMovement`'s decision, published as `comparable` and
+  // already interpreted once on this page; asking "does `movement.rows` have anything in it"
+  // here would be a second opinion that could disagree with the strip actually rendered.
+  if (openMovementView(movement).show) {
+    return {
+      show: false, supersededBy: "movement",
+      pending: false, tiles: [], open: null, openAll: null, note: null,
+      populationLine: null, populationExplain: null,
+    };
+  }
   const all = order || [];
   const sevs = all.filter((s) => scope.includes(s));
   const build = (read) => sevs.map((sev) => {
@@ -168,6 +205,7 @@ export function executiveSeverityView({ order, scope, bootCounts, payload, scope
     const open = sum(tiles);
     const pop = line(open, openAll);
     return {
+      show: true, supersededBy: null,
       pending: false, tiles, open, openAll, note,
       populationLine: pop.text,
       // NULL WHEN THE TWO POPULATIONS AGREE — there is nothing to explain, and `renderSeverity`
@@ -194,6 +232,7 @@ export function executiveSeverityView({ order, scope, bootCounts, payload, scope
   }
   if (!payload) {
     return {
+      show: true, supersededBy: null,
       pending: true, tiles: build(() => null), open: null, openAll: null, note: null,
       populationLine: null, populationExplain: null,
     };
@@ -854,12 +893,17 @@ export async function renderExecutive(main, _params, ctx) {
       skeleton("stat", { width: "260px", height: "56px" })),
   );
   guard("the last-scan caption", scanHost, renderScan);
-  // Painted early ONLY where the numbers are already in hand: unscoped, they come off
-  // bootstrap and the repaint below is a no-op (see executiveSeverityView). With no scan at
-  // all this is certainly a first run, so nothing is drawn and the panel speaks instead.
-  if (boot.latestScan) {
-    guard("open findings by severity", sevHost, () => renderSeverity(null));
-  }
+  // NO EARLY PAINT FOR THE SEVERITY BLOCK ANY MORE, and that is the price of making it the
+  // movement strip's fallback rather than its second copy. It used to be drawn here from
+  // bootstrap's own tally, unscoped, so the landing page showed real numbers on the first
+  // synchronous pass; whether it belongs on the page at all is now a question about the
+  // PAYLOAD (is there a week of scans to compare?), which is not answered until the RPC
+  // lands. The two ways to keep an early paint are both worse than nothing: computing
+  // comparability here from bootstrap would be a second copy of `insights.openMovement`'s own
+  // rule, free to disagree with the strip that actually renders, and painting it anyway would
+  // flash a full section that then vanishes on every load of a mature register. A skeleton is
+  // the same flash wearing a shimmer. So the slot stays empty until the answer is known — the
+  // hero's own skeleton above already says the page is loading.
 
   paint = (payload) => {
     const first = executiveFirstRunView(payload, boot);
@@ -887,13 +931,13 @@ export async function renderExecutive(main, _params, ctx) {
       detail: String((e && e.message) || e),
       onRetry: () => ctx.refresh(),
     }));
-    // Unscoped, the severity block already holds bootstrap's numbers and those are still
-    // true — leave them. Scoped, it holds the pending placeholder, and falling back to the
-    // register-wide tally would be exactly the lie this page was rewired to stop telling.
-    if (scoped) {
-      clear(sevHost).append(errorState("Couldn't load counts for this scope.",
-        { detail: String((e && e.message) || e) }));
-    }
+    // NOTHING GOES IN THE SEVERITY SLOT ON A FAILED LOAD, and the branch that used to is gone
+    // with the early paint above. It existed to REPLACE something: unscoped the block held
+    // bootstrap's register-wide tally and scoped it held a pending placeholder, and leaving
+    // either one under a failed scoped fetch was the lie this page was rewired to stop
+    // telling. Both are gone, so there is nothing to replace — and an error box here would
+    // now claim a section that this register may not have at all, on a page whose hero
+    // already carries the one failure and the retry.
   }
 
   // ------------------------------------------------------------------- the first run
@@ -1294,6 +1338,11 @@ export async function renderExecutive(main, _params, ctx) {
    * THE COUNTS ARE MANDATORY, not decoration. The bar is colour, and colour is never the only
    * cue here — the key row carries the level's word and its number, and the population line
    * under it carries the total the bar is a picture of.
+   *
+   * IT IS THE MOVEMENT STRIP'S FALLBACK NOW, not a second copy of it. `executiveSeverityView`
+   * owns that decision and the reasoning is on it; what this function does with it is return
+   * without drawing a heading, so a page whose movement strip is comparable has no empty
+   * "Open findings by severity" slot where this used to be.
    */
   function renderSeverity(data) {
     const view = executiveSeverityView({
@@ -1302,9 +1351,10 @@ export async function renderExecutive(main, _params, ctx) {
       bootCounts: boot.openCounts,
       payload: data && data.severityCounts,
       scoped,
+      movement: data && data.movement,
     });
     clear(sevHost);
-    if (!view.tiles.length) return;
+    if (!view.show || !view.tiles.length) return;
     // The method note is a DEFINITION of the axis — what a severity grades, and over which
     // rows — so it sits on the heading rather than under the picture.
     sevHost.append(sectionLabel("Open findings by severity", {

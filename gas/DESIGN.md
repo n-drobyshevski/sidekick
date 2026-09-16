@@ -122,8 +122,9 @@ block (the only `h1`, which waits on no RPC), then a metric header from the shar
 `pageHeader()`: the hero stat ("Remediation half-life", read through `kmHalfLifeView` so a
 censored curve prints "at least N days" and an unread ledger prints "Not measured"), a
 movement aside of per-severity rows against the newest scan a week or more older, and a
-stat strip closed by a hairline; then the open severity strip with its key row; then the
-by-domain table; then the last-scan block; and LAST, behind its own heading, Fix next — a
+stat strip closed by a hairline; then the open severity strip with its key row WHERE THAT
+MOVEMENT COMPARISON DOES NOT EXIST (see below); then the by-domain table; then the last-scan
+block; and LAST, behind its own heading, Fix next — a
 ranked table of (tier, owner) groups (an ordered list until the prose round of 2026-09-16 —
 see §9) with its denominator ("25 of 70 open findings ranked") and a disclosure naming every
 unranked reason with its count. The centred 720px `.exec` column and the page-level Run
@@ -155,7 +156,41 @@ a paragraph under the table. `test/wordsOneLevelDown.test.js` still holds `cutNo
 holds the new half — `fixHost` last in `main.append`, the section built through
 `collapsibleSection`, and the two notes appended to the section's body rather than outside it.
 The open state is the page's (`fixOpen`, because swrCall paints twice on a warm cache) and is
-remembered per reader under the app's own storage prefix. An honesty statement (a bound, a refusal, a cut, the population caveat)
+remembered per reader under the app's own storage prefix.
+
+**The open severity strip is the movement aside's fallback, not a second copy of it.** Both
+are built from the same scoped rows under the same severity gate (`api.ts` hands
+`insights.openMovement` and `executiveSeverityCounts` the same `baseVisible` and the same
+`severities`), and the aside says strictly more about that population: a row per severity
+carrying the open count, a `unitRow` tally of it, the previous count and the direction. Drawn
+together, the front door stated 27 CRITICAL and 39 HIGH twice, a screen apart, in two
+different pictures — and only the lower copy had to apologise for its own arithmetic, because
+dropping UNKNOWN from the key row is what puts 27 + 39 = 66 under a hero counting 70. The
+aside's rows carry UNKNOWN and sum to their own total; there is nothing up there to reconcile.
+
+**It is a fallback rather than a deletion because `openMovement` needs two scans at least
+seven days apart.** A register in its first week has no comparison, the aside prints its
+refusal with the real span it can offer, and this block is then the only thing on the front
+door that breaks the open backlog down at all. Exactly one of the two is on screen at any
+time and it is always the richer one available. `executiveSeverityView` owns the decision and
+reads it through `openMovementView` rather than through a second copy of the comparability
+rule — asking "does `movement.rows` have anything in it" would be a second opinion free to
+disagree with the strip actually rendered, and `test/executiveView.test.js` perturbs exactly
+that shortcut. The cost is stated on the view: with no gate in force `openMovement` publishes
+only the severities PRESENT at either endpoint, so a level the register held nothing in all
+week loses the "LOW 0" key this section otherwise insists on.
+
+**The early bootstrap paint went with it, and so did the scoped error box.** The block used
+to be drawn unscoped from `boot.openCounts` on the first synchronous pass, so the landing page
+showed real numbers before the RPC landed; whether it belongs on the page at all is now a
+question about the payload. Computing comparability from bootstrap would be that second copy
+of the rule again, and painting it anyway would flash a full section that vanishes on every
+load of a mature register — a skeleton is the same flash wearing a shimmer. The slot stays
+empty until the answer is known; the hero's own skeleton already says the page is loading. The
+`Couldn't load counts for this scope.` box existed only to REPLACE that early paint (leaving
+a register-wide tally under a failed scoped fetch was the lie the scope rewire removed), and
+with nothing pre-painted there is nothing to replace — the hero carries the one failure and
+the retry. An honesty statement (a bound, a refusal, a cut, the population caveat)
 stays on the surface; an explanation moves onto the nearest label's tip or into the
 disclosure. Measured against the DevSecOps front door on its own harness (272 words, 2
 prose blocks): 276 words, 9 prose blocks, the difference being the eight ranked meta lines,
