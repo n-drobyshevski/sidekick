@@ -36,14 +36,30 @@
 // `domain`; the by-support-group split ships `group` alone. A reader that reaches for `.domain`
 // renders a table of real numbers beside a column of blanks — which looks like missing data
 // rather than like a bug in the accessor.
-
-import { describe, expect, it } from "vitest";
+//
+// THE THIRD HALF IS NEWER AND IS ABOUT A BLOCK THAT MAY NOT BE DRAWN AT ALL. The movement
+// strip in the hero header states every severity's open count, its previous count and its
+// direction, over the same scoped rows under the same gate — so wherever that strip can be
+// drawn, this block was the page saying 27 CRITICAL and 39 HIGH a second time, a screen lower,
+// in a second picture. It is the strip's FALLBACK now: `openMovement` needs two scans a week
+// apart, and a register that does not have them keeps this block as the only breakdown of its
+// open backlog. Which of the two is on screen is a real decision with a real wrong answer, so
+// it lives on the view and is pinned here, perturbation included.
 
 import { readFileSync } from "node:fs";
 
+import { describe, expect, it } from "vitest";
+
+import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 import {
   coldShareView, executiveByDomainView, executiveHeroView, executiveSeverityView,
 } from "../src/client/js/pages/executive.js";
+
+// The DOM half is swept as source text, the house pattern for a tree with no jsdom, and
+// comment-stripped through `code()` because this page's prose quotes the calls it removed.
+const EXEC_SRC = readFileSync(
+  new URL("../src/client/js/pages/executive.js", import.meta.url), "utf8",
+);
 
 const ORDER = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
 const ALL = ["CRITICAL", "HIGH", "MEDIUM", "LOW"];
@@ -597,5 +613,99 @@ describe("the cold-zone card's render half", () => {
   it("labels the figure and takes its definition from the book", () => {
     expect(SRC).toContain('label: "Backlog in the cold zone"');
     expect(SRC).toContain('sectionLabel("The cold zone", { term: "cold-zone" })');
+  });
+});
+
+// =========================================================================================
+//  The severity block is the movement strip's FALLBACK, not its second copy
+// =========================================================================================
+
+/**
+ * A comparable `movementOpen` block, in the shape `insights.openMovement` publishes — two
+ * endpoints a week apart, a row per severity, a total that the rows sum to.
+ */
+const COMPARABLE = {
+  comparable: true,
+  reason: null,
+  since: "2026-09-09T00:00:00Z",
+  until: "2026-09-16T00:00:00Z",
+  gapDays: 7,
+  rows: [
+    { severity: "CRITICAL", open: 27, prevOpen: 29, delta: -2 },
+    { severity: "HIGH", open: 39, prevOpen: 46, delta: -7 },
+  ],
+  total: { open: 70, prevOpen: 79, delta: -9 },
+};
+
+describe("executiveSeverityView — the movement strip supersedes it when it can be drawn", () => {
+  it("withholds the whole block when the movement comparison exists", () => {
+    const v = sevView({ movement: COMPARABLE });
+    expect(v.show).toBe(false);
+    expect(v.supersededBy).toBe("movement");
+    // NOT "empty tiles and let the renderer work it out": `show` is the decision, and the
+    // tiles are absent because there is no block, not because the register has no findings.
+    expect(v.tiles).toEqual([]);
+    expect(v.populationLine).toBeNull();
+  });
+
+  // The three refusals `openMovement` can publish. Each one is a register the strip cannot
+  // describe, and every one of them is a register whose severity split still exists.
+  for (const reason of ["noScan", "oneScan", "tooClose"]) {
+    it(`draws the block when the comparison is refused with \`${reason}\``, () => {
+      const v = sevView({ movement: { comparable: false, reason, rows: [], gapDays: 4 } });
+      expect(v.show).toBe(true);
+      expect(values(v)).toEqual({ CRITICAL: "12", HIGH: "340", MEDIUM: "1,200", LOW: "7" });
+    });
+  }
+
+  it("draws the block when handed no movement at all, so an older payload keeps it", () => {
+    // `movement` undefined means NOT COMPARABLE, not "assume it is". A payload shape that
+    // predates the block — or a caller that simply does not pass one — must keep the severity
+    // split rather than silently lose the only severity statement on the page.
+    expect(sevView().show).toBe(true);
+    expect(sevView({ movement: null }).show).toBe(true);
+    expect(sevView({ movement: {} }).show).toBe(true);
+  });
+
+  // PERTURBATION. The tempting implementation is "does the movement block have any rows?",
+  // which reads the evidence instead of the decision. `insights.openMovement` publishes
+  // `comparable` and empties `rows` on every refusal, so the two agree TODAY and the shortcut
+  // passes every test above — until something publishes rows alongside a refusal, at which
+  // point the shortcut deletes the page's only severity statement and the honest read does
+  // not. Reproduced inline so this is a measurement rather than a restatement of the rule.
+  it("PERTURBATION: reading `rows.length` instead of the decision suppresses a refusal", () => {
+    const refusedWithRows = { comparable: false, reason: "tooClose", rows: COMPARABLE.rows };
+    const byRows = (m) => Boolean(m && Array.isArray(m.rows) && m.rows.length);
+    expect(byRows(refusedWithRows)).toBe(true);        // the shortcut hides the block
+    expect(sevView({ movement: refusedWithRows }).show).toBe(true); // the shipped rule keeps it
+  });
+
+  it("supersession outranks every other branch, scoped and pending alike", () => {
+    // A scoped view with no payload yet would otherwise return `pending: true` and paint a
+    // skeleton. A skeleton for a block that is not going to exist is the flash the page
+    // dropped its early paint to avoid.
+    const v = sevView({ scoped: true, payload: null, movement: COMPARABLE });
+    expect(v.show).toBe(false);
+    expect(v.pending).toBe(false);
+  });
+});
+
+describe("os: the page hands the severity view its movement, and paints it no earlier", () => {
+  it("passes `movement` off the same payload the strip is drawn from", () => {
+    expect(EXEC_SRC).toMatch(/movement: data && data\.movement,/);
+  });
+
+  it("no longer paints the block from bootstrap before the payload lands", () => {
+    // The early paint could not survive the fallback: whether the block belongs is a question
+    // about the payload, and answering it from bootstrap would be a second copy of
+    // `insights.openMovement`'s own rule. The call is gone, not merely moved.
+    expect(code(EXEC_SRC)).not.toContain("renderSeverity(null)");
+    expect(code(EXEC_SRC)).toMatch(/guard\("open findings by severity", sevHost, \(\) => renderSeverity\(payload\)\)/);
+  });
+
+  it("drops the scoped error box that existed only to replace that early paint", () => {
+    expect(code(EXEC_SRC)).not.toContain("Couldn't load counts for this scope.");
+    // The page's ONE failure statement is still the hero's, with the retry on it.
+    expect(code(EXEC_SRC)).toContain("Couldn't load remediation data.");
   });
 });

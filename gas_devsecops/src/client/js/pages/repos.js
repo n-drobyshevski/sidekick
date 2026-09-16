@@ -5,8 +5,12 @@
 // it is built straight from `domain/assets.ts::assetProfile` — a D6 port of
 // brick/metrics.py's asset-centric family — through `readModels.reposModel`, which
 // runs the same estimator twice: `groupBy: "repo"` (one row per repository) and
-// `groupBy: "language"` (one row per language, the only grain where percentiles across
-// several repos are not trivially one point).
+// `groupBy: "product"` (one row per product — the tenant's ownership grain, and the one where
+// percentiles across several repos are not trivially one point). The two are the two sides of
+// ONE table's switch. A `language` grain exists in `assets.ts` and is what brick's fixture
+// pins, but no page draws it: a repository's language is not something anyone remediates
+// against, and grouping the same measurements by it restated the repository table one level
+// coarser.
 //
 // DENSITY IS NEVER A MEAN. `AssetProfileRow` publishes `density_p25/p50/p75` and no mean —
 // v5 Fig. 10's distribution is "many with <10 but some >1000", and a mean would move when a
@@ -20,9 +24,11 @@
 // added — so the density, foothold, half-life and capacity blocks below are unchanged and
 // still carry no owner. What changed is that `buildRepos` (readModels.ts) now composes a
 // SECOND family into the same payload: `model.coldZone`, a `ColdZoneResult`
-// (src/domain/coldZone.ts) built from the ledger rows themselves, where `owner_project` has
-// always been. Its `teams` array is one row per project, and a repository with no project at
-// all is a REAL ROW in it under the label "(no project)" (`COLD_PROJECT_NONE`) rather than a
+// (src/domain/coldZone.ts) built from the ledger rows themselves, where ownership has always
+// been. Its `teams` array is one row per PRODUCT — the tenant's finer ownership grain, with
+// the CS/CE/LU support group above it carried as a column (src/domain/projectGrain.ts) — and
+// a repository with no product at all is a REAL ROW in it under the label "(no product)"
+// (`COLD_PRODUCT_NONE`) rather than a
 // drop — which is what finally answers the unowned question that used to be stated here as a
 // gap, as a count of repositories and of the open findings on them rather than as a
 // percentage nobody computed. The old `ownershipView`'s honest refusal is gone because the
@@ -41,7 +47,7 @@
 // that threshold — so every figure, bucket and cell below reads one number and no renderer
 // asks which mode it came from. What the mode changes is the SENTENCE: `coldModeCaption`
 // heads the section with where the line came from, the cold-repositories card's denominator
-// repeats it one level down, the project table grows a relative rank beside the absolute
+// repeats it one level down, the product table grows a relative rank beside the absolute
 // verdict, and the scatter's rule says "(relative)" when the line was derived. See
 // `coldModeCaption` for the copy and for what it refuses to round off.
 
@@ -51,7 +57,8 @@ import { pagedTable } from "./sca.js";
 import {
   absentText, boundedDays, chartTable, chartTableModel, clear, days1, denomNote, el,
   emptyState, errorState, figureCard, firstRunNotice, fmtCount, fmtDate, fmtDays, meter,
-  num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, skeletonStack, statusPill,
+  num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, segmented, skeletonStack,
+  statusPill,
   uiIcon, MAX_EXACT_CELLS, unitChartModel, unitGrid, unitKeyRow,
   tipLabel,
 } from "../ui.js";
@@ -86,7 +93,7 @@ export function overallRow(result) {
   return rows.find((r) => r.asset_group === OVERALL) || null;
 }
 
-/** Every group row except `OVERALL` — the per-repo or per-language breakdown. */
+/** Every group row except `OVERALL` — the per-repo or per-product breakdown. */
 export function groupRows(result) {
   const rows = result && Array.isArray(result.rows) ? result.rows : [];
   return rows.filter((r) => r.asset_group !== OVERALL);
@@ -239,6 +246,15 @@ export function coldZoneView(model) {
     // The cold repositories whose idle time was never measured — the cost of ranking a
     // repository at the bound it can prove. Null, not 0, when nothing was measurable.
     coldBoundOnly: present ? num(cz.cold_bound_only) : null,
+    // THE POPULATION AN OPERATOR MAY HAVE REMOVED, and the size of what went. Read even on
+    // the two notice branches: the fold that produces these happens before the clock is
+    // consulted (src/domain/coldZone.ts), so they are real on a register that cannot measure
+    // anything else, and "we are not counting eleven repositories here" is worth saying even
+    // then. A payload that predates the field carries none, which reads as "no exclusion".
+    excludeEndOfLife: present && cz.exclude_end_of_life === true,
+    endOfLifeRepos: present ? num(cz.end_of_life_repos, 0) : 0,
+    excludedEndOfLife: present ? num(cz.excluded_end_of_life, 0) : 0,
+    excludedOpenFindings: present ? num(cz.excluded_open_findings, 0) : 0,
     teamsInColdestShare: totals ? num(totals.teams_in_coldest_share, 0) : 0,
     // The threshold and the clock ride along even when nothing is measurable: a reader asking
     // "cold after how long?" is asking about the setting, not about the data.
@@ -383,35 +399,70 @@ export function unmeasurableNote(view) {
 }
 
 /**
- * The count line under the project table. The "(no project)" bucket is named ONLY when it is
- * in the table: a sentence that says "including the repositories with no project recorded"
+ * The count line under the product table. The "(no product)" bucket is named ONLY when it is
+ * in the table: a sentence that says "including the repositories with no product recorded"
  * over a table with no such row claims a bucket the reader cannot find.
  *
- * @param {{totals?: {repos_no_project?: number}|null}|null|undefined} view
+ * @param {{totals?: {repos_no_product?: number}|null}|null|undefined} view
  * @param {number} rowCount  the rows the table actually holds
  * @returns {string}
  */
-export function projectCountNote(view, rowCount) {
+export function productCountNote(view, rowCount) {
   const rows = num(rowCount, 0);
-  const noProject = view && view.totals ? num(view.totals.repos_no_project, 0) : 0;
-  const head = `${fmtCount(rows)} ${rows === 1 ? "project" : "projects"}`;
-  if (!noProject) return `${head}.`;
-  return `${head}, including the ${fmtCount(noProject)} ${noProject === 1 ? "repository" : "repositories"}`
-    + " with no project recorded, counted together as one.";
+  const noProduct = view && view.totals ? num(view.totals.repos_no_product, 0) : 0;
+  const head = `${fmtCount(rows)} ${rows === 1 ? "product" : "products"}`;
+  if (!noProduct) return `${head}.`;
+  return `${head}, including the ${fmtCount(noProduct)} ${noProduct === 1 ? "repository" : "repositories"}`
+    + " with no product recorded, counted together as one.";
 }
 
 /**
- * The badge's own count line, under the project table — or null when nobody is badged.
+ * What the end-of-life setting is doing to this section, in one sentence — or null.
+ *
+ * TWO SENTENCES FOR TWO SETTINGS, AND BOTH ARE ABOUT THE SAME POPULATION. On, it says what
+ * left and how much backlog went with it, because a share whose denominator quietly shrank is
+ * a share nobody can check — the same duty `productCountNote` discharges for the null-product
+ * bucket and `boundOnlySentence` for the repositories ranked at a bound. Off, it says the
+ * retired repositories are in here, and where the switch is: this section's whole argument is
+ * that a long silence means somebody stopped, and for these repositories it does not.
+ *
+ * NULL WHEN THERE ARE NONE, in either setting — `unmeasurableNote`'s rule. A sentence about
+ * zero repositories is noise, and it is also the honest reading on a tenant whose lifecycle
+ * tag this register never learned: nothing is known, so nothing is claimed. Settings > System
+ * is where that case is diagnosable, and it says so rather than this line guessing at it.
+ *
+ * @param {{excludeEndOfLife?: boolean, endOfLifeRepos?: number,
+ *          excludedEndOfLife?: number, excludedOpenFindings?: number}|null|undefined} view
+ * @returns {string|null}
+ */
+export function endOfLifeNote(view) {
+  if (!view) return null;
+  const total = num(view.endOfLifeRepos, 0);
+  if (!total) return null;
+  const repos = (n) => `${fmtCount(n)} ${n === 1 ? "repository" : "repositories"}`;
+  if (view.excludeEndOfLife !== true) {
+    return `${repos(total)} here ${total === 1 ? "is" : "are"} end of life and still counted.`
+      + " Settings, under Deadlines, can leave them out.";
+  }
+  const cut = num(view.excludedEndOfLife, 0);
+  const open = num(view.excludedOpenFindings, 0);
+  const findings = `${fmtCount(open)} open ${open === 1 ? "finding" : "findings"}`;
+  return `${repos(cut)} left out as end of life, with ${findings}.`
+    + " They are counted in every other figure this register publishes.";
+}
+
+/**
+ * The badge's own count line, under the product table — or null when nobody is badged.
  *
  * TWO SENTENCES, AND THE SECOND ONE IS THE REFUSAL. "The coldest 20%" of an estate where one
- * project has anything cold at all is that ONE project: `rankTeams` clamps the badge to the
- * projects that actually have a cold repository (`coldZone.ts`'s `C` clamp), so a reader who
+ * product has anything cold at all is that ONE product: `rankTeams` clamps the badge to the
+ * products that actually have a cold repository (`coldZone.ts`'s `C` clamp), so a reader who
  * counts the marks and finds fewer than the arithmetic implies is seeing the clamp, not a
  * rendering bug. A line that only reported the count would leave that looking like one.
  *
  * Null in fixed mode by construction rather than by a branch here: `in_coldest_share` is only
  * ever true in relative mode, so the total it is counted from is 0 and there is nothing to
- * say. Same shape as `unmeasurableNote` above — a sentence about zero projects is noise.
+ * say. Same shape as `unmeasurableNote` above — a sentence about zero products is noise.
  *
  * @param {{teamsInColdestShare?: number, targetSharePct?: number|null}|null|undefined} view
  * @returns {string|null}
@@ -420,9 +471,9 @@ export function coldestShareNote(view) {
   const n = view ? num(view.teamsInColdestShare, 0) : 0;
   if (!n) return null;
   const one = n === 1;
-  return `${fmtCount(n)} ${one ? "project is" : "projects are"} in the coldest`
+  return `${fmtCount(n)} ${one ? "product is" : "products are"} in the coldest`
     + ` ${fmtCount(num(view.targetSharePct))}% by the share of ${one ? "its" : "their"}`
-    + " open-finding repositories that are cold. A project with no cold repository is never"
+    + " open-finding repositories that are cold. A product with no cold repository is never"
     + " marked.";
 }
 
@@ -590,7 +641,7 @@ const COLD_VERDICT_LABEL = {
   unobserved: "Unobserved",
 };
 
-/** The same, for a project's rollup of its repositories. */
+/** The same, for a product's rollup of its repositories. */
 const TEAM_VERDICT_LABEL = {
   "fully-cold": "Fully cold",
   "partly-cold": "Partly cold",
@@ -599,48 +650,67 @@ const TEAM_VERDICT_LABEL = {
 };
 
 /**
- * The label a repository with no `owner_project` is filed under.
+ * The label a repository the tenant filed under no product is shown with.
  *
- * `src/domain/coldZone.ts` exports this exact string as `COLD_PROJECT_NONE` and puts it on
- * every team row's `label`, so the team table never spells it itself. It is repeated here for
- * the one place the payload cannot supply it — a REPOSITORY row, whose `project` is the raw
- * `owner_project` and is null for exactly these repositories. Not imported: no page in this
- * client imports from `src/domain/` (history.js's header states the rule and why), and a
+ * `src/domain/coldZone.ts` exports this exact string as `COLD_PRODUCT_NONE` and puts it on
+ * every team row's `label`, so the product table never spells it itself. It is repeated here
+ * for the one place the payload cannot supply it — a REPOSITORY row, whose `product` is the
+ * row's own `_product` and is null for exactly these repositories. Not imported: no page in
+ * this client imports from `src/domain/` (history.js's header states the rule and why), and a
  * one-word literal is a smaller cost than pulling a server module into the browser bundle.
  */
-const NO_PROJECT = "(no project)";
+const NO_PRODUCT = "(no product)";
 
 /**
- * One row per project, formatted.
+ * The mark a product whose repositories name no single support group is shown with.
+ *
+ * TWO SITUATIONS, ONE MARK, and that is deliberate here where it would not be in a figure:
+ * either no repository named a group, or they named several. Both mean the same thing to a
+ * reader looking for who to escalate to — this column cannot tell them — and the em dash is
+ * this register's one mark for "not answered". The distinction is kept in the payload
+ * (`support_groups`) for anyone who needs it.
+ */
+const NO_SUPPORT_GROUP = absentText;
+
+/**
+ * One row per product, formatted.
  *
  * ORDER IS THE PAYLOAD'S, and the table is handed no sort spec so it stays that way.
  * `coldZoneProfile` already sorts teams by cold repositories desc, then open-in-cold desc,
  * then label — a rule that belongs beside the one that computed the counts, not re-derived
- * against a formatted string here. The "(no project)" bucket sorts by the same rule as every
+ * against a formatted string here. The "(no product)" bucket sorts by the same rule as every
  * other row: it is a team like any other and is never pinned last or hidden.
  */
 export function coldTeamRows(view) {
   const teams = view && Array.isArray(view.teams) ? view.teams : [];
   return teams.map((t) => ({
-    key: t.project === null || t.project === undefined ? NO_PROJECT : String(t.project),
-    label: t.label || NO_PROJECT,
+    key: t.product === null || t.product === undefined ? NO_PRODUCT : String(t.product),
+    label: t.label || NO_PRODUCT,
+    // WHO THIS PRODUCT ESCALATES TO. Null where its repositories named no group or named
+    // several — see NO_SUPPORT_GROUP for why one mark serves both.
+    supportGroup: t.support_group === null || t.support_group === undefined
+      ? null
+      : String(t.support_group),
+    supportGroupText: t.support_group === null || t.support_group === undefined
+      ? NO_SUPPORT_GROUP
+      : String(t.support_group),
     verdict: t.verdict || null,
     verdictWord: TEAM_VERDICT_LABEL[t.verdict] || absentText,
     repos: num(t.repos, 0),
     coldRepos: num(t.cold_repos, 0),
-    // NULL IS A REAL ANSWER and it draws NO meter. A project whose repositories all read
+    // NULL IS A REAL ANSWER and it draws NO meter. A product whose repositories all read
     // clear has no repository with open findings to divide by, and the domain returns null
     // rather than 0 for exactly that reason; a 0% track here would be a picture asserting
     // that none of its repositories has gone cold, which is a different claim from "there was
     // nothing to ask the question of". Same refusal shape as `coverageMeterPct` above.
     sharePct: num(t.cold_share_pct),
     // THE RANK IS NOT THE ROW NUMBER, and both modes carry it. The table is published in the
-    // payload's own order (cold repositories desc); the rank orders the same projects on a
+    // payload's own order (cold repositories desc); the rank orders the same products on a
     // different axis — the SHARE of their open-finding repositories that is cold — so rank 1
-    // is routinely not the first row, and a project with nothing open has NO rank at all
+    // is routinely not the first row, and a product with nothing open has NO rank at all
     // rather than a last place it never raced for.
     relativeRank: num(t.relative_rank),
-    // Only ever true in relative mode, and never for a project with no cold repository.
+    // Only ever true in relative mode, and never for a product with no cold repository.
     inColdestShare: t.in_coldest_share === true,
     openInCold: num(t.open_in_cold, 0),
     highRiskInCold: num(t.high_risk_in_cold, 0),
@@ -679,39 +749,85 @@ export function heatLevel(count, max) {
 }
 
 /**
- * The project × idle-bucket grid: the columns from the payload, one row per project, and a
- * totals row under them.
+ * The repository × idle-bucket grid: the columns from the payload, one row per REPOSITORY, and
+ * a totals row under them.
  *
- * THE TOTALS ROW CARRIES NO SHADE, deliberately. The ramp compares projects with each other,
- * and the totals are the sum of every one of them — shaded on the same scale, every cell in
- * that row would saturate at the darkest step and say nothing except "this row is bigger",
- * which the reader can already see from the numbers. Level 0 across the row; the counts are
- * printed exactly as they are everywhere else.
+ * ONE LIT CELL PER ROW, AND THAT IS THE SHAPE OF THE DATA rather than a rendering choice. A
+ * repository has exactly ONE idle reading, so it sits in exactly one band — where the
+ * per-product grid this replaced showed a real distribution (a product's repositories spread
+ * across the bands), a per-repository row can only mark a position. The other four cells are
+ * left BLANK rather than printed as `0`: a zero would claim four measurements that were never
+ * taken, and "absent is never zero" is the rule that is actually at stake in a row where the
+ * absence is structural.
+ *
+ * SO THE CELL CARRIES THE BACKLOG, NOT A COUNT OF ONE. `1` in every lit cell would be noise —
+ * the row IS one repository — and it would flatten the ramp, since a scale whose maximum is
+ * one shades every lit cell identically. The number that varies, and the one a reader is
+ * actually comparing across rows, is how many open findings sit at that position. The totals
+ * row keeps BOTH figures, because there it is a summary over many repositories and "how many
+ * repositories are in this band" is a real question again.
+ *
+ * SORTED LONGEST-IDLE FIRST, then by backlog, then by name. The grid grows with the estate now
+ * that a row is a repository rather than a product, so the order has to put the end of it that
+ * anyone is looking for at the top; the tie-breaks are total so two paints over one payload
+ * cannot reshuffle.
+ *
+ * A REPOSITORY IN NO BAND IS IN NO ROW. `bucket` is null for the unobserved and for those with
+ * nothing open — they have no idle position to draw — and the heading's tip says so, the same
+ * contract the per-product grid kept for its columns.
+ *
+ * THE TOTALS ROW CARRIES NO SHADE, deliberately. The ramp compares repositories with each
+ * other, and the totals are the sum of every one of them — shaded on the same scale, every
+ * cell in that row would saturate at the darkest step and say nothing except "this row is
+ * bigger", which the reader can already see from the numbers.
  *
  * Returns null where there is no grid to draw — no columns (nothing measurable) or no
- * projects. A caller draws nothing rather than an empty table.
+ * repository in any band. A caller draws nothing rather than an empty table.
  */
 export function heatModel(view) {
   const columns = view && Array.isArray(view.bucketLabels) ? view.bucketLabels : null;
-  const teams = view && Array.isArray(view.teams) ? view.teams : [];
-  if (!columns || !columns.length || !teams.length) return null;
-  const cellsOf = (row) => columns.map((_, i) => ({
-    count: num(row && Array.isArray(row.buckets) ? row.buckets[i] : null, 0),
-    open: num(row && Array.isArray(row.bucket_open) ? row.bucket_open[i] : null, 0),
-  }));
-  const rows = teams.map((t) => ({
-    key: t.project === null || t.project === undefined ? NO_PROJECT : String(t.project),
-    label: t.label || NO_PROJECT,
-    cells: cellsOf(t),
-  }));
+  const repos = view && Array.isArray(view.repos) ? view.repos : [];
+  if (!columns || !columns.length) return null;
+  const placed = repos.filter((r) => {
+    const bucket = num(r && r.bucket);
+    return bucket !== null && bucket >= 0 && bucket < columns.length;
+  });
+  if (!placed.length) return null;
+  const rows = placed
+    .map((r) => {
+      const bucket = num(r.bucket);
+      const open = num(r.open_findings, 0);
+      const label = r.repo_name === null || r.repo_name === undefined || r.repo_name === ""
+        ? String(r.repo_id ?? "")
+        : String(r.repo_name);
+      return {
+        key: String(r.repo_id ?? label),
+        label,
+        bucket,
+        open,
+        cells: columns.map((_, i) => (i === bucket
+          ? { count: 1, open, lit: true }
+          : { count: 0, open: 0, lit: false })),
+      };
+    })
+    .sort((a, b) => (b.bucket - a.bucket) || (b.open - a.open) || a.label.localeCompare(b.label));
   let max = 0;
-  for (const row of rows) for (const cell of row.cells) if (cell.count > max) max = cell.count;
-  for (const row of rows) for (const cell of row.cells) cell.level = heatLevel(cell.count, max);
+  for (const row of rows) if (row.open > max) max = row.open;
+  for (const row of rows) {
+    for (const cell of row.cells) cell.level = cell.lit ? heatLevel(cell.open, max) : 0;
+  }
   const totals = view.totals
     ? {
         key: "__all__",
-        label: "All projects",
-        cells: cellsOf(view.totals).map((c) => ({ ...c, level: 0 })),
+        label: "All repositories",
+        bucket: null,
+        open: 0,
+        cells: columns.map((_, i) => ({
+          count: num(Array.isArray(view.totals.buckets) ? view.totals.buckets[i] : null, 0),
+          open: num(Array.isArray(view.totals.bucket_open) ? view.totals.bucket_open[i] : null, 0),
+          lit: true,
+          level: 0,
+        })),
       }
     : null;
   return { columns: columns.slice(), rows, totals, max };
@@ -752,7 +868,15 @@ export function coldRepoRows(view) {
       return {
         key: r.repo_id || label,
         label,
-        project: r.project === null || r.project === undefined ? NO_PROJECT : String(r.project),
+        product: r.product === null || r.product === undefined ? NO_PRODUCT : String(r.product),
+        // WHAT THE VERDICT COLUMN CANNOT SAY. "Cold" and "retired" look identical in every
+        // other cell on this row, and they are opposite readings of the same silence — so the
+        // tag is printed whether or not the deployment has chosen to exclude the retired ones.
+        // Absent is this app's one absence mark, never a guessed "live".
+        lifecycle: typeof r.lifecycle === "string" && r.lifecycle.trim() ? r.lifecycle : null,
+        lifecycleText: typeof r.lifecycle === "string" && r.lifecycle.trim()
+          ? r.lifecycle
+          : absentText,
         verdict: r.verdict || null,
         verdictWord: COLD_VERDICT_LABEL[r.verdict] || absentText,
         cold: r.cold === true,
@@ -816,12 +940,21 @@ export function coldScatterPoints(view) {
   return points;
 }
 
-/** One row of the per-repo / per-language table, formatted for `pagedTable`'s columns. */
+/** One row of the per-repo / per-product table, formatted for `pagedTable`'s columns. */
 export function tableRow(row) {
   const foothold = num(row.assets_with_high_risk_pct);
+  const lifecycle = typeof row.asset_lifecycle === "string" && row.asset_lifecycle.trim()
+    ? row.asset_lifecycle
+    : null;
   return {
     key: row.asset_group,
     label: row.asset_label || row.asset_group,
+    // NULL AT EVERY GRAIN BUT THE REPOSITORY, and the domain refuses it rather than this
+    // function guessing: a product is many repositories and can hold several lifecycles at
+    // once (`domain/assets.ts`). The column is drawn on one side of the switch for that
+    // reason, so the text is only ever read where it is real.
+    lifecycle,
+    lifecycleText: lifecycle === null ? absentText : lifecycle,
     assets: num(row.assets, 0),
     openFindings: num(row.open_findings, 0),
     densityP50: num(row.density_p50),
@@ -839,7 +972,7 @@ export function tableRow(row) {
  * `<span>` around it so it can be tested without a DOM.
  *
  * ONLY THE TWO ENDS GET A GLYPH. `tableRow.footholdText` is "Yes" at 100%, "No" at 0%, a
- * plain percentage in between (a language grouping several repositories, most of which will
+ * plain percentage in between (a product made of several repositories, most of which will
  * never land on an exact 0 or 100), and `absentText` when nothing was measured — a percentage
  * is not a verdict, so it stays plain text rather than borrowing a glyph that would claim one.
  */
@@ -851,7 +984,7 @@ export function footholdCellKind(footholdText) {
 }
 
 /**
- * The percentage a repository/language's coverage meter may be filled to — or NULL, which
+ * The percentage a repository's (or product's) coverage meter may be filled to — or NULL, which
  * draws no meter. Mirrors `pages/program.js`'s `signalMeterPct`: the refusal happens on the
  * value `tableRow` already read through `num()` (refuse-before-cast), never on a second,
  * confident `Number(...)` taken at render time — `meter(Number(row.coverageP50))` would draw
@@ -900,7 +1033,13 @@ export async function renderRepos(host, _params, _ctx) {
   const densityHost = el("div", { class: "kpi-row" });
   const coldHost = el("div", {});
   const repoHost = el("div", {});
-  const langHost = el("div", {});
+  // WHICH GRAIN THE ONE TABLE IS SHOWING. Client-side only: both cuts are in the payload
+  // already (`byRepo` and `byProduct`), so flipping it is a repaint and never a refetch —
+  // which is the whole reason it can be a switch rather than two tables.
+  let groupGrain = "repo";
+  // The last payload painted, so the switch can repaint the table without a refetch. Set by
+  // `paint` below; null until the first successful load, which is why `grainSwitch` guards.
+  let lastModel = null;
   const chartsHost = el("div", { class: "chart-row" });
   // ONE WRAPPER FOR EVERY SECTION BELOW THE DENSITY CARDS, so a first run can clear four
   // headings and their content together in one call — the same "label lives with its box"
@@ -917,10 +1056,22 @@ export async function renderRepos(host, _params, _ctx) {
       // repositories nobody is working on has already been told the wrong thing first.
       sectionLabel("Cold zone", { term: "cold-zone" }),
       coldHost,
-      sectionLabel("By repository"),
+      // ONE TABLE, TWO GRAINS. This was two sections — "By repository" and "By language" —
+      // and the second is gone: a repository's language is not something anyone remediates
+      // against, and grouping the same measurements by it restated the first table one level
+      // coarser. What sits beside the repository now is the grain the tenant owns work by, so
+      // the switch flips between "which repository carries this" and "which product does",
+      // over identical columns.
+      //
+      // NAMED FOR ITS QUESTION, NOT FOR ITS GRAIN, and that is the whole reason it is not
+      // "By repository or product". The switch inside it already says which grain a row is
+      // ("One row per: Repository | Product"), so a heading repeating that says nothing twice
+      // — and it collided on screen with the cold zone's own "By product" roll-up above,
+      // leaving two headings that both answered "how is this grouped?" and neither "what does
+      // this tell me?". They are different questions: the cold zone asks who has gone quiet,
+      // this asks how much is here and how fast it clears.
+      sectionLabel("Backlog and clearance"),
       repoHost,
-      sectionLabel("By language"),
-      langHost,
       sectionLabel("Half-life"),
       chartsHost,
     );
@@ -944,13 +1095,13 @@ export async function renderRepos(host, _params, _ctx) {
     // re-attaches them the next time this runs non-first (see history.js for the identical
     // shape).
     if (first) {
-      [coldHost, repoHost, langHost, chartsHost, sectionsHost].forEach(clear);
+      [coldHost, repoHost, chartsHost, sectionsHost].forEach(clear);
       return;
     }
     ensureSections();
+    lastModel = model;
     renderColdZone(model);
-    renderGroupTable(repoHost, model && model.byRepo && model.byRepo.all, "repository", "repositories");
-    renderGroupTable(langHost, model && model.byLanguage && model.byLanguage.all, "language", "languages");
+    renderGroupTable(model);
     renderHalfLifeChart(model);
   };
 
@@ -959,7 +1110,7 @@ export async function renderRepos(host, _params, _ctx) {
   } catch (e) {
     console.error("[repos] api_getReposPage failed:", e);
     // errorState, because this IS a failure: the RPC did not answer. Every other absence on
-    // this page — an unmeasured cold zone, a language with no rows, a repository whose curve
+    // this page — an unmeasured cold zone, a grain with no rows, a repository whose curve
     // never fell to half — renders through `emptyState` instead, and the split between the two
     // is the whole reason this call site is spelled out rather than shared.
     clear(densityHost).append(errorState(
@@ -1021,6 +1172,12 @@ export async function renderRepos(host, _params, _ctx) {
     // that says which one goes ABOVE the figures rather than under them, and it is printed on
     // the two notice branches too, where the line is the only thing there is to say.
     coldHost.append(denomNote(coldModeCaption(view)));
+    // WHO IS BEING MEASURED, directly under where the line came from, and on all three
+    // branches for the same reason that caption is: both sentences are about the section
+    // rather than about its figures, and the population question survives a register that
+    // cannot measure anything yet.
+    const eol = endOfLifeNote(view);
+    if (eol) coldHost.append(denomNote(eol));
     if (!view.measurable) {
       coldHost.append(emptyState(
         "The cold zone is not measured yet.",
@@ -1085,18 +1242,27 @@ export async function renderRepos(host, _params, _ctx) {
 
   function renderColdTeams(view) {
     const rows = coldTeamRows(view);
-    coldHost.append(el("h3", { class: "section-label" }, "By project"));
+    coldHost.append(el("h3", { class: "section-label" }, "By product"));
     if (!rows.length) {
       coldHost.append(emptyState(
-        "No project has a repository to report on yet.",
-        "A project appears here as soon as one of its repositories carries a finding.",
+        "No product has a repository to report on yet.",
+        "A product appears here as soon as one of its repositories carries a finding.",
         { variant: "notice" },
       ));
       return;
     }
     coldHost.append(pagedTable({
       columns: [
-        { key: "label", label: "Project", cell: (r) => r.label },
+        { key: "label", label: "Product", cell: (r) => r.label },
+        {
+          // THE ESCALATION PATH, beside the grain that has gone cold. The roll-up itself is
+          // NOT a second table: the verdicts and the coldest-share badge are calibrated on
+          // this population of products (src/domain/coldZone.ts's rollUp says why), and a
+          // support-group table would have to re-derive both on a population a tenth the
+          // size, where "the coldest 20%" means something else.
+          key: "supportGroup", label: "Support group",
+          cell: (r) => r.supportGroupText,
+        },
         {
           key: "verdict", label: "Verdict",
           // The dot AND the word, never the dot alone — `ui/verdict.js` carries the mapping
@@ -1126,7 +1292,7 @@ export async function renderRepos(host, _params, _ctx) {
           // THE RELATIVE POSITION, beside the absolute verdict rather than instead of it. The
           // rank is computed in both modes so the column always reads; the BADGE is a claim
           // about a target share and only relative mode names one, so it appears only there.
-          // `warn` rather than `bad` on purpose: being the coldest project on a healthy
+          // `warn` rather than `bad` on purpose: being the coldest product on a healthy
           // estate is a POSITION, not a verdict, and the Verdict column earlier in the same
           // row is where the absolute reading lives.
           key: "coldestRank", label: "Coldest rank", help: { term: "coldest-share" },
@@ -1158,7 +1324,7 @@ export async function renderRepos(host, _params, _ctx) {
           help: {
             term: "idle",
             lines: [
-              "The most recent finding resolved, removed or rotated anywhere in the project,"
+              "The most recent finding resolved, removed or rotated anywhere in the product,"
               + " over the repositories the scanner still returns.",
             ],
           },
@@ -1168,17 +1334,17 @@ export async function renderRepos(host, _params, _ctx) {
       rows,
       // NO SORT SPEC — see `coldTeamRows`: the payload's own order is the published one, and
       // `sortRows` leaves a list untouched when it is given no value function.
-      emptyText: "No project has a repository to report on yet.",
+      emptyText: "No product has a repository to report on yet.",
     }));
-    coldHost.append(denomNote(projectCountNote(view, rows.length)));
+    coldHost.append(denomNote(productCountNote(view, rows.length)));
     // The marks in the column above, counted — and the clamp that decides how many there are,
-    // stated. Null when nobody is marked, which is every project in fixed mode.
+    // stated. Null when nobody is marked, which is every product in fixed mode.
     const coldest = coldestShareNote(view);
     if (coldest) coldHost.append(denomNote(coldest));
   }
 
   /**
-   * The project × idle-bucket grid.
+   * The repository × idle-bucket grid.
    *
    * HAND-BUILT RATHER THAN `dataTable`, and that is the exception this page makes rather than
    * a component it is missing: no table in `gas_shared` takes a per-cell ordinal shade, and
@@ -1193,36 +1359,51 @@ export async function renderRepos(host, _params, _ctx) {
   function renderColdHeat(view) {
     const heat = heatModel(view);
     if (!heat) return;
-    const head = el("tr", {}, el("th", { scope: "col" }, "Project"));
+    const head = el("tr", {}, el("th", { scope: "col" }, "Repository"));
     for (const label of heat.columns) head.append(el("th", { scope: "col", class: "num" }, label));
     const body = el("tbody", {});
-    const paintRow = (r) => {
+    // A REPOSITORY ROW PRINTS ONLY WHERE IT SITS. One idle reading means one lit cell; the
+    // rest are empty, not zero (see `heatModel`). The totals row prints both figures in every
+    // cell, because there a count of repositories is a real question again.
+    const paintRepo = (r) => {
       const tr = el("tr", {}, el("th", { scope: "row" }, r.label));
       for (const cell of r.cells) {
-        tr.append(el("td", {
-          class: "num heat-cell",
-          // Every cell prints its own count and the open findings under it, shaded or not:
-          // the shade repeats the number, it never replaces it.
-          "data-level": String(cell.level),
-        }, fmtCount(cell.count), el("span", { class: "small muted" }, `${fmtCount(cell.open)} open`)));
+        tr.append(cell.lit
+          ? el("td", {
+            class: "num heat-cell",
+            // The shade repeats the number, it never replaces it.
+            "data-level": String(cell.level),
+          }, el("span", { class: "small muted" }, `${fmtCount(cell.open)} open`))
+          : el("td", { class: "num heat-cell", "data-level": "0" }));
       }
       return tr;
     };
-    for (const r of heat.rows) body.append(paintRow(r));
-    if (heat.totals) body.append(paintRow(heat.totals));
+    const paintTotals = (r) => {
+      const tr = el("tr", {}, el("th", { scope: "row" }, r.label));
+      for (const cell of r.cells) {
+        tr.append(el("td", { class: "num heat-cell", "data-level": String(cell.level) },
+          fmtCount(cell.count),
+          el("span", { class: "small muted" }, `${fmtCount(cell.open)} open`)));
+      }
+      return tr;
+    };
+    for (const r of heat.rows) body.append(paintRepo(r));
+    if (heat.totals) body.append(paintTotals(heat.totals));
     // The caption keeps what the cells COUNT; what the last column means and who is in no
-    // column are the heading's tip — the 51-word caption was the page's largest prose block.
-    coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by project", {
+    // row are the heading's tip — the 51-word caption was the page's largest prose block.
+    coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by repo", {
       lines: [
         "The last column is the repositories with no movement on record yet — not idle for"
         + " zero days, but not yet measurable.",
-        "Unobserved repositories and repositories with nothing open are in no column.",
+        "Unobserved repositories and repositories with nothing open have no idle reading, so"
+        + " they are in no row.",
       ],
     })));
     coldHost.append(el("div", { class: "table-wrap" },
       el("table", { class: "data heat" },
         el("caption", { class: "small muted" },
-          "Repositories per project by idle band, with the open findings in each."),
+          "One row per repository, in the idle band its reading falls in, with the open"
+          + " findings sitting there. The last row is every repository together."),
         el("thead", {}, head),
         body)));
   }
@@ -1241,7 +1422,15 @@ export async function renderRepos(host, _params, _ctx) {
     coldHost.append(pagedTable({
       columns: [
         { key: "label", label: "Repository", cell: (r) => r.label },
-        { key: "project", label: "Project", cell: (r) => r.project },
+        { key: "product", label: "Product", cell: (r) => r.product },
+        {
+          // BESIDE THE OWNER, NOT BESIDE THE VERDICT. It answers "what is this repository",
+          // which is the same question the two columns to its left answer, rather than
+          // "how is it doing" — and a reader scanning for something to dismiss reads the
+          // left of the row.
+          key: "lifecycle", label: "Lifecycle", help: { term: "lifecycle" },
+          cell: (r) => r.lifecycleText,
+        },
         { key: "verdict", label: "Verdict", cell: (r) => verdictMark(r.verdict, r.verdictWord) },
         {
           key: "idle", label: "Idle", className: "num", help: { term: "idle" },
@@ -1362,21 +1551,58 @@ export async function renderRepos(host, _params, _ctx) {
       .catch(() => chartUnavailable(canvas));
   }
 
-  function renderGroupTable(target, result, singular, plural) {
-    const rows = groupRows(result).map(tableRow).sort((a, b) => b.openFindings - a.openFindings);
-    clear(target);
+  /**
+   * The one grouped table, and the switch that says which grain it is counting.
+   *
+   * IDENTICAL COLUMNS ON BOTH SIDES, which is what makes this a switch rather than two
+   * tables wearing one heading: every figure here is a property of a POPULATION OF
+   * REPOSITORIES — how dense, whether any offers a foothold, how much of what deserved
+   * remediation got it, how fast a finding dies, whether closing keeps up with arriving —
+   * and a product is just a bigger population of the same thing. Only the row header and the
+   * denominator sentence change words.
+   *
+   * ONE EXTRA COLUMN ON THE PRODUCT SIDE, and it is the honest one: `Repos`, how many
+   * repositories the product is made of. Without it a reader cannot tell a product whose
+   * single repository is dense from one whose twenty are. The repository side needs no such
+   * column — the answer is always one.
+   */
+  function renderGroupTable(model) {
+    const cut = groupGrain === "product"
+      ? (model && model.byProduct && model.byProduct.all)
+      : (model && model.byRepo && model.byRepo.all);
+    const isRepo = groupGrain !== "product";
+    const singular = isRepo ? "repository" : "product";
+    const plural = isRepo ? "repositories" : "products";
+    const rows = groupRows(cut).map(tableRow).sort((a, b) => b.openFindings - a.openFindings);
+    clear(repoHost);
+    // THE SWITCH IS DRAWN EVEN WHERE THE TABLE IS EMPTY. A reader who lands on a grain with
+    // nothing measured has to be able to get back to the one that has something; a control
+    // that appeared only on success would strand them.
+    repoHost.append(grainSwitch());
     if (!rows.length) {
-      target.append(emptyState(
+      repoHost.append(emptyState(
         `No ${plural} measured yet.`,
         `It appears once a sync has saved a finding against at least one ${singular}.`,
       ));
       return;
     }
-    const isRepo = singular === "repository";
     const columns = [
-      { key: "label", label: isRepo ? "Repository" : "Language", cell: (r) => r.label },
+      { key: "label", label: isRepo ? "Repository" : "Product", cell: (r) => r.label },
     ];
-    if (!isRepo) {
+    // ONE GRAIN-SPECIFIC COLUMN EACH, IN THE SAME SLOT, and they are two halves of the same
+    // honesty rather than two exceptions. A product needs `Repos` because without it a reader
+    // cannot tell a product whose single repository is dense from one whose twenty are; the
+    // repository side needs no such column, because the answer is always one. A repository
+    // needs `Lifecycle` because a retired one carries a backlog nobody is meant to clear; the
+    // product side cannot have one, because a product spans repositories that need not agree
+    // — `assetProfile` publishes `asset_lifecycle` at the repository grain only, so the
+    // absence here is the domain's refusal and not a layout choice.
+    if (isRepo) {
+      columns.push({
+        key: "lifecycle", label: "Lifecycle", help: { term: "lifecycle" },
+        cell: (r) => r.lifecycleText,
+      });
+    } else {
       columns.push({ key: "assets", label: "Repos", className: "num", cell: (r) => fmtCount(r.assets) });
     }
     columns.push(
@@ -1384,7 +1610,7 @@ export async function renderRepos(host, _params, _ctx) {
       {
         key: "foothold", label: "Foothold", className: "num", help: { term: "foothold" },
         // A verdict at the two ends (Yes/No) draws a glyph AND the word — colour never
-        // carries it alone, per R5. A percentage in between (a language spanning several
+        // carries it alone, per R5. A percentage in between (a product made of several
         // repositories) is not a verdict and stays plain text; absent stays this app's one
         // absence mark. `footholdCellKind` is the pure decision this reads.
         cell: (r) => {
@@ -1422,7 +1648,7 @@ export async function renderRepos(host, _params, _ctx) {
       },
     );
     // PAGED, like every other unbounded table in this app. `rows` is one row per repository
-    // (or per language) and the estate is not small: the whole list was rendered at once
+    // (or per product) and the estate is not small: the whole list was rendered at once
     // here, so a reader met several hundred rows with no footer, no page size and nothing
     // saying how many there were beyond the count line below. `pagedTable` (sca.js) sorts
     // and pages client-side, which is right for a list the page already holds in full —
@@ -1431,7 +1657,7 @@ export async function renderRepos(host, _params, _ctx) {
     // THE SORT IS THE ONE THIS TABLE ALREADY HAD: most open findings first, tie-broken on
     // the group key so equal counts do not reshuffle between paints. `rows` arrives sorted
     // that way and `sortRows` re-states it rather than changing it.
-    target.append(pagedTable({
+    repoHost.append(pagedTable({
       columns,
       rows,
       sortSpec: { value: (r) => r.openFindings, descending: true, tiebreak: (r) => r.key },
@@ -1441,7 +1667,41 @@ export async function renderRepos(host, _params, _ctx) {
     // page holds; the pager above it states which slice of that set is on screen. Leaving
     // the old word would have the two lines disagree — "312 repositories shown" directly
     // under a footer reading 1-25 of 312.
-    target.append(denomNote(`${fmtCount(rows.length)} ${rows.length === 1 ? singular : plural} measured.`));
+    repoHost.append(denomNote(`${fmtCount(rows.length)} ${rows.length === 1 ? singular : plural} measured.`));
+  }
+
+  /**
+   * The grain switch. Repaints in place — it never refetches, because both cuts already
+   * travelled in the one payload this page loaded.
+   *
+   * NAMED FOR WHAT A ROW IS, not for what the switch does: "Repository" and "Product" are the
+   * row headers the reader will get, so the control and the column agree word for word.
+   */
+  function grainSwitch() {
+    return el("div", { class: "toolbar-group" },
+      el("span", { class: "small muted" }, "One row per"),
+      segmented({
+        options: [
+          {
+            value: "repo",
+            label: "Repository",
+            title: "One row per repository — how much each carries and how fast it clears it.",
+          },
+          {
+            value: "product",
+            label: "Product",
+            title: "The same measurements over every repository the tenant files under one "
+              + "product. A repository filed under none is counted under (no product).",
+          },
+        ],
+        value: groupGrain,
+        ariaLabel: "Group the table by",
+        onChange: (v) => {
+          if (v === groupGrain) return;
+          groupGrain = v;
+          if (lastModel) renderGroupTable(lastModel);
+        },
+      }));
   }
 
   function renderHalfLifeChart(model) {

@@ -18,8 +18,9 @@
 // — the honest-gap behaviour, because `assetProfile()` never read `owner_project` and there
 // was no owned/unowned split anywhere in `api_getReposPage`'s reply. That is still true of
 // `assetProfile()`; what changed is that the payload now carries a SECOND family beside it,
-// `model.coldZone` (src/domain/coldZone.ts), built from the ledger rows where `owner_project`
-// has always been. Its `teams` array is one row per project with a real "(no project)" bucket,
+// `model.coldZone` (src/domain/coldZone.ts), built from the ledger rows where ownership has
+// always been. Its `teams` array is one row per PRODUCT — with the CS/CE/LU support group
+// above it carried as a column — and has a real "(no product)" bucket,
 // so the question the old test pinned as unanswerable is answered, and the describes below
 // pin the new claims instead. The rule the deleted test encoded has not moved: an absence is
 // still an absence and is still drawn with `emptyState`, which is what the source-as-text case
@@ -33,7 +34,7 @@ import {
   coldCensusModel,
   coldRepoRows, coldScatterPoints, coldTeamRows, coldZoneView, coverageMeterPct, densityView,
   footholdCellKind, footholdView, groupRows, halfLifeView, heatLevel, heatModel, overallRow,
-  tableRow, unmeasurableNote, projectCountNote,
+  tableRow, unmeasurableNote, productCountNote, endOfLifeNote,
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
@@ -167,6 +168,16 @@ describe("repos: foothold, half-life and capacity read the published fields, not
     expect(tableRow({ ...REPO_A, assets_with_high_risk_pct: 0 }).footholdText).toBe("No");
     expect(tableRow({ ...REPO_A, assets_with_high_risk_pct: null }).footholdText).toBe("—");
   });
+
+  it("tableRow carries the repository's lifecycle, and the absence mark where there is none", () => {
+    expect(tableRow({ ...REPO_A, asset_lifecycle: "END_OF_LIFE" }).lifecycleText).toBe("END_OF_LIFE");
+    // Null at every grain but the repository — `domain/assets.ts` refuses it for a product, so
+    // this cell is only ever asked to print something real. Blank and missing read the same.
+    for (const v of [null, undefined, "", "   "]) {
+      expect(tableRow({ ...REPO_A, asset_lifecycle: v }).lifecycle).toBeNull();
+      expect(tableRow({ ...REPO_A, asset_lifecycle: v }).lifecycleText).toBe("—");
+    }
+  });
 });
 
 // =========================================================================================
@@ -230,7 +241,7 @@ function coldRepo(over = {}) {
   return {
     repo_id: "r1",
     repo_name: "repo-one",
-    project: "platform",
+    product: "platform",
     open_findings: 12,
     open_high_risk: 3,
     oldest_open_age_days: 210.5,
@@ -255,7 +266,7 @@ function coldRepo(over = {}) {
 /** A `ColdTeamRow`-shaped fixture, same bargain. */
 function coldTeam(over = {}) {
   return {
-    project: "platform",
+    product: "platform",
     label: "platform",
     repos: 4,
     repos_observed: 4,
@@ -297,7 +308,7 @@ function coldTotals(over = {}) {
     teams: 2,
     teams_fully_cold: 0,
     teams_partly_cold: 1,
-    repos_no_project: 1,
+    repos_no_product: 1,
     buckets: [2, 1, 0, 2, 1],
     bucket_open: [10, 6, 0, 24, 4],
     ...over,
@@ -551,36 +562,89 @@ describe("repos: heatLevel — the ordinal shade, refused before the cast", () =
   });
 });
 
-describe("repos: heatModel — the grid, its header and its unshaded totals row", () => {
+describe("repos: heatModel — one row per repository, and the unshaded totals row", () => {
+  // Three repositories across three bands, so the ramp has something to compare and the
+  // ordering has something to sort.
+  const threeRepos = coldModel({
+    repos: [
+      coldRepo({ repo_id: "r1", repo_name: "acme/api", bucket: 3, open_findings: 12 }),
+      coldRepo({ repo_id: "r2", repo_name: "acme/web", bucket: 0, open_findings: 5 }),
+      coldRepo({ repo_id: "r3", repo_name: "acme/etl", bucket: 3, open_findings: 40 }),
+    ],
+  });
+
   it("takes its columns from the payload and never spells them itself", () => {
     const model = heatModel(coldZoneView(coldModel()));
     expect(model.columns)
       .toEqual(["0–30 d", "30–60 d", "60–90 d", "≥ 90 d", "not yet measurable"]);
   });
 
-  it("every cell carries its repository count, its open findings and a level", () => {
-    const model = heatModel(coldZoneView(coldModel()));
-    expect(model.rows[0].cells.map((c) => c.count)).toEqual([1, 1, 0, 1, 0]);
-    expect(model.rows[0].cells.map((c) => c.open)).toEqual([5, 9, 0, 12, 0]);
-    expect(model.rows[0].cells.map((c) => c.level)).toEqual([4, 4, 0, 4, 0]);
+  it("ONE LIT CELL PER ROW — a repository has one idle reading, so it sits in one band", () => {
+    const model = heatModel(coldZoneView(threeRepos));
+    const first = model.rows[0];
+    expect(first.cells.filter((c) => c.lit)).toHaveLength(1);
+    expect(first.cells.findIndex((c) => c.lit)).toBe(first.bucket);
   });
 
-  it("the totals row is unshaded — the ramp compares projects, not a project with the sum", () => {
+  it("the unlit cells are EMPTY, not zero — four measurements nobody took", () => {
+    // The row's own `open` is the only figure it has; a 0 in the other four bands would be a
+    // reading, and there is none. `lit` is what the renderer draws a blank from.
+    const model = heatModel(coldZoneView(threeRepos));
+    const unlit = model.rows[0].cells.filter((c) => !c.lit);
+    expect(unlit).toHaveLength(4);
+    expect(unlit.every((c) => c.level === 0)).toBe(true);
+  });
+
+  it("the cell carries the BACKLOG, and the ramp is taken over it — not over a count of one", () => {
+    // Every lit cell would hold `1`, so a ramp over counts would shade every row identically.
+    const model = heatModel(coldZoneView(threeRepos));
+    const byRepo = Object.fromEntries(model.rows.map((r) => [r.label, r]));
+    expect(byRepo["acme/etl"].cells[3].open).toBe(40);   // the biggest backlog…
+    expect(byRepo["acme/etl"].cells[3].level).toBe(4);   // …takes the top of the scale
+    expect(byRepo["acme/web"].cells[0].open).toBe(5);
+    expect(byRepo["acme/web"].cells[0].level).toBeLessThan(4);
+    expect(model.max).toBe(40);
+  });
+
+  it("sorts longest-idle first, then by backlog, then by name", () => {
+    const model = heatModel(coldZoneView(threeRepos));
+    // Band 3 before band 0; within band 3, 40 open before 12.
+    expect(model.rows.map((r) => r.label)).toEqual(["acme/etl", "acme/api", "acme/web"]);
+  });
+
+  it("a repository in NO band is in no row — it has no idle position to draw", () => {
+    const model = heatModel(coldZoneView(coldModel({
+      repos: [
+        coldRepo({ repo_id: "r1", repo_name: "acme/api", bucket: 3 }),
+        // Unobserved and clear repositories carry a null bucket.
+        coldRepo({ repo_id: "r2", repo_name: "acme/gone", bucket: null, observed: false }),
+      ],
+    })));
+    expect(model.rows.map((r) => r.label)).toEqual(["acme/api"]);
+  });
+
+  it("the totals row keeps BOTH figures and is unshaded", () => {
+    // A summary over many repositories, so "how many are in this band" is a real question
+    // again — unlike a single repository's row, where the answer is always one.
     const model = heatModel(coldZoneView(coldModel()));
-    expect(model.totals.label).toBe("All projects");
+    expect(model.totals.label).toBe("All repositories");
     expect(model.totals.cells.map((c) => c.count)).toEqual([2, 1, 0, 2, 1]);
+    // The ramp compares repositories with each other; shaded on the same scale every cell in
+    // this row would saturate and say only "this row is bigger".
     expect(model.totals.cells.every((c) => c.level === 0)).toBe(true);
   });
 
   it("draws nothing rather than an empty table when there is no grid", () => {
-    expect(heatModel(coldZoneView(coldModel({ teams: [] })))).toBeNull();
+    expect(heatModel(coldZoneView(coldModel({ repos: [] })))).toBeNull();
+    // Every repository out of the bands is the same "nothing to draw" as no repositories.
+    expect(heatModel(coldZoneView(coldModel({ repos: [coldRepo({ bucket: null })] })))).toBeNull();
     expect(heatModel(coldZoneView(coldModel({ bucket_labels: null })))).toBeNull();
     expect(heatModel(null)).toBeNull();
   });
 });
 
 describe("repos: coldTeamRows — a share nobody could take draws no meter", () => {
-  it("carries the project's figures and its verdict word", () => {
+  it("carries the product's figures and its verdict word", () => {
     const [row] = coldTeamRows(coldZoneView(coldModel()));
     expect(row.label).toBe("platform");
     expect(row.verdict).toBe("partly-cold");
@@ -591,7 +655,7 @@ describe("repos: coldTeamRows — a share nobody could take draws no meter", () 
   });
 
   it("a null cold share is null on the row, so the cell draws the em dash and no track", () => {
-    // `cold_share_pct` is null over an empty denominator (a project with no repository
+    // `cold_share_pct` is null over an empty denominator (a product with no repository
     // carrying an open finding). `meter()` opens with `Number(value) || 0`, so a row that
     // passed the null through would draw a confident 0% track beside a cell that measured
     // nothing — the same defect `coverageMeterPct` above exists to refuse.
@@ -608,14 +672,42 @@ describe("repos: coldTeamRows — a share nobody could take draws no meter", () 
     expect(coldTeamRows(v)[0].sharePct).toBe(0);
   });
 
-  it("the no-project bucket is a row like any other, labelled and never dropped", () => {
+  it("the no-product bucket is a row like any other, labelled and never dropped", () => {
     const v = coldZoneView(coldModel({
-      teams: [coldTeam({ project: null, label: "(no project)" }), coldTeam()],
+      teams: [coldTeam({ product: null, label: "(no product)" }), coldTeam()],
     }));
     const rows = coldTeamRows(v);
     expect(rows).toHaveLength(2);
-    expect(rows[0].label).toBe("(no project)");
-    expect(rows[0].key).toBe("(no project)");
+    expect(rows[0].label).toBe("(no product)");
+    expect(rows[0].key).toBe("(no product)");
+  });
+
+  // THE ESCALATION PATH, beside the grain that went cold. One support group holds many
+  // products, so this column is the only way to read a cold product up to who answers for it
+  // — the roll-up itself stays on products, because the verdicts and the coldest-share badge
+  // are calibrated on that population.
+  it("carries the support group a product escalates to", () => {
+    const v = coldZoneView(coldModel({
+      teams: [coldTeam({ support_group: "CE-TRANSPORT", support_groups: 1 })],
+    }));
+    expect(coldTeamRows(v)[0].supportGroup).toBe("CE-TRANSPORT");
+    expect(coldTeamRows(v)[0].supportGroupText).toBe("CE-TRANSPORT");
+  });
+
+  it("prints the em dash where no single support group answers — BOTH reasons, one mark", () => {
+    // Nobody named one, and several named different ones, look the same to a reader asking
+    // who to escalate to; this column cannot tell them apart and does not pretend to. The
+    // distinction survives in the payload's `support_groups` count.
+    const none = coldZoneView(coldModel({
+      teams: [coldTeam({ support_group: null, support_groups: 0 })],
+    }));
+    expect(coldTeamRows(none)[0].supportGroup).toBeNull();
+    expect(coldTeamRows(none)[0].supportGroupText).toBe("—");
+
+    const split = coldZoneView(coldModel({
+      teams: [coldTeam({ support_group: null, support_groups: 2 })],
+    }));
+    expect(coldTeamRows(split)[0].supportGroupText).toBe("—");
   });
 
   it("a team that has never moved prints the em dash, never a date of zero", () => {
@@ -676,25 +768,25 @@ describe("repos: coldRepoRows — the bound reads \"≥\", and never \">\"", () 
     expect(coldRepoRows(v)[0].reopenedOpen).toBe(4);
   });
 
-  it("a repository with no project recorded is filed under (no project), never blank", () => {
-    const v = coldZoneView(coldModel({ repos: [coldRepo({ project: null })] }));
-    expect(coldRepoRows(v)[0].project).toBe("(no project)");
+  it("a repository with no product recorded is filed under (no product), never blank", () => {
+    const v = coldZoneView(coldModel({ repos: [coldRepo({ product: null })] }));
+    expect(coldRepoRows(v)[0].product).toBe("(no product)");
   });
 });
 
-describe("repos: projectCountNote — names the (no project) bucket only when it is in the table", () => {
+describe("repos: productCountNote — names the (no product) bucket only when it is in the table", () => {
   it("says nothing about a bucket the table does not hold", () => {
-    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_project: 0 }) }));
-    expect(projectCountNote(v, 4)).toBe("4 projects.");
-    expect(projectCountNote(v, 4)).not.toMatch(/no project/);
+    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_product: 0 }) }));
+    expect(productCountNote(v, 4)).toBe("4 products.");
+    expect(productCountNote(v, 4)).not.toMatch(/no product/);
   });
 
-  it("names the bucket, with its size, when repositories have no project recorded", () => {
-    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_project: 2 }) }));
-    expect(projectCountNote(v, 3)).toBe(
-      "3 projects, including the 2 repositories with no project recorded, counted together as one.",
+  it("names the bucket, with its size, when repositories have no product recorded", () => {
+    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_product: 2 }) }));
+    expect(productCountNote(v, 3)).toBe(
+      "3 products, including the 2 repositories with no product recorded, counted together as one.",
     );
-    expect(projectCountNote(v, 1)).toMatch(/^1 project,/);
+    expect(productCountNote(v, 1)).toMatch(/^1 product,/);
   });
 });
 
@@ -1097,7 +1189,7 @@ describe("repos: coldTeamRows — the rank is not the row number, and the badge 
   it("carries the rank and the mark the payload published", () => {
     const v = coldZoneView(relativeModel({
       teams: [
-        coldTeam({ project: "quiet", label: "quiet", relative_rank: 1, in_coldest_share: true }),
+        coldTeam({ product: "quiet", label: "quiet", relative_rank: 1, in_coldest_share: true }),
         coldTeam({ relative_rank: 2, in_coldest_share: false }),
       ],
     }));
@@ -1106,7 +1198,7 @@ describe("repos: coldTeamRows — the rank is not the row number, and the badge 
     expect(rows.map((r) => r.inColdestShare)).toEqual([true, false]);
   });
 
-  it("a project with no repository carrying an open finding has NO rank, not a last place", () => {
+  it("a product with no repository carrying an open finding has NO rank, not a last place", () => {
     const v = coldZoneView(relativeModel({
       teams: [coldTeam({
         repos_with_open: 0, cold_repos: 0, cold_share_pct: null, verdict: "clear",
@@ -1134,26 +1226,97 @@ describe("repos: coldTeamRows — the rank is not the row number, and the badge 
 });
 
 describe("repos: coldestShareNote — the marks counted, and the clamp that decides how many", () => {
-  it("counts the badged projects and states the refusal behind the count", () => {
+  it("counts the badged products and states the refusal behind the count", () => {
     const v = coldZoneView(relativeModel({}, { teams_in_coldest_share: 2 }));
     expect(coldestShareNote(v)).toBe(
-      "2 projects are in the coldest 20% by the share of their open-finding repositories that"
-      + " are cold. A project with no cold repository is never marked.",
+      "2 products are in the coldest 20% by the share of their open-finding repositories that"
+      + " are cold. A product with no cold repository is never marked.",
     );
   });
 
-  it("reads grammatically at one project", () => {
+  it("reads grammatically at one product", () => {
     const v = coldZoneView(relativeModel({}, { teams_in_coldest_share: 1 }));
     expect(coldestShareNote(v)).toBe(
-      "1 project is in the coldest 20% by the share of its open-finding repositories that are"
-      + " cold. A project with no cold repository is never marked.",
+      "1 product is in the coldest 20% by the share of its open-finding repositories that are"
+      + " cold. A product with no cold repository is never marked.",
     );
   });
 
-  it("is null — not a sentence about zero projects — when nobody is marked", () => {
+  it("is null — not a sentence about zero products — when nobody is marked", () => {
     expect(coldestShareNote(coldZoneView(relativeModel()))).toBeNull();
     expect(coldestShareNote(null)).toBeNull();
     expect(coldestShareNote(undefined)).toBeNull();
+  });
+});
+
+// =========================================================================================
+//  repos: ONE grouped table with a repo/product switch — and no language table at all
+// =========================================================================================
+//
+// SOURCE-AS-TEXT, for this file's usual reason: no jsdom here, and what can go wrong is
+// WHICH payload cut the table reads and WHETHER the switch repaints instead of refetching.
+
+describe("repos: the grouped table is one table with two grains", () => {
+  const section = REPOS_SRC.slice(
+    REPOS_SRC.indexOf("function renderGroupTable"),
+    REPOS_SRC.indexOf("function renderHalfLifeChart"),
+  );
+
+  it("reads BOTH cuts from the one payload, so the switch is a repaint and not a refetch", () => {
+    expect(section).toMatch(/model\.byProduct && model\.byProduct\.all/);
+    expect(section).toMatch(/model\.byRepo && model\.byRepo\.all/);
+    // A refetch here would make a grain flip cost a round trip for data already on the page.
+    expect(section).not.toMatch(/swrCall|api_getReposPage/);
+  });
+
+  it("names the row header for the grain, and the control agrees word for word", () => {
+    expect(section).toMatch(/label: isRepo \? "Repository" : "Product"/);
+    expect(REPOS_SRC).toMatch(/value: "repo",\s*\n\s*label: "Repository"/);
+    expect(REPOS_SRC).toMatch(/value: "product",\s*\n\s*label: "Product"/);
+  });
+
+  it("ONE GRAIN-SPECIFIC COLUMN EACH, in the same slot: Lifecycle vs Repos", () => {
+    // Without `Repos` a reader cannot tell a product whose single repository is dense from one
+    // whose twenty are; on the repository side the answer is always one, so it would be a
+    // column of ones. `Lifecycle` is the mirror: a retired repository carries a backlog nobody
+    // is meant to clear, and a product spans repositories that need not agree on one word — so
+    // `domain/assets.ts` publishes `asset_lifecycle` at the repository grain and null at every
+    // other, and this side of the branch is the only place it can be read.
+    expect(section).toMatch(/if \(isRepo\) \{[\s\S]{0,200}?label: "Lifecycle"/);
+    expect(section).toMatch(/\} else \{[\s\S]{0,120}?key: "assets", label: "Repos"/);
+    // And neither leaks to the other side: one `columns.push` per branch, not two.
+    expect(section.match(/label: "Lifecycle"/g)).toHaveLength(1);
+    expect(section.match(/label: "Repos"/g)).toHaveLength(1);
+  });
+
+  it("draws the switch even where the grain has nothing measured", () => {
+    // A reader who lands on an empty grain has to be able to get back to the one that has
+    // something; a control that appeared only on success would strand them.
+    const beforeEmpty = section.slice(0, section.indexOf("if (!rows.length)"));
+    expect(beforeEmpty).toMatch(/repoHost\.append\(grainSwitch\(\)\)/);
+  });
+
+  it("is headed by its QUESTION, and leaves the grain to the switch inside it", () => {
+    // The control already says which grain a row is, so a heading repeating it says nothing
+    // twice — and "By repository or product" collided on screen with the cold zone's own
+    // "By product" roll-up, leaving two headings that both answered "how is this grouped?"
+    // and neither "what does this tell me?".
+    expect(REPOS_SRC).toMatch(/sectionLabel\("Backlog and clearance"\)/);
+    expect(REPOS_SRC).not.toMatch(/sectionLabel\("By repository/);
+    // The cold zone's roll-up is untouched: it answers who has gone quiet, which this does
+    // not, and it stays legible under its own section heading.
+    expect(REPOS_SRC).toMatch(/"By product"/);
+  });
+
+  it("the language table is gone from the page entirely — heading, host and payload", () => {
+    // Deleted rather than hidden: a repository's language is not something anyone remediates
+    // against, and grouping the same measurements by it restated the repository table one
+    // level coarser. `assets.ts` keeps its `language` grouping for brick's fixture parity;
+    // this page simply never asks for it.
+    expect(REPOS_SRC).not.toMatch(/byLanguage/);
+    expect(REPOS_SRC).not.toMatch(/langHost/);
+    expect(REPOS_SRC).not.toMatch(/sectionLabel\("By language"\)/);
+    expect(REPOS_SRC).not.toMatch(/label: .*"Language"/);
   });
 });
 
@@ -1175,7 +1338,7 @@ describe("repos: the mode reaches the section, the column and the canvas", () =>
       .toBeLessThan(body.indexOf("if (!view.measurable)"));
   });
 
-  it("the project table carries a Coldest rank column, its pill and its glossary id", () => {
+  it("the product table carries a Coldest rank column, its pill and its glossary id", () => {
     expect(section).toMatch(/label: "Coldest rank"/);
     expect(section).toMatch(/term: "coldest-share"/);
     expect(section).toMatch(/statusPill\("warn", `Coldest \$\{fmtCount\(view\.targetSharePct\)\}%`\)/);
@@ -1184,11 +1347,42 @@ describe("repos: the mode reaches the section, the column and the canvas", () =>
     expect(section.indexOf('label: "Coldest rank"')).toBeLessThan(section.indexOf('label: "Open in cold"'));
   });
 
+  it("the table is headed By product and carries the Support group column next to it", () => {
+    expect(section).toMatch(/"By product"/);
+    expect(section).toMatch(/label: "Product"/);
+    expect(section).toMatch(/label: "Support group"/);
+    // Immediately after the product it belongs to, and before anything measured — the reader
+    // reads "this product, under that group" as one phrase before any number arrives.
+    expect(section.indexOf('label: "Product"'))
+      .toBeLessThan(section.indexOf('label: "Support group"'));
+    expect(section.indexOf('label: "Support group"'))
+      .toBeLessThan(section.indexOf('label: "Verdict"'));
+    // And the word the whole family retired is gone from this section.
+    expect(section).not.toMatch(/label: "Project"/);
+  });
+
+  it("the idle grid is headed by repo, and its row header names a repository", () => {
+    expect(section).toMatch(/tipLabel\("Idle time by repo"/);
+    expect(section).toMatch(/el\("th", \{ scope: "col" \}, "Repository"\)/);
+    // The grain it replaced is gone from this section entirely — a heading and a row header
+    // that disagreed about what a row is would be worse than either alone.
+    expect(section).not.toMatch(/Idle time by product/);
+    expect(section).not.toMatch(/"All products"/);
+  });
+
+  it("an unlit cell is drawn EMPTY, and only a lit one prints a figure", () => {
+    // The model says which is which; this pins that the renderer acts on it, because a `0`
+    // here would claim four idle readings a repository never had.
+    expect(section).toMatch(/cell\.lit/);
+    expect(section).toMatch(/paintRepo/);
+    expect(section).toMatch(/paintTotals/);
+  });
+
   it("the scatter is told which mode drew the line it is about to draw a rule at", () => {
     expect(section).toMatch(/coldZoneScatter\(canvas, points, \{[\s\S]*?mode: view\.mode,/);
   });
 
-  it("the badge's count line is rendered under the project table", () => {
+  it("the badge's count line is rendered under the product table", () => {
     expect(section).toMatch(/coldestShareNote\(view\)/);
   });
 });
@@ -1603,5 +1797,89 @@ describe("data: every destructive action is behind a confirm step", () => {
       { scan_id: "b", ts: "2026-01-02T00:00:00Z", scope: "sca", total: 1, sealed: 1 },
     ]);
     expect(rows.map((r) => r.scanId)).toEqual(["a"]);
+  });
+});
+
+// =========================================================================================
+//  repos: the lifecycle column, and the sentence the end-of-life setting owes the reader
+// =========================================================================================
+//
+// The column and the exclusion are one feature read two ways. A repository's lifecycle is
+// printed on the cold table whatever the setting says — "cold" and "retired" are opposite
+// readings of the same silence and every other cell on the row looks identical — and
+// `endOfLifeNote` is what the section says once an operator acts on that.
+
+describe("repos: coldRepoRows carries the lifecycle beside the owner", () => {
+  it("prints the tag as the tenant wrote it", () => {
+    const v = coldZoneView(coldModel({ repos: [coldRepo({ lifecycle: "END_OF_LIFE" })] }));
+    expect(coldRepoRows(v)[0].lifecycle).toBe("END_OF_LIFE");
+    expect(coldRepoRows(v)[0].lifecycleText).toBe("END_OF_LIFE");
+  });
+
+  it("draws the absence mark for a repository the tenant never tagged, never a guessed word", () => {
+    for (const lifecycle of [null, undefined, "", "   "]) {
+      const v = coldZoneView(coldModel({ repos: [coldRepo({ lifecycle })] }));
+      expect(coldRepoRows(v)[0].lifecycle, String(lifecycle)).toBeNull();
+      expect(coldRepoRows(v)[0].lifecycleText, String(lifecycle)).toBe("—");
+    }
+  });
+});
+
+describe("repos: endOfLifeNote", () => {
+  const view = (over) => coldZoneView(coldModel(over));
+
+  it("says nothing at all when no repository here is end of life", () => {
+    // `unmeasurableNote`'s rule: a sentence about zero repositories is noise — and it is also
+    // the honest reading on a tenant whose lifecycle tag this register never learned.
+    expect(endOfLifeNote(view({ end_of_life_repos: 0, exclude_end_of_life: false }))).toBeNull();
+    expect(endOfLifeNote(view({ end_of_life_repos: 0, exclude_end_of_life: true }))).toBeNull();
+    // A payload that predates the fields entirely.
+    expect(endOfLifeNote(coldZoneView(coldModel()))).toBeNull();
+    expect(endOfLifeNote(null)).toBeNull();
+  });
+
+  // Perturbation, run and reverted: returning null whenever the exclusion is off — the
+  // "nothing was removed, so there is nothing to say" reading — fails this case with
+  // `expected null to contain 'still counted'`.
+  it("OFF, it says the retired repositories are in here and where the switch is", () => {
+    const note = endOfLifeNote(view({ end_of_life_repos: 3, exclude_end_of_life: false }));
+    expect(note).toContain("3 repositories");
+    expect(note).toContain("still counted");
+    expect(note).toContain("Deadlines");
+    // Nothing left, so nothing is claimed to have.
+    expect(note).not.toContain("left out");
+  });
+
+  it("ON, it says what left and how much backlog went with it", () => {
+    const note = endOfLifeNote(view({
+      end_of_life_repos: 3, exclude_end_of_life: true,
+      excluded_end_of_life: 3, excluded_open_findings: 41,
+    }));
+    expect(note).toContain("3 repositories left out");
+    expect(note).toContain("41 open findings");
+    // THE LIMIT OF THE CLAIM, said in the same breath: the exclusion reaches this section and
+    // nothing else, so a reader does not conclude their backlog figures moved too.
+    expect(note).toContain("every other figure");
+  });
+
+  it("counts in singular where one repository or one finding is what happened", () => {
+    expect(endOfLifeNote(view({ end_of_life_repos: 1, exclude_end_of_life: false })))
+      .toContain("1 repository here is");
+    expect(endOfLifeNote(view({
+      end_of_life_repos: 1, exclude_end_of_life: true,
+      excluded_end_of_life: 1, excluded_open_findings: 1,
+    }))).toContain("1 repository left out as end of life, with 1 open finding.");
+  });
+
+  it("survives a register with no clock, where the count is real and nothing else is", () => {
+    // The fold that produces these happens before the clock is consulted, so the figure is
+    // true on a payload whose every other block is null.
+    const v = coldZoneView(coldModel({
+      measurable: false, repos: null, teams: null, totals: null,
+      end_of_life_repos: 2, exclude_end_of_life: true,
+      excluded_end_of_life: 2, excluded_open_findings: 7,
+    }));
+    expect(v.measurable).toBe(false);
+    expect(endOfLifeNote(v)).toContain("2 repositories left out");
   });
 });

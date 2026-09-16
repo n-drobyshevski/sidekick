@@ -80,6 +80,12 @@ const EXPECTED_IDS = [
   // a verdict about any one of them — a distinction worth a card of its own.
   // (No quoted ids inside this comment: test/pagesHelp.test.js reads this array as TEXT.)
   "cold-zone-mode", "coldest-share",
+  // The repository tag the register learned to read, and the one value in it anything acts on.
+  // Two entries rather than one, this array's usual reason again: the Lifecycle column wants a
+  // definition of the whole vocabulary, and the Settings switch wants the argument for
+  // removing one word from it. Neither fits as the other's third line.
+  // (No quoted ids inside this comment: test/pagesHelp.test.js reads this array as TEXT.)
+  "lifecycle", "end-of-life",
 ];
 
 // Long enough for the three-line entries already in the file (the longest today is 164
@@ -184,10 +190,14 @@ describe("the measurement decisions in the new entries", () => {
     expect(t).not.toMatch(/censored, not excluded/);
   });
 
-  it("foothold: one open high-risk finding is enough, on a repo or a language group", () => {
+  it("foothold: one open high-risk finding is enough, on a repo or the product over it", () => {
     const t = text("foothold");
     expect(t).toMatch(/repository|repo/);
-    expect(t).toMatch(/language/);
+    // The second grain the Repositories table offers. It used to be a language group; that
+    // table is gone, and an entry naming a grouping the page no longer draws would send a
+    // reader looking for a table that is not there.
+    expect(t).toMatch(/product/);
+    expect(t).not.toMatch(/language/);
     expect(t).toMatch(/high-risk/);
   });
 

@@ -53,7 +53,7 @@ import {
 } from "../domain/settingsLogic";
 import { inProject, parseProjects, projectCatalogue, unattributedCount } from "../domain/projectScope";
 import { domainCatalogue, inDomain, noDomainCount } from "../domain/domainScope";
-import * as repoDomains from "./repoDomains";
+import * as repoTags from "./repoTags";
 import * as settingsImpact from "../domain/settingsImpact";
 import type { Rec } from "../domain/util";
 import {
@@ -260,7 +260,7 @@ export interface Bootstrap {
      * OUT LOUD for `unattributed`'s reason exactly: without it, "1,204 of 8,331" quietly
      * attributes the other 7,127 to some other domain when the truth for most of them is that
      * nobody tagged the repository. The two populations inside this one figure are separated by
-     * the Settings map-health readout (`repoDomains.mapHealth`), not here.
+     * the Settings map-health readout (`repoTags.mapHealth`), not here.
      */
     noDomain: number;
     syncProjectId: string | null;
@@ -351,7 +351,7 @@ export function bootstrap(_p?: unknown): ApiResult<Bootstrap> {
   // be taken from rows that have already been through the join. Doing it once here is also
   // what keeps the register-wide side of the header self-consistent: `filterOptions.domainList`
   // and `scope.noDomain` read the same array.
-  repoDomains.attachDomains(allRows as unknown as Rec[]);
+  repoTags.attachRepoTags(allRows as unknown as Rec[]);
   const projectView = settings.projectView || null;
   const domainView = settings.domainView || null;
   // At most one of the two is ever set — `withProjectView`/`withDomainView` clear each other —
@@ -585,8 +585,8 @@ export function setDomainView(p: { domainView?: unknown }): ApiResult<ReturnType
  * `mutate` is what holds the lock and bumps the data version, so every cached domain figure
  * repaints against the new map rather than answering from the old attribution.
  */
-export function refreshDomains(_p?: unknown): ApiResult<repoDomains.DomainRefresh> {
-  return mutate(() => repoDomains.refreshRepoDomains());
+export function refreshDomains(_p?: unknown): ApiResult<repoTags.RepoTagRefresh> {
+  return mutate(() => repoTags.refreshRepoTags());
 }
 
 /**
@@ -596,10 +596,10 @@ export function refreshDomains(_p?: unknown): ApiResult<repoDomains.DomainRefres
  * looking at an empty domain switcher needs this one: a map with zero keys says "never
  * refreshed", and a map with thousands of keys and a domain list that is still empty says the
  * join is missing — a tag key that does not match, or repository identities that do not
- * overlap the ones findings carry (see `repoDomains.recordIdentityTokens`).
+ * overlap the ones findings carry (see `repoTags.recordIdentityTokens`).
  */
-export function domainMapHealth(_p?: unknown): ApiResult<ReturnType<typeof repoDomains.mapHealth>> {
-  return run(() => repoDomains.mapHealth());
+export function domainMapHealth(_p?: unknown): ApiResult<ReturnType<typeof repoTags.mapHealth>> {
+  return run(() => repoTags.mapHealth());
 }
 
 /**

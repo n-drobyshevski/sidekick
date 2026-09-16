@@ -194,10 +194,14 @@ describe("os: the page suppresses rather than dashes", () => {
   });
 
   it("clears every host below the hero rather than leaving a stale paint behind it", () => {
-    // The severity block is painted EARLY on the unscoped path (bootstrap already holds the
-    // numbers, so the repaint is a no-op and the landing page does not flash a skeleton). On
-    // a register whose scan saved nothing that early paint is exactly the row of zeros this
-    // file is about, so the first-run branch clears it rather than painting over it.
+    // THE EARLY PAINT IS GONE and this pin is not. The severity block used to be drawn from
+    // bootstrap before the RPC landed, and on a register whose scan saved nothing that early
+    // paint was exactly the row of zeros this file is about — so the first-run branch cleared
+    // it rather than painting over it. It is the movement strip's fallback now
+    // (`executiveSeverityView`'s own `movement` gate), which is a question about the payload,
+    // so there is nothing to paint early any more. The clear stays required regardless: these
+    // hosts are reused across paints, and a first run arriving after a good one must not leave
+    // the previous register's figures standing under the panel.
     const s = code(SRC);
     const branch = s.slice(s.indexOf("if (first.show) {"), s.indexOf("renderFixNext(payload)"));
     for (const host of ["fixHost", "sevHost", "byDomainHost"]) {

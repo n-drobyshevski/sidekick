@@ -149,9 +149,9 @@ import { coldZoneHeadline, coldZoneProfile, type NewestScan } from "../domain/co
 import type { BaseRow, ScanRow } from "../domain/ledgerTypes";
 import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
-import { inProject, parseProjects } from "../domain/projectScope";
+import { attachProjectGrain, inProject, parseProjects } from "../domain/projectScope";
 import { inDomain } from "../domain/domainScope";
-import { attachDomains } from "./repoDomains";
+import { attachRepoTags } from "./repoTags";
 import { clampInt, parseTs, type Rec } from "../domain/util";
 import {
   REGISTER_ROWS_DEFAULT_PAGE_SIZE,
@@ -325,6 +325,13 @@ interface NormParams {
   /** The floor the derived line may not go below, in days. Not a `ModelParams` field, same
    *  argument; travels with the mode for the same reason `coldTargetSharePct` does. */
   coldFloorDays: number;
+  /**
+   * Whether retired repositories are left out of the cold zone. Not a `ModelParams` field, for
+   * the same argument as the four above and with more force: this one changes WHO IS COUNTED,
+   * so a per-page override would let the Executive card and the Repositories page report cold
+   * shares of two different estates.
+   */
+  coldExcludeEndOfLife: boolean;
 }
 
 /**
@@ -338,9 +345,9 @@ function norm(p?: ModelParams): NormParams {
   const severities = Array.isArray(sevRaw) && sevRaw.length
     ? sevRaw.map((s) => normalizeSeverity(s)).filter((s, i, a) => a.indexOf(s) === i).sort()
     : null;
-  // One `loadSettings()` for every field it feeds below — `project`, `slaTargets` and the four
-  // cold-zone fields are independent readings of the same settings row, not seven separate
-  // reasons to fetch it seven times.
+  // One `loadSettings()` for every field it feeds below — `project`, `slaTargets` and the five
+  // cold-zone fields are independent readings of the same settings row, not eight separate
+  // reasons to fetch it eight times.
   const settings = loadSettings();
   // `cleanProjectView` already collapses anything that is not a genuine string to "" — this
   // is just the last step, turning that "no scope stored" value into the `null` every other
@@ -350,7 +357,7 @@ function norm(p?: ModelParams): NormParams {
   // The same last step for the domain scope, through the same `cleanViewScope` guarantee.
   const domainRaw = settings.domainView;
   const domain = domainRaw ? domainRaw : null;
-  // ALL FOUR COLD-ZONE FIELDS THROUGH ONE DOOR, off the same settings object. See
+  // ALL FIVE COLD-ZONE FIELDS THROUGH ONE DOOR, off the same settings object. See
   // `effectiveColdZoneSettings`'s own header: reading the mode from one place and the two
   // relative-mode numbers from another is exactly how `coldZoneProfile` ends up handed a
   // relative mode with nothing to aim at, which it throws on.
@@ -366,6 +373,7 @@ function norm(p?: ModelParams): NormParams {
     coldZoneMode: cold.mode,
     coldTargetSharePct: cold.targetSharePct,
     coldFloorDays: cold.floorDays,
+    coldExcludeEndOfLife: cold.excludeEndOfLife,
   };
 }
 
@@ -398,23 +406,35 @@ let baseMemo: BaseSnapshot | undefined;
  * rather than serving the rows it had just invalidated — the same hazard `serverCache`'s own
  * memos guard, for the same reason.
  *
- * THE DOMAIN JOIN HAPPENS HERE, ONCE, AND THIS IS THE ONLY PLACE IT CAN. `_domain` is resolved
- * on read and never persisted (see domain/domainTag.ts), so a row that has not been through
- * `attachDomains` carries no domain at all — and every model below takes its rows from this one
- * snapshot. Attaching anywhere further down would mean one model answering by domain while
- * another silently reported the whole register; attaching further up, inside `loadBaseRows`,
- * would put a server-side join inside the store that every pure test constructs rows through.
+ * THE REPOSITORY-TAG JOIN HAPPENS HERE, ONCE, AND THIS IS THE ONLY PLACE IT CAN. `_domain` and
+ * `_lifecycle` are resolved on read and never persisted (see domain/domainTag.ts and
+ * domain/lifecycleTag.ts), so a row that has not been through `attachRepoTags` carries neither
+ * — and every model below takes its rows from this one snapshot. Attaching anywhere further
+ * down would mean one model answering by domain while another silently reported the whole
+ * register; attaching further up, inside `loadBaseRows`, would put a server-side join inside
+ * the store that every pure test constructs rows through.
  *
- * `refreshRepoDomains` bumps the data version, so a refreshed map invalidates this memo by the
+ * `refreshRepoTags` bumps the data version, so a refreshed map invalidates this memo by the
  * same mechanism a sync does — the map is never joined against stale rows, nor rows against a
  * stale map.
+ *
+ * THE TWO PROJECT GRAINS ATTACH HERE TOO, for exactly the argument above — `_supportGroup` and
+ * `_product` are derived on read, so a model reading rows that never passed through
+ * `attachProjectGrain` would report the whole register where another reported one product.
+ *
+ * ONE DIFFERENCE WORTH STATING, because it changes what an unset field MEANS. The tag join
+ * is gated on a map that may never have been refreshed, so `attachRepoTags` can legitimately
+ * be a whole-register no-op. `attachProjectGrain` is a pure function of the row and never is:
+ * a row without `_product` is a row the tenant filed under no product, not a row the plumbing
+ * has not reached yet.
  */
 function baseSnapshot(): BaseSnapshot {
   const version = dataVersion();
   if (!baseMemo || baseMemo.version !== version) {
     const now = Date.now();
     const rows = loadBaseRows({ now });
-    attachDomains(rows as unknown as Rec[]);
+    attachRepoTags(rows as unknown as Rec[]);
+    attachProjectGrain(rows);
     baseMemo = { version, now, rows };
   }
   return baseMemo;
@@ -966,6 +986,7 @@ function buildExecutive(n: NormParams): Rec {
       mode: n.coldZoneMode,
       targetSharePct: n.coldTargetSharePct,
       floorDays: n.coldFloorDays,
+      excludeEndOfLife: n.coldExcludeEndOfLife,
       newestScanByScope: newestScanByScope(),
     })),
     coldZoneAsOfSource: clock.asOfSource,
@@ -1194,9 +1215,21 @@ const CONCENTRATION_DIMS: Record<Scope, string[]> = {
   // reason (the join map has never been refreshed), and the card that results says `(none)`
   // for every row rather than disappearing — which is the honest shape, and is why
   // `concentrationModel` keeping zero-row cards is left alone rather than special-cased.
-  sca: ["repo", "owner_project", "domain"],
-  sast: ["repo", "cwe", "owner_project", "domain"],
-  secrets: ["repo", "secret_kind", "owner_project", "domain"],
+  //
+  // `owner_project` IS GONE, REPLACED BY TWO CARDS, and that is the correction this list
+  // exists to record. The tenant files every repository under a CS/CE/LU SUPPORT GROUP and
+  // under a `product-…` PRODUCT (src/domain/projectGrain.ts), and `owner_project` held
+  // whichever of the two Wiz happened to return first — so a single card was ranking products
+  // against support groups and calling the mixture "By owning project".
+  //
+  // BOTH GRAINS ARE LISTED, and neither is a restatement of the other in `language`'s sense.
+  // One support group holds MANY products, so the group's total is a roll-up the product card
+  // cannot express: the product card names the worst single product, and only the group card
+  // can show that three mediocre products under one group add up to the largest backlog
+  // anyone owns. It is also the escalation grain — you tell a support group, not a product.
+  sca: ["repo", "product", "support_group", "domain"],
+  sast: ["repo", "cwe", "product", "support_group", "domain"],
+  secrets: ["repo", "secret_kind", "product", "support_group", "domain"],
 };
 
 function buildRegister(scope: Scope, n: NormParams): Rec {
@@ -1765,11 +1798,19 @@ export function programModel(p?: ModelParams): Rec {
 // --------------------------------------------------------------------------------------- //
 
 /**
- * The estate: repositories as the asset, and the language cut beside them.
+ * The estate: repositories as the asset, and the same measurements rolled up to the product
+ * the tenant owns them by.
  *
- * BOTH GROUPINGS AND BOTH POPULATIONS. `assetProfile` groups on `language` (brick's own
- * fixture pins that) or on `repo`; `assetProfilePopulations` stacks the `all` and `high_risk`
- * cuts. "How much does a typical repository carry" and "are we closing high risk faster than
+ * BOTH GRAINS AND BOTH POPULATIONS. `assetProfile` groups on `repo` or on `product`;
+ * `assetProfilePopulations` stacks the `all` and `high_risk` cuts.
+ *
+ * THE LANGUAGE CUT IS GONE FROM THIS PAYLOAD, and the reason is the same one that removed it
+ * from both code registers' concentration lists (`CONCENTRATION_DIMS` above): a repository's
+ * language is not something anyone remediates against, and grouping by it restated the
+ * repository card one level coarser. What replaced it is the grain the tenant actually owns
+ * work by — a product — so one table with a repo/product switch says what two tables used to,
+ * and says the second half of it usefully. `assets.ts` KEEPS its `language` grouping: brick's
+ * fixture pins that shape, and the parity is worth more than the branch costs. "How much does a typical repository carry" and "are we closing high risk faster than
  * it arrives" routinely disagree, and which one an unlabelled number meant is not recoverable
  * afterwards — so every row carries `population` and the page must filter on it.
  *
@@ -1796,7 +1837,7 @@ function buildRepos(n: NormParams): Rec {
     showNoFix: n.showNoFix,
     rowCount: visible.length,
     byRepo: assetProfilePopulations(rows, { ...opts, groupBy: "repo" }),
-    byLanguage: assetProfilePopulations(rows, { ...opts, groupBy: "language" }),
+    byProduct: assetProfilePopulations(rows, { ...opts, groupBy: "product" }),
     // `visible`, NOT the re-censored `rows` copy: this module never reads `age_days`, so
     // handing it the rewritten rows would only hide which population it actually measured.
     coldZone: coldZoneProfile(visible, {
@@ -1806,6 +1847,7 @@ function buildRepos(n: NormParams): Rec {
       mode: n.coldZoneMode,
       targetSharePct: n.coldTargetSharePct,
       floorDays: n.coldFloorDays,
+      excludeEndOfLife: n.coldExcludeEndOfLife,
       newestScanByScope: newestScanByScope(),
     }),
     signalCoverage: signalCoverage(visible),

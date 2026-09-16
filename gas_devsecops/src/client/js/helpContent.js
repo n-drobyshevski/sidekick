@@ -168,7 +168,7 @@ const ENTRIES = [
     id: "foothold",
     term: "Foothold",
     lines: [
-      "An asset — a repository or a language group — carrying at least one open high-risk finding.",
+      "An asset — a repository, or a product made of several — carrying at least one open high-risk finding.",
       "One is enough: a foothold is a yes/no property of the asset, not a count.",
     ],
   },
@@ -412,14 +412,42 @@ const ENTRIES = [
     ],
   },
   {
+    // WHAT THE REGISTER KNOWS ABOUT A REPOSITORY THAT IS NOT A FINDING. The Lifecycle column on
+    // the Repositories tables points here; it is a tag the tenant writes, not anything this
+    // app derives, and the second line is the one a reader needs when the column is empty.
+    id: "lifecycle",
+    term: "Lifecycle",
+    lines: [
+      "Where the tenant says a repository is in its life \u2014 in production, in development, end of life. Read off the repository's lifecycle tag in Wiz, printed as written.",
+      "Blank means no lifecycle is known: either the repository carries no such tag, or the tag map has never been refreshed. It is never read as \u201calive\u201d, and it never excludes a repository from anything.",
+      "Refresh it from Settings > System, which also reports how many repositories the key actually placed.",
+    ],
+  },
+  {
+    // THE ONE POPULATION AN OPERATOR MAY REMOVE. Its own entry rather than a line on
+    // `cold-zone`, for this file's usual reason: the tip card renders two lines. The Settings
+    // switch and the Repositories exclusion note both point here.
+    id: "end-of-life",
+    term: "End of life",
+    lines: [
+      "A repository the tenant has retired, by its lifecycle tag. Nobody is closing findings on one because nobody is meant to, so its silence does not mean what the cold zone reads into a silence.",
+      "Settings > Deadlines can leave these out of the cold zone. Off by default, and it never guesses: only a recognised end-of-life value excludes, never a blank tag or an unfamiliar word.",
+      "The exclusion reaches the cold zone alone. Their findings stay in every backlog, density and severity figure this register publishes.",
+    ],
+  },
+  {
     // The team-level half of relative mode. A rank is not a verdict, and this is where that
-    // distinction is settled for a reader who found the mark on the project table.
+    // distinction is settled for a reader who found the mark on the product table.
+    //
+    // THE ID DOES NOT MOVE with the wording. Every `help: { term: "coldest-share" }` in
+    // repos.js resolves against it, and a renamed entry is a column whose caveat silently
+    // stops opening.
     id: "coldest-share",
     term: "Coldest share",
     lines: [
-      "In relative mode, the projects with the highest share of their open-finding repositories cold — a position relative to the other projects, not a verdict about any one of them.",
-      "A project with no cold repository is never marked, however small the estate; projects tied at the cutoff are all marked rather than split by name.",
-      "Ranked over the projects that have at least one repository with an open finding. A project with nothing open has no share to rank and carries no position at all.",
+      "In relative mode, the products with the highest share of their open-finding repositories cold — a position relative to the other products, not a verdict about any one of them.",
+      "A product with no cold repository is never marked, however small the estate; products tied at the cutoff are all marked rather than split by name.",
+      "Ranked over the products that have at least one repository with an open finding. A product with nothing open has no share to rank and carries no position at all.",
     ],
   },
   {

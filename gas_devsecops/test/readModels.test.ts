@@ -1079,11 +1079,17 @@ describe("programModel", () => {
 // --------------------------------------------------------------------------------------- //
 
 describe("reposModel", () => {
-  it("profiles both groupings and both populations", () => {
+  it("profiles both grains and both populations", () => {
     const m = reposModel(ALL) as any;
     expect(m.byRepo.groupBy).toBeUndefined(); // populations wrap two results
     expect(m.byRepo.all.groupBy).toBe("repo");
-    expect(m.byLanguage.all.groupBy).toBe("language");
+    // THE PRODUCT CUT REPLACED THE LANGUAGE ONE. A repository's language is not something
+    // anyone remediates against, and grouping the same measurements by it restated the
+    // repository table one level coarser; a product is the grain the tenant owns work by, so
+    // the two cuts are now the two sides of ONE table's switch. `assets.ts` keeps its
+    // `language` grouping — brick's fixture pins that shape — it is just not served here.
+    expect(m.byProduct.all.groupBy).toBe("product");
+    expect(m.byLanguage).toBeUndefined();
     expect(m.byRepo.rows.some((r: any) => r.population === "all")).toBe(true);
     expect(m.byRepo.rows.some((r: any) => r.population === "high_risk")).toBe(true);
   });
@@ -1491,8 +1497,9 @@ describe("executiveModel", () => {
     // estate to draw it is the "cap in the model, no slice at the edge" rule being lost.
     expect(Object.keys(m.coldZone).sort()).toEqual([
       "achieved_share_pct", "as_of", "cold_after_days", "cold_bound_only", "derived_days",
-      "dropped_no_repo", "eligible_repos", "fixed_after_days", "floor_applied", "floor_days",
-      "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
+      "dropped_no_repo", "eligible_repos", "end_of_life_repos", "exclude_end_of_life",
+      "excluded_end_of_life", "excluded_open_findings", "fixed_after_days", "floor_applied",
+      "floor_days", "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
       "target_share_pct", "totals", "unclassified_secrets",
     ]);
     expect(m.coldZone).not.toHaveProperty("repos");

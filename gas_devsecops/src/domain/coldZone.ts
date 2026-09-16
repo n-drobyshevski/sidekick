@@ -54,6 +54,31 @@
 //     observed (the conservative direction: we do not accuse a team of vanishing on the
 //     strength of a missing scan row) and the scope is named in `scopes_without_scan`.
 //
+// -------------------------------------------------------------------------------------
+// ONE POPULATION THE OPERATOR MAY REMOVE, AND IT IS THE ONLY ONE. `excludeEndOfLife` drops
+// the repositories the tenant has RETIRED (`src/domain/lifecycleTag.ts`, read off the
+// repository's `lifecycle` tag) before anything here is measured. It is off by default, and
+// it is the one exclusion this module offers, because it is the one population whose silence
+// means the opposite of what every other column here reads into it: nobody is closing
+// findings on a finished repository because nobody is meant to. Counting those as cold does
+// not describe a team that stopped — it describes a decision that was taken, and it crowds
+// out the repositories that really did go quiet.
+//
+// WHAT THE EXCLUSION REFUSES TO DO:
+//   * It never guesses. Only a positive, recognised end-of-life reading removes anything; a
+//     repository with no lifecycle tag, or one in a vocabulary this register has not been
+//     taught, stays in. Absence is never retirement.
+//   * It never happens silently. `end_of_life_repos` counts the retired population in BOTH
+//     settings, `excluded_end_of_life` counts what actually left, and `excluded_open_findings`
+//     says how much backlog went with them — so a share whose denominator shrank can be
+//     checked rather than merely believed.
+//   * It never reaches the rest of the register. A retired repository's findings are real and
+//     stay in every backlog, density and severity figure this app publishes; what is being
+//     removed is a reading about ENGAGEMENT, not a finding.
+//   * It never narrows `scopes_without_scan`, which is a fact about scan coverage rather than
+//     about this population — a coverage warning must not disappear because of a display
+//     setting.
+//
 // THRESHOLD SEMANTICS: `>=`, everywhere. Exactly 90.0 days idle is cold, matching the
 // register's "≥ N" wording rule (README / PRODUCT.md) — the page never prints ">".
 //
@@ -99,9 +124,9 @@
 //     `eligible_repos` reports 0 so the empty answer can prove it looked.
 //
 // The TEAM rank is the same idea one level up and is deliberately kept separate from the
-// verdict: `relative_rank` orders the projects that have repositories with open findings by
+// verdict: `relative_rank` orders the products that have repositories with open findings by
 // the share of those repositories that are cold, and in relative mode the coldest
-// `targetSharePct` of them are marked `in_coldest_share`. A project with no cold repository
+// `targetSharePct` of them are marked `in_coldest_share`. A product with no cold repository
 // is never marked, whatever the arithmetic says (the `C` clamp), and ties are extended
 // through rather than broken by the label — a badge that depended on alphabetical order
 // would be a fact about spelling.
@@ -115,13 +140,14 @@ import {
   type Scope,
 } from "./config";
 import type { BaseRow } from "./ledgerTypes";
+import { isEndOfLife } from "./lifecycleTag";
 import { classifyRisk, type AnyRiskRule, type RiskClass, type RiskRow } from "./program";
 import { cmp, parseTs, present, toIso } from "./util";
 
 const DAY_MS = 86_400_000;
 
-/** The label the null `owner_project` bucket is published under — a real row, never a drop. */
-export const COLD_PROJECT_NONE = "(no project)";
+/** The label the null-product bucket is published under — a real row, never a drop. */
+export const COLD_PRODUCT_NONE = "(no product)";
 
 // --------------------------------------------------------------------------- input shape
 
@@ -139,7 +165,19 @@ export type ColdRow = RiskRow &
     BaseRow,
     | "repo_id"
     | "repo_name"
-    | "owner_project"
+    // THE TWO GRAINS, ATTACHED ON READ, NOT the `owner_project` column they replaced. A
+    // repository is filed under a `product-…` product and under a CS/CE/LU support group that
+    // holds several of them (src/domain/projectGrain.ts); `owner_project` held whichever of
+    // the two Wiz returned first, so the roll-up below was ranking products against support
+    // groups. Taking `_product` here means the compiler proves the old column left this path.
+    | "_product"
+    | "_supportGroup"
+    | "_supportGroups"
+    // The repository's lifecycle, attached on read from its `lifecycle` tag
+    // (`src/domain/lifecycleTag.ts`). It is here for two separate jobs: the page prints it
+    // beside a cold verdict so a reader can tell an abandoned repository from a finished one,
+    // and `excludeEndOfLife` below can remove the finished ones from the measurement entirely.
+    | "_lifecycle"
     | "scope"
     | "status"
     | "first_seen"
@@ -190,6 +228,28 @@ export interface ColdZoneOptions {
   targetSharePct?: number;
   /** The line's floor in days, REQUIRED in relative mode. See the module header. */
   floorDays?: number;
+  /**
+   * Leave end-of-life repositories out of the measurement entirely. Default FALSE, so every
+   * caller that predates this option gets exactly what it used to.
+   *
+   * WHY THE COLD ZONE IS THE ONE FAMILY THIS APPLIES TO. Every other number in this register
+   * is a count of findings, and a retired repository's findings are real: they are in the
+   * backlog, they are in the density, and hiding them would be a smaller estate than the
+   * tenant has. This family measures ENGAGEMENT — how long since anybody closed anything —
+   * and there the same silence means the opposite thing. Nobody is remediating a retired
+   * repository because nobody is meant to, so counting it as cold does not describe a team
+   * that has stopped; it describes a decision that was taken on purpose, and it crowds out
+   * the repositories that really have gone quiet.
+   *
+   * AN OPT-IN, NOT A DEFAULT, AND THAT IS THE CONSERVATIVE DIRECTION. Off, the reader sees
+   * every repository and can dismiss the retired ones themselves — `ColdRepoRow.lifecycle`
+   * is printed for exactly that. On, they are gone and the count of what went is published
+   * (`excluded_end_of_life`), because a population that quietly shrank is a share nobody can
+   * check. A tenant whose lifecycle tag is missing or misspelled gets no exclusion at all
+   * rather than a silent one: `lifecycleTag.isEndOfLife` recognises one word and refuses
+   * everything else, absence included.
+   */
+  excludeEndOfLife?: boolean;
   /** Per scope, the newest scan — a scope absent from this map is undecidable, not stale. */
   newestScanByScope: Partial<Record<Scope, NewestScan>>;
   /** Omit to let each row's scope choose its classifier (`config.ruleForScope`). */
@@ -204,15 +264,36 @@ export type ColdVerdict = "unobserved" | "clear" | "cold" | "warm" | "watching";
 /** What counts as movement. Three columns, because they are three events. */
 export type MovementKind = "resolved" | "removed" | "rotated";
 
-/** Project states, rolled up from the repositories that have open findings. */
+/** Product states, rolled up from the repositories that have open findings. */
 export type TeamVerdict = "fully-cold" | "partly-cold" | "warm" | "clear";
 
 export interface ColdRepoRow {
   repo_id: string;
   /** Display name; falls back to the id when no row carried one. */
   repo_name: string | null;
-  /** `owner_project`. NULL is a real answer and is rolled up under `COLD_PROJECT_NONE`. */
-  project: string | null;
+  /** `_product`. NULL is a real answer and is rolled up under `COLD_PRODUCT_NONE`. */
+  product: string | null;
+  /** `_supportGroup` — the group this product escalates to. NULL when the row names none. */
+  support_group: string | null;
+  /**
+   * TRUE where the repository itself is filed under SEVERAL support groups.
+   *
+   * `support_group` above is one name because a breakdown bucket has to land somewhere; this
+   * says that one name is not the whole answer, so the roll-up can decline to publish it as an
+   * escalation path. Without it a product whose single repository sits under two groups would
+   * be summarised under whichever one sorted first.
+   */
+  support_group_split: boolean;
+  /**
+   * `_lifecycle` — where the tenant says this repository is in its life. NULL is a real answer
+   * and is never read as "alive": see `ColdZoneOptions.excludeEndOfLife`.
+   *
+   * PRINTED WHETHER OR NOT THE EXCLUSION IS ON, because it answers a question the verdict
+   * cannot. "Cold" and "retired" look identical in every other column on this row, and a
+   * reader deciding where to spend a week needs to tell them apart even on a deployment that
+   * has chosen to keep both in the table.
+   */
+  lifecycle: string | null;
   open_findings: number;
   open_high_risk: number;
   /** Age of the oldest OPEN finding, from `first_seen` against `now`. Never from `age_days`. */
@@ -243,8 +324,21 @@ export interface ColdRepoRow {
 }
 
 export interface ColdTeamRow {
-  project: string | null;
+  product: string | null;
   label: string;
+  /**
+   * The support group every repository in this product agreed on, or NULL where they did not
+   * — or where none named one at all.
+   *
+   * A TEAM ROW IS A SUMMARY OVER MANY REPOSITORIES, so this takes the same refusal
+   * `server/fixNext.ts` applies to a ranked group: naming one of several would invent an
+   * escalation path. `support_groups` is what tells "nobody said" from "they disagreed", and
+   * a disagreement is itself worth seeing — it means the tenant's convention has broken for
+   * this product.
+   */
+  support_group: string | null;
+  /** How many distinct support groups this product's repositories named. 0 when none did. */
+  support_groups: number;
   repos: number;
   repos_observed: number;
   repos_unobserved: number;
@@ -264,15 +358,15 @@ export interface ColdTeamRow {
   last_movement_at: string | null;
   verdict: TeamVerdict;
   /**
-   * 1..T over the projects that have repositories with open findings, by `cold_share_pct`
-   * desc, `open_in_cold` desc, label asc. NULL for a project with nothing open — it has no
-   * cold share, and giving it a rank would invent a position for a project that is not in
+   * 1..T over the products that have repositories with open findings, by `cold_share_pct`
+   * desc, `open_in_cold` desc, label asc. NULL for a product with nothing open — it has no
+   * cold share, and giving it a rank would invent a position for a product that is not in
    * the race. Computed in BOTH modes, so the payload has one shape.
    */
   relative_rank: number | null;
   /**
-   * The coldest `targetSharePct` of the ranked projects. Only ever true in relative mode,
-   * never true for a project with no cold repository, and extended through ties.
+   * The coldest `targetSharePct` of the ranked products. Only ever true in relative mode,
+   * never true for a product with no cold repository, and extended through ties.
    */
   in_coldest_share: boolean;
   /** Repos per idle bucket, length 5 (the fifth is "not yet measurable"). */
@@ -301,10 +395,10 @@ export interface ColdZoneTotals {
   teams: number;
   teams_fully_cold: number;
   teams_partly_cold: number;
-  /** Projects marked `in_coldest_share`. Always 0 in fixed mode — the badge is relative. */
+  /** Products marked `in_coldest_share`. Always 0 in fixed mode — the badge is relative. */
   teams_in_coldest_share: number;
-  /** Repositories with no `owner_project` at all — the ownership gap, published as a figure. */
-  repos_no_project: number;
+  /** Repositories the tenant filed under no product — the ownership gap, published as a figure. */
+  repos_no_product: number;
   buckets: number[];
   bucket_open: number[];
 }
@@ -357,6 +451,27 @@ export interface ColdZoneResult {
   repos: ColdRepoRow[] | null;
   teams: ColdTeamRow[] | null;
   totals: ColdZoneTotals | null;
+  /** Whether the caller asked for end-of-life repositories to be left out. */
+  exclude_end_of_life: boolean;
+  /**
+   * Repositories this read saw whose lifecycle says they are finished — COUNTED IN BOTH
+   * SETTINGS, which is what makes the setting discoverable instead of hidden.
+   *
+   * With the exclusion OFF this is how many retired repositories are still being measured as
+   * though somebody owed them a fix; with it ON it is what left. Either way it is a number the
+   * page can put a sentence behind, and either way it is 0 on a tenant whose lifecycle tag
+   * this register never learned — which is not the same fact as "no repository is retired",
+   * and is why `mapHealth` measures the lifecycle join separately.
+   */
+  end_of_life_repos: number;
+  /**
+   * Of those, how many were actually removed: `end_of_life_repos` when the exclusion is on, 0
+   * when it is off. A share whose denominator quietly shrank is a share nobody can check, so
+   * the shrinkage travels with it.
+   */
+  excluded_end_of_life: number;
+  /** Open findings on the removed repositories — the backlog this read is no longer about. */
+  excluded_open_findings: number;
   /** Rows handed in, before any drop — so a zero elsewhere can prove it looked. */
   row_count: number;
   /** Rows with a blank `repo_id`: dropped, because they belong to no repository, AND counted. */
@@ -388,6 +503,10 @@ export interface ColdZoneHeadline {
   derived_days: number | null;
   eligible_repos: number | null;
   cold_bound_only: number | null;
+  exclude_end_of_life: boolean;
+  end_of_life_repos: number;
+  excluded_end_of_life: number;
+  excluded_open_findings: number;
   observed_from: string | null;
   as_of: string;
   totals: ColdZoneTotals | null;
@@ -445,7 +564,10 @@ const VERDICT_RANK: Record<ColdVerdict, number> = {
 interface RepoAcc {
   repoId: string;
   repoName: string | null;
-  project: string | null;
+  product: string | null;
+  supportGroup: string | null;
+  supportGroupSplit: boolean;
+  lifecycle: string | null;
   scopes: Set<Scope>;
   rowsByScope: Map<Scope, ColdRow[]>;
   open: number;
@@ -487,7 +609,10 @@ function newAcc(repoId: string): RepoAcc {
   return {
     repoId,
     repoName: null,
-    project: null,
+    product: null,
+    supportGroup: null,
+    supportGroupSplit: false,
+    lifecycle: null,
     scopes: new Set(),
     rowsByScope: new Map(),
     open: 0,
@@ -513,7 +638,17 @@ function newAcc(repoId: string): RepoAcc {
  */
 function foldRow(acc: RepoAcc, row: ColdRow, risk: RiskClass): void {
   if (acc.repoName === null && !blank(row.repo_name)) acc.repoName = String(row.repo_name);
-  if (acc.project === null && !blank(row.owner_project)) acc.project = String(row.owner_project);
+  if (acc.product === null && !blank(row._product)) acc.product = String(row._product);
+  if (acc.supportGroup === null && !blank(row._supportGroup)) {
+    acc.supportGroup = String(row._supportGroup);
+  }
+  // Sticky: one observation of a repository under several groups is enough to stop the
+  // roll-up naming one, and a later row that happened to carry a single group does not
+  // un-learn it.
+  if (Number(row._supportGroups) > 1) acc.supportGroupSplit = true;
+  // First non-blank wins, like the name and the product above it: the tag belongs to the
+  // repository, so every row of one repository carries the same value or none.
+  if (acc.lifecycle === null && !blank(row._lifecycle)) acc.lifecycle = String(row._lifecycle);
   acc.scopes.add(row.scope);
   const bucket = acc.rowsByScope.get(row.scope);
   if (bucket) bucket.push(row);
@@ -614,10 +749,12 @@ function bucketOf(readingDays: number, t: number): number {
 // --------------------------------------------------------------------------- the entry point
 
 /**
- * The cold-zone profile: one row per repository, one per project, and the totals.
+ * The cold-zone profile: one row per repository, one per product, and the totals.
  *
- * The verdict table, first match wins — the ORDER is the contract:
+ * The verdict table, first match wins — the ORDER is the contract. Rule 0 is the operator's
+ * and runs before the clock is read at all; rules 1-6 are the register's:
  *
+ *   0  excludeEndOfLife && the repository's lifecycle is end-of-life      not measured here
  *   1  no row reaches the newest scan of any scope the repo has rows in   unobserved
  *   2  open_findings === 0                                                clear
  *   3  idle_days !== null    && idle_days       >= coldAfterDays          cold (measured)
@@ -631,6 +768,10 @@ function bucketOf(readingDays: number, t: number): number {
  * of cold, and refusing to say so just because nothing was measured would hide exactly the
  * repositories this page is for — the bound is published alongside so the claim is auditable.
  * Rule 6 is the honest remainder: no movement, and not enough watched time to call it.
+ *
+ * Rule 0 sits above all of them because an excluded repository must not be in the population
+ * the relative line is derived FROM, not merely absent from the table afterwards — a cut
+ * applied later would move the line and then hide the repositories that moved it.
  */
 export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZoneResult {
   // REFUSE BEFORE CASTING. A typo in a timestamp would otherwise silently publish a
@@ -710,9 +851,40 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
     foldRow(acc, row, risk);
   }
 
+  // ---------------------------------------------------------------- the end-of-life cut
+  //
+  // DECIDED PER REPOSITORY, AFTER THE FOLD AND BEFORE ANY MEASUREMENT. A lifecycle is a
+  // property of a repository, not of a finding, so the question can only be asked once the
+  // rows are gathered; and it has to be asked before pass A, because an excluded repository
+  // must not sit in the eligible population the relative line is DERIVED from. A cut applied
+  // later would move the line and then hide the repositories that moved it.
+  //
+  // COUNTED IN BOTH SETTINGS, REMOVED IN ONE. `end_of_life_repos` is the whole retired
+  // population whatever the caller asked for; `excluded` is the subset that actually left.
+  // With the option off the two disagree by design, and that difference is the sentence the
+  // page puts in front of an operator who has not found the setting yet.
+  const excludeEol = opts.excludeEndOfLife === true;
+  const excludedIds = new Set<string>();
+  let endOfLifeRepos = 0;
+  let excludedOpenFindings = 0;
+  for (const acc of byRepo.values()) {
+    if (!isEndOfLife(acc.lifecycle)) continue;
+    endOfLifeRepos += 1;
+    if (!excludeEol) continue;
+    excludedIds.add(acc.repoId);
+    excludedOpenFindings += acc.open;
+  }
+  const excludedRepos = excludedIds.size;
+
   // Observation is decided even when the block is not measurable, so `scopes_without_scan`
   // reports either way — the reader needs to know coverage is undecidable before they need
   // to know how long the silence was.
+  //
+  // OVER EVERY REPOSITORY, EXCLUDED ONES INCLUDED, and that is deliberate rather than an
+  // oversight in the filter below. `scopes_without_scan` is a statement about SCAN COVERAGE —
+  // this scope has rows and no scan, so observation cannot be decided for it — and that stays
+  // true of a scope whose only rows happen to sit on a retired repository. Narrowing it with
+  // the cold population would make a coverage warning disappear because of a display setting.
   const scopesWithoutScan = new Set<Scope>();
   const observedById = new Map<string, boolean>();
   for (const acc of byRepo.values()) {
@@ -723,6 +895,10 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
   const base = {
     observed_from: observedFromMs === null ? null : toIso(observedFromMs),
     as_of: toIso(nowMs)!,
+    exclude_end_of_life: excludeEol,
+    end_of_life_repos: endOfLifeRepos,
+    excluded_end_of_life: excludedRepos,
+    excluded_open_findings: excludedOpenFindings,
     row_count: rows.length,
     dropped_no_repo: droppedNoRepo,
     unclassified_secrets: unclassifiedSecrets,
@@ -766,6 +942,10 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
   // threshold-independent too, so the eligible population is knowable here.
   const facts: RepoFacts[] = [];
   for (const acc of byRepo.values()) {
+    // The cut, applied once. Everything downstream — the eligible population, the derived
+    // line, the verdicts, the buckets, the roll-up and the totals — is built from `facts`, so
+    // skipping here is the whole exclusion and there is no second place to keep in step.
+    if (excludedIds.has(acc.repoId)) continue;
     const observed = observedById.get(acc.repoId) === true;
     const idleDays = acc.movementAt === null ? null : daysBetween(acc.movementAt, nowMs);
     // The bound: the later of "when we started watching" and "when this repository's oldest
@@ -870,7 +1050,10 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
     repos.push({
       repo_id: acc.repoId,
       repo_name: acc.repoName,
-      project: acc.project,
+      product: acc.product,
+      support_group: acc.supportGroup,
+      support_group_split: acc.supportGroupSplit,
+      lifecycle: acc.lifecycle,
       open_findings: acc.open,
       open_high_risk: acc.openHigh,
       oldest_open_age_days:
@@ -921,20 +1104,33 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
 }
 
 /**
- * Per project. The NULL key is a real bucket and is labelled `COLD_PROJECT_NONE` — it is
- * never dropped and never pinned last, because "nobody owns these repositories" is one of
- * the answers the page exists to give, not a gap in the data to be tidied away.
+ * Per PRODUCT, with the support group carried alongside. The NULL key is a real bucket and is
+ * labelled `COLD_PRODUCT_NONE` — it is never dropped and never pinned last, because "nobody
+ * owns these repositories" is one of the answers the page exists to give, not a gap in the
+ * data to be tidied away.
+ *
+ * ROLLED UP BY THE FINER GRAIN, DELIBERATELY, even though this type is called a TEAM row and
+ * a support group is literally the team. The verdicts and the coldest-share badge are
+ * calibrated on this population: over a dozen support groups instead of a hundred products,
+ * `cold_share_pct` means a different thing and the glossary entry stops being true. A group
+ * whose products are individually fine can also be fine in aggregate while one of them has
+ * gone completely dark, and that is exactly what the page exists to surface.
+ *
+ * So the group rides as a COLUMN instead — the escalation path from a cold product, reachable
+ * without a second table calibrated on a second population. That also makes honest something
+ * this type only ever approximated: a "team" here was always the finest ownership the ledger
+ * could name, and now the reader can see the team above it.
  */
 function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
-  const byProject = new Map<string | null, ColdRepoRow[]>();
+  const byProduct = new Map<string | null, ColdRepoRow[]>();
   for (const r of repos) {
-    const list = byProject.get(r.project);
+    const list = byProduct.get(r.product);
     if (list) list.push(r);
-    else byProject.set(r.project, [r]);
+    else byProduct.set(r.product, [r]);
   }
 
   const out: ColdTeamRow[] = [];
-  for (const [project, list] of byProject) {
+  for (const [product, list] of byProduct) {
     const buckets = [0, 0, 0, 0, 0];
     const bucketOpen = [0, 0, 0, 0, 0];
     let observed = 0;
@@ -992,9 +1188,23 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
     const verdict: TeamVerdict =
       withOpen === 0 ? "clear" : coldRepos === withOpen ? "fully-cold" : coldRepos > 0 ? "partly-cold" : "warm";
 
+    const groups = new Set<string>();
+    let split = false;
+    for (const r of list) {
+      if (r.support_group !== null) groups.add(r.support_group);
+      if (r.support_group_split) split = true;
+    }
+    // A repository filed under several groups makes the union below an UNDERCOUNT, so the
+    // count is floored at two: the honest answer is "more than one", and the column's job is
+    // only to stop asserting one.
+    const groupCount = split ? Math.max(groups.size, 2) : groups.size;
+
     out.push({
-      project,
-      label: project ?? COLD_PROJECT_NONE,
+      product,
+      label: product ?? COLD_PRODUCT_NONE,
+      // One name only when they all agree — see the field's own comment.
+      support_group: groupCount === 1 ? [...groups][0]! : null,
+      support_groups: groupCount,
       repos: list.length,
       repos_observed: observed,
       repos_unobserved: unobserved,
@@ -1011,7 +1221,7 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
       last_movement_at: toIso(lastMovement),
       verdict,
       // Filled by `rankTeams`, which runs over the finished roll-up: the rank is a fact about
-      // the whole set of projects, so no single project's fold can know it.
+      // the whole set of products, so no single product's fold can know it.
       relative_rank: null,
       in_coldest_share: false,
       buckets,
@@ -1030,17 +1240,17 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
  *
  * The published order is the one `rollUp` set (cold repositories desc), because that is the
  * order the table is read in and changing it under a reader would be a different page. The
- * rank is a separate column measured on a different axis — the SHARE of a project's
- * open-finding repositories that are cold, so a project with three cold repositories out of
+ * rank is a separate column measured on a different axis — the SHARE of a product's
+ * open-finding repositories that are cold, so a product with three cold repositories out of
  * three outranks one with five out of fifty. Tie-breaks: `open_in_cold` desc, then label asc
  * for determinism.
  *
  * Three refusals, all of them about not badging somebody the arithmetic merely swept up:
- *   * Only projects with `repos_with_open > 0` are ranked at all. A project with nothing open
+ *   * Only products with `repos_with_open > 0` are ranked at all. A product with nothing open
  *     has a NULL cold share, and a rank over a null is an invention.
- *   * `C` — the ranked projects that actually have a cold repository — CLAMPS the badge.
- *     "The coldest 20%" of an estate where only one project has anything cold is that one
- *     project, never a second one whose cold share is zero.
+ *   * `C` — the ranked products that actually have a cold repository — CLAMPS the badge.
+ *     "The coldest 20%" of an estate where only one product has anything cold is that one
+ *     product, never a second one whose cold share is zero.
  *   * Ties at the cutoff are extended through, on `(cold_share_pct, open_in_cold)`. The label
  *     tie-break orders the table; it must never decide a badge, because that would make the
  *     mark a fact about spelling.
@@ -1071,8 +1281,8 @@ function rankTeams(
   if (mode === "relative" && withCold > 0 && targetSharePct !== null) {
     want = Math.min(withCold, Math.max(1, Math.ceil((targetSharePct / 100) * total)));
     // Extend through a tie at the cutoff — see the refusals above. The walk stops at `withCold`
-    // by construction as well as by the guard: every project past that point has a cold share
-    // of 0, which cannot tie with the share of a project that has a cold repository.
+    // by construction as well as by the guard: every product past that point has a cold share
+    // of 0, which cannot tie with the share of a product that has a cold repository.
     while (
       want < withCold &&
       (ranked[want].cold_share_pct ?? 0) === (ranked[want - 1].cold_share_pct ?? 0) &&
@@ -1111,7 +1321,7 @@ function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
     teams_fully_cold: 0,
     teams_partly_cold: 0,
     teams_in_coldest_share: 0,
-    repos_no_project: 0,
+    repos_no_product: 0,
     buckets,
     bucket_open: bucketOpen,
   };
@@ -1133,7 +1343,7 @@ function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
     // Counted off the rows themselves rather than passed in from the derivation, so the
     // figure and the marks on the table can never disagree about how many were badged.
     if (team.in_coldest_share) t.teams_in_coldest_share += 1;
-    if (team.project === null) t.repos_no_project = team.repos;
+    if (team.product === null) t.repos_no_product = team.repos;
     for (let i = 0; i < 5; i += 1) {
       buckets[i] += team.buckets[i];
       bucketOpen[i] += team.bucket_open[i];
@@ -1166,6 +1376,10 @@ export function coldZoneHeadline(result: ColdZoneResult): ColdZoneHeadline {
     derived_days: result.derived_days,
     eligible_repos: result.eligible_repos,
     cold_bound_only: result.cold_bound_only,
+    exclude_end_of_life: result.exclude_end_of_life,
+    end_of_life_repos: result.end_of_life_repos,
+    excluded_end_of_life: result.excluded_end_of_life,
+    excluded_open_findings: result.excluded_open_findings,
     observed_from: result.observed_from,
     as_of: result.as_of,
     totals: result.totals,

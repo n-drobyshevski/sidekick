@@ -500,7 +500,7 @@ export function secretsModel(payload, opts) {
     // statement about age, which is what the question here actually is.
     aging: bucketTotals(reg.aging),
     oldestRepos: oldestReposModel(reg.oldest),
-    concentration: concentrationModel(reg.concentration, ["repo", "secret_kind", "owner_project", "domain"]),
+    concentration: concentrationModel(reg.concentration, ["repo", "secret_kind", "product", "support_group", "domain"]),
     movement: withoutRequestedSeverities(movementModel(reg.movement, reg.latestScan)),
 
     twinNote: TWIN_NOTE,
@@ -1279,7 +1279,7 @@ function paintSecrets(host, vm, filters) {
         sortSpec: { value: (r) => r.oldestDays, descending: true, tiebreak: (r) => r.key },
         columns: [
           { key: "key", label: "Repository", cell: (r) => r.key },
-          { key: "owner", label: "Owning project", cell: (r) => r.ownerProject || absent() },
+          { key: "product", label: "Product", cell: (r) => r.product || absent() },
           { key: "open", label: "Open", className: "num", cell: (r) => fmtCount(r.openCount) },
           { key: "aged", label: "Open past 90d", className: "num", cell: (r) => fmtCount(r.agedCount) },
           {

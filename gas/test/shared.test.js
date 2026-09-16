@@ -28,6 +28,8 @@ import { describe, expect, it, afterAll, beforeAll } from "vitest";
 import { SEVERITY_COLORS, SLA_TARGETS } from "../src/domain/config";
 
 import { registerBrandMarkContract } from "../../gas_shared/test/contracts/brandMark.js";
+import { registerCollapsibleSectionContract }
+  from "../../gas_shared/test/contracts/collapsibleSection.js";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerPageHeaderContract } from "../../gas_shared/test/contracts/pageHeader.js";
@@ -122,6 +124,7 @@ registerTokenContract({
 });
 
 registerZScaleContract(base);
+registerCollapsibleSectionContract(base);
 
 // =========================================================================================
 //  The seam: what this app is still allowed to keep a local copy of

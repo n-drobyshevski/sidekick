@@ -45,12 +45,12 @@ function fixNextBlock(over) {
     groups: [
       {
         tier: 1, label: "Live credential", scope: "secrets", repo: "payments-api",
-        owner_project: "payments", count: 7, oldestAgeDays: 412,
+        product: "product-payments", supportGroup: "CE-TRANSPORT", count: 7, oldestAgeDays: 412,
         route: "secrets", params: { scope: "secrets", repo: "payments-api" },
       },
       {
         tier: 2, label: "Fixable and late", scope: "sca", repo: null,
-        owner_project: null, count: 3, oldestAgeDays: null,
+        product: null, supportGroup: null, count: 3, oldestAgeDays: null,
         route: "sca", params: { scope: "sca", repo: null },
       },
     ],
@@ -204,7 +204,10 @@ describe("fixNextView", () => {
     expect(first.countText).toBe("7 open findings");
     expect(first.oldestText).toBe("oldest 412 days");
     expect(first.scopeLabel).toBe("Secrets");
-    expect(first.ownerProject).toBe("payments");
+    expect(first.product).toBe("product-payments");
+    expect(first.supportGroup).toBe("CE-TRANSPORT");
+    // The product is who this is for, so it is what the meta line prints.
+    expect(first.ownerText).toBe("product-payments");
   });
 
   it("links each group at its own register", () => {
@@ -223,7 +226,25 @@ describe("fixNextView", () => {
     expect(second.repoText).toBe("—");
     expect(second.oldestDays).toBeNull();
     expect(second.oldestText).toBe("no readable age");
-    expect(second.ownerProject).toBeNull();
+    expect(second.product).toBeNull();
+    expect(second.supportGroup).toBeNull();
+    expect(second.ownerText).toBe("no single owner");
+  });
+
+  // THREE STATES, NOT TWO. A group whose repositories sit under several products may still
+  // sit under one support group — the coarser grain agrees more often, and it is who a reader
+  // escalates to. Falling straight to "no single owner" there would hide a real answer.
+  it("falls back to the support group, NAMED AS ONE, when no single product agrees", () => {
+    const v = fixNextView(payload({ fixNext: fixNextBlock({
+      groups: [{
+        tier: 1, label: "Live credential", scope: "secrets", repo: "payments-api",
+        product: null, supportGroup: "CE-TRANSPORT", count: 7, oldestAgeDays: 412,
+        route: "secrets", params: { scope: "secrets", repo: "payments-api" },
+      }],
+    }) }));
+    // Named as one: "CE-TRANSPORT" alone would read as a product to anyone who has not
+    // learned the tenant's prefixes.
+    expect(v.items[0].ownerText).toBe("CE-TRANSPORT (support group)");
   });
 
   it("accounts for everything it left out, by reason, in one sentence", () => {
@@ -297,5 +318,52 @@ describe("the front door still draws no chart", () => {
 
   it("draws the ranked list as an ordered list, because the order is the claim", () => {
     expect(SRC).toContain('el("ol", { class: "fixnext" })');
+  });
+});
+
+// ------------------------------------------------- where the ranked list sits, and how
+
+/**
+ * The host order, as the page itself declares it — `host.append(...)`'s argument list is the
+ * DOM order, so this is the one line that decides what a reader meets first. The literal spans
+ * two lines here, hence the `[\s\S]`.
+ */
+function hostOrder(src) {
+  const m = src.match(/host\.append\(([\s\S]*?)\);/);
+  return m
+    ? m[1].split(",").map((s) => s.trim()).filter((s) => s.endsWith("Host"))
+    : [];
+}
+
+describe("Fix next is the page's LAST block, and it is collapsible", () => {
+  it("appends fixHost after every other host, the last-sync caption included", () => {
+    expect(hostOrder(SRC)).toEqual([
+      "noticeHost", "heroHost", "coldHost", "sevHost", "registerHost", "scanHost", "fixHost",
+    ]);
+    // Perturbed, because "is fixHost in the list" would pass on the arrangement this replaces.
+    // The ranked list spent its whole life directly under the hero, which put the page's
+    // longest block between the one figure this page opens with and the three one-glance
+    // blocks that qualify it.
+    const before = "  host.append(\n    pageHeader({ route: \"executive\" }),\n"
+      + "    noticeHost, heroHost, fixHost, coldHost, sevHost, registerHost, scanHost,\n  );";
+    expect(hostOrder(before).at(-1)).toBe("scanHost");
+    expect(hostOrder(SRC).at(-1)).toBe("fixHost");
+  });
+
+  it("builds the section through collapsibleSection, with the page holding the open flag", () => {
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toContain('collapsibleSection("Fix next", {');
+    expect(fn).toMatch(/open: fixOpen,/);
+    expect(fn).toMatch(/onToggle: \(o\) => \{ fixOpen = o; \},/);
+    // Remembered per reader across visits — the closure flag only survives this page's own
+    // repaints, and swrCall paints twice on a warm cache.
+    expect(fn).toMatch(/remember: "execFixNext",/);
+  });
+
+  it("puts the denominator on the heading, so a SHUT section still says what it holds", () => {
+    const fn = SRC.slice(SRC.indexOf("function renderFixNext("));
+    expect(fn).toMatch(/hint: view\.rankedShort,/);
+    // And it is no longer ALSO a paragraph under the list — one statement, one place.
+    expect(fn).not.toContain('el("p", { class: "small muted" }, view.rankedShort)');
   });
 });

@@ -25,7 +25,7 @@
 // `Wiz/Domain` tag became reachable. It was never that the tenant did not tag its repositories
 // — it does — but that the tag could not be FETCHED: the three finding documents cannot select
 // `tags` on a repository asset, so the tag arrives through a separate graphSearch join
-// (`src/server/repoDomains.ts`), and until that existed a domain picker would have offered
+// (`src/server/repoTags.ts`), and until that existed a domain picker would have offered
 // slices whose pages all render zero. An earlier revision of this header stated the stronger
 // claim, that this register has no such tag, citing `domain/maintenance.ts:256`; that was
 // wrong about the tenant and is corrected here rather than quietly deleted.
@@ -63,100 +63,186 @@ function findingCount(n) {
 }
 
 /**
- * The tenant's naming convention: a project whose name begins `CS`, `CE` or `LU` is a SUPPORT
- * GROUP, and a business unit is anything that is not one.
+ * THE CLIENT MIRROR of `src/domain/projectGrain.ts`. That file is the single home of the
+ * tenant's project vocabulary — the server reads it too — and this is the copy the browser
+ * bundle can reach, because no page in this client imports TypeScript from `src/domain/`
+ * (history.js's header states the rule and why). `test/projectScopeView.test.js` holds the two
+ * equal by reading the domain file as text, so a fourth prefix added there and not here fails
+ * before it ships.
  *
- * A rule read off a NAME, which this codebase is otherwise careful not to do — this is not an
- * inference about what something IS, it is the tenant's own convention for what they CALL
- * things, the same class of fact `domain/projectScope.ts` already leans on for `isFolder`
- * itself: Wiz reports a project's name and whether it nests other projects; it does not report
- * that a folder is a support group rather than a business unit. There is no other way to learn
- * it, so a name rule is the legitimate answer here rather than a shortcut.
+ * THE TENANT'S TWO CONVENTIONS. A project whose name's first segment is `CS`, `CE` or `LU` is
+ * a SUPPORT GROUP; one whose first segment is `product` is a PRODUCT; one support group holds
+ * MANY products. Both are rules read off a NAME, which this codebase is otherwise careful not
+ * to do — but neither is an inference about what something IS. They are the tenant's own
+ * convention for what they CALL things, and Wiz reports neither: it reports a project's name
+ * and whether it nests other projects, never that a folder is a support group rather than a
+ * business unit, nor that one project sits inside another at all.
  *
- * THE FIRST SEGMENT, NOT A BARE PREFIX. `CE-TRANSPORT` matches; `CENTRAL-OPS` must not, and a
- * project like `owner-CE-INDUS-cloud` — carrying `CE` in the middle of a compound name — must
- * not either. Splitting on the separator answers all three, where `startsWith("CE")` gets the
- * second wrong and `includes("CE")` gets the third wrong.
- *
- * One list, exported, because a convention is a thing that changes: a fourth prefix is one
- * edit here rather than a hunt through every caller.
+ * THE FIRST SEGMENT, NOT A BARE PREFIX, for both. `CE-TRANSPORT` matches; `CENTRAL-OPS` must
+ * not, and `owner-CE-INDUS-cloud` — carrying `CE` in the middle of a compound name — must not
+ * either. Splitting on the separator answers all three, where `startsWith("CE")` gets the
+ * second wrong and `includes("CE")` gets the third wrong. The product rule uses the same
+ * splitter, so `owner-product-x` is no more a product than `CENTRAL-OPS` is a support group.
  */
 export const SUPPORT_GROUP_PREFIXES = ["CS", "CE", "LU"];
+export const PRODUCT_SEGMENT = "product";
+
+function firstSegment(name) {
+  return String(name || "").trim().split(/[-_\s]/)[0] || "";
+}
 
 export function isSupportGroup(name) {
-  const first = String(name || "").trim().toUpperCase().split(/[-_\s]/)[0];
-  return SUPPORT_GROUP_PREFIXES.indexOf(first) >= 0;
+  const first = firstSegment(name).toUpperCase();
+  return first !== "" && SUPPORT_GROUP_PREFIXES.indexOf(first) >= 0;
+}
+
+export function isProduct(name) {
+  return firstSegment(name).toLowerCase() === PRODUCT_SEGMENT;
 }
 
 /**
- * What to call one row: a support group, a business unit, a project, or nothing yet.
+ * What to call one row: a support group, a product, a business unit, a plain leaf, or nothing
+ * yet.
  *
- * THE NAME RULE WINS OVER `isFolder`. A folder named `CS-LOG-ZEN-ECOM` is a folder AND a
- * support group; calling it a business unit because Wiz says it nests things would be the app
- * overruling the tenant on the tenant's own vocabulary.
+ * THE NAME RULES WIN OVER `isFolder`, both of them. A folder named `CS-LOG-ZEN-ECOM` is a
+ * folder AND a support group; a `product-…` project whose `isFolder` Wiz omitted is a product
+ * and not an "unknown". Calling either something else because of what Wiz says about nesting
+ * would be the app overruling the tenant on the tenant's own vocabulary — and the product case
+ * is not hypothetical: before this rule existed, every product Wiz reported without the flag
+ * was shown under "Not yet recorded".
  */
 export function projectKind(p) {
   if (isSupportGroup(p.name)) return "support";
+  if (isProduct(p.name)) return "product";
   if (p.isFolder === true) return "unit";
   if (p.isFolder === false) return "project";
   return "unknown";
 }
 
 const KIND_GROUP = {
-  support: "Support groups",
   unit: "Business units",
+  product: "Products without a support group",
   project: "Projects",
   unknown: "Not yet recorded",
 };
-// Support groups sort AFTER units, so the list reads widest-first: a unit reaches a whole
-// subtree, a support group reaches its own, a project is a leaf. The combobox emits a heading
-// only when the group value changes while walking in order, so a list that did not sort by
-// kind would fragment its own headings.
-const KIND_RANK = { unit: 0, support: 1, project: 2, unknown: 3 };
+
+// A SUPPORT GROUP IS ITS OWN HEADING, which is why `support` has no entry above: the heading a
+// support group's rows sit under is the group's own NAME, and its products sit under it with
+// it. Everything else is a taxonomy level.
+//
+// Widest-first, and each heading contiguous. The combobox emits a heading only when the group
+// string changes while walking the list in order (gas_shared/ui/combobox.js), so the ordering
+// below is what produces the headings at all — a list not sorted this way would fragment its
+// own. Units first (each reaches a whole subtree), then the support groups with their products
+// nested under them by sorting rather than by any tree machinery, then the products nobody
+// could place, then the leaves that follow neither convention, then the ones Wiz has told us
+// nothing about.
+const KIND_RANK = { unit: 0, support: 1, product: 1, orphanProduct: 2, project: 3, unknown: 4 };
+
+/** The heading a row sits under, and the sort key that keeps that heading in one piece. */
+function placeRow(p, kind, anyRecorded) {
+  if (kind === "support") {
+    // Its own heading, and it is the FIRST row inside it — picking it reaches everything
+    // below, so it is offered before the parts.
+    return { group: p.name, rank: KIND_RANK.support, band: p.name, within: 0 };
+  }
+  if (kind === "product") {
+    const parent = typeof p.supportGroup === "string" && p.supportGroup !== ""
+      ? p.supportGroup
+      : null;
+    // Under its group's heading when exactly one group claims it; otherwise in the bucket
+    // that says so. `supportGroupCount` is what tells "nobody filed it" from "two did", and
+    // the hint below says which — see `scopeOptions`.
+    if (parent === null) {
+      return { group: KIND_GROUP.product, rank: KIND_RANK.orphanProduct, band: "", within: 1 };
+    }
+    return { group: parent, rank: KIND_RANK.product, band: parent, within: 1 };
+  }
+  // The `isFolder`-derived kinds keep their gate — see `scopeOptions`.
+  return {
+    group: anyRecorded ? KIND_GROUP[kind] : "",
+    rank: KIND_RANK[kind],
+    band: "",
+    within: 0,
+  };
+}
 
 /**
  * The projects on offer, as switcher rows.
  *
+ * ONE HEADING PER SUPPORT GROUP, with its products listed beneath it and the group itself
+ * offered first inside its own heading as `NAME (everything)`. The containment is real —
+ * `domain/projectScope.ts::projectCatalogue` learns it from co-occurrence, a support group and
+ * a product appearing on the same row — and this is the cheapest way to show it: the shared
+ * combobox does flat headings only, so the nesting is produced entirely by the sort below and
+ * costs `gas_shared` (and therefore the two sibling apps) nothing.
+ *
+ * SELECTION IS UNCHANGED AND ALREADY CORRECT. Picking a support group has always reached every
+ * finding of every product under it, because Wiz flattens the whole ancestor chain onto every
+ * row and `inProject` is one `.some()` over it. This is presentation, not filtering.
+ *
  * `isFolder` is TRI-STATE and the third state is load-bearing (`domain/projectScope.ts`):
  * `undefined` means the register has not recorded it for anyone — every row before the
  * `projects_json` column existed, or an API response that omitted the flag on this particular
- * project. So the FOLDER half of the grouping only claims anything once at least one row in
- * the CURRENT register has actually recorded it; otherwise the list is flat, because grouping
- * every row under "Projects" would assert leaf-ness of the whole register on a field nobody
- * has filled in yet. The SUPPORT-GROUP half is NOT gated on it — it is read off the name and
- * needs nothing from Wiz, so it is worth saying even on a register that cannot yet say which
- * of its folders are leaves.
+ * project. So the FOLDER-DERIVED half of the grouping only claims anything once at least one
+ * row in the CURRENT register has actually recorded it; otherwise those rows are flat, because
+ * grouping every one of them under "Projects" would assert leaf-ness of the whole register on
+ * a field nobody has filled in yet. THE TWO NAME-DERIVED KINDS ARE NOT GATED on it — they are
+ * read off the name and need nothing from Wiz, so they are worth saying even on a register
+ * that cannot yet say which of its folders are leaves.
  */
 export function scopeOptions(list) {
   const anyRecorded = (list || []).some((p) => p.isFolder !== undefined);
   const rows = (list || []).map((p) => {
     const kind = projectKind(p);
+    const place = placeRow(p, kind, anyRecorded);
+    const groupCount = Number(p.supportGroupCount) || 0;
     return {
       value: p.slug,
-      label: p.name,
+      // Named for what picking it DOES. A support group sits under a heading bearing its own
+      // name, so a bare repeat would read as a duplicate row rather than as "the whole group".
+      label: kind === "support" ? `${p.name} (everything)` : p.name,
       kind,
       // Declared in words rather than by icon or colour: picking a unit or a support group
       // reaches its whole subtree, and that is a meaning, so it does not travel by colour
-      // alone.
+      // alone. A product under its group's heading needs no such clause — the heading above it
+      // already says whose it is — but one that could not be placed says WHY, because "nobody
+      // filed it" and "two groups claim it" are different problems.
       hint: kind === "support" ? `Support group · ${findingCount(p.findings)}`
         : kind === "unit" ? `Business unit · ${findingCount(p.findings)}`
-          : findingCount(p.findings),
-      group: kind === "support" ? KIND_GROUP.support
-        : !anyRecorded ? "" : KIND_GROUP[kind],
+          : kind === "product" && place.band === "" && groupCount > 1
+            ? `${groupCount} support groups · ${findingCount(p.findings)}`
+            : findingCount(p.findings),
+      group: place.group,
       // The glyph is the THIRD carrier, after the hint above and the group heading — a reader
       // who cannot tell one folder from two at 14px has already been told twice in words. That
       // ordering is the whole licence for it: an icon that had to be understood would be
-      // exactly the shorthand the hint exists to avoid.
+      // exactly the shorthand the hint exists to avoid. A product takes the single folder: it
+      // holds repositories, not projects, and the doubled mark is reserved for the two kinds
+      // that reach a subtree of other projects.
       icon: kind === "unit" || kind === "support" ? "folders" : "folder",
+      _rank: place.rank,
+      _band: place.band,
+      _within: place.within,
     };
   });
-  // Sorted by kind so each heading is emitted once. Stable within a kind, which keeps the
-  // server's folders-first-then-name ordering (`domain/projectScope.ts::projectCatalogue`)
-  // wherever it still applies.
+  // Sorted so each heading is emitted exactly once: by kind band, then by support-group name
+  // (which is the heading string for the middle band), then group-row-before-its-products,
+  // then by label. Stable within all of that, which keeps the server's
+  // folders-first-then-name ordering (`domain/projectScope.ts::projectCatalogue`) wherever it
+  // still applies.
   return rows
     .map((row, at) => ({ row, at }))
-    .sort((x, y) => (KIND_RANK[x.row.kind] - KIND_RANK[y.row.kind]) || (x.at - y.at))
-    .map(({ row }) => row);
+    .sort((x, y) => (x.row._rank - y.row._rank)
+      || x.row._band.localeCompare(y.row._band)
+      || (x.row._within - y.row._within)
+      || (x.row._band === "" ? x.at - y.at : x.row.label.localeCompare(y.row.label)))
+    .map(({ row }) => {
+      delete row._rank;
+      delete row._band;
+      delete row._within;
+      return row;
+    });
 }
 
 /**

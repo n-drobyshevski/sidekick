@@ -490,6 +490,69 @@ describe("bootstrap's freshness caption reports the SYNC, not one of its rows", 
 // longer match the other registers" warning (P0, settingsModel.js) could never fire again for
 // an operator who has ever saved one. `effectiveSlaTargets` is the second field that exists so
 // `slaTargets` never has to carry both meanings.
+// =========================================================================================
+//  The domain axis, END TO END through the real bootstrap
+// =========================================================================================
+//
+// THE GAP THIS CLOSES, and it is the one a live tenant found. `repoTags.attachRepoTags` and
+// `domainScope.domainCatalogue` were each held directly, and both were right — but nothing
+// asserted that `bootstrap` actually runs the first and feeds the second, which is the only
+// path the header's Domains group is built from. A register whose map places rows can still
+// offer an empty switcher if that wiring is wrong, and every unit test stays green while it is.
+describe("bootstrap builds the domain switcher's list from the join", () => {
+  /** Seed the `domain_map` tab from the repositories the committed battery produced. */
+  async function seedDomainMapFromLedger(): Promise<{ tokens: string[]; domains: string[] }> {
+    const { TABS } = await import("../src/server/sheetsDb");
+    const repoTags = await import("../src/server/repoTags");
+    const names = [...new Set(
+      (tables[TABS.repos] ?? []).map((r) => String(r.repo_id ?? "")).filter(Boolean),
+    )];
+    expect(names.length, "the battery must produce repositories to map").toBeGreaterThan(0);
+    const domains = ["SAP", "CROSS"];
+    const map: Record<string, { domain: string | null; lifecycle: string | null }> = {};
+    names.forEach((id, i) => {
+      map[repoTags.foldToken(id)] = { domain: domains[i % domains.length]!, lifecycle: null };
+    });
+    repoTags.resetRepoTagMapMemo();
+    repoTags.setRepoTagMap(map);
+    repoTags.resetRepoTagMapMemo();
+    return { tokens: Object.keys(map), domains };
+  }
+
+  it("filterOptions.domainList is non-empty once the map places rows", async () => {
+    const { api } = await syncedRegister();
+    const { domains } = await seedDomainMapFromLedger();
+
+    const boot = api.bootstrap({});
+    expect(boot.ok).toBe(true);
+    const list = boot.data!.filterOptions.domainList;
+    // THE ASSERTION THE LIVE TENANT NEEDED. An empty list here is an empty Domains group in
+    // the header, whatever the Settings card reports about the map.
+    expect(list.length, "the map places rows, so the switcher must offer domains").toBeGreaterThan(0);
+    expect(list.map((d) => d.name).sort()).toEqual([...domains].sort());
+    for (const entry of list) expect(entry.findings).toBeGreaterThan(0);
+  });
+
+  it("scope.noDomain falls below the register once rows are placed", async () => {
+    const { api } = await syncedRegister();
+    await seedDomainMapFromLedger();
+
+    const boot = api.bootstrap({});
+    const scope = boot.data!.scope;
+    expect(scope.register).toBeGreaterThan(0);
+    // Every row was mapped, so nothing should be left unattributed — and `noDomain` equal to
+    // the register is exactly the picture an operator sees when the join silently does nothing.
+    expect(scope.noDomain).toBeLessThan(scope.register);
+  });
+
+  it("with no map at all, the list is empty and noDomain IS the register", async () => {
+    const { api } = await syncedRegister();
+    const boot = api.bootstrap({});
+    expect(boot.data!.filterOptions.domainList).toEqual([]);
+    expect(boot.data!.scope.noDomain).toBe(boot.data!.scope.register);
+  });
+});
+
 describe("bootstrap ships the canonical SLA constant and the effective override separately", () => {
   it("both equal SLA_TARGETS before any operator has saved a window", async () => {
     const { api } = await load();
@@ -850,8 +913,9 @@ describe("each read model reaches its slice", () => {
     const cold = d["coldZone"] as Rec;
     expect(Object.keys(cold).sort()).toEqual([
       "achieved_share_pct", "as_of", "cold_after_days", "cold_bound_only", "derived_days",
-      "dropped_no_repo", "eligible_repos", "fixed_after_days", "floor_applied", "floor_days",
-      "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
+      "dropped_no_repo", "eligible_repos", "end_of_life_repos", "exclude_end_of_life",
+      "excluded_end_of_life", "excluded_open_findings", "fixed_after_days", "floor_applied",
+      "floor_days", "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
       "target_share_pct", "totals", "unclassified_secrets",
     ]);
     // The mode fields ride along BY VALUE, not merely by name: the Executive card names which

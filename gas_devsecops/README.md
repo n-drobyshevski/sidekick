@@ -57,23 +57,78 @@ units, support groups and leaves, read off `projects_json`) and a **business dom
 tenant says owns it, from the repository's `Wiz/Domain` tag). Picking either clears the other,
 because a header that carries two scopes cannot answer "what am I looking at" in one line.
 
+**The project axis has two grains, and the app keeps them apart.** The tenant files every
+repository under a **support group** — a project whose name's first segment is `CS`, `CE` or
+`LU` — and under a **product**, one whose first segment is `product`. One support group holds
+many products. Wiz reports all of them in a flat `projects[]` with no parent links, so that
+containment lives in the tenant's naming and never in the payload: `src/domain/projectGrain.ts`
+is the one place both rules are written down, and the client keeps a mirror of it that a test
+holds equal.
+
+Both grains are attached on read — `_supportGroup` and `_product`, beside `_domain`, at
+`readModels.baseSnapshot` — rather than stored. A prefix rule is vocabulary, and vocabulary
+changes; baked into the ledger a fourth prefix would cost a re-scan to correct, and because
+reconcile merges those columns latest-wins-never-erased a stale value would keep winning even
+then. Each falls back so rows already on the sheet still answer, and the product one refuses
+the single case it can prove wrong: it takes `owner_project` unless that value is itself a
+support group.
+
+That column, `owner_project`, is what this replaced. It took "the first non-folder project",
+which under this convention usually lands on the product — but not always: where Wiz reported
+the support group as a leaf and returned it first, the same column held a support group. One
+column, two grains, decided by API order, and every table on it headed "Owning project". The
+three register pages now break down **By product** and **By support group**; the Repositories
+cold zone rolls up by product with the support group as a column (the verdicts and the
+coldest-share badge are calibrated on the finer population, so the roll-up stays there and the
+group is the escalation path beside it); and the switcher gives each support group its own
+heading with its products under it. Where a product's repositories name two different support
+groups, nothing names one — a summary that hides a disagreement is worse than one that reports
+it.
+
+**One project is excluded from both, because it reaches everything.** Wiz files a repository
+under every project that touches it, and the tenant's GitHub connector puts `GITHUB-DKTUNITED`
+on all of them. As a switcher row that is "everything synced" under another name; as an
+`owner_project` it is a bucket named after the organisation that owns the whole register. So
+`src/domain/config.ts`'s `ORG_WIDE_PROJECTS` names it, `projectScope.ts::parseProjects` drops
+it before the catalogue, the membership predicate or the unattributed count see it, and
+`reconcile.ts::ownerProject` will not file a repository under it — a repository carrying only
+that tag reads as **no owning project**, and is counted in the header's `have no project`
+figure rather than quietly attributed to the organisation. The stored `projects_json` and
+`tags_json` keep it, whole: this is an exclusion from the analysis, not from the observation.
+A second connector tag is one edit to that list; it is spelled out rather than inferred from a
+`GITHUB-` prefix, so a business unit named after a tool is never hidden by accident.
+
 The domain arrives by a different route than the project, and the difference is the whole
 design: `projects[]` is in all three query documents, so it rides in on every finding, but
 **none of the three can select an asset's tags**. `VulnerableAssetRepositoryBranch` is the one
 member of the `vulnerableAsset` union that Wiz's own console query omits `tags` from — it is
 on the other twelve — and a field the schema lacks fails the whole document, so asking anyway
-would stop SCA syncing. So `src/server/repoDomains.ts` graphSearches the tenant's tagged
-repository entities separately, builds a repository-identity → domain map on the `domain_map`
-tab, and attaches `_domain` to rows **on read**, never baked into the ledger. That is the same
+would stop SCA syncing. So `src/server/repoTags.ts` graphSearches the tenant's tagged
+repository entities separately, builds a repository-identity → tags map on the `domain_map`
+tab, and attaches those tags to rows **on read**, never baked into the ledger. That is the same
 shape `gas/src/server/supportGroups.ts` already uses for a `Wiz/provisioning` tag that lives on
 a subscription findings carry without its tags.
 
+**Two tags travel that road, not one.** Beside the business domain, the same fetch carries each
+repository's **lifecycle** — `END_OF_LIFE`, `IN_PRODUCTION`, whatever the tenant writes, read
+off its `lifecycle` tag (`WIZ_LIFECYCLE_TAG_KEY` overrides the key). It is attached as
+`_lifecycle` at the same point, appears as a **Lifecycle** column on the Repositories tables,
+and is the one thing an operator can ask the cold zone to act on — see below. The query filters
+on one tag key at a time, so the refresh pages it **once per key** and merges; each pass reads
+both tags off every entity it sees, so a repository carrying only one of the two is still
+reached. Whether a widened `where` would mean "carries both" or "carries either" is not
+verifiable without the tenant, and a wrong guess there is a silent under-fetch.
+
 Two consequences a reader meets on screen. The map is refreshed from **Settings → System →
-Business domains**, on its own clock rather than with a sync — tagging changes when tagging
-changes, not when findings do. And until it is refreshed there are no domains: the switcher
-simply has no Domains group, the caption counts the rows as `have no domain`, and the Settings
-card says *Never refreshed* rather than letting an unrefreshed map look like an untagged
-tenant. An unreachable map degrades the same way rather than taking the pages down with it.
+Repository tags**, on its own clock rather than with a sync — tagging changes when tagging
+changes, not when findings do. And until it is refreshed there are no domains and no
+lifecycles: the switcher simply has no Domains group, the caption counts the rows as `have no
+domain`, the Lifecycle column is empty, and the Settings card says *Never refreshed* rather
+than letting an unrefreshed map look like an untagged tenant. An unreachable map degrades the
+same way rather than taking the pages down with it. The card reports the **two tags'
+placements separately**, because they fail separately: `Wiz/Domain` is a key Wiz's own console
+writes, while the lifecycle key is whatever the tenant's catalogue used — so the default is a
+guess, and a zero beside a healthy domain count is how an operator finds that out.
 
 **The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
 `src/server/readModels.ts`'s `registerRowsModel` (through `serverCache.ts`'s durable, 1-hour
@@ -133,7 +188,32 @@ here and `test/vocabulary.test.js` holds the copy to it.
 | `repos` | Repositories | Data | Where does the backlog sit, which repos have gone cold, who owns them? |
 | `history` | Scan history | Data | What was actually measured, when? |
 | `data` | Storage | Data | What is stored, what can be exported, what can be reset? |
-| `settings` | Settings | — | Register, SLA windows, the cold-zone mode, access, system. |
+| `settings` | Settings | — | Register, SLA windows, the cold-zone mode and its end-of-life exclusion, access, system. |
+
+### The cold zone, and the one population an operator may remove
+
+The Repositories page's cold zone answers **where has remediation stopped** rather than how
+much is open: a repository with open findings and no close, removal or rotation for at least
+the window. The line is drawn either as a **fixed** number of idle days or **relative**, as the
+idlest share of the estate with a floor under it; both produce one effective threshold and
+nothing downstream branches on which.
+
+**End-of-life repositories can be left out, and that is the only exclusion on offer.** A
+repository the tenant has retired answers this question with a silence that means the opposite
+of what the section reads into it — nobody is closing findings on it because nobody is meant
+to — so counting it as cold describes a decision rather than a team, and crowds out the
+repositories that really have gone quiet. **Settings → Deadlines** turns it on; it is **off by
+default**, and off the retired repositories stay in the table with their lifecycle printed
+beside the verdict so a reader can dismiss them without the app deciding for them.
+
+Three refusals keep it honest. It **never guesses**: only a positively recognised end-of-life
+value excludes, so a missing tag, an unfamiliar word, or a lifecycle key that matches nothing
+excludes nothing at all. It **never happens silently**: the section says how many repositories
+left and how many open findings went with them, because a share whose denominator quietly
+shrank is a share nobody can check — and with the setting off it says how many retired
+repositories are being counted, which is how an operator finds the switch. And it **reaches the
+cold zone alone**: those findings stay in every backlog, density, severity and SLA figure the
+register publishes. What is being removed is a reading about engagement, not a finding.
 
 ### Why SAST, SCA and secrets are three pages
 
@@ -238,6 +318,8 @@ WIZ_API_TOKEN=...          # or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET
 WIZ_PROJECT_ID_V2=...      # optional; scopes every query
 WIZ_DOMAIN_TAG_KEY=...     # optional; the repository tag whose value is a business domain
                            # (default Wiz/Domain) — see "Two ways to slice it" below
+WIZ_LIFECYCLE_TAG_KEY=...  # optional; the repository tag whose value is a lifecycle
+                           # (default lifecycle) — read beside the domain, in one refresh
 ```
 
 **The two questions it exists to answer.**

@@ -119,6 +119,28 @@ export interface Settings {
    * be set beyond the longest fixed window this register will accept.
    */
   coldFloorDays: number;
+  /**
+   * Leave END-OF-LIFE repositories out of the cold zone.
+   *
+   * ON THE DEADLINES TAB WITH THE THREE ABOVE, AND IT IS NOT A FOURTH THRESHOLD. Those three
+   * decide WHERE THE LINE FALLS; this one decides WHO IS BEING MEASURED AT ALL. They belong
+   * together because a reader setting a cold-zone window is already deciding what "cold" means
+   * on their estate, and "does a repository we retired count" is the same decision one step
+   * earlier.
+   *
+   * DEFAULT FALSE, `autoCompact`'s precedent exactly: a fresh install and every deployment that
+   * predates this field behave identically until an operator opts in. That direction is the
+   * conservative one here rather than merely the compatible one — off, a retired repository is
+   * still in the table with its lifecycle printed beside it and a reader can dismiss it; on, it
+   * is gone, and a tenant whose lifecycle tag this register has not learned would be silently
+   * excluding nothing while believing otherwise. `domain/coldZone.ts` publishes
+   * `end_of_life_repos` in BOTH settings so that belief is checkable.
+   *
+   * ONLY A LITERAL `true` TURNS IT ON (`cleanSettings`), like `showExperimental` and
+   * `autoCompact` beside it: a string, a number or a missing cell is not consent to delete
+   * repositories from a page.
+   */
+  excludeEndOfLife: boolean;
   /** Show routes flagged experimental in the nav. */
   showExperimental: boolean;
   /**
@@ -196,6 +218,7 @@ export const DEFAULT_SETTINGS: Settings = {
   coldZoneMode: DEFAULT_COLD_ZONE_MODE,
   coldTargetSharePct: DEFAULT_COLD_TARGET_SHARE_PCT,
   coldFloorDays: DEFAULT_COLD_FLOOR_DAYS,
+  excludeEndOfLife: false,
   showExperimental: false,
   syncSchedule: DEFAULT_SYNC_HOUR,
   autoCompact: false,
@@ -414,6 +437,9 @@ export function cleanSettings(raw: Rec | null | undefined): Settings {
     coldZoneMode: cleanColdZoneMode(r.coldZoneMode),
     coldTargetSharePct: cleanColdTargetSharePct(r.coldTargetSharePct),
     coldFloorDays: cleanColdFloorDays(r.coldFloorDays),
+    // Junk (a string, a number, undefined) coerces to false, same as the two booleans below —
+    // only a literal `true` removes repositories from the cold zone.
+    excludeEndOfLife: r.excludeEndOfLife === true,
     showExperimental: r.showExperimental === true,
     syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
     // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
@@ -583,6 +609,8 @@ export interface EffectiveColdZone {
   coldAfterDays: number;
   targetSharePct: number;
   floorDays: number;
+  /** Whether retired repositories are left out of the measurement. See `Settings`. */
+  excludeEndOfLife: boolean;
 }
 
 /**
@@ -611,7 +639,10 @@ export interface EffectiveColdZone {
  */
 export function effectiveColdZoneSettings(
   settings:
-    | Partial<Pick<Settings, "coldAfterDays" | "coldZoneMode" | "coldTargetSharePct" | "coldFloorDays">>
+    | Partial<Pick<
+      Settings,
+      "coldAfterDays" | "coldZoneMode" | "coldTargetSharePct" | "coldFloorDays" | "excludeEndOfLife"
+    >>
     | null
     | undefined,
 ): EffectiveColdZone {
@@ -620,5 +651,10 @@ export function effectiveColdZoneSettings(
     coldAfterDays: cleanColdAfterDays(settings?.coldAfterDays),
     targetSharePct: cleanColdTargetSharePct(settings?.coldTargetSharePct),
     floorDays: cleanColdFloorDays(settings?.coldFloorDays),
+    // THROUGH THE SAME DOOR AS THE OTHER FOUR, and it is not symmetry for its own sake: this
+    // decides which repositories the line is derived FROM, so a caller that read the mode here
+    // and this flag from the settings row directly could derive a relative line over one
+    // population and then draw the table over another.
+    excludeEndOfLife: settings?.excludeEndOfLife === true,
   };
 }

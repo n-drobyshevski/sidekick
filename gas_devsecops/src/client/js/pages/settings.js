@@ -127,7 +127,7 @@ export const PAGE_DEFAULT_COLD_FLOOR_DAYS = 14;
 // this page happened to load with. `test/pagesSettings.test.js` pins the exclusion.
 export const SETTINGS_KEYS = [
   "scopes", "fetchSeverities", "slaTargets", "coldAfterDays", "coldZoneMode",
-  "coldTargetSharePct", "coldFloorDays", "showExperimental",
+  "coldTargetSharePct", "coldFloorDays", "excludeEndOfLife", "showExperimental",
   "syncSchedule", "autoCompact", "retentionDays",
 ];
 
@@ -191,6 +191,9 @@ export function draftFromSettings(settings) {
     coldFloorDays: Number.isFinite(Number(s.coldFloorDays))
       ? Number(s.coldFloorDays)
       : PAGE_DEFAULT_COLD_FLOOR_DAYS,
+    // Only a literal `true`, mirroring the server's own `cleanSettings`: a settings cell
+    // holding a string or a number is not consent to delete repositories from a page.
+    excludeEndOfLife: s.excludeEndOfLife === true,
     showExperimental: s.showExperimental === true,
     syncSchedule: Number.isFinite(Number(s.syncSchedule)) ? Number(s.syncSchedule) : DEFAULT_SYNC_HOUR,
     autoCompact: s.autoCompact === true,
@@ -1124,6 +1127,35 @@ export async function renderSettings(host, params, ctx) {
       }));
     }
 
+    // ---- who the cold zone measures, under where its line falls.
+    //
+    // LAST IN THE PANEL AND OUTSIDE THE MODE BRANCH, because it is the only cold-zone control
+    // both readings share: fixed and relative disagree about where the line goes and agree
+    // completely about whether a repository the tenant retired should be behind it.
+    //
+    // A SWITCH, NOT A THRESHOLD, so it takes `switchToggle` and the System tab's phrasing
+    // rather than a number input — and the description carries the one caveat that decides
+    // whether it does anything at all: the exclusion reads a repository TAG, so a deployment
+    // whose tag key this register never learned excludes nothing. Settings > System's
+    // repository-tag card is where that is diagnosable, and the sentence points at it rather
+    // than leaving an operator to conclude the switch is broken.
+    const eolSwitch = switchToggle({
+      checked: draft.excludeEndOfLife,
+      id: "settings-exclude-eol",
+      ariaLabel: "Exclude end-of-life repositories",
+      onChange: (on) => { draft.excludeEndOfLife = on; syncDirty(); },
+    });
+    body.push(settingRow({
+      label: glossaryTip("End-of-life repositories", "end-of-life"),
+      htmlFor: "settings-exclude-eol",
+      description: "Leave repositories the tenant has retired out of the cold zone. Nobody is "
+        + "closing findings on a finished repository because nobody is meant to, so counting "
+        + "them as cold crowds out the ones that really have gone quiet. Their findings stay "
+        + "in every other figure this register publishes. Read off each repository's lifecycle "
+        + "tag — if System reports no lifecycles placed, this excludes nothing.",
+      control: eolSwitch.node,
+    }));
+
     const panel = settingsPanel({
       title: glossaryTip("Remediation windows", "sla-target"),
       description: "The same window applies to every register: a CRITICAL finding gets the "
@@ -1235,7 +1267,15 @@ export async function renderSettings(host, params, ctx) {
   }
 
   /**
-   * The repository → business-domain join, and whether it is actually joining.
+   * The repository → tags join, and whether it is actually joining.
+   *
+   * TWO TAGS, ONE MAP, TWO PLACEMENT FIGURES. The register joins a business domain
+   * (`Wiz/Domain`) and a lifecycle (`lifecycle`) off the same repository entities in one
+   * refresh, and this card reports each one's reach SEPARATELY, because they fail separately:
+   * the domain key is one Wiz's own console writes, while the lifecycle key is whatever the
+   * tenant's own catalogue used, so a perfectly healthy domain half can sit beside a lifecycle
+   * half that matches nothing. A single collapsed "placed" would hide exactly that, and the
+   * Lifecycle column would just be quietly blank everywhere with nothing on screen saying why.
    *
    * WHY THIS CARD EXISTS AT ALL. The domain scope in the app header and the "By business
    * domain" breakdowns are drawn from a map this register fetches SEPARATELY from any sync —
@@ -1254,7 +1294,7 @@ export async function renderSettings(host, params, ctx) {
    * THE MIDDLE ONE IS WHY THIS CARD REPORTS `placed` RATHER THAN A KEY COUNT. A map can hold
    * thousands of tokens and three domains and still place zero findings, because the identity
    * a repository ENTITY carries in Wiz's graph need not be the one a FINDING carries — nothing
-   * in the tree can verify that overlap without the tenant (`repoDomains.recordIdentityTokens`
+   * in the tree can verify that overlap without the tenant (`repoTags.recordIdentityTokens`
    * says so at length). Reported as keys alone, that state reads as perfect health while every
    * domain figure in the app is empty, which is exactly the confident lie this card exists to
    * prevent.
@@ -1311,7 +1351,21 @@ export async function renderSettings(host, params, ctx) {
             `${fmtCount(domains)} domain(s) over ${fmtCount(placed)} of `
             + `${fmtCount(repos)} repositories`));
         }
-        wrap.append(el("span", { class: "muted small" }, `Tag key: ${h.tagKey}`));
+        wrap.append(el("span", { class: "muted small" }, `Domain tag key: ${h.tagKey}`));
+        // THE SECOND TAG, ON ITS OWN LINE AND WITH ITS OWN PLACEMENT FIGURE. A zero here
+        // beside a healthy domain count is the one state the default key is allowed to be in
+        // (it is a guess about the tenant's own vocabulary — see domain/lifecycleTag.ts), and
+        // it is the state that makes the Lifecycle column and the end-of-life exclusion do
+        // nothing. Said here, once, rather than left for someone to deduce from an empty
+        // column on another page.
+        const lifePlaced = Number(h.lifecyclePlaced) || 0;
+        const lifeKey = h.lifecycleTagKey || "lifecycle";
+        wrap.append(el("span", { class: "muted small" },
+          keys && !lifePlaced
+            ? `No repository lifecycle placed — nothing matches the ${lifeKey} tag, so the `
+              + "Lifecycle column is empty and the end-of-life exclusion removes nothing."
+            : `Lifecycle tag key: ${lifeKey}`
+              + (keys ? ` — placed on ${fmtCount(lifePlaced)} of ${fmtCount(repos)} repositories` : "")));
       } else {
         wrap.append(statusPill("neutral", "Not checked"));
       }
@@ -1332,9 +1386,10 @@ export async function renderSettings(host, params, ctx) {
             const health = await call("api_domainMapHealth", {});
             paint({ health });
             toast(!res.repos
-              ? `No repository carries a ${res.tagKey} tag.`
-              : health.placed
-                ? `${fmtCount(res.repos)} tagged repository(s), ${fmtCount(res.domains)} domain(s).`
+              ? `No repository carries a ${res.tagKey} or ${res.lifecycleTagKey} tag.`
+              : health.placed || health.lifecyclePlaced
+                ? `${fmtCount(res.repos)} tagged repository(s), ${fmtCount(res.domains)} `
+                  + `domain(s), ${fmtCount(res.lifecycles)} lifecycle(s).`
                 : `${fmtCount(res.repos)} tagged repository(s) fetched, but none match this `
                   + "register's repositories — see the card.");
             // The map moved, so every domain figure the shell is holding is stale — including
@@ -1345,7 +1400,7 @@ export async function renderSettings(host, params, ctx) {
             paint({ error: String(e.message || e).slice(0, 200) });
           }
         },
-      }, "Refresh domains");
+      }, "Refresh repository tags");
       wrap.append(btn);
     };
     paint(null);
@@ -1541,7 +1596,7 @@ export async function renderSettings(host, params, ctx) {
     // a reader sets. It is also the only card here whose button costs a tenant call, which is
     // why it sits next to the other one that does.
     diagnostics.grid.append(diagnosticCard({
-      key: "domainMap", label: "Business domains", body: domainMapCard(),
+      key: "domainMap", label: "Repository tags", body: domainMapCard(),
     }));
 
     clear(panels.system).append(

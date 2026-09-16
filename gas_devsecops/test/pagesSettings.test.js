@@ -682,11 +682,11 @@ describe("tab plumbing", () => {
     expect(normalizeTab(null)).toBe(DEFAULT_TAB);
   });
 
-  it("BATCHED_KEYS is ten of the eleven fields — showExperimental is deliberately excluded", () => {
+  it("BATCHED_KEYS is eleven of the twelve fields — showExperimental is deliberately excluded", () => {
     expect(BATCHED_KEYS.sort()).toEqual(
       [
         "scopes", "fetchSeverities", "slaTargets", "coldAfterDays",
-        "coldZoneMode", "coldTargetSharePct", "coldFloorDays",
+        "coldZoneMode", "coldTargetSharePct", "coldFloorDays", "excludeEndOfLife",
         "syncSchedule", "autoCompact", "retentionDays",
       ].sort(),
     );

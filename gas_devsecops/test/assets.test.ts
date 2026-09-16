@@ -61,6 +61,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
+  ASSET_PRODUCT_NONE,
   assetProfile,
   assetProfilePopulations,
   type AssetProfileRow,
@@ -190,7 +191,13 @@ describe("assetProfile — brick fixture parity", () => {
     });
   }
 
-  it("accounts for every field the fixture carries, and adds exactly one of its own", () => {
+  // THE TWO ADDITIONS ARE BOTH DISPLAY-ONLY, and this assertion is the gate that keeps them
+  // that way. brick computes the seventeen columns above; every figure this port publishes is
+  // one of them, and the only things it adds are two labels for the repository grain —
+  // `asset_label` (the name) and `asset_lifecycle` (the tag). Neither feeds a percentile, a
+  // rate or a verdict. A THIRD name appearing here, or either of these two turning up in an
+  // arithmetic path, is the port drifting from the pipeline, which is what this pins.
+  it("accounts for every field the fixture carries, and adds exactly two labels of its own", () => {
     const fixtureKeys = new Set<string>();
     for (const c of FX.cases) for (const r of c.expected) for (const k of Object.keys(r)) fixtureKeys.add(k);
     expect([...fixtureKeys].sort()).toEqual(
@@ -200,7 +207,46 @@ describe("assetProfile — brick fixture parity", () => {
     const sample = assetProfile([], { now: "2026-08-01T00:00:00Z", observedFrom: null }).rows[0]!;
     const produced = new Set(Object.keys(sample));
     for (const k of fixtureKeys) expect(produced.has(k), `missing column ${k}`).toBe(true);
-    expect([...produced].filter((k) => !fixtureKeys.has(k))).toEqual(["asset_label"]);
+    expect([...produced].filter((k) => !fixtureKeys.has(k)).sort())
+      .toEqual(["asset_label", "asset_lifecycle"]);
+  });
+
+  // Perturbation, run and reverted: publishing `asset_lifecycle` at every grain — dropping the
+  // `groupBy === "repo"` guard in `assetProfile`'s call to `aggregate` — fails the product case
+  // below with `expected 'END_OF_LIFE' to be null`.
+  describe("asset_lifecycle — a repository property, published at the repository grain only", () => {
+    const row = (over: Partial<AssetRow>): AssetRow => ({
+      vuln_key: "k", repo_id: "r-1", repo_name: "svc-api", scope: "sca", severity: "HIGH",
+      status: "OPEN", language: "GO", _product: "product-x", _lifecycle: null,
+      first_seen: "2026-01-01T00:00:00Z", resolved_at: null, mttr_days: null, age_days: 30,
+      ...over,
+    } as AssetRow);
+    const opts = { now: "2026-08-01T00:00:00Z", observedFrom: "2026-01-01T00:00:00Z" } as const;
+
+    it("carries the repository's lifecycle onto its own row", () => {
+      const out = assetProfile([row({ _lifecycle: "END_OF_LIFE" })], { ...opts, groupBy: "repo" });
+      const r = out.rows.find((x) => x.asset_group === "r-1")!;
+      expect(r.asset_lifecycle).toBe("END_OF_LIFE");
+      expect(r.asset_label).toBe("svc-api");
+    });
+
+    it("is null for a repository the tenant never tagged — absence, not a placeholder", () => {
+      const out = assetProfile([row({})], { ...opts, groupBy: "repo" });
+      expect(out.rows.find((x) => x.asset_group === "r-1")!.asset_lifecycle).toBeNull();
+    });
+
+    it("REFUSES A PRODUCT ROW, which is many repositories and can hold several lifecycles", () => {
+      const out = assetProfile(
+        [row({ _lifecycle: "END_OF_LIFE" }), row({ repo_id: "r-2", _lifecycle: "IN_PRODUCTION" })],
+        { ...opts, groupBy: "product" },
+      );
+      expect(out.rows.find((x) => x.asset_group === "product-x")!.asset_lifecycle).toBeNull();
+    });
+
+    it("is null on OVERALL at every grain — the register has no one lifecycle", () => {
+      const out = assetProfile([row({ _lifecycle: "END_OF_LIFE" })], { ...opts, groupBy: "repo" });
+      expect(out.rows.find((x) => x.asset_group === "OVERALL")!.asset_lifecycle).toBeNull();
+    });
   });
 
   it("publishes OVERALL first, then assets descending", () => {
@@ -353,6 +399,64 @@ describe("observedFrom: null makes every rate NULL, never 0", () => {
     expect(nOverall.open_findings).toBe(wOverall.open_findings);
     expect(nOverall.asset_coverage_p50).toBe(wOverall.asset_coverage_p50);
     expect(nOverall.km_median_days).toBe(wOverall.km_median_days);
+  });
+});
+
+// THE TENANT'S OWNERSHIP GRAIN, and the third thing this module can group by. brick has no
+// product grouping at all — the fixture pins `language`, which is why that branch stays even
+// though no page draws it any more — so everything below is this port's own.
+describe('groupBy: "product"', () => {
+  const rows = [
+    row({ repo_id: "r1", repo_name: "acme/alpha", _product: "product-a", has_kev: true }),
+    row({ repo_id: "r1", repo_name: "acme/alpha", _product: "product-a" }),
+    row({ repo_id: "r2", repo_name: "acme/beta", _product: "product-a", has_kev: true }),
+    row({ repo_id: "r3", repo_name: "acme/gamma", _product: "product-b" }),
+  ];
+  const byProduct = assetProfile(rows, { now: NOW, observedFrom: null, groupBy: "product" });
+
+  it("gives one group per product plus OVERALL, counting its repositories", () => {
+    expect(byProduct.rows.map((r) => r.asset_group)).toEqual([OVERALL, "product-a", "product-b"]);
+    // product-a is made of TWO repositories; product-b of one. That count is the column the
+    // repository side of the switch does not need, because there the answer is always one.
+    expect(byProduct.rows.map((r) => r.assets)).toEqual([3, 2, 1]);
+  });
+
+  it("measures the same population as the repository grouping — a product is just a bigger "
+    + "set of the same assets", () => {
+    const byRepo = assetProfile(rows, { now: NOW, observedFrom: null, groupBy: "repo" });
+    const pOverall = byProduct.rows.find((r) => r.asset_group === OVERALL)!;
+    const rOverall = byRepo.rows.find((r) => r.asset_group === OVERALL)!;
+    expect(pOverall.open_findings).toBe(4);
+    expect(pOverall.open_findings).toBe(rOverall.open_findings);
+    expect(pOverall.assets).toBe(rOverall.assets);
+  });
+
+  it("carries no asset_label — the group key IS the name, as with language", () => {
+    expect(byProduct.rows.every((r) => r.asset_label === null)).toBe(true);
+  });
+
+  it("A REPOSITORY FILED UNDER NO PRODUCT IS A REAL GROUP, labelled (no product)", () => {
+    // Never dropped: "nobody owns these" is one of the answers this page exists to give. And
+    // the word matches the cold zone's own bucket on the same page — the same population
+    // labelled "UNKNOWN" here and "(no product)" there would read as two different groups.
+    const withOrphan = assetProfile([
+      ...rows,
+      row({ repo_id: "r9", repo_name: "acme/orphan", _product: null }),
+    ], { now: NOW, observedFrom: null, groupBy: "product" });
+    expect(ASSET_PRODUCT_NONE).toBe("(no product)");
+    expect(withOrphan.rows.map((r) => r.asset_group)).toContain(ASSET_PRODUCT_NONE);
+    const none = withOrphan.rows.find((r) => r.asset_group === ASSET_PRODUCT_NONE)!;
+    expect(none.assets).toBe(1);
+    expect(none.open_findings).toBe(1);
+  });
+
+  it("a blank product is the same group as a missing one", () => {
+    const blanks = assetProfile([
+      row({ repo_id: "r8", repo_name: "acme/blank", _product: "" }),
+      row({ repo_id: "r9", repo_name: "acme/none", _product: null }),
+    ], { now: NOW, observedFrom: null, groupBy: "product" });
+    const none = blanks.rows.find((r) => r.asset_group === ASSET_PRODUCT_NONE)!;
+    expect(none.assets).toBe(2);
   });
 });
 
