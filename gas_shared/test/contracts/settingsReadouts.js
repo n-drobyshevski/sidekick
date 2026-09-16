@@ -137,6 +137,22 @@ export function registerSettingsReadoutsContract(ctx) {
       expect(m.caption).toContain("MEDIUM");
       expect(m.caption).toContain("not scanned");
     });
+
+    it("offers the same figures as keys, one per severity, so the bar can draw a row not a sentence", () => {
+      const m = severitySplitModel({
+        selectable: ["CRITICAL", "HIGH", "MEDIUM"],
+        bySeverityOpen: { CRITICAL: 3, HIGH: 5, MEDIUM: 11 },
+        bySeverityAll: { CRITICAL: 5, HIGH: 7, MEDIUM: 15 },
+        inScope: (sev) => sev !== "MEDIUM",
+        openTotal: 19, total: 30, outLabel: "Not scanned", unit: "findings",
+      });
+      expect(m.keys.map((k) => k.label)).toEqual(["CRITICAL", "HIGH", "MEDIUM"]);
+      expect(m.keys.map((k) => k.out)).toEqual([false, false, true]);
+      // Every key's figure is the caption's figure for that severity — same source, two forms.
+      for (const k of m.keys) expect(m.caption).toContain(`${k.label} ${k.text}`);
+      expect(m.summary).toBe("8 of 19 open findings scanned, 30 in the register all time.");
+      expect(m.caption.endsWith(m.summary)).toBe(true);
+    });
   });
 
   // ============================================================================ tick timeline

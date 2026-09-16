@@ -335,12 +335,12 @@ a register. `splitBar`'s hatch, `tickTimeline`'s ticks and `createCutHistogram`'
 nothing OS-vulnerability-specific either, which is why they moved to `components.css` rather than
 following `settings.css` over from `gas`.
 
-## Three primitives for a page with too many words
+## Four primitives for a page with too many words
 
 The density wave's finding was that these registers are *correct* and *wordy*: a `denomNote`
 paragraph under every figure card (22 of them across three register pages, 13 on Secrets
 alone), a five-column table with a prose "Reading" column wherever two yes/no questions cross,
-and a figure that says where a number is but never where it is going. Three modules, all
+and a figure that says where a number is but never where it is going. Four modules, all
 additive, all with a pure model half a contract can hold and a thin DOM half that cannot be
 wrong in an interesting way.
 
@@ -392,6 +392,73 @@ optional resolver for one narrow reason — `tipLines({term})` reaches
 `appConfig().findHelpEntry`, which THROWS when nothing configured it, and a contract that
 installed a manifest to get past that would install it for every other file sharing the
 vitest worker.
+
+**`ui/unitChart.js` — a count as countable marks.** The fourth, and the one that arrived by
+promotion rather than by extraction: `gas_devsecops`'s Executive page had drawn unit marks for
+the open backlog since the cold-zone wave, with the ladder, the clipped partial mark and the
+refuse-before-cast rule inline in that page, and no sibling could draw one. `unitScale` /
+`unitCounts` are `pictogramUnit` / `pictogramCounts` verbatim; `unitChartModel` / `unitGrid` /
+`unitKeyRow` are the part-to-whole half the tally never had. Two layouts, one file, two models —
+they share the MARK (its box, its `--ink` fill, its forced-colours substitution) and keep two
+models, because a tally goes wrong when the unit is per-row instead of per-table and a waffle
+when the cells do not sum to the lattice.
+
+**The class is `.isotype`, and that is the decision worth reading.**
+`gas_devsecops/dev/densityModel.mjs`'s `VISUAL_PREDICATES` already counts `hasClass("isotype")`
+as a picture. Naming the generalised module's wrapper anything else would have meant editing the
+measuring instrument in the same wave that uses it to prove a change — a before-column and an
+after-column read off two different rulers. The grid is the same class with a modifier for that
+reason and no other, and it is why this package needed no edit to the walker at all.
+
+Two non-colour channels rather than one: `data-tone` is `quad.js`'s four (a fifth would be a
+severity, and a tone outside the set is refused, which is what structurally keeps a severity
+distribution out of this module and in `sevSegmentBar`), and `data-fill` is a SILHOUETTE —
+solid, ring or hatch — so two adjacent segments differ by shape as well as by fill. Four by
+three is twelve distinguishable styles and zero new colour tokens; `--chart-cat-*` stays
+reserved and undefined. `--hatch` gets its first consumer as designed: a segment that is a
+coverage gap rather than a measurement.
+
+Refusals, all by type before any cast: an unmeasured count is `absentText` and contributes no
+cells and no share; a zero denominator is unmeasured and never `"0.0%"`; `unit` is required and
+throws; a segment with no `label` is refused outright; and segments summing PAST the stated
+total throw, because two overlapping populations read as one partition has no silent outcome
+worth having. Shares read against the STATED total, never the segments' own sum — the leftover
+is a named remainder. `cells: "exact"` is one cell per member and throws above
+`MAX_EXACT_CELLS`, because a grid that looks countable and is not is worse than one that never
+claimed to be.
+
+**A waffle owes no `chartTable` disclosure, and the reason is specific.** `chartTable.js` exists
+because a `<canvas>` has no DOM to read and a Chart.js tooltip answers only a pointer, so the
+figures are literally unreachable. `unitKeyRow` prints every segment's label, count and share in
+real text beneath the lattice, and the model refuses a segment with no label — so there is no
+configuration in which the grid is the sole carrier. That is `splitBar`'s caption argument, and
+it is stronger than the canvas case because the numbers are beside the picture rather than one
+disclosure down.
+
+**One thing this module may not have: a `minMark` option.** A rung of 30 against an open backlog
+of 200,000 rounds to zero tenths, so `unitRow` returns `null` and the caller draws nothing. That
+is correct — the honest encoding of a continuous share of one denominator is a proportional bar
+with a minimum-width floor, which `gas`'s triage funnel already has. An option that drew a mark
+below the resolution of its own unit would be a licence to lie in the one place that must not.
+
+**A backtick in a thrown string fails the BUILD, not the suite.** Three of this module's own
+refusal messages quoted a parameter name in backticks. esbuild lowers template literals and
+minify strips comments, but a backtick CHARACTER inside a string literal survives both, and
+every app's `esbuild.config.mjs` middlebox guard rejects it. `gas` built anyway — it had
+tree-shaken `unitChartModel` until a second register called it — so the failure only surfaced
+two apps later. `test/contracts/unitChart.js` sweeps the module's comment-stripped source for
+one now.
+
+**Two forms that replaced sentences, from the prose round (2026-09-16).** `splitBar` given
+`keys` (which `severitySplitModel` now returns beside its `caption`) draws one key per severity
+under the track — swatch, word, figure, "not scanned" beside an out-of-scope one — and the
+model's `summary` beneath them, and prints the caption nowhere. The caption is still built and
+still the bar's spoken form; what changed is that a 45-word sentence on every Settings page in
+two registers is a row of facts a reader scans. A caller passing only `caption` (the two-way
+impact split) is drawn byte-identically. And `.scope-chips` / `.scope-chip` in
+`components.css` draw a register's provenance line — `populationLine`'s `parts`, one chip
+each, the lead chip the count — with the joined sentence as the group's `aria-label`. Both are
+CSS-and-model changes only; neither is a new module.
 
 **`--hatch`, and the class over it.** One token in `styles/tokens.base.css` holding the
 repeating-linear-gradient that means THIS PART IS NOT A MEASUREMENT, plus a `.hatch` utility
@@ -519,6 +586,7 @@ registerTokenContract({ describe, it, expect, appRoot: new URL("../", import.met
 | `figureCard.js` | `ui/figures.js`'s `figureCard`: the denominator PREPENDED to the tip lines, stamped on `data-denominator`, and drawn as no paragraph. Perturbed three ways — dropped from the lines (the attribute check still passes and the reader is told nothing), appended instead of prepended (buried under a three-line glossary entry), and merged into a bare `{lines}` (identical on screen, and every migrated card loses its route to the book) |
 | `settingsForm.js` | `ui/settingsForm.js`'s kernel, run against every registry that binds it: this app's own `{tabs, fields}` registry is well-formed (every field names a real tab, no duplicate tab keys, every tab and field carries a non-empty label, and the malformed shapes actually throw), the kernel's fixed behaviour against one synthetic registry so the assertions are identical for every app rather than hand-derived from each one's own field names, the direct-import-path rule asserted as a specifier regex against the app's own source, the `tabStatus` key-presence-not-truthiness perturbation, and — opt-in via `ctx.spine` — the canonical Register · … · Access · System tab spine |
 | `settingsReadouts.js` | the shared half of `ui/settingsReadouts.js` and `ui/figures.js`'s `openAndTotal`: the zero-denominator refusal (`absentText`, never `"0.0%"`), the naive `Array#includes` perturbation showing why `severitySplitModel`'s `inScope` must be a predicate and never a selected array, the glyph-without-word refusal for `tickTimeline`, a build-once identity assertion that `createCutHistogram`'s `update()` never recreates the range input, and `openAndTotal`'s own suppress-when-equal and refuse-before-cast rules. Registered from `gas`, `gas_ai` and `gas_devsecops` — not `gas_hub`, which has no register population |
+| `unitChart.js` | the unit ladder and the part-to-whole: one unit per TABLE (a per-row unit draws 401 with fewer marks than 400), every input refused by type before any cast, cells allocated by largest remainder so the lattice sums exactly and no real segment rounds away to nothing, shares read against the STATED total, a segment with no word refused, a tone outside quad's four refused, and — because it broke a build once — no backtick in any string that survives minification. Registered from all three registers; `gas_hub` has no register population and does not |
 
 `gas_devsecops/test/shared.test.js` is the worked example.
 

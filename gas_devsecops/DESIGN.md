@@ -105,3 +105,104 @@ scale, the whisper-or-lift elevation rule, and the motion durations.
 `#ffcb13` is literally `gas_ai`'s `--rank-2-solid`. Separate apps, so there is no collision
 today. If this register ever grows a maturity or posture ramp, the brand colour will equal
 tier 2 of 4 — and at that point the **ramp moves, not the brand**.
+
+## Measuring a page, and what the unit-chart round moved
+
+`npm run density` runs this app's own walker (`dev/density.mjs --root . --port 8787`) over its
+eleven routes and prints, per route: words, prose blocks and their word count, bare numeric
+tokens, table cells, pictures by kind, visible definition triggers, and horizontal overflow at
+1280/640/360px. `--diff before.json after.json` compares two runs. This register owns the
+walker; until the unit-chart round it was the only one of the three with no `density` script of
+its own, which is a gap worth not reintroducing.
+
+**Unit-chart round (2026-09-15), at 1280px, seeded.** Each cell reads
+`words / proseBlocks / proseWords / numbers / tableCells / visuals / tips`.
+
+| route | before | after |
+|---|---|---|
+| executive | 293 / 2 / 33 / 80 / 12 / 4 / 11 | **unchanged — and that is the pass condition** |
+| mttr | 328 / 5 / 91 / 138 / 75 / 29 / 22 | unchanged |
+| program | 251 / 2 / 38 / 57 / 29 / 9 / 17 | unchanged |
+| sca | 274 / 1 / 27 / 337 / 388 / 13 / 19 | unchanged |
+| sast | 254 / 0 / 0 / 284 / 345 / 11 / 16 | unchanged |
+| secrets | 429 / 3 / 83 / 353 / 397 / 19 / 42 | unchanged |
+| repos | 210 / 3 / 105 / **211** / 178 / **36** / 20 | **243** / 3 / 105 / **221** / 178 / **37** / 20 |
+| history | 230 / 0 / 0 / 159 / 81 / 7 / 6 | unchanged |
+| data | 119 / 1 / 23 / 71 / 54 / 0 / 6 | unchanged |
+| help | 2354 / 81 / 1962 / 20 / 0 / 0 / 0 | unchanged |
+| settings | 284 / 6 / 188 / 39 / 0 / 0 / 2 | unchanged |
+
+**`executive` moving on NOT ONE metric is the finding this round wanted.** The open-backlog
+isotype left this page for `gas_shared/ui/unitChart.js`, and a promotion that moves a pixel is a
+promotion that changed a shipped picture. The walker's `isotype` bucket for this route reads 4
+before and 4 after. Everywhere else in this repo a route that moves on no metric is a finding
+under CLAUDE.md's rule; here it is the assertion, and that inversion is why it is written down
+rather than left to a reader to infer from a table of zeros.
+
+**`repos` gained 33 words, 10 numbers and one picture, and the words are the honest part.** The
+cold-zone census (`coldCensusModel`, `renderColdCensus`) draws the five verdicts as one
+part-to-whole with `unitKeyRow` beneath it, and that key row is new SURFACE information rather
+than a restatement: `warm`, `clear`, `watching` and `unobserved` counts were only reachable in
+tables further down the page, while the four figure cards above speak for cold repositories and
+cold backlog against three different denominators. The key row is also what lets the lattice owe
+no `chartTable` disclosure — see `gas_shared/README.md` on why that argument is stronger here
+than for a canvas.
+
+**Two of the five verdicts are hatched, and that is the section's own claim in picture form.**
+`watching` is a repository with open findings whose idle time could not be measured at all;
+`unobserved` is one the scanner has lost sight of. The section spends most of its prose
+insisting neither is warm — `--hatch` means "this part is not a measurement" and says it where
+the reader is already looking. `clear` is a ring rather than a fill: measured, and fine.
+
+**What High Contrast costs this picture, measured rather than assumed.** Emulated forced colours
+render the census as ten solid cells and one dashed: the hatch survives (it is ink at an alpha,
+not a hue), so measured-versus-not-measured — the distinction this section exists to make — is
+intact, but `cold` and `warm` differ only by `data-tone` and flatten into one run. Three
+silhouettes cannot carry four tones. It is accepted rather than fixed: `.sevbar-seg` takes the
+other road with `forced-color-adjust: none`, and that road is wrong here because `--warn` on a
+black High Contrast ground measures about 1.8:1 — keeping the hue would trade a lost DISTINCTION
+for a lost CELL. Nothing is actually lost, because `unitKeyRow` prints every segment's label,
+count and share in text directly beneath the lattice and the model refuses a segment with no
+label. `gas_shared/styles/components.css` carries the reasoning beside the rules.
+
+**The lattice sizes itself to its population.** Eleven repositories at the waffle's 9px cell
+rendered as a smudge in the corner of a full-width card. `unitGrid` now lays an exact lattice of
+24 or fewer out as one row at 14px, and a larger one as a square block at 9px — a small census
+is a strip a reader counts, a large one is a block they read as a proportion. `gas_ai`'s Scans
+page had a local rule doing the same thing by hand; it is gone, because a local rule that agrees
+with the shared default is one that will disagree with it later.
+
+**The six `denomNote` paragraphs on this page stay.** They were the obvious prose to remove and
+they are not restatements — `coldModeCaption` says which line drew the zone, `boundOnlySentence`
+says idle time was never measured and the figure is a lower bound, and the repository-list note
+says what the list excludes. Those are honesty statements, and this register's own rule puts an
+honesty statement on the surface and only an explanation one level down.
+
+### Prose round (2026-09-16)
+
+The round above added a picture and left `proseBlocks` where it was. This one reduces it,
+replacing what is too crucial to delete with a form a reader scans. Same command, same seed;
+only the routes that moved are shown, and no route overflows at any width it did not before.
+
+| route | before | after |
+|---|---|---|
+| repos | 210 / **3** / **105** / 211 / 36 / 20 | 223 / **1** / **28** / 221 / 37 / 22 |
+| sca | 274 / **1** / **27** / 337 / 13 / 19 | 274 / **0** / **0** / 337 / 13 / 19 |
+| settings | 284 / **6** / **188** / 39 / 0 / 2 | 284 / **3** / **71** / 39 / 0 / 2 |
+
+(Cells read `words / proseBlocks / proseWords / numbers / visuals / tips`.)
+
+**Three forms replaced three sentences, and two of them are shared now.** The register
+provenance line ("In scope 400 · gate: all severities · only packages with a published fixed
+version · …") is a row of `.scope-chips` on `sca`, `sast` and `secrets` — `populationLine`
+already returned its parts, only the drawing changed, and the joined sentence is the group's
+`aria-label`. The three severity scan-scope bars on Settings draw a key row under the track
+(`splitBar` given the model's new `keys`) instead of a 45-word caption: swatch, word, figure
+per severity, the out-of-scope ones hatched with "not scanned" beside their figure, and one
+summary line under the keys. `repos`'s 51-word heat-map caption and 27-word list note each kept
+the clause a reader needs without hovering and put the rest on the nearest heading.
+
+**The one paragraph that stays is pinned on purpose.** `renderColdZone` prints
+`denomNote(coldModeCaption(view))` first, in all three branches, and `test/pagesData.test.js`
+asserts exactly that: the sentence that says which line drew the zone goes above the figures it
+qualifies. This round does not overrule that test.

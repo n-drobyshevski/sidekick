@@ -54,6 +54,8 @@ import {
   clear, dataTable, disclosure, el, emptyState, errorState, fmtCount,
   fmtDate, fmtDateTime, fmtDays, fmtSpan, heroStat, num, pageHeader, pluralize, relativeAge,
   scopeBar, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
+  FINE_UNITS, unitRow, unitScale,
+  absent, days1,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -977,20 +979,45 @@ export async function renderExecutive(main, _params, ctx) {
   }
 
   /**
-   * One row of the movement strip: a severity, its pill, and the pair the pill is FROM.
+   * One row of the movement strip: a severity, how much of it there is, its pill, and the pair
+   * the pill is FROM.
    *
    * The raw pair rides beside the delta on purpose. A pill reading "down 9" is a claim about
    * two numbers, and a reader who cannot see both has to trust it; "27 open, was 36" is the
    * arithmetic in the open. A null chip means the previous count was not measurable, and that
    * renders as words rather than as a ±0 (see `deltaChipView`).
    *
+   * THE TALLY IS THE ONE PICTURE THIS PAGE MAY DRAW. The module header's hard rule is no chart
+   * and no canvas on the front door, and `test/executiveFixNext.test.js` holds it; `unitRow` is
+   * DOM and CSS, so the rule is not bent to add it. What it buys is the comparison six numbers
+   * down a column do not make on their own — 27 against 170 is a ratio a reader had to compute,
+   * and marks in one unit are that ratio at a glance. The counts stay exactly where they were:
+   * the marks are a second encoding of a figure already in words, never the readout.
+   *
+   * `unit` IS THE STRIP'S, PASSED IN, and it comes from the largest SEVERITY row rather than
+   * from the total. A total an order of magnitude above every part would pick a unit that drew
+   * the parts as nothing — and the comparison this strip exists for is severity against
+   * severity. The total row keeps its pill and its pair and draws no marks, because "all
+   * severities against one severity" is not the question the tally answers.
+   *
    * THE GLYPH NEVER CARRIES THE MEANING. It is `aria-hidden` and the pill's own visible text
    * spells the direction ("up 4" / "down 4" / "unchanged"), so neither the triangle nor the
    * tint is the only cue.
    */
-  function movementRow(label, r) {
-    const row = el("div", { class: "movement-row" },
+  function movementRow(label, r, unit) {
+    // The modifier, not a rule on `.movement-row` itself: `gas_devsecops` draws the same shared
+    // class with no tally in it, and its counts are right-aligned by an auto margin that is
+    // correct for a three-part row and wraps a four-part one. A row that gained a picture gets
+    // the flow layout; a row that did not keeps exactly what it had.
+    const row = el("div", { class: "movement-row" + (unit ? " movement-row--tally" : "") },
       el("span", { class: "movement-label small" }, label));
+    if (unit) {
+      row.append(unitRow(r.open, {
+        unit,
+        label: label + ", " + fmtCount(r.open) + " open, one mark per "
+          + (unit === 1 ? "finding" : fmtCount(unit) + " findings"),
+      }));
+    }
     if (r.chip) {
       const glyph = r.chip.direction === "up" ? "▲" : r.chip.direction === "down" ? "▼" : "=";
       row.append(el("span", {
@@ -1029,9 +1056,31 @@ export async function renderExecutive(main, _params, ctx) {
       box.append(el("div", { class: "small muted" },
         "No open-backlog comparison. " + open.reason));
     } else {
-      box.append(el("div", { class: "movement-rows" },
-        movementRow(open.total.label, open.total),
-        ...open.rows.map((r) => movementRow(r.label, r))));
+      // ONE UNIT FOR THE WHOLE STRIP, from the largest severity row — see `movementRow`.
+      //
+      // TWELVE MARKS, NOT FORTY, AND THAT IS A PROPERTY OF THIS ROW RATHER THAN OF THE LADDER.
+      // `MAX_MARKS` is the point past which a reader stops counting and starts estimating from
+      // length, which is still honest in a table cell that owns its whole column. This is an
+      // inline strip capped at 46ch beside a label, a pill and a count pair: at the default
+      // ceiling the largest severity drew 39 marks, the row wrapped, and the pill landed on a
+      // line of its own under a rule of ink. Measured, not guessed — the first screenshot of
+      // this change is what found it. Twelve is also where the icon-array literature puts the
+      // count a reader can still take in at a glance.
+      //
+      // The FINE ladder with it: a severity's open count is tens, and the coarse ladder's
+      // finest rung would draw the whole strip as three clipped marks.
+      const stripUnit = unitScale(
+        open.rows.reduce(
+          (m, r) => (typeof r.open === "number" && Number.isFinite(r.open) && r.open > m
+            ? r.open
+            : m),
+          0,
+        ),
+        { units: FINE_UNITS, maxMarks: 12 },
+      );
+      box.append(el("div", { class: "movement-rows movement-rows--tally" },
+        movementRow(open.total.label, open.total, null),
+        ...open.rows.map((r) => movementRow(r.label, r, stripUnit))));
       box.append(el("div", { class: "small muted" }, open.dates));
     }
 
@@ -1087,24 +1136,82 @@ export async function renderExecutive(main, _params, ctx) {
     if (view.empty) {
       fixHost.append(emptyState("Nothing is ranked.", view.emptyReason));
     } else {
-      const list = el("ol", { class: "fixnext" });
-      for (const it of view.items) {
-        list.append(el("li", { class: "fixnext-item" },
-          el("div", { class: "fixnext-head" },
-            statusPill(it.kind, it.tierLabel),
-            el("a", {
-              class: "linklike fixnext-repo",
-              href: it.href,
-              "aria-label": it.tierLabel + " — " + it.ownerText + ", " + it.meta + ". "
-                + it.linkLabel,
-            }, it.ownerText),
-            it.ownerKindWord
-              ? el("span", { class: "small muted" }, it.ownerKindWord)
-              : null),
-          el("div", { class: "fixnext-meta small muted" }, it.meta),
-        ));
-      }
-      fixHost.append(list);
+      // A RANKED TABLE, NOT AN ORDERED LIST — and the order is still the claim. The `<ol>`
+      // this replaces drew each group as a pill, a link and a `·`-joined meta sentence ("2
+      // open findings · 1 host · CVE-2026-90001 (1) · oldest 210 days · domain CROSS"), which
+      // is five facts in five different units set as one run of prose. Eight of them were
+      // eight of this page's nine prose blocks under the density walker, and a reader
+      // comparing "oldest 210 days" against "oldest 46 days" three rows down was scanning
+      // sentences for a number. A table gives every fact its own column, so the ages compare
+      // down one column and the counts down another; the rank column keeps "1 of 8" as a
+      // statement a screen reader makes ("row 1 of 8"), which is what the `<ol>` was for.
+      //
+      // THE OPEN COLUMN CARRIES A TALLY, one unit for the whole table (the shipped DevSecOps
+      // Executive pattern), so the magnitudes read against each other at a glance. The fine
+      // ladder, capped at twelve marks, because these are small counts in a narrow column.
+      //
+      // `it.meta` STAYS ON THE VIEW and on every link's accessible name: the sentence is still
+      // the right shape for a screen reader announcing one row, and the tests pin it.
+      const tableUnit = unitScale(
+        view.items.reduce((m, it) => (it.count > m ? it.count : m), 0),
+        { units: FINE_UNITS, maxMarks: 12 },
+      );
+      fixHost.append(dataTable({
+        className: "fixnext-table",
+        columns: [
+          { key: "rank", label: "#", className: "num", cell: (r) => String(r.rank) },
+          { key: "tier", label: "Tier", cell: (r) => statusPill(r.kind, r.tierLabel) },
+          {
+            key: "owner",
+            label: "Group",
+            cell: (r) => el("span", {},
+              el("a", {
+                class: "linklike fixnext-repo",
+                href: r.href,
+                "aria-label": r.tierLabel + " — " + r.ownerText + ", " + r.meta + ". "
+                  + r.linkLabel,
+              }, r.ownerText),
+              r.ownerKindWord ? el("span", { class: "small muted" }, r.ownerKindWord) : null),
+          },
+          {
+            key: "count",
+            label: "Open",
+            className: "num",
+            cell: (r) => el("span", {},
+              unitRow(r.count, {
+                unit: tableUnit,
+                label: fmtCount(r.count) + " open, one mark per "
+                  + (tableUnit === 1 ? "finding" : fmtCount(tableUnit) + " findings"),
+              }),
+              el("span", { class: "num" }, fmtCount(r.count))),
+          },
+          {
+            key: "assets",
+            label: "Hosts",
+            className: "num",
+            cell: (r) => (r.assets > 0 ? fmtCount(r.assets) : absent()),
+          },
+          {
+            key: "cve",
+            label: "Leading CVE",
+            help: ["The CVE carried by the most findings in the group, and how many of them."],
+            cell: (r) => (r.topCve
+              ? el("span", {}, r.topCve.cve, " ",
+                el("span", { class: "small muted num" }, "(" + fmtCount(r.topCve.count) + ")"))
+              : absent()),
+          },
+          {
+            key: "oldest",
+            label: "Oldest",
+            className: "num",
+            // `days1` in a cell, `fmtDays` in a sentence — the grain is the context's, and the
+            // meta sentence on the link keeps its worded whole days.
+            cell: (r) => (r.oldestDays === null ? absent() : days1(r.oldestDays)),
+          },
+          { key: "domain", label: "Domain", cell: (r) => (r.domain === null ? absent() : r.domain) },
+        ],
+        rows: view.items,
+      }));
     }
 
     // The two numbers on the surface; the four reasons behind the rest in a closed

@@ -30,6 +30,7 @@ import {
   settingsPanel,
   switchToggle,
   toast,
+  tipLabel,
 } from "../ui.js";
 
 // A one-line description of the global scope a report/export is generated under, so a
@@ -339,9 +340,15 @@ function renderExportSection(main, boot, domain, supportGroup) {
     el(
       "p",
       { class: "muted small" },
+      tipLabel("The bundle is the whole ledger, filters ignored", {
+        lines: [
+          "p",
+      { class: "muted small" },
       "The migration bundle carries the entire durable ledger — every scan, lifecycle and " +
-        "resolved episode — ignoring the filters above. It is the file another surface " +
-        "imports, and this app can re-import it too.",
+            "resolved episode — ignoring the filters above. It is the file another surface " +
+            "imports, and this app can re-import it too.",
+        ],
+      }),
     ),
   );
   main.append(card);
@@ -458,17 +465,29 @@ function renderImportSection(main, ctx) {
     el(
       "p",
       { class: "muted small" },
+      tipLabel("One-time merge; imported scans arrive sealed", {
+        lines: [
+          "p",
+      { class: "muted small" },
       "Merge a migration bundle exported from the legacy Python dashboard into this " +
-        "ledger. Imported scans arrive sealed — their raw archives stay on the old " +
-        "machine — and the merge is one-time: it can't be undone from here.",
+            "ledger. Imported scans arrive sealed — their raw archives stay on the old " +
+            "machine — and the merge is one-time: it can't be undone from here.",
+        ],
+      }),
     ),
     el(
       "p",
       { class: "muted small" },
+      tipLabel("Sharded exports need a fresh ledger; select every file", {
+        lines: [
+          "p",
+      { class: "muted small" },
       "A large export arrives as several .json files (a manifest plus shards) — select all " +
-        "of them together. A sharded import needs a fresh, never-scanned ledger: if this ledger " +
-        "already has scans, use Reset ledger first, then import and run a Wiz scan to refill " +
-        "open-vulnerability detail.",
+            "of them together. A sharded import needs a fresh, never-scanned ledger: if this ledger " +
+            "already has scans, use Reset ledger first, then import and run a Wiz scan to refill " +
+            "open-vulnerability detail.",
+        ],
+      }),
     ),
   );
   const fileInput = el("input", {
@@ -818,13 +837,14 @@ function renderMaintenanceSection(main, boot, ctx) {
 
   main.append(
     settingsPanel({
-      title: "Purge findings by severity",
-      description:
+      title: tipLabel("Purge findings by severity", { lines: [
         "Removes every trace of the chosen severities — open and resolved lifecycles, the " +
         "sealed episode records, the compaction baseline, and the saved scan archives in " +
         "Drive. Rewriting the archives is what makes it stick: without it, deleting a scan " +
         "replays the findings straight back. The archive pass runs in the background and " +
         "blocks scanning while it does.",
+      ] }),
+      description: "Deletes every trace of the chosen severities, everywhere.",
       body: [purgePills.node, purgeCounts, purgeProgress],
       footer: purgeBtn,
     }),
@@ -844,12 +864,13 @@ function renderMaintenanceSection(main, boot, ctx) {
 
   main.append(
     settingsPanel({
-      title: "Prune resolved episodes",
-      description:
+      title: tipLabel("Prune resolved episodes", { lines: [
         "Drops sealed lifecycles that were closed long enough ago to stop being interesting. " +
         "Compaction moves closed findings into episode rows but never removes them, so this " +
         "is the only thing that shortens that tab. Unlike compaction, it CHANGES THE PAST: " +
         "episodes feed MTTR and remediation coverage, so historical figures will move.",
+      ] }),
+      description: "Drops sealed lifecycles closed long enough ago to stop mattering.",
       body: [
         settingRow({
           label: "Resolved more than",
@@ -887,11 +908,12 @@ function renderMaintenanceSection(main, boot, ctx) {
 
   main.append(
     settingsPanel({
-      title: "Trim trend history",
-      description:
+      title: tipLabel("Trim trend history", { lines: [
         "Drops daily KPI snapshots older than the window. The only cleanup here with no " +
         "knock-on: the snapshots are written once per scan and never replayed, so trimming " +
         "them shortens the history-based series and changes nothing else.",
+      ] }),
+      description: "Drops daily KPI snapshots older than the window.",
       body: [
         settingRow({
           label: "Keep the last",

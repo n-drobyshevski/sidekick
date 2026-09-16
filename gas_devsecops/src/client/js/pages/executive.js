@@ -33,6 +33,7 @@ import {
   absent, absentText, clear, dataTable, days1, disclosure, el, emptyState, errorState,
   figureCard, fmtCount, fmtDate, fmtDateTime, fmtDays, heroStat, num, pageHeader, pct1,
   pluralize, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
+  unitCounts, unitRow, unitScale,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -123,13 +124,12 @@ export function executiveSeverityView(payload, order) {
   };
 }
 
-// The pictogram ladder, and the ceiling that picks a rung off it. 40 marks is where a reader
-// stops counting and starts estimating from the row's length — which is still an honest read,
-// because every row is in the same unit — and the rungs are the round numbers a reader can
-// hold in their head while doing it. Nothing below 10: one mark per finding on an 18,000-row
-// register is not a picture.
-const PICTOGRAM_UNITS = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000];
-const PICTOGRAM_MAX_MARKS = 40;
+// THE PICTOGRAM LADDER MOVED. `unitScale` / `unitCounts` in gas_shared/ui/unitChart.js are
+// this page's own `pictogramUnit` / `pictogramCounts`, promoted verbatim when the second and
+// third registers needed the same picture. The ladder, the 40-mark ceiling and the
+// refuse-before-cast rule all travelled with them, and gas_shared/test/contracts/unitChart.js
+// is where `test/executivePictogram.test.js`'s perturbations now live — registered from this
+// app's own test/shared.test.js, so nothing about the coverage moved with the code.
 
 /**
  * The three registers side by side: how much is open in each, and how fast each closes.
@@ -175,76 +175,6 @@ export function executiveRegisterView(byScope) {
   };
 }
 
-/**
- * The pictogram unit, chosen ONCE PER TABLE.
- *
- * NEURATH'S RULE IS THE WHOLE POINT: more quantity is MORE MARKS OF THE SAME SIZE, never a
- * bigger mark. A row's marks are only readable against the row above it if both rows count in
- * the same unit, so the unit is a property of the TABLE and not of a row. The two rejected
- * alternatives are worth naming, because both look tidier per row and both destroy the
- * comparison the form exists to make:
- *
- *   per-row unit  — every row fills the same width, so 280 open and 30 open draw the same
- *                   picture. That is a bar chart with the axis deleted.
- *   a cap         — "at most 40 marks, then stop" truncates the largest register silently, and
- *                   the register that most needs reading is the one that gets cut.
- *
- * So: the smallest unit from the ladder that keeps the BIGGEST row inside 40 marks. Every
- * other row then draws fewer marks than that, in the same unit, and the ratio between two rows
- * is the ratio between their counts.
- *
- * A non-finite or non-positive maximum falls back to the finest unit rather than throwing —
- * with no rows to size against there is nothing to compare, and the caller draws no marks
- * anyway.
- *
- * @param {unknown} maxOpen  the largest open count in the table
- * @returns {number} one of PICTOGRAM_UNITS
- */
-export function pictogramUnit(maxOpen) {
-  // Refused BEFORE any cast — `Number(null)`, `Number("")`, `Number([])` and `Number(false)`
-  // are all 0, and a 0 here would silently pick the finest unit for a value that was never a
-  // measurement. (It picks the finest unit anyway; the point is that it does so because the
-  // input was refused, not because a cast invented a zero.)
-  if (typeof maxOpen !== "number" || !Number.isFinite(maxOpen) || maxOpen <= 0) {
-    return PICTOGRAM_UNITS[0];
-  }
-  for (const unit of PICTOGRAM_UNITS) {
-    if (maxOpen / unit <= PICTOGRAM_MAX_MARKS) return unit;
-  }
-  return PICTOGRAM_UNITS[PICTOGRAM_UNITS.length - 1];
-}
-
-/**
- * How many whole marks, and how much of one more.
- *
- * The remainder is drawn as a mark clipped to its TENTHS rather than as a smaller mark, for
- * the same reason the unit is per-table: a mark of a different size is a different unit, and
- * a reader counting marks would be counting two things at once. Ten tenths is a whole mark, so
- * a remainder that rounds up to 10 carries into `full` instead of drawing a "partial" mark
- * indistinguishable from a full one.
- *
- * @param {unknown} n     the count to draw
- * @param {unknown} unit  findings per mark
- * @returns {{full: number, partialTenths: number}}
- */
-export function pictogramCounts(n, unit) {
-  // Both refusals come BEFORE any arithmetic. `Number(["3"])` is 3 and `Number([])` is 0 —
-  // a cast-first version of this function draws three marks for a value that is not a number
-  // and no marks for one that is not a measurement, and neither is distinguishable in the
-  // output from a real count. See test/executivePictogram.test.js, which reproduces the
-  // cast-first rewrite inline and shows it disagreeing on exactly that value.
-  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) {
-    return { full: 0, partialTenths: 0 };
-  }
-  if (typeof unit !== "number" || !Number.isFinite(unit) || unit <= 0) {
-    return { full: 0, partialTenths: 0 };
-  }
-  const full = Math.floor(n / unit);
-  const tenths = Math.round((10 * (n % unit)) / unit);
-  return tenths >= 10
-    ? { full: full + 1, partialTenths: 0 }
-    : { full, partialTenths: Math.max(0, tenths) };
-}
 
 /**
  * Movement, and what it is movement OF.
@@ -1193,9 +1123,9 @@ export async function renderExecutive(host, params, _ctx) {
       return;
     }
     // ONE UNIT FOR THE WHOLE TABLE, computed once here rather than per cell — see
-    // `pictogramUnit`. Rows the cell will refuse to draw (a non-finite count) are kept out of
+    // `unitScale`. Rows the cell will refuse to draw (a non-finite count) are kept out of
     // the maximum too, so one unreadable row cannot pick the unit for the two readable ones.
-    const unit = pictogramUnit(view.rows.reduce(
+    const unit = unitScale(view.rows.reduce(
       (m, r) => (typeof r.open === "number" && Number.isFinite(r.open) && r.open > m ? r.open : m),
       0,
     ));
@@ -1214,27 +1144,24 @@ export async function renderExecutive(host, params, _ctx) {
      * as it was; the pictogram is a second encoding of a figure that is already in words, which
      * is what keeps this clear of "meaning by colour (or shape) alone". The marks are one
      * `role="img"` with the count and the unit in its label rather than N nodes a screen reader
-     * would walk.
+     * would walk — `unitRow` builds that node now, and this closure keeps only the two refusals
+     * that are facts about THIS table.
+     *
+     * THE LABEL IS PASSED, NOT COMPOSED. `unitRow` would build the same sentence from `noun`,
+     * and the module's own default is this string; passing it explicitly is what lets the
+     * promotion be checked rather than trusted — the shipped wording is right here, in the
+     * file that shipped it, where a diff shows any change to it.
      */
     function isotype(r) {
       if (r.share.baseEmpty) return null;
       if (typeof r.open !== "number" || !Number.isFinite(r.open)) return null;
-      const { full, partialTenths } = pictogramCounts(r.open, unit);
-      const marks = [];
-      for (let i = 0; i < full; i++) marks.push(el("span", { class: "isotype-mark" }));
-      if (partialTenths > 0) {
-        marks.push(el("span", {
-          class: "isotype-mark isotype-mark--part",
-          style: "--tenths:" + partialTenths,
-        }));
-      }
-      if (marks.length === 0) return null;
+      const { full, partialTenths } = unitCounts(r.open, unit);
+      if (full === 0 && partialTenths === 0) return null;
       anyMarks = true;
-      return el("span", {
-        class: "isotype",
-        role: "img",
-        "aria-label": fmtCount(r.open) + " open, one mark per " + fmtCount(unit),
-      }, ...marks);
+      return unitRow(r.open, {
+        unit,
+        label: fmtCount(r.open) + " open, one mark per " + fmtCount(unit),
+      });
     }
 
     registerHost.append(dataTable({

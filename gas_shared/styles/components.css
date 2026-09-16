@@ -344,6 +344,134 @@
    it saying what was not measured — the same rule `data-tone` obeys two sections down. */
 .hatch { background-image: var(--hatch); }
 
+/* --------------------------------------------------------------------- scope chips */
+/* A register's provenance — "In scope 107", the gate, every filter word — as one chip per
+   part rather than one " · "-joined sentence. The model (`populationLine`, in each register's
+   own page model) already returns the parts; only the drawing changed. The joined sentence
+   stays as the group's aria-label, so a screen reader hears the provenance whole while a
+   sighted reader scans a row of facts. The lead chip is the count, in tabular figures. */
+.scope-chips { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-top: var(--space-2); }
+.scope-chip {
+  display: inline-flex; align-items: center;
+  padding: var(--space-half) var(--space-2);
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+  font-size: var(--fs-label); line-height: 1.4;
+}
+.scope-chip--lead { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ---------------------------------------------------------------------- unit chart */
+/* Countable quantity as countable marks (ui/unitChart.js), in two layouts that share one
+   mark. PROMOTED from gas_devsecops/src/client/styles/pages.css, where the tally shipped
+   first as the Executive page's open-backlog isotype; the four rules below the comment are
+   byte-identical to that copy, deliberately, so the promotion moves no pixel.
+
+   THE CLASS STAYS `.isotype` even though the module generalises. dev/densityModel.mjs's
+   VISUAL_PREDICATES already counts `hasClass("isotype")` as a picture, and renaming it would
+   have meant editing the measuring instrument in the same wave that uses it to prove a
+   change — a before-column and an after-column measured by two different rulers. The grid is
+   the same class with a modifier for that reason and no other.
+
+   Neurath's rule, in three declarations: quantity is MORE MARKS OF THE SAME SIZE. Every mark
+   is 8x12 whatever the row's count is, and the unit is chosen once per table (unitScale) so
+   two rows' marks are comparable - a mark that grew with its value would make the row's
+   length and the mark's size two different encodings of one number.
+
+   --ink, NOT --accent. The brand accent is a FILL token at 1.52:1 on white in one of the
+   three registers; a mark carrying a COUNT has to be legible on its own, so these are the
+   page's ink. Nothing about the tally is colour-coded either - the percentage beside it is
+   the readout, and the marks are a second encoding of it.
+
+   The partial mark is CLIPPED, not shrunk: same box, same baseline, --tenths of it painted.
+   var(--tenths) is a bare integer so `var(--tenths) * 10%` resolves inside calc(). */
+.isotype { display: inline-flex; gap: 2px; margin-right: 8px; vertical-align: middle; }
+.isotype-mark { width: 8px; height: 12px; background: var(--ink); border-radius: 1px; display: inline-block; }
+.isotype-mark--part { clip-path: inset(0 calc(100% - var(--tenths) * 10%) 0 0); }
+
+/* The waffle. --isotype-cols is an INSTANCE value written by unitGrid as an inline custom
+   property, the same way --tenths is above; it is not a design token and does not belong in
+   tokens.base.css, because a lattice width is a property of one picture rather than of the
+   system. The cell is square and the gap is the smallest step on the spacing ramp, so 100
+   cells read as one block rather than as a hundred things. */
+.isotype--grid {
+  display: grid;
+  grid-template-columns: repeat(var(--isotype-cols, 10), var(--isotype-cell, 9px));
+  gap: var(--space-half);
+  margin-right: 0;
+  width: max-content;
+}
+.isotype-cell {
+  width: var(--isotype-cell, 9px); height: var(--isotype-cell, 9px);
+  border-radius: 1px; background: var(--ink);
+}
+
+/* TWO CHANNELS, NOT ONE. data-tone carries the verdict, data-fill carries a SILHOUETTE, so
+   two adjacent segments differ by shape as well as by fill and the lattice survives grayscale
+   and a red/green confusion. The tone set is quad.js's, unchanged - a fifth tone would be a
+   severity, and a severity distribution has sevSegmentBar. */
+.isotype-cell[data-tone="ok"] { background: var(--ok); }
+.isotype-cell[data-tone="warn"] { background: var(--warn); }
+.isotype-cell[data-tone="bad"] { background: var(--bad); }
+.isotype-cell[data-fill="ring"] { background: var(--page); box-shadow: inset 0 0 0 2px currentColor; }
+.isotype-cell[data-fill="ring"][data-tone="neutral"] { color: var(--ink); }
+.isotype-cell[data-fill="ring"][data-tone="ok"] { color: var(--ok); }
+.isotype-cell[data-fill="ring"][data-tone="warn"] { color: var(--warn); }
+.isotype-cell[data-fill="ring"][data-tone="bad"] { color: var(--bad); }
+.isotype-cell[data-fill="hatch"] { background-color: var(--surface); background-image: var(--hatch); }
+.isotype-cell--empty { background: var(--surface-2); }
+
+/* The key row is why a waffle owes no chart-table disclosure: every figure the lattice draws
+   is printed here, on the surface, in real text. See ui/unitChart.js's unitKeyRow. */
+.isotype-wrap { display: flex; flex-direction: column; gap: var(--space-2); }
+.isotype-keys { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); }
+.isotype-key { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-label); }
+.isotype-key-swatch { width: 9px; height: 9px; border-radius: 1px; background: var(--ink); flex: none; }
+.isotype-key-swatch[data-tone="ok"] { background: var(--ok); }
+.isotype-key-swatch[data-tone="warn"] { background: var(--warn); }
+.isotype-key-swatch[data-tone="bad"] { background: var(--bad); }
+.isotype-key-swatch[data-fill="ring"] { background: var(--page); box-shadow: inset 0 0 0 2px currentColor; }
+.isotype-key-swatch[data-fill="hatch"] { background-color: var(--surface); background-image: var(--hatch); }
+.isotype-key-swatch--empty { background: var(--surface-2); }
+.isotype-caption { margin: 0; }
+
+/* Forced colours drop `background` entirely, which would leave the marks invisible with
+   nothing in their place - the one state where the picture is the only thing that changed. An
+   outlined mark in CanvasText survives the substitution, and the clip still applies to it. The
+   grid needs the same treatment plus its silhouette channel kept intact, because with every
+   fill flattened to one forced colour the silhouette is ALL that is left to tell two segments
+   apart. --hatch survives unaided: it is ink at an alpha rather than a hue.
+
+   WHAT THIS MODE COSTS, STATED RATHER THAN DISCOVERED LATER. Three silhouettes cannot carry
+   four tones: two segments that differ only by `data-tone` - a cold repository and a warm one
+   - render as one indistinguishable run here. That was measured, not assumed (the cold-zone
+   census under emulated forced colours reads ten solid cells and one dashed).
+
+   It is accepted rather than fixed, and the reasoning is worth keeping. `.sevbar-seg` takes
+   the other road - `forced-color-adjust: none`, so its fills survive the substitution - and
+   that road is wrong for these cells: --warn on a black High Contrast ground measures about
+   1.8:1, so keeping the hue would trade a lost DISTINCTION for a lost CELL. Visibility wins,
+   because the distinction is not lost at all: `unitKeyRow` prints every segment's label,
+   count and share in real text directly beneath the lattice, and `unitChartModel` refuses a
+   segment with no label, so there is no configuration in which the run is the only carrier.
+   The one distinction that MUST survive a colour collapse - measured versus not measured -
+   is the one carried by silhouette rather than by tone, and it does. */
+@media (forced-colors: active) {
+  .isotype-mark { border: 2px solid CanvasText; background: transparent; }
+  .isotype-cell, .isotype-key-swatch { forced-color-adjust: none; }
+  .isotype-cell[data-fill="solid"], .isotype-key-swatch[data-fill="solid"] {
+    background: CanvasText; border: 1px solid CanvasText;
+  }
+  .isotype-cell[data-fill="ring"], .isotype-key-swatch[data-fill="ring"] {
+    background: Canvas; box-shadow: none; border: 2px solid CanvasText;
+  }
+  .isotype-cell[data-fill="hatch"], .isotype-key-swatch[data-fill="hatch"] {
+    background-color: Canvas; border: 1px dashed CanvasText;
+  }
+  .isotype-cell--empty, .isotype-key-swatch--empty {
+    background: Canvas; border: 1px solid GrayText;
+  }
+}
+
 /* -------------------------------------------------------------------------- quad */
 /* Two yes/no questions crossed (ui/quad.js). A real table, ruled by hairlines like every
    other surface here, with the two axis words as `<th scope>` headers rather than as prose
@@ -1588,6 +1716,42 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
 .movement-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
 .movement-label { color: var(--text-2); min-width: 8ch; }
 .movement-counts { margin-left: auto; font-variant-numeric: tabular-nums; }
+/* The tally's own right margin is for a table cell, where it sits before a figure with no
+   gap of its own; this row is a flex box that already spaces its children. */
+.movement-row .isotype { margin-right: 0; }
+/* A row carrying a tally has four parts, not three, and the auto margin that right-aligns
+   the count pair in a three-part row pushes the fourth onto a line of its own inside the
+   strip's 46ch. The modifier is on the ROW rather than a rule on `.movement-row`, because
+   a sibling register draws the same class with no tally in it and its right-aligned counts
+   are correct as they are. */
+.movement-row--tally .movement-counts { margin-left: 0; }
+/* THE MARKS MUST SHARE A LEFT EDGE OR THEY COMPARE NOTHING. `.movement-label`'s 8ch is a
+   MIN width, and a severity word wider than it pushes that row's tally right: measured on
+   the shipped page, CRITICAL's marks began at x=424, HIGH's at 423 and UNKNOWN's at 433 —
+   UNKNOWN is a shorter word than CRITICAL and a wider one to set, so the stagger does not
+   even follow the label length. A reader comparing two mark runs against a moving origin
+   is doing the arithmetic the picture was drawn to save them.
+
+   10ch is measured against THIS register's own severity vocabulary (UNKNOWN is the widest
+   at 63px; 10ch is 67px at --fs-label), and it is a FIXED basis rather than a minimum so a
+   longer word could never silently reintroduce the stagger. Tally rows only: the total row
+   is passed no unit, carries no modifier, and has no marks to line anything up with. */
+.movement-row--tally .movement-label { flex: 0 0 10ch; }
+/* And the strip itself needs the room the fourth part takes. 46ch fits a label, a pill and
+   a count pair; it does not fit a tally as well, and the longest row wrapped its counts
+   onto a line of their own — measured on a screenshot, not guessed. The modifier keeps a
+   sibling's three-part strip at the width that is right for three parts. */
+.movement-rows--tally { max-width: 60ch; }
+
+/* NO PHONE-WIDTH RULE HERE, AND THE ABSENCE IS MEASURED. The first version of this tally
+   ran at the module's default 40-mark ceiling, drew 39 marks for the largest severity,
+   and took this page from 364px of horizontal overflow at 360px to 404px — an .isotype is
+   one inline-flex run that cannot wrap, so a long one pushes the register off the side of
+   a phone. The first fix hid it below 640px; the right fix was a 12-mark ceiling at the
+   CALL SITE (gas/pages/executive.js), which is the readable count for an inline strip
+   anyway. Re-measured without any hide rule: 364px, the same figure every other route in
+   that app carries. So a phone reader keeps the picture. Do not reintroduce a display:none
+   here without re-measuring first — it would be hiding a symptom this ceiling removed. */
 .movement-block { display: grid; gap: var(--space-2); margin-top: var(--space-4); }
 
 /* `.chart-row` (tables.css) is `repeat(auto-fit, minmax(420px, 1fr))` — right for a page's two
@@ -1698,6 +1862,17 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
 .splitbar__seg--INFO { background: var(--sev-info); }
 .splitbar__seg--UNKNOWN { background: var(--sev-unknown); }
 .splitbar__seg--in { background: var(--accent); box-shadow: inset 0 0 0 1px var(--accent-edge); }
+/* The key row under a severity split (ui/splitBar.js, given `keys`): one key per severity,
+   swatch + word + figure, in place of the joined caption sentence. The swatch reuses the
+   segment fill classes above so a key's colour is the bar's colour; an out-of-scope severity
+   keeps its severity swatch and adds the word ("not scanned") beside its figure. */
+.splitbar__keys { display: flex; flex-wrap: wrap; gap: var(--space-1) var(--space-3); margin-top: var(--space-2); }
+.splitbar__key { display: inline-flex; align-items: center; gap: var(--space-1); font-size: var(--fs-label); }
+.splitbar__swatch { width: 9px; height: 9px; border-radius: 1px; flex: none; }
+.splitbar__key-label { font-weight: 600; }
+.splitbar__key-out { color: var(--text-3); }
+.splitbar__key--out .splitbar__key-label { color: var(--text-2); font-weight: 500; }
+.splitbar__sum { margin: var(--space-1) 0 0; }
 /* Excluded/"not counted": a hatched neutral rather than a second solid hue, so "not counted"
    reads as an absence rather than a category competing with the severities beside it.
    THE LITERAL GRADIENT, CARRIED ACROSS UNCHANGED. This predates the --hatch token in

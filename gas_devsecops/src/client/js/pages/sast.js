@@ -262,7 +262,10 @@ function paintSast(host, vm, filters) {
   // register nobody has read is one more confident zero, and `firstRunNotice` below already
   // says what is missing.
   const population = vm.firstRun.show ? null : populationLine(vm);
-  if (population) host.append(el("p", { class: "small muted" }, population.text));
+  if (population) host.append(el("div", { class: "scope-chips", role: "group", "aria-label": population.text },
+          ...population.parts.map((part, i) => el("span", {
+            class: "scope-chip" + (i === 0 ? " scope-chip--lead" : ""),
+          }, part))));
 
   // FIRST RUN STOPS HERE — see sca.js's paintSca for why every section past this point would
   // otherwise print its own confident "0", including both chart canvases.

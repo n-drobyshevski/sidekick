@@ -39,6 +39,7 @@ import {
   measuredEmpty, num, nvdUrl, openSheet, pageHeader, pct1, scopeBar, sectionLabel, segmented,
   sevBadge, sevEntries, sevKeyRow, sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow,
   tableFooter, tip, tipAnchor, tipLabel, togglePills, triCell,
+  statusPill,
 } from "../ui.js";
 
 // Rows per page in the "Oldest open findings" panel's pagination. The server ships
@@ -200,9 +201,17 @@ export async function renderOverview(main, params, ctx) {
     const unknown = insights?.sevStats?.UNKNOWN?.total;
     if (unknown > 0) {
       if (scopeNote.firstChild) scopeNote.append(" ");
-      scopeNote.append(
-        `${unknown.toLocaleString()} finding${unknown === 1 ? " has" : "s have"} an `
-        + "unrecognized severity — included in every count here regardless of severity scope.");
+      // A STATE, DRAWN AS A STATE — the count and the word on a pill, the caveat behind it.
+      // As a 16-word sentence it read as a footnote; as a pill it reads as a qualifier on
+      // every figure below, which is what it is.
+      scopeNote.append(statusPill("neutral",
+        `${unknown.toLocaleString()} unrecognized severity`, {
+          lines: [
+            `${unknown.toLocaleString()} finding${unknown === 1 ? " has" : "s have"} a severity`
+            + " that never normalized. They are included in every count here regardless of"
+            + " severity scope.",
+          ],
+        }));
     }
   }
   paintScopeNote(null);
@@ -328,7 +337,17 @@ export async function renderOverview(main, params, ctx) {
             sevKeyRow(openSevs),
           ]
           : null,
-        population ? el("p", { class: "small muted" }, population.text) : null,
+        // THE SCOPE AS CHIPS, NOT A SENTENCE. `populationLine` already returns its `parts` —
+        // "In scope 107", the gate, every filter word — and joined by " · " they were a
+        // 28-word paragraph the density walker counted as prose. One chip per part is the
+        // same provenance as a row of facts a reader scans rather than parses; the joined
+        // sentence stays as the group's accessible name so a screen reader still hears it whole.
+        population
+          ? el("div", { class: "scope-chips", role: "group", "aria-label": population.text },
+            ...population.parts.map((part, i) => el("span", {
+              class: "scope-chip" + (i === 0 ? " scope-chip--lead" : ""),
+            }, part)))
+          : null,
       )
       : null;
 
@@ -529,7 +548,13 @@ export async function renderOverview(main, params, ctx) {
    *  the sparkline carries the magnitude the scale deliberately drops. */
   function tierTrendCard(insights) {
     const trend = insights.tierTrend || [];
-    const card = el("div", { class: "chart-card" }, el("h3", {}, "Tier trend"));
+    const card = el("div", { class: "chart-card" }, el("h3", {}, tipLabel("Tier trend", {
+      lines: [
+        "Tiers are computed from today's signals and applied backwards: has_kev and"
+        + " has_exploit never revert, and EPSS is the peak observed. So this traces the"
+        + " BACKLOG moving between tiers, not intelligence arriving.",
+      ],
+    })));
     if (trend.length < 2) {
       card.append(el("p", { class: "muted small" }, "Trend appears after the second scan."));
       return card;
@@ -584,10 +609,6 @@ export async function renderOverview(main, params, ctx) {
     }).catch(() => {
       for (const { canvas } of pending) chartUnavailable(canvas);
     });
-    card.append(el("p", { class: "chart-caption muted" },
-      "Tiers are computed from today's signals and applied backwards: has_kev and has_exploit "
-      + "never revert, and EPSS is the peak observed. So this traces the BACKLOG moving "
-      + "between tiers, not intelligence arriving."));
     return card;
   }
 
@@ -623,15 +644,19 @@ export async function renderOverview(main, params, ctx) {
         + "running SLA clock are past it."
       : "How long open findings have been open";
     insightsHost.append(el("div", { class: "chart-card" },
-      el("h3", {}, headline),
+      // The clock caveat and the omitted-rows caveat are what the HEADLINE means, so they are
+      // its tip; the sub-line says only what the bars count.
+      el("h3", {}, tipLabel(headline, {
+        lines: [
+          "SLA is measured on the vendor-fix clock, so a finding still awaiting a patch is not"
+          + " counted as a breach.",
+          "Rows with no recorded age are omitted from the bars, which is why this total can"
+          + " trail the open count above.",
+        ],
+      })),
       el("div", { class: "small muted", style: "margin-bottom:8px" },
-        `${aging.totalOpen.toLocaleString()} still-open findings, bucketed by age since first `
-        + "seen and split by risk tier."),
+        `${aging.totalOpen.toLocaleString()} still-open findings by age and risk tier.`),
       el("div", { class: "chart-box" }, canvas),
-      el("p", { class: "chart-caption muted" },
-        "SLA is measured on the vendor-fix clock, so a finding still awaiting a patch is not "
-        + "counted as a breach. Rows with no recorded age are omitted from the bars, which is "
-        + "why this total can trail the open count above."),
       // The same `AGE_LABELS` / `aging.perTier` the wrapper below is handed, named once here.
       chartTable({
         canvas,
@@ -656,10 +681,19 @@ export async function renderOverview(main, params, ctx) {
     if (boot.settings.showNoFix !== false && aw && aw.overall > 0) {
       const pct = aw.pctOfOpen !== null && aw.pctOfOpen !== undefined
         ? ` (${aw.pctOfOpen.toFixed(0)}% of open)` : "";
-      insightsHost.append(el("p", { class: "section-note" },
-        `${aw.overall.toLocaleString()} open finding${aw.overall === 1 ? "" : "s"}${pct} `
-        + "awaiting a vendor fix — no patch is available yet, so they sit outside the SLA "
-        + "clock entirely."));
+      // A COUNT WITH A SHARE IS A STAT ROW, not a sentence: the figure, its share of open as
+      // the meter, and the reason it sits outside the SLA clock as the label's tip.
+      insightsHost.append(el("div", { class: "card stat-list" }, statRow(
+        "Awaiting a vendor fix",
+        aw.overall.toLocaleString(),
+        pct ? pct.trim().replace(/^\(|\)$/g, "") : "open findings with no patch available",
+        aw.pctOfOpen !== null && aw.pctOfOpen !== undefined ? aw.pctOfOpen : null,
+        {
+          lines: [
+            "No patch is available yet, so these findings sit outside the SLA clock entirely.",
+          ],
+        },
+      )));
     }
     insightsHost.append(el("button", {
       type: "button", style: "margin-top:10px",
@@ -716,12 +750,14 @@ export async function renderOverview(main, params, ctx) {
     }
     const canvas = el("canvas", { id: "sla-consumed-chart" });
     insightsHost.append(el("div", { class: "chart-card" },
-      el("h3", {}, "How much of the SLA window is used"),
+      // The axis key and what the bars leave out (`slaConsumedCaption`) are the heading's tip.
+      el("h3", {}, tipLabel("How much of the SLA window is used", {
+        lines: [slaConsumedCaption(consumed)].filter(Boolean),
+      })),
       el("div", { class: "small muted", style: "margin-bottom:8px" },
-        `${(consumed.totalOpen || 0).toLocaleString()} open findings still inside their window, `
-        + "placed by the tenth of it they have consumed and split by severity."),
+        `${(consumed.totalOpen || 0).toLocaleString()} open findings inside their window, `
+        + "by tenth consumed and severity."),
       el("div", { class: "chart-box" }, canvas),
-      el("p", { class: "chart-caption muted" }, slaConsumedCaption(consumed)),
       // The same `consumed.labels` / `consumed.perSev` the wrapper below is handed, named once
       // here — `ui/chartTable.js`'s one rule. `agingTableModel` is generic over its label
       // array; the header word is passed because these labels are tenths, not age buckets.

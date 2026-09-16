@@ -40,6 +40,10 @@ import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/rel
 import { openAndTotal, relativeAge } from "../../gas_shared/ui/figures.js";
 import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
 import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
+import { registerUnitChartContract } from "../../gas_shared/test/contracts/unitChart.js";
+import {
+  COUNT_UNITS, MAX_EXACT_CELLS, MAX_MARKS, unitChartModel, unitCounts, unitScale,
+} from "../../gas_shared/ui/unitChart.js";
 import { registerSettingsReadoutsContract } from "../../gas_shared/test/contracts/settingsReadouts.js";
 import {
   createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
@@ -430,6 +434,13 @@ registerSyncCaptionContract(base);
 // `sparkLabel` directly, so this register's own KPI-band sparklines are held to the same
 // refuse-before-cast contract `gas_devsecops`'s Scan History page already registers.
 registerSparklineContract({ ...base, sparkPath, sparkLabel });
+
+// The unit chart. This register draws no isotype yet at the time the contract lands, and
+// registering it anyway is the point: the arithmetic is the design system's, and the page
+// that adopts it should find the guard already running rather than bring its own.
+registerUnitChartContract({
+  ...base, unitScale, unitCounts, unitChartModel, COUNT_UNITS, MAX_MARKS, MAX_EXACT_CELLS,
+});
 
 // =========================================================================================
 //  The hub link: one rule, this register's boundary and the shared header gate

@@ -166,25 +166,36 @@ export function severitySplitModel({
   const byAll = bySeverityAll || {};
   const segments = [];
   const parts = [];
+  const keys = [];
   let inScopeCount = 0;
   for (const sev of selectable || []) {
     const n = byOpen[sev] || 0;
+    const figure = openAndTotal(n, byAll[sev] || 0);
     if (inScope(sev)) {
       inScopeCount += n;
       segments.push({ label: sev, value: n, tone: sev });
-      parts.push(`${sev} ${openAndTotal(n, byAll[sev] || 0)}`);
+      parts.push(`${sev} ${figure}`);
+      keys.push({ label: sev, tone: sev, text: figure, out: false });
     } else {
       // A comma, not a second parenthetical: two bracketed asides on one item stop a reader
       // scanning cleanly. The list separator is "·", so a comma inside an item is
       // unambiguous.
-      parts.push(`${sev} ${openAndTotal(n, byAll[sev] || 0)}, ${String(outLabel).toLowerCase()}`);
+      parts.push(`${sev} ${figure}, ${String(outLabel).toLowerCase()}`);
+      keys.push({ label: sev, tone: sev, text: figure, out: true, outLabel: String(outLabel) });
     }
   }
   segments.push({ label: outLabel, value: Math.max(0, (openTotal || 0) - inScopeCount), tone: "out" });
-  const caption = `${parts.join(" · ")} — ${fmt(inScopeCount)} of ${fmt(openTotal)} `
-    + `open ${unit} scanned${total > openTotal ? `, ${fmt(total)} in the register all time` : ""}.`;
+  const summary = `${fmt(inScopeCount)} of ${fmt(openTotal)} open ${unit} scanned`
+    + `${total > openTotal ? `, ${fmt(total)} in the register all time` : ""}.`;
+  // `caption` IS STILL BUILT AND STILL THE ONE SENTENCE THAT NAMES EVERY FIGURE, because it
+  // is the bar's spoken form and the contract pins it. What changed is where it is DRAWN:
+  // `splitBar` given `keys` draws one key per severity (swatch, word, figure) and the
+  // `summary` under them, and prints the caption nowhere — the same figures as a row of
+  // facts rather than a 45-word paragraph the density walker counted as prose on every
+  // Settings page in two registers.
+  const caption = `${parts.join(" · ")} — ${summary}`;
   const ariaLabel = `${fmt(inScopeCount)} of ${fmt(openTotal)} open ${unit} are in the scan scope`;
-  return { segments, caption, ariaLabel, inScopeCount };
+  return { segments, caption, keys, summary, ariaLabel, inScopeCount };
 }
 
 // ============================================================================= tick timeline

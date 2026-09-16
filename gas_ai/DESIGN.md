@@ -707,3 +707,65 @@ evidence pass runs on the dry run). The 90-load screenshot sweep at `eeab75f` (1
 including five Settings tabs, at 1280/640/360, seeded and unsynced) found 0 console errors, 0
 overflow and 0 visible alerts — the wave close's own sweep had recorded one transient console
 error, a dev-server rebuild collision on a single load, that did not reproduce here.
+
+### Unit-chart round (2026-09-15)
+
+A second before/after against the same command, same seed, same `--experimental` flag. Only one
+route moved, and only on pictures:
+
+| route | before | after |
+|---|---|---|
+| scans | 462 / 7 / 190 / 138 / 126 / **10** / 16 | 462 / 7 / 190 / 138 / 126 / **11** / 16 |
+
+Every other route is byte-identical on all ten metrics, and no route overflows at 1280, 640 or
+360px (`settings` reads 361px before and after — a pre-existing 1px, untouched here).
+
+**What changed is `coverageBar`.** It was a flex-grow proportional bar over a dozen scan areas,
+`aria-hidden`, with `coverageKeys` carrying the figures; it is `unitGrid` in `cells: "exact"`
+mode now — one cell per area, no rounding to explain, and a reader counts "three reporting, two
+partial, seven not scanned" instead of judging three widths. The keys are untouched and are
+still the text carrier, so the wrapper stays `aria-hidden`.
+
+**Nothing about the vocabulary was invented.** `COVERAGE[state].pill` is already `ok` / `warn` /
+`neutral`, which is the tone set `unitChartModel` accepts unchanged, and the keys' own glyphs
+(● ◐ ○) are already the solid / partial / ring progression the `fill` channel draws. `.cov-bar`
+and `.cov-bar-seg` leave `styles/scans.css` with it.
+
+**The picture count moved by exactly one, which is the whole story.** `.cov-bar` was never in
+the walker's `NAMED_VISUAL_CLASSES`, so the page has always had a picture the instrument could
+not see; `.isotype` is in that list, so the swap is one bar out and one counted lattice in. A
+route whose `visuals` jumped by more than one here would have meant the module drew something
+nobody asked for.
+
+**`pages/scans.js`'s `kindSummaryText` was examined and left alone.** It reads like a sentence
+restating the table under it, and it is — but it is already passed as a `sectionLabel(..., {
+lines })`, which is a tip. It is one level down, which is where this register's ladder already
+puts an explanation, and it costs the surface nothing.
+
+### Prose round (2026-09-16)
+
+The unit-chart round above added pictures and moved `proseBlocks` on no route at all. That was
+the wrong metric to leave alone: the brief was to reduce prose blocks, and to replace what is
+too crucial to delete with a form a reader scans rather than parses. Same command, same seed,
+same `--experimental` flag; only the two routes that moved are shown, every other route is
+byte-identical on all ten metrics and no route overflows at 1280, 640 or 360px.
+
+| route | before | after |
+|---|---|---|
+| inventory | 413 / **10** / **266** / 124 / 165 / 39 / 7 | 203 / **3** / **56** / 119 / 165 / 39 / **13** |
+| scans | 462 / **7** / **190** / 138 / 126 / 10 / 16 | 332 / **2** / **45** / 135 / 126 / 11 / **20** |
+
+**Every moved sentence was an explanation of a picture, and it now rides on the picture's own
+heading.** `inventory`'s four posture cards each carried up to two `.chart-note` paragraphs
+under the canvas — which series have gaps ("gaps, not zeros"), what the foot line qualified,
+what "opened" and "closed" count — and the "Counts over time" card carried two more. They are
+the `<h3>`'s `tipLabel` lines now (`tips` 7 → 13: every moved sentence is reachable by
+keyboard from the heading it explains, and the `tipsSignified` column says each trigger has a
+resting affordance). The "N syncs" line under each heading is the one surface note a card
+keeps. `scans` did the same for the diagram legend and the sync-cadence paragraph (section
+labels), and cut the two chipset lead-ins to their five words with the reason behind them.
+
+**What stays, and why.** `settings` (11 blocks) is decision support — the sentences that say
+what a draft would do before it is saved are this register's own thesis and not restatements.
+`combos`, `compliance` and `data` (4 each) carry the hero qualifier, a rail key and two prune
+notes; they are the next round's, not this one's.

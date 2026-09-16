@@ -41,6 +41,7 @@ import {
   nameCell, sectionLabel, sevBadge, sevEntries, sevKeyRow,
   sevSegmentBar, sevSpoken, skeleton, skeletonStack, statRow, tableFooter, toast,
   trendScopeNote,
+  tipLabel,
 } from "../ui.js";
 import { trendTableModel } from "./_charts.js";
 
@@ -1245,8 +1246,29 @@ export async function renderInventory(main, params) {
       role: "img",
     });
 
+    // A GAP IS NOT A ZERO, and the two sentences that say which series have gaps and which
+    // are not charted at all are the HEADING's tip lines now rather than two chart-note
+    // paragraphs under the canvas. They are explanations of the picture; the "N syncs" line
+    // beneath the heading is the only surface note this card keeps.
+    const countNotes = [
+      trend.length >= 2 && partial.length
+        ? (partial.length === 1
+          ? `${partial[0].label} has`
+          : `${partial.map((s) => s.label).join(" and ")} have`) +
+          " no figure for every sync in this window — earlier syncs predate the column, " +
+          "and a sync that collected no framework posture records none. Those points " +
+          "are gaps, not zeros."
+        : null,
+      trend.length >= 2 && present.length < SERIES.length
+        ? SERIES.filter((s) => present.indexOf(s) < 0).map((s) => s.label).join(" and ") +
+          (present.length === SERIES.length - 1 ? " is" : " are") +
+          " not charted: no sync in this window recorded a figure."
+        : null,
+    ].filter(Boolean);
     const card = el("div", { class: "chart-card" },
-      el("h3", {}, "Counts over time"),
+      el("h3", {}, countNotes.length
+        ? tipLabel("Counts over time", { lines: countNotes })
+        : "Counts over time"),
       el("p", { class: "chart-note" },
         trend.length >= 2 ? `${trend.length} syncs` : "One point per sync"),
       // This series FOLLOWS the project view: sync_history carries a per-project blob
@@ -1265,25 +1287,6 @@ export async function renderInventory(main, params) {
                 ? "No sync has recorded totals for this project yet — the series starts at " +
                   "the next one."
                 : "No history yet. Each sync adds a point; earlier syncs can't be recovered."),
-      // A GAP IS NOT A ZERO, and this is where that distinction becomes visible. Two of the
-      // three counts were added to sync_history after the issue count, and history cannot
-      // be backfilled, so their lines simply begin later. Saying which ones stops a reader
-      // reading "the line starts here" as "this was zero until then".
-      trend.length >= 2 && partial.length
-        ? el("p", { class: "chart-note" },
-            (partial.length === 1
-              ? `${partial[0].label} has`
-              : `${partial.map((s) => s.label).join(" and ")} have`) +
-            " no figure for every sync in this window — earlier syncs predate the column, " +
-            "and a sync that collected no framework posture records none. Those points " +
-            "are gaps, not zeros.")
-        : null,
-      trend.length >= 2 && present.length < SERIES.length
-        ? el("p", { class: "chart-note" },
-            SERIES.filter((s) => present.indexOf(s) < 0).map((s) => s.label).join(" and ") +
-            (present.length === SERIES.length - 1 ? " is" : " are") +
-            " not charted: no sync in this window recorded a figure.")
-        : null,
       // THE SAME `trend`/`present` THE CHART WRAPPER READS BELOW, named once above and
       // handed to both — `gas_shared/ui/chartTable.js`'s one rule. Only where the chart
       // itself draws: below two points there is no line, and a table over a dangling,
@@ -1399,10 +1402,12 @@ export async function renderInventory(main, params) {
       capacityCard(readout),
     );
     return el("div", { class: "inv-history" },
-      sectionLabel("Posture over time"),
-      el("p", { class: "chart-note" },
-        "The whole register. These four are recorded per sync and have no project grain, so "
-        + "they do not follow the project view."),
+      sectionLabel("Posture over time", {
+        lines: [
+          "The whole register: these four are recorded per sync and have no project grain, so"
+          + " they do not follow the project view.",
+        ],
+      }),
       cards);
   }
 
@@ -1433,8 +1438,17 @@ export async function renderInventory(main, params) {
     const present = presentSeries(points, series);
     const gappy = gappySeries(points, present);
     const canvas = el("canvas", { "aria-label": label, role: "img" });
+    // The gap sentence and the card's own foot are EXPLANATIONS of the line, so they ride on
+    // the heading rather than sitting under the canvas as two more paragraphs per card.
+    const cardNotes = [
+      points.length >= 2 && gappy.length
+        ? `${labelList(gappy)} ${gappy.length === 1 ? "has" : "have"} no `
+          + "figure for every sync in this window. Those points are gaps, not zeros."
+        : null,
+      foot || null,
+    ].filter(Boolean);
     const card = el("div", { class: "chart-card" },
-      el("h3", {}, title),
+      el("h3", {}, cardNotes.length ? tipLabel(title, { lines: cardNotes }) : title),
       el("p", { class: "chart-note" },
         points.length >= 2 ? `${points.length} syncs` : "One point per sync"),
       points.length >= 2 && present.length
@@ -1445,13 +1459,6 @@ export async function renderInventory(main, params) {
               : points.length
                 ? "No sync in this window recorded a figure for any of these."
                 : "No sync has recorded this yet."),
-      // A GAP IS NOT A ZERO, said in words wherever a line breaks or begins in mid-air.
-      points.length >= 2 && gappy.length
-        ? el("p", { class: "chart-note" },
-            `${labelList(gappy)} ${gappy.length === 1 ? "has" : "have"} no `
-            + "figure for every sync in this window. Those points are gaps, not zeros.")
-        : null,
-      foot ? el("p", { class: "chart-note" }, foot) : null,
       // THE SAME `points`/`present` THE CHART WRAPPER READS BELOW, named once above and
       // handed to both — only where the chart actually draws (see trendSection's own note
       // on why a dangling canvas gets no disclosure).
@@ -1490,11 +1497,17 @@ export async function renderInventory(main, params) {
     const dotClass = readout.verdict ? `cap-dot cap-dot--${readout.verdict}` : "cap-dot";
     const recent = readout.rows.slice(-6).reverse();
     return el("div", { class: "chart-card" },
-      el("h3", {}, "Remediation capacity"),
+      el("h3", {}, tipLabel("Remediation capacity", {
+        lines: [
+          readout.detail,
+          "Opened counts new and reopened issues; closed counts the ledger's own"
+          + " disappearance-dated resolutions. A sync that changed the register's scope, or"
+          + " resolved nothing by absence, is plotted but not compared.",
+        ].filter(Boolean),
+      })),
       el("p", { class: "cap-verdict" },
         el("span", { class: dotClass, "aria-hidden": "true" }),
         el("span", { class: "cap-verdict-word" }, readout.word)),
-      el("p", { class: "chart-note" }, readout.detail),
       recent.length
         ? el("table", { class: "cap-table" },
             el("thead", {},
@@ -1511,10 +1524,6 @@ export async function renderInventory(main, params) {
               el("td", { class: "num" }, r.net > 0 ? `+${r.net}` : String(r.net)),
               el("td", {}, r.verdict)))))
         : null,
-      el("p", { class: "chart-note" },
-        "Opened counts new and reopened issues; closed counts the ledger's own "
-        + "disappearance-dated resolutions. A sync that changed the register's scope, or "
-        + "resolved nothing by absence, is plotted but not compared."),
     );
   }
 }

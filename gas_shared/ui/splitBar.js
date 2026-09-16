@@ -43,7 +43,7 @@ import { el } from "./dom.js";
  * below carries them in words, because a bar alone fails the non-color rule and is
  * unreadable to a screen reader.
  */
-export function splitBar({ segments, caption, ariaLabel }) {
+export function splitBar({ segments, caption, keys, summary, ariaLabel }) {
   const total = segments.reduce((n, s) => n + (s.value || 0), 0);
   const track = el("div", {
     class: "splitbar", role: "img",
@@ -56,7 +56,26 @@ export function splitBar({ segments, caption, ariaLabel }) {
     seg.style.width = `${(s.value / (total || 1)) * 100}%`;
     track.append(seg);
   }
+  // KEYS OVER A CAPTION, where the model offers them. A key row is the same figures as a row
+  // of facts — swatch, word, figure per segment — and a reader scans it; the joined caption
+  // was a sentence they parsed, and at five severities it ran to 45 words. Both forms repeat
+  // every number in text, which is the non-colour rule; only one of them is prose. A caller
+  // that passes only `caption` (the two-way impact split, a dozen words) is drawn exactly as
+  // before.
+  const keyRow = keys && keys.length
+    ? el("div", { class: "splitbar__keys" },
+      ...keys.map((k) => el("span", { class: `splitbar__key${k.out ? " splitbar__key--out" : ""}` },
+        el("span", {
+          class: `splitbar__swatch splitbar__seg--${k.out ? "out" : k.tone}`,
+          "aria-hidden": "true",
+        }),
+        el("span", { class: "splitbar__key-label" }, k.label),
+        el("span", { class: "splitbar__key-num num" }, k.text),
+        k.out ? el("span", { class: "splitbar__key-out" }, String(k.outLabel || "").toLowerCase()) : null)))
+    : null;
   return el("div", { class: "splitbar-wrap" },
     track,
-    caption ? el("p", { class: "splitbar__caption muted small" }, caption) : null);
+    keyRow,
+    keyRow && summary ? el("p", { class: "splitbar__sum muted small" }, summary) : null,
+    !keyRow && caption ? el("p", { class: "splitbar__caption muted small" }, caption) : null);
 }

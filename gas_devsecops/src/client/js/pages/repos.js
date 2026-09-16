@@ -52,7 +52,8 @@ import {
   absentText, boundedDays, chartTable, chartTableModel, clear, days1, denomNote, el,
   emptyState, errorState, figureCard, firstRunNotice, fmtCount, fmtDate, fmtDays, meter,
   num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, skeletonStack, statusPill,
-  uiIcon,
+  uiIcon, MAX_EXACT_CELLS, unitChartModel, unitGrid, unitKeyRow,
+  tipLabel,
 } from "../ui.js";
 // `verdictMark` is `pages/program.js`'s own dot-and-word for a capacity verdict, promoted to
 // `ui/verdict.js` in this same wave so this page's Capacity column can draw the identical
@@ -424,6 +425,64 @@ export function coldestShareNote(view) {
     + " open-finding repositories that are cold. A project with no cold repository is never"
     + " marked.";
 }
+
+/**
+ * The cold zone as one population rather than four figures.
+ *
+ * WHY A PICTURE AND NOT A FIFTH CARD. The four figures above each answer a different question
+ * against a different denominator — cold repositories against those with open findings, open
+ * findings sitting cold against the whole backlog — and none of them says what the estate looks
+ * like. "How much of this register is the scanner actually watching" is a part-to-whole, and a
+ * reader was reconstructing it from four numbers with four different bottoms.
+ *
+ * THE FIVE VERDICTS PARTITION THE REGISTER, which is what makes this a waffle and not five
+ * bars: `cold + warm + watching + clear` is every OBSERVED repository (coldZone.ts's verdict
+ * switch) and `observed + unobserved` is every repository. `unitChartModel` throws if that ever
+ * stops being true, which is the guard worth having here — the day a sixth verdict appears, a
+ * silently-renormalised grid would be the last place anyone looked.
+ *
+ * TWO OF THE FIVE ARE HATCHED, AND THAT IS THE WHOLE POINT. `watching` is a repository with
+ * open findings whose idle time could not be measured at all (`idleDays === null` with no
+ * usable bound); `unobserved` is one the scanner has lost sight of. Neither is a measurement of
+ * idleness, and the section spends most of its words insisting they are not counted as warm.
+ * `--hatch` is the design system's own token for exactly that claim — "this part is not a
+ * measurement" — so the picture makes it where the reader is already looking, instead of only
+ * in a sentence underneath.
+ *
+ * `clear` IS A RING, NOT A FILL. It is measured and it is fine: nothing open to go quiet on.
+ * Drawing it solid would put it in the same visual weight class as cold and warm, and the
+ * silhouette channel exists so two segments differ by shape as well as by tone.
+ *
+ * EXACT WHERE IT CAN BE. Under MAX_EXACT_CELLS repositories the lattice is one cell per
+ * repository and there is no rounding to explain; above it the lattice is 100 cells and the
+ * model says so in its own label. Which of the two a reader is looking at is a fact about the
+ * register's size, so it is derived here rather than fixed.
+ */
+export function coldCensusModel(view) {
+  const t = view && view.totals;
+  if (!t) return null;
+  const repos = num(t.repos);
+  if (repos === null || repos <= 0) return null;
+  return unitChartModel({
+    unit: "repositories",
+    total: repos,
+    cells: repos <= MAX_EXACT_CELLS ? "exact" : 100,
+    segments: [
+      { key: "cold", label: "Cold", count: num(t.cold_repos, 0), tone: "bad", fill: "solid" },
+      { key: "warm", label: "Warm", count: num(t.warm_repos, 0), tone: "warn", fill: "solid" },
+      {
+        key: "watching", label: "Idle time not measured", count: num(t.watching_repos, 0),
+        tone: "warn", fill: "hatch",
+      },
+      { key: "clear", label: "Clear", count: num(t.clear_repos, 0), tone: "ok", fill: "ring" },
+      {
+        key: "unobserved", label: "Out of sight", count: num(t.repos_unobserved, 0),
+        tone: "neutral", fill: "hatch",
+      },
+    ],
+  });
+}
+
 
 /**
  * The four figures, as specs — label, value, the sentence under it and the denominator behind
@@ -1004,6 +1063,24 @@ export async function renderRepos(host, _params, _ctx) {
     // sentence about zero repositories is noise.
     const note = unmeasurableNote(view);
     if (note) coldHost.append(denomNote(note));
+    renderColdCensus(view);
+  }
+
+  /**
+   * The census, under the four figures it gives a shape to. Drawn only where the register has
+   * repositories to count: `coldCensusModel` returns null otherwise, and a lattice over an
+   * unmeasured denominator is the confident zero this page refuses everywhere else.
+   *
+   * The key row carries every figure in words, which is why this owes no `chartTable`
+   * disclosure the way a canvas on this page would — see ui/unitChart.js's `unitKeyRow`.
+   */
+  function renderColdCensus(view) {
+    const model = coldCensusModel(view);
+    if (!model || !model.measured) return;
+    coldHost.append(el("div", { class: "card" },
+      sectionLabel("Every repository, by what the clock can say"),
+      unitGrid(model, { className: "cold-census" }),
+      unitKeyRow(model)));
   }
 
   function renderColdTeams(view) {
@@ -1133,14 +1210,19 @@ export async function renderRepos(host, _params, _ctx) {
     };
     for (const r of heat.rows) body.append(paintRow(r));
     if (heat.totals) body.append(paintRow(heat.totals));
-    coldHost.append(el("h3", { class: "section-label" }, "Idle time by project"));
+    // The caption keeps what the cells COUNT; what the last column means and who is in no
+    // column are the heading's tip — the 51-word caption was the page's largest prose block.
+    coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by project", {
+      lines: [
+        "The last column is the repositories with no movement on record yet — not idle for"
+        + " zero days, but not yet measurable.",
+        "Unobserved repositories and repositories with nothing open are in no column.",
+      ],
+    })));
     coldHost.append(el("div", { class: "table-wrap" },
       el("table", { class: "data heat" },
         el("caption", { class: "small muted" },
-          "Repositories per project by how long they have been idle, and the open findings"
-          + " sitting in each band. The last column is the repositories with no movement on"
-          + " record yet — not idle for zero days, but not yet measurable. Unobserved"
-          + " repositories and repositories with nothing open are in no column."),
+          "Repositories per project by idle band, with the open findings in each."),
         el("thead", {}, head),
         body)));
   }
@@ -1202,11 +1284,18 @@ export async function renderRepos(host, _params, _ctx) {
       // first inside each, and that order is the section's whole argument.
       emptyText: "No repository is cold, and none has dropped out of the scanner.",
     }));
-    coldHost.append(denomNote(
-      `${fmtCount(rows.length)} ${rows.length === 1 ? "repository" : "repositories"} listed:`
-      + " every cold one and every one the scanner has lost sight of. Warm, clear and"
-      + " not-yet-measurable repositories are counted above and not listed here.",
-    ));
+    // WHICH VERDICTS ARE IN THE LIST, as a short lead with the exclusions behind it. It was a
+    // 27-word paragraph; the two words a reader needs without hovering are "cold" and "out of
+    // sight", and the census above already draws every verdict with its count.
+    coldHost.append(el("p", { class: "small muted" }, tipLabel(
+      `${fmtCount(rows.length)} listed: cold, and out of sight`,
+      {
+        lines: [
+          "Every cold repository and every one the scanner has lost sight of.",
+          "Warm, clear and not-yet-measurable repositories are counted above and not listed here.",
+        ],
+      },
+    )));
   }
 
   /**

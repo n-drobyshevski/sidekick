@@ -30,6 +30,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   boundedDays, capacityVerdict, capacityView, coldestShareNote, coldKpiCards, coldModeCaption,
+  coldCensusModel,
   coldRepoRows, coldScatterPoints, coldTeamRows, coldZoneView, coverageMeterPct, densityView,
   footholdCellKind, footholdView, groupRows, halfLifeView, heatLevel, heatModel, overallRow,
   tableRow, unmeasurableNote, projectCountNote,
@@ -394,6 +395,77 @@ describe("repos: coldZoneView refuses a shape it cannot draw, rather than throwi
     }));
     expect(v.measurable).toBe(true);
     expect(v.populated).toBe(false);
+  });
+});
+
+describe("repos: the cold-zone census is a real partition of the register", () => {
+  // THE CLAIM THE WAFFLE MAKES is that five verdicts cover every repository exactly once —
+  // coldZone.ts's verdict switch says `cold + warm + watching + clear` is every OBSERVED repo
+  // and `observed + unobserved` is every repo. `unitChartModel` throws when segments sum past
+  // the stated total, so the day a sixth verdict arrives this page fails loudly instead of
+  // drawing a renormalised grid nobody would think to check.
+  it("covers every repository, with nothing left over", () => {
+    const m = coldCensusModel(coldZoneView(coldModel()));
+    expect(m).toBeTruthy();
+    expect(m.measured).toBe(true);
+    expect(m.total).toBe(10);
+    const counted = m.segments.reduce((a, s) => a + s.count, 0);
+    expect(counted).toBe(10);
+    // No remainder at all: a "not accounted for" wedge here would mean the verdicts had
+    // stopped partitioning, which is the thing worth noticing.
+    expect(m.remainder).toBeNull();
+  });
+
+  it("is exact at this size — one cell per repository, no rounding to explain", () => {
+    const m = coldCensusModel(coldZoneView(coldModel()));
+    expect(m.exact).toBe(true);
+    expect(m.cells).toBe(10);
+    expect(m.segments.map((s) => [s.key, s.cells])).toEqual([
+      ["cold", 2], ["warm", 3], ["watching", 1], ["clear", 3], ["unobserved", 1],
+    ]);
+    expect(m.rounded).toBe(false);
+  });
+
+  it("hatches the two states that are not measurements of idleness, and only those", () => {
+    // `watching` is a repository with open findings whose idle time could not be measured at
+    // all; `unobserved` is one the scanner has lost sight of. The section spends most of its
+    // words insisting neither is warm — --hatch is the design system's token for that claim.
+    const m = coldCensusModel(coldZoneView(coldModel()));
+    const hatched = m.segments.filter((s) => s.fill === "hatch").map((s) => s.key);
+    expect(hatched).toEqual(["watching", "unobserved"]);
+    expect(m.segments.find((s) => s.key === "clear").fill).toBe("ring");
+    expect(m.segments.find((s) => s.key === "cold").fill).toBe("solid");
+  });
+
+  it("every segment carries a word, so no cell means anything by its fill alone", () => {
+    const m = coldCensusModel(coldZoneView(coldModel()));
+    for (const s of m.segments) {
+      expect(typeof s.label).toBe("string");
+      expect(s.label.trim().length).toBeGreaterThan(0);
+    }
+    expect(m.aria).toContain("Of 10 repositories");
+  });
+
+  it("draws nothing where there is no register to count, rather than an empty lattice", () => {
+    expect(coldCensusModel(coldZoneView(null))).toBeNull();
+    expect(coldCensusModel(coldZoneView(coldModel({ totals: coldTotals({ repos: 0 }) })))).toBeNull();
+    expect(coldCensusModel(null)).toBeNull();
+  });
+
+  it("switches to a proportional lattice once the register stops being countable", () => {
+    // 400 repositories is not something a reader counts, and a 400-cell grid that looked
+    // countable and was not would be worse than one that never claimed to be.
+    const big = coldZoneView(coldModel({
+      totals: coldTotals({
+        repos: 400, repos_observed: 380, repos_unobserved: 20,
+        cold_repos: 40, warm_repos: 120, watching_repos: 20, clear_repos: 200,
+      }),
+    }));
+    const m = coldCensusModel(big);
+    expect(m.exact).toBe(false);
+    expect(m.cells).toBe(100);
+    expect(m.segments.reduce((a, s) => a + s.cells, 0) + (m.remainder ? m.remainder.cells : 0))
+      .toBe(100);
   });
 });
 

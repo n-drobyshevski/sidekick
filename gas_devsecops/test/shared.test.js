@@ -48,6 +48,10 @@ import { registerQuadContract } from "../../gas_shared/test/contracts/quad.js";
 import { quadModel } from "../../gas_shared/ui/quad.js";
 import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
 import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
+import { registerUnitChartContract } from "../../gas_shared/test/contracts/unitChart.js";
+import {
+  COUNT_UNITS, MAX_EXACT_CELLS, MAX_MARKS, unitChartModel, unitCounts, unitScale,
+} from "../../gas_shared/ui/unitChart.js";
 import { registerSyncCaptionContract } from "../../gas_shared/test/contracts/syncCaption.js";
 import { registerScanStepContract } from "../../gas_shared/test/contracts/scanSteps.js";
 import { registerHubUrlContract } from "../../gas_shared/test/contracts/hubUrl.js";
@@ -276,6 +280,13 @@ registerSyncCaptionContract(base);
 // reads code rather than rendering.
 registerQuadContract({ ...base, quadModel });
 registerSparklineContract({ ...base, sparkPath, sparkLabel });
+// The open-backlog isotype's arithmetic, which used to be test/executivePictogram.test.js
+// against this page's own exports. It moved wholesale when gas_shared/ui/unitChart.js took
+// the ladder: the cast-first perturbation is that file's, carried over intact, and the
+// three new ones hold the waffle half the tally never had.
+registerUnitChartContract({
+  ...base, unitScale, unitCounts, unitChartModel, COUNT_UNITS, MAX_MARKS, MAX_EXACT_CELLS,
+});
 registerFigureCardContract({ ...base, figureCardModel });
 
 // =========================================================================================
