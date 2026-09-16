@@ -205,6 +205,16 @@ removed entirely, `executive` reads 364px again, so a phone reader keeps the pic
 absence of a `display:none` here is a measurement, not an oversight; `components.css` says so
 beside the rules.
 
+**The marks did not share a left edge, and a screenshot is the only thing that showed it.**
+`.movement-label`'s width is a MINIMUM, so a severity word wider than it pushed that row's tally
+right: measured on the shipped page, CRITICAL's marks began at x=424, HIGH's at 423 and
+UNKNOWN's at 433. UNKNOWN is the shorter word and the wider one to set, so the stagger did not
+even track the label length. A reader comparing two mark runs against a moving origin is doing
+the arithmetic the picture was drawn to save them — and every test passed, because a mark COUNT
+is arithmetic and the arithmetic was right. Tally rows now take a fixed 10ch label basis
+(measured against this register's own severity vocabulary; UNKNOWN is the widest at 63px) and
+all three runs start at x=436.
+
 **Three sites examined and rejected, with reasons, so the next round does not re-litigate them:**
 
 - `pages/data.js`'s `bySeverityLine` — it feeds destructive-action confirmation copy, and that

@@ -379,12 +379,15 @@
    cells read as one block rather than as a hundred things. */
 .isotype--grid {
   display: grid;
-  grid-template-columns: repeat(var(--isotype-cols, 10), 9px);
+  grid-template-columns: repeat(var(--isotype-cols, 10), var(--isotype-cell, 9px));
   gap: var(--space-half);
   margin-right: 0;
   width: max-content;
 }
-.isotype-cell { width: 9px; height: 9px; border-radius: 1px; background: var(--ink); }
+.isotype-cell {
+  width: var(--isotype-cell, 9px); height: var(--isotype-cell, 9px);
+  border-radius: 1px; background: var(--ink);
+}
 
 /* TWO CHANNELS, NOT ONE. data-tone carries the verdict, data-fill carries a SILHOUETTE, so
    two adjacent segments differ by shape as well as by fill and the lattice survives grayscale
@@ -420,7 +423,22 @@
    outlined mark in CanvasText survives the substitution, and the clip still applies to it. The
    grid needs the same treatment plus its silhouette channel kept intact, because with every
    fill flattened to one forced colour the silhouette is ALL that is left to tell two segments
-   apart. --hatch survives unaided: it is ink at an alpha rather than a hue. */
+   apart. --hatch survives unaided: it is ink at an alpha rather than a hue.
+
+   WHAT THIS MODE COSTS, STATED RATHER THAN DISCOVERED LATER. Three silhouettes cannot carry
+   four tones: two segments that differ only by `data-tone` - a cold repository and a warm one
+   - render as one indistinguishable run here. That was measured, not assumed (the cold-zone
+   census under emulated forced colours reads ten solid cells and one dashed).
+
+   It is accepted rather than fixed, and the reasoning is worth keeping. `.sevbar-seg` takes
+   the other road - `forced-color-adjust: none`, so its fills survive the substitution - and
+   that road is wrong for these cells: --warn on a black High Contrast ground measures about
+   1.8:1, so keeping the hue would trade a lost DISTINCTION for a lost CELL. Visibility wins,
+   because the distinction is not lost at all: `unitKeyRow` prints every segment's label,
+   count and share in real text directly beneath the lattice, and `unitChartModel` refuses a
+   segment with no label, so there is no configuration in which the run is the only carrier.
+   The one distinction that MUST survive a colour collapse - measured versus not measured -
+   is the one carried by silhouette rather than by tone, and it does. */
 @media (forced-colors: active) {
   .isotype-mark { border: 2px solid CanvasText; background: transparent; }
   .isotype-cell, .isotype-key-swatch { forced-color-adjust: none; }
@@ -1691,6 +1709,18 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
    a sibling register draws the same class with no tally in it and its right-aligned counts
    are correct as they are. */
 .movement-row--tally .movement-counts { margin-left: 0; }
+/* THE MARKS MUST SHARE A LEFT EDGE OR THEY COMPARE NOTHING. `.movement-label`'s 8ch is a
+   MIN width, and a severity word wider than it pushes that row's tally right: measured on
+   the shipped page, CRITICAL's marks began at x=424, HIGH's at 423 and UNKNOWN's at 433 —
+   UNKNOWN is a shorter word than CRITICAL and a wider one to set, so the stagger does not
+   even follow the label length. A reader comparing two mark runs against a moving origin
+   is doing the arithmetic the picture was drawn to save them.
+
+   10ch is measured against THIS register's own severity vocabulary (UNKNOWN is the widest
+   at 63px; 10ch is 67px at --fs-label), and it is a FIXED basis rather than a minimum so a
+   longer word could never silently reintroduce the stagger. Tally rows only: the total row
+   is passed no unit, carries no modifier, and has no marks to line anything up with. */
+.movement-row--tally .movement-label { flex: 0 0 10ch; }
 /* And the strip itself needs the room the fourth part takes. 46ch fits a label, a pill and
    a count pair; it does not fit a tally as well, and the longest row wrapped its counts
    onto a line of their own — measured on a screenshot, not guessed. The modifier keeps a

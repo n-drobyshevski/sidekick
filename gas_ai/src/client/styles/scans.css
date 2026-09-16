@@ -19,9 +19,9 @@
    the tone comes from COVERAGE[state].pill and the silhouette from the same ● ◐ ○ progression
    the keys already draw. The keys below are untouched and are still the text carrier.
 
-   The lattice keeps this page's own width, because a dozen cells in a row reads as a strip and
-   a dozen in a square reads as a grid nobody asked for. */
-.cov-census .isotype--grid { grid-template-columns: repeat(auto-fit, 9px); width: 100%; }
+   NO LOCAL LAYOUT RULE ANY MORE: `unitGrid` lays a small exact lattice out as one row at a
+   larger cell size, which is what this page was overriding for. A local rule that agrees
+   with the shared default is a rule that will disagree with it later. */
 
 .cov-keys { display: flex; flex-wrap: wrap; gap: var(--space-1); }
 .cov-key {

@@ -154,6 +154,24 @@ than for a canvas.
 insisting neither is warm — `--hatch` means "this part is not a measurement" and says it where
 the reader is already looking. `clear` is a ring rather than a fill: measured, and fine.
 
+**What High Contrast costs this picture, measured rather than assumed.** Emulated forced colours
+render the census as ten solid cells and one dashed: the hatch survives (it is ink at an alpha,
+not a hue), so measured-versus-not-measured — the distinction this section exists to make — is
+intact, but `cold` and `warm` differ only by `data-tone` and flatten into one run. Three
+silhouettes cannot carry four tones. It is accepted rather than fixed: `.sevbar-seg` takes the
+other road with `forced-color-adjust: none`, and that road is wrong here because `--warn` on a
+black High Contrast ground measures about 1.8:1 — keeping the hue would trade a lost DISTINCTION
+for a lost CELL. Nothing is actually lost, because `unitKeyRow` prints every segment's label,
+count and share in text directly beneath the lattice and the model refuses a segment with no
+label. `gas_shared/styles/components.css` carries the reasoning beside the rules.
+
+**The lattice sizes itself to its population.** Eleven repositories at the waffle's 9px cell
+rendered as a smudge in the corner of a full-width card. `unitGrid` now lays an exact lattice of
+24 or fewer out as one row at 14px, and a larger one as a square block at 9px — a small census
+is a strip a reader counts, a large one is a block they read as a proportion. `gas_ai`'s Scans
+page had a local rule doing the same thing by hand; it is gone, because a local rule that agrees
+with the shared default is one that will disagree with it later.
+
 **The six `denomNote` paragraphs on this page stay.** They were the obvious prose to remove and
 they are not restatements — `coldModeCaption` says which line drew the zone, `boundOnlySentence`
 says idle time was never measured and the figure is a lower bound, and the repository-list note

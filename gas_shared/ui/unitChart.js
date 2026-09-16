@@ -404,11 +404,28 @@ export function unitGrid(model, opts = {}) {
     return wrap;
   }
 
+  // THE LATTICE'S SHAPE AND ITS CELL SIZE ARE BOTH FUNCTIONS OF HOW MANY CELLS THERE ARE, and
+  // both are written as instance custom properties the way `--tenths` is — a lattice width is a
+  // property of one picture, not of the design system, so neither belongs in tokens.base.css.
+  //
+  // A SMALL CENSUS IS A STRIP, A LARGE ONE IS A BLOCK. Eleven repositories laid out as a 4x3
+  // lump reads as a shape to decode; eleven in a row reads as eleven things, which is the whole
+  // reason exact mode exists. Past ROW_MAX a row stops being countable and a square block is the
+  // better form — that is also where `cells` is a proportion rather than a census.
+  //
+  // AND A CELL THAT IS ONE OF ELEVEN CAN AFFORD TO BE BIGGER THAN ONE OF A HUNDRED. 9px is sized
+  // for a 10x10 waffle, where the block is the figure; at eleven cells it renders a census as a
+  // smudge in the corner of its own card (measured on the shipped page before this rule).
+  const ROW_MAX = 24;
+  const cols = model.cells <= ROW_MAX
+    ? model.cells
+    : Math.max(1, Math.ceil(Math.sqrt(model.cells)));
+  const cell = model.cells <= ROW_MAX ? 14 : 9;
   const grid = el("div", {
     class: "isotype isotype--grid",
     role: "img",
     "aria-label": model.aria,
-    style: "--isotype-cols:" + Math.max(1, Math.ceil(Math.sqrt(model.cells))),
+    style: "--isotype-cols:" + cols + ";--isotype-cell:" + cell + "px",
   });
   for (const seg of model.segments) {
     for (let i = 0; i < seg.cells; i++) {
