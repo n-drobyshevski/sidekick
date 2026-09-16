@@ -104,26 +104,106 @@ const UNOBSERVED_REPO: RepoSpec =
 const SLOW_REPO: RepoSpec =
   { id: "repo-11", name: "dktunited/warehouse-sync", branch: "main", cloudPlatform: "GitHub", language: "PYTHON" };
 
+// The tenant's project shape, as the harness must model it or every new surface looks broken.
+//
+// A repository is filed under a CS/CE/LU SUPPORT GROUP and under a `product-…` PRODUCT, and
+// ONE SUPPORT GROUP HOLDS MANY PRODUCTS (src/domain/projectGrain.ts). A business unit may sit
+// beside them. The pool below is built so the harness can actually exercise every branch of
+// that, rather than passing because the case never arrives:
+//
+//   * `CE-TRANSPORT` covers TWO products — without that, the support-group roll-up would be a
+//     second spelling of the product breakdown and nothing would prove it is not.
+//   * one entry has NO product at all, so the `(no product)` bucket and `productOf`'s
+//     `owner_project` fallback are both on screen.
+//   * one product sits under TWO support groups, so the switcher's `2 support groups` hint and
+//     the cold-zone table's em dash are reachable.
 interface ProjectSpec {
-  folder: string;
-  folderSlug: string;
-  leaf: string;
-  leafSlug: string;
+  /** A business unit, where the tenant filed one. Neither name rule claims it. */
+  unit?: string;
+  unitSlug?: string;
+  /** The CS/CE/LU support group. Present on every repository, as in the tenant. */
+  support: string;
+  supportSlug: string;
+  /** A SECOND support group, on the one entry that is filed under two. */
+  support2?: string;
+  support2Slug?: string;
+  /** The `product-…` project, absent on the one entry that follows no convention. */
+  product?: string;
+  productSlug?: string;
 }
 
 const PROJECT_POOL: readonly ProjectSpec[] = [
-  { folder: "VALUE-CHAIN", folderSlug: "value-chain", leaf: "product-tattoo-idp", leafSlug: "tattoo-idp" },
-  { folder: "CE-TRANSPORT", folderSlug: "ce-transport", leaf: "checkout-svc", leafSlug: "checkout-svc" },
-  { folder: "PLATFORM", folderSlug: "platform", leaf: "payments-core", leafSlug: "payments-core" },
-  { folder: "GROWTH", folderSlug: "growth", leaf: "notifications-team", leafSlug: "notifications-team" },
+  {
+    unit: "VALUE-CHAIN", unitSlug: "value-chain",
+    support: "CE-TRANSPORT", supportSlug: "ce-transport",
+    product: "product-tattoo-idp", productSlug: "product-tattoo-idp",
+  },
+  {
+    // The second product under CE-TRANSPORT — this is the one that makes the support-group
+    // card a roll-up rather than a restatement.
+    support: "CE-TRANSPORT", supportSlug: "ce-transport",
+    product: "product-checkout", productSlug: "product-checkout",
+  },
+  {
+    unit: "PLATFORM", unitSlug: "platform",
+    support: "CS-LOG-ZEN-ECOM", supportSlug: "cs-log-zen-ecom",
+    product: "product-payments", productSlug: "product-payments",
+  },
+  {
+    // NO PRODUCT. The repository still names a support group, so it is not unowned — it is
+    // unowned at the finer grain, which is a different and visible thing.
+    support: "LU-OPS", supportSlug: "lu-ops",
+  },
+  {
+    // ONE PRODUCT, TWO SUPPORT GROUPS. The tenant's convention broken for one repository, which
+    // is a state the app must be able to SAY rather than resolve by picking.
+    support: "CS-LOG-ZEN-ECOM", supportSlug: "cs-log-zen-ecom",
+    support2: "LU-OPS", support2Slug: "lu-ops",
+    product: "product-notifications", productSlug: "product-notifications",
+  },
 ];
 
-function projectsFor(idx: number): Rec[] {
-  const p = PROJECT_POOL[idx % PROJECT_POOL.length]!;
-  return [
-    { id: `proj-folder-${idx % PROJECT_POOL.length}`, name: p.folder, isFolder: true, slug: p.folderSlug },
-    { id: `proj-leaf-${idx % PROJECT_POOL.length}`, name: p.leaf, isFolder: false, slug: p.leafSlug },
-  ];
+// The connector tag the tenant puts on EVERY repository — seeded here for the same reason the
+// pool above exists: so the harness shows what the deployment shows. It is an organisation-wide
+// project (src/domain/config.ts's ORG_WIDE_PROJECTS), so the switcher must NOT offer it and no
+// row may be filed under it as an owner; seeding it is what makes the dev register able to
+// disagree, rather than passing because the case never arrives.
+const ORG_TAG: Rec =
+  { id: "proj-org", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" };
+
+/**
+ * KEYED ON THE REPOSITORY, NOT THE FINDING, and that is a correction rather than a preference.
+ * Wiz files a REPOSITORY under projects; every finding on it carries the same flattened list.
+ * Keying this on a finding index — which it used to be — gave one repository several different
+ * owners across its own findings, which no tenant can produce, and it hid a state the register
+ * has to be able to show: `coldZone.foldRow` takes the first non-blank grain per repository, so
+ * a repository that should have answered "no product" always found one on some other finding
+ * of its own and the `(no product)` bucket could never appear in the dev harness.
+ *
+ * The digits of the id are the key, so the mapping is stable across scans and across runs.
+ */
+function projectsFor(repoId: string): Rec[] {
+  const digits = String(repoId).replace(/\D/g, "");
+  const at = (digits === "" ? 0 : Number(digits)) % PROJECT_POOL.length;
+  const p = PROJECT_POOL[at]!;
+  const out: Rec[] = [];
+  if (p.unit !== undefined) {
+    out.push({ id: `proj-unit-${at}`, name: p.unit, isFolder: true, slug: p.unitSlug! });
+  }
+  out.push({ id: `proj-support-${p.supportSlug}`, name: p.support, isFolder: true, slug: p.supportSlug });
+  if (p.support2 !== undefined) {
+    out.push({
+      id: `proj-support-${p.support2Slug}`, name: p.support2, isFolder: true, slug: p.support2Slug!,
+    });
+  }
+  if (p.product !== undefined) {
+    // isFolder DELIBERATELY ABSENT on the products, not false: Wiz omits it often enough that
+    // the tri-state is load-bearing, and a product classified only by its name is exactly the
+    // case the old "first non-folder" rule got wrong.
+    out.push({ id: `proj-product-${p.productSlug}`, name: p.product, slug: p.productSlug! });
+  }
+  out.push(ORG_TAG);
+  return out;
 }
 
 const SCA_PACKAGES: readonly string[] = [
@@ -298,7 +378,7 @@ function scaRawNode(spec: ScaSpec, scanTs: string, resolved: boolean): Rec {
       tags: { team: repo.name.split("/")[1] ?? "platform" },
     },
     artifactType: { codeLibraryLanguage: repo.language },
-    projects: projectsFor(spec.idx),
+    projects: projectsFor(repo.id),
   };
 }
 
@@ -429,7 +509,7 @@ function sastRawNode(spec: SastSpec, scanTs: string): Rec {
     firstDetectedAtSource: null,
     resource: { id: spec.repo.id, name: `${spec.repo.name}/${spec.repo.branch}`, type: "REPOSITORY_BRANCH" },
     weaknesses: [{ id: spec.cwe, name: spec.name }],
-    projects: projectsFor(spec.idx + 1),
+    projects: projectsFor(spec.repo.id),
     vcsDetails: { commitHash: `c${(spec.idx + 1).toString(16).padStart(7, "0")}` },
     // This tenant's measured reality (CLAUDE.md): every node's aiAnalysis is null.
     aiAnalysis: null,
@@ -577,7 +657,7 @@ function secretRawNode(spec: SecretRawSpec, scanTs: string): Rec {
       cloudPlatform: spec.repo.cloudPlatform,
     },
     vcsDetails: { initialCommitHash: `s${(spec.physicalIndex + 1).toString(16).padStart(7, "0")}` },
-    projects: projectsFor(spec.physicalIndex + 2),
+    projects: projectsFor(spec.repo.id),
   };
 }
 

@@ -57,6 +57,47 @@ units, support groups and leaves, read off `projects_json`) and a **business dom
 tenant says owns it, from the repository's `Wiz/Domain` tag). Picking either clears the other,
 because a header that carries two scopes cannot answer "what am I looking at" in one line.
 
+**The project axis has two grains, and the app keeps them apart.** The tenant files every
+repository under a **support group** — a project whose name's first segment is `CS`, `CE` or
+`LU` — and under a **product**, one whose first segment is `product`. One support group holds
+many products. Wiz reports all of them in a flat `projects[]` with no parent links, so that
+containment lives in the tenant's naming and never in the payload: `src/domain/projectGrain.ts`
+is the one place both rules are written down, and the client keeps a mirror of it that a test
+holds equal.
+
+Both grains are attached on read — `_supportGroup` and `_product`, beside `_domain`, at
+`readModels.baseSnapshot` — rather than stored. A prefix rule is vocabulary, and vocabulary
+changes; baked into the ledger a fourth prefix would cost a re-scan to correct, and because
+reconcile merges those columns latest-wins-never-erased a stale value would keep winning even
+then. Each falls back so rows already on the sheet still answer, and the product one refuses
+the single case it can prove wrong: it takes `owner_project` unless that value is itself a
+support group.
+
+That column, `owner_project`, is what this replaced. It took "the first non-folder project",
+which under this convention usually lands on the product — but not always: where Wiz reported
+the support group as a leaf and returned it first, the same column held a support group. One
+column, two grains, decided by API order, and every table on it headed "Owning project". The
+three register pages now break down **By product** and **By support group**; the Repositories
+cold zone rolls up by product with the support group as a column (the verdicts and the
+coldest-share badge are calibrated on the finer population, so the roll-up stays there and the
+group is the escalation path beside it); and the switcher gives each support group its own
+heading with its products under it. Where a product's repositories name two different support
+groups, nothing names one — a summary that hides a disagreement is worse than one that reports
+it.
+
+**One project is excluded from both, because it reaches everything.** Wiz files a repository
+under every project that touches it, and the tenant's GitHub connector puts `GITHUB-DKTUNITED`
+on all of them. As a switcher row that is "everything synced" under another name; as an
+`owner_project` it is a bucket named after the organisation that owns the whole register. So
+`src/domain/config.ts`'s `ORG_WIDE_PROJECTS` names it, `projectScope.ts::parseProjects` drops
+it before the catalogue, the membership predicate or the unattributed count see it, and
+`reconcile.ts::ownerProject` will not file a repository under it — a repository carrying only
+that tag reads as **no owning project**, and is counted in the header's `have no project`
+figure rather than quietly attributed to the organisation. The stored `projects_json` and
+`tags_json` keep it, whole: this is an exclusion from the analysis, not from the observation.
+A second connector tag is one edit to that list; it is spelled out rather than inferred from a
+`GITHUB-` prefix, so a business unit named after a tool is never hidden by accident.
+
 The domain arrives by a different route than the project, and the difference is the whole
 design: `projects[]` is in all three query documents, so it rides in on every finding, but
 **none of the three can select an asset's tags**. `VulnerableAssetRepositoryBranch` is the one

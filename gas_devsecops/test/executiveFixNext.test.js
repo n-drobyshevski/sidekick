@@ -45,12 +45,12 @@ function fixNextBlock(over) {
     groups: [
       {
         tier: 1, label: "Live credential", scope: "secrets", repo: "payments-api",
-        owner_project: "payments", count: 7, oldestAgeDays: 412,
+        product: "product-payments", supportGroup: "CE-TRANSPORT", count: 7, oldestAgeDays: 412,
         route: "secrets", params: { scope: "secrets", repo: "payments-api" },
       },
       {
         tier: 2, label: "Fixable and late", scope: "sca", repo: null,
-        owner_project: null, count: 3, oldestAgeDays: null,
+        product: null, supportGroup: null, count: 3, oldestAgeDays: null,
         route: "sca", params: { scope: "sca", repo: null },
       },
     ],
@@ -204,7 +204,10 @@ describe("fixNextView", () => {
     expect(first.countText).toBe("7 open findings");
     expect(first.oldestText).toBe("oldest 412 days");
     expect(first.scopeLabel).toBe("Secrets");
-    expect(first.ownerProject).toBe("payments");
+    expect(first.product).toBe("product-payments");
+    expect(first.supportGroup).toBe("CE-TRANSPORT");
+    // The product is who this is for, so it is what the meta line prints.
+    expect(first.ownerText).toBe("product-payments");
   });
 
   it("links each group at its own register", () => {
@@ -223,7 +226,25 @@ describe("fixNextView", () => {
     expect(second.repoText).toBe("—");
     expect(second.oldestDays).toBeNull();
     expect(second.oldestText).toBe("no readable age");
-    expect(second.ownerProject).toBeNull();
+    expect(second.product).toBeNull();
+    expect(second.supportGroup).toBeNull();
+    expect(second.ownerText).toBe("no single owner");
+  });
+
+  // THREE STATES, NOT TWO. A group whose repositories sit under several products may still
+  // sit under one support group — the coarser grain agrees more often, and it is who a reader
+  // escalates to. Falling straight to "no single owner" there would hide a real answer.
+  it("falls back to the support group, NAMED AS ONE, when no single product agrees", () => {
+    const v = fixNextView(payload({ fixNext: fixNextBlock({
+      groups: [{
+        tier: 1, label: "Live credential", scope: "secrets", repo: "payments-api",
+        product: null, supportGroup: "CE-TRANSPORT", count: 7, oldestAgeDays: 412,
+        route: "secrets", params: { scope: "secrets", repo: "payments-api" },
+      }],
+    }) }));
+    // Named as one: "CE-TRANSPORT" alone would read as a product to anyone who has not
+    // learned the tenant's prefixes.
+    expect(v.items[0].ownerText).toBe("CE-TRANSPORT (support group)");
   });
 
   it("accounts for everything it left out, by reason, in one sentence", () => {

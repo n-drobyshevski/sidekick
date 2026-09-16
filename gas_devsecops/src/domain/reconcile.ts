@@ -65,6 +65,7 @@
 // columns and for validation_state alike.
 
 import {
+  isOrgWideProject,
   RESOLUTION_API,
   RESOLUTION_DISAPPEARED,
   RESOLVED_STATUSES,
@@ -73,6 +74,7 @@ import {
   type Scope,
 } from "./config";
 import { findingKey } from "./lifecycle";
+import { isProduct } from "./projectGrain";
 import { normalizeSeverity } from "./severity";
 import {
   clean,
@@ -279,17 +281,53 @@ export function projectsListJson(record: Rec): string | null {
  *
  * If a later package learns the real hierarchy (the `repos` tab carries `projects_json` for
  * exactly that), owner_path is the field to re-derive; owner_project is not affected.
+ *
+ * NEITHER OF THEM NAMES AN ORGANISATION-WIDE PROJECT (`config.ts::ORG_WIDE_PROJECTS`). The
+ * tenant's connector tag sits in `projects[]` as a LEAF on every repository, so without this
+ * guard `owner_project` — the column the executive page groups by and the concentration
+ * tables rank — would read `GITHUB-DKTUNITED` for every repository nobody has filed under a
+ * product project, i.e. one enormous bucket named after the organisation that owns all of
+ * them. A repository whose ONLY project is that tag comes back null instead, which is the
+ * state the pages already draw ("no owning project"); a fabricated owner is worse than a
+ * missing one, because only one of the two can be noticed.
+ *
+ * `projects_json` and `tags_json` still carry the tag, whole — see ORG_WIDE_PROJECTS on why
+ * the stored observation is not ours to edit. This pair is a CHOICE, as the paragraph above
+ * says, and the choice is where the tenant's convention belongs.
+ *
+ * AND THE PRODUCT IS PREFERRED OVER "THE FIRST LEAF", because "the first leaf" is not one
+ * grain. The tenant marks a product by naming it `product-…` (`projectGrain.ts`), and files
+ * every repository under a CS/CE/LU support group as well — so on a node where Wiz reported
+ * the support group as a LEAF and returned it earlier in the array, the old rule filed the
+ * repository under the support group, while its neighbour with the same two projects in the
+ * other order got the product. One column, two grains, decided by API order: the executive
+ * page and the concentration tables were ranking those against each other.
+ *
+ * THE FALLBACK STILL TAKES A SUPPORT GROUP, deliberately. A repository whose only attribution
+ * is `CE-TRANSPORT` must keep naming it: this column is what a SEALED EPISODE is attributed by
+ * (`ledgerCore.ts`), and compaction keeps nothing else — nulling it would lose the only
+ * ownership a compacted row has. The read side is where that ambiguity is refused, once, in
+ * `projectGrain.productOf`. The write path PREFERS; the read path REFUSES.
+ *
+ * This change is STRICTLY NON-ERASING — it replaces one non-null name with another — so the
+ * latest-wins-never-erased merge below overwrites it on the next scan and no read-side repair
+ * pass is needed. That is what makes it cheap, unlike the org-wide rule above, which had to
+ * turn a value into `null` and therefore needed `ledgerStore.scrubOrgWideOwners`.
  */
 export function ownerProject(record: Rec): string | null {
-  const projects = projectList(record);
+  const projects = projectList(record).filter(
+    (p) => !isOrgWideProject(p["slug"], p["id"], p["name"]),
+  );
+  const product = projects.find((p) => isProduct(p["name"]));
   const leaf = projects.find((p) => p["isFolder"] !== true);
-  return str(leaf ?? projects[0] ?? {}, "name");
+  return str(product ?? leaf ?? projects[0] ?? {}, "name");
 }
 
 export function ownerPath(record: Rec): string | null {
   const names: string[] = [];
   for (const p of projectList(record)) {
     if (p["isFolder"] !== true) continue;
+    if (isOrgWideProject(p["slug"], p["id"], p["name"])) continue;
     const n = str(p, "name");
     if (n !== null) names.push(n);
   }

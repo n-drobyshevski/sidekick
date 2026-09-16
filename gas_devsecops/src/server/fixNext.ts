@@ -88,11 +88,25 @@ export interface FixNextGroup {
   /** `repo_name` if the ledger has one, else `repo_id`, else null — never "(unknown)". */
   repo: string | null;
   /**
-   * The one owning project, or null where the group spans several or carries none.
-   * `owner_project` is latest-wins per row, so a group of rows can genuinely disagree;
-   * naming one of them would invent an owner.
+   * The one PRODUCT, or null where the group spans several or carries none.
+   *
+   * `_product` is derived per row (src/domain/projectGrain.ts), so a group of rows can
+   * genuinely disagree; naming one of them would invent an owner. Replaces `owner_project`,
+   * which held a product for most rows and a SUPPORT GROUP for the rest depending on the
+   * order Wiz returned `projects[]` in — so the line under a ranked item used to name two
+   * different kinds of thing without saying which.
    */
-  owner_project: string | null;
+  product: string | null;
+  /**
+   * The one SUPPORT GROUP, under the same refusal.
+   *
+   * Carried BESIDE the product rather than instead of it because it is the coarser grain and
+   * therefore the more likely of the two to agree: a group whose repositories sit under
+   * several products may still sit under one support group, and that is exactly who you
+   * escalate to. A fix-next group is keyed on ONE repository, so disagreement here is itself
+   * a signal that the tenant's convention has broken for that repository.
+   */
+  supportGroup: string | null;
   count: number;
   /** The oldest open finding in the group, in days. Null when no row has a readable age. */
   oldestAgeDays: number | null;
@@ -213,12 +227,20 @@ function repoOf(row: BaseRow): string | null {
   return id.trim() === "" ? null : id;
 }
 
+/** Collect one row's grain into a bucket's set, ignoring blanks — a blank is not a name. */
+function addGrain(into: Set<string>, value: unknown): void {
+  if (value === null || value === undefined) return;
+  const name = String(value).trim();
+  if (name !== "") into.add(name);
+}
+
 interface Bucket {
   tier: FixNextTier;
   repo: string | null;
   count: number;
   oldestAgeDays: number | null;
-  owners: Set<string>;
+  products: Set<string>;
+  supportGroups: Set<string>;
 }
 
 /**
@@ -258,7 +280,14 @@ export function fixNext(rows: readonly BaseRow[], opts: FixNextOptions = {}): Fi
     const key = verdict.tier + " " + (repo === null ? "" : repo);
     let bucket = buckets.get(key);
     if (!bucket) {
-      bucket = { tier: verdict.tier, repo, count: 0, oldestAgeDays: null, owners: new Set() };
+      bucket = {
+        tier: verdict.tier,
+        repo,
+        count: 0,
+        oldestAgeDays: null,
+        products: new Set(),
+        supportGroups: new Set(),
+      };
       buckets.set(key, bucket);
     }
     bucket.count += 1;
@@ -266,10 +295,8 @@ export function fixNext(rows: readonly BaseRow[], opts: FixNextOptions = {}): Fi
     if (age !== null && age !== undefined && Number.isFinite(age)) {
       if (bucket.oldestAgeDays === null || age > bucket.oldestAgeDays) bucket.oldestAgeDays = age;
     }
-    const owner = row.owner_project === null || row.owner_project === undefined
-      ? ""
-      : String(row.owner_project);
-    if (owner.trim() !== "") bucket.owners.add(owner);
+    addGrain(bucket.products, row["_product"]);
+    addGrain(bucket.supportGroups, row["_supportGroup"]);
   }
 
   const all: FixNextGroup[] = [...buckets.values()]
@@ -280,7 +307,8 @@ export function fixNext(rows: readonly BaseRow[], opts: FixNextOptions = {}): Fi
         label: TIER_LABELS[b.tier],
         scope,
         repo: b.repo,
-        owner_project: b.owners.size === 1 ? [...b.owners][0]! : null,
+        product: b.products.size === 1 ? [...b.products][0]! : null,
+        supportGroup: b.supportGroups.size === 1 ? [...b.supportGroups][0]! : null,
         count: b.count,
         // One decimal. `age_days` is a float carrying sub-second precision that no reader
         // wants and every group pays 14 bytes for; the page rounds it to whole days anyway.

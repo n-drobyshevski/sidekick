@@ -18,8 +18,9 @@
 // — the honest-gap behaviour, because `assetProfile()` never read `owner_project` and there
 // was no owned/unowned split anywhere in `api_getReposPage`'s reply. That is still true of
 // `assetProfile()`; what changed is that the payload now carries a SECOND family beside it,
-// `model.coldZone` (src/domain/coldZone.ts), built from the ledger rows where `owner_project`
-// has always been. Its `teams` array is one row per project with a real "(no project)" bucket,
+// `model.coldZone` (src/domain/coldZone.ts), built from the ledger rows where ownership has
+// always been. Its `teams` array is one row per PRODUCT — with the CS/CE/LU support group
+// above it carried as a column — and has a real "(no product)" bucket,
 // so the question the old test pinned as unanswerable is answered, and the describes below
 // pin the new claims instead. The rule the deleted test encoded has not moved: an absence is
 // still an absence and is still drawn with `emptyState`, which is what the source-as-text case
@@ -33,7 +34,7 @@ import {
   coldCensusModel,
   coldRepoRows, coldScatterPoints, coldTeamRows, coldZoneView, coverageMeterPct, densityView,
   footholdCellKind, footholdView, groupRows, halfLifeView, heatLevel, heatModel, overallRow,
-  tableRow, unmeasurableNote, projectCountNote,
+  tableRow, unmeasurableNote, productCountNote,
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
@@ -230,7 +231,7 @@ function coldRepo(over = {}) {
   return {
     repo_id: "r1",
     repo_name: "repo-one",
-    project: "platform",
+    product: "platform",
     open_findings: 12,
     open_high_risk: 3,
     oldest_open_age_days: 210.5,
@@ -255,7 +256,7 @@ function coldRepo(over = {}) {
 /** A `ColdTeamRow`-shaped fixture, same bargain. */
 function coldTeam(over = {}) {
   return {
-    project: "platform",
+    product: "platform",
     label: "platform",
     repos: 4,
     repos_observed: 4,
@@ -297,7 +298,7 @@ function coldTotals(over = {}) {
     teams: 2,
     teams_fully_cold: 0,
     teams_partly_cold: 1,
-    repos_no_project: 1,
+    repos_no_product: 1,
     buckets: [2, 1, 0, 2, 1],
     bucket_open: [10, 6, 0, 24, 4],
     ...over,
@@ -565,9 +566,9 @@ describe("repos: heatModel — the grid, its header and its unshaded totals row"
     expect(model.rows[0].cells.map((c) => c.level)).toEqual([4, 4, 0, 4, 0]);
   });
 
-  it("the totals row is unshaded — the ramp compares projects, not a project with the sum", () => {
+  it("the totals row is unshaded — the ramp compares products, not a product with the sum", () => {
     const model = heatModel(coldZoneView(coldModel()));
-    expect(model.totals.label).toBe("All projects");
+    expect(model.totals.label).toBe("All products");
     expect(model.totals.cells.map((c) => c.count)).toEqual([2, 1, 0, 2, 1]);
     expect(model.totals.cells.every((c) => c.level === 0)).toBe(true);
   });
@@ -580,7 +581,7 @@ describe("repos: heatModel — the grid, its header and its unshaded totals row"
 });
 
 describe("repos: coldTeamRows — a share nobody could take draws no meter", () => {
-  it("carries the project's figures and its verdict word", () => {
+  it("carries the product's figures and its verdict word", () => {
     const [row] = coldTeamRows(coldZoneView(coldModel()));
     expect(row.label).toBe("platform");
     expect(row.verdict).toBe("partly-cold");
@@ -591,7 +592,7 @@ describe("repos: coldTeamRows — a share nobody could take draws no meter", () 
   });
 
   it("a null cold share is null on the row, so the cell draws the em dash and no track", () => {
-    // `cold_share_pct` is null over an empty denominator (a project with no repository
+    // `cold_share_pct` is null over an empty denominator (a product with no repository
     // carrying an open finding). `meter()` opens with `Number(value) || 0`, so a row that
     // passed the null through would draw a confident 0% track beside a cell that measured
     // nothing — the same defect `coverageMeterPct` above exists to refuse.
@@ -608,14 +609,42 @@ describe("repos: coldTeamRows — a share nobody could take draws no meter", () 
     expect(coldTeamRows(v)[0].sharePct).toBe(0);
   });
 
-  it("the no-project bucket is a row like any other, labelled and never dropped", () => {
+  it("the no-product bucket is a row like any other, labelled and never dropped", () => {
     const v = coldZoneView(coldModel({
-      teams: [coldTeam({ project: null, label: "(no project)" }), coldTeam()],
+      teams: [coldTeam({ product: null, label: "(no product)" }), coldTeam()],
     }));
     const rows = coldTeamRows(v);
     expect(rows).toHaveLength(2);
-    expect(rows[0].label).toBe("(no project)");
-    expect(rows[0].key).toBe("(no project)");
+    expect(rows[0].label).toBe("(no product)");
+    expect(rows[0].key).toBe("(no product)");
+  });
+
+  // THE ESCALATION PATH, beside the grain that went cold. One support group holds many
+  // products, so this column is the only way to read a cold product up to who answers for it
+  // — the roll-up itself stays on products, because the verdicts and the coldest-share badge
+  // are calibrated on that population.
+  it("carries the support group a product escalates to", () => {
+    const v = coldZoneView(coldModel({
+      teams: [coldTeam({ support_group: "CE-TRANSPORT", support_groups: 1 })],
+    }));
+    expect(coldTeamRows(v)[0].supportGroup).toBe("CE-TRANSPORT");
+    expect(coldTeamRows(v)[0].supportGroupText).toBe("CE-TRANSPORT");
+  });
+
+  it("prints the em dash where no single support group answers — BOTH reasons, one mark", () => {
+    // Nobody named one, and several named different ones, look the same to a reader asking
+    // who to escalate to; this column cannot tell them apart and does not pretend to. The
+    // distinction survives in the payload's `support_groups` count.
+    const none = coldZoneView(coldModel({
+      teams: [coldTeam({ support_group: null, support_groups: 0 })],
+    }));
+    expect(coldTeamRows(none)[0].supportGroup).toBeNull();
+    expect(coldTeamRows(none)[0].supportGroupText).toBe("—");
+
+    const split = coldZoneView(coldModel({
+      teams: [coldTeam({ support_group: null, support_groups: 2 })],
+    }));
+    expect(coldTeamRows(split)[0].supportGroupText).toBe("—");
   });
 
   it("a team that has never moved prints the em dash, never a date of zero", () => {
@@ -676,25 +705,25 @@ describe("repos: coldRepoRows — the bound reads \"≥\", and never \">\"", () 
     expect(coldRepoRows(v)[0].reopenedOpen).toBe(4);
   });
 
-  it("a repository with no project recorded is filed under (no project), never blank", () => {
-    const v = coldZoneView(coldModel({ repos: [coldRepo({ project: null })] }));
-    expect(coldRepoRows(v)[0].project).toBe("(no project)");
+  it("a repository with no product recorded is filed under (no product), never blank", () => {
+    const v = coldZoneView(coldModel({ repos: [coldRepo({ product: null })] }));
+    expect(coldRepoRows(v)[0].product).toBe("(no product)");
   });
 });
 
-describe("repos: projectCountNote — names the (no project) bucket only when it is in the table", () => {
+describe("repos: productCountNote — names the (no product) bucket only when it is in the table", () => {
   it("says nothing about a bucket the table does not hold", () => {
-    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_project: 0 }) }));
-    expect(projectCountNote(v, 4)).toBe("4 projects.");
-    expect(projectCountNote(v, 4)).not.toMatch(/no project/);
+    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_product: 0 }) }));
+    expect(productCountNote(v, 4)).toBe("4 products.");
+    expect(productCountNote(v, 4)).not.toMatch(/no product/);
   });
 
-  it("names the bucket, with its size, when repositories have no project recorded", () => {
-    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_project: 2 }) }));
-    expect(projectCountNote(v, 3)).toBe(
-      "3 projects, including the 2 repositories with no project recorded, counted together as one.",
+  it("names the bucket, with its size, when repositories have no product recorded", () => {
+    const v = coldZoneView(coldModel({ totals: coldTotals({ repos_no_product: 2 }) }));
+    expect(productCountNote(v, 3)).toBe(
+      "3 products, including the 2 repositories with no product recorded, counted together as one.",
     );
-    expect(projectCountNote(v, 1)).toMatch(/^1 project,/);
+    expect(productCountNote(v, 1)).toMatch(/^1 product,/);
   });
 });
 
@@ -1097,7 +1126,7 @@ describe("repos: coldTeamRows — the rank is not the row number, and the badge 
   it("carries the rank and the mark the payload published", () => {
     const v = coldZoneView(relativeModel({
       teams: [
-        coldTeam({ project: "quiet", label: "quiet", relative_rank: 1, in_coldest_share: true }),
+        coldTeam({ product: "quiet", label: "quiet", relative_rank: 1, in_coldest_share: true }),
         coldTeam({ relative_rank: 2, in_coldest_share: false }),
       ],
     }));
@@ -1106,7 +1135,7 @@ describe("repos: coldTeamRows — the rank is not the row number, and the badge 
     expect(rows.map((r) => r.inColdestShare)).toEqual([true, false]);
   });
 
-  it("a project with no repository carrying an open finding has NO rank, not a last place", () => {
+  it("a product with no repository carrying an open finding has NO rank, not a last place", () => {
     const v = coldZoneView(relativeModel({
       teams: [coldTeam({
         repos_with_open: 0, cold_repos: 0, cold_share_pct: null, verdict: "clear",
@@ -1134,23 +1163,23 @@ describe("repos: coldTeamRows — the rank is not the row number, and the badge 
 });
 
 describe("repos: coldestShareNote — the marks counted, and the clamp that decides how many", () => {
-  it("counts the badged projects and states the refusal behind the count", () => {
+  it("counts the badged products and states the refusal behind the count", () => {
     const v = coldZoneView(relativeModel({}, { teams_in_coldest_share: 2 }));
     expect(coldestShareNote(v)).toBe(
-      "2 projects are in the coldest 20% by the share of their open-finding repositories that"
-      + " are cold. A project with no cold repository is never marked.",
+      "2 products are in the coldest 20% by the share of their open-finding repositories that"
+      + " are cold. A product with no cold repository is never marked.",
     );
   });
 
-  it("reads grammatically at one project", () => {
+  it("reads grammatically at one product", () => {
     const v = coldZoneView(relativeModel({}, { teams_in_coldest_share: 1 }));
     expect(coldestShareNote(v)).toBe(
-      "1 project is in the coldest 20% by the share of its open-finding repositories that are"
-      + " cold. A project with no cold repository is never marked.",
+      "1 product is in the coldest 20% by the share of its open-finding repositories that are"
+      + " cold. A product with no cold repository is never marked.",
     );
   });
 
-  it("is null — not a sentence about zero projects — when nobody is marked", () => {
+  it("is null — not a sentence about zero products — when nobody is marked", () => {
     expect(coldestShareNote(coldZoneView(relativeModel()))).toBeNull();
     expect(coldestShareNote(null)).toBeNull();
     expect(coldestShareNote(undefined)).toBeNull();
@@ -1175,7 +1204,7 @@ describe("repos: the mode reaches the section, the column and the canvas", () =>
       .toBeLessThan(body.indexOf("if (!view.measurable)"));
   });
 
-  it("the project table carries a Coldest rank column, its pill and its glossary id", () => {
+  it("the product table carries a Coldest rank column, its pill and its glossary id", () => {
     expect(section).toMatch(/label: "Coldest rank"/);
     expect(section).toMatch(/term: "coldest-share"/);
     expect(section).toMatch(/statusPill\("warn", `Coldest \$\{fmtCount\(view\.targetSharePct\)\}%`\)/);
@@ -1184,11 +1213,25 @@ describe("repos: the mode reaches the section, the column and the canvas", () =>
     expect(section.indexOf('label: "Coldest rank"')).toBeLessThan(section.indexOf('label: "Open in cold"'));
   });
 
+  it("the table is headed By product and carries the Support group column next to it", () => {
+    expect(section).toMatch(/"By product"/);
+    expect(section).toMatch(/label: "Product"/);
+    expect(section).toMatch(/label: "Support group"/);
+    // Immediately after the product it belongs to, and before anything measured — the reader
+    // reads "this product, under that group" as one phrase before any number arrives.
+    expect(section.indexOf('label: "Product"'))
+      .toBeLessThan(section.indexOf('label: "Support group"'));
+    expect(section.indexOf('label: "Support group"'))
+      .toBeLessThan(section.indexOf('label: "Verdict"'));
+    // And the word the whole family retired is gone from this section.
+    expect(section).not.toMatch(/label: "Project"/);
+  });
+
   it("the scatter is told which mode drew the line it is about to draw a rule at", () => {
     expect(section).toMatch(/coldZoneScatter\(canvas, points, \{[\s\S]*?mode: view\.mode,/);
   });
 
-  it("the badge's count line is rendered under the project table", () => {
+  it("the badge's count line is rendered under the product table", () => {
     expect(section).toMatch(/coldestShareNote\(view\)/);
   });
 });

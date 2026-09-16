@@ -413,13 +413,17 @@ const ENTRIES = [
   },
   {
     // The team-level half of relative mode. A rank is not a verdict, and this is where that
-    // distinction is settled for a reader who found the mark on the project table.
+    // distinction is settled for a reader who found the mark on the product table.
+    //
+    // THE ID DOES NOT MOVE with the wording. Every `help: { term: "coldest-share" }` in
+    // repos.js resolves against it, and a renamed entry is a column whose caveat silently
+    // stops opening.
     id: "coldest-share",
     term: "Coldest share",
     lines: [
-      "In relative mode, the projects with the highest share of their open-finding repositories cold — a position relative to the other projects, not a verdict about any one of them.",
-      "A project with no cold repository is never marked, however small the estate; projects tied at the cutoff are all marked rather than split by name.",
-      "Ranked over the projects that have at least one repository with an open finding. A project with nothing open has no share to rank and carries no position at all.",
+      "In relative mode, the products with the highest share of their open-finding repositories cold — a position relative to the other products, not a verdict about any one of them.",
+      "A product with no cold repository is never marked, however small the estate; products tied at the cutoff are all marked rather than split by name.",
+      "Ranked over the products that have at least one repository with an open finding. A product with nothing open has no share to rank and carries no position at all.",
     ],
   },
   {

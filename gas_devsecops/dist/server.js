@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "e0664f8b8baa" : "dev";
+  var BUILD_ID = true ? "292509516ea8" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -661,6 +661,18 @@ var Server = (() => {
     sast: "Code",
     secrets: "Secrets"
   };
+  var ORG_WIDE_PROJECTS = ["GITHUB-DKTUNITED"];
+  var ORG_WIDE_KEYS = new Set(
+    ORG_WIDE_PROJECTS.map((p) => p.trim().toUpperCase())
+  );
+  function isOrgWideProject(...labels) {
+    for (const label of labels) {
+      if (typeof label !== "string") continue;
+      const key = label.trim().toUpperCase();
+      if (key !== "" && ORG_WIDE_KEYS.has(key)) return true;
+    }
+    return false;
+  }
   var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
   var STATUS_OPEN = "OPEN";
   var STATUS_RESOLVED = "RESOLVED";
@@ -978,6 +990,41 @@ var Server = (() => {
     return summarize(work, opts.now, opts.scope, opts.slaTargets);
   }
 
+  // src/domain/projectGrain.ts
+  function firstSegment(name) {
+    var _a;
+    return (_a = String(name != null ? name : "").trim().split(/[-_\s]/)[0]) != null ? _a : "";
+  }
+  var SUPPORT_GROUP_PREFIXES = ["CS", "CE", "LU"];
+  var PRODUCT_SEGMENT = "product";
+  function isSupportGroup(name) {
+    const first = firstSegment(name).toUpperCase();
+    return first !== "" && SUPPORT_GROUP_PREFIXES.indexOf(first) >= 0;
+  }
+  function isProduct(name) {
+    return firstSegment(name).toLowerCase() === PRODUCT_SEGMENT;
+  }
+  function lowestName(names) {
+    if (!names.length) return null;
+    return [...names].sort((a, b) => a.localeCompare(b))[0];
+  }
+  function supportGroupOf(projects, ownerPath2) {
+    const named = lowestName(projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name));
+    if (named !== null) return named;
+    if (typeof ownerPath2 !== "string" || ownerPath2.trim() === "") return null;
+    return lowestName(
+      ownerPath2.split("/").map((seg) => seg.trim()).filter((seg) => isSupportGroup(seg))
+    );
+  }
+  function productOf(projects, ownerProject2) {
+    const named = lowestName(projects.filter((p) => isProduct(p.name)).map((p) => p.name));
+    if (named !== null) return named;
+    if (typeof ownerProject2 !== "string") return null;
+    const owner = ownerProject2.trim();
+    if (owner === "" || isSupportGroup(owner)) return null;
+    return owner;
+  }
+
   // src/domain/reconcile.ts
   var DAY_MS2 = 864e5;
   var MEASURED_VALIDATION = /* @__PURE__ */ new Set(["VALID", "INVALID"]);
@@ -1072,15 +1119,19 @@ var Server = (() => {
     return `[${parts.join(", ")}]`;
   }
   function ownerProject(record) {
-    var _a;
-    const projects = projectList(record);
+    var _a, _b;
+    const projects = projectList(record).filter(
+      (p) => !isOrgWideProject(p["slug"], p["id"], p["name"])
+    );
+    const product = projects.find((p) => isProduct(p["name"]));
     const leaf = projects.find((p) => p["isFolder"] !== true);
-    return str((_a = leaf != null ? leaf : projects[0]) != null ? _a : {}, "name");
+    return str((_b = (_a = product != null ? product : leaf) != null ? _a : projects[0]) != null ? _b : {}, "name");
   }
   function ownerPath(record) {
     const names = [];
     for (const p of projectList(record)) {
       if (p["isFolder"] !== true) continue;
+      if (isOrgWideProject(p["slug"], p["id"], p["name"])) continue;
       const n2 = str(p, "name");
       if (n2 !== null) names.push(n2);
     }
@@ -2278,13 +2329,16 @@ var Server = (() => {
   }
   function oldestOpen(rows, topN = 7, scope) {
     const scoped = byScope(rows, scope);
-    const findings = scoped.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => ({
-      identifier: r.identifier,
-      repo: r.repo_name,
-      ownerProject: r.owner_project,
-      severity: normalizeSeverity(r.severity),
-      ageDays: age
-    }));
+    const findings = scoped.map((r) => ({ r, age: openAge(r) })).filter((x) => x.age !== null).sort((a, b) => b.age - a.age).slice(0, topN).map(({ r, age }) => {
+      var _a;
+      return {
+        identifier: r.identifier,
+        repo: r.repo_name,
+        product: (_a = r._product) != null ? _a : null,
+        severity: normalizeSeverity(r.severity),
+        ageDays: age
+      };
+    });
     return {
       findings,
       byRepo: rankGroups(scoped, (r) => {
@@ -2293,7 +2347,7 @@ var Server = (() => {
       }, topN, (r) => {
         var _a;
         return {
-          ownerProject: String((_a = r.owner_project) != null ? _a : "")
+          product: String((_a = r._product) != null ? _a : "")
         };
       })
     };
@@ -2322,6 +2376,8 @@ var Server = (() => {
     repo: "repo_name",
     language: "language",
     owner_project: "owner_project",
+    product: "_product",
+    support_group: "_supportGroup",
     domain: "_domain",
     secret_kind: "secret_kind",
     cwe: "cwe"
@@ -4718,6 +4774,7 @@ var Server = (() => {
       const slug = rec["slug"];
       const name = rec["name"];
       if (typeof slug !== "string" || slug === "" || typeof name !== "string") continue;
+      if (isOrgWideProject(slug, name)) continue;
       const ref = { slug, name };
       if (typeof rec["isFolder"] === "boolean") ref.isFolder = rec["isFolder"];
       out.push(ref);
@@ -4726,16 +4783,40 @@ var Server = (() => {
   }
   function projectCatalogue(rows) {
     const bySlug = /* @__PURE__ */ new Map();
+    const parentsOf = /* @__PURE__ */ new Map();
     for (const row of rows) {
-      for (const p of parseProjects(row.projects_json)) {
+      const projects = parseProjects(row.projects_json);
+      const groups = projects.filter((p) => isSupportGroup(p.name)).map((p) => p.name);
+      for (const p of projects) {
+        if (groups.length && isProduct(p.name)) {
+          let parents = parentsOf.get(p.slug);
+          if (!parents) {
+            parents = /* @__PURE__ */ new Set();
+            parentsOf.set(p.slug, parents);
+          }
+          for (const g of groups) parents.add(g);
+        }
         const seen = bySlug.get(p.slug);
         if (!seen) {
-          bySlug.set(p.slug, { slug: p.slug, name: p.name, isFolder: p.isFolder, findings: 1 });
+          bySlug.set(p.slug, {
+            slug: p.slug,
+            name: p.name,
+            isFolder: p.isFolder,
+            findings: 1,
+            supportGroup: null,
+            supportGroupCount: 0
+          });
           continue;
         }
         seen.findings += 1;
         if (seen.isFolder === void 0 && p.isFolder !== void 0) seen.isFolder = p.isFolder;
       }
+    }
+    for (const [slug, parents] of parentsOf) {
+      const entry = bySlug.get(slug);
+      if (!entry) continue;
+      entry.supportGroupCount = parents.size;
+      entry.supportGroup = parents.size === 1 ? [...parents][0] : null;
     }
     return [...bySlug.values()].sort(
       (a, b) => a.isFolder === b.isFolder ? a.name.localeCompare(b.name) : a.isFolder ? -1 : 1
@@ -4751,6 +4832,17 @@ var Server = (() => {
       if (parseProjects(row.projects_json).length === 0) count += 1;
     }
     return count;
+  }
+  function attachProjectGrain(rows) {
+    for (const row of rows) {
+      const projects = parseProjects(row.projects_json);
+      const group = supportGroupOf(projects, row.owner_path);
+      const product = productOf(projects, row.owner_project);
+      if (group !== null) row._supportGroup = group;
+      if (product !== null) row._product = product;
+      const groups = projects.filter((p) => isSupportGroup(p.name)).length;
+      if (groups > 1) row._supportGroups = groups;
+    }
   }
 
   // src/domain/domainScope.ts
@@ -5593,6 +5685,18 @@ var Server = (() => {
     const num2 = Number(v);
     return Number.isFinite(num2) ? num2 : null;
   }
+  function ownerOf(r) {
+    const owner = s(r, "owner_project");
+    return isOrgWideProject(owner) ? null : owner;
+  }
+  function scrubOrgWideOwners(state) {
+    for (const row of Object.values(state.ledger)) {
+      if (isOrgWideProject(row.owner_project)) row.owner_project = null;
+    }
+    for (const episode of state.episodes) {
+      if (isOrgWideProject(episode.owner_project)) episode.owner_project = null;
+    }
+  }
   function scopeOf(key, raw) {
     if (raw === "sca" || raw === "sast" || raw === "secrets") return raw;
     const head = key.slice(0, key.indexOf(":"));
@@ -5656,7 +5760,7 @@ var Server = (() => {
       validation_state: s(r, "validation_state"),
       validated_at: s(r, "validated_at"),
       confidence: s(r, "confidence"),
-      owner_project: s(r, "owner_project"),
+      owner_project: ownerOf(r),
       owner_path: s(r, "owner_path"),
       tags_json: s(r, "tags_json"),
       projects_json: s(r, "projects_json")
@@ -5685,7 +5789,7 @@ var Server = (() => {
       epss: risk.epss,
       cwe: s(r, "cwe"),
       language: s(r, "language"),
-      owner_project: s(r, "owner_project")
+      owner_project: ownerOf(r)
     };
   }
   var scanRowsMemo;
@@ -5714,6 +5818,7 @@ var Server = (() => {
       if (snap) {
         state.ledger = snap.ledger;
         state.episodes = snap.episodes;
+        scrubOrgWideOwners(state);
         stateMemo = state;
         return state;
       }
@@ -6195,7 +6300,7 @@ var Server = (() => {
 
   // src/domain/coldZone.ts
   var DAY_MS7 = 864e5;
-  var COLD_PROJECT_NONE = "(no project)";
+  var COLD_PRODUCT_NONE = "(no product)";
   function isOpen4(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
@@ -6223,7 +6328,9 @@ var Server = (() => {
     return {
       repoId,
       repoName: null,
-      project: null,
+      product: null,
+      supportGroup: null,
+      supportGroupSplit: false,
       scopes: /* @__PURE__ */ new Set(),
       rowsByScope: /* @__PURE__ */ new Map(),
       open: 0,
@@ -6240,7 +6347,11 @@ var Server = (() => {
   function foldRow(acc, row, risk) {
     var _a, _b;
     if (acc.repoName === null && !blank(row.repo_name)) acc.repoName = String(row.repo_name);
-    if (acc.project === null && !blank(row.owner_project)) acc.project = String(row.owner_project);
+    if (acc.product === null && !blank(row._product)) acc.product = String(row._product);
+    if (acc.supportGroup === null && !blank(row._supportGroup)) {
+      acc.supportGroup = String(row._supportGroup);
+    }
+    if (Number(row._supportGroups) > 1) acc.supportGroupSplit = true;
     acc.scopes.add(row.scope);
     const bucket = acc.rowsByScope.get(row.scope);
     if (bucket) bucket.push(row);
@@ -6483,7 +6594,9 @@ var Server = (() => {
       repos.push({
         repo_id: acc.repoId,
         repo_name: acc.repoName,
-        project: acc.project,
+        product: acc.product,
+        support_group: acc.supportGroup,
+        support_group_split: acc.supportGroupSplit,
         open_findings: acc.open,
         open_high_risk: acc.openHigh,
         oldest_open_age_days: acc.oldestOpenFirstSeen === null ? null : daysBetween(acc.oldestOpenFirstSeen, nowMs),
@@ -6529,14 +6642,14 @@ var Server = (() => {
     };
   }
   function rollUp(repos) {
-    const byProject = /* @__PURE__ */ new Map();
+    const byProduct = /* @__PURE__ */ new Map();
     for (const r of repos) {
-      const list = byProject.get(r.project);
+      const list = byProduct.get(r.product);
       if (list) list.push(r);
-      else byProject.set(r.project, [r]);
+      else byProduct.set(r.product, [r]);
     }
     const out = [];
-    for (const [project2, list] of byProject) {
+    for (const [product, list] of byProduct) {
       const buckets = [0, 0, 0, 0, 0];
       const bucketOpen = [0, 0, 0, 0, 0];
       let observed = 0;
@@ -6588,9 +6701,19 @@ var Server = (() => {
         }
       }
       const verdict = withOpen === 0 ? "clear" : coldRepos === withOpen ? "fully-cold" : coldRepos > 0 ? "partly-cold" : "warm";
+      const groups = /* @__PURE__ */ new Set();
+      let split = false;
+      for (const r of list) {
+        if (r.support_group !== null) groups.add(r.support_group);
+        if (r.support_group_split) split = true;
+      }
+      const groupCount = split ? Math.max(groups.size, 2) : groups.size;
       out.push({
-        project: project2,
-        label: project2 != null ? project2 : COLD_PROJECT_NONE,
+        product,
+        label: product != null ? product : COLD_PRODUCT_NONE,
+        // One name only when they all agree — see the field's own comment.
+        support_group: groupCount === 1 ? [...groups][0] : null,
+        support_groups: groupCount,
         repos: list.length,
         repos_observed: observed,
         repos_unobserved: unobserved,
@@ -6607,7 +6730,7 @@ var Server = (() => {
         last_movement_at: toIso(lastMovement),
         verdict,
         // Filled by `rankTeams`, which runs over the finished roll-up: the rank is a fact about
-        // the whole set of projects, so no single project's fold can know it.
+        // the whole set of products, so no single product's fold can know it.
         relative_rank: null,
         in_coldest_share: false,
         buckets,
@@ -6666,7 +6789,7 @@ var Server = (() => {
       teams_fully_cold: 0,
       teams_partly_cold: 0,
       teams_in_coldest_share: 0,
-      repos_no_project: 0,
+      repos_no_product: 0,
       buckets,
       bucket_open: bucketOpen
     };
@@ -6685,7 +6808,7 @@ var Server = (() => {
       if (team.verdict === "fully-cold") t.teams_fully_cold += 1;
       if (team.verdict === "partly-cold") t.teams_partly_cold += 1;
       if (team.in_coldest_share) t.teams_in_coldest_share += 1;
-      if (team.project === null) t.repos_no_project = team.repos;
+      if (team.product === null) t.repos_no_product = team.repos;
       for (let i = 0; i < 5; i += 1) {
         buckets[i] += team.buckets[i];
         bucketOpen[i] += team.bucket_open[i];
@@ -7258,6 +7381,11 @@ var Server = (() => {
     const id = row.repo_id === null || row.repo_id === void 0 ? "" : String(row.repo_id);
     return id.trim() === "" ? null : id;
   }
+  function addGrain(into, value) {
+    if (value === null || value === void 0) return;
+    const name = String(value).trim();
+    if (name !== "") into.add(name);
+  }
   function fixNext(rows, opts = {}) {
     var _a;
     const now = opts.now === void 0 ? Date.now() : opts.now;
@@ -7282,7 +7410,14 @@ var Server = (() => {
       const key = verdict.tier + "\0" + (repo === null ? "" : repo);
       let bucket = buckets.get(key);
       if (!bucket) {
-        bucket = { tier: verdict.tier, repo, count: 0, oldestAgeDays: null, owners: /* @__PURE__ */ new Set() };
+        bucket = {
+          tier: verdict.tier,
+          repo,
+          count: 0,
+          oldestAgeDays: null,
+          products: /* @__PURE__ */ new Set(),
+          supportGroups: /* @__PURE__ */ new Set()
+        };
         buckets.set(key, bucket);
       }
       bucket.count += 1;
@@ -7290,8 +7425,8 @@ var Server = (() => {
       if (age !== null && age !== void 0 && Number.isFinite(age)) {
         if (bucket.oldestAgeDays === null || age > bucket.oldestAgeDays) bucket.oldestAgeDays = age;
       }
-      const owner = row.owner_project === null || row.owner_project === void 0 ? "" : String(row.owner_project);
-      if (owner.trim() !== "") bucket.owners.add(owner);
+      addGrain(bucket.products, row["_product"]);
+      addGrain(bucket.supportGroups, row["_supportGroup"]);
     }
     const all = [...buckets.values()].map((b) => {
       const scope = TIER_SCOPES[b.tier];
@@ -7300,7 +7435,8 @@ var Server = (() => {
         label: TIER_LABELS[b.tier],
         scope,
         repo: b.repo,
-        owner_project: b.owners.size === 1 ? [...b.owners][0] : null,
+        product: b.products.size === 1 ? [...b.products][0] : null,
+        supportGroup: b.supportGroups.size === 1 ? [...b.supportGroups][0] : null,
         count: b.count,
         // One decimal. `age_days` is a float carrying sub-second precision that no reader
         // wants and every group pays 14 bytes for; the page rounds it to whole days anyway.
@@ -7484,6 +7620,7 @@ var Server = (() => {
       const now = Date.now();
       const rows = loadBaseRows({ now });
       attachDomains(rows);
+      attachProjectGrain(rows);
       baseMemo = { version, now, rows };
     }
     return baseMemo;
@@ -7954,9 +8091,21 @@ var Server = (() => {
     // reason (the join map has never been refreshed), and the card that results says `(none)`
     // for every row rather than disappearing — which is the honest shape, and is why
     // `concentrationModel` keeping zero-row cards is left alone rather than special-cased.
-    sca: ["repo", "owner_project", "domain"],
-    sast: ["repo", "cwe", "owner_project", "domain"],
-    secrets: ["repo", "secret_kind", "owner_project", "domain"]
+    //
+    // `owner_project` IS GONE, REPLACED BY TWO CARDS, and that is the correction this list
+    // exists to record. The tenant files every repository under a CS/CE/LU SUPPORT GROUP and
+    // under a `product-…` PRODUCT (src/domain/projectGrain.ts), and `owner_project` held
+    // whichever of the two Wiz happened to return first — so a single card was ranking products
+    // against support groups and calling the mixture "By owning project".
+    //
+    // BOTH GRAINS ARE LISTED, and neither is a restatement of the other in `language`'s sense.
+    // One support group holds MANY products, so the group's total is a roll-up the product card
+    // cannot express: the product card names the worst single product, and only the group card
+    // can show that three mediocre products under one group add up to the largest backlog
+    // anyone owns. It is also the escalation grain — you tell a support group, not a product.
+    sca: ["repo", "product", "support_group", "domain"],
+    sast: ["repo", "cwe", "product", "support_group", "domain"],
+    secrets: ["repo", "secret_kind", "product", "support_group", "domain"]
   };
   function buildRegister(scope, n2) {
     const snap = baseSnapshot();

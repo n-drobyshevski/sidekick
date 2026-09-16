@@ -28,7 +28,7 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  COLD_PROJECT_NONE,
+  COLD_PRODUCT_NONE,
   coldZoneHeadline,
   coldZoneProfile,
   type ColdRow,
@@ -73,7 +73,11 @@ function row(over: Partial<ColdRow> = {}): ColdRow {
     ai_verdict: null,
     repo_id: "repo-1",
     repo_name: "acme/repo-1",
-    owner_project: "platform",
+    // THE TWO GRAINS, ATTACHED ON READ (projectScope.attachProjectGrain), never columns —
+    // which is why the fixture sets them directly. They replaced `owner_project`, whose grain
+    // depended on the order Wiz returned `projects[]` in.
+    _product: "platform",
+    _supportGroup: "CE-TRANSPORT",
     first_seen: back(200),
     last_seen: AS_OF,
     resolved_at: null,
@@ -362,39 +366,96 @@ describe("secrets: removal on an OPEN row is movement, and is never high risk", 
 
 // --------------------------------------------------------------------------- teams
 
-describe("the null owner_project is a real team row, not a drop", () => {
+describe("the null product is a real team row, not a drop", () => {
   const out = profile([
-    row({ repo_id: "repo-orphan", repo_name: "acme/orphan", owner_project: null }),
-    row({ repo_id: "repo-orphan", repo_name: "acme/orphan", owner_project: "" }),
+    row({ repo_id: "repo-orphan", repo_name: "acme/orphan", _product: null }),
+    row({ repo_id: "repo-orphan", repo_name: "acme/orphan", _product: "" }),
     row({ repo_id: "repo-owned", repo_name: "acme/owned", status: "RESOLVED", resolved_at: back(5) }),
     row({ repo_id: "repo-owned", repo_name: "acme/owned" }),
   ]);
 
   it("labels it, keeps it, and publishes the ownership gap as a figure", () => {
-    const orphan = teamOf(out, COLD_PROJECT_NONE);
-    expect(COLD_PROJECT_NONE).toBe("(no project)");
-    expect(orphan.project).toBeNull();
+    const orphan = teamOf(out, COLD_PRODUCT_NONE);
+    expect(COLD_PRODUCT_NONE).toBe("(no product)");
+    expect(orphan.product).toBeNull();
     expect(orphan.repos).toBe(1);
     expect(orphan.open_findings).toBe(2);
-    expect(out.totals!.repos_no_project).toBe(1);
+    expect(out.totals!.repos_no_product).toBe(1);
     expect(out.totals!.teams).toBe(2);
   });
 
   it("sorts it by the same rule as every other team — never pinned last", () => {
     // The orphan is cold (no movement, 400 d bound); the owned repo is warm. Cold first.
-    expect(out.teams!.map((t) => t.label)).toEqual([COLD_PROJECT_NONE, "platform"]);
+    expect(out.teams!.map((t) => t.label)).toEqual([COLD_PRODUCT_NONE, "platform"]);
+  });
+});
+
+// THE ESCALATION PATH, CARRIED BESIDE THE GRAIN THAT WENT COLD. One support group holds many
+// products, so the roll-up stays on the finer grain — the verdicts and the coldest-share badge
+// are calibrated on it — and the group rides as a column. A team row summarises many
+// repositories, so it takes the same refusal `server/fixNext.ts` applies to a ranked group.
+describe("the support group a product escalates to", () => {
+  it("names it when every repository in the product agrees", () => {
+    const out = profile([
+      row({ repo_id: "r1", repo_name: "r1", _product: "product-a", _supportGroup: "CE-TRANSPORT" }),
+      row({ repo_id: "r2", repo_name: "r2", _product: "product-a", _supportGroup: "CE-TRANSPORT" }),
+    ]);
+    const team = teamOf(out, "product-a");
+    expect(team.support_group).toBe("CE-TRANSPORT");
+    expect(team.support_groups).toBe(1);
+  });
+
+  it("REFUSES to name one where they disagree, and says how many there were", () => {
+    // Not a tie to be broken: a product filed under two support groups means the tenant's
+    // convention has broken for it, and that is worth seeing rather than papering over.
+    //
+    // Perturbation, run and reverted: relaxing rollUp's collapse to `groups.size ? [...][0]`
+    // fails here with `expected 'CE-TRANSPORT' to be null` and leaves the other two green.
+    const out = profile([
+      row({ repo_id: "r1", repo_name: "r1", _product: "product-a", _supportGroup: "CE-TRANSPORT" }),
+      row({ repo_id: "r2", repo_name: "r2", _product: "product-a", _supportGroup: "CS-LOG-ZEN-ECOM" }),
+    ]);
+    const team = teamOf(out, "product-a");
+    expect(team.support_group).toBeNull();
+    expect(team.support_groups).toBe(2);
+  });
+
+  it("REFUSES where ONE repository is itself filed under two groups — the union undercounts", () => {
+    // Caught by running the harness, not by a unit test: the per-ROW pick is deterministic,
+    // so both repositories of such a product pick the SAME name and the union sees one group.
+    // Without `_supportGroups` the column would have asserted an escalation path for a product
+    // the tenant filed under two — the exact claim `projectCatalogue` already refuses.
+    const out = profile([
+      row({ repo_id: "r1", repo_name: "r1", _product: "product-a", _supportGroup: "CE-TRANSPORT", _supportGroups: 2 }),
+      row({ repo_id: "r2", repo_name: "r2", _product: "product-a", _supportGroup: "CE-TRANSPORT", _supportGroups: 2 }),
+    ]);
+    const team = teamOf(out, "product-a");
+    expect(team.support_group).toBeNull();
+    // Floored at two: the honest answer is "more than one", and the column's job is only to
+    // stop asserting one.
+    expect(team.support_groups).toBe(2);
+  });
+
+  it("a product nobody filed under a group names none, and counts zero", () => {
+    // Distinct from the disagreement above, and only `support_groups` can tell them apart.
+    const out = profile([
+      row({ repo_id: "r1", repo_name: "r1", _product: "product-a", _supportGroup: null }),
+    ]);
+    const team = teamOf(out, "product-a");
+    expect(team.support_group).toBeNull();
+    expect(team.support_groups).toBe(0);
   });
 });
 
 describe("the four team verdicts", () => {
   const coldRepo = (id: string, project: string) =>
-    row({ repo_id: id, repo_name: id, owner_project: project, first_seen: back(300) });
+    row({ repo_id: id, repo_name: id, _product: project, first_seen: back(300) });
   const warmRepo = (id: string, project: string) => [
-    row({ repo_id: id, repo_name: id, owner_project: project }),
+    row({ repo_id: id, repo_name: id, _product: project }),
     row({
       repo_id: id,
       repo_name: id,
-      owner_project: project,
+      _product: project,
       status: "RESOLVED",
       resolved_at: back(5),
     }),
@@ -403,7 +464,7 @@ describe("the four team verdicts", () => {
     row({
       repo_id: id,
       repo_name: id,
-      owner_project: project,
+      _product: project,
       status: "RESOLVED",
       resolved_at: back(5),
     });
@@ -674,11 +735,11 @@ describe("a scope with rows but no scan on record is undecidable, not stale", ()
 
 /** A repository with a MEASURED idle time of exactly `days`: one open row, one closed then. */
 const idleRepo = (id: string, days: number, project = "platform"): ColdRow[] => [
-  row({ repo_id: id, repo_name: id, owner_project: project, first_seen: back(390) }),
+  row({ repo_id: id, repo_name: id, _product: project, first_seen: back(390) }),
   row({
     repo_id: id,
     repo_name: id,
-    owner_project: project,
+    _product: project,
     first_seen: back(390),
     status: "RESOLVED",
     resolved_at: back(days),
@@ -986,7 +1047,7 @@ describe("the coldest projects are ranked on their cold SHARE, not on their size
     ...idleRepo("g1", 150, "gamma"),
     ...idleRepo("g2", 5, "gamma"),
     ...idleRepo("g3", 5, "gamma"),
-    row({ repo_id: "d1", repo_name: "d1", owner_project: "delta", status: "RESOLVED", resolved_at: back(5) }),
+    row({ repo_id: "d1", repo_name: "d1", _product: "delta", status: "RESOLVED", resolved_at: back(5) }),
   ];
   const out = relativeProfile(rows);
 

@@ -457,10 +457,17 @@ export function concentrationModel(concentration, dims) {
 const DIM_LABELS = {
   repo: "By repository",
   language: "By language",
-  owner_project: "By owning project",
-  // "Owning" is deliberately not repeated here even though a domain owns too. The project
-  // hierarchy is where Wiz FILES a repository; the domain is the business the tenant tagged it
-  // with. Two cards both captioned "owning" would read as two answers to one question.
+  // THE TENANT'S TWO WORDS, not one word for both. A repository is filed under a `product-…`
+  // product and under a CS/CE/LU support group that holds several products, and the card this
+  // pair replaces — "By owning project" — showed whichever of the two Wiz returned first.
+  // Each label says which grain it is, so two cards cannot read as two answers to one
+  // question. See src/domain/projectGrain.ts.
+  product: "By product",
+  support_group: "By support group",
+  // "Owning" is deliberately not used by any of these even though a product, a support group
+  // and a domain all own. The project hierarchy is where Wiz FILES a repository; the domain is
+  // the business the tenant tagged it with. Cards that all said "owning" would read as three
+  // answers to one question.
   domain: "By business domain",
   cwe: "By weakness class",
   secret_kind: "By secret kind",
@@ -567,9 +574,7 @@ export function oldestFindingsModel(oldest) {
   return (o.findings || []).map((f) => ({
     identifier: f.identifier === null || f.identifier === undefined ? null : String(f.identifier),
     repo: f.repo === null || f.repo === undefined ? null : String(f.repo),
-    ownerProject: f.ownerProject === null || f.ownerProject === undefined
-      ? null
-      : String(f.ownerProject),
+    product: f.product === null || f.product === undefined ? null : String(f.product),
     severity: String(f.severity || "UNKNOWN"),
     ageDays: num(f.ageDays, null),
   }));
@@ -583,7 +588,7 @@ export function oldestReposModel(oldest) {
     agedCount: num(g.agedCount),
     openCount: num(g.openCount),
     oldestDays: num(g.oldestDays, null),
-    ownerProject: g.ownerProject ? String(g.ownerProject) : null,
+    product: g.product ? String(g.product) : null,
   }));
 }
 
@@ -1136,7 +1141,7 @@ export function scaModel(payload, opts) {
     // empty one; both copies have to agree. (Passing no list at all falls back to
     // `Object.keys(perDim)` — the server's order — which would remove the duplication, but it
     // also hands the page's card order to the payload, so the explicit list stays.)
-    concentration: concentrationModel(p.concentration, ["repo", "owner_project", "domain"]),
+    concentration: concentrationModel(p.concentration, ["repo", "product", "support_group", "domain"]),
     oldest: oldestFindingsModel(p.oldest),
     oldestRepos: oldestReposModel(p.oldest),
     movement: movementModel(p.movement, p.latestScan),
@@ -1475,7 +1480,7 @@ function paintSca(host, vm, filters) {
         columns: [
           { key: "identifier", label: "CVE", cell: (r) => r.identifier || absent() },
           { key: "repo", label: "Repository", cell: (r) => r.repo || absent() },
-          { key: "owner", label: "Owning project", cell: (r) => r.ownerProject || absent() },
+          { key: "product", label: "Product", cell: (r) => r.product || absent() },
           { key: "sev", label: "Severity", cell: (r) => sevBadge(r.severity) },
           {
             key: "age",
