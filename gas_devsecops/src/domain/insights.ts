@@ -36,7 +36,7 @@
 //                                   `Wiz/Domain`. What is true is that the three finding
 //                                   documents cannot SELECT an asset's tags, so the value
 //                                   arrives through a separate graphSearch join
-//                                   (src/server/repoDomains.ts) and is attached to rows on
+//                                   (src/server/repoTags.ts) and is attached to rows on
 //                                   read. `owner_project` remains the other ownership axis;
 //                                   the two are orthogonal, not a replacement for each other.
 //   atype / cloud / os /           host-only. Asset type, cloud platform, operating system and
@@ -476,7 +476,7 @@ export function movement(
 // The module header above records `domain` as DROPPED, host-only, on the grounds that "a source
 // repository carries no such taxonomy". That was wrong about the tenant — its repositories do
 // carry `Wiz/Domain` — and right only about the QUERIES: the three finding documents cannot
-// select an asset's tags, which is why the value arrives through `src/server/repoDomains.ts`
+// select an asset's tags, which is why the value arrives through `src/server/repoTags.ts`
 // rather than off the row.
 //
 // `support_group` is the same correction with a different cause. gas/'s support group is a

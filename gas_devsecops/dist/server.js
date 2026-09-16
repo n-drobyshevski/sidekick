@@ -169,6 +169,14 @@ var Server = (() => {
     // WIZ_PROJECT_ID_V2 sits in. See domain/domainTag.ts for why it is resolved on READ: a key
     // baked into the ledger would make correcting a typo cost a full re-scan.
     wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+    // The repository tag key whose VALUE is where that repository is in its life
+    // (`END_OF_LIFE`, `IN_PRODUCTION`, …). Unset means `lifecycle`. Same tier and same reasoning
+    // as the domain key above it, with one difference worth stating: `Wiz/Domain` is a key Wiz's
+    // own console writes, so its default is a FACT, while a repository's lifecycle reaches Wiz
+    // under whatever key the tenant's own catalogue used — so this default is a GUESS, and
+    // `repoTags.mapHealth` publishes how many repositories it actually placed so a wrong guess
+    // shows up as a zero on the Settings page rather than as a quietly empty column.
+    wizLifecycleTagKey: "WIZ_LIFECYCLE_TAG_KEY",
     ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
     archiveFolderId: "ARCHIVE_FOLDER_ID",
     // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.
@@ -464,7 +472,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "0fce3af22684" : "dev";
+  var BUILD_ID = true ? "3fb1e1b295a9" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -3436,6 +3444,7 @@ var Server = (() => {
     coldZoneMode: DEFAULT_COLD_ZONE_MODE,
     coldTargetSharePct: DEFAULT_COLD_TARGET_SHARE_PCT,
     coldFloorDays: DEFAULT_COLD_FLOOR_DAYS,
+    excludeEndOfLife: false,
     showExperimental: false,
     syncSchedule: DEFAULT_SYNC_HOUR,
     autoCompact: false,
@@ -3531,6 +3540,9 @@ var Server = (() => {
       coldZoneMode: cleanColdZoneMode(r.coldZoneMode),
       coldTargetSharePct: cleanColdTargetSharePct(r.coldTargetSharePct),
       coldFloorDays: cleanColdFloorDays(r.coldFloorDays),
+      // Junk (a string, a number, undefined) coerces to false, same as the two booleans below —
+      // only a literal `true` removes repositories from the cold zone.
+      excludeEndOfLife: r.excludeEndOfLife === true,
       showExperimental: r.showExperimental === true,
       syncSchedule: cleanHourOfDay(r.syncSchedule, DEFAULT_SYNC_HOUR),
       // Junk (a string, a number, undefined) coerces to false, same as showExperimental above —
@@ -3561,7 +3573,12 @@ var Server = (() => {
       mode: cleanColdZoneMode(settings == null ? void 0 : settings.coldZoneMode),
       coldAfterDays: cleanColdAfterDays(settings == null ? void 0 : settings.coldAfterDays),
       targetSharePct: cleanColdTargetSharePct(settings == null ? void 0 : settings.coldTargetSharePct),
-      floorDays: cleanColdFloorDays(settings == null ? void 0 : settings.coldFloorDays)
+      floorDays: cleanColdFloorDays(settings == null ? void 0 : settings.coldFloorDays),
+      // THROUGH THE SAME DOOR AS THE OTHER FOUR, and it is not symmetry for its own sake: this
+      // decides which repositories the line is derived FROM, so a caller that read the mode here
+      // and this flag from the settings row directly could derive a relative line over one
+      // population and then draw the table over another.
+      excludeEndOfLife: (settings == null ? void 0 : settings.excludeEndOfLife) === true
     };
   }
 
@@ -3578,8 +3595,9 @@ var Server = (() => {
     scans: "scans",
     // Repositories and their owning project hierarchy — the register's asset dimension.
     repos: "repos",
-    // The repository-identity → business-domain join, refreshed from Wiz separately from any
-    // scan (src/server/repoDomains.ts). ITS OWN TAB rather than a settings cell, for gas/'s
+    // The repository-identity → repository-tag join (business domain and lifecycle), refreshed
+    // from Wiz separately from any scan (src/server/repoTags.ts). ITS OWN TAB rather than a
+    // settings cell, for gas/'s
     // measured reason: a settings value is one 50k cell, and a tenant with a few thousand
     // repositories indexed under several identity tokens each overruns it. Lazily created —
     // see `ensureTab` — so a deployment that has not re-run setup() still gets it on first use.
@@ -3791,8 +3809,14 @@ var Server = (() => {
     ],
     // One row per identity token, not per repository: the join indexes a repository under every
     // id/name/externalId it carries, because nothing here can verify which of them a finding's
-    // `repo_id` will turn out to be. See repoDomains.ts.
-    [TABS.domainMap]: ["token", "domain"],
+    // `repo_id` will turn out to be. See repoTags.ts.
+    //
+    // TWO TAG COLUMNS UNDER A TAB STILL NAMED `domain_map`. The tab predates the lifecycle tag
+    // and renaming it would orphan every deployed map to no gain; `ensureHeaders` appends the
+    // new column on the next write, and a row written before it existed reads `lifecycle` as
+    // absent and still places its domain. Either column may be blank — a repository can carry
+    // one tag and not the other — and a row with neither is skipped on read.
+    [TABS.domainMap]: ["token", "domain", "lifecycle"],
     [TABS.compactions]: [
       "compaction_id",
       "ts",
@@ -3823,7 +3847,7 @@ var Server = (() => {
     ],
     [TABS.meta]: ["version"]
   };
-  var SCHEMA_VERSION = 3;
+  var SCHEMA_VERSION = 4;
   var spreadsheetCache = null;
   function ledgerSpreadsheet() {
     if (spreadsheetCache === null) {
@@ -4930,8 +4954,8 @@ var Server = (() => {
       for (const [k, v] of Object.entries(tags)) out[k] = v;
     }
   }
-  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
-    const want = key.trim().toLowerCase();
+  function tagValue(tags, key) {
+    const want = String(key != null ? key : "").trim().toLowerCase();
     if (!want || !tags) return null;
     for (const [k, v] of Object.entries(tags)) {
       if (String(k).trim().toLowerCase() !== want) continue;
@@ -4940,6 +4964,30 @@ var Server = (() => {
       if (value) return value;
     }
     return null;
+  }
+  function domainOfTags(tags, key = DEFAULT_DOMAIN_TAG_KEY) {
+    return tagValue(tags, key);
+  }
+
+  // src/domain/lifecycleTag.ts
+  var DEFAULT_LIFECYCLE_TAG_KEY = "lifecycle";
+  function resolveLifecycleTagKey(configured) {
+    const k = (configured != null ? configured : "").trim();
+    return k || DEFAULT_LIFECYCLE_TAG_KEY;
+  }
+  var LIFECYCLE_FIELD = "_lifecycle";
+  function lifecycleOfTags(tags, key = DEFAULT_LIFECYCLE_TAG_KEY) {
+    return tagValue(tags, key);
+  }
+  var END_OF_LIFE_VALUES = ["END_OF_LIFE"];
+  function foldLifecycle(value) {
+    if (typeof value !== "string") return "";
+    return value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+  }
+  var END_OF_LIFE_KEYS = new Set(END_OF_LIFE_VALUES.map(foldLifecycle));
+  function isEndOfLife(value) {
+    const folded = foldLifecycle(value);
+    return folded !== "" && END_OF_LIFE_KEYS.has(folded);
   }
 
   // src/server/wizReposQuery.ts
@@ -4951,15 +4999,21 @@ var Server = (() => {
   function reposByTagQuery(tagKey) {
     if (!isSafeTagKey(tagKey)) {
       throw new Error(
-        `Unsafe WIZ_DOMAIN_TAG_KEY ${JSON.stringify(tagKey)} \u2014 allowed: letters, digits, _ . : / - (max 120 chars).`
+        `Unsafe repository tag key ${JSON.stringify(tagKey)} \u2014 allowed: letters, digits, _ . : / - (max 120 chars).`
       );
     }
-    return 'query GetRepositoriesByWizDomainTag($first: Int, $after: String) {\n  graphSearch(\n    query: {\n      type: [REPOSITORY, REPOSITORY_BRANCH]\n      select: true\n      where: { tags: { CONTAINS: [{ key: "' + tagKey + '" }] } }\n    }\n    first: $first\n    after: $after\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes { entities { id name properties } }\n  }\n}\n';
+    return 'query GetRepositoriesByTag($first: Int, $after: String) {\n  graphSearch(\n    query: {\n      type: [REPOSITORY, REPOSITORY_BRANCH]\n      select: true\n      where: { tags: { CONTAINS: [{ key: "' + tagKey + '" }] } }\n    }\n    first: $first\n    after: $after\n  ) {\n    pageInfo { hasNextPage endCursor }\n    nodes { entities { id name properties } }\n  }\n}\n';
   }
 
-  // src/server/repoDomains.ts
+  // src/server/repoTags.ts
   function configuredDomainTagKey() {
     return resolveDomainTagKey(getProp(PROP_KEYS.wizDomainTagKey));
+  }
+  function configuredLifecycleTagKey() {
+    return resolveLifecycleTagKey(getProp(PROP_KEYS.wizLifecycleTagKey));
+  }
+  function configuredTagKeys() {
+    return { domain: configuredDomainTagKey(), lifecycle: configuredLifecycleTagKey() };
   }
   function foldToken(v) {
     return String(v).trim().toLowerCase();
@@ -4993,27 +5047,33 @@ var Server = (() => {
     }
     return out;
   }
-  function resolveDomain(record, map, tagKey) {
-    const own = domainOfTags(recordTags(record), tagKey);
-    if (own) return own;
+  function resolveRepoTags(record, map, keys) {
+    const own = recordTags(record);
+    let domain = domainOfTags(own, keys.domain);
+    let lifecycle = lifecycleOfTags(own, keys.lifecycle);
+    if (domain !== null && lifecycle !== null) return { domain, lifecycle };
     for (const token of recordIdentityTokens(record)) {
-      const domain = map[foldToken(token)];
-      if (domain) return domain;
+      const hit = map[foldToken(token)];
+      if (!hit) continue;
+      if (domain === null && hit.domain) domain = hit.domain;
+      if (lifecycle === null && hit.lifecycle) lifecycle = hit.lifecycle;
+      if (domain !== null && lifecycle !== null) break;
     }
-    return null;
+    return { domain, lifecycle };
   }
-  function attachDomains(records) {
-    const map = getDomainMap();
+  function attachRepoTags(records) {
+    const map = getRepoTagMap();
     if (!Object.keys(map).length) return;
-    const tagKey = configuredDomainTagKey();
+    const keys = configuredTagKeys();
     for (const r of records) {
-      const domain = resolveDomain(r, map, tagKey);
+      const { domain, lifecycle } = resolveRepoTags(r, map, keys);
       if (domain) r[DOMAIN_FIELD] = domain;
+      if (lifecycle) r[LIFECYCLE_FIELD] = lifecycle;
     }
   }
   var mapMemo;
-  function getDomainMap() {
-    var _a, _b;
+  function getRepoTagMap() {
+    var _a, _b, _c;
     if (mapMemo !== void 0) return mapMemo;
     const map = {};
     try {
@@ -5021,17 +5081,26 @@ var Server = (() => {
       for (const row of readAll(TABS.domainMap)) {
         const token = String((_a = row["token"]) != null ? _a : "");
         const domain = String((_b = row["domain"]) != null ? _b : "");
-        if (token && domain) map[token] = domain;
+        const lifecycle = String((_c = row["lifecycle"]) != null ? _c : "");
+        if (!token || !domain && !lifecycle) continue;
+        map[token] = { domain: domain || null, lifecycle: lifecycle || null };
       }
     } catch (e) {
-      console.warn(`Domain map unreadable \u2014 no domains attached this execution: ${String(e)}`);
+      console.warn(`Repository tag map unreadable \u2014 no tags attached this execution: ${String(e)}`);
     }
     mapMemo = map;
     return map;
   }
-  function setDomainMap(map) {
+  function setRepoTagMap(map) {
     ensureTab(TABS.domainMap);
-    const rows = Object.entries(map).sort((a, b) => a[0].localeCompare(b[0])).map(([token, domain]) => ({ token, domain }));
+    const rows = Object.entries(map).sort((a, b) => a[0].localeCompare(b[0])).map(([token, tags]) => {
+      var _a, _b;
+      return {
+        token,
+        domain: (_a = tags.domain) != null ? _a : null,
+        lifecycle: (_b = tags.lifecycle) != null ? _b : null
+      };
+    });
     overwrite(TABS.domainMap, rows);
     mapMemo = { ...map };
     bumpDataVersion();
@@ -5058,11 +5127,13 @@ var Server = (() => {
     "name",
     "cloudProviderURL"
   ];
-  function parseRepoEntity(entity, tagKey) {
+  function parseRepoEntity(entity, keys) {
     const props = entityProperties(entity);
-    const domain = domainOfTags(recordTags(props), tagKey);
+    const bag = recordTags(props);
+    const domain = domainOfTags(bag, keys.domain);
+    const lifecycle = lifecycleOfTags(bag, keys.lifecycle);
     const tokens = [];
-    if (domain) {
+    if (domain || lifecycle) {
       for (const k of PROP_ID_KEYS) {
         const v = props[k];
         if (present(v) && String(v).trim()) tokens.push(foldToken(v));
@@ -5072,56 +5143,83 @@ var Server = (() => {
         if (present(v) && String(v).trim()) tokens.push(foldToken(v));
       }
     }
-    return { domain, tokens };
+    return { domain, lifecycle, tokens };
   }
-  function fetchRepoDomains() {
-    var _a;
-    const tagKey = configuredDomainTagKey();
-    const query = reposByTagQuery(tagKey);
+  function fetchRepoTags() {
+    var _a, _b, _c;
+    const keys = configuredTagKeys();
     const map = {};
     const domains = /* @__PURE__ */ new Set();
-    let cursor = null;
-    let repos = 0;
+    const lifecycles = /* @__PURE__ */ new Set();
+    const seen = /* @__PURE__ */ new Set();
     let logged = false;
-    for (let page = 0; page < MAX_PAGES2; page++) {
-      const result = queryPage(query, { first: PAGE_SIZE2, after: cursor });
-      for (const node of result.nodes) {
-        const entities = (_a = node["entities"]) != null ? _a : [];
-        for (const entity of entities) {
-          if (!logged) {
-            console.log(`Domain-tag sample entity: ${JSON.stringify(entity).slice(0, 800)}`);
-            logged = true;
+    const passKeys = keys.domain.trim().toLowerCase() === keys.lifecycle.trim().toLowerCase() ? [keys.domain] : [keys.domain, keys.lifecycle];
+    for (const passKey of passKeys) {
+      const query = reposByTagQuery(passKey);
+      let cursor = null;
+      for (let page = 0; page < MAX_PAGES2; page++) {
+        const result = queryPage(query, { first: PAGE_SIZE2, after: cursor });
+        for (const node of result.nodes) {
+          const entities = (_a = node["entities"]) != null ? _a : [];
+          for (const entity of entities) {
+            if (!logged) {
+              console.log(`Repository-tag sample entity: ${JSON.stringify(entity).slice(0, 800)}`);
+              logged = true;
+            }
+            const { domain, lifecycle, tokens } = parseRepoEntity(entity, keys);
+            if (!tokens.length) continue;
+            for (const token of tokens) {
+              const prev = map[token];
+              map[token] = {
+                // LATEST NON-NULL WINS ACROSS PASSES, never an erase. The lifecycle pass sees a
+                // repository the domain pass already placed and must not blank its domain
+                // because this entity's bag answered nothing for that key.
+                domain: (_b = domain != null ? domain : prev == null ? void 0 : prev.domain) != null ? _b : null,
+                lifecycle: (_c = lifecycle != null ? lifecycle : prev == null ? void 0 : prev.lifecycle) != null ? _c : null
+              };
+            }
+            if (!seen.has(tokens[0])) seen.add(tokens[0]);
+            if (domain) domains.add(domain);
+            if (lifecycle) lifecycles.add(lifecycle);
           }
-          const { domain, tokens } = parseRepoEntity(entity, tagKey);
-          if (!domain) continue;
-          for (const token of tokens) map[token] = domain;
-          repos += 1;
-          domains.add(domain);
         }
+        if (!result.pageInfo.hasNextPage || !result.pageInfo.endCursor) break;
+        cursor = result.pageInfo.endCursor;
       }
-      if (!result.pageInfo.hasNextPage || !result.pageInfo.endCursor) break;
-      cursor = result.pageInfo.endCursor;
     }
-    return { map, stats: { repos, keys: Object.keys(map).length, domains: domains.size, tagKey } };
+    return {
+      map,
+      stats: {
+        repos: seen.size,
+        keys: Object.keys(map).length,
+        domains: domains.size,
+        lifecycles: lifecycles.size,
+        tagKey: keys.domain,
+        lifecycleTagKey: keys.lifecycle
+      }
+    };
   }
-  function refreshRepoDomains() {
-    const { map, stats } = fetchRepoDomains();
-    setDomainMap(map);
+  function refreshRepoTags() {
+    const { map, stats } = fetchRepoTags();
+    setRepoTagMap(map);
     return stats;
   }
   var SAMPLE = 5;
   function mapHealth() {
     var _a, _b;
-    const map = getDomainMap();
-    const tagKey = configuredDomainTagKey();
-    const keys = Object.keys(map);
+    const map = getRepoTagMap();
+    const keys = configuredTagKeys();
+    const tokens = Object.keys(map);
     let repos = 0;
     let placed = 0;
+    let lifecyclePlaced = 0;
     const sampleUnplaced = [];
     try {
       for (const row of readAll(TABS.repos)) {
         repos += 1;
-        if (resolveDomain(row, map, tagKey)) {
+        const tags = resolveRepoTags(row, map, keys);
+        if (tags.lifecycle) lifecyclePlaced += 1;
+        if (tags.domain) {
           placed += 1;
           continue;
         }
@@ -5130,15 +5228,24 @@ var Server = (() => {
         }
       }
     } catch (e) {
-      console.warn(`Repos tab unreadable \u2014 domain map health is partial: ${String(e)}`);
+      console.warn(`Repos tab unreadable \u2014 repository tag map health is partial: ${String(e)}`);
+    }
+    const domains = /* @__PURE__ */ new Set();
+    const lifecycles = /* @__PURE__ */ new Set();
+    for (const t of Object.values(map)) {
+      if (t.domain) domains.add(t.domain);
+      if (t.lifecycle) lifecycles.add(t.lifecycle);
     }
     return {
-      keys: keys.length,
-      domains: new Set(Object.values(map)).size,
-      tagKey,
+      keys: tokens.length,
+      domains: domains.size,
+      lifecycles: lifecycles.size,
+      tagKey: keys.domain,
+      lifecycleTagKey: keys.lifecycle,
       repos,
       placed,
-      sampleTokens: keys.slice(0, SAMPLE),
+      lifecyclePlaced,
+      sampleTokens: tokens.slice(0, SAMPLE),
       sampleUnplaced
     };
   }
@@ -6331,6 +6438,7 @@ var Server = (() => {
       product: null,
       supportGroup: null,
       supportGroupSplit: false,
+      lifecycle: null,
       scopes: /* @__PURE__ */ new Set(),
       rowsByScope: /* @__PURE__ */ new Map(),
       open: 0,
@@ -6352,6 +6460,7 @@ var Server = (() => {
       acc.supportGroup = String(row._supportGroup);
     }
     if (Number(row._supportGroups) > 1) acc.supportGroupSplit = true;
+    if (acc.lifecycle === null && !blank(row._lifecycle)) acc.lifecycle = String(row._lifecycle);
     acc.scopes.add(row.scope);
     const bucket = acc.rowsByScope.get(row.scope);
     if (bucket) bucket.push(row);
@@ -6485,6 +6594,18 @@ var Server = (() => {
       }
       foldRow(acc, row, risk);
     }
+    const excludeEol = opts.excludeEndOfLife === true;
+    const excludedIds = /* @__PURE__ */ new Set();
+    let endOfLifeRepos = 0;
+    let excludedOpenFindings = 0;
+    for (const acc of byRepo.values()) {
+      if (!isEndOfLife(acc.lifecycle)) continue;
+      endOfLifeRepos += 1;
+      if (!excludeEol) continue;
+      excludedIds.add(acc.repoId);
+      excludedOpenFindings += acc.open;
+    }
+    const excludedRepos = excludedIds.size;
     const scopesWithoutScan = /* @__PURE__ */ new Set();
     const observedById = /* @__PURE__ */ new Map();
     for (const acc of byRepo.values()) {
@@ -6494,6 +6615,10 @@ var Server = (() => {
     const base = {
       observed_from: observedFromMs === null ? null : toIso(observedFromMs),
       as_of: toIso(nowMs),
+      exclude_end_of_life: excludeEol,
+      end_of_life_repos: endOfLifeRepos,
+      excluded_end_of_life: excludedRepos,
+      excluded_open_findings: excludedOpenFindings,
       row_count: rows.length,
       dropped_no_repo: droppedNoRepo,
       unclassified_secrets: unclassifiedSecrets,
@@ -6525,6 +6650,7 @@ var Server = (() => {
     }
     const facts = [];
     for (const acc of byRepo.values()) {
+      if (excludedIds.has(acc.repoId)) continue;
       const observed = observedById.get(acc.repoId) === true;
       const idleDays = acc.movementAt === null ? null : daysBetween(acc.movementAt, nowMs);
       const boundStart = acc.earliestFirstSeen === null ? observedFromMs : Math.max(observedFromMs, acc.earliestFirstSeen);
@@ -6597,6 +6723,7 @@ var Server = (() => {
         product: acc.product,
         support_group: acc.supportGroup,
         support_group_split: acc.supportGroupSplit,
+        lifecycle: acc.lifecycle,
         open_findings: acc.open,
         open_high_risk: acc.openHigh,
         oldest_open_age_days: acc.oldestOpenFirstSeen === null ? null : daysBetween(acc.oldestOpenFirstSeen, nowMs),
@@ -6831,6 +6958,10 @@ var Server = (() => {
       derived_days: result.derived_days,
       eligible_repos: result.eligible_repos,
       cold_bound_only: result.cold_bound_only,
+      exclude_end_of_life: result.exclude_end_of_life,
+      end_of_life_repos: result.end_of_life_repos,
+      excluded_end_of_life: result.excluded_end_of_life,
+      excluded_open_findings: result.excluded_open_findings,
       observed_from: result.observed_from,
       as_of: result.as_of,
       totals: result.totals,
@@ -6996,6 +7127,7 @@ var Server = (() => {
           assetId,
           group,
           label: null,
+          lifecycle: null,
           density: 0,
           hasFoothold: false,
           tp: 0,
@@ -7010,6 +7142,7 @@ var Server = (() => {
         byKey.set(key, a);
       }
       if (a.label === null && !blank2(row.repo_name)) a.label = String(row.repo_name);
+      if (a.lifecycle === null && !blank2(row._lifecycle)) a.lifecycle = String(row._lifecycle);
       const open = isOpen6(row.status);
       const high = risk === "high";
       if (open) a.density += 1;
@@ -7035,7 +7168,7 @@ var Server = (() => {
     }
     return [...byKey.values()];
   }
-  function aggregate(group, label, assets, windowMonths, population, km) {
+  function aggregate(group, label, lifecycle, assets, windowMonths, population, km) {
     const densities = assets.map((a) => a.density);
     const coverages = [];
     for (const a of assets) if (a.coveragePct !== null) coverages.push(a.coveragePct);
@@ -7078,7 +7211,8 @@ var Server = (() => {
       assets_flowing: flowing,
       window_months: windowMonths,
       population,
-      asset_label: label
+      asset_label: label,
+      asset_lifecycle: lifecycle
     };
   }
   function halfLife(group, rows) {
@@ -7092,7 +7226,7 @@ var Server = (() => {
     return { median: km.median, medianLowerBound: km.medianLowerBound };
   }
   function assetProfile(rows, opts) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     const groupBy = (_a = opts.groupBy) != null ? _a : "language";
     const highRiskOnly = opts.highRiskOnly === true;
     const population = highRiskOnly ? POPULATION_HIGH_RISK : POPULATION_ALL;
@@ -7129,11 +7263,13 @@ var Server = (() => {
     const assets = perAsset(kept, windowStart, groupBy);
     const assetsByGroup = /* @__PURE__ */ new Map();
     const labelByGroup = /* @__PURE__ */ new Map();
+    const lifecycleByGroup = /* @__PURE__ */ new Map();
     for (const a of assets) {
       const list = assetsByGroup.get(a.group);
       if (list) list.push(a);
       else assetsByGroup.set(a.group, [a]);
       if (groupBy === "repo" && !labelByGroup.get(a.group)) labelByGroup.set(a.group, a.label);
+      if (!lifecycleByGroup.get(a.group)) lifecycleByGroup.set(a.group, a.lifecycle);
     }
     const findingsByGroup = /* @__PURE__ */ new Map();
     for (const { row } of kept) {
@@ -7149,14 +7285,17 @@ var Server = (() => {
         aggregate(
           group,
           groupBy === "repo" ? (_c = labelByGroup.get(group)) != null ? _c : null : null,
+          groupBy === "repo" ? (_d = lifecycleByGroup.get(group)) != null ? _d : null : null,
           list,
           windowMonths,
           population,
-          halfLife(group, (_d = findingsByGroup.get(group)) != null ? _d : [])
+          halfLife(group, (_e = findingsByGroup.get(group)) != null ? _e : [])
         )
       );
     }
-    out.push(aggregate(OVERALL, null, assets, windowMonths, population, halfLife(OVERALL, allFindings)));
+    out.push(
+      aggregate(OVERALL, null, null, assets, windowMonths, population, halfLife(OVERALL, allFindings))
+    );
     out.sort((a, b) => {
       if (a.asset_group === OVERALL) return b.asset_group === OVERALL ? 0 : -1;
       if (b.asset_group === OVERALL) return 1;
@@ -7609,7 +7748,8 @@ var Server = (() => {
       coldAfterDays: cold.coldAfterDays,
       coldZoneMode: cold.mode,
       coldTargetSharePct: cold.targetSharePct,
-      coldFloorDays: cold.floorDays
+      coldFloorDays: cold.floorDays,
+      coldExcludeEndOfLife: cold.excludeEndOfLife
     };
   }
   function keyOf(n2) {
@@ -7627,7 +7767,7 @@ var Server = (() => {
     if (!baseMemo || baseMemo.version !== version) {
       const now = Date.now();
       const rows = loadBaseRows({ now });
-      attachDomains(rows);
+      attachRepoTags(rows);
       attachProjectGrain(rows);
       baseMemo = { version, now, rows };
     }
@@ -7952,6 +8092,7 @@ var Server = (() => {
         mode: n2.coldZoneMode,
         targetSharePct: n2.coldTargetSharePct,
         floorDays: n2.coldFloorDays,
+        excludeEndOfLife: n2.coldExcludeEndOfLife,
         newestScanByScope: newestScanByScope()
       })),
       coldZoneAsOfSource: clock.asOfSource,
@@ -8452,6 +8593,7 @@ var Server = (() => {
         mode: n2.coldZoneMode,
         targetSharePct: n2.coldTargetSharePct,
         floorDays: n2.coldFloorDays,
+        excludeEndOfLife: n2.coldExcludeEndOfLife,
         newestScanByScope: newestScanByScope()
       }),
       signalCoverage: signalCoverage(visible)
@@ -9348,7 +9490,7 @@ var Server = (() => {
       }
       const settings = loadSettings();
       const allRows = loadBaseRows();
-      attachDomains(allRows);
+      attachRepoTags(allRows);
       const projectView = settings.projectView || null;
       const domainView = settings.domainView || null;
       const shown = projectView ? allRows.filter((r) => inProject(parseProjects(r.projects_json), projectView)).length : domainView ? allRows.filter((r) => inDomain(r, domainView)).length : allRows.length;
@@ -9459,7 +9601,7 @@ var Server = (() => {
     return mutate(() => saveSettings(withDomainView(loadSettings(), p.domainView)));
   }
   function refreshDomains(_p) {
-    return mutate(() => refreshRepoDomains());
+    return mutate(() => refreshRepoTags());
   }
   function domainMapHealth(_p) {
     return run(() => mapHealth());
@@ -9783,7 +9925,7 @@ var Server = (() => {
   // src/server/devSeed.ts
   var devSeed_exports = {};
   __export(devSeed_exports, {
-    seedDomainMap: () => seedDomainMap,
+    seedRepoTagMap: () => seedRepoTagMap,
     seedSampleLedger: () => seedSampleLedger
   });
 
@@ -9819,12 +9961,36 @@ var Server = (() => {
     return { seeded, syncs: SAMPLE_SYNCS.length, rows };
   }
   var DEV_DOMAINS = ["CROSS", "SAP", "VALUE-CHAIN", "RETAIL"];
-  function seedDomainMap() {
-    var _a, _b, _c;
+  var DEV_LIFECYCLE_SLOTS = [
+    "IN_PRODUCTION",
+    "IN_PRODUCTION",
+    "IN_PRODUCTION",
+    "IN_PRODUCTION",
+    "IN_DEVELOPMENT",
+    "IN_DEVELOPMENT",
+    "END_OF_LIFE",
+    "END_OF_LIFE",
+    null,
+    null
+  ];
+  var DEV_PINNED_LIFECYCLES = {
+    "dktunited/retired-mobile": "END_OF_LIFE",
+    "dktunited/warehouse-sync": "END_OF_LIFE",
+    "dktunited/legacy-batch": "IN_PRODUCTION"
+  };
+  function hashOf(identity, seed) {
+    let h = seed >>> 0;
+    for (let i = 0; i < identity.length; i++) h = h * 31 + identity.charCodeAt(i) >>> 0;
+    return h;
+  }
+  function seedRepoTagMap() {
+    var _a, _b, _c, _d, _e;
+    const empty = { repos: 0, domains: 0, unmapped: 0, lifecycles: 0, endOfLife: 0, noLifecycle: 0 };
     if (SAMPLE_SYNCS.length === 0) {
-      return { repos: 0, domains: 0, unmapped: 0, reason: "no sample data in this build" };
+      return { ...empty, reason: "no sample data in this build" };
     }
     const repos = /* @__PURE__ */ new Map();
+    const nameOf = /* @__PURE__ */ new Map();
     for (const row of Object.values(loadState().ledger)) {
       const id = String((_a = row.repo_id) != null ? _a : "").trim();
       const name = String((_b = row.repo_name) != null ? _b : "").trim();
@@ -9835,23 +10001,35 @@ var Server = (() => {
         if (t && tokens.indexOf(t) < 0) tokens.push(t);
       }
       repos.set(identity, tokens);
+      if (name) nameOf.set(identity, name);
     }
     const map = {};
     const domains = /* @__PURE__ */ new Set();
+    const lifecycles = /* @__PURE__ */ new Set();
     let unmapped = 0;
+    let endOfLife = 0;
+    let noLifecycle = 0;
     for (const [identity, tokens] of [...repos.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-      let h = 0;
-      for (let i = 0; i < identity.length; i++) h = h * 31 + identity.charCodeAt(i) >>> 0;
-      if (h % 4 === 3) {
-        unmapped += 1;
-        continue;
-      }
-      const domain = DEV_DOMAINS[h % DEV_DOMAINS.length];
-      for (const t of tokens) map[foldToken(t)] = domain;
-      domains.add(domain);
+      const h = hashOf(identity, 0);
+      const lifecycle = (_e = DEV_PINNED_LIFECYCLES[(_d = nameOf.get(identity)) != null ? _d : ""]) != null ? _e : DEV_LIFECYCLE_SLOTS[hashOf(identity, 7) % DEV_LIFECYCLE_SLOTS.length];
+      const domain = h % 4 === 3 ? null : DEV_DOMAINS[h % DEV_DOMAINS.length];
+      if (domain === null) unmapped += 1;
+      if (lifecycle === null) noLifecycle += 1;
+      else if (lifecycle === "END_OF_LIFE") endOfLife += 1;
+      if (domain === null && lifecycle === null) continue;
+      for (const t of tokens) map[foldToken(t)] = { domain, lifecycle };
+      if (domain) domains.add(domain);
+      if (lifecycle) lifecycles.add(lifecycle);
     }
-    setDomainMap(map);
-    return { repos: repos.size - unmapped, domains: domains.size, unmapped };
+    setRepoTagMap(map);
+    return {
+      repos: repos.size - unmapped,
+      domains: domains.size,
+      unmapped,
+      lifecycles: lifecycles.size,
+      endOfLife,
+      noLifecycle
+    };
   }
   return __toCommonJS(index_exports);
 })();

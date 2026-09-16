@@ -1497,8 +1497,9 @@ describe("executiveModel", () => {
     // estate to draw it is the "cap in the model, no slice at the edge" rule being lost.
     expect(Object.keys(m.coldZone).sort()).toEqual([
       "achieved_share_pct", "as_of", "cold_after_days", "cold_bound_only", "derived_days",
-      "dropped_no_repo", "eligible_repos", "fixed_after_days", "floor_applied", "floor_days",
-      "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
+      "dropped_no_repo", "eligible_repos", "end_of_life_repos", "exclude_end_of_life",
+      "excluded_end_of_life", "excluded_open_findings", "fixed_after_days", "floor_applied",
+      "floor_days", "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
       "target_share_pct", "totals", "unclassified_secrets",
     ]);
     expect(m.coldZone).not.toHaveProperty("repos");

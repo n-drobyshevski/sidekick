@@ -34,7 +34,7 @@ import {
   coldCensusModel,
   coldRepoRows, coldScatterPoints, coldTeamRows, coldZoneView, coverageMeterPct, densityView,
   footholdCellKind, footholdView, groupRows, halfLifeView, heatLevel, heatModel, overallRow,
-  tableRow, unmeasurableNote, productCountNote,
+  tableRow, unmeasurableNote, productCountNote, endOfLifeNote,
 } from "../src/client/js/pages/repos.js";
 import {
   groupBySync, isAllSeverities, kmMedianPoints, kpiView, openResolvedPoints, perScopeView,
@@ -167,6 +167,16 @@ describe("repos: foothold, half-life and capacity read the published fields, not
     expect(tableRow({ ...REPO_A, assets_with_high_risk_pct: 100 }).footholdText).toBe("Yes");
     expect(tableRow({ ...REPO_A, assets_with_high_risk_pct: 0 }).footholdText).toBe("No");
     expect(tableRow({ ...REPO_A, assets_with_high_risk_pct: null }).footholdText).toBe("—");
+  });
+
+  it("tableRow carries the repository's lifecycle, and the absence mark where there is none", () => {
+    expect(tableRow({ ...REPO_A, asset_lifecycle: "END_OF_LIFE" }).lifecycleText).toBe("END_OF_LIFE");
+    // Null at every grain but the repository — `domain/assets.ts` refuses it for a product, so
+    // this cell is only ever asked to print something real. Blank and missing read the same.
+    for (const v of [null, undefined, "", "   "]) {
+      expect(tableRow({ ...REPO_A, asset_lifecycle: v }).lifecycle).toBeNull();
+      expect(tableRow({ ...REPO_A, asset_lifecycle: v }).lifecycleText).toBe("—");
+    }
   });
 });
 
@@ -1265,11 +1275,18 @@ describe("repos: the grouped table is one table with two grains", () => {
     expect(REPOS_SRC).toMatch(/value: "product",\s*\n\s*label: "Product"/);
   });
 
-  it("the product side carries a Repos column and the repository side does not", () => {
-    // Without it a reader cannot tell a product whose single repository is dense from one
-    // whose twenty are. On the repository side the answer is always one, so the column would
-    // be a column of ones.
-    expect(section).toMatch(/if \(!isRepo\) \{\s*\n\s*columns\.push\(\{ key: "assets", label: "Repos"/);
+  it("ONE GRAIN-SPECIFIC COLUMN EACH, in the same slot: Lifecycle vs Repos", () => {
+    // Without `Repos` a reader cannot tell a product whose single repository is dense from one
+    // whose twenty are; on the repository side the answer is always one, so it would be a
+    // column of ones. `Lifecycle` is the mirror: a retired repository carries a backlog nobody
+    // is meant to clear, and a product spans repositories that need not agree on one word — so
+    // `domain/assets.ts` publishes `asset_lifecycle` at the repository grain and null at every
+    // other, and this side of the branch is the only place it can be read.
+    expect(section).toMatch(/if \(isRepo\) \{[\s\S]{0,200}?label: "Lifecycle"/);
+    expect(section).toMatch(/\} else \{[\s\S]{0,120}?key: "assets", label: "Repos"/);
+    // And neither leaks to the other side: one `columns.push` per branch, not two.
+    expect(section.match(/label: "Lifecycle"/g)).toHaveLength(1);
+    expect(section.match(/label: "Repos"/g)).toHaveLength(1);
   });
 
   it("draws the switch even where the grain has nothing measured", () => {
@@ -1780,5 +1797,89 @@ describe("data: every destructive action is behind a confirm step", () => {
       { scan_id: "b", ts: "2026-01-02T00:00:00Z", scope: "sca", total: 1, sealed: 1 },
     ]);
     expect(rows.map((r) => r.scanId)).toEqual(["a"]);
+  });
+});
+
+// =========================================================================================
+//  repos: the lifecycle column, and the sentence the end-of-life setting owes the reader
+// =========================================================================================
+//
+// The column and the exclusion are one feature read two ways. A repository's lifecycle is
+// printed on the cold table whatever the setting says — "cold" and "retired" are opposite
+// readings of the same silence and every other cell on the row looks identical — and
+// `endOfLifeNote` is what the section says once an operator acts on that.
+
+describe("repos: coldRepoRows carries the lifecycle beside the owner", () => {
+  it("prints the tag as the tenant wrote it", () => {
+    const v = coldZoneView(coldModel({ repos: [coldRepo({ lifecycle: "END_OF_LIFE" })] }));
+    expect(coldRepoRows(v)[0].lifecycle).toBe("END_OF_LIFE");
+    expect(coldRepoRows(v)[0].lifecycleText).toBe("END_OF_LIFE");
+  });
+
+  it("draws the absence mark for a repository the tenant never tagged, never a guessed word", () => {
+    for (const lifecycle of [null, undefined, "", "   "]) {
+      const v = coldZoneView(coldModel({ repos: [coldRepo({ lifecycle })] }));
+      expect(coldRepoRows(v)[0].lifecycle, String(lifecycle)).toBeNull();
+      expect(coldRepoRows(v)[0].lifecycleText, String(lifecycle)).toBe("—");
+    }
+  });
+});
+
+describe("repos: endOfLifeNote", () => {
+  const view = (over) => coldZoneView(coldModel(over));
+
+  it("says nothing at all when no repository here is end of life", () => {
+    // `unmeasurableNote`'s rule: a sentence about zero repositories is noise — and it is also
+    // the honest reading on a tenant whose lifecycle tag this register never learned.
+    expect(endOfLifeNote(view({ end_of_life_repos: 0, exclude_end_of_life: false }))).toBeNull();
+    expect(endOfLifeNote(view({ end_of_life_repos: 0, exclude_end_of_life: true }))).toBeNull();
+    // A payload that predates the fields entirely.
+    expect(endOfLifeNote(coldZoneView(coldModel()))).toBeNull();
+    expect(endOfLifeNote(null)).toBeNull();
+  });
+
+  // Perturbation, run and reverted: returning null whenever the exclusion is off — the
+  // "nothing was removed, so there is nothing to say" reading — fails this case with
+  // `expected null to contain 'still counted'`.
+  it("OFF, it says the retired repositories are in here and where the switch is", () => {
+    const note = endOfLifeNote(view({ end_of_life_repos: 3, exclude_end_of_life: false }));
+    expect(note).toContain("3 repositories");
+    expect(note).toContain("still counted");
+    expect(note).toContain("Deadlines");
+    // Nothing left, so nothing is claimed to have.
+    expect(note).not.toContain("left out");
+  });
+
+  it("ON, it says what left and how much backlog went with it", () => {
+    const note = endOfLifeNote(view({
+      end_of_life_repos: 3, exclude_end_of_life: true,
+      excluded_end_of_life: 3, excluded_open_findings: 41,
+    }));
+    expect(note).toContain("3 repositories left out");
+    expect(note).toContain("41 open findings");
+    // THE LIMIT OF THE CLAIM, said in the same breath: the exclusion reaches this section and
+    // nothing else, so a reader does not conclude their backlog figures moved too.
+    expect(note).toContain("every other figure");
+  });
+
+  it("counts in singular where one repository or one finding is what happened", () => {
+    expect(endOfLifeNote(view({ end_of_life_repos: 1, exclude_end_of_life: false })))
+      .toContain("1 repository here is");
+    expect(endOfLifeNote(view({
+      end_of_life_repos: 1, exclude_end_of_life: true,
+      excluded_end_of_life: 1, excluded_open_findings: 1,
+    }))).toContain("1 repository left out as end of life, with 1 open finding.");
+  });
+
+  it("survives a register with no clock, where the count is real and nothing else is", () => {
+    // The fold that produces these happens before the clock is consulted, so the figure is
+    // true on a payload whose every other block is null.
+    const v = coldZoneView(coldModel({
+      measurable: false, repos: null, teams: null, totals: null,
+      end_of_life_repos: 2, exclude_end_of_life: true,
+      excluded_end_of_life: 2, excluded_open_findings: 7,
+    }));
+    expect(v.measurable).toBe(false);
+    expect(endOfLifeNote(v)).toContain("2 repositories left out");
   });
 });

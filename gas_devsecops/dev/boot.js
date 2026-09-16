@@ -169,28 +169,32 @@
     }
   }
 
-  // ------------------------------------------------------------------ the domain map, faked
+  // -------------------------------------------------------------- the repository tags, faked
   //
   // The one piece of the register the sample battery cannot produce. A project rides in on the
-  // finding, so the project switcher fills itself from the seed; a domain is fetched separately
-  // from Wiz (`api_refreshDomains`), which this harness has no tenant for. `seedDomainMap`
-  // builds one over the repositories the seed just created — see its own header for why it is
-  // derived rather than hardcoded, and why it deliberately leaves a quarter of them untagged.
+  // finding, so the project switcher fills itself from the seed; a domain and a lifecycle are
+  // repository TAGS, fetched separately from Wiz (`api_refreshDomains`), which this harness has
+  // no tenant for. `seedRepoTagMap` builds one over the repositories the seed just created —
+  // see its own header for why it is derived rather than hardcoded, why it deliberately leaves
+  // a quarter of them with no domain, and why the lifecycle is drawn independently so a fifth
+  // carries none of that either.
   //
   // ?nodomains reaches the OTHER state, the way ?noseed and ?noscope do: a register whose
-  // domain map has never been refreshed is every deployment's first condition, and it is the
-  // state the Settings card's "Never refreshed" pill and the switcher's missing Domains group
-  // are FOR. Without a way back to it, neither is ever seen locally.
+  // tag map has never been refreshed is every deployment's first condition, and it is the
+  // state the Settings card's "Never refreshed" pill, the switcher's missing Domains group and
+  // an empty Lifecycle column are FOR. Without a way back to it, none of them is ever seen
+  // locally.
   if (query.has("nodomains")) {
-    console.log("[dev] ?nodomains — no domain map seeded; the Domains scope group stays empty.");
-  } else if (typeof Server.devSeed.seedDomainMap === "function") {
-    const dm = Server.devSeed.seedDomainMap();
+    console.log("[dev] ?nodomains — no tag map seeded; Domains and Lifecycle stay empty.");
+  } else if (typeof Server.devSeed.seedRepoTagMap === "function") {
+    const dm = Server.devSeed.seedRepoTagMap();
     if (dm.reason) {
-      console.log(`[dev] No domain map seeded: ${dm.reason}.`);
+      console.log(`[dev] No repository tag map seeded: ${dm.reason}.`);
     } else {
       console.log(
-        `[dev] Seeded a domain map: ${dm.domains} domain(s) over ${dm.repos} repository key(s), `
-        + `${dm.unmapped} left untagged on purpose — ?nodomains to open with none.`,
+        `[dev] Seeded a repository tag map: ${dm.domains} domain(s) over ${dm.repos} repository `
+        + `key(s), ${dm.unmapped} with no domain on purpose; ${dm.lifecycles} lifecycle(s), `
+        + `${dm.endOfLife} END_OF_LIFE and ${dm.noLifecycle} untagged — ?nodomains for none.`,
       );
     }
   }

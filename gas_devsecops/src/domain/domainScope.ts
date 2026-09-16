@@ -11,16 +11,16 @@
 //     matches, which is the whole of the model.
 //
 //   * READ OFF `_domain`, ATTACHED IN MEMORY, not off a persisted column. `projects_json` is a
-//     ledger column; `_domain` is put on a record by `src/server/repoDomains.ts` at read time
+//     ledger column; `_domain` is put on a record by `src/server/repoTags.ts` at read time
 //     from the join map, and is never written to the sheet. See domainTag.ts's header for why
 //     it is resolved rather than baked. Everything below therefore takes rows that have
-//     ALREADY been through `attachDomains` — a caller that forgets sees an empty catalogue and
+//     ALREADY been through `attachRepoTags` — a caller that forgets sees an empty catalogue and
 //     a `noDomainCount` equal to the register, which reads as "we never learned" rather than
 //     as a wrong answer.
 //
 // PURE. No Apps Script globals, no import from src/server/.
 
-/** The field `repoDomains.attachDomains` writes. Spelled once, here. */
+/** The field `repoTags.attachRepoTags` writes. Spelled once, here. */
 export const DOMAIN_FIELD = "_domain";
 
 /** The shape this module needs of a row. Any ledger/base row satisfies it structurally. */
@@ -92,7 +92,7 @@ export function inDomain(row: DomainCarrier | null | undefined, name: string): b
  *
  * It counts TWO populations that a reader cannot tell apart from here and does not need to:
  * a repository the tenant has not tagged, and a repository the join map has never seen
- * because the map was never refreshed. `repoDomains.mapHealth` is what separates those, and
+ * because the map was never refreshed. `repoTags.mapHealth` is what separates those, and
  * the Settings readout is where it is said.
  */
 export function noDomainCount(rows: readonly DomainCarrier[]): number {

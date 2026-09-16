@@ -249,7 +249,7 @@ export type BaseRow = LedgerRow & {
    * COLUMN.
    *
    * Every other field on this type is either a ledger column or derived from one. This is
-   * neither: `src/server/repoDomains.ts` writes it onto the row at read time from the
+   * neither: `src/server/repoTags.ts` writes it onto the row at read time from the
    * repository → domain join map, and nothing ever persists it. `src/domain/domainTag.ts`'s
    * header carries the full argument — the short form is that the key is configurable, and a
    * baked column would make correcting a typed-wrong tag key cost a full re-scan while the
@@ -261,6 +261,18 @@ export type BaseRow = LedgerRow & {
    * count is reported instead of a synthetic "Untagged" owner.
    */
   _domain?: string | null;
+  /**
+   * Where this finding's repository is in its life — `END_OF_LIFE`, `IN_PRODUCTION`, whatever
+   * the tenant writes. THE SECOND ATTACHED-IN-MEMORY TAG, and it rides the same join as
+   * `_domain` above: one map, one refresh, one pass (`src/server/repoTags.ts`).
+   *
+   * OPTIONAL, AND THE ABSENCE IS MEANINGFUL — with more teeth here than on `_domain`, because
+   * something ACTS on this one. The cold zone can be set to exclude end-of-life repositories,
+   * and an unset field must never be read as a lifecycle: a repository nobody tagged is not
+   * retired, and `lifecycleTag.isEndOfLife` refuses everything it does not positively
+   * recognise for exactly that reason.
+   */
+  _lifecycle?: string | null;
   /**
    * The tenant's two ownership grains — LIKEWISE ATTACHED IN MEMORY, NEVER COLUMNS.
    *

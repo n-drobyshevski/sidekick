@@ -24,8 +24,9 @@ export const TABS = {
   scans: "scans",
   // Repositories and their owning project hierarchy — the register's asset dimension.
   repos: "repos",
-  // The repository-identity → business-domain join, refreshed from Wiz separately from any
-  // scan (src/server/repoDomains.ts). ITS OWN TAB rather than a settings cell, for gas/'s
+  // The repository-identity → repository-tag join (business domain and lifecycle), refreshed
+  // from Wiz separately from any scan (src/server/repoTags.ts). ITS OWN TAB rather than a
+  // settings cell, for gas/'s
   // measured reason: a settings value is one 50k cell, and a tenant with a few thousand
   // repositories indexed under several identity tokens each overruns it. Lazily created —
   // see `ensureTab` — so a deployment that has not re-run setup() still gets it on first use.
@@ -176,8 +177,14 @@ export const TAB_HEADERS: Record<string, string[]> = {
   ],
   // One row per identity token, not per repository: the join indexes a repository under every
   // id/name/externalId it carries, because nothing here can verify which of them a finding's
-  // `repo_id` will turn out to be. See repoDomains.ts.
-  [TABS.domainMap]: ["token", "domain"],
+  // `repo_id` will turn out to be. See repoTags.ts.
+  //
+  // TWO TAG COLUMNS UNDER A TAB STILL NAMED `domain_map`. The tab predates the lifecycle tag
+  // and renaming it would orphan every deployed map to no gain; `ensureHeaders` appends the
+  // new column on the next write, and a row written before it existed reads `lifecycle` as
+  // absent and still places its domain. Either column may be blank — a repository can carry
+  // one tag and not the other — and a row with neither is skipped on read.
+  [TABS.domainMap]: ["token", "domain", "lifecycle"],
   [TABS.compactions]: [
     "compaction_id", "ts", "floor_scan_id", "floor_ts", "scans_sealed",
     "episodes_created", "archive_bytes_freed", "checkpoint_ref",
@@ -211,8 +218,12 @@ export const TAB_HEADERS: Record<string, string[]> = {
  * for every row written before it, which is the honest record of when the register started
  * measuring it. A RENAME is the case that does destroy data (the old column stops being
  * written and the new one starts empty), so rename by adding and migrating, never in place.
+ *
+ * 4 — `lifecycle` on the tag map: the second repository tag this register joins on read
+ * (src/domain/lifecycleTag.ts), beside the business domain the tab was built for. A deployed
+ * map keeps every domain it already held and starts carrying lifecycles on the next refresh.
  */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 let spreadsheetCache: GoogleAppsScript.Spreadsheet.Spreadsheet | null = null;
 

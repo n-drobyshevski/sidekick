@@ -151,7 +151,7 @@ import { normalizeSeverity } from "../domain/severity";
 import { parseSeverities } from "../domain/compaction";
 import { attachProjectGrain, inProject, parseProjects } from "../domain/projectScope";
 import { inDomain } from "../domain/domainScope";
-import { attachDomains } from "./repoDomains";
+import { attachRepoTags } from "./repoTags";
 import { clampInt, parseTs, type Rec } from "../domain/util";
 import {
   REGISTER_ROWS_DEFAULT_PAGE_SIZE,
@@ -325,6 +325,13 @@ interface NormParams {
   /** The floor the derived line may not go below, in days. Not a `ModelParams` field, same
    *  argument; travels with the mode for the same reason `coldTargetSharePct` does. */
   coldFloorDays: number;
+  /**
+   * Whether retired repositories are left out of the cold zone. Not a `ModelParams` field, for
+   * the same argument as the four above and with more force: this one changes WHO IS COUNTED,
+   * so a per-page override would let the Executive card and the Repositories page report cold
+   * shares of two different estates.
+   */
+  coldExcludeEndOfLife: boolean;
 }
 
 /**
@@ -338,9 +345,9 @@ function norm(p?: ModelParams): NormParams {
   const severities = Array.isArray(sevRaw) && sevRaw.length
     ? sevRaw.map((s) => normalizeSeverity(s)).filter((s, i, a) => a.indexOf(s) === i).sort()
     : null;
-  // One `loadSettings()` for every field it feeds below — `project`, `slaTargets` and the four
-  // cold-zone fields are independent readings of the same settings row, not seven separate
-  // reasons to fetch it seven times.
+  // One `loadSettings()` for every field it feeds below — `project`, `slaTargets` and the five
+  // cold-zone fields are independent readings of the same settings row, not eight separate
+  // reasons to fetch it eight times.
   const settings = loadSettings();
   // `cleanProjectView` already collapses anything that is not a genuine string to "" — this
   // is just the last step, turning that "no scope stored" value into the `null` every other
@@ -350,7 +357,7 @@ function norm(p?: ModelParams): NormParams {
   // The same last step for the domain scope, through the same `cleanViewScope` guarantee.
   const domainRaw = settings.domainView;
   const domain = domainRaw ? domainRaw : null;
-  // ALL FOUR COLD-ZONE FIELDS THROUGH ONE DOOR, off the same settings object. See
+  // ALL FIVE COLD-ZONE FIELDS THROUGH ONE DOOR, off the same settings object. See
   // `effectiveColdZoneSettings`'s own header: reading the mode from one place and the two
   // relative-mode numbers from another is exactly how `coldZoneProfile` ends up handed a
   // relative mode with nothing to aim at, which it throws on.
@@ -366,6 +373,7 @@ function norm(p?: ModelParams): NormParams {
     coldZoneMode: cold.mode,
     coldTargetSharePct: cold.targetSharePct,
     coldFloorDays: cold.floorDays,
+    coldExcludeEndOfLife: cold.excludeEndOfLife,
   };
 }
 
@@ -398,14 +406,15 @@ let baseMemo: BaseSnapshot | undefined;
  * rather than serving the rows it had just invalidated — the same hazard `serverCache`'s own
  * memos guard, for the same reason.
  *
- * THE DOMAIN JOIN HAPPENS HERE, ONCE, AND THIS IS THE ONLY PLACE IT CAN. `_domain` is resolved
- * on read and never persisted (see domain/domainTag.ts), so a row that has not been through
- * `attachDomains` carries no domain at all — and every model below takes its rows from this one
- * snapshot. Attaching anywhere further down would mean one model answering by domain while
- * another silently reported the whole register; attaching further up, inside `loadBaseRows`,
- * would put a server-side join inside the store that every pure test constructs rows through.
+ * THE REPOSITORY-TAG JOIN HAPPENS HERE, ONCE, AND THIS IS THE ONLY PLACE IT CAN. `_domain` and
+ * `_lifecycle` are resolved on read and never persisted (see domain/domainTag.ts and
+ * domain/lifecycleTag.ts), so a row that has not been through `attachRepoTags` carries neither
+ * — and every model below takes its rows from this one snapshot. Attaching anywhere further
+ * down would mean one model answering by domain while another silently reported the whole
+ * register; attaching further up, inside `loadBaseRows`, would put a server-side join inside
+ * the store that every pure test constructs rows through.
  *
- * `refreshRepoDomains` bumps the data version, so a refreshed map invalidates this memo by the
+ * `refreshRepoTags` bumps the data version, so a refreshed map invalidates this memo by the
  * same mechanism a sync does — the map is never joined against stale rows, nor rows against a
  * stale map.
  *
@@ -413,8 +422,8 @@ let baseMemo: BaseSnapshot | undefined;
  * `_product` are derived on read, so a model reading rows that never passed through
  * `attachProjectGrain` would report the whole register where another reported one product.
  *
- * ONE DIFFERENCE WORTH STATING, because it changes what an unset field MEANS. The domain join
- * is gated on a map that may never have been refreshed, so `attachDomains` can legitimately
+ * ONE DIFFERENCE WORTH STATING, because it changes what an unset field MEANS. The tag join
+ * is gated on a map that may never have been refreshed, so `attachRepoTags` can legitimately
  * be a whole-register no-op. `attachProjectGrain` is a pure function of the row and never is:
  * a row without `_product` is a row the tenant filed under no product, not a row the plumbing
  * has not reached yet.
@@ -424,7 +433,7 @@ function baseSnapshot(): BaseSnapshot {
   if (!baseMemo || baseMemo.version !== version) {
     const now = Date.now();
     const rows = loadBaseRows({ now });
-    attachDomains(rows as unknown as Rec[]);
+    attachRepoTags(rows as unknown as Rec[]);
     attachProjectGrain(rows);
     baseMemo = { version, now, rows };
   }
@@ -977,6 +986,7 @@ function buildExecutive(n: NormParams): Rec {
       mode: n.coldZoneMode,
       targetSharePct: n.coldTargetSharePct,
       floorDays: n.coldFloorDays,
+      excludeEndOfLife: n.coldExcludeEndOfLife,
       newestScanByScope: newestScanByScope(),
     })),
     coldZoneAsOfSource: clock.asOfSource,
@@ -1837,6 +1847,7 @@ function buildRepos(n: NormParams): Rec {
       mode: n.coldZoneMode,
       targetSharePct: n.coldTargetSharePct,
       floorDays: n.coldFloorDays,
+      excludeEndOfLife: n.coldExcludeEndOfLife,
       newestScanByScope: newestScanByScope(),
     }),
     signalCoverage: signalCoverage(visible),
