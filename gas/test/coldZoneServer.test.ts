@@ -18,6 +18,8 @@
 //      the per-asset and per-group arrays are the Cold zone page's, and a landing page carrying
 //      them pays for them on every load.
 
+import { readFileSync } from "node:fs";
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { DEFAULT_RISK_RULE } from "../src/domain/program";
@@ -36,6 +38,10 @@ const H = vi.hoisted(() => ({
   version: 0,
   // Every params object `durablyCached` was handed this run, in call order.
   keys: [] as { ns: string; params: Rec }[],
+  // When set, the cold-zone compute fails the way a Drive service error makes it fail.
+  coldThrows: false,
+  // Operation labels `errorLog.recordError` was handed this run.
+  recorded: [] as string[],
 }));
 
 // Sheets/Drive never load: this file is about the read model, and api.ts's import graph reaches
@@ -60,6 +66,7 @@ vi.mock("../src/server/serverCache", () => ({
 vi.mock("../src/server/readModelStore", () => ({
   durablyCached: (ns: string, params: unknown, compute: () => unknown) => {
     H.keys.push({ ns, params: params as Rec });
+    if (ns === "coldZone1" && H.coldThrows) throw new Error("Erreur liée à un service : Drive");
     return compute();
   },
   duringWarm: <T,>(fn: () => T): T => fn(),
@@ -90,7 +97,10 @@ vi.mock("../src/server/supportGroups", () => ({
 vi.mock("../src/server/bizDomains", () => ({
   attachBizDomains: (rows: Rec[]) => { for (const r of rows) r["_bizDomain"] = ""; },
 }));
-vi.mock("../src/server/errorLog", () => ({ recordError: () => {}, recentErrors: () => [] }));
+vi.mock("../src/server/errorLog", () => ({
+  recordError: (op: string) => { H.recorded.push(op); },
+  recentErrors: () => [],
+}));
 
 import { getColdZonePage, getExecutivePage } from "../src/server/api";
 
@@ -146,6 +156,8 @@ beforeEach(() => {
   // the memo is shaped to avoid inside a single execution.
   H.version += 1;
   H.keys.length = 0;
+  H.coldThrows = false;
+  H.recorded.length = 0;
   H.ruleVersion = 0;
   H.cold = { mode: "fixed", coldAfterDays: 90, targetSharePct: 20, floorDays: 14 };
   H.base = [
@@ -432,5 +444,78 @@ describe("the Executive slice", () => {
   it("publishes wallClock on the Executive too, rather than hiding the fallback", () => {
     H.scans = [];
     expect(exec()["coldZoneAsOfSource"]).toBe("wallClock");
+  });
+
+  // ------------------------------------------------------------------------------------- //
+  //  The newest card on the DEFAULT landing page cannot be what takes the page down
+  // ------------------------------------------------------------------------------------- //
+  //
+  // This is the only Executive slice whose compute reaches Drive on a miss: the durable layer's
+  // halves are total, but `coldZoneData` walks the base rows, which loads the ledger, which reads
+  // the snapshot. Before the guard a service error there came back out of `api_getExecutivePage`
+  // and the client painted "Couldn't load remediation data." over the whole page — the hero, the
+  // fix-next list, the severity tiles and MTTR by domain — for the sake of one card.
+  describe("a cold-zone failure costs the card, not the page", () => {
+    it("still answers ok, with every other slice intact", () => {
+      H.coldThrows = true;
+      const res = getExecutivePage();
+      expect(res.ok).toBe(true);
+      expect(res.error ?? "").toBe("");
+      const d = res.data as Rec;
+      expect(d["mttr"]).toBeTruthy();
+      expect(d["severityCounts"]).toBeTruthy();
+      expect(d["byDomain"]).toBeTruthy();
+    });
+
+    // `coldShareView` decides from the shape that arrived, never from a flag, so null lands on
+    // the same not-measured notice the card draws with no flat scan on record (pinned in
+    // test/executiveView.test.js).
+    it("ships a null slice rather than omitting the keys", () => {
+      H.coldThrows = true;
+      const d = getExecutivePage().data as Rec;
+      expect("coldZone" in d).toBe(true);
+      expect(d["coldZone"]).toBeNull();
+      expect(d["coldZoneAsOfSource"]).toBeNull();
+    });
+
+    it("records the failure for Diagnostics instead of swallowing it", () => {
+      H.coldThrows = true;
+      getExecutivePage();
+      expect(H.recorded).toContain("executiveColdZone");
+    });
+
+    it("the Cold zone PAGE still reports the failure — it is that page's whole payload", () => {
+      H.coldThrows = true;
+      const res = getColdZonePage();
+      expect(res.ok).toBe(false);
+    });
+  });
+});
+
+// --------------------------------------------------------------------------------------- //
+//  The warm order
+// --------------------------------------------------------------------------------------- //
+//
+// Read as source rather than by running the warm: `warmReadModelsInner` touches every read-model
+// in the app, and a spec that ran it would be pinning the whole server's wiring to assert one
+// ordering.
+//
+// THE WARM RUNS UNDER A 270 s BUDGET and stops warming when it runs out, so ORDER IS PRIORITY.
+// The cold zone is the newest and heaviest model here; warmed in the middle of the per-scope loop
+// it could spend what was left and leave `bootstrap`, `mttr` or `program` cold — models every page
+// has depended on for far longer. Cold `bootstrapCore8` is the expensive one: it recomputes
+// `findings.currentScan()` against Drive on every load.
+describe("the cold zone is warmed last", () => {
+  const API_SRC = readFileSync(new URL("../src/server/api.ts", import.meta.url), "utf8");
+  const labels = [...API_SRC.matchAll(/\n\s*warm\("([A-Za-z]+)"/g)].map((m) => m[1]);
+
+  it("has the warm set this spec thinks it has", () => {
+    expect(labels).toContain("bootstrap");
+    expect(labels).toContain("program");
+    expect(labels.filter((l) => l === "coldZone")).toHaveLength(1);
+  });
+
+  it("names it after every other model in the function", () => {
+    expect(labels[labels.length - 1]).toBe("coldZone");
   });
 });

@@ -518,6 +518,28 @@ describe("coldShareView — the shape decides, never the flag", () => {
       expect(v.openFindings).toBe(0);
     }
   });
+
+  // THE SHAPE THE SERVER SHIPS WHEN THE COLD COMPUTE FAILED. `getExecutivePage` guards its cold
+  // slice and sends `{ coldZone: null, coldZoneAsOfSource: null }` rather than letting a Drive
+  // service error take the whole landing page down (test/coldZoneServer.test.ts). That is only a
+  // degradation while THIS renders it as the absence notice — a throw in here would put the red
+  // box back, one layer further down.
+  it("renders an explicitly null cold zone as the absence, not as a failure", () => {
+    const v = coldShareView({ coldZone: null, coldZoneAsOfSource: null });
+    expect(v.show).toBe(false);
+    expect(v.measurable).toBe(false);
+    expect(v.pct).toBeNull();
+    expect(v.openFindings).toBe(0);
+    expect(v.coldAfterDays).toBeNull();
+    // A null source is not the server SAYING it fell back to the wall clock.
+    expect(v.atLedgerClock).toBe(true);
+  });
+
+  it("survives the rest of the page's slices arriving alongside a null cold zone", () => {
+    const v = coldShareView({ coldZone: null, coldZoneAsOfSource: null, mttr: {}, byDomain: [] });
+    expect(v.show).toBe(false);
+    expect(v.mode).toBe("fixed");
+  });
 });
 
 describe("coldShareView — a null share is an answer and it is not zero", () => {

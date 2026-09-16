@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "22ffc1766ed1" : "dev";
+  var BUILD_ID = true ? "bfe43cb2e129" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -652,6 +652,51 @@ var Server = (() => {
     return HtmlService.createHtmlOutput(welcomeHtml(email, continueUrl, accountChooserUrl())).setTitle(PRODUCT).addMetaTag("viewport", "width=device-width, initial-scale=1");
   }
 
+  // src/server/errorLog.ts
+  var KEY = "RECENT_ERRORS";
+  var MAX_ENTRIES = 25;
+  var MAX_MESSAGE_LEN = 500;
+  var MAX_BLOB_CHARS = 8500;
+  function truncate(s) {
+    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
+  }
+  function recentErrors() {
+    const raw = getProp(KEY);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
+        var _a, _b, _c, _d;
+        return {
+          ts: String((_a = e["ts"]) != null ? _a : ""),
+          op: String((_b = e["op"]) != null ? _b : "api"),
+          kind: String((_c = e["kind"]) != null ? _c : "error"),
+          message: String((_d = e["message"]) != null ? _d : "")
+        };
+      });
+    } catch {
+      return [];
+    }
+  }
+  function recordError(op, err, kind = "error", now) {
+    try {
+      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
+      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
+      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
+      let blob = JSON.stringify(next);
+      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
+        next.pop();
+        blob = JSON.stringify(next);
+      }
+      setProp(KEY, blob);
+    } catch {
+    }
+  }
+  function clearErrors() {
+    deleteProp(KEY);
+  }
+
   // src/server/archiveStore.ts
   var SUBFOLDERS = [
     "scans",
@@ -665,15 +710,44 @@ var Server = (() => {
     // deployment that never re-runs setup() still self-heals on the first write.
     "readmodels"
   ];
+  var recordedFailures = /* @__PURE__ */ new Set();
+  function noteDriveFailure(label, e) {
+    console.warn(`${label}: ${e}`);
+    if (recordedFailures.has(label)) return;
+    recordedFailures.add(label);
+    recordError(label, e, "error");
+  }
   function rootFolder() {
     return DriveApp.getFolderById(requireProp(PROP_KEYS.archiveFolderId));
   }
-  function childFolder(parent, name) {
+  function findChild(parent, name) {
     const it = parent.getFoldersByName(name);
-    return it.hasNext() ? it.next() : parent.createFolder(name);
+    return it.hasNext() ? it.next() : null;
+  }
+  function childFolder(parent, name) {
+    var _a;
+    return (_a = findChild(parent, name)) != null ? _a : parent.createFolder(name);
   }
   function subfolder(name) {
     return childFolder(rootFolder(), name);
+  }
+  function findSubfolder(name) {
+    try {
+      return findChild(rootFolder(), name);
+    } catch (e) {
+      noteDriveFailure(`archiveRead:${name}`, e);
+      return null;
+    }
+  }
+  function readGzJsonIn(folder, name, label = "archiveRead") {
+    if (!folder) return null;
+    try {
+      const files = folder.getFilesByName(name);
+      return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+    } catch (e) {
+      noteDriveFailure(label, e);
+      return null;
+    }
   }
   function ensureFolders(rootId) {
     const root = rootId ? DriveApp.getFolderById(rootId) : rootFolder();
@@ -713,22 +787,29 @@ var Server = (() => {
   function scanFolder(scanId) {
     return childFolder(subfolder("scans"), safeName(scanId));
   }
+  function findScanFolder(scanId) {
+    const scans = findSubfolder("scans");
+    if (!scans) return null;
+    try {
+      return findChild(scans, safeName(scanId));
+    } catch (e) {
+      noteDriveFailure("archiveRead:scans", e);
+      return null;
+    }
+  }
   function writeScanPage(scanId, pageNumber, payload) {
     const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
     return writeGzJson(scanFolder(scanId), name, payload).getId();
   }
   function readScanPage(scanId, pageNumber) {
     const name = `page-${String(pageNumber).padStart(4, "0")}.json.gz`;
-    const files = scanFolder(scanId).getFilesByName(name);
-    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+    return readGzJsonIn(findScanFolder(scanId), name, "archiveRead:page");
   }
   function writeSlimRecords(scanId, records) {
     return writeGzJson(scanFolder(scanId), "slim.json.gz", records).getId();
   }
   function readSlimRecords(scanId) {
-    const files = scanFolder(scanId).getFilesByName("slim.json.gz");
-    if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
+    const parsed = readGzJsonIn(findScanFolder(scanId), "slim.json.gz", "archiveRead:slim");
     return Array.isArray(parsed) ? parsed : null;
   }
   var FRAME_NAME = "frame-v1.json.gz";
@@ -736,9 +817,7 @@ var Server = (() => {
     return writeGzJson(scanFolder(scanId), FRAME_NAME, records).getId();
   }
   function readFrame(scanId) {
-    const files = scanFolder(scanId).getFilesByName(FRAME_NAME);
-    if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
+    const parsed = readGzJsonIn(findScanFolder(scanId), FRAME_NAME, "archiveRead:frame");
     return Array.isArray(parsed) ? parsed : null;
   }
   var PAGE_RUNS_NAME = "pageruns.json.gz";
@@ -746,9 +825,7 @@ var Server = (() => {
     writeGzJson(scanFolder(scanId), PAGE_RUNS_NAME, runs);
   }
   function readPageRuns(scanId) {
-    const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
-    if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
+    const parsed = readGzJsonIn(findScanFolder(scanId), PAGE_RUNS_NAME, "archiveRead:pageRuns");
     return Array.isArray(parsed) ? parsed : null;
   }
   function readScanPayload(scanRef) {
@@ -760,14 +837,19 @@ var Server = (() => {
       return null;
     }
     const pages = [];
-    const files = folder.getFiles();
-    while (files.hasNext()) {
-      const f = files.next();
-      const name = f.getName();
-      if (!/^page-\d+\.json(\.gz)?$/.test(name)) continue;
-      const payload = parseGzBlob(f.getBlob());
-      if (payload === null) return null;
-      pages.push({ name, payload });
+    try {
+      const files = folder.getFiles();
+      while (files.hasNext()) {
+        const f = files.next();
+        const name = f.getName();
+        if (!/^page-\d+\.json(\.gz)?$/.test(name)) continue;
+        const payload = parseGzBlob(f.getBlob());
+        if (payload === null) return null;
+        pages.push({ name, payload });
+      }
+    } catch (e) {
+      noteDriveFailure("archiveRead:scanPayload", e);
+      return null;
     }
     if (!pages.length) return null;
     pages.sort((a, b) => a.name < b.name ? -1 : 1);
@@ -873,17 +955,23 @@ var Server = (() => {
       return [];
     }
     const nums = [];
-    const files = folder.getFiles();
-    while (files.hasNext()) {
-      const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
-      if (m) nums.push(Number(m[1]));
+    try {
+      const files = folder.getFiles();
+      while (files.hasNext()) {
+        const m = /^page-(\d+)\.json(\.gz)?$/.exec(files.next().getName());
+        if (m) nums.push(Number(m[1]));
+      }
+    } catch (e) {
+      noteDriveFailure("archiveRead:pageNumbers", e);
+      return [];
     }
     return nums.sort((a, b) => a - b);
   }
   function trashPageRuns(scanId) {
     try {
-      const files = scanFolder(scanId).getFilesByName(PAGE_RUNS_NAME);
-      while (files.hasNext()) files.next().setTrashed(true);
+      const folder = findScanFolder(scanId);
+      const files = folder ? folder.getFilesByName(PAGE_RUNS_NAME) : null;
+      while (files && files.hasNext()) files.next().setTrashed(true);
     } catch (e) {
       console.warn(`Couldn't trash page runs for ${scanId}: ${e}`);
     }
@@ -894,9 +982,7 @@ var Server = (() => {
     writeGzJson(subfolder("snapshots"), SNAPSHOT_NAME, snap);
   }
   function readLedgerSnapshot() {
-    const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
-    if (!files.hasNext()) return null;
-    const parsed = parseGzBlob(files.next().getBlob());
+    const parsed = readGzJsonIn(findSubfolder("snapshots"), SNAPSHOT_NAME, "archiveRead:snapshot");
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
     const snap = parsed;
     return snap.ledger && snap.episodes ? snap : null;
@@ -915,33 +1001,49 @@ var Server = (() => {
     const file = writeGzJson(subfolder("exports"), name, bundle);
     return { name, url: file.getDownloadUrl(), bytes: file.getSize() };
   }
-  function readGzJsonNamed(folder, name) {
-    const files = subfolder(folder).getFilesByName(name);
-    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
-  }
   function listNames(folder) {
+    const dir = findSubfolder(folder);
+    if (!dir) return [];
     const out = [];
-    const files = subfolder(folder).getFiles();
-    while (files.hasNext()) out.push(files.next().getName());
+    try {
+      const files = dir.getFiles();
+      while (files.hasNext()) out.push(files.next().getName());
+    } catch (e) {
+      noteDriveFailure(`archiveRead:${folder}`, e);
+      return [];
+    }
     return out;
   }
   function trashNamed(folder, name) {
-    const files = subfolder(folder).getFilesByName(name);
+    const dir = findSubfolder(folder);
+    if (!dir) return;
+    const files = dir.getFilesByName(name);
     while (files.hasNext()) files.next().setTrashed(true);
   }
   function trashLedgerSnapshot() {
-    const files = subfolder("snapshots").getFilesByName(SNAPSHOT_NAME);
+    const dir = findSubfolder("snapshots");
+    if (!dir) return;
+    const files = dir.getFilesByName(SNAPSHOT_NAME);
     while (files.hasNext()) files.next().setTrashed(true);
   }
   function importFolder(sessionId) {
     return childFolder(subfolder("imports"), safeName(sessionId));
   }
+  function findImportFolder(sessionId) {
+    const imports = findSubfolder("imports");
+    if (!imports) return null;
+    try {
+      return findChild(imports, safeName(sessionId));
+    } catch (e) {
+      noteDriveFailure("archiveRead:imports", e);
+      return null;
+    }
+  }
   function writeImportManifest(sessionId, manifest) {
     return writeGzJson(importFolder(sessionId), "manifest.json.gz", manifest).getId();
   }
   function readImportManifest(sessionId) {
-    const files = importFolder(sessionId).getFilesByName("manifest.json.gz");
-    return files.hasNext() ? parseGzBlob(files.next().getBlob()) : null;
+    return readGzJsonIn(findImportFolder(sessionId), "manifest.json.gz", "archiveRead:imports");
   }
   function stageShard(sessionId, index, payload) {
     const name = `shard-${String(index + 1).padStart(4, "0")}.json.gz`;
@@ -7039,51 +7141,6 @@ var Server = (() => {
     return (r) => orNull(r[column]);
   }
 
-  // src/server/errorLog.ts
-  var KEY = "RECENT_ERRORS";
-  var MAX_ENTRIES = 25;
-  var MAX_MESSAGE_LEN = 500;
-  var MAX_BLOB_CHARS = 8500;
-  function truncate(s) {
-    return s.length > MAX_MESSAGE_LEN ? s.slice(0, MAX_MESSAGE_LEN) + "\u2026" : s;
-  }
-  function recentErrors() {
-    const raw = getProp(KEY);
-    if (!raw) return [];
-    try {
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed.filter((e) => Boolean(e) && typeof e === "object" && !Array.isArray(e)).map((e) => {
-        var _a, _b, _c, _d;
-        return {
-          ts: String((_a = e["ts"]) != null ? _a : ""),
-          op: String((_b = e["op"]) != null ? _b : "api"),
-          kind: String((_c = e["kind"]) != null ? _c : "error"),
-          message: String((_d = e["message"]) != null ? _d : "")
-        };
-      });
-    } catch {
-      return [];
-    }
-  }
-  function recordError(op, err, kind = "error", now) {
-    try {
-      const message = err instanceof Error ? err.message : typeof err === "string" ? err : String(err);
-      const entry = { ts: nowIso(now), op, kind, message: truncate(message) };
-      const next = [entry, ...recentErrors()].slice(0, MAX_ENTRIES);
-      let blob = JSON.stringify(next);
-      while (next.length > 1 && blob.length > MAX_BLOB_CHARS) {
-        next.pop();
-        blob = JSON.stringify(next);
-      }
-      setProp(KEY, blob);
-    } catch {
-    }
-  }
-  function clearErrors() {
-    deleteProp(KEY);
-  }
-
   // src/domain/purge.ts
   function severityOf(rec) {
     return effectiveSeverity(rec).severity;
@@ -8715,8 +8772,10 @@ var Server = (() => {
   }
   var disabled = false;
   var folderMemo;
-  function readModelFolder() {
-    if (folderMemo === void 0) folderMemo = subfolder("readmodels");
+  function readModelFolder(create) {
+    if (folderMemo === void 0 || create && folderMemo === null) {
+      folderMemo = create ? subfolder("readmodels") : findSubfolder("readmodels");
+    }
     return folderMemo;
   }
   function readModelFileName(name, params) {
@@ -8725,7 +8784,9 @@ var Server = (() => {
   function l2Read(name, params) {
     if (disabled) return { hit: false, why: "disabled" };
     try {
-      const parsed = readGzJsonNamed("readmodels", readModelFileName(name, params));
+      const folder = readModelFolder(false);
+      if (folder === null) return { hit: false, why: "absent" };
+      const parsed = readGzJsonIn(folder, readModelFileName(name, params), "readModelRead");
       if (parsed === null || typeof parsed !== "object") return { hit: false, why: "absent" };
       const env = parsed;
       if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
@@ -8738,6 +8799,7 @@ var Server = (() => {
       return { hit: false, why: "unreadable" };
     }
   }
+  var MAX_L2_JSON_CHARS = 4e6;
   function l2Write(name, params, value) {
     if (disabled) return;
     try {
@@ -8749,7 +8811,16 @@ var Server = (() => {
         writtenAtMs: Date.now(),
         value
       };
-      writeGzJson(readModelFolder(), readModelFileName(name, params), env);
+      const chars = JSON.stringify(env).length;
+      if (chars > MAX_L2_JSON_CHARS) {
+        console.warn(
+          `Durable read-model (${name}) is ${chars} chars, over the ${MAX_L2_JSON_CHARS} cap \u2014 not written`
+        );
+        return;
+      }
+      const folder = readModelFolder(true);
+      if (folder === null) return;
+      writeGzJson(folder, readModelFileName(name, params), env);
     } catch (e) {
       disabled = true;
       console.warn(`Durable read-model write (${name}) failed, L2 disabled for this run: ${e}`);
@@ -11152,6 +11223,15 @@ var Server = (() => {
       coldZoneAsOfSource: model["asOfSource"]
     };
   }
+  function execColdSliceGuarded(p) {
+    try {
+      return execColdSlice(cachedColdZoneData(p));
+    } catch (e) {
+      console.warn(`Executive cold-zone slice failed: ${e}`);
+      recordError("executiveColdZone", e, "error");
+      return { coldZone: null, coldZoneAsOfSource: null };
+    }
+  }
   function getColdZonePage(p) {
     return run(() => cachedColdZoneData(p));
   }
@@ -11507,7 +11587,7 @@ var Server = (() => {
       return {
         mttr: execMttrSlice(cachedMttrData(p)),
         ...(_a2 = execInsightsSlice(cachedInsightsData(insightsParams))) != null ? _a2 : {},
-        ...execColdSlice(cachedColdZoneData(coldParams)),
+        ...execColdSliceGuarded(coldParams),
         // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
         // domain yields a single row, so a domain scope splits by support group within it instead.
         byDomain: execGroupSlice(
@@ -12254,11 +12334,13 @@ var Server = (() => {
       warm("mttrTrend", () => cachedMttrTrendData(p));
       warm("insights", () => cachedInsightsData(p));
       warm("program", () => cachedProgramData(p));
-      warm("coldZone", () => cachedColdZoneData(p));
       warm("programTrend", () => cachedProgramTrendData(p));
       warm("mttrBySupportGroup", () => cachedMttrBySupportGroupData(p));
       warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
       warm("attribution", () => cachedAttributionData({ severities }));
+    }
+    for (const severities of scopes) {
+      warm("coldZone", () => cachedColdZoneData({ domain: "", supportGroup: "", severities }));
     }
     if (skipped) {
       console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);

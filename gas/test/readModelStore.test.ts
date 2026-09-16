@@ -15,14 +15,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 // In-memory Drive: name -> parsed payload, plus call counters.
 const files = new Map<string, unknown>();
-const calls = { create: 0, read: 0, trash: 0, list: 0 };
+// `folder` counts FOLDER RESOLUTIONS — getFolderById + getFoldersByName in the real
+// archiveStore, which is the pair the memo below exists to stop paying per model.
+const calls = { create: 0, read: 0, trash: 0, list: 0, folder: 0 };
 let driveThrows = false;
 
 vi.mock("../src/server/archiveStore", () => ({
-  subfolder: () => ({ __fake: true }),
-  readGzJsonNamed: (_f: string, name: string) => {
-    calls.read += 1;
+  // The write-side lookup: it creates, and it throws when Drive is unreachable.
+  subfolder: () => {
+    calls.folder += 1;
     if (driveThrows) throw new Error("drive unavailable");
+    return { __fake: true };
+  },
+  // The read-side lookup: total, never creates, null when the folder is absent or Drive threw.
+  findSubfolder: () => {
+    calls.folder += 1;
+    return driveThrows ? null : { __fake: true };
+  },
+  readGzJsonIn: (_folder: unknown, name: string) => {
+    calls.read += 1;
     return files.has(name) ? files.get(name) : null;
   },
   writeGzJson: (_folder: unknown, name: string, payload: unknown) => {
@@ -67,7 +78,7 @@ beforeEach(async () => {
   ({ durablyCached, duringWarm, readModelFileName, sweepReadModels } = await load());
   files.clear();
   l1.clear();
-  calls.create = 0; calls.read = 0; calls.trash = 0; calls.list = 0;
+  calls.create = 0; calls.read = 0; calls.trash = 0; calls.list = 0; calls.folder = 0;
   driveThrows = false;
   stamp = "build1.100.tagA";
   vi.stubGlobal("console", { ...console, warn: () => {} });
@@ -180,11 +191,69 @@ describe("failure semantics: an optimization, never a correctness dependency", (
   });
 
   // A missing ARCHIVE_FOLDER_ID or a revoked scope should cost ONE failed call, not one per
-  // durable read-model per request.
+  // durable read-model per request. The memo is what bounds it now: the folder resolves to null
+  // once and every later read answers off that, without reaching Drive at all.
   it("stops trying after the first Drive failure in an execution", () => {
     driveThrows = true;
     for (const n of ["a", "b", "c", "d"]) durablyCached(n, P, () => n);
-    expect(calls.read).toBe(1);
+    expect(calls.folder).toBe(1);
+    expect(calls.read).toBe(0);
+  });
+});
+
+describe("the folder is resolved once per execution, not once per model", () => {
+  // THE READ HALF USED TO SKIP THE MEMO. `readGzJsonNamed` resolved the folder afresh — a
+  // getFolderById plus a getFoldersByName — on every durable read, so a page reading three
+  // durable models paid six Drive calls for one folder. Invisible except as latency, which is
+  // the one symptom a register inside a six-minute execution cap can least afford.
+  it("pays one folder resolution across three durable reads", () => {
+    duringWarm(() => {
+      durablyCached("a", P, () => 1);
+      durablyCached("b", P, () => 2);
+      durablyCached("c", P, () => 3);
+    });
+    l1.clear();
+    calls.folder = 0;
+    durablyCached("a", P, () => 1);
+    durablyCached("b", P, () => 2);
+    durablyCached("c", P, () => 3);
+    expect(calls.read).toBe(6); // three writes' reads, then three hits
+    expect(calls.folder).toBe(0); // memoized by the warm above, in this same execution
+  });
+
+  it("resolves it exactly once when the execution starts cold", () => {
+    durablyCached("a", P, () => 1);
+    durablyCached("b", P, () => 2);
+    durablyCached("c", P, () => 3);
+    expect(calls.folder).toBe(1);
+  });
+});
+
+describe("an envelope too big for one file is skipped, not written", () => {
+  // A read-model that serializes past the cap is a whole-register payload; writing it would cost
+  // more than recomputing it, and a write big enough to blow the execution cap would take the
+  // REST of the warm down with it. Skipping ONE entry degrades instead — and the run's other
+  // durable writes must still happen, which is why this is not the `disabled` breaker.
+  const big = () => ({ rows: ["x".repeat(4_000_001)] });
+
+  it("writes no file for an oversized value", () => {
+    duringWarm(() => durablyCached("huge", P, big));
+    expect(files.size).toBe(0);
+    expect(calls.create).toBe(0);
+  });
+
+  it("keeps writing the other models in the same warm", () => {
+    duringWarm(() => {
+      durablyCached("huge", P, big);
+      durablyCached("small", P, () => "ok");
+    });
+    expect([...files.keys()]).toEqual([readModelFileName("small", P)]);
+  });
+
+  it("still answers with the computed value", () => {
+    let out: unknown;
+    duringWarm(() => { out = durablyCached("huge", P, big); });
+    expect((out as { rows: string[] }).rows[0]!.length).toBe(4_000_001);
   });
 });
 
