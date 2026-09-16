@@ -99,9 +99,9 @@
 //     `eligible_repos` reports 0 so the empty answer can prove it looked.
 //
 // The TEAM rank is the same idea one level up and is deliberately kept separate from the
-// verdict: `relative_rank` orders the projects that have repositories with open findings by
+// verdict: `relative_rank` orders the products that have repositories with open findings by
 // the share of those repositories that are cold, and in relative mode the coldest
-// `targetSharePct` of them are marked `in_coldest_share`. A project with no cold repository
+// `targetSharePct` of them are marked `in_coldest_share`. A product with no cold repository
 // is never marked, whatever the arithmetic says (the `C` clamp), and ties are extended
 // through rather than broken by the label — a badge that depended on alphabetical order
 // would be a fact about spelling.
@@ -120,8 +120,8 @@ import { cmp, parseTs, present, toIso } from "./util";
 
 const DAY_MS = 86_400_000;
 
-/** The label the null `owner_project` bucket is published under — a real row, never a drop. */
-export const COLD_PROJECT_NONE = "(no project)";
+/** The label the null-product bucket is published under — a real row, never a drop. */
+export const COLD_PRODUCT_NONE = "(no product)";
 
 // --------------------------------------------------------------------------- input shape
 
@@ -139,7 +139,13 @@ export type ColdRow = RiskRow &
     BaseRow,
     | "repo_id"
     | "repo_name"
-    | "owner_project"
+    // THE TWO GRAINS, ATTACHED ON READ, NOT the `owner_project` column they replaced. A
+    // repository is filed under a `product-…` product and under a CS/CE/LU support group that
+    // holds several of them (src/domain/projectGrain.ts); `owner_project` held whichever of
+    // the two Wiz returned first, so the roll-up below was ranking products against support
+    // groups. Taking `_product` here means the compiler proves the old column left this path.
+    | "_product"
+    | "_supportGroup"
     | "scope"
     | "status"
     | "first_seen"
@@ -204,15 +210,17 @@ export type ColdVerdict = "unobserved" | "clear" | "cold" | "warm" | "watching";
 /** What counts as movement. Three columns, because they are three events. */
 export type MovementKind = "resolved" | "removed" | "rotated";
 
-/** Project states, rolled up from the repositories that have open findings. */
+/** Product states, rolled up from the repositories that have open findings. */
 export type TeamVerdict = "fully-cold" | "partly-cold" | "warm" | "clear";
 
 export interface ColdRepoRow {
   repo_id: string;
   /** Display name; falls back to the id when no row carried one. */
   repo_name: string | null;
-  /** `owner_project`. NULL is a real answer and is rolled up under `COLD_PROJECT_NONE`. */
-  project: string | null;
+  /** `_product`. NULL is a real answer and is rolled up under `COLD_PRODUCT_NONE`. */
+  product: string | null;
+  /** `_supportGroup` — the group this product escalates to. NULL when the row names none. */
+  support_group: string | null;
   open_findings: number;
   open_high_risk: number;
   /** Age of the oldest OPEN finding, from `first_seen` against `now`. Never from `age_days`. */
@@ -243,8 +251,21 @@ export interface ColdRepoRow {
 }
 
 export interface ColdTeamRow {
-  project: string | null;
+  product: string | null;
   label: string;
+  /**
+   * The support group every repository in this product agreed on, or NULL where they did not
+   * — or where none named one at all.
+   *
+   * A TEAM ROW IS A SUMMARY OVER MANY REPOSITORIES, so this takes the same refusal
+   * `server/fixNext.ts` applies to a ranked group: naming one of several would invent an
+   * escalation path. `support_groups` is what tells "nobody said" from "they disagreed", and
+   * a disagreement is itself worth seeing — it means the tenant's convention has broken for
+   * this product.
+   */
+  support_group: string | null;
+  /** How many distinct support groups this product's repositories named. 0 when none did. */
+  support_groups: number;
   repos: number;
   repos_observed: number;
   repos_unobserved: number;
@@ -264,15 +285,15 @@ export interface ColdTeamRow {
   last_movement_at: string | null;
   verdict: TeamVerdict;
   /**
-   * 1..T over the projects that have repositories with open findings, by `cold_share_pct`
-   * desc, `open_in_cold` desc, label asc. NULL for a project with nothing open — it has no
-   * cold share, and giving it a rank would invent a position for a project that is not in
+   * 1..T over the products that have repositories with open findings, by `cold_share_pct`
+   * desc, `open_in_cold` desc, label asc. NULL for a product with nothing open — it has no
+   * cold share, and giving it a rank would invent a position for a product that is not in
    * the race. Computed in BOTH modes, so the payload has one shape.
    */
   relative_rank: number | null;
   /**
-   * The coldest `targetSharePct` of the ranked projects. Only ever true in relative mode,
-   * never true for a project with no cold repository, and extended through ties.
+   * The coldest `targetSharePct` of the ranked products. Only ever true in relative mode,
+   * never true for a product with no cold repository, and extended through ties.
    */
   in_coldest_share: boolean;
   /** Repos per idle bucket, length 5 (the fifth is "not yet measurable"). */
@@ -301,10 +322,10 @@ export interface ColdZoneTotals {
   teams: number;
   teams_fully_cold: number;
   teams_partly_cold: number;
-  /** Projects marked `in_coldest_share`. Always 0 in fixed mode — the badge is relative. */
+  /** Products marked `in_coldest_share`. Always 0 in fixed mode — the badge is relative. */
   teams_in_coldest_share: number;
-  /** Repositories with no `owner_project` at all — the ownership gap, published as a figure. */
-  repos_no_project: number;
+  /** Repositories the tenant filed under no product — the ownership gap, published as a figure. */
+  repos_no_product: number;
   buckets: number[];
   bucket_open: number[];
 }
@@ -445,7 +466,8 @@ const VERDICT_RANK: Record<ColdVerdict, number> = {
 interface RepoAcc {
   repoId: string;
   repoName: string | null;
-  project: string | null;
+  product: string | null;
+  supportGroup: string | null;
   scopes: Set<Scope>;
   rowsByScope: Map<Scope, ColdRow[]>;
   open: number;
@@ -487,7 +509,8 @@ function newAcc(repoId: string): RepoAcc {
   return {
     repoId,
     repoName: null,
-    project: null,
+    product: null,
+    supportGroup: null,
     scopes: new Set(),
     rowsByScope: new Map(),
     open: 0,
@@ -513,7 +536,10 @@ function newAcc(repoId: string): RepoAcc {
  */
 function foldRow(acc: RepoAcc, row: ColdRow, risk: RiskClass): void {
   if (acc.repoName === null && !blank(row.repo_name)) acc.repoName = String(row.repo_name);
-  if (acc.project === null && !blank(row.owner_project)) acc.project = String(row.owner_project);
+  if (acc.product === null && !blank(row._product)) acc.product = String(row._product);
+  if (acc.supportGroup === null && !blank(row._supportGroup)) {
+    acc.supportGroup = String(row._supportGroup);
+  }
   acc.scopes.add(row.scope);
   const bucket = acc.rowsByScope.get(row.scope);
   if (bucket) bucket.push(row);
@@ -614,7 +640,7 @@ function bucketOf(readingDays: number, t: number): number {
 // --------------------------------------------------------------------------- the entry point
 
 /**
- * The cold-zone profile: one row per repository, one per project, and the totals.
+ * The cold-zone profile: one row per repository, one per product, and the totals.
  *
  * The verdict table, first match wins — the ORDER is the contract:
  *
@@ -870,7 +896,8 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
     repos.push({
       repo_id: acc.repoId,
       repo_name: acc.repoName,
-      project: acc.project,
+      product: acc.product,
+      support_group: acc.supportGroup,
       open_findings: acc.open,
       open_high_risk: acc.openHigh,
       oldest_open_age_days:
@@ -921,20 +948,33 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
 }
 
 /**
- * Per project. The NULL key is a real bucket and is labelled `COLD_PROJECT_NONE` — it is
- * never dropped and never pinned last, because "nobody owns these repositories" is one of
- * the answers the page exists to give, not a gap in the data to be tidied away.
+ * Per PRODUCT, with the support group carried alongside. The NULL key is a real bucket and is
+ * labelled `COLD_PRODUCT_NONE` — it is never dropped and never pinned last, because "nobody
+ * owns these repositories" is one of the answers the page exists to give, not a gap in the
+ * data to be tidied away.
+ *
+ * ROLLED UP BY THE FINER GRAIN, DELIBERATELY, even though this type is called a TEAM row and
+ * a support group is literally the team. The verdicts and the coldest-share badge are
+ * calibrated on this population: over a dozen support groups instead of a hundred products,
+ * `cold_share_pct` means a different thing and the glossary entry stops being true. A group
+ * whose products are individually fine can also be fine in aggregate while one of them has
+ * gone completely dark, and that is exactly what the page exists to surface.
+ *
+ * So the group rides as a COLUMN instead — the escalation path from a cold product, reachable
+ * without a second table calibrated on a second population. That also makes honest something
+ * this type only ever approximated: a "team" here was always the finest ownership the ledger
+ * could name, and now the reader can see the team above it.
  */
 function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
-  const byProject = new Map<string | null, ColdRepoRow[]>();
+  const byProduct = new Map<string | null, ColdRepoRow[]>();
   for (const r of repos) {
-    const list = byProject.get(r.project);
+    const list = byProduct.get(r.product);
     if (list) list.push(r);
-    else byProject.set(r.project, [r]);
+    else byProduct.set(r.product, [r]);
   }
 
   const out: ColdTeamRow[] = [];
-  for (const [project, list] of byProject) {
+  for (const [product, list] of byProduct) {
     const buckets = [0, 0, 0, 0, 0];
     const bucketOpen = [0, 0, 0, 0, 0];
     let observed = 0;
@@ -992,9 +1032,15 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
     const verdict: TeamVerdict =
       withOpen === 0 ? "clear" : coldRepos === withOpen ? "fully-cold" : coldRepos > 0 ? "partly-cold" : "warm";
 
+    const groups = new Set<string>();
+    for (const r of list) if (r.support_group !== null) groups.add(r.support_group);
+
     out.push({
-      project,
-      label: project ?? COLD_PROJECT_NONE,
+      product,
+      label: product ?? COLD_PRODUCT_NONE,
+      // One name only when they all agree — see the field's own comment.
+      support_group: groups.size === 1 ? [...groups][0]! : null,
+      support_groups: groups.size,
       repos: list.length,
       repos_observed: observed,
       repos_unobserved: unobserved,
@@ -1011,7 +1057,7 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
       last_movement_at: toIso(lastMovement),
       verdict,
       // Filled by `rankTeams`, which runs over the finished roll-up: the rank is a fact about
-      // the whole set of projects, so no single project's fold can know it.
+      // the whole set of products, so no single product's fold can know it.
       relative_rank: null,
       in_coldest_share: false,
       buckets,
@@ -1030,17 +1076,17 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
  *
  * The published order is the one `rollUp` set (cold repositories desc), because that is the
  * order the table is read in and changing it under a reader would be a different page. The
- * rank is a separate column measured on a different axis — the SHARE of a project's
- * open-finding repositories that are cold, so a project with three cold repositories out of
+ * rank is a separate column measured on a different axis — the SHARE of a product's
+ * open-finding repositories that are cold, so a product with three cold repositories out of
  * three outranks one with five out of fifty. Tie-breaks: `open_in_cold` desc, then label asc
  * for determinism.
  *
  * Three refusals, all of them about not badging somebody the arithmetic merely swept up:
- *   * Only projects with `repos_with_open > 0` are ranked at all. A project with nothing open
+ *   * Only products with `repos_with_open > 0` are ranked at all. A product with nothing open
  *     has a NULL cold share, and a rank over a null is an invention.
- *   * `C` — the ranked projects that actually have a cold repository — CLAMPS the badge.
- *     "The coldest 20%" of an estate where only one project has anything cold is that one
- *     project, never a second one whose cold share is zero.
+ *   * `C` — the ranked products that actually have a cold repository — CLAMPS the badge.
+ *     "The coldest 20%" of an estate where only one product has anything cold is that one
+ *     product, never a second one whose cold share is zero.
  *   * Ties at the cutoff are extended through, on `(cold_share_pct, open_in_cold)`. The label
  *     tie-break orders the table; it must never decide a badge, because that would make the
  *     mark a fact about spelling.
@@ -1071,8 +1117,8 @@ function rankTeams(
   if (mode === "relative" && withCold > 0 && targetSharePct !== null) {
     want = Math.min(withCold, Math.max(1, Math.ceil((targetSharePct / 100) * total)));
     // Extend through a tie at the cutoff — see the refusals above. The walk stops at `withCold`
-    // by construction as well as by the guard: every project past that point has a cold share
-    // of 0, which cannot tie with the share of a project that has a cold repository.
+    // by construction as well as by the guard: every product past that point has a cold share
+    // of 0, which cannot tie with the share of a product that has a cold repository.
     while (
       want < withCold &&
       (ranked[want].cold_share_pct ?? 0) === (ranked[want - 1].cold_share_pct ?? 0) &&
@@ -1111,7 +1157,7 @@ function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
     teams_fully_cold: 0,
     teams_partly_cold: 0,
     teams_in_coldest_share: 0,
-    repos_no_project: 0,
+    repos_no_product: 0,
     buckets,
     bucket_open: bucketOpen,
   };
@@ -1133,7 +1179,7 @@ function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
     // Counted off the rows themselves rather than passed in from the derivation, so the
     // figure and the marks on the table can never disagree about how many were badged.
     if (team.in_coldest_share) t.teams_in_coldest_share += 1;
-    if (team.project === null) t.repos_no_project = team.repos;
+    if (team.product === null) t.repos_no_product = team.repos;
     for (let i = 0; i < 5; i += 1) {
       buckets[i] += team.buckets[i];
       bucketOpen[i] += team.bucket_open[i];

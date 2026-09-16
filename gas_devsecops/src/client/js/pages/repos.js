@@ -20,9 +20,11 @@
 // added — so the density, foothold, half-life and capacity blocks below are unchanged and
 // still carry no owner. What changed is that `buildRepos` (readModels.ts) now composes a
 // SECOND family into the same payload: `model.coldZone`, a `ColdZoneResult`
-// (src/domain/coldZone.ts) built from the ledger rows themselves, where `owner_project` has
-// always been. Its `teams` array is one row per project, and a repository with no project at
-// all is a REAL ROW in it under the label "(no project)" (`COLD_PROJECT_NONE`) rather than a
+// (src/domain/coldZone.ts) built from the ledger rows themselves, where ownership has always
+// been. Its `teams` array is one row per PRODUCT — the tenant's finer ownership grain, with
+// the CS/CE/LU support group above it carried as a column (src/domain/projectGrain.ts) — and
+// a repository with no product at all is a REAL ROW in it under the label "(no product)"
+// (`COLD_PRODUCT_NONE`) rather than a
 // drop — which is what finally answers the unowned question that used to be stated here as a
 // gap, as a count of repositories and of the open findings on them rather than as a
 // percentage nobody computed. The old `ownershipView`'s honest refusal is gone because the
@@ -41,7 +43,7 @@
 // that threshold — so every figure, bucket and cell below reads one number and no renderer
 // asks which mode it came from. What the mode changes is the SENTENCE: `coldModeCaption`
 // heads the section with where the line came from, the cold-repositories card's denominator
-// repeats it one level down, the project table grows a relative rank beside the absolute
+// repeats it one level down, the product table grows a relative rank beside the absolute
 // verdict, and the scatter's rule says "(relative)" when the line was derived. See
 // `coldModeCaption` for the copy and for what it refuses to round off.
 
@@ -383,35 +385,35 @@ export function unmeasurableNote(view) {
 }
 
 /**
- * The count line under the project table. The "(no project)" bucket is named ONLY when it is
- * in the table: a sentence that says "including the repositories with no project recorded"
+ * The count line under the product table. The "(no product)" bucket is named ONLY when it is
+ * in the table: a sentence that says "including the repositories with no product recorded"
  * over a table with no such row claims a bucket the reader cannot find.
  *
- * @param {{totals?: {repos_no_project?: number}|null}|null|undefined} view
+ * @param {{totals?: {repos_no_product?: number}|null}|null|undefined} view
  * @param {number} rowCount  the rows the table actually holds
  * @returns {string}
  */
-export function projectCountNote(view, rowCount) {
+export function productCountNote(view, rowCount) {
   const rows = num(rowCount, 0);
-  const noProject = view && view.totals ? num(view.totals.repos_no_project, 0) : 0;
-  const head = `${fmtCount(rows)} ${rows === 1 ? "project" : "projects"}`;
-  if (!noProject) return `${head}.`;
-  return `${head}, including the ${fmtCount(noProject)} ${noProject === 1 ? "repository" : "repositories"}`
-    + " with no project recorded, counted together as one.";
+  const noProduct = view && view.totals ? num(view.totals.repos_no_product, 0) : 0;
+  const head = `${fmtCount(rows)} ${rows === 1 ? "product" : "products"}`;
+  if (!noProduct) return `${head}.`;
+  return `${head}, including the ${fmtCount(noProduct)} ${noProduct === 1 ? "repository" : "repositories"}`
+    + " with no product recorded, counted together as one.";
 }
 
 /**
- * The badge's own count line, under the project table — or null when nobody is badged.
+ * The badge's own count line, under the product table — or null when nobody is badged.
  *
  * TWO SENTENCES, AND THE SECOND ONE IS THE REFUSAL. "The coldest 20%" of an estate where one
- * project has anything cold at all is that ONE project: `rankTeams` clamps the badge to the
- * projects that actually have a cold repository (`coldZone.ts`'s `C` clamp), so a reader who
+ * product has anything cold at all is that ONE product: `rankTeams` clamps the badge to the
+ * products that actually have a cold repository (`coldZone.ts`'s `C` clamp), so a reader who
  * counts the marks and finds fewer than the arithmetic implies is seeing the clamp, not a
  * rendering bug. A line that only reported the count would leave that looking like one.
  *
  * Null in fixed mode by construction rather than by a branch here: `in_coldest_share` is only
  * ever true in relative mode, so the total it is counted from is 0 and there is nothing to
- * say. Same shape as `unmeasurableNote` above — a sentence about zero projects is noise.
+ * say. Same shape as `unmeasurableNote` above — a sentence about zero products is noise.
  *
  * @param {{teamsInColdestShare?: number, targetSharePct?: number|null}|null|undefined} view
  * @returns {string|null}
@@ -420,9 +422,9 @@ export function coldestShareNote(view) {
   const n = view ? num(view.teamsInColdestShare, 0) : 0;
   if (!n) return null;
   const one = n === 1;
-  return `${fmtCount(n)} ${one ? "project is" : "projects are"} in the coldest`
+  return `${fmtCount(n)} ${one ? "product is" : "products are"} in the coldest`
     + ` ${fmtCount(num(view.targetSharePct))}% by the share of ${one ? "its" : "their"}`
-    + " open-finding repositories that are cold. A project with no cold repository is never"
+    + " open-finding repositories that are cold. A product with no cold repository is never"
     + " marked.";
 }
 
@@ -590,7 +592,7 @@ const COLD_VERDICT_LABEL = {
   unobserved: "Unobserved",
 };
 
-/** The same, for a project's rollup of its repositories. */
+/** The same, for a product's rollup of its repositories. */
 const TEAM_VERDICT_LABEL = {
   "fully-cold": "Fully cold",
   "partly-cold": "Partly cold",
@@ -599,48 +601,67 @@ const TEAM_VERDICT_LABEL = {
 };
 
 /**
- * The label a repository with no `owner_project` is filed under.
+ * The label a repository the tenant filed under no product is shown with.
  *
- * `src/domain/coldZone.ts` exports this exact string as `COLD_PROJECT_NONE` and puts it on
- * every team row's `label`, so the team table never spells it itself. It is repeated here for
- * the one place the payload cannot supply it — a REPOSITORY row, whose `project` is the raw
- * `owner_project` and is null for exactly these repositories. Not imported: no page in this
- * client imports from `src/domain/` (history.js's header states the rule and why), and a
+ * `src/domain/coldZone.ts` exports this exact string as `COLD_PRODUCT_NONE` and puts it on
+ * every team row's `label`, so the product table never spells it itself. It is repeated here
+ * for the one place the payload cannot supply it — a REPOSITORY row, whose `product` is the
+ * row's own `_product` and is null for exactly these repositories. Not imported: no page in
+ * this client imports from `src/domain/` (history.js's header states the rule and why), and a
  * one-word literal is a smaller cost than pulling a server module into the browser bundle.
  */
-const NO_PROJECT = "(no project)";
+const NO_PRODUCT = "(no product)";
 
 /**
- * One row per project, formatted.
+ * The mark a product whose repositories name no single support group is shown with.
+ *
+ * TWO SITUATIONS, ONE MARK, and that is deliberate here where it would not be in a figure:
+ * either no repository named a group, or they named several. Both mean the same thing to a
+ * reader looking for who to escalate to — this column cannot tell them — and the em dash is
+ * this register's one mark for "not answered". The distinction is kept in the payload
+ * (`support_groups`) for anyone who needs it.
+ */
+const NO_SUPPORT_GROUP = absentText;
+
+/**
+ * One row per product, formatted.
  *
  * ORDER IS THE PAYLOAD'S, and the table is handed no sort spec so it stays that way.
  * `coldZoneProfile` already sorts teams by cold repositories desc, then open-in-cold desc,
  * then label — a rule that belongs beside the one that computed the counts, not re-derived
- * against a formatted string here. The "(no project)" bucket sorts by the same rule as every
+ * against a formatted string here. The "(no product)" bucket sorts by the same rule as every
  * other row: it is a team like any other and is never pinned last or hidden.
  */
 export function coldTeamRows(view) {
   const teams = view && Array.isArray(view.teams) ? view.teams : [];
   return teams.map((t) => ({
-    key: t.project === null || t.project === undefined ? NO_PROJECT : String(t.project),
-    label: t.label || NO_PROJECT,
+    key: t.product === null || t.product === undefined ? NO_PRODUCT : String(t.product),
+    label: t.label || NO_PRODUCT,
+    // WHO THIS PRODUCT ESCALATES TO. Null where its repositories named no group or named
+    // several — see NO_SUPPORT_GROUP for why one mark serves both.
+    supportGroup: t.support_group === null || t.support_group === undefined
+      ? null
+      : String(t.support_group),
+    supportGroupText: t.support_group === null || t.support_group === undefined
+      ? NO_SUPPORT_GROUP
+      : String(t.support_group),
     verdict: t.verdict || null,
     verdictWord: TEAM_VERDICT_LABEL[t.verdict] || absentText,
     repos: num(t.repos, 0),
     coldRepos: num(t.cold_repos, 0),
-    // NULL IS A REAL ANSWER and it draws NO meter. A project whose repositories all read
+    // NULL IS A REAL ANSWER and it draws NO meter. A product whose repositories all read
     // clear has no repository with open findings to divide by, and the domain returns null
     // rather than 0 for exactly that reason; a 0% track here would be a picture asserting
     // that none of its repositories has gone cold, which is a different claim from "there was
     // nothing to ask the question of". Same refusal shape as `coverageMeterPct` above.
     sharePct: num(t.cold_share_pct),
     // THE RANK IS NOT THE ROW NUMBER, and both modes carry it. The table is published in the
-    // payload's own order (cold repositories desc); the rank orders the same projects on a
+    // payload's own order (cold repositories desc); the rank orders the same products on a
     // different axis — the SHARE of their open-finding repositories that is cold — so rank 1
-    // is routinely not the first row, and a project with nothing open has NO rank at all
+    // is routinely not the first row, and a product with nothing open has NO rank at all
     // rather than a last place it never raced for.
     relativeRank: num(t.relative_rank),
-    // Only ever true in relative mode, and never for a project with no cold repository.
+    // Only ever true in relative mode, and never for a product with no cold repository.
     inColdestShare: t.in_coldest_share === true,
     openInCold: num(t.open_in_cold, 0),
     highRiskInCold: num(t.high_risk_in_cold, 0),
@@ -679,17 +700,17 @@ export function heatLevel(count, max) {
 }
 
 /**
- * The project × idle-bucket grid: the columns from the payload, one row per project, and a
+ * The product × idle-bucket grid: the columns from the payload, one row per product, and a
  * totals row under them.
  *
- * THE TOTALS ROW CARRIES NO SHADE, deliberately. The ramp compares projects with each other,
+ * THE TOTALS ROW CARRIES NO SHADE, deliberately. The ramp compares products with each other,
  * and the totals are the sum of every one of them — shaded on the same scale, every cell in
  * that row would saturate at the darkest step and say nothing except "this row is bigger",
  * which the reader can already see from the numbers. Level 0 across the row; the counts are
  * printed exactly as they are everywhere else.
  *
  * Returns null where there is no grid to draw — no columns (nothing measurable) or no
- * projects. A caller draws nothing rather than an empty table.
+ * products. A caller draws nothing rather than an empty table.
  */
 export function heatModel(view) {
   const columns = view && Array.isArray(view.bucketLabels) ? view.bucketLabels : null;
@@ -700,8 +721,8 @@ export function heatModel(view) {
     open: num(row && Array.isArray(row.bucket_open) ? row.bucket_open[i] : null, 0),
   }));
   const rows = teams.map((t) => ({
-    key: t.project === null || t.project === undefined ? NO_PROJECT : String(t.project),
-    label: t.label || NO_PROJECT,
+    key: t.product === null || t.product === undefined ? NO_PRODUCT : String(t.product),
+    label: t.label || NO_PRODUCT,
     cells: cellsOf(t),
   }));
   let max = 0;
@@ -710,7 +731,7 @@ export function heatModel(view) {
   const totals = view.totals
     ? {
         key: "__all__",
-        label: "All projects",
+        label: "All products",
         cells: cellsOf(view.totals).map((c) => ({ ...c, level: 0 })),
       }
     : null;
@@ -752,7 +773,7 @@ export function coldRepoRows(view) {
       return {
         key: r.repo_id || label,
         label,
-        project: r.project === null || r.project === undefined ? NO_PROJECT : String(r.project),
+        product: r.product === null || r.product === undefined ? NO_PRODUCT : String(r.product),
         verdict: r.verdict || null,
         verdictWord: COLD_VERDICT_LABEL[r.verdict] || absentText,
         cold: r.cold === true,
@@ -1085,18 +1106,27 @@ export async function renderRepos(host, _params, _ctx) {
 
   function renderColdTeams(view) {
     const rows = coldTeamRows(view);
-    coldHost.append(el("h3", { class: "section-label" }, "By project"));
+    coldHost.append(el("h3", { class: "section-label" }, "By product"));
     if (!rows.length) {
       coldHost.append(emptyState(
-        "No project has a repository to report on yet.",
-        "A project appears here as soon as one of its repositories carries a finding.",
+        "No product has a repository to report on yet.",
+        "A product appears here as soon as one of its repositories carries a finding.",
         { variant: "notice" },
       ));
       return;
     }
     coldHost.append(pagedTable({
       columns: [
-        { key: "label", label: "Project", cell: (r) => r.label },
+        { key: "label", label: "Product", cell: (r) => r.label },
+        {
+          // THE ESCALATION PATH, beside the grain that has gone cold. The roll-up itself is
+          // NOT a second table: the verdicts and the coldest-share badge are calibrated on
+          // this population of products (src/domain/coldZone.ts's rollUp says why), and a
+          // support-group table would have to re-derive both on a population a tenth the
+          // size, where "the coldest 20%" means something else.
+          key: "supportGroup", label: "Support group",
+          cell: (r) => r.supportGroupText,
+        },
         {
           key: "verdict", label: "Verdict",
           // The dot AND the word, never the dot alone — `ui/verdict.js` carries the mapping
@@ -1126,7 +1156,7 @@ export async function renderRepos(host, _params, _ctx) {
           // THE RELATIVE POSITION, beside the absolute verdict rather than instead of it. The
           // rank is computed in both modes so the column always reads; the BADGE is a claim
           // about a target share and only relative mode names one, so it appears only there.
-          // `warn` rather than `bad` on purpose: being the coldest project on a healthy
+          // `warn` rather than `bad` on purpose: being the coldest product on a healthy
           // estate is a POSITION, not a verdict, and the Verdict column earlier in the same
           // row is where the absolute reading lives.
           key: "coldestRank", label: "Coldest rank", help: { term: "coldest-share" },
@@ -1158,7 +1188,7 @@ export async function renderRepos(host, _params, _ctx) {
           help: {
             term: "idle",
             lines: [
-              "The most recent finding resolved, removed or rotated anywhere in the project,"
+              "The most recent finding resolved, removed or rotated anywhere in the product,"
               + " over the repositories the scanner still returns.",
             ],
           },
@@ -1168,17 +1198,17 @@ export async function renderRepos(host, _params, _ctx) {
       rows,
       // NO SORT SPEC — see `coldTeamRows`: the payload's own order is the published one, and
       // `sortRows` leaves a list untouched when it is given no value function.
-      emptyText: "No project has a repository to report on yet.",
+      emptyText: "No product has a repository to report on yet.",
     }));
-    coldHost.append(denomNote(projectCountNote(view, rows.length)));
+    coldHost.append(denomNote(productCountNote(view, rows.length)));
     // The marks in the column above, counted — and the clamp that decides how many there are,
-    // stated. Null when nobody is marked, which is every project in fixed mode.
+    // stated. Null when nobody is marked, which is every product in fixed mode.
     const coldest = coldestShareNote(view);
     if (coldest) coldHost.append(denomNote(coldest));
   }
 
   /**
-   * The project × idle-bucket grid.
+   * The product × idle-bucket grid.
    *
    * HAND-BUILT RATHER THAN `dataTable`, and that is the exception this page makes rather than
    * a component it is missing: no table in `gas_shared` takes a per-cell ordinal shade, and
@@ -1193,7 +1223,7 @@ export async function renderRepos(host, _params, _ctx) {
   function renderColdHeat(view) {
     const heat = heatModel(view);
     if (!heat) return;
-    const head = el("tr", {}, el("th", { scope: "col" }, "Project"));
+    const head = el("tr", {}, el("th", { scope: "col" }, "Product"));
     for (const label of heat.columns) head.append(el("th", { scope: "col", class: "num" }, label));
     const body = el("tbody", {});
     const paintRow = (r) => {
@@ -1212,7 +1242,7 @@ export async function renderRepos(host, _params, _ctx) {
     if (heat.totals) body.append(paintRow(heat.totals));
     // The caption keeps what the cells COUNT; what the last column means and who is in no
     // column are the heading's tip — the 51-word caption was the page's largest prose block.
-    coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by project", {
+    coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by product", {
       lines: [
         "The last column is the repositories with no movement on record yet — not idle for"
         + " zero days, but not yet measurable.",
@@ -1222,7 +1252,7 @@ export async function renderRepos(host, _params, _ctx) {
     coldHost.append(el("div", { class: "table-wrap" },
       el("table", { class: "data heat" },
         el("caption", { class: "small muted" },
-          "Repositories per project by idle band, with the open findings in each."),
+          "Repositories per product by idle band, with the open findings in each."),
         el("thead", {}, head),
         body)));
   }
@@ -1241,7 +1271,7 @@ export async function renderRepos(host, _params, _ctx) {
     coldHost.append(pagedTable({
       columns: [
         { key: "label", label: "Repository", cell: (r) => r.label },
-        { key: "project", label: "Project", cell: (r) => r.project },
+        { key: "product", label: "Product", cell: (r) => r.product },
         { key: "verdict", label: "Verdict", cell: (r) => verdictMark(r.verdict, r.verdictWord) },
         {
           key: "idle", label: "Idle", className: "num", help: { term: "idle" },

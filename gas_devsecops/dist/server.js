@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "c94227ba411a" : "dev";
+  var BUILD_ID = true ? "f7bdc610b3cd" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -6298,7 +6298,7 @@ var Server = (() => {
 
   // src/domain/coldZone.ts
   var DAY_MS7 = 864e5;
-  var COLD_PROJECT_NONE = "(no project)";
+  var COLD_PRODUCT_NONE = "(no product)";
   function isOpen4(status) {
     return !RESOLVED_STATUSES.has(String(status != null ? status : "").toUpperCase());
   }
@@ -6326,7 +6326,8 @@ var Server = (() => {
     return {
       repoId,
       repoName: null,
-      project: null,
+      product: null,
+      supportGroup: null,
       scopes: /* @__PURE__ */ new Set(),
       rowsByScope: /* @__PURE__ */ new Map(),
       open: 0,
@@ -6343,7 +6344,10 @@ var Server = (() => {
   function foldRow(acc, row, risk) {
     var _a, _b;
     if (acc.repoName === null && !blank(row.repo_name)) acc.repoName = String(row.repo_name);
-    if (acc.project === null && !blank(row.owner_project)) acc.project = String(row.owner_project);
+    if (acc.product === null && !blank(row._product)) acc.product = String(row._product);
+    if (acc.supportGroup === null && !blank(row._supportGroup)) {
+      acc.supportGroup = String(row._supportGroup);
+    }
     acc.scopes.add(row.scope);
     const bucket = acc.rowsByScope.get(row.scope);
     if (bucket) bucket.push(row);
@@ -6586,7 +6590,8 @@ var Server = (() => {
       repos.push({
         repo_id: acc.repoId,
         repo_name: acc.repoName,
-        project: acc.project,
+        product: acc.product,
+        support_group: acc.supportGroup,
         open_findings: acc.open,
         open_high_risk: acc.openHigh,
         oldest_open_age_days: acc.oldestOpenFirstSeen === null ? null : daysBetween(acc.oldestOpenFirstSeen, nowMs),
@@ -6632,14 +6637,14 @@ var Server = (() => {
     };
   }
   function rollUp(repos) {
-    const byProject = /* @__PURE__ */ new Map();
+    const byProduct = /* @__PURE__ */ new Map();
     for (const r of repos) {
-      const list = byProject.get(r.project);
+      const list = byProduct.get(r.product);
       if (list) list.push(r);
-      else byProject.set(r.project, [r]);
+      else byProduct.set(r.product, [r]);
     }
     const out = [];
-    for (const [project2, list] of byProject) {
+    for (const [product, list] of byProduct) {
       const buckets = [0, 0, 0, 0, 0];
       const bucketOpen = [0, 0, 0, 0, 0];
       let observed = 0;
@@ -6691,9 +6696,14 @@ var Server = (() => {
         }
       }
       const verdict = withOpen === 0 ? "clear" : coldRepos === withOpen ? "fully-cold" : coldRepos > 0 ? "partly-cold" : "warm";
+      const groups = /* @__PURE__ */ new Set();
+      for (const r of list) if (r.support_group !== null) groups.add(r.support_group);
       out.push({
-        project: project2,
-        label: project2 != null ? project2 : COLD_PROJECT_NONE,
+        product,
+        label: product != null ? product : COLD_PRODUCT_NONE,
+        // One name only when they all agree — see the field's own comment.
+        support_group: groups.size === 1 ? [...groups][0] : null,
+        support_groups: groups.size,
         repos: list.length,
         repos_observed: observed,
         repos_unobserved: unobserved,
@@ -6710,7 +6720,7 @@ var Server = (() => {
         last_movement_at: toIso(lastMovement),
         verdict,
         // Filled by `rankTeams`, which runs over the finished roll-up: the rank is a fact about
-        // the whole set of projects, so no single project's fold can know it.
+        // the whole set of products, so no single product's fold can know it.
         relative_rank: null,
         in_coldest_share: false,
         buckets,
@@ -6769,7 +6779,7 @@ var Server = (() => {
       teams_fully_cold: 0,
       teams_partly_cold: 0,
       teams_in_coldest_share: 0,
-      repos_no_project: 0,
+      repos_no_product: 0,
       buckets,
       bucket_open: bucketOpen
     };
@@ -6788,7 +6798,7 @@ var Server = (() => {
       if (team.verdict === "fully-cold") t.teams_fully_cold += 1;
       if (team.verdict === "partly-cold") t.teams_partly_cold += 1;
       if (team.in_coldest_share) t.teams_in_coldest_share += 1;
-      if (team.project === null) t.repos_no_project = team.repos;
+      if (team.product === null) t.repos_no_product = team.repos;
       for (let i = 0; i < 5; i += 1) {
         buckets[i] += team.buckets[i];
         bucketOpen[i] += team.bucket_open[i];
