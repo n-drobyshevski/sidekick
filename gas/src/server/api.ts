@@ -12,7 +12,8 @@ import {
 import { domainNames, validateDomains, compileDomains, assignDomain, assignDomains, hasDomainInputs, UNASSIGNED, type CompiledDomain } from "../domain/domainRules";
 import { coverage, ruleHealth, supportGroupBreakdown, unassignedLifecycles, unassignedResources, untaggedSubscriptions } from "../domain/attribution";
 import { mttrFromLedger, vulnKey } from "../domain/lifecycle";
-import type { BaseRow } from "../domain/ledgerCore";
+import { newestFlatScanBySeverity, type BaseRow } from "../domain/ledgerCore";
+import * as coldZone from "../domain/coldZone";
 import { fixNext } from "../domain/fixNext";
 import { extractNodes } from "../domain/transform";
 import { overallSlaOldest } from "../domain/metrics";
@@ -1783,6 +1784,206 @@ export function startRiskBackfill(_p?: unknown): ApiResult {
   return mutate(() => backfillJobs.startBackfill());
 }
 
+// --------------------------------------------------------------------- cold zone
+
+interface LedgerClock {
+  /** Epoch ms of the newest FLAT scan, or the wall clock when no flat scan has ever saved. */
+  asOf: number;
+  asOfSource: "scan" | "wallClock";
+  /** ISO of the earliest flat scan — when this register started WATCHING. Null with none. */
+  observedFrom: string | null;
+}
+
+let clockMemo: { version: string; clock: LedgerClock } | undefined;
+
+/**
+ * The LEDGER's clock: the newest flat scan's `ts` for "now", the earliest for "when we started
+ * looking".
+ *
+ * THIS IS WHAT MAKES THE DURABLE COLD-ZONE ENTRY DURABLE. Every figure in that model is "how
+ * long since something happened", and a duration dated by `Date.now()` is not a function of the
+ * ledger: a stored copy of it would be a stale number wearing a fresh label, and a register
+ * nobody had synced for a month would drift into the cold zone on its own with no new
+ * observation behind the change. Dated by the newest scan, the same ledger answers the same
+ * number forever, which is the only condition under which `durablyCached` (readModelStore.ts —
+ * "only time-invariant read-models") may hold it at all.
+ *
+ * FLAT SCANS ONLY, for the reason `ledgerStore.latestFlatScanRow` exists: a grouped scan writes
+ * no per-finding observations (`ledgerCore.persistGroupedScan`), so it never saw whether an
+ * asset was returned and cannot date a claim about one.
+ *
+ * `wallClock` IS THE HONEST FALLBACK AND IT IS PUBLISHED rather than hidden. With no flat scan
+ * on record there is no ledger clock to read, so the model says which clock it used and the
+ * page can say the figures move as it is reopened.
+ *
+ * Memoized per `dataVersion()` rather than per execution: a mutate-then-read inside one
+ * execution must rebuild rather than serve what it just invalidated.
+ */
+function ledgerClock(): LedgerClock {
+  const version = dataVersion();
+  if (clockMemo && clockMemo.version === version) return clockMemo.clock;
+  const flats = ledgerStore.loadScanRows().filter((s) => s.shape === "flat");
+  let newest: number | null = null;
+  let earliest: number | null = null;
+  let earliestIso: string | null = null;
+  for (const s of flats) {
+    const ms = parseTs(s.ts);
+    if (ms === null) continue;
+    if (newest === null || ms > newest) newest = ms;
+    if (earliest === null || ms < earliest) {
+      earliest = ms;
+      earliestIso = s.ts;
+    }
+  }
+  const clock: LedgerClock = newest === null
+    ? { asOf: Date.now(), asOfSource: "wallClock", observedFrom: earliestIso }
+    : { asOf: newest, asOfSource: "scan", observedFrom: earliestIso };
+  clockMemo = { version, clock };
+  return clock;
+}
+
+let newestScanMemo: { version: string; bySeverity: Record<string, coldZone.NewestScan> } | undefined;
+
+/**
+ * Per severity, the newest flat scan that covered it — what `coldZone` tests "the scanner still
+ * returns this asset" against. The walk itself is `ledgerCore.newestFlatScanBySeverity`, beside
+ * the disappearance guard it is the twin of; this is the memoized read of it.
+ *
+ * PER SEVERITY, NOT ONE NEWEST SCAN, because this register syncs a chosen set of severities and
+ * `reconcile` already gates disappearance the same way. Keying observation on the single newest
+ * scan would mark every HIGH asset unobserved the morning after a CRITICAL-only sweep, which
+ * would contradict the register's own rule about the same rows.
+ *
+ * A SEVERITY WITH NO COVERING FLAT SCAN IS LEFT OUT OF THIS MAP ON PURPOSE — see the walk's own
+ * header. Its absence is the input `coldZone` reads as "undecidable, so observed".
+ *
+ * Memoized beside `clockMemo` and keyed on `dataVersion()` for the same reason.
+ */
+function newestScanBySeverity(): Record<string, coldZone.NewestScan> {
+  const version = dataVersion();
+  if (newestScanMemo && newestScanMemo.version === version) return newestScanMemo.bySeverity;
+  const bySeverity = newestFlatScanBySeverity(ledgerStore.loadScanRows());
+  newestScanMemo = { version, bySeverity };
+  return bySeverity;
+}
+
+/**
+ * The Cold zone page's read-model: where remediation has stopped, per asset and per support
+ * group.
+ *
+ * SAME FUNNEL AS `programData` AND `insightsData` — `scopedBaseRows`, then the severity scope,
+ * then `visibleBase` (the show-no-fix and end-of-life toggles) — so an asset that is cold here
+ * is cold over the same population the Program page classifies. A private copy of any of those
+ * three is how two pages come to disagree about what "open" means.
+ *
+ * THE SUPPORT-GROUP JOIN IS UNCONDITIONAL, unlike the scoped callers above it. `scopedBaseRows`
+ * attaches `_supportGroup` only when a scope is active (there is nothing to filter by
+ * otherwise), but this model ROLLS UP by that column at the whole-register view as well, so it
+ * has to be there whether or not anything is scoped — the same reason
+ * `mttrBySupportGroupData` calls it for itself. `attachSupportGroups` is idempotent, so the
+ * scoped path re-attaching is free rather than wrong.
+ */
+function coldZoneData(p?: unknown): Rec {
+  const domain = String((p as Rec)?.["domain"] ?? "");
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  let rows = scopedBaseRows(domain, supportGroup);
+  supportGroups.attachSupportGroups(rows);
+  rows = filterSeverities(rows, readSeverities(p));
+  rows = visibleBase(rows);
+  const rule = settingsStore.getRiskRule().rule;
+  const cold = settingsStore.getColdZone();
+  const clock = ledgerClock();
+  return {
+    asOf: clock.asOf,
+    asOfSource: clock.asOfSource,
+    observedFrom: clock.observedFrom,
+    // The classifier and its sentence ride along for the same reason they do on the Program
+    // page: "high risk sitting cold" is a derived verdict, and the page says out loud which
+    // rule produced it rather than leaving the reader to go and look.
+    rule,
+    ruleSentence: program.ruleSentence(rule),
+    coldZone: coldZone.coldZoneProfile(rows as unknown as coldZone.ColdRow[], {
+      now: clock.asOf,
+      observedFrom: clock.observedFrom,
+      coldAfterDays: cold.coldAfterDays,
+      mode: cold.mode,
+      targetSharePct: cold.targetSharePct,
+      floorDays: cold.floorDays,
+      newestScanBySeverity: newestScanBySeverity(),
+      rule,
+    }),
+    // Named so the page can state what was excluded before any of this counted.
+    toggles: {
+      showNoFix: settingsStore.getShowNoFix(),
+      includeEol: settingsStore.getIncludeEol(),
+    },
+    rowCount: rows.length,
+  };
+}
+
+const cachedColdZoneData = (p?: unknown) =>
+  // A NEW NAMESPACE, so no stale entry of any shape can be addressed by it — nothing served
+  // this payload before.
+  //
+  // NO TTL, BECAUSE THERE IS NOTHING FOR ONE TO AGE OUT. Every figure here is dated by
+  // `ledgerClock()` (see its header), so the same ledger answers the same numbers forever and
+  // the durable layer's "only time-invariant read-models" rule is satisfied. That is also what
+  // makes the key below unforgiving: with no TTL, a field this compute READS and the key omits
+  // does not go stale for an hour — it answers with the old value until the next commit happens
+  // to rewrite the file.
+  //
+  // ALL FOUR COLD FIELDS ARE IN THE KEY, IN THIS FIXED ORDER (mode, window, target, floor).
+  // `settingsStore.getColdZone()` is read by the compute, so every one of them changes the
+  // answer: an operator who switches to relative mode and reloads would otherwise read the
+  // fixed mode's verdicts off a warm Drive file indefinitely. The order is fixed so that the
+  // Executive's rebuilt params (see `getExecutivePage`) list the same fields the same way —
+  // two key builders that agree by accident are two chances to drop one.
+  //
+  // `riskRuleVersion` rather than the rule itself, the trick the Program page's key uses: the
+  // payload is a pure function of the rule and the version bumps on every save.
+  durablyCached(
+    "coldZone1",
+    {
+      domain: String((p as Rec)?.["domain"] ?? ""),
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+      includeEol: settingsStore.getIncludeEol(),
+      riskRuleVersion: settingsStore.getRiskRule().version,
+      coldZoneMode: settingsStore.getColdZone().mode,
+      coldAfterDays: settingsStore.getColdZone().coldAfterDays,
+      coldTargetSharePct: settingsStore.getColdZone().targetSharePct,
+      coldFloorDays: settingsStore.getColdZone().floorDays,
+    },
+    () => coldZoneData(p),
+  );
+
+/**
+ * The Executive card's slice of the cold zone: the totals, the clock and the threshold, never
+ * the per-asset or per-group arrays (`coldZoneHeadline`'s own contract).
+ *
+ * SLICED FROM THE SAME CACHED ENTRY THE COLD ZONE PAGE READS, not computed a second time. One
+ * `coldZoneProfile` pass over the base rows is the expensive half of this model — the per-asset
+ * idle fold, the observation join and, in relative mode, a rank over the whole estate — and
+ * this register runs inside a six-minute execution cap. A second profile on the DEFAULT landing
+ * page would pay that cost again for a card that draws one number out of the totals.
+ *
+ * `coldZoneAsOfSource` travels with it so the card can say WHICH clock dated the figure —
+ * "wallClock" is the honest answer with no flat scan on record, and it means the number moves
+ * as the page is reopened rather than as the estate changes.
+ */
+function execColdSlice(model: Rec): Rec {
+  return {
+    coldZone: coldZone.coldZoneHeadline(model["coldZone"] as coldZone.ColdZoneResult),
+    coldZoneAsOfSource: model["asOfSource"],
+  };
+}
+
+/** The Cold zone page in one round trip: the profile, the clock and the classifier behind it. */
+export function getColdZonePage(p?: unknown): ApiResult {
+  return run(() => cachedColdZoneData(p));
+}
+
 /** Backfill progress / last report, for the Settings panel and the page's honesty note. */
 export function getRiskBackfillStatus(_p?: unknown): ApiResult {
   return run(() => ({ backfill: backfillJobs.backfillStatus() }));
@@ -2393,9 +2594,15 @@ export function getExecutivePage(p?: unknown): ApiResult {
     supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
     severities: readSeverities(p),
   };
+  // The same rebuild, for the same reason, against `cachedColdZoneData`'s key. That key reads
+  // {domain, supportGroup, severities} off the params and everything else off settings, so
+  // these three and nothing else land on the entry the Cold zone page warms — which is what
+  // makes `execColdSlice` a SLICE rather than a second profile over the whole base.
+  const coldParams = insightsParams;
   return run(() => ({
     mttr: execMttrSlice(cachedMttrData(p)),
     ...(execInsightsSlice(cachedInsightsData(insightsParams)) ?? {}),
+    ...execColdSlice(cachedColdZoneData(coldParams)),
     // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
     // domain yields a single row, so a domain scope splits by support group within it instead.
     byDomain: execGroupSlice(
@@ -3388,6 +3595,11 @@ function warmReadModelsInner(budgetMs: number): void {
     // backbone. `mttrBySupportGroup` is the split BOTH the MTTR and Executive pages switch to
     // the moment a domain scope is picked, and it was cold for the same reason.
     warm("program", () => cachedProgramData(p));
+    // The cold zone is on the DEFAULT landing page (the Executive card slices it) as well as
+    // behind its own route, and `durablyCached` only writes L2 during the warm — so without
+    // this line the durable file would never be written at all and every first load after a
+    // scan would pay the full profile over the base.
+    warm("coldZone", () => cachedColdZoneData(p));
     warm("programTrend", () => cachedProgramTrendData(p));
     warm("mttrBySupportGroup", () => cachedMttrBySupportGroupData(p));
     warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
