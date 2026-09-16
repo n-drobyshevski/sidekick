@@ -93,3 +93,49 @@ describe("every inline field-error span is role=\"alert\" and starts hidden", ()
     }
   });
 });
+
+describe("the Cold zone panel lives on Lifecycle, beside retention", () => {
+  it("builds a settingsPanel titled \"Cold zone\"", () => {
+    expect(SETTINGS_CODE).toMatch(/settingsPanel\(\{\s*title:\s*"Cold zone"/);
+  });
+
+  it("puts it in the lifecycle tab panel", () => {
+    expect(SETTINGS_CODE).toMatch(/tabPanel\(\s*"lifecycle"[^)]*coldZonePanel/);
+  });
+
+  it("carries the comment that says why a silence threshold is a deadline like retention", () => {
+    // The reason lives in a comment, so it is swept off the RAW source rather than the
+    // comment-stripped copy every other sweep in this file reads.
+    expect(SETTINGS_SRC).toMatch(/ON LIFECYCLE BESIDE RETENTION, AND NOT ONE OF IT/);
+  });
+});
+
+describe("the relative-mode controls are shown and hidden, never disabled", () => {
+  it("toggles the wrapper's hidden from the draft's mode", () => {
+    expect(SETTINGS_CODE).toMatch(
+      /coldRelativeRows\.hidden\s*=\s*draft\.coldZoneMode\s*!==\s*"relative"/,
+    );
+  });
+
+  it("never sets .disabled on either relative-mode input", () => {
+    // A disabled control says "this is part of the answer, you just may not touch it", which
+    // is a lie in fixed mode: the register is not measuring against those numbers at all.
+    expect(SETTINGS_CODE).not.toMatch(/coldTargetShare\.disabled/);
+    expect(SETTINGS_CODE).not.toMatch(/coldFloorDays\.disabled/);
+  });
+
+  it("keeps the three inputs built once, so flipping the mode cannot lose a typed value", () => {
+    for (const name of ["coldAfterDays", "coldTargetShare", "coldFloorDays"]) {
+      const decls = [...SETTINGS_CODE.matchAll(new RegExp(`const ${name}\\s*=\\s*el\\(`, "g"))];
+      expect(decls.length, `${name} is constructed exactly once`).toBe(1);
+    }
+  });
+
+  it("shows the cold-zone window in BOTH modes — it is published in both", () => {
+    // Only the two relative-mode rows are wrapped; the window row is a direct body entry.
+    expect(SETTINGS_CODE).toMatch(/htmlFor:\s*"settings-cold-after-days"/);
+    const wrapper = SETTINGS_CODE.match(/const coldRelativeRows = el\([\s\S]*?\n  \);/);
+    expect(wrapper).not.toBeNull();
+    expect(wrapper[0]).not.toMatch(/settings-cold-after-days/);
+  });
+});

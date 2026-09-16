@@ -10,7 +10,7 @@
 // gas_shared/ui/figures.js rather than here.
 
 import { describe, expect, it } from "vitest";
-import { retentionTicks, shareOf } from "../src/client/js/settingsReadouts.js";
+import { coldZoneSentence, retentionTicks, shareOf } from "../src/client/js/settingsReadouts.js";
 import { absentText } from "../../gas_shared/ui/figures.js";
 
 function scan(overrides) {
@@ -98,5 +98,38 @@ describe("shareOf", () => {
   it("agrees with impactSplitModel, which is the point of restating the rule", () => {
     expect(shareOf(0, 0)).toBe(absentText);
     expect(shareOf(1, 4)).toBe("25.0%");
+  });
+});
+
+describe("coldZoneSentence", () => {
+  it("names the window and what it is a silence of, in fixed mode", () => {
+    const out = coldZoneSentence({ coldZoneMode: "fixed", coldAfterDays: 90 });
+    expect(out).toContain("Fixed");
+    expect(out).toContain("90 days");
+    expect(out).toContain("nothing resolved");
+  });
+
+  it("names the share AND the floor in relative mode, never the window", () => {
+    // The window is not what draws the line here, and quoting it would be the one number a
+    // reader could mistake for the answer.
+    const out = coldZoneSentence({
+      coldZoneMode: "relative", coldAfterDays: 90, coldTargetSharePct: 35, coldFloorDays: 21,
+    });
+    expect(out).toContain("35%");
+    expect(out).toContain("21 days");
+    expect(out).not.toContain("90");
+  });
+
+  it("names the population the share is of — a rate travels with its denominator", () => {
+    const out = coldZoneSentence({
+      coldZoneMode: "relative", coldTargetSharePct: 20, coldFloorDays: 14,
+    });
+    expect(out).toContain("the scanner still returns");
+    expect(out).toContain("open findings");
+  });
+
+  it("falls back to fixed wording for a draft with no mode at all", () => {
+    expect(coldZoneSentence({ coldAfterDays: 90 })).toContain("Fixed");
+    expect(coldZoneSentence(null)).toContain("Fixed");
   });
 });

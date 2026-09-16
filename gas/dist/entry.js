@@ -88,6 +88,7 @@ function api_getMttrPage(p) { return timedApi_("getMttrPage", p); }
 function api_getMttrByDomainTrend(p) { return timedApi_("getMttrByDomainTrend", p); }
 function api_getExecutivePage(p) { return timedApi_("getExecutivePage", p); }
 function api_getProgramPage(p) { return timedApi_("getProgramPage", p); }
+function api_getColdZonePage(p) { return timedApi_("getColdZonePage", p); }
 function api_getRiskCohort(p) { return timedApi_("getRiskCohort", p); }
 function api_getRegisterRows(p) { return timedApi_("getRegisterRows", p); }
 function api_getExportCoverageCsv(p) { return timedApi_("getExportCoverageCsv", p); }

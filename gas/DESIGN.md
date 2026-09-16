@@ -123,8 +123,8 @@ block (the only `h1`, which waits on no RPC), then a metric header from the shar
 censored curve prints "at least N days" and an unread ledger prints "Not measured"), a
 movement aside of per-severity rows against the newest scan a week or more older, and a
 stat strip closed by a hairline; then the open severity strip with its key row WHERE THAT
-MOVEMENT COMPARISON DOES NOT EXIST (see below); then the by-domain table; then the last-scan
-block; and LAST, behind its own heading, Fix next — a
+MOVEMENT COMPARISON DOES NOT EXIST (see below); then the cold-backlog card (§11); then the
+by-domain table; then the last-scan block; and LAST, behind its own heading, Fix next — a
 ranked table of (tier, owner) groups (an ordered list until the prose round of 2026-09-16 —
 see §9) with its denominator ("25 of 70 open findings ranked") and a disclosure naming every
 unranked reason with its count. The centred 720px `.exec` column and the page-level Run
@@ -343,3 +343,60 @@ mttr.js builds one model into a variable just before its call).
 **What stays.** `mttr` (5 blocks: the SLA-edge legend, the reconstructed-days note, the
 vendor-fix exclusion and two chart captions) is the heaviest-tested page in the app and is the
 next round's. `attribution`'s and `history`'s section notes (3 and 2) are scope statements.
+
+## 11. The cold zone (ported from `gas_devsecops`)
+
+`src/domain/coldZone.ts` and `pages/coldZone.js` port the DevSecOps register's cold-repository
+family to assets/support groups. The behaviour is a straight port (see the domain module's own
+header); what follows is what changed, or did not, on the way across.
+
+**The census is a part-to-whole unit chart, and two of its five segments are hatched.**
+`coldCensusModel` partitions every asset in the ledger — `cold + warm + watching + clear` is
+every OBSERVED asset, `+ unobserved` is every asset — into one `unitChart` (`unitGrid` +
+`unitKeyRow`, class `.cold-census`, capped at a 44rem max-width so the lattice stays a block a
+reader counts rather than a banner stretched to the page). `watching` (open findings, idle time
+that could not be measured at all) and `unobserved` (the scanner has lost sight of the asset)
+are drawn `fill: "hatch"` — `--hatch` is the design system's own token for "this part is not a
+measurement", and both verdicts are exactly that: neither is a reading of idle time, and the
+page's own prose spends most of its words insisting neither counts as warm. `clear` is a RING
+rather than a fill, for the opposite reason: it is measured, and it is fine, and drawing it
+solid would put "nothing open to go quiet on" in the same visual weight class as an actual
+problem. `cold` and `warm` are the only two solid fills.
+
+**What High Contrast costs this picture.** Emulated forced-colors mode keeps the hatch (it is
+ink at an alpha, not a hue, so "measured vs. not measured" survives), but `cold` and `warm`
+differ only by tone and flatten toward each other the same way `gas_devsecops/DESIGN.md`
+records for its own repository census — three or four silhouettes cannot carry five tones
+under forced colors. Nothing is actually lost: `unitKeyRow` prints every segment's label, count
+and share in text under the lattice regardless of mode, so the reading survives even where the
+picture's tones do not.
+
+**The support-group × idle-bucket heat table's ramp is neutral ink at four alphas, and that is
+a rule, not a preference.** `table.data.heat`'s cells (`gas/src/client/styles/pages.css`,
+"Cold zone: the support-group x idle-bucket heat table") carry the one ordinal shading channel
+in this app outside the severity palette — `rgba(23,23,23, .06/.12/.20/.30)` over the page's own
+ground, never a severity colour and never `--accent`. Severity is the OTHER ordinal scale a
+reader of this register already knows the meaning of, and idle time is not severity: a 70-day
+cell in red would read as "HIGH" regardless of what the caption says. `--accent` is out for the
+same reason §1 gives it exactly one job — "the thing being pointed at" — and four steps of it
+spent on a table background would compete with the scatter's own use of it below. This is the
+same discipline §9 states for `pages/overview.js`'s tier card, which rejected recolouring
+`unitChart`'s four-tone vocabulary to carry a five-step ordinal scale rather than lie about the
+order; here the ordinal scale gets its own local rule instead of borrowing one built for a
+different meaning. The shade is always redundant, never load-bearing: every cell also prints
+its asset count and, under it, the open findings in that bucket, and `forced-colors: active`
+strips the `background` outright, so the grid survives greyscale, a dichromat and High Contrast
+on the printed numbers alone.
+
+**One paragraph is pinned on purpose.** `renderColdZone` prints `denomNote(coldModeCaption(view))`
+first, above everything else, in all three branches — the two `emptyState` notices (not
+measured yet; nothing to be idle) and the fully-populated page. The same number
+(`cold_after_days`) means a different thing depending on which mode drew the line, so the
+sentence that says which one goes ABOVE the figures it qualifies rather than under them, the
+same rule `gas_devsecops`'s own port states for `coldModeCaption`. No round on this page may
+move that sentence off the top.
+
+**The scatter takes `--accent` directly, because Ink-Equals-Fill already holds here (§1).**
+`coldZoneScatter` fills cold assets' `rectRot` points in `CATEGORICAL[0]` (`#2563eb`) and reads
+them back as canvas ink at the same 5.17:1 measurement §1 pins for text — one fewer token to
+reconcile than a register whose accent needed the five-token split.

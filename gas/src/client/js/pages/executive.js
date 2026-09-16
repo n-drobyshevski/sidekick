@@ -56,6 +56,7 @@ import {
   scopeBar, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
   FINE_UNITS, unitRow, unitScale,
   absent, days1,
+  absentText, figureCard, pct1,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -720,6 +721,96 @@ export function fixNextView(payload, boot) {
 }
 
 /**
+ * The cold zone, as the one figure a leader reads about it: how much of the open backlog is
+ * sitting on assets where nothing is moving.
+ *
+ * ONE NUMBER, AND IT IS A SHARE RATHER THAN A COUNT. "412 open findings are cold" is a figure
+ * whose meaning changes with the size of the register; "31.4% of the backlog is cold" is the
+ * same fact read against the only denominator that makes it comparable week to week. Both are
+ * published — the share is the value, the pair behind it is the sentence underneath — because
+ * a rate without its denominator is not a measurement.
+ *
+ * NULL IS AN ANSWER AND IT IS NOT ZERO. `cold_backlog_share_pct` is null over an empty
+ * denominator — a register with no open findings at all has no cold SHARE, and rendering that
+ * as 0.0% would say the backlog is all warm when there is no backlog. The card draws the muted
+ * dash instead, which is what every other absent figure on this page draws.
+ *
+ * THE SHAPE IS CHECKED, NOT THE FLAG. `api_getExecutivePage` ships `coldZone` as a
+ * `ColdZoneHeadline` — the totals and the clock, never the per-asset or per-group arrays — and
+ * sets `totals` to null in exactly the case `measurable: false` describes. A payload that said
+ * `measurable: true` over a null `totals` (an older server answering a newer client) would pass
+ * a flag check and then throw inside the renderer, which `guard()` would dress as a red error
+ * box for what is really an absence. So this decides for itself from what arrived.
+ *
+ * `coldZoneAsOfSource` IS CARRIED BECAUSE THE CLOCK CAN SLIP. Every duration in the cold-zone
+ * family is measured at the LEDGER's clock — the newest flat scan's timestamp — so the same
+ * saved ledger always reads the same number. Where the server could not find that clock it
+ * falls back to the wall clock and says so, and a figure measured against "now" grows a little
+ * every time the page is opened. That is a different reading from the one the card otherwise
+ * promises, so the denominator sentence says which it is rather than quietly printing both the
+ * same way. TRUE unless the server SAID it fell back: an older payload that carries no source
+ * at all is not evidence of a wall-clock reading.
+ *
+ * AND THE MODE RIDES ALONG, for the reason the Cold zone page's caption spells out at length:
+ * `cold_after_days` is the EFFECTIVE line in both modes, so one number reaches this card
+ * whichever definition drew it, and "at least 47 days" means something different when a person
+ * chose 47 than when the estate's tenth-idlest asset did. The card still prints ONE figure; the
+ * denominator sentence is where the difference is stated.
+ *
+ * @param {object|null|undefined} payload  `api_getExecutivePage`'s reply
+ */
+export function coldShareView(payload) {
+  const cz = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? payload.coldZone
+    : null;
+  const present = !!cz && typeof cz === "object" && !Array.isArray(cz);
+  const totals = present && cz.totals && typeof cz.totals === "object" && !Array.isArray(cz.totals)
+    ? cz.totals
+    : null;
+  const measurable = present && cz.measurable === true && totals !== null;
+  const source = payload && typeof payload.coldZoneAsOfSource === "string"
+    ? payload.coldZoneAsOfSource
+    : null;
+  // Absent means the older contract — the fixed window — and only the literal "relative" is
+  // relative. Same refusal as pages/coldZoneModel.js's `coldZoneView`, for the same reason.
+  const mode = present && cz.mode === "relative" ? "relative" : "fixed";
+  const modeFields = {
+    mode,
+    targetSharePct: present ? num(cz.target_share_pct) : null,
+    achievedSharePct: present ? num(cz.achieved_share_pct) : null,
+    floorApplied: present && cz.floor_applied === true,
+    derivedDays: present ? num(cz.derived_days) : null,
+    floorDays: present ? num(cz.floor_days) : null,
+  };
+  if (!measurable) {
+    return {
+      show: false,
+      measurable: false,
+      atLedgerClock: source !== "wallClock",
+      pct: null,
+      openInCold: 0,
+      openFindings: 0,
+      coldAssets: 0,
+      assetsWithOpen: 0,
+      coldAfterDays: present ? num(cz.cold_after_days) : null,
+      ...modeFields,
+    };
+  }
+  return {
+    show: true,
+    measurable: true,
+    ...modeFields,
+    atLedgerClock: source !== "wallClock",
+    pct: num(totals.cold_backlog_share_pct),
+    openInCold: num(totals.open_in_cold, 0),
+    openFindings: num(totals.open_findings, 0),
+    coldAssets: num(totals.cold_assets, 0),
+    assetsWithOpen: num(totals.assets_with_open, 0),
+    coldAfterDays: num(cz.cold_after_days),
+  };
+}
+
+/**
  * The front door on a ledger nobody has read, and what would change that.
  *
  * WHAT THIS REPLACES. With no scan saved, this page rendered `0 tracked lifecycles · 0
@@ -838,6 +929,16 @@ export async function renderExecutive(main, _params, ctx) {
   const noticeHost = el("div", {});
   const heroHost = el("div", {});
   const sevHost = el("div", {});
+  // AFTER THE SEVERITY STRIP AND BEFORE THE BY-DOMAIN TABLE — inside the run of one-glance
+  // blocks that qualify the hero, not next to the worklist folded at the foot of the page.
+  // That run reads hero (how fast risk closes) -> the open distribution (what there is) -> the
+  // cold zone (where none of it is moving) -> who owns it (by domain) -> when we last looked.
+  // Below the severity slot because the cold zone is a share OF the open backlog whichever
+  // block broke that backlog down just above it — the strip, or the movement aside that
+  // withholds it; above the by-domain table because the cold zone is the first block on this
+  // page about the ABSENCE of movement rather than about the backlog itself, which is the turn
+  // the by-domain table then answers ("whose").
+  const coldHost = el("div", {});
   const byDomainHost = el("div", {});
   const scanHost = el("div", {});
   // LAST ON THE PAGE, AND SHUT. It sat directly under the hero for its whole life on the
@@ -867,7 +968,7 @@ export async function renderExecutive(main, _params, ctx) {
   // the first of them. Null when nothing is scoped.
   const scopeChips = scopeBar({ domain, supportGroup, onClear: ctx.clearScope });
   if (scopeChips) main.append(scopeChips);
-  main.append(noticeHost, heroHost, sevHost, byDomainHost, scanHost, fixHost);
+  main.append(noticeHost, heroHost, sevHost, coldHost, byDomainHost, scanHost, fixHost);
 
   // This is the default landing page, so a single failing section must never blank the whole
   // view. Each section renders inside a guard: on error it logs a tagged trace (so a
@@ -915,11 +1016,13 @@ export async function renderExecutive(main, _params, ctx) {
     if (first.show) {
       clear(fixHost);
       clear(sevHost);
+      clear(coldHost);
       clear(byDomainHost);
       return;
     }
     guard("the fix-next list", fixHost, () => renderFixNext(payload));
     guard("open findings by severity", sevHost, () => renderSeverity(payload));
+    guard("the cold zone", coldHost, () => renderColdShare(payload));
     guard("MTTR by domain", byDomainHost, () => renderByDomain(payload && payload.byDomain));
   };
 
@@ -1393,6 +1496,71 @@ export async function renderExecutive(main, _params, ctx) {
         ? tipLabel(view.populationLine, { lines: view.populationExplain })
         : view.populationLine));
     if (view.note) sevHost.append(el("p", { class: "small muted" }, view.note));
+  }
+
+  // ------------------------------------------------------------------------ cold zone
+
+  /**
+   * One card: the share of the open backlog sitting where nothing is moving.
+   *
+   * ONE FIGURE AND NO TABLE, which is the same slice rule the hero follows. The Cold zone page
+   * draws the whole family — every cold asset, every support group, the idle-bucket grid and
+   * the scatter — and `coldZoneHeadline` (src/domain/coldZone.ts) is the projection that keeps
+   * the per-asset arrays off this payload entirely rather than shipping them and rendering one
+   * number out of them.
+   *
+   * THE LINK IS THE REST OF THE ANSWER. A reader who wants to know WHICH assets is one click
+   * away, and that is a cross-reference rather than a second copy of the page.
+   */
+  function renderColdShare(payload) {
+    const view = coldShareView(payload);
+    clear(coldHost);
+    coldHost.append(sectionLabel("The cold zone", { term: "cold-zone" }));
+    if (!view.show) {
+      // A NOTICE, NEVER AN ERROR. No flat scan on record means there is no clock to measure
+      // idleness against — a state this block renders correctly, not a failure of it.
+      coldHost.append(emptyState(
+        "The cold zone is not measured yet.",
+        "Idle time is counted from the last scan back to the movement before it, so this"
+        + " figure appears once a scan has saved one.",
+        { variant: "notice" },
+      ));
+      return;
+    }
+    const windowText = view.coldAfterDays === null
+      ? "the cold-zone window"
+      : "at least " + fmtDays(view.coldAfterDays);
+    // WHERE THAT WINDOW CAME FROM. Nothing here branches on the mode to read a NUMBER — the
+    // line above is the effective one in both modes — but a derived line and a chosen one are
+    // different claims about the same figure, and the floor case is the one where the zone is
+    // deliberately smaller than the share that was asked for.
+    const targetText = fmtCount(view.targetSharePct) + "%";
+    const modeClause = view.mode !== "relative"
+      ? ""
+      : view.floorApplied === true
+        ? " — the floor, which holds the zone smaller than the " + targetText + " asked for"
+        : " — the line relative mode set so the idlest " + targetText + " of assets with open"
+          + " findings are cold";
+    const clock = view.atLedgerClock
+      ? "Measured at the last scan, never against today."
+      : "Measured against the current time rather than the last scan — the clock the ledger"
+        + " was measured at could not be read, so this figure moves as the page is reopened.";
+    coldHost.append(el("div", { class: "kpi-row" }, figureCard({
+      label: "Backlog in the cold zone",
+      // NULL IS NOT 0.0%. A register with no open finding at all has no cold share, and the
+      // muted dash is what this page draws for every other figure nobody could measure.
+      value: view.pct === null ? absentText : pct1(view.pct),
+      sub: fmtCount(view.openInCold) + " of " + fmtCount(view.openFindings) + " open findings",
+      help: { term: "cold-zone" },
+      denominator:
+        fmtCount(view.openInCold) + " of " + fmtCount(view.openFindings) + " open findings, on "
+        + fmtCount(view.coldAssets) + " of " + fmtCount(view.assetsWithOpen) + " assets with"
+        + " open findings where nothing has been resolved for " + windowText + modeClause + ". "
+        + clock,
+    })));
+    coldHost.append(el("p", { class: "small muted" },
+      "Which assets, and which support groups → ",
+      el("a", { class: "linklike", href: "#/coldZone" }, "Cold zone")));
   }
 
   // ------------------------------------------------------------------------ by domain

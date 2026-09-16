@@ -52,7 +52,7 @@ import { describe, expect, it } from "vitest";
 
 import { code } from "../../gas_shared/test/contracts/emptyStates.js";
 import {
-  executiveByDomainView, executiveHeroView, executiveSeverityView,
+  coldShareView, executiveByDomainView, executiveHeroView, executiveSeverityView,
 } from "../src/client/js/pages/executive.js";
 
 // The DOM half is swept as source text, the house pattern for a tree with no jsdom, and
@@ -419,6 +419,200 @@ describe("executiveHeroView — the qualifier states its own base", () => {
       mttr: { rowCount: 1, overall: { resolved: 0, open: 1 }, remediation: { km: {} } },
     });
     expect(v.qualifier).toBe("1 tracked lifecycle · 0 resolved · 1 still open");
+  });
+});
+
+// =========================================================================================
+//  coldShareView — one number, and the three things that can make it not be one
+// =========================================================================================
+//
+// The Executive's cold-backlog card reads a `ColdZoneHeadline` (src/domain/coldZone.ts): the
+// totals and the clock, never the per-asset or per-group arrays. Three states a payload can
+// legitimately arrive in, and each renders differently:
+//
+//   measurable        the share, with the pair behind it and a sentence naming the mode.
+//   not measurable    a notice. No flat scan on record means there is no clock to measure
+//                     idleness against — an absence, not a failure.
+//   null share        the muted dash. "No asset has an open finding" is not "0.0% of the
+//                     backlog is cold", and the second one reads as a clean bill of health.
+//
+// And a fourth thing that is not a state of the data at all: WHICH CLOCK dated the figure.
+// The server publishes `coldZoneAsOfSource`, and "wallClock" means the number moves every time
+// the page is reopened rather than when the estate does — so the card says so.
+
+const headline = (over = {}) => ({
+  coldZone: {
+    measurable: true,
+    mode: "fixed",
+    cold_after_days: 90,
+    fixed_after_days: 90,
+    target_share_pct: null,
+    achieved_share_pct: 20,
+    floor_days: null,
+    floor_applied: false,
+    derived_days: null,
+    eligible_assets: 10,
+    cold_bound_only: 0,
+    observed_from: "2026-01-01T00:00:00.000Z",
+    as_of: "2026-06-01T00:00:00.000Z",
+    totals: {
+      assets: 40,
+      assets_with_open: 10,
+      cold_assets: 2,
+      open_findings: 500,
+      open_in_cold: 157,
+      cold_backlog_share_pct: 31.4,
+    },
+    row_count: 900,
+    dropped_no_asset: 0,
+    unclassified_rows: 0,
+    severities_without_scan: [],
+    ...over,
+  },
+  coldZoneAsOfSource: "scan",
+});
+
+describe("coldShareView — the measurable case", () => {
+  it("publishes the share and the pair it was taken over", () => {
+    const v = coldShareView(headline());
+    expect(v.show).toBe(true);
+    expect(v.measurable).toBe(true);
+    expect(v.pct).toBe(31.4);
+    expect(v.openInCold).toBe(157);
+    expect(v.openFindings).toBe(500);
+    expect(v.coldAssets).toBe(2);
+    expect(v.assetsWithOpen).toBe(10);
+    expect(v.coldAfterDays).toBe(90);
+  });
+
+  it("never carries the per-asset or per-group arrays — that is the point of the slice", () => {
+    const v = coldShareView(headline());
+    expect(v.assets).toBeUndefined();
+    expect(v.groups).toBeUndefined();
+  });
+});
+
+describe("coldShareView — the shape decides, never the flag", () => {
+  it("refuses a payload that claims measurable over a null totals", () => {
+    const v = coldShareView(headline({ totals: null }));
+    expect(v.show).toBe(false);
+    expect(v.measurable).toBe(false);
+    // The threshold still rides along: a reader asking "cold after how long?" is asking about
+    // the setting, not about the data.
+    expect(v.coldAfterDays).toBe(90);
+  });
+
+  // PERTURBATION: the flag check this view replaces would have passed that same payload, and
+  // the renderer would then have read `.open_in_cold` off null.
+  it("the tempting flag check passes the payload that would throw", () => {
+    const p = headline({ totals: null });
+    expect(p.coldZone.measurable).toBe(true);
+    expect(() => p.coldZone.totals.open_in_cold).toThrow();
+  });
+
+  it("answers on a payload with no cold-zone block at all rather than throwing", () => {
+    for (const payload of [null, undefined, {}, [], 7]) {
+      const v = coldShareView(payload);
+      expect(v.show).toBe(false);
+      expect(v.pct).toBeNull();
+      expect(v.openFindings).toBe(0);
+    }
+  });
+});
+
+describe("coldShareView — a null share is an answer and it is not zero", () => {
+  it("keeps a null cold_backlog_share_pct null", () => {
+    const v = coldShareView(headline({
+      totals: {
+        assets: 4, assets_with_open: 0, cold_assets: 0,
+        open_findings: 0, open_in_cold: 0, cold_backlog_share_pct: null,
+      },
+    }));
+    expect(v.show).toBe(true);
+    expect(v.pct).toBeNull();
+  });
+
+  it("Number(null) — the cast this refusal replaces — would have printed 0.0%", () => {
+    expect(Number(null)).toBe(0);
+  });
+});
+
+describe("coldShareView — the mode is the exact word or it is fixed", () => {
+  it("reads only the literal \"relative\" as relative, and carries its two clauses", () => {
+    const v = coldShareView(headline({
+      mode: "relative", target_share_pct: 20, floor_days: 14, derived_days: 47,
+      cold_after_days: 47, floor_applied: false,
+    }));
+    expect(v.mode).toBe("relative");
+    expect(v.targetSharePct).toBe(20);
+    expect(v.derivedDays).toBe(47);
+    expect(v.floorApplied).toBe(false);
+    for (const mode of ["Relative", "RELATIVE", 1, null]) {
+      expect(coldShareView(headline({ mode })).mode, String(mode)).toBe("fixed");
+    }
+  });
+
+  it("carries floor_applied only when the payload literally says true", () => {
+    expect(coldShareView(headline({ floor_applied: true })).floorApplied).toBe(true);
+    expect(coldShareView(headline({ floor_applied: "yes" })).floorApplied).toBe(false);
+  });
+});
+
+describe("coldShareView — which clock dated the figure", () => {
+  it("is the ledger clock unless the server SAID it fell back", () => {
+    expect(coldShareView(headline()).atLedgerClock).toBe(true);
+    const older = headline();
+    delete older.coldZoneAsOfSource;
+    expect(coldShareView(older).atLedgerClock).toBe(true);
+  });
+
+  it("is false on wallClock, in the measurable and the not-measurable branch alike", () => {
+    const measurable = { ...headline(), coldZoneAsOfSource: "wallClock" };
+    expect(coldShareView(measurable).atLedgerClock).toBe(false);
+    const absentBlock = { ...headline({ totals: null }), coldZoneAsOfSource: "wallClock" };
+    expect(coldShareView(absentBlock).atLedgerClock).toBe(false);
+  });
+});
+
+// =========================================================================================
+//  The card itself, read as source — the two things a pure function cannot hold
+// =========================================================================================
+//
+// There is no jsdom here, so the render half is swept as text the way test/coldZoneDom.test.js
+// and test/historyDom.test.js do: what the card refuses to print, and where its cross-reference
+// points. A link to the wrong route is the kind of defect every unit test passes.
+
+describe("the cold-zone card's render half", () => {
+  const SRC = readFileSync(
+    new URL("../src/client/js/pages/executive.js", import.meta.url), "utf8",
+  );
+
+  it("points its cross-reference at the Cold zone route", () => {
+    expect(SRC).toContain('el("a", { class: "linklike", href: "#/coldZone" }, "Cold zone")');
+    expect(SRC).toContain("Which assets, and which support groups");
+  });
+
+  it("draws the absence as a notice rather than an error", () => {
+    const at = SRC.indexOf("function renderColdShare");
+    expect(at).toBeGreaterThan(-1);
+    const body = SRC.slice(at, SRC.indexOf("by domain", at));
+    expect(body).toContain('variant: "notice"');
+    expect(body).not.toContain("errorState(");
+  });
+
+  it("prints the muted dash rather than a percentage when the share is null", () => {
+    const at = SRC.indexOf("function renderColdShare");
+    const body = SRC.slice(at, SRC.indexOf("by domain", at));
+    expect(body).toContain("view.pct === null ? absentText : pct1(view.pct)");
+  });
+
+  it("names the wall clock's consequence rather than only its name", () => {
+    expect(SRC).toContain("moves as the page is reopened");
+  });
+
+  it("labels the figure and takes its definition from the book", () => {
+    expect(SRC).toContain('label: "Backlog in the cold zone"');
+    expect(SRC).toContain('sectionLabel("The cold zone", { term: "cold-zone" })');
   });
 });
 

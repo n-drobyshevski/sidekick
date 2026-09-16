@@ -115,6 +115,50 @@ export function prevScanIdBySeverity(scans: ScanRow[]): Record<string, string> |
   return Object.keys(mapping).length ? mapping : null;
 }
 
+/**
+ * Per severity, the newest FLAT scan that covered it — `{scan_id, ts}`, keyed by the same
+ * canonical severity names `severity.normalizeSeverity` answers with.
+ *
+ * `prevScanIdBySeverity`'S TWIN, ONE WALK, THREE DELIBERATE DIFFERENCES. That function answers
+ * "what was the last scan that could have seen this severity BEFORE the one being persisted",
+ * for the disappearance guard; this one answers "what is the newest scan that still sees it",
+ * for `domain/coldZone.ts`'s observation test. Both walk the scans newest-first and retire a
+ * severity the moment a scan's scope covers it, which is what makes the answer per severity
+ * rather than one newest scan for the estate.
+ *
+ *   1  FLAT SCANS ONLY. A grouped scan writes no per-finding observations at all
+ *      (`persistGroupedScan` below), so it cannot tell us whether an asset was returned;
+ *      counting one would mark a whole estate observed on the strength of a row that never
+ *      looked at a single finding. The clock the cold zone measures against comes from flat
+ *      scans for the same reason (`ledgerStore.latestFlatScanRow`).
+ *   2  IT CARRIES `ts`, not just `scan_id`. `coldZone` falls back to `last_seen >= newest.ts`
+ *      for a row whose `last_scan_id` is blank — imported or compacted history — so the
+ *      instant has to travel with the id.
+ *   3  A SEVERITY WITH NO COVERING FLAT SCAN IS LEFT OUT, and the empty map is a legitimate
+ *      answer rather than the `null` its twin returns. Absence is the input `coldZone` reads
+ *      as "observation is undecidable here": it keeps those assets OBSERVED and names the
+ *      severity in `severities_without_scan`. Writing a placeholder — a null `scan_id`, or the
+ *      whole-register newest — would turn "we cannot tell" into a claim, and the claim it would
+ *      make is the accusing one.
+ */
+export function newestFlatScanBySeverity(
+  scans: ScanRow[],
+): Record<string, { scan_id: string; ts: string }> {
+  const remaining = new Set<string>(SEVERITY_ORDER);
+  const out: Record<string, { scan_id: string; ts: string }> = {};
+  const desc = scansAsc(scans.filter((s) => s.shape === "flat")).reverse();
+  for (const r of desc) {
+    const scope = parseSeverities(r.severities);
+    const covered = scope === null
+      ? [...remaining]
+      : [...remaining].filter((s) => scope.includes(s));
+    for (const sev of covered) out[sev] = { scan_id: r.scan_id, ts: r.ts };
+    covered.forEach((s) => remaining.delete(s));
+    if (!remaining.size) break;
+  }
+  return out;
+}
+
 /** Stored deltas if this scan_id is already saved (idempotency), else null. */
 export function existingScanDeltas(scans: ScanRow[], scanId: string): Deltas | null {
   const row = scans.find((r) => r.scan_id === scanId);

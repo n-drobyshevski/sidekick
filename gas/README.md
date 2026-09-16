@@ -460,6 +460,83 @@ computing a rate over the slice that happens to have data.
 > The ledger grows by four columns, roughly +22% on its ~18 cells/vulnerability footprint —
 > check **Settings → Storage** at production scale.
 
+## The cold zone
+
+Where **Program performance** asks whether the right risk is closing, the **Cold zone**
+page (`#/coldZone`, and its "Backlog in the cold zone" card on the Executive page) asks
+where remediation has stopped altogether. Backlog size cannot tell an actively-worked asset
+from an abandoned one; idle time can. `src/domain/coldZone.ts` measures, per **asset**
+rolled up per **support group** (`_supportGroup`, joined live the same way the domain
+breakdown is — never a stored ledger column), how long since anything on it last resolved.
+
+### Two states, tested in an order that matters
+
+- **`cold`** — a fact about the team. The asset is still scanned, still carries open
+  findings, and nothing on it has resolved for at least the cold-zone window.
+- **`unobserved`** — a fact about the scanner. It stopped returning the asset at all.
+
+`unobserved` is tested **first**, and the order is load-bearing: `reconcile` resolves a
+finding that drops out of the newest scan **by disappearance**
+(`resolution_src: "disappeared"`), so an asset the scanner has simply lost sight of looks,
+for one scan, exactly like it was mass-remediated. Reading that as warmth would reward
+losing coverage — the single worst thing this page could do — so an unobserved asset is
+never warm, never cold, and sits in no idle bucket. It publishes `disappeared_at` and how
+many findings closed at that instant instead, so the shape of the drop-out is visible.
+
+### The lower bound
+
+An asset can carry open findings and have **never** had one resolve. That is not "0 days
+idle", and it is not "unmeasured" either — it is the strongest case of cold there is, and
+refusing to say so just because nothing was measured would hide exactly the assets this
+page exists for. Those rows get `idle_bound_days`: the later of "when we started watching"
+and "when this asset's oldest open finding first appeared", published as a genuine **lower
+bound**, never a measurement dressed up as one.
+
+That is also the register's general notation rule for every bounded figure here: **"≥ N d"**
+in a table cell, **"at least N days"** in prose — never a bare number standing in for either.
+A bound and a measurement must never read alike.
+
+### Two ways to draw the line
+
+- **Fixed** (the default) — the operator names a window in days (`coldAfterDays`, default
+  90). The same number means the same thing on every estate, every week.
+- **Relative** — the operator names a share (`coldTargetSharePct`, default 20%), and the
+  line in days is *derived*: the idlest N% of the assets that are observed and still carry
+  open findings. The cut is a **rank** — the k-th largest idle reading — never an
+  interpolation, so it always lands on an asset someone can go look at, and ties at the
+  cutoff are all cold rather than split.
+
+Relative mode never goes below `coldFloorDays` (default 14 days) — the **floor**. A share
+always names somebody, however healthy the estate, and the floor is what stops "the idlest
+20%" from slandering four assets that were all touched last week. When the floor holds, the
+page's caption says so and still publishes the derived line it overruled
+(`derived_days`), so the claim stays auditable either way.
+
+### The observation rule: per severity, over flat scans only
+
+An asset counts as observed if **any** of its rows reaches the newest **flat** scan covering
+that row's severity — never the single newest scan overall. Two reasons:
+
+1. `reconcile.ts` already gates disappearance the same way ("this severity wasn't scanned,
+   absence is expected, not resolution") — keying observation on one scan instead would mark
+   every HIGH-severity asset unobserved the morning after a CRITICAL-only sweep, contradicting
+   the register's own rule about the very same rows.
+2. **Grouped scans write no per-finding observations at all** (`persistGroupedScan`) — they
+   cannot say whether an asset was returned — so only `shape === "flat"` scans count, for the
+   clock (`asOf` / `observedFrom`) as well as the map. A severity with rows but no flat scan on
+   record is undecidable and resolves to observed, the conservative direction, and is named in
+   `severities_without_scan` so the reader knows which way the doubt fell.
+
+### Two things this page counts rather than hides
+
+- **`unclassified_rows`** — open findings the active high-risk rule cannot classify at all,
+  because the signals it reads were never captured on them. They are real open findings, they
+  count as such, and they can never be high risk; the third KPI's denominator explains the gap
+  rather than silently excluding the rows.
+- **`(no support group)`** — a real row, never a drop. With no support-group map loaded, or a
+  subscription the map does not name, every affected asset lands here, and the page says so —
+  the same discipline the Attribution page's map-health note follows.
+
 ## Exporting the register
 
 **Data → Migration bundle (Drive)** writes the whole durable ledger to
@@ -807,8 +884,28 @@ magic-byte sniff in `archiveStore` tolerates). `dev/boot.js` runs `setup()`, see
 8 backdated dry-run scans (the clock is shifted per scan so MTTR/trend have shape,
 and eight daily scans span the seven days an open-backlog comparison needs),
 and shims `google.script.run` onto `Server.api`. The dry-run sample is amplified to
-~170 findings across ~26 assets via an esbuild alias (`dev/sampleData.dev.ts`) that
+~180 findings across ~30 assets via an esbuild alias (`dev/sampleData.dev.ts`) that
 exists only in the dev build — `dist/server.js` and the pushed bundle are untouched.
+
+Query flags `dev/boot.js` reads off `location.search` on every load:
+
+| Flag                    | Effect                                                            |
+| ----------------------- | ------------------------------------------------------------------ |
+| `?noseed`                | Skip the seed scans — a fresh, empty ledger.                       |
+| `?nohub`                 | Skip seeding a hub URL — the header renders with no hub button.    |
+| `?slow=<ms>`             | Artificial RPC latency, for exercising loading states.             |
+| `?seedJob=running\|stuck`| Seed a non-terminal scan job row (the progress card / details).    |
+| `?cold=fixed\|relative`  | Force the cold-zone mode (Lifecycle tab), saved after the seed.    |
+| `?coldafter=N`           | Fixed-mode window in days (`coldAfterDays`).                       |
+| `?coldtarget=N`          | Relative-mode target share, in percent (`coldTargetSharePct`).     |
+| `?coldfloor=N`           | Relative-mode floor in days (`coldFloorDays`).                     |
+
+The four `cold*` flags merge into one `api_saveSettings` call issued **after** the seed
+loop — saving settings bumps the settings data version, and the cold-zone read model's
+durable cache keys on it, so it only recomputes against the seed once that version has
+moved. `?cold=relative` alone leaves the target share and floor at whatever they already
+are (the domain defaults, 20% / 14 days, on a fresh harness): `saveSettings` merges the
+patch over the current settings rather than replacing them.
 
 ### Measuring a page (`npm run density`)
 

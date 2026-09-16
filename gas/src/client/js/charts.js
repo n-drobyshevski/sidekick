@@ -1813,3 +1813,135 @@ export function coverageEfficiencyScatter(canvas, points) {
     plugins: [labels],
   });
 }
+
+/**
+ * The cold zone as a scatter: idle days on x, open findings on y, a dashed rule at the
+ * threshold. Up-and-to-the-RIGHT is the worst quadrant here — a big backlog nobody has touched
+ * — which is the opposite of `coverageEfficiencyScatter` above and the reason the threshold
+ * rule is drawn at all: without it the reader has to know where 90 days is.
+ *
+ * Implemented as `type: "line"` with `showLine: false` **on purpose**, exactly as the coverage
+ * scatter is. chartsBundle.js registers only the controllers this file uses, and
+ * ScatterController is not among them; a genuine `type: "scatter"` would fail at runtime in the
+ * bundle. LineController + PointElement + LinearScale are all registered, and a line dataset
+ * with no line drawn is exactly a scatter. Do not "fix" this into type: "scatter" without also
+ * registering the controller.
+ *
+ * TWO CLASSES, AND THE SHAPE CARRIES THE SPLIT BEFORE THE COLOUR DOES. Cold assets are
+ * `rectRot` filled in this register's accent (`CATEGORICAL[0]` = `#2563eb`, which here IS the
+ * ink as well as the fill — DESIGN.md §1's Ink-Equals-Fill case, measured at 5.17:1 on white);
+ * every other asset is a hollow `circle` outlined in the neutral `OTHER_COLOR`. A filled
+ * diamond against a hollow circle survives greyscale, every CVD simulation and forced colors on
+ * its own, which is what DESIGN.md's non-colour-signal rule asks for. The neutral is
+ * deliberately below the chroma floor: it is "everything else", not a second category hue, and
+ * the `chartTable` twin every caller ships beside this canvas carries the readings in words.
+ *
+ * WHERE THE RULE CAME FROM IS PART OF THE RULE. One dashed line at 47 days is two different
+ * claims: an operator's standing window, or the idle time of the k-th idlest asset on this
+ * estate at this scan (`src/domain/coldZone.ts` — `cold_after_days` is the EFFECTIVE line in
+ * both modes, so the canvas receives one number either way). A derived line MOVES when the
+ * population moves, and a reader comparing two screenshots a week apart has to be able to see
+ * that from the picture. Hence "(relative)" on the label and the mode in the description — no
+ * second colour, no second line, no legend: one more word on a rule that was already labelled.
+ *
+ * @param {*} canvas
+ * @param {Array<{label: string, idleDays: number, open: number, cold: boolean,
+ *                bounded: boolean}>} points  one per observed asset with open findings
+ * @param {{thresholdDays: number, mode: string}} opts
+ */
+export function coldZoneScatter(canvas, points, { thresholdDays, mode } = {}) {
+  destroyExisting(canvas);
+  const plotted = (points || []).filter(
+    (p) => typeof p.idleDays === "number" && Number.isFinite(p.idleDays)
+      && typeof p.open === "number" && Number.isFinite(p.open),
+  );
+  const threshold =
+    typeof thresholdDays === "number" && Number.isFinite(thresholdDays) ? thresholdDays : null;
+  // Absent means the fixed window — the older contract — and only the exact word is relative.
+  const relative = mode === "relative";
+  const modeText = relative ? "relative mode" : "the fixed window";
+  describe(
+    canvas,
+    "Idle days against open findings for each asset the newest scan still returns: "
+      + plotted
+        .map(
+          (p) =>
+            // "at least" in prose, "≥" in a cell — the register's notation rule. An alt text
+            // is prose, so a bound reads the long way here and the short way in the table.
+            p.label + ", idle " + (p.bounded ? "at least " : "") + Math.round(p.idleDays)
+            + " days, " + localeNum(p.open) + " open" + (p.cold ? " (in the cold zone)" : ""),
+        )
+        .join("; ")
+      + "."
+      + (threshold === null
+        ? " The cold-zone line comes from " + modeText + "."
+        : " The cold-zone threshold is " + Math.round(threshold) + " days, from "
+          + modeText + "."),
+  );
+  const opts = baseOptions("");
+  opts.scales.x.type = "linear";
+  opts.scales.x.beginAtZero = true;
+  opts.scales.x.title = { display: true, text: "idle days", font: FONT, color: INK2 };
+  opts.scales.y.title = { display: true, text: "open findings", font: FONT, color: INK2 };
+  opts.plugins.tooltip.callbacks.title = (items) =>
+    items.length ? plotted[items[0].dataIndex].label : "";
+  opts.plugins.tooltip.callbacks.label = (ctx) => {
+    const p = plotted[ctx.dataIndex];
+    return [
+      "Idle " + (p.bounded ? "at least " : "") + Math.round(p.idleDays) + " d",
+      localeNum(p.open) + " open",
+    ];
+  };
+  // The threshold as a dashed vertical rule, labelled in words. Dashed BECAUSE it is a
+  // threshold rather than data — the one place a dash is right on a canvas whose gridlines are
+  // all solid hairlines — and labelled because a rule with no label is a line a reader has to
+  // guess the meaning of. Drawn after the datasets so a point never hides it.
+  const rule = threshold === null ? null : {
+    id: "coldThreshold",
+    afterDatasetsDraw(chart) {
+      const { ctx, chartArea, scales } = chart;
+      const x = scales.x.getPixelForValue(threshold);
+      if (!Number.isFinite(x) || x < chartArea.left || x > chartArea.right) return;
+      ctx.save();
+      ctx.strokeStyle = HAIRLINE;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.font = "600 11px " + FONT.family;
+      ctx.fillStyle = INK2;
+      ctx.textBaseline = "top";
+      // Flipped inside the plot near the right edge, so the label never clips.
+      const right = x > chartArea.right - 80;
+      ctx.textAlign = right ? "right" : "left";
+      // "(relative)" rather than a second rule or a second colour: the line is in the same
+      // place either way, and what changes is what it is a line OF.
+      const label = "cold at " + Math.round(threshold) + " d" + (relative ? " (relative)" : "");
+      ctx.fillText(label, x + (right ? -4 : 4), chartArea.top + 2);
+      ctx.restore();
+    },
+  };
+  return new ChartCtor(canvas, {
+    type: "line", // see the note above — NOT "scatter"
+    data: {
+      datasets: [
+        {
+          data: plotted.map((p) => ({ x: p.idleDays, y: p.open })),
+          showLine: false,
+          pointRadius: plotted.map((p) => (p.cold ? 7 : 5)),
+          pointHoverRadius: 9,
+          pointBackgroundColor: plotted.map((p) => (p.cold ? CATEGORICAL[0] : "#ffffff")),
+          pointBorderColor: plotted.map((p) => (p.cold ? CATEGORICAL[0] : OTHER_COLOR)),
+          pointBorderWidth: 2,
+          // The non-colour cue: a filled diamond is cold, a hollow circle is not.
+          pointStyle: plotted.map((p) => (p.cold ? "rectRot" : "circle")),
+        },
+      ],
+    },
+    options: opts,
+    plugins: rule ? [rule] : [],
+  });
+}

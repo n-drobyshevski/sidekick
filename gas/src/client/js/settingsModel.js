@@ -58,7 +58,38 @@ export const SETTING_FIELDS = {
   riskRule: { tab: "risk", label: "high-risk classifier" },
   retentionDays: { tab: "lifecycle", label: "retention window" },
   autoCompact: { tab: "lifecycle", label: "auto-compact" },
+  // The four cold-zone knobs, on Lifecycle beside retention and not one of it: retention says
+  // how long the register KEEPS a scan, these say how long an asset may go with nothing
+  // closing before the register calls it cold. Both are deadlines an operator sets over the
+  // whole estate rather than promises about one finding, which is why they share a tab. All
+  // four sit on the SAME tab deliberately: the mode decides which of the other three controls
+  // is on screen, so a registry that housed them apart would let the save bar offer "jump to"
+  // a tab whose control the current mode has hidden.
+  coldZoneMode: { tab: "lifecycle", label: "cold-zone mode" },
+  coldAfterDays: { tab: "lifecycle", label: "cold-zone window" },
+  coldTargetSharePct: { tab: "lifecycle", label: "cold-zone target share" },
+  coldFloorDays: { tab: "lifecycle", label: "cold-zone floor" },
 };
+
+/**
+ * The cold-zone bounds and defaults, mirrored from src/domain/config.ts. The client never
+ * imports the TS domain modules (see pages/settings.js's RETENTION_FLOOR_DAYS comment for the
+ * rule), so these are second literals held equal to the source of truth by a test rather than
+ * by an import. The MODE is a CLOSED SET rather than a range, which is the one place the
+ * pattern differs: an unrecognized string has no nearest legal value to be clamped toward, so
+ * both this file and the server FALL BACK to "fixed".
+ */
+export const COLD_MODES = ["fixed", "relative"];
+export const DEFAULT_COLD_ZONE_MODE = "fixed";
+export const COLD_AFTER_DAYS_MIN = 7;
+export const COLD_AFTER_DAYS_MAX = 365;
+export const DEFAULT_COLD_AFTER_DAYS = 90;
+export const COLD_TARGET_SHARE_PCT_MIN = 1;
+export const COLD_TARGET_SHARE_PCT_MAX = 50;
+export const DEFAULT_COLD_TARGET_SHARE_PCT = 20;
+export const COLD_FLOOR_DAYS_MIN = 1;
+export const COLD_FLOOR_DAYS_MAX = 365;
+export const DEFAULT_COLD_FLOOR_DAYS = 14;
 
 export const SETTING_KEYS = Object.keys(SETTING_FIELDS);
 
@@ -77,6 +108,22 @@ export const {
   normalizeTab, changedFields, settingsPatch, changeSummary, changeCountText, tabStatus,
   TAB_FIELDS,
 } = kernel;
+
+/**
+ * A real, finite number off the bootstrap payload, or the shared default — the same
+ * refuse-before-you-cast guard `domain/settingsLogic.ts`'s `numericOrNull` applies server-side,
+ * and for the same reason: `Number(null)`, `Number("")`, `Number(false)` and `Number([])` are
+ * all 0, so a cast-first lift would turn four different kinds of "nothing stored" into the
+ * smallest legal value the field has instead of into its default.
+ */
+function coldNumber(v, fallback) {
+  if (typeof v === "number") return Number.isFinite(v) ? v : fallback;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  return fallback;
+}
 
 /**
  * Lift `boot.settings` into a flat draft over exactly SETTING_KEYS. Arrays and the rule object
@@ -101,6 +148,17 @@ export function settingsDraft(settings) {
       ? null
       : Number(s.retentionDays),
     autoCompact: !!s.autoCompact,
+    // The cold-zone four. The mode defaults to "fixed" rather than to whatever the payload
+    // happened to carry, because "fixed" is what an absent mode MEANS everywhere else in this
+    // register (domain/coldZone.ts reads an absent `mode` as fixed); the three numbers are
+    // coerced so a string from a hand-edited settings cell cannot reach the number inputs as
+    // a string and come back out of `changedFields` looking edited when nothing was typed.
+    coldZoneMode: COLD_MODES.indexOf(s.coldZoneMode) >= 0
+      ? s.coldZoneMode
+      : DEFAULT_COLD_ZONE_MODE,
+    coldAfterDays: coldNumber(s.coldAfterDays, DEFAULT_COLD_AFTER_DAYS),
+    coldTargetSharePct: coldNumber(s.coldTargetSharePct, DEFAULT_COLD_TARGET_SHARE_PCT),
+    coldFloorDays: coldNumber(s.coldFloorDays, DEFAULT_COLD_FLOOR_DAYS),
   };
 }
 
@@ -119,6 +177,7 @@ export function settingsDraft(settings) {
 export function fieldErrors(draft) {
   const errs = {
     fetchSeverities: null, displaySeverities: null, riskRule: null, retentionDays: null,
+    coldZoneMode: null, coldAfterDays: null, coldTargetSharePct: null, coldFloorDays: null,
   };
   if (!draft.fetchSeverities.length) {
     errs.fetchSeverities = "At least one severity must stay in the scan scope.";
@@ -143,6 +202,36 @@ export function fieldErrors(draft) {
       errs.retentionDays = "The retention window must be at least 30 days.";
     }
   }
+  // The cold-zone four. ALL FOUR ARE CHECKED IN BOTH MODES, even though only some of them are
+  // on screen at a time: the draft carries every one of them whichever mode is selected (see
+  // pages/settings.js — the relative-mode controls are hidden, never disabled, and their values
+  // are preserved), so a value typed in one mode and left behind in the other is still what
+  // would be SAVED, and refusing to check it would let it through unseen.
+  const cw = Number(draft.coldAfterDays);
+  if (!Number.isFinite(cw) || cw < COLD_AFTER_DAYS_MIN || cw > COLD_AFTER_DAYS_MAX) {
+    errs.coldAfterDays = "The cold-zone window must be at least " + COLD_AFTER_DAYS_MIN
+      + " days and at most " + COLD_AFTER_DAYS_MAX + " days.";
+  }
+  const ct = Number(draft.coldTargetSharePct);
+  if (
+    !Number.isFinite(ct) || ct < COLD_TARGET_SHARE_PCT_MIN || ct > COLD_TARGET_SHARE_PCT_MAX
+  ) {
+    errs.coldTargetSharePct = "The cold-zone target share must be at least "
+      + COLD_TARGET_SHARE_PCT_MIN + "% and at most " + COLD_TARGET_SHARE_PCT_MAX + "%.";
+  }
+  const cf = Number(draft.coldFloorDays);
+  if (!Number.isFinite(cf) || cf < COLD_FLOOR_DAYS_MIN || cf > COLD_FLOOR_DAYS_MAX) {
+    errs.coldFloorDays = "The cold-zone floor must be at least " + COLD_FLOOR_DAYS_MIN
+      + " day and at most " + COLD_FLOOR_DAYS_MAX + " days.";
+  }
+  // A FALLBACK EVERYWHERE ELSE, AN ERROR HERE, and the difference is who is answering. The
+  // server falls back to "fixed" for an unreadable stored mode because a settings cell nobody
+  // is looking at has to resolve to something; this page's own control can only ever produce
+  // one of the two, so a draft holding anything else means something upstream went wrong and
+  // saying so beats silently saving a mode the reader never picked.
+  if (COLD_MODES.indexOf(draft.coldZoneMode) < 0) {
+    errs.coldZoneMode = "The cold-zone mode must be either fixed or relative.";
+  }
   return errs;
 }
 
@@ -163,6 +252,14 @@ export function validateDraft(draft) {
   if (errs.displaySeverities) return { ok: false, tab: "register", message: errs.displaySeverities };
   if (errs.riskRule) return { ok: false, tab: "risk", message: errs.riskRule };
   if (errs.retentionDays) return { ok: false, tab: "lifecycle", message: errs.retentionDays };
+  // The mode first of the cold four: it decides which of the other three the reader can see,
+  // so a message about a window they cannot reach would send them to a tab with no such control.
+  if (errs.coldZoneMode) return { ok: false, tab: "lifecycle", message: errs.coldZoneMode };
+  if (errs.coldAfterDays) return { ok: false, tab: "lifecycle", message: errs.coldAfterDays };
+  if (errs.coldTargetSharePct) {
+    return { ok: false, tab: "lifecycle", message: errs.coldTargetSharePct };
+  }
+  if (errs.coldFloorDays) return { ok: false, tab: "lifecycle", message: errs.coldFloorDays };
   return { ok: true, message: "", tab: null };
 }
 

@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import {
   applySettingsPatch,
   apiSeverityFilter,
+  effectiveColdZoneSettings,
+  getColdAfterDays,
+  getColdFloorDays,
+  getColdTargetSharePct,
+  getColdZoneMode,
+  withColdAfterDays,
+  withColdFloorDays,
+  withColdTargetSharePct,
+  withColdZoneMode,
   canonicalSeverities,
   getDisplaySeverities,
   getDomains,
@@ -217,5 +226,166 @@ describe("applySettingsPatch (the single save bar's one atomic write)", () => {
 
   it("turns sealing off when the retention window is patched to null", () => {
     expect(applySettingsPatch(base(), { retentionDays: null })["retention_days"]).toBeNull();
+  });
+});
+
+// --------------------------------------------------------------------------- cold zone
+
+describe("cold-zone settings", () => {
+  // THE TWO-WAY SPLIT IS THE WHOLE POINT of these four readers, and it is what every case
+  // below is about: junk — anything that is not a number (or, for the mode, not a string in
+  // the set) — means NOTHING WAS CHOSEN and falls back to the default, while a REAL value
+  // outside the range still points at an end of that range and is CLAMPED toward it.
+  describe("the window", () => {
+    it("defaults when the key is missing entirely", () => {
+      expect(getColdAfterDays({})).toBe(90);
+    });
+
+    it.each([null, undefined, "", "  ", "ninety", true, false, [], {}, NaN, Infinity])(
+      "falls back to the default for junk (%p) rather than casting it to a number",
+      (junk) => {
+        expect(getColdAfterDays({ cold_after_days: junk as unknown })).toBe(90);
+      },
+    );
+
+    it("clamps a real number below the floor instead of defaulting it", () => {
+      // 3 is not junk: the operator asked for the shortest window this register offers.
+      expect(getColdAfterDays({ cold_after_days: 3 })).toBe(7);
+    });
+
+    it("clamps a real number above the ceiling instead of defaulting it", () => {
+      expect(getColdAfterDays({ cold_after_days: 400 })).toBe(365);
+    });
+
+    it("keeps an in-range value, and floors a fractional one", () => {
+      expect(getColdAfterDays({ cold_after_days: 45 })).toBe(45);
+      expect(getColdAfterDays({ cold_after_days: 45.9 })).toBe(45);
+    });
+
+    it("reads a numeric string, because a hand-edited settings cell is still an answer", () => {
+      expect(getColdAfterDays({ cold_after_days: "120" })).toBe(120);
+    });
+
+    it("stores the CLEANED value, so a bad write cannot survive on the sheet", () => {
+      expect(withColdAfterDays({}, 400)["cold_after_days"]).toBe(365);
+      expect(withColdAfterDays({}, "nope")["cold_after_days"]).toBe(90);
+    });
+  });
+
+  describe("the mode", () => {
+    it("defaults to fixed when nothing is stored", () => {
+      expect(getColdZoneMode({})).toBe("fixed");
+    });
+
+    it("accepts both known modes", () => {
+      expect(getColdZoneMode({ cold_zone_mode: "fixed" })).toBe("fixed");
+      expect(getColdZoneMode({ cold_zone_mode: "relative" })).toBe("relative");
+    });
+
+    it("trims and lowercases a genuine string", () => {
+      expect(getColdZoneMode({ cold_zone_mode: " RELATIVE " })).toBe("relative");
+    });
+
+    it("falls back rather than clamping for an unrecognized string", () => {
+      // There is no nearest legal value in a two-member set, so "warm" means nothing chosen.
+      expect(getColdZoneMode({ cold_zone_mode: "warm" })).toBe("fixed");
+    });
+
+    it.each([null, undefined, 0, 1, true, [], {}, ["relative"]])(
+      "refuses a non-string (%p) BEFORE casting it",
+      (junk) => {
+        // String(null) is "null" and String({}) is "[object Object]" — a cast-first version
+        // would happen to pass today and break the day somebody names a mode "null".
+        expect(getColdZoneMode({ cold_zone_mode: junk as unknown })).toBe("fixed");
+      },
+    );
+
+    it("stores the cleaned mode", () => {
+      expect(withColdZoneMode({}, " Relative ")["cold_zone_mode"]).toBe("relative");
+      expect(withColdZoneMode({}, 7)["cold_zone_mode"]).toBe("fixed");
+    });
+  });
+
+  describe("the target share and the floor", () => {
+    it("default when nothing is stored", () => {
+      expect(getColdTargetSharePct({})).toBe(20);
+      expect(getColdFloorDays({})).toBe(14);
+    });
+
+    it("clamp real numbers at both ends", () => {
+      expect(getColdTargetSharePct({ cold_target_share_pct: 0 })).toBe(1);
+      expect(getColdTargetSharePct({ cold_target_share_pct: 80 })).toBe(50);
+      expect(getColdFloorDays({ cold_floor_days: 0 })).toBe(1);
+      expect(getColdFloorDays({ cold_floor_days: 900 })).toBe(365);
+    });
+
+    it("fall back for junk", () => {
+      expect(getColdTargetSharePct({ cold_target_share_pct: "half" })).toBe(20);
+      expect(getColdFloorDays({ cold_floor_days: null })).toBe(14);
+    });
+
+    it("store cleaned values", () => {
+      expect(withColdTargetSharePct({}, 80)["cold_target_share_pct"]).toBe(50);
+      expect(withColdFloorDays({}, -5)["cold_floor_days"]).toBe(1);
+    });
+  });
+
+  describe("effectiveColdZoneSettings — the one door", () => {
+    it("answers all four defaults for an empty dict", () => {
+      expect(effectiveColdZoneSettings({})).toEqual({
+        mode: "fixed", coldAfterDays: 90, targetSharePct: 20, floorDays: 14,
+      });
+    });
+
+    it("answers all four defaults for null and undefined", () => {
+      // A hand-built fixture or a partial mock must not reach coldZoneProfile as undefineds.
+      expect(effectiveColdZoneSettings(null)).toEqual({
+        mode: "fixed", coldAfterDays: 90, targetSharePct: 20, floorDays: 14,
+      });
+      expect(effectiveColdZoneSettings(undefined).mode).toBe("fixed");
+    });
+
+    it("never answers a relative mode with nothing to aim at", () => {
+      // The combination the profile refuses: mode from one place, numbers from another.
+      const out = effectiveColdZoneSettings({ cold_zone_mode: "relative" });
+      expect(out.mode).toBe("relative");
+      expect(out.targetSharePct).toBe(20);
+      expect(out.floorDays).toBe(14);
+    });
+
+    it("reads each field through the same cleaner the store writes with", () => {
+      expect(
+        effectiveColdZoneSettings({
+          cold_zone_mode: "RELATIVE",
+          cold_after_days: 400,
+          cold_target_share_pct: "35",
+          cold_floor_days: 0.5,
+        }),
+      ).toEqual({ mode: "relative", coldAfterDays: 365, targetSharePct: 35, floorDays: 1 });
+    });
+  });
+
+  describe("applySettingsPatch", () => {
+    it("writes all four cold fields, cleaned, when the page saves them together", () => {
+      const out = applySettingsPatch({}, {
+        coldZoneMode: "relative",
+        coldAfterDays: 400,
+        coldTargetSharePct: 0,
+        coldFloorDays: 30,
+      });
+      expect(out["cold_zone_mode"]).toBe("relative");
+      expect(out["cold_after_days"]).toBe(365);
+      expect(out["cold_target_share_pct"]).toBe(1);
+      expect(out["cold_floor_days"]).toBe(30);
+    });
+
+    it("touches only the cold field named in the patch", () => {
+      const base = { cold_zone_mode: "relative", cold_after_days: 30, cold_floor_days: 21 };
+      const out = applySettingsPatch(base, { coldAfterDays: 45 });
+      expect(out["cold_after_days"]).toBe(45);
+      expect(out["cold_zone_mode"]).toBe("relative");
+      expect(out["cold_floor_days"]).toBe(21);
+      expect("cold_target_share_pct" in out).toBe(false);
+    });
   });
 });

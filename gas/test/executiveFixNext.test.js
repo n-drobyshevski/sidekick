@@ -537,7 +537,9 @@ describe("os: Fix next is the page's LAST block, and it is collapsible", () => {
   it("appends fixHost after every other host, the last-scan caption included", () => {
     const order = hostOrder(SRC);
     expect(order).toEqual([
-      "noticeHost", "heroHost", "sevHost", "byDomainHost", "scanHost", "fixHost",
+      // `coldHost` rides in the run of one-glance blocks that qualify the hero, between the
+      // severity slot and the by-domain table; what this test is about is the tail.
+      "noticeHost", "heroHost", "sevHost", "coldHost", "byDomainHost", "scanHost", "fixHost",
     ]);
     // Perturbed, because "is fixHost in the list" would pass on the arrangement this replaced.
     // The ranked list spent its whole life directly under the hero, which put the page's

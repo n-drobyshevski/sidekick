@@ -422,6 +422,49 @@ const ENTRIES = [
     ],
   },
   {
+    // THE COLD ZONE'S THREE WORDS, ported from gas_devsecops/helpContent.js and reworded for
+    // this grain. `cold-zone` is the state and its clock; `unobserved` is the state that must
+    // never be mistaken for it (a fact about the scanner, not about a support group); `idle` is
+    // the number both of them are read off. Three entries rather than one because the tip card
+    // renders an entry's first two lines — a definition folded in as a third line is a
+    // definition nobody can reach — and because the Cold zone page puts the three in three
+    // different places: the page header, a verdict column, and a figure column.
+    id: "cold-zone",
+    term: "Cold zone",
+    lines: [
+      "An asset with open findings where nothing has moved for at least the cold-zone window: no finding resolved on it in that time.",
+      "Measured at the last scan, never against today, so the same saved ledger always reads the same. With no movement on record the figure is a lower bound \u2014 see Lower bound.",
+      "The window is either a fixed number of days or a share of the estate, set on the Lifecycle tab in Settings. An asset the scanner has stopped returning is Unobserved instead: counted apart, and never counted as warm.",
+    ],
+  },
+  {
+    // The support-group half of relative mode. A rank is not a verdict, and this is where that
+    // distinction is settled for a reader who found the mark on the group table.
+    id: "coldest-share",
+    term: "Coldest share",
+    lines: [
+      "In relative mode, the support groups with the highest share of their open-finding assets cold \u2014 a position relative to the other groups, not a verdict about any one of them.",
+      "A support group with no cold asset is never marked, however small the estate; groups tied at the cutoff are all marked rather than split by name.",
+      "Ranked over the support groups that have at least one asset with an open finding. A group with nothing open has no share to rank and carries no position at all.",
+    ],
+  },
+  {
+    id: "unobserved",
+    term: "Unobserved",
+    lines: [
+      "The scanner stopped returning this asset: no finding on it reached the newest scan of any severity it has rows in.",
+      "Its findings close by disappearance, which looks like a whole asset being remediated at once \u2014 so it is tested first, counted apart, and never counted as warm or cold.",
+    ],
+  },
+  {
+    id: "idle",
+    term: "Idle days",
+    lines: [
+      "Days since the last movement on an asset: the most recent finding resolved on it.",
+      "Measured from the last scan, never from today. Where nothing has ever moved there is no measurement, so the count runs from when we started watching and is published as a lower bound.",
+    ],
+  },
+  {
     id: "returned",
     term: "Returned",
     lines: [
