@@ -500,9 +500,14 @@ describe("effectiveColdZoneSettings, the one door to coldZoneProfile", () => {
     coldAfterDays: DEFAULT_COLD_AFTER_DAYS,
     targetSharePct: DEFAULT_COLD_TARGET_SHARE_PCT,
     floorDays: DEFAULT_COLD_FLOOR_DAYS,
+    // FIVE FIELDS NOW, and the fifth is the one that decides WHO is measured rather than where
+    // the line falls — which is exactly why it comes out of the same door: a caller that read
+    // the mode here and this flag off the settings row could derive a relative line over one
+    // population and then draw the table over another.
+    excludeEndOfLife: false,
   };
 
-  it("degrades nothing at all to the four shared defaults", () => {
+  it("degrades nothing at all to the five shared defaults", () => {
     // The case that makes this function load-bearing rather than tidy: readModels.test.ts's
     // `loadSettings()` mock returns a PARTIAL settings object, and `coldZoneProfile` throws on
     // a relative mode with no target. Four fields out of one call is what makes "a mode with
@@ -529,23 +534,32 @@ describe("effectiveColdZoneSettings, the one door to coldZoneProfile", () => {
   it("applies each field's own cleaner — junk defaults, a real number is clamped", () => {
     expect(effectiveColdZoneSettings({
       coldZoneMode: " RELATIVE ", coldAfterDays: 400, coldTargetSharePct: 80, coldFloorDays: 0,
+      excludeEndOfLife: true,
     })).toEqual({
       mode: "relative",
       coldAfterDays: COLD_AFTER_DAYS_MAX,
       targetSharePct: COLD_TARGET_SHARE_PCT_MAX,
       floorDays: COLD_FLOOR_DAYS_MIN,
+      excludeEndOfLife: true,
     });
     expect(effectiveColdZoneSettings({
       coldZoneMode: "warm", coldAfterDays: "junk", coldTargetSharePct: {}, coldFloorDays: [],
+      // ONLY A LITERAL `true` EXCLUDES. Deleting repositories from a page on the strength of a
+      // truthy string is the one coercion this field must never make.
+      excludeEndOfLife: "true",
     })).toEqual(ALL_DEFAULTS);
+    expect(effectiveColdZoneSettings({ excludeEndOfLife: 1 }).excludeEndOfLife).toBe(false);
+    expect(effectiveColdZoneSettings({ excludeEndOfLife: true }).excludeEndOfLife).toBe(true);
   });
 
   it("reads a real Settings object back unchanged", () => {
     const s = withSettings(DEFAULT_SETTINGS, {
       coldZoneMode: "relative", coldAfterDays: 120, coldTargetSharePct: 35, coldFloorDays: 30,
+      excludeEndOfLife: true,
     });
     expect(effectiveColdZoneSettings(s)).toEqual({
       mode: "relative", coldAfterDays: 120, targetSharePct: 35, floorDays: 30,
+      excludeEndOfLife: true,
     });
   });
 
@@ -705,6 +719,10 @@ describe("tabStatus: per-tab dirty and invalid state", () => {
       // onChange writes `draft.coldZoneMode`, the two number inputs write their own fields —
       // so all three belong in this sweep, and in TAB_FIELDS.
       "coldZoneMode", "coldTargetSharePct", "coldFloorDays",
+      // The fifth cold-zone field, driven from the same panel by a `switchToggle` rather than
+      // by a number input — and the only one of the five that is not read by a mode branch, so
+      // it is on screen in both modes and belongs in this sweep for both.
+      "excludeEndOfLife",
       "syncSchedule", "autoCompact", "retentionDays",
     ];
     for (const field of fieldsSourceActuallyDrivesTheDraftFor) {

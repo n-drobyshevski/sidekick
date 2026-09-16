@@ -494,7 +494,7 @@ describe("bootstrap's freshness caption reports the SYNC, not one of its rows", 
 //  The domain axis, END TO END through the real bootstrap
 // =========================================================================================
 //
-// THE GAP THIS CLOSES, and it is the one a live tenant found. `repoDomains.attachDomains` and
+// THE GAP THIS CLOSES, and it is the one a live tenant found. `repoTags.attachRepoTags` and
 // `domainScope.domainCatalogue` were each held directly, and both were right — but nothing
 // asserted that `bootstrap` actually runs the first and feeds the second, which is the only
 // path the header's Domains group is built from. A register whose map places rows can still
@@ -503,17 +503,19 @@ describe("bootstrap builds the domain switcher's list from the join", () => {
   /** Seed the `domain_map` tab from the repositories the committed battery produced. */
   async function seedDomainMapFromLedger(): Promise<{ tokens: string[]; domains: string[] }> {
     const { TABS } = await import("../src/server/sheetsDb");
-    const repoDomains = await import("../src/server/repoDomains");
+    const repoTags = await import("../src/server/repoTags");
     const names = [...new Set(
       (tables[TABS.repos] ?? []).map((r) => String(r.repo_id ?? "")).filter(Boolean),
     )];
     expect(names.length, "the battery must produce repositories to map").toBeGreaterThan(0);
     const domains = ["SAP", "CROSS"];
-    const map: Record<string, string> = {};
-    names.forEach((id, i) => { map[repoDomains.foldToken(id)] = domains[i % domains.length]!; });
-    repoDomains.resetDomainMapMemo();
-    repoDomains.setDomainMap(map);
-    repoDomains.resetDomainMapMemo();
+    const map: Record<string, { domain: string | null; lifecycle: string | null }> = {};
+    names.forEach((id, i) => {
+      map[repoTags.foldToken(id)] = { domain: domains[i % domains.length]!, lifecycle: null };
+    });
+    repoTags.resetRepoTagMapMemo();
+    repoTags.setRepoTagMap(map);
+    repoTags.resetRepoTagMapMemo();
     return { tokens: Object.keys(map), domains };
   }
 
@@ -911,8 +913,9 @@ describe("each read model reaches its slice", () => {
     const cold = d["coldZone"] as Rec;
     expect(Object.keys(cold).sort()).toEqual([
       "achieved_share_pct", "as_of", "cold_after_days", "cold_bound_only", "derived_days",
-      "dropped_no_repo", "eligible_repos", "fixed_after_days", "floor_applied", "floor_days",
-      "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
+      "dropped_no_repo", "eligible_repos", "end_of_life_repos", "exclude_end_of_life",
+      "excluded_end_of_life", "excluded_open_findings", "fixed_after_days", "floor_applied",
+      "floor_days", "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
       "target_share_pct", "totals", "unclassified_secrets",
     ]);
     // The mode fields ride along BY VALUE, not merely by name: the Executive card names which

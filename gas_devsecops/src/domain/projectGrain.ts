@@ -23,7 +23,7 @@
 // catalogue's parent edge and to attach the two fields; if this file reached back for
 // `parseProjects` the two would be a cycle. So the resolvers below take ALREADY-PARSED
 // projects plus the two fallback strings as explicit parameters — the arrangement
-// `repoDomains.resolveDomain(record, map, tagKey)` already uses for the same reason.
+// `repoTags.resolveDomain(record, map, tagKey)` already uses for the same reason.
 //
 // PURE. No Apps Script globals, no import from src/server/.
 

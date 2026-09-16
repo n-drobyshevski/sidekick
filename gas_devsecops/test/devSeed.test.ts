@@ -176,8 +176,8 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
 
     const devSeed = await import("../src/server/devSeed");
     const ledgerStore = await import("../src/server/ledgerStore");
-    const repoDomains = await import("../src/server/repoDomains");
-    return { devSeed, ledgerStore, repoDomains, tables };
+    const repoTags = await import("../src/server/repoTags");
+    return { devSeed, ledgerStore, repoTags, tables };
   }
 
   it("walks all three SAMPLE_SYNCS through slimRecord -> persistSync and reports the counts", async () => {
@@ -277,25 +277,31 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
   });
 
   // THE DOMAIN AXIS, END TO END OVER THE REAL SEED. Everything else about the join is held in
-  // test/repoDomains.test.ts against hand-built rows; what those cannot prove is the thing the
+  // test/repoTags.test.ts against hand-built rows; what those cannot prove is the thing the
   // join actually risks — that the tokens a map is built under OVERLAP the ones the ledger's
   // rows carry. Here the map is derived from the seeded repositories and then asked to place
   // those same rows, which is the one arrangement where a mismatch would show up as silence.
-  it("seedDomainMap builds a map that actually places the seeded rows", async () => {
-    const { devSeed, ledgerStore, repoDomains } = await mockSeamsAndImportDevSeed();
+  it("seedRepoTagMap builds a map that actually places the seeded rows", async () => {
+    const { devSeed, ledgerStore, repoTags } = await mockSeamsAndImportDevSeed();
     devSeed.seedSampleLedger();
 
-    const result = devSeed.seedDomainMap();
+    const result = devSeed.seedRepoTagMap();
     expect(result.reason).toBeUndefined();
     expect(result.domains).toBeGreaterThan(1); // or the switcher has no choice to offer
     expect(result.repos).toBeGreaterThan(0);
     // A QUARTER LEFT UNTAGGED ON PURPOSE — the harness has to show the `noDomain` caption and
     // the `(none)` breakdown bucket, not a fiction in which everything is attributed.
     expect(result.unmapped).toBeGreaterThan(0);
+    // AND THE LIFECYCLE IS DRAWN SEPARATELY, so all four combinations exist. Without the
+    // END_OF_LIFE slot the cold zone's exclusion has nothing to exclude on the harness and is
+    // never looked at locally; without the untagged slot the column's absence mark never draws.
+    expect(result.lifecycles).toBeGreaterThan(1);
+    expect(result.endOfLife).toBeGreaterThan(0);
+    expect(result.noLifecycle).toBeGreaterThan(0);
 
     const rows = Object.values(ledgerStore.loadState().ledger) as unknown as Record<string, unknown>[];
-    repoDomains.resetDomainMapMemo();
-    repoDomains.attachDomains(rows);
+    repoTags.resetRepoTagMapMemo();
+    repoTags.attachRepoTags(rows);
 
     const placed = rows.filter((r) => typeof r["_domain"] === "string" && r["_domain"]);
     // THE ASSERTION THAT MATTERS: the join placed rows at all. A token mismatch — the failure
@@ -305,6 +311,13 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
     expect(names.size).toBe(result.domains);
     // And it did NOT place everything, so both halves of the picture are exercised.
     expect(placed.length).toBeLessThan(rows.length);
+
+    // ONE PASS ATTACHES BOTH TAGS. A row placed by the lifecycle half proves the second half
+    // of the join is wired, and the end-of-life population proves the exclusion has a subject.
+    const lifed = rows.filter((r) => typeof r["_lifecycle"] === "string" && r["_lifecycle"]);
+    expect(lifed.length).toBeGreaterThan(0);
+    expect(lifed.length).toBeLessThan(rows.length);
+    expect(lifed.some((r) => r["_lifecycle"] === "END_OF_LIFE")).toBe(true);
   });
 
   it("a second call is idempotent — persistSync replays per (scan_id, scope), seeded stays 554", async () => {

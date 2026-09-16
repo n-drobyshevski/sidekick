@@ -638,8 +638,9 @@ describe("coldZoneHeadline is the Executive slice, capped in the model", () => {
   it("carries no per-repository or per-team array", () => {
     expect(Object.keys(head).sort()).toEqual([
       "achieved_share_pct", "as_of", "cold_after_days", "cold_bound_only", "derived_days",
-      "dropped_no_repo", "eligible_repos", "fixed_after_days", "floor_applied", "floor_days",
-      "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
+      "dropped_no_repo", "eligible_repos", "end_of_life_repos", "exclude_end_of_life",
+      "excluded_end_of_life", "excluded_open_findings", "fixed_after_days", "floor_applied",
+      "floor_days", "measurable", "mode", "observed_from", "row_count", "scopes_without_scan",
       "target_share_pct", "totals", "unclassified_secrets",
     ]);
     expect("repos" in head).toBe(false);
@@ -1171,5 +1172,185 @@ describe("relative mode with no clock refuses exactly as the fixed mode does", (
     // The counts still report, so the empty section can prove it looked.
     expect(out.row_count).toBe(2);
     expect(out.dropped_no_repo).toBe(1);
+  });
+});
+
+// ===========================================================================================
+//  The lifecycle column, and the one population an operator may remove
+// ===========================================================================================
+//
+// TWO SEPARATE THINGS IN ONE BLOCK, because the second is only defensible given the first.
+// `ColdRepoRow.lifecycle` is printed whatever the setting says, so a reader can tell an
+// abandoned repository from a finished one; `excludeEndOfLife` then lets them act on it. The
+// cases below are mostly about what the exclusion REFUSES to do — guess, hide its own size, or
+// move a line and then conceal what moved it.
+
+describe("the lifecycle rides on the repository row, whatever the setting", () => {
+  it("first non-blank wins, like the name and the product beside it", () => {
+    const out = profile([
+      row({ _lifecycle: null }),
+      row({ _lifecycle: "END_OF_LIFE" }),
+    ]);
+    expect(repoOf(out, "repo-1").lifecycle).toBe("END_OF_LIFE");
+  });
+
+  it("is NULL for a repository the tenant never tagged — absence, not a placeholder", () => {
+    expect(repoOf(profile([row({})]), "repo-1").lifecycle).toBeNull();
+    expect(repoOf(profile([row({ _lifecycle: "   " })]), "repo-1").lifecycle).toBeNull();
+  });
+
+  it("comes back as the tenant wrote it, and a live lifecycle excludes nothing", () => {
+    const out = profile([row({ _lifecycle: "In production" })], { excludeEndOfLife: true });
+    expect(repoOf(out, "repo-1").lifecycle).toBe("In production");
+    expect(out.end_of_life_repos).toBe(0);
+    expect(out.excluded_end_of_life).toBe(0);
+  });
+});
+
+describe("excludeEndOfLife", () => {
+  /** One retired repository sitting cold, and one live one that is fine. */
+  const rows = (): ColdRow[] => [
+    row({ repo_id: "repo-dead", repo_name: "acme/retired", _lifecycle: "END_OF_LIFE",
+      first_seen: back(300), status: "RESOLVED", resolved_at: back(200) }),
+    row({ repo_id: "repo-dead", repo_name: "acme/retired", _lifecycle: "END_OF_LIFE",
+      first_seen: back(300) }),
+    row({ repo_id: "repo-live", repo_name: "acme/live", _lifecycle: "IN_PRODUCTION",
+      first_seen: back(100), status: "RESOLVED", resolved_at: back(5) }),
+    row({ repo_id: "repo-live", repo_name: "acme/live", _lifecycle: "IN_PRODUCTION",
+      first_seen: back(100) }),
+  ];
+
+  it("OFF BY DEFAULT — a caller that predates the option gets exactly what it used to", () => {
+    const out = profile(rows());
+    expect(out.exclude_end_of_life).toBe(false);
+    expect(out.repos!.map((r) => r.repo_id).sort()).toEqual(["repo-dead", "repo-live"]);
+    expect(repoOf(out, "repo-dead").verdict).toBe("cold");
+    // COUNTED ANYWAY, which is what makes the setting discoverable rather than hidden: the
+    // page can say how many retired repositories are being measured as though somebody owed
+    // them a fix, on a deployment that has never turned the exclusion on.
+    expect(out.end_of_life_repos).toBe(1);
+    expect(out.excluded_end_of_life).toBe(0);
+    expect(out.excluded_open_findings).toBe(0);
+  });
+
+  // Perturbation, run and reverted: dropping the `excludedIds` skip from pass A fails this
+  // case with `expected 2 to be 1` on `totals.repos`, and the relative-mode case below with
+  // `expected 95 to be 60` — the excluded repository back in the population the line is
+  // derived from, which is the whole reason the cut sits where it does.
+  it("ON, the repository leaves the measurement entirely — rows, teams and totals", () => {
+    const out = profile(rows(), { excludeEndOfLife: true });
+    expect(out.exclude_end_of_life).toBe(true);
+    expect(out.repos!.map((r) => r.repo_id)).toEqual(["repo-live"]);
+    expect(out.totals!.repos).toBe(1);
+    expect(out.totals!.cold_repos).toBe(0);
+    // The eligible population — what a relative line would be derived FROM — is narrowed too.
+    expect(out.eligible_repos).toBe(1);
+  });
+
+  it("publishes what left, so a share whose denominator shrank can be checked", () => {
+    const out = profile(rows(), { excludeEndOfLife: true });
+    expect(out.end_of_life_repos).toBe(1);
+    expect(out.excluded_end_of_life).toBe(1);
+    // One open finding on the retired repository; the resolved one is not open.
+    expect(out.excluded_open_findings).toBe(1);
+  });
+
+  // Perturbation, run and reverted: replacing `isEndOfLife(acc.lifecycle)` with a bare
+  // non-null test fails this case with `expected 3 to be 0` — every tagged repository in the
+  // tenant would leave the page, retired or not.
+  it("NEVER GUESSES: only a recognised end-of-life reading removes anything", () => {
+    const out = profile([
+      row({ repo_id: "r-none", _lifecycle: null }),
+      row({ repo_id: "r-live", _lifecycle: "IN_PRODUCTION" }),
+      row({ repo_id: "r-soon", _lifecycle: "END_OF_LIFE_PLANNED" }),
+      row({ repo_id: "r-odd", _lifecycle: "DECOMMISSIONED" }),
+    ], { excludeEndOfLife: true });
+    expect(out.excluded_end_of_life).toBe(0);
+    expect(out.repos!).toHaveLength(4);
+  });
+
+  it("absorbs how the word was punctuated, because that is one value and not four", () => {
+    const out = profile([
+      row({ repo_id: "r-1", _lifecycle: "end-of-life" }),
+      row({ repo_id: "r-2", _lifecycle: "End Of Life" }),
+      row({ repo_id: "r-3", _lifecycle: "EndOfLife" }),
+    ], { excludeEndOfLife: true });
+    expect(out.excluded_end_of_life).toBe(3);
+    expect(out.repos!).toHaveLength(0);
+  });
+
+  it("removes the product row too when nothing else is filed under it", () => {
+    const out = profile([
+      row({ repo_id: "repo-dead", _product: "product-retired", _lifecycle: "END_OF_LIFE" }),
+      row({ repo_id: "repo-live", _product: "product-live", _lifecycle: null }),
+    ], { excludeEndOfLife: true });
+    expect(out.teams!.map((t) => t.label)).toEqual(["product-live"]);
+  });
+
+  // THE REASON RULE 0 SITS ABOVE THE CLOCK. In relative mode the line is DERIVED from the
+  // eligible readings, so a retired repository left in the population would drag the line out
+  // to its own silence and then be hidden by the very filter that was supposed to remove it —
+  // a cut that changes the answer for everybody else.
+  it("in RELATIVE mode the excluded repository does not get to move the derived line", () => {
+    /** A repository idle for `idle` days: one closed finding that far back, one still open. */
+    const pair = (id: string, idle: number, over: Partial<ColdRow> = {}): ColdRow[] => [
+      row({ repo_id: id, first_seen: back(300), status: "RESOLVED", resolved_at: back(idle), ...over }),
+      row({ repo_id: id, first_seen: back(300), ...over }),
+    ];
+    const rs: ColdRow[] = [
+      // Retired, and idle for 200 days — the extreme that would otherwise drag the line out.
+      ...pair("r-dead", 200, { _lifecycle: "END_OF_LIFE" }),
+      ...pair("r-a", 95),
+      ...pair("r-b", 60),
+      ...pair("r-c", 30),
+    ];
+    const opts = { mode: "relative" as ColdZoneMode, targetSharePct: 50, floorDays: 1 };
+
+    // INCLUDED: the idlest 50% of FOUR is k=2 of [200, 95, 60, 30] — the line lands on 95, and
+    // only one live repository is cold. The retired one has quietly made the estate look warm.
+    const kept = profile(rs, opts);
+    expect(kept.eligible_repos).toBe(4);
+    expect(kept.derived_days).toBe(95);
+    expect(kept.repos!.filter((r) => r.cold).map((r) => r.repo_id).sort()).toEqual(["r-a", "r-dead"]);
+
+    // EXCLUDED: the idlest 50% of THREE is k=2 of [95, 60, 30]. The line moves to 60 and the
+    // second-quietest live repository stops being hidden behind a decision somebody took.
+    const cut = profile(rs, { ...opts, excludeEndOfLife: true });
+    expect(cut.eligible_repos).toBe(3);
+    expect(cut.derived_days).toBe(60);
+    expect(cut.repos!.filter((r) => r.cold).map((r) => r.repo_id).sort()).toEqual(["r-a", "r-b"]);
+    expect(cut.repos!.map((r) => r.repo_id).sort()).toEqual(["r-a", "r-b", "r-c"]);
+  });
+
+  // Perturbation, run and reverted: narrowing the `observedById` loop to the surviving
+  // repositories fails this case with `expected [] to deeply equal [ 'sast' ]`.
+  it("NEVER NARROWS scopes_without_scan — coverage is not a display setting", () => {
+    // The only `sast` rows sit on the retired repository. The scope still has rows and still
+    // has no scan, and that warning must survive the exclusion.
+    const out = profile([
+      row({ repo_id: "r-dead", scope: "sast", _lifecycle: "END_OF_LIFE" }),
+      row({ repo_id: "r-live" }),
+    ], { excludeEndOfLife: true });
+    expect(out.scopes_without_scan).toEqual(["sast"]);
+    expect(out.excluded_end_of_life).toBe(1);
+  });
+
+  it("counts the retired population even with no clock, where nothing else is measurable", () => {
+    const out = profile([row({ _lifecycle: "END_OF_LIFE" })], {
+      observedFrom: null, excludeEndOfLife: true,
+    });
+    expect(out.measurable).toBe(false);
+    expect(out.repos).toBeNull();
+    // The fold happens before the clock is read, so this figure is real where the rest is null.
+    expect(out.end_of_life_repos).toBe(1);
+    expect(out.excluded_end_of_life).toBe(1);
+  });
+
+  it("the headline carries all four figures, so the Executive card can qualify its own", () => {
+    const head = coldZoneHeadline(profile(rows(), { excludeEndOfLife: true }));
+    expect(head.exclude_end_of_life).toBe(true);
+    expect(head.end_of_life_repos).toBe(1);
+    expect(head.excluded_end_of_life).toBe(1);
+    expect(head.excluded_open_findings).toBe(1);
   });
 });

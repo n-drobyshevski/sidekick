@@ -17,6 +17,14 @@ export const PROP_KEYS = {
   // WIZ_PROJECT_ID_V2 sits in. See domain/domainTag.ts for why it is resolved on READ: a key
   // baked into the ledger would make correcting a typo cost a full re-scan.
   wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+  // The repository tag key whose VALUE is where that repository is in its life
+  // (`END_OF_LIFE`, `IN_PRODUCTION`, …). Unset means `lifecycle`. Same tier and same reasoning
+  // as the domain key above it, with one difference worth stating: `Wiz/Domain` is a key Wiz's
+  // own console writes, so its default is a FACT, while a repository's lifecycle reaches Wiz
+  // under whatever key the tenant's own catalogue used — so this default is a GUESS, and
+  // `repoTags.mapHealth` publishes how many repositories it actually placed so a wrong guess
+  // shows up as a zero on the Settings page rather than as a quietly empty column.
+  wizLifecycleTagKey: "WIZ_LIFECYCLE_TAG_KEY",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
   // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.

@@ -103,18 +103,32 @@ design: `projects[]` is in all three query documents, so it rides in on every fi
 **none of the three can select an asset's tags**. `VulnerableAssetRepositoryBranch` is the one
 member of the `vulnerableAsset` union that Wiz's own console query omits `tags` from — it is
 on the other twelve — and a field the schema lacks fails the whole document, so asking anyway
-would stop SCA syncing. So `src/server/repoDomains.ts` graphSearches the tenant's tagged
-repository entities separately, builds a repository-identity → domain map on the `domain_map`
-tab, and attaches `_domain` to rows **on read**, never baked into the ledger. That is the same
+would stop SCA syncing. So `src/server/repoTags.ts` graphSearches the tenant's tagged
+repository entities separately, builds a repository-identity → tags map on the `domain_map`
+tab, and attaches those tags to rows **on read**, never baked into the ledger. That is the same
 shape `gas/src/server/supportGroups.ts` already uses for a `Wiz/provisioning` tag that lives on
 a subscription findings carry without its tags.
 
+**Two tags travel that road, not one.** Beside the business domain, the same fetch carries each
+repository's **lifecycle** — `END_OF_LIFE`, `IN_PRODUCTION`, whatever the tenant writes, read
+off its `lifecycle` tag (`WIZ_LIFECYCLE_TAG_KEY` overrides the key). It is attached as
+`_lifecycle` at the same point, appears as a **Lifecycle** column on the Repositories tables,
+and is the one thing an operator can ask the cold zone to act on — see below. The query filters
+on one tag key at a time, so the refresh pages it **once per key** and merges; each pass reads
+both tags off every entity it sees, so a repository carrying only one of the two is still
+reached. Whether a widened `where` would mean "carries both" or "carries either" is not
+verifiable without the tenant, and a wrong guess there is a silent under-fetch.
+
 Two consequences a reader meets on screen. The map is refreshed from **Settings → System →
-Business domains**, on its own clock rather than with a sync — tagging changes when tagging
-changes, not when findings do. And until it is refreshed there are no domains: the switcher
-simply has no Domains group, the caption counts the rows as `have no domain`, and the Settings
-card says *Never refreshed* rather than letting an unrefreshed map look like an untagged
-tenant. An unreachable map degrades the same way rather than taking the pages down with it.
+Repository tags**, on its own clock rather than with a sync — tagging changes when tagging
+changes, not when findings do. And until it is refreshed there are no domains and no
+lifecycles: the switcher simply has no Domains group, the caption counts the rows as `have no
+domain`, the Lifecycle column is empty, and the Settings card says *Never refreshed* rather
+than letting an unrefreshed map look like an untagged tenant. An unreachable map degrades the
+same way rather than taking the pages down with it. The card reports the **two tags'
+placements separately**, because they fail separately: `Wiz/Domain` is a key Wiz's own console
+writes, while the lifecycle key is whatever the tenant's catalogue used — so the default is a
+guess, and a zero beside a healthy domain count is how an operator finds that out.
 
 **The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
 `src/server/readModels.ts`'s `registerRowsModel` (through `serverCache.ts`'s durable, 1-hour
@@ -174,7 +188,32 @@ here and `test/vocabulary.test.js` holds the copy to it.
 | `repos` | Repositories | Data | Where does the backlog sit, which repos have gone cold, who owns them? |
 | `history` | Scan history | Data | What was actually measured, when? |
 | `data` | Storage | Data | What is stored, what can be exported, what can be reset? |
-| `settings` | Settings | — | Register, SLA windows, the cold-zone mode, access, system. |
+| `settings` | Settings | — | Register, SLA windows, the cold-zone mode and its end-of-life exclusion, access, system. |
+
+### The cold zone, and the one population an operator may remove
+
+The Repositories page's cold zone answers **where has remediation stopped** rather than how
+much is open: a repository with open findings and no close, removal or rotation for at least
+the window. The line is drawn either as a **fixed** number of idle days or **relative**, as the
+idlest share of the estate with a floor under it; both produce one effective threshold and
+nothing downstream branches on which.
+
+**End-of-life repositories can be left out, and that is the only exclusion on offer.** A
+repository the tenant has retired answers this question with a silence that means the opposite
+of what the section reads into it — nobody is closing findings on it because nobody is meant
+to — so counting it as cold describes a decision rather than a team, and crowds out the
+repositories that really have gone quiet. **Settings → Deadlines** turns it on; it is **off by
+default**, and off the retired repositories stay in the table with their lifecycle printed
+beside the verdict so a reader can dismiss them without the app deciding for them.
+
+Three refusals keep it honest. It **never guesses**: only a positively recognised end-of-life
+value excludes, so a missing tag, an unfamiliar word, or a lifecycle key that matches nothing
+excludes nothing at all. It **never happens silently**: the section says how many repositories
+left and how many open findings went with them, because a share whose denominator quietly
+shrank is a share nobody can check — and with the setting off it says how many retired
+repositories are being counted, which is how an operator finds the switch. And it **reaches the
+cold zone alone**: those findings stay in every backlog, density, severity and SLA figure the
+register publishes. What is being removed is a reading about engagement, not a finding.
 
 ### Why SAST, SCA and secrets are three pages
 
@@ -279,6 +318,8 @@ WIZ_API_TOKEN=...          # or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET
 WIZ_PROJECT_ID_V2=...      # optional; scopes every query
 WIZ_DOMAIN_TAG_KEY=...     # optional; the repository tag whose value is a business domain
                            # (default Wiz/Domain) — see "Two ways to slice it" below
+WIZ_LIFECYCLE_TAG_KEY=...  # optional; the repository tag whose value is a lifecycle
+                           # (default lifecycle) — read beside the domain, in one refresh
 ```
 
 **The two questions it exists to answer.**

@@ -269,7 +269,7 @@ export interface ProjectGrainCarrier extends ProjectsCarrier {
  * exist only because `ORG_WIDE_PROJECTS` was applied to a stored column. Derived on read, a
  * corrected rule is one edit and a page reload.
  *
- * NEVER A NO-OP, unlike `repoDomains.attachDomains`. That one is gated on a join map that may
+ * NEVER A NO-OP, unlike `repoTags.attachRepoTags`. That one is gated on a join map that may
  * never have been refreshed, so it legitimately leaves every row unset; this is a pure
  * function of the row and always answers what the row can support. A field left UNSET here
  * therefore means the row genuinely carries no such attribution — which is a finding, not a

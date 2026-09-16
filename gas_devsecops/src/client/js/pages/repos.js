@@ -246,6 +246,15 @@ export function coldZoneView(model) {
     // The cold repositories whose idle time was never measured — the cost of ranking a
     // repository at the bound it can prove. Null, not 0, when nothing was measurable.
     coldBoundOnly: present ? num(cz.cold_bound_only) : null,
+    // THE POPULATION AN OPERATOR MAY HAVE REMOVED, and the size of what went. Read even on
+    // the two notice branches: the fold that produces these happens before the clock is
+    // consulted (src/domain/coldZone.ts), so they are real on a register that cannot measure
+    // anything else, and "we are not counting eleven repositories here" is worth saying even
+    // then. A payload that predates the field carries none, which reads as "no exclusion".
+    excludeEndOfLife: present && cz.exclude_end_of_life === true,
+    endOfLifeRepos: present ? num(cz.end_of_life_repos, 0) : 0,
+    excludedEndOfLife: present ? num(cz.excluded_end_of_life, 0) : 0,
+    excludedOpenFindings: present ? num(cz.excluded_open_findings, 0) : 0,
     teamsInColdestShare: totals ? num(totals.teams_in_coldest_share, 0) : 0,
     // The threshold and the clock ride along even when nothing is measurable: a reader asking
     // "cold after how long?" is asking about the setting, not about the data.
@@ -405,6 +414,41 @@ export function productCountNote(view, rowCount) {
   if (!noProduct) return `${head}.`;
   return `${head}, including the ${fmtCount(noProduct)} ${noProduct === 1 ? "repository" : "repositories"}`
     + " with no product recorded, counted together as one.";
+}
+
+/**
+ * What the end-of-life setting is doing to this section, in one sentence — or null.
+ *
+ * TWO SENTENCES FOR TWO SETTINGS, AND BOTH ARE ABOUT THE SAME POPULATION. On, it says what
+ * left and how much backlog went with it, because a share whose denominator quietly shrank is
+ * a share nobody can check — the same duty `productCountNote` discharges for the null-product
+ * bucket and `boundOnlySentence` for the repositories ranked at a bound. Off, it says the
+ * retired repositories are in here, and where the switch is: this section's whole argument is
+ * that a long silence means somebody stopped, and for these repositories it does not.
+ *
+ * NULL WHEN THERE ARE NONE, in either setting — `unmeasurableNote`'s rule. A sentence about
+ * zero repositories is noise, and it is also the honest reading on a tenant whose lifecycle
+ * tag this register never learned: nothing is known, so nothing is claimed. Settings > System
+ * is where that case is diagnosable, and it says so rather than this line guessing at it.
+ *
+ * @param {{excludeEndOfLife?: boolean, endOfLifeRepos?: number,
+ *          excludedEndOfLife?: number, excludedOpenFindings?: number}|null|undefined} view
+ * @returns {string|null}
+ */
+export function endOfLifeNote(view) {
+  if (!view) return null;
+  const total = num(view.endOfLifeRepos, 0);
+  if (!total) return null;
+  const repos = (n) => `${fmtCount(n)} ${n === 1 ? "repository" : "repositories"}`;
+  if (view.excludeEndOfLife !== true) {
+    return `${repos(total)} here ${total === 1 ? "is" : "are"} end of life and still counted.`
+      + " Settings, under Deadlines, can leave them out.";
+  }
+  const cut = num(view.excludedEndOfLife, 0);
+  const open = num(view.excludedOpenFindings, 0);
+  const findings = `${fmtCount(open)} open ${open === 1 ? "finding" : "findings"}`;
+  return `${repos(cut)} left out as end of life, with ${findings}.`
+    + " They are counted in every other figure this register publishes.";
 }
 
 /**
@@ -825,6 +869,14 @@ export function coldRepoRows(view) {
         key: r.repo_id || label,
         label,
         product: r.product === null || r.product === undefined ? NO_PRODUCT : String(r.product),
+        // WHAT THE VERDICT COLUMN CANNOT SAY. "Cold" and "retired" look identical in every
+        // other cell on this row, and they are opposite readings of the same silence — so the
+        // tag is printed whether or not the deployment has chosen to exclude the retired ones.
+        // Absent is this app's one absence mark, never a guessed "live".
+        lifecycle: typeof r.lifecycle === "string" && r.lifecycle.trim() ? r.lifecycle : null,
+        lifecycleText: typeof r.lifecycle === "string" && r.lifecycle.trim()
+          ? r.lifecycle
+          : absentText,
         verdict: r.verdict || null,
         verdictWord: COLD_VERDICT_LABEL[r.verdict] || absentText,
         cold: r.cold === true,
@@ -891,9 +943,18 @@ export function coldScatterPoints(view) {
 /** One row of the per-repo / per-product table, formatted for `pagedTable`'s columns. */
 export function tableRow(row) {
   const foothold = num(row.assets_with_high_risk_pct);
+  const lifecycle = typeof row.asset_lifecycle === "string" && row.asset_lifecycle.trim()
+    ? row.asset_lifecycle
+    : null;
   return {
     key: row.asset_group,
     label: row.asset_label || row.asset_group,
+    // NULL AT EVERY GRAIN BUT THE REPOSITORY, and the domain refuses it rather than this
+    // function guessing: a product is many repositories and can hold several lifecycles at
+    // once (`domain/assets.ts`). The column is drawn on one side of the switch for that
+    // reason, so the text is only ever read where it is real.
+    lifecycle,
+    lifecycleText: lifecycle === null ? absentText : lifecycle,
     assets: num(row.assets, 0),
     openFindings: num(row.open_findings, 0),
     densityP50: num(row.density_p50),
@@ -1001,7 +1062,15 @@ export async function renderRepos(host, _params, _ctx) {
       // coarser. What sits beside the repository now is the grain the tenant owns work by, so
       // the switch flips between "which repository carries this" and "which product does",
       // over identical columns.
-      sectionLabel("By repository or product"),
+      //
+      // NAMED FOR ITS QUESTION, NOT FOR ITS GRAIN, and that is the whole reason it is not
+      // "By repository or product". The switch inside it already says which grain a row is
+      // ("One row per: Repository | Product"), so a heading repeating that says nothing twice
+      // — and it collided on screen with the cold zone's own "By product" roll-up above,
+      // leaving two headings that both answered "how is this grouped?" and neither "what does
+      // this tell me?". They are different questions: the cold zone asks who has gone quiet,
+      // this asks how much is here and how fast it clears.
+      sectionLabel("Backlog and clearance"),
       repoHost,
       sectionLabel("Half-life"),
       chartsHost,
@@ -1103,6 +1172,12 @@ export async function renderRepos(host, _params, _ctx) {
     // that says which one goes ABOVE the figures rather than under them, and it is printed on
     // the two notice branches too, where the line is the only thing there is to say.
     coldHost.append(denomNote(coldModeCaption(view)));
+    // WHO IS BEING MEASURED, directly under where the line came from, and on all three
+    // branches for the same reason that caption is: both sentences are about the section
+    // rather than about its figures, and the population question survives a register that
+    // cannot measure anything yet.
+    const eol = endOfLifeNote(view);
+    if (eol) coldHost.append(denomNote(eol));
     if (!view.measurable) {
       coldHost.append(emptyState(
         "The cold zone is not measured yet.",
@@ -1348,6 +1423,14 @@ export async function renderRepos(host, _params, _ctx) {
       columns: [
         { key: "label", label: "Repository", cell: (r) => r.label },
         { key: "product", label: "Product", cell: (r) => r.product },
+        {
+          // BESIDE THE OWNER, NOT BESIDE THE VERDICT. It answers "what is this repository",
+          // which is the same question the two columns to its left answer, rather than
+          // "how is it doing" — and a reader scanning for something to dismiss reads the
+          // left of the row.
+          key: "lifecycle", label: "Lifecycle", help: { term: "lifecycle" },
+          cell: (r) => r.lifecycleText,
+        },
         { key: "verdict", label: "Verdict", cell: (r) => verdictMark(r.verdict, r.verdictWord) },
         {
           key: "idle", label: "Idle", className: "num", help: { term: "idle" },
@@ -1506,7 +1589,20 @@ export async function renderRepos(host, _params, _ctx) {
     const columns = [
       { key: "label", label: isRepo ? "Repository" : "Product", cell: (r) => r.label },
     ];
-    if (!isRepo) {
+    // ONE GRAIN-SPECIFIC COLUMN EACH, IN THE SAME SLOT, and they are two halves of the same
+    // honesty rather than two exceptions. A product needs `Repos` because without it a reader
+    // cannot tell a product whose single repository is dense from one whose twenty are; the
+    // repository side needs no such column, because the answer is always one. A repository
+    // needs `Lifecycle` because a retired one carries a backlog nobody is meant to clear; the
+    // product side cannot have one, because a product spans repositories that need not agree
+    // — `assetProfile` publishes `asset_lifecycle` at the repository grain only, so the
+    // absence here is the domain's refusal and not a layout choice.
+    if (isRepo) {
+      columns.push({
+        key: "lifecycle", label: "Lifecycle", help: { term: "lifecycle" },
+        cell: (r) => r.lifecycleText,
+      });
+    } else {
       columns.push({ key: "assets", label: "Repos", className: "num", cell: (r) => fmtCount(r.assets) });
     }
     columns.push(

@@ -97,6 +97,10 @@ export type AssetRow = RiskRow &
   // never a stored column — which is why it is optional here and why a row that carries none
   // is a real group rather than a dropped one.
   | "_product"
+  // Attached on read from the repository's `lifecycle` tag (`repoTags.attachRepoTags`), never
+  // a stored column either — and, unlike `_product`, gated on a join map that may never have
+  // been refreshed, so unset here has the extra meaning "nothing was ever fetched".
+  | "_lifecycle"
   | "first_seen"
   | "resolved_at"
   | "mttr_days"
@@ -134,8 +138,8 @@ export interface AssetProfileOptions {
 /**
  * One published row. The first 17 fields are `OUTPUT_COLUMNS["asset_profile"]` verbatim
  * (panels.py:1542-1547) plus `population`, which `asset_profile` itself stamps on
- * (metrics.py:1444-1447). `asset_label` is this port's only addition and is null unless
- * `groupBy: "repo"`.
+ * (metrics.py:1444-1447). `asset_label` and `asset_lifecycle` are this port's only additions
+ * and are both null unless `groupBy: "repo"`.
  */
 export interface AssetProfileRow {
   /** The asset category: the language, the repo id, or `OVERALL`. NULL folds to `UNKNOWN`. */
@@ -171,6 +175,23 @@ export interface AssetProfileRow {
   population: string;
   /** Display name for the group. `repo_name` under `groupBy: "repo"`; null otherwise. */
   asset_label: string | null;
+  /**
+   * Where the repository is in its life — `_lifecycle`, under `groupBy: "repo"` only.
+   *
+   * DISPLAY-ONLY, AND THE SECOND FIELD BRICK DOES NOT HAVE. `asset_label` is the precedent and
+   * the bargain is the same one: brick computes neither, no figure on this row is derived from
+   * either, and `test/assets.test.ts` names both as the port's whole divergence from
+   * `OUTPUT_COLUMNS["asset_profile"]` — so the fixture parity that pins the seventeen real
+   * columns is unchanged and stays checkable.
+   *
+   * NULL AT EVERY OTHER GRAIN, and that is a refusal rather than a gap. A lifecycle is a
+   * property of a REPOSITORY; a product is many repositories and can hold several at once, so
+   * there is no single value to publish and inventing one (the first, the commonest) would put
+   * a word on a row that is false for some of what it counts. The page's own switch is where
+   * that is honoured — the column is drawn on the repository grain and absent on the product
+   * one, exactly as `Repos` is present on the product grain and absent on the repository one.
+   */
+  asset_lifecycle: string | null;
 }
 
 export interface AssetProfileResult {
@@ -267,6 +288,7 @@ interface PerAsset {
   assetId: string;
   group: string;
   label: string | null;
+  lifecycle: string | null;
   /** Open findings on this asset. */
   density: number;
   /** >= 1 OPEN high-risk finding. */
@@ -305,6 +327,7 @@ function perAsset(rows: Classified[], windowStart: number | null, groupBy: Asset
         assetId,
         group,
         label: null,
+        lifecycle: null,
         density: 0,
         hasFoothold: false,
         tp: 0,
@@ -319,6 +342,9 @@ function perAsset(rows: Classified[], windowStart: number | null, groupBy: Asset
       byKey.set(key, a);
     }
     if (a.label === null && !blank(row.repo_name)) a.label = String(row.repo_name);
+    // First non-blank wins, exactly as the display name above: the tag is a property of the
+    // repository, so every row of one asset carries the same value or none.
+    if (a.lifecycle === null && !blank(row._lifecycle)) a.lifecycle = String(row._lifecycle);
 
     const open = isOpen(row.status);
     const high = risk === "high";
@@ -356,6 +382,7 @@ function perAsset(rows: Classified[], windowStart: number | null, groupBy: Asset
 function aggregate(
   group: string,
   label: string | null,
+  lifecycle: string | null,
   assets: PerAsset[],
   windowMonths: number | null,
   population: string,
@@ -411,6 +438,7 @@ function aggregate(
     window_months: windowMonths,
     population,
     asset_label: label,
+    asset_lifecycle: lifecycle,
   };
 }
 
@@ -510,11 +538,16 @@ export function assetProfile(rows: AssetRow[], opts: AssetProfileOptions): Asset
   // the two over the same rows but at different grains.
   const assetsByGroup = new Map<string, PerAsset[]>();
   const labelByGroup = new Map<string, string | null>();
+  const lifecycleByGroup = new Map<string, string | null>();
   for (const a of assets) {
     const list = assetsByGroup.get(a.group);
     if (list) list.push(a);
     else assetsByGroup.set(a.group, [a]);
     if (groupBy === "repo" && !labelByGroup.get(a.group)) labelByGroup.set(a.group, a.label);
+    // GATHERED AT EVERY GRAIN AND PUBLISHED AT ONE, where the label is gated twice. The single
+    // guard is at the call site below, so the rule that a lifecycle belongs to a repository and
+    // to nothing coarser lives in exactly one place and a test can move it.
+    if (!lifecycleByGroup.get(a.group)) lifecycleByGroup.set(a.group, a.lifecycle);
   }
   const findingsByGroup = new Map<string, AssetRow[]>();
   for (const { row } of kept) {
@@ -531,6 +564,7 @@ export function assetProfile(rows: AssetRow[], opts: AssetProfileOptions): Asset
       aggregate(
         group,
         groupBy === "repo" ? labelByGroup.get(group) ?? null : null,
+        groupBy === "repo" ? lifecycleByGroup.get(group) ?? null : null,
         list,
         windowMonths,
         population,
@@ -538,7 +572,9 @@ export function assetProfile(rows: AssetRow[], opts: AssetProfileOptions): Asset
       ),
     );
   }
-  out.push(aggregate(OVERALL, null, assets, windowMonths, population, halfLife(OVERALL, allFindings)));
+  out.push(
+    aggregate(OVERALL, null, null, assets, windowMonths, population, halfLife(OVERALL, allFindings)),
+  );
 
   // panels.py:1284 publishes OVERALL first, then `assets DESC`.
   // DIVERGENCE: a name tie-break is added, because that SQL leaves ties in whatever order the

@@ -25,7 +25,7 @@
 // `Wiz/Domain` tag became reachable. It was never that the tenant did not tag its repositories
 // — it does — but that the tag could not be FETCHED: the three finding documents cannot select
 // `tags` on a repository asset, so the tag arrives through a separate graphSearch join
-// (`src/server/repoDomains.ts`), and until that existed a domain picker would have offered
+// (`src/server/repoTags.ts`), and until that existed a domain picker would have offered
 // slices whose pages all render zero. An earlier revision of this header stated the stronger
 // claim, that this register has no such tag, citing `domain/maintenance.ts:256`; that was
 // wrong about the tenant and is corrected here rather than quietly deleted.

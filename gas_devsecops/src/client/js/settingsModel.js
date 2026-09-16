@@ -60,6 +60,11 @@ export const SETTING_FIELDS = {
   coldZoneMode: { tab: "deadlines", label: "cold-zone mode" },
   coldTargetSharePct: { tab: "deadlines", label: "cold-zone target share" },
   coldFloorDays: { tab: "deadlines", label: "cold-zone floor" },
+  // The fifth cold-zone knob, and the only one that is not about WHERE the line falls: it
+  // decides who is measured at all. On Deadlines with the other four because a reader setting
+  // a cold-zone window is already deciding what "cold" means on their estate, and "does a
+  // repository we retired count" is that same decision one step earlier.
+  excludeEndOfLife: { tab: "deadlines", label: "end-of-life exclusion" },
   syncSchedule: { tab: "system", label: "sync hour" },
   autoCompact: { tab: "system", label: "automatic compaction" },
   retentionDays: { tab: "system", label: "retention window" },

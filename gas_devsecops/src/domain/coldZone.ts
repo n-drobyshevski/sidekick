@@ -54,6 +54,31 @@
 //     observed (the conservative direction: we do not accuse a team of vanishing on the
 //     strength of a missing scan row) and the scope is named in `scopes_without_scan`.
 //
+// -------------------------------------------------------------------------------------
+// ONE POPULATION THE OPERATOR MAY REMOVE, AND IT IS THE ONLY ONE. `excludeEndOfLife` drops
+// the repositories the tenant has RETIRED (`src/domain/lifecycleTag.ts`, read off the
+// repository's `lifecycle` tag) before anything here is measured. It is off by default, and
+// it is the one exclusion this module offers, because it is the one population whose silence
+// means the opposite of what every other column here reads into it: nobody is closing
+// findings on a finished repository because nobody is meant to. Counting those as cold does
+// not describe a team that stopped — it describes a decision that was taken, and it crowds
+// out the repositories that really did go quiet.
+//
+// WHAT THE EXCLUSION REFUSES TO DO:
+//   * It never guesses. Only a positive, recognised end-of-life reading removes anything; a
+//     repository with no lifecycle tag, or one in a vocabulary this register has not been
+//     taught, stays in. Absence is never retirement.
+//   * It never happens silently. `end_of_life_repos` counts the retired population in BOTH
+//     settings, `excluded_end_of_life` counts what actually left, and `excluded_open_findings`
+//     says how much backlog went with them — so a share whose denominator shrank can be
+//     checked rather than merely believed.
+//   * It never reaches the rest of the register. A retired repository's findings are real and
+//     stay in every backlog, density and severity figure this app publishes; what is being
+//     removed is a reading about ENGAGEMENT, not a finding.
+//   * It never narrows `scopes_without_scan`, which is a fact about scan coverage rather than
+//     about this population — a coverage warning must not disappear because of a display
+//     setting.
+//
 // THRESHOLD SEMANTICS: `>=`, everywhere. Exactly 90.0 days idle is cold, matching the
 // register's "≥ N" wording rule (README / PRODUCT.md) — the page never prints ">".
 //
@@ -115,6 +140,7 @@ import {
   type Scope,
 } from "./config";
 import type { BaseRow } from "./ledgerTypes";
+import { isEndOfLife } from "./lifecycleTag";
 import { classifyRisk, type AnyRiskRule, type RiskClass, type RiskRow } from "./program";
 import { cmp, parseTs, present, toIso } from "./util";
 
@@ -147,6 +173,11 @@ export type ColdRow = RiskRow &
     | "_product"
     | "_supportGroup"
     | "_supportGroups"
+    // The repository's lifecycle, attached on read from its `lifecycle` tag
+    // (`src/domain/lifecycleTag.ts`). It is here for two separate jobs: the page prints it
+    // beside a cold verdict so a reader can tell an abandoned repository from a finished one,
+    // and `excludeEndOfLife` below can remove the finished ones from the measurement entirely.
+    | "_lifecycle"
     | "scope"
     | "status"
     | "first_seen"
@@ -197,6 +228,28 @@ export interface ColdZoneOptions {
   targetSharePct?: number;
   /** The line's floor in days, REQUIRED in relative mode. See the module header. */
   floorDays?: number;
+  /**
+   * Leave end-of-life repositories out of the measurement entirely. Default FALSE, so every
+   * caller that predates this option gets exactly what it used to.
+   *
+   * WHY THE COLD ZONE IS THE ONE FAMILY THIS APPLIES TO. Every other number in this register
+   * is a count of findings, and a retired repository's findings are real: they are in the
+   * backlog, they are in the density, and hiding them would be a smaller estate than the
+   * tenant has. This family measures ENGAGEMENT — how long since anybody closed anything —
+   * and there the same silence means the opposite thing. Nobody is remediating a retired
+   * repository because nobody is meant to, so counting it as cold does not describe a team
+   * that has stopped; it describes a decision that was taken on purpose, and it crowds out
+   * the repositories that really have gone quiet.
+   *
+   * AN OPT-IN, NOT A DEFAULT, AND THAT IS THE CONSERVATIVE DIRECTION. Off, the reader sees
+   * every repository and can dismiss the retired ones themselves — `ColdRepoRow.lifecycle`
+   * is printed for exactly that. On, they are gone and the count of what went is published
+   * (`excluded_end_of_life`), because a population that quietly shrank is a share nobody can
+   * check. A tenant whose lifecycle tag is missing or misspelled gets no exclusion at all
+   * rather than a silent one: `lifecycleTag.isEndOfLife` recognises one word and refuses
+   * everything else, absence included.
+   */
+  excludeEndOfLife?: boolean;
   /** Per scope, the newest scan — a scope absent from this map is undecidable, not stale. */
   newestScanByScope: Partial<Record<Scope, NewestScan>>;
   /** Omit to let each row's scope choose its classifier (`config.ruleForScope`). */
@@ -231,6 +284,16 @@ export interface ColdRepoRow {
    * be summarised under whichever one sorted first.
    */
   support_group_split: boolean;
+  /**
+   * `_lifecycle` — where the tenant says this repository is in its life. NULL is a real answer
+   * and is never read as "alive": see `ColdZoneOptions.excludeEndOfLife`.
+   *
+   * PRINTED WHETHER OR NOT THE EXCLUSION IS ON, because it answers a question the verdict
+   * cannot. "Cold" and "retired" look identical in every other column on this row, and a
+   * reader deciding where to spend a week needs to tell them apart even on a deployment that
+   * has chosen to keep both in the table.
+   */
+  lifecycle: string | null;
   open_findings: number;
   open_high_risk: number;
   /** Age of the oldest OPEN finding, from `first_seen` against `now`. Never from `age_days`. */
@@ -388,6 +451,27 @@ export interface ColdZoneResult {
   repos: ColdRepoRow[] | null;
   teams: ColdTeamRow[] | null;
   totals: ColdZoneTotals | null;
+  /** Whether the caller asked for end-of-life repositories to be left out. */
+  exclude_end_of_life: boolean;
+  /**
+   * Repositories this read saw whose lifecycle says they are finished — COUNTED IN BOTH
+   * SETTINGS, which is what makes the setting discoverable instead of hidden.
+   *
+   * With the exclusion OFF this is how many retired repositories are still being measured as
+   * though somebody owed them a fix; with it ON it is what left. Either way it is a number the
+   * page can put a sentence behind, and either way it is 0 on a tenant whose lifecycle tag
+   * this register never learned — which is not the same fact as "no repository is retired",
+   * and is why `mapHealth` measures the lifecycle join separately.
+   */
+  end_of_life_repos: number;
+  /**
+   * Of those, how many were actually removed: `end_of_life_repos` when the exclusion is on, 0
+   * when it is off. A share whose denominator quietly shrank is a share nobody can check, so
+   * the shrinkage travels with it.
+   */
+  excluded_end_of_life: number;
+  /** Open findings on the removed repositories — the backlog this read is no longer about. */
+  excluded_open_findings: number;
   /** Rows handed in, before any drop — so a zero elsewhere can prove it looked. */
   row_count: number;
   /** Rows with a blank `repo_id`: dropped, because they belong to no repository, AND counted. */
@@ -419,6 +503,10 @@ export interface ColdZoneHeadline {
   derived_days: number | null;
   eligible_repos: number | null;
   cold_bound_only: number | null;
+  exclude_end_of_life: boolean;
+  end_of_life_repos: number;
+  excluded_end_of_life: number;
+  excluded_open_findings: number;
   observed_from: string | null;
   as_of: string;
   totals: ColdZoneTotals | null;
@@ -479,6 +567,7 @@ interface RepoAcc {
   product: string | null;
   supportGroup: string | null;
   supportGroupSplit: boolean;
+  lifecycle: string | null;
   scopes: Set<Scope>;
   rowsByScope: Map<Scope, ColdRow[]>;
   open: number;
@@ -523,6 +612,7 @@ function newAcc(repoId: string): RepoAcc {
     product: null,
     supportGroup: null,
     supportGroupSplit: false,
+    lifecycle: null,
     scopes: new Set(),
     rowsByScope: new Map(),
     open: 0,
@@ -556,6 +646,9 @@ function foldRow(acc: RepoAcc, row: ColdRow, risk: RiskClass): void {
   // roll-up naming one, and a later row that happened to carry a single group does not
   // un-learn it.
   if (Number(row._supportGroups) > 1) acc.supportGroupSplit = true;
+  // First non-blank wins, like the name and the product above it: the tag belongs to the
+  // repository, so every row of one repository carries the same value or none.
+  if (acc.lifecycle === null && !blank(row._lifecycle)) acc.lifecycle = String(row._lifecycle);
   acc.scopes.add(row.scope);
   const bucket = acc.rowsByScope.get(row.scope);
   if (bucket) bucket.push(row);
@@ -658,8 +751,10 @@ function bucketOf(readingDays: number, t: number): number {
 /**
  * The cold-zone profile: one row per repository, one per product, and the totals.
  *
- * The verdict table, first match wins — the ORDER is the contract:
+ * The verdict table, first match wins — the ORDER is the contract. Rule 0 is the operator's
+ * and runs before the clock is read at all; rules 1-6 are the register's:
  *
+ *   0  excludeEndOfLife && the repository's lifecycle is end-of-life      not measured here
  *   1  no row reaches the newest scan of any scope the repo has rows in   unobserved
  *   2  open_findings === 0                                                clear
  *   3  idle_days !== null    && idle_days       >= coldAfterDays          cold (measured)
@@ -673,6 +768,10 @@ function bucketOf(readingDays: number, t: number): number {
  * of cold, and refusing to say so just because nothing was measured would hide exactly the
  * repositories this page is for — the bound is published alongside so the claim is auditable.
  * Rule 6 is the honest remainder: no movement, and not enough watched time to call it.
+ *
+ * Rule 0 sits above all of them because an excluded repository must not be in the population
+ * the relative line is derived FROM, not merely absent from the table afterwards — a cut
+ * applied later would move the line and then hide the repositories that moved it.
  */
 export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZoneResult {
   // REFUSE BEFORE CASTING. A typo in a timestamp would otherwise silently publish a
@@ -752,9 +851,40 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
     foldRow(acc, row, risk);
   }
 
+  // ---------------------------------------------------------------- the end-of-life cut
+  //
+  // DECIDED PER REPOSITORY, AFTER THE FOLD AND BEFORE ANY MEASUREMENT. A lifecycle is a
+  // property of a repository, not of a finding, so the question can only be asked once the
+  // rows are gathered; and it has to be asked before pass A, because an excluded repository
+  // must not sit in the eligible population the relative line is DERIVED from. A cut applied
+  // later would move the line and then hide the repositories that moved it.
+  //
+  // COUNTED IN BOTH SETTINGS, REMOVED IN ONE. `end_of_life_repos` is the whole retired
+  // population whatever the caller asked for; `excluded` is the subset that actually left.
+  // With the option off the two disagree by design, and that difference is the sentence the
+  // page puts in front of an operator who has not found the setting yet.
+  const excludeEol = opts.excludeEndOfLife === true;
+  const excludedIds = new Set<string>();
+  let endOfLifeRepos = 0;
+  let excludedOpenFindings = 0;
+  for (const acc of byRepo.values()) {
+    if (!isEndOfLife(acc.lifecycle)) continue;
+    endOfLifeRepos += 1;
+    if (!excludeEol) continue;
+    excludedIds.add(acc.repoId);
+    excludedOpenFindings += acc.open;
+  }
+  const excludedRepos = excludedIds.size;
+
   // Observation is decided even when the block is not measurable, so `scopes_without_scan`
   // reports either way — the reader needs to know coverage is undecidable before they need
   // to know how long the silence was.
+  //
+  // OVER EVERY REPOSITORY, EXCLUDED ONES INCLUDED, and that is deliberate rather than an
+  // oversight in the filter below. `scopes_without_scan` is a statement about SCAN COVERAGE —
+  // this scope has rows and no scan, so observation cannot be decided for it — and that stays
+  // true of a scope whose only rows happen to sit on a retired repository. Narrowing it with
+  // the cold population would make a coverage warning disappear because of a display setting.
   const scopesWithoutScan = new Set<Scope>();
   const observedById = new Map<string, boolean>();
   for (const acc of byRepo.values()) {
@@ -765,6 +895,10 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
   const base = {
     observed_from: observedFromMs === null ? null : toIso(observedFromMs),
     as_of: toIso(nowMs)!,
+    exclude_end_of_life: excludeEol,
+    end_of_life_repos: endOfLifeRepos,
+    excluded_end_of_life: excludedRepos,
+    excluded_open_findings: excludedOpenFindings,
     row_count: rows.length,
     dropped_no_repo: droppedNoRepo,
     unclassified_secrets: unclassifiedSecrets,
@@ -808,6 +942,10 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
   // threshold-independent too, so the eligible population is knowable here.
   const facts: RepoFacts[] = [];
   for (const acc of byRepo.values()) {
+    // The cut, applied once. Everything downstream — the eligible population, the derived
+    // line, the verdicts, the buckets, the roll-up and the totals — is built from `facts`, so
+    // skipping here is the whole exclusion and there is no second place to keep in step.
+    if (excludedIds.has(acc.repoId)) continue;
     const observed = observedById.get(acc.repoId) === true;
     const idleDays = acc.movementAt === null ? null : daysBetween(acc.movementAt, nowMs);
     // The bound: the later of "when we started watching" and "when this repository's oldest
@@ -915,6 +1053,7 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
       product: acc.product,
       support_group: acc.supportGroup,
       support_group_split: acc.supportGroupSplit,
+      lifecycle: acc.lifecycle,
       open_findings: acc.open,
       open_high_risk: acc.openHigh,
       oldest_open_age_days:
@@ -1237,6 +1376,10 @@ export function coldZoneHeadline(result: ColdZoneResult): ColdZoneHeadline {
     derived_days: result.derived_days,
     eligible_repos: result.eligible_repos,
     cold_bound_only: result.cold_bound_only,
+    exclude_end_of_life: result.exclude_end_of_life,
+    end_of_life_repos: result.end_of_life_repos,
+    excluded_end_of_life: result.excluded_end_of_life,
+    excluded_open_findings: result.excluded_open_findings,
     observed_from: result.observed_from,
     as_of: result.as_of,
     totals: result.totals,

@@ -6,7 +6,7 @@
 // score, not a verdict, just a string the tenant wrote on the resource.
 //
 // WHY THE TAG CANNOT COME OFF A FINDING HERE, which is the whole reason this register went
-// without a domain axis until now and the reason `src/server/repoDomains.ts` exists at all.
+// without a domain axis until now and the reason `src/server/repoTags.ts` exists at all.
 // gas/ reads the tag straight off `vulnerableAsset.tags`, already in its vulnerability query
 // and already persisted per finding. This register cannot: its asset is a repository branch,
 // and the finding-level asset types do not expose `tags`.
@@ -28,7 +28,7 @@
 //
 // RESOLVED ON READ, NEVER BAKED. The key is configurable, and a key baked into the ledger
 // would mean a full re-scan to correct a typo. The join map is persisted; the ANSWER is not.
-// `_domain` is attached to records in memory by repoDomains.attachDomains and never written to
+// `_domain` is attached to records in memory by repoTags.attachRepoTags and never written to
 // a ledger column — the same discipline `gas/` keeps for `_bizDomain` and `_supportGroup`, and
 // for the same reason: a stale baked column wins for anything reading the tab directly.
 //
@@ -60,7 +60,7 @@ export function resolveDomainTagKey(configured: string | null | undefined): stri
  *   nested `<asset>.tags`     a raw node, as the SCA query would return it
  *   flat `<asset>.tags.<key>` a flattened frame record
  *   `[{key, value}]` array    a graphSearch entity's `properties.tags` — the shape
- *                             repoDomains.ts actually reads, since that is where this
+ *                             repoTags.ts actually reads, since that is where this
  *                             register's tags come from at all
  *
  * gas/ splits these across `domainRules.recordTags` (the first three) and
@@ -152,23 +152,27 @@ function addTagList(out: Rec, tags: unknown): void {
 }
 
 /**
- * The domain for one tag bag, or null when it carries none.
+ * The value of ONE tag key in a tag bag, or null when the bag carries none.
+ *
+ * THE GENERIC READER, and `domainOfTags` below is now a one-line projection of it rather than
+ * its own copy. This register reads two repository tags off the same bags through the same
+ * fetch — the business domain (this file) and the lifecycle (`lifecycleTag.ts`) — and the three
+ * rules below are properties of a TAG, not of a domain. A second copy of them is how one of the
+ * two later grows a case-sensitivity the other does not have.
  *
  * The KEY match is case-insensitive: Wiz spells it `Wiz/Domain` while most people writing
  * about it say `Wiz/domain`, and an operator who types the latter into a Script Property must
  * not silently select nothing.
  *
  * The VALUE comes back as written, only trimmed. It is a label a person chose, and folding its
- * case would print something the Wiz console does not.
+ * case would print something the Wiz console does not. (`lifecycleTag.isEndOfLife` folds a COPY
+ * of it to compare; it never folds what gets displayed.)
  *
- * A tag present with a blank value is null, not a domain named "": an empty string is not an
+ * A tag present with a blank value is null, not a value named "": an empty string is not an
  * owner, and a switcher row with no name is not a scope.
  */
-export function domainOfTags(
-  tags: Rec | null | undefined,
-  key: string = DEFAULT_DOMAIN_TAG_KEY,
-): string | null {
-  const want = key.trim().toLowerCase();
+export function tagValue(tags: Rec | null | undefined, key: string): string | null {
+  const want = String(key ?? "").trim().toLowerCase();
   if (!want || !tags) return null;
   for (const [k, v] of Object.entries(tags)) {
     if (String(k).trim().toLowerCase() !== want) continue;
@@ -177,6 +181,14 @@ export function domainOfTags(
     if (value) return value;
   }
   return null;
+}
+
+/** The domain for one tag bag, or null when it carries none. See `tagValue` for the rules. */
+export function domainOfTags(
+  tags: Rec | null | undefined,
+  key: string = DEFAULT_DOMAIN_TAG_KEY,
+): string | null {
+  return tagValue(tags, key);
 }
 
 /** The domain for one record, from whichever tag shape it carries. */
