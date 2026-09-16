@@ -106,7 +106,7 @@ export {
   tipMark, truncTip,
 } from "./tip.js";
 export {
-  closeActiveSheet, openSheet, sectionLabel, sheetRow, sheetSection,
+  closeActiveSheet, collapsibleSection, openSheet, sectionLabel, sheetRow, sheetSection,
 } from "./sheet.js";
 export { clampSheetWidth, recordCursor } from "./recordCursor.js";
 export { closeCombobox, filterCombobox } from "./combobox.js";

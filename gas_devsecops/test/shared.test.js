@@ -31,6 +31,8 @@ import { SEVERITY_COLORS, SEVERITY_TEXT, SLA_TARGETS } from "../src/domain/confi
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 
 import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/tokens.js";
+import { registerCollapsibleSectionContract }
+  from "../../gas_shared/test/contracts/collapsibleSection.js";
 import { registerEmptyStateContract } from "../../gas_shared/test/contracts/emptyStates.js";
 import { registerNavGroupContract } from "../../gas_shared/test/contracts/navGroups.js";
 import { registerPageHeaderContract } from "../../gas_shared/test/contracts/pageHeader.js";
@@ -161,6 +163,7 @@ registerParityContract({
 });
 
 registerZScaleContract(base);
+registerCollapsibleSectionContract(base);
 
 // =========================================================================================
 //  This app's brand, pinned by value

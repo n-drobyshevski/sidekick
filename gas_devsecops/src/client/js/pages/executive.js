@@ -30,10 +30,10 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { scopeParam } from "./_rates.js";
 import { SCOPE_LABELS_LONG as SCOPE_LABELS } from "./_scopeLabels.js";
 import {
-  absent, absentText, clear, dataTable, days1, disclosure, el, emptyState, errorState,
-  figureCard, fmtCount, fmtDate, fmtDateTime, fmtDays, heroStat, num, pageHeader, pct1,
-  pluralize, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill, tipLabel,
-  unitCounts, unitRow, unitScale,
+  absent, absentText, clear, collapsibleSection, dataTable, days1, disclosure, el, emptyState,
+  errorState, figureCard, fmtCount, fmtDate, fmtDateTime, fmtDays, heroStat, num, pageHeader,
+  pct1, pluralize, sectionLabel, sevKeyRow, sevSegmentBar, skeleton, statRow, statusPill,
+  tipLabel, unitCounts, unitRow, unitScale,
 } from "../ui.js";
 // THE HALF-LIFE DECISION IS IMPORTED, NOT REPEATED. `execMttrSlice` is a slice of the MTTR
 // page's own payload (api.ts says so), so the rule that turns `{median, medianLowerBound}`
@@ -676,17 +676,27 @@ export async function renderExecutive(host, params, _ctx) {
 
   const noticeHost = el("div", {});
   const heroHost = el("div", {});
-  // Directly under the hero and ABOVE the tiles: the hero states the register's claim about
-  // itself, this states what follows from it, and only then comes the description.
-  const fixHost = el("div", {});
-  // BETWEEN "what to fix next" AND "what is open by severity", because it answers the question
-  // that sits between them: the fix-next list says where to spend the next hour, the severity
-  // strip says how big the problem is, and this says how much of it nobody is spending any
-  // hour on at all.
+  // FIRST OF THE QUALIFYING BLOCKS, now that the ranked list has left the slot above it. It
+  // used to sit between "what to fix next" and "what is open by severity" because it answered
+  // the question between them; with the worklist at the foot of the page it opens that run
+  // instead — how much of the backlog nobody is spending any hour on, then how big the backlog
+  // is, then how it splits across the three registers.
   const coldHost = el("div", {});
   const sevHost = el("div", {});
   const registerHost = el("div", {});
   const scanHost = el("div", {});
+  // LAST ON THE PAGE, AND SHUT. Same call as the OS register's front door, for the same
+  // reason: the ranked list is the page's longest block and its only WORKLIST — a different
+  // reader on a different errand from the leader the hero is written for — so it no longer
+  // stands between the one figure this page opens with and the three one-glance blocks that
+  // qualify it.
+  //
+  // `fixOpen` OUTLIVES THE PAINT. swrCall paints twice on a warm cache (the stored answer,
+  // then the fresh one), so a section whose open state lived on the node would snap shut under
+  // a reader who had just expanded it. The flag is the page's; the node is handed it and hands
+  // back every change.
+  const fixHost = el("div", {});
+  let fixOpen = false;
   // THE TITLE BLOCK IS STATIC, AND THE h1 DOES NOT WAIT ON AN RPC. The metric header below is
   // built inside `renderHero`, which runs only once the fetch resolves — so the loading
   // skeleton, the fetch-failure errorState and (on Coverage & efficiency) the no-figures empty
@@ -696,7 +706,7 @@ export async function renderExecutive(host, params, _ctx) {
   // header, then the figure and its stat strip.
   host.append(
     pageHeader({ route: "executive" }),
-    noticeHost, heroHost, fixHost, coldHost, sevHost, registerHost, scanHost,
+    noticeHost, heroHost, coldHost, sevHost, registerHost, scanHost, fixHost,
   );
 
   // One failing section must never blank the front door.
@@ -932,7 +942,8 @@ export async function renderExecutive(host, params, _ctx) {
   // ------------------------------------------------------------------------- fix next
 
   /**
-   * The ranked list, as an ordered list of GROUPS.
+   * The ranked list, as an ordered list of GROUPS — last on the page, and behind its own
+   * heading.
    *
    * NO CHART AND NO CANVAS, which is the module header's hard rule and is not relaxed for a
    * ranking. `<ol>` is the right element because the order IS the claim — a reader using a
@@ -941,6 +952,12 @@ export async function renderExecutive(host, params, _ctx) {
    * EVERY ROW CARRIES ITS UNITS. "7" is not a figure; "7 open findings" is. The oldest age
    * carries "days" for the same reason, and a group whose rows have no readable age says so
    * rather than printing a 0.
+   *
+   * COLLAPSIBLE, AND SHUT UNTIL A READER OPENS IT. Everything the section holds folds
+   * together, the cap note with the list it qualifies, so nothing in it is ever on screen
+   * without its caveat; the denominator rides on the heading so the shut section still says
+   * how much of the backlog is behind it. See the host declaration above for why `fixOpen` is
+   * the page's and not the node's.
    */
   function renderFixNext(payload) {
     const view = fixNextView(payload, boot);
@@ -951,10 +968,26 @@ export async function renderExecutive(host, params, _ctx) {
     // lede said what "Fix next" means; the heading now says it through the `fix-next` entry,
     // which is the same three clauses in the book's own voice. Nothing about the rule is a
     // task constraint or an honesty statement, which is what R2 keeps on the surface.
-    fixHost.append(sectionLabel("Fix next", { term: "fix-next" }));
+    //
+    // THE DENOMINATOR IS THE SHUT SECTION'S OWN CAPTION. "10 of 416 open findings ranked" used
+    // to sit under the list as a surface paragraph; it is the one line that tells a reader what
+    // is behind the toggle and how much of the backlog it speaks for, so it rides on the
+    // heading instead and is legible whether the section is open or closed. It is NOT moved
+    // behind a signifier — the disclosure under it still holds the four reasons, exactly as
+    // before — it moved UP, onto the thing it measures.
+    const section = collapsibleSection("Fix next", {
+      help: { term: "fix-next" },
+      hint: view.rankedShort,
+      open: fixOpen,
+      // Per reader, across visits — the flag above only survives this page's own repaints.
+      remember: "execFixNext",
+      onToggle: (o) => { fixOpen = o; },
+    });
+    fixHost.append(section.node);
+    const fix = section.body;
 
     if (view.empty) {
-      fixHost.append(emptyState("Nothing is ranked.", view.emptyReason));
+      fix.append(emptyState("Nothing is ranked.", view.emptyReason));
     } else {
       const list = el("ol", { class: "fixnext" });
       for (const it of view.items) {
@@ -977,23 +1010,24 @@ export async function renderExecutive(host, params, _ctx) {
             + " · " + it.ownerText),
         ));
       }
-      fixHost.append(list);
+      fix.append(list);
     }
 
-    // "10 of 416 open findings ranked" on the surface; the four reasons behind the other 406
-    // in a closed `disclosure` under it. NOT a tip: the sentence is an ACCOUNTING, four counts
-    // with a reason each, and a hover card is the wrong shape for something a reader may want
-    // to read twice and compare against the register pages. A disclosure is the second of the
-    // two channels R1 allows, and its summary is the visible signifier.
-    fixHost.append(el("p", { class: "small muted" }, view.rankedShort));
-    fixHost.append(disclosure(
+    // The four reasons behind the other 406 in a closed `disclosure`. NOT a tip: the sentence
+    // is an ACCOUNTING, four counts with a reason each, and a hover card is the wrong shape
+    // for something a reader may want to read twice and compare against the register pages. A
+    // disclosure is the second of the two channels R1 allows, and its summary is the visible
+    // signifier. The two numbers it accounts for are on the section's own heading now.
+    fix.append(disclosure(
       "Why the rest are not ranked",
       el("p", { class: "small muted" }, view.unrankedSentence),
     ));
-    // KEPT ON THE SURFACE. A cap is a task constraint — the reader is looking at a list that
-    // stops before the backlog does, and a count of what was cut off the end is exactly the
-    // kind of statement R2 refuses to move behind a signifier.
-    if (view.cutNote) fixHost.append(el("p", { class: "small muted" }, view.cutNote));
+    // KEPT ON THIS SECTION'S SURFACE. A cap is a task constraint — the reader is looking at a
+    // list that stops before the backlog does, and a count of what was cut off the end is
+    // exactly the kind of statement R2 refuses to move behind a signifier. It folds with the
+    // list it qualifies, which is the one arrangement in which the list is never on screen
+    // without it.
+    if (view.cutNote) fix.append(el("p", { class: "small muted" }, view.cutNote));
   }
 
   // ------------------------------------------------------------------------- cold zone
