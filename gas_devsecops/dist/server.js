@@ -464,7 +464,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "ed993d455126" : "dev";
+  var BUILD_ID = true ? "1b56dc81b89a" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -661,6 +661,18 @@ var Server = (() => {
     sast: "Code",
     secrets: "Secrets"
   };
+  var ORG_WIDE_PROJECTS = ["GITHUB-DKTUNITED"];
+  var ORG_WIDE_KEYS = new Set(
+    ORG_WIDE_PROJECTS.map((p) => p.trim().toUpperCase())
+  );
+  function isOrgWideProject(...labels) {
+    for (const label of labels) {
+      if (typeof label !== "string") continue;
+      const key = label.trim().toUpperCase();
+      if (key !== "" && ORG_WIDE_KEYS.has(key)) return true;
+    }
+    return false;
+  }
   var RESOLVED_STATUSES = /* @__PURE__ */ new Set(["RESOLVED", "REMEDIATED", "FIXED", "CLOSED"]);
   var STATUS_OPEN = "OPEN";
   var STATUS_RESOLVED = "RESOLVED";
@@ -1073,7 +1085,9 @@ var Server = (() => {
   }
   function ownerProject(record) {
     var _a;
-    const projects = projectList(record);
+    const projects = projectList(record).filter(
+      (p) => !isOrgWideProject(p["slug"], p["id"], p["name"])
+    );
     const leaf = projects.find((p) => p["isFolder"] !== true);
     return str((_a = leaf != null ? leaf : projects[0]) != null ? _a : {}, "name");
   }
@@ -1081,6 +1095,7 @@ var Server = (() => {
     const names = [];
     for (const p of projectList(record)) {
       if (p["isFolder"] !== true) continue;
+      if (isOrgWideProject(p["slug"], p["id"], p["name"])) continue;
       const n2 = str(p, "name");
       if (n2 !== null) names.push(n2);
     }
@@ -4718,6 +4733,7 @@ var Server = (() => {
       const slug = rec["slug"];
       const name = rec["name"];
       if (typeof slug !== "string" || slug === "" || typeof name !== "string") continue;
+      if (isOrgWideProject(slug, name)) continue;
       const ref = { slug, name };
       if (typeof rec["isFolder"] === "boolean") ref.isFolder = rec["isFolder"];
       out.push(ref);
@@ -5593,6 +5609,18 @@ var Server = (() => {
     const num2 = Number(v);
     return Number.isFinite(num2) ? num2 : null;
   }
+  function ownerOf(r) {
+    const owner = s(r, "owner_project");
+    return isOrgWideProject(owner) ? null : owner;
+  }
+  function scrubOrgWideOwners(state) {
+    for (const row of Object.values(state.ledger)) {
+      if (isOrgWideProject(row.owner_project)) row.owner_project = null;
+    }
+    for (const episode of state.episodes) {
+      if (isOrgWideProject(episode.owner_project)) episode.owner_project = null;
+    }
+  }
   function scopeOf(key, raw) {
     if (raw === "sca" || raw === "sast" || raw === "secrets") return raw;
     const head = key.slice(0, key.indexOf(":"));
@@ -5656,7 +5684,7 @@ var Server = (() => {
       validation_state: s(r, "validation_state"),
       validated_at: s(r, "validated_at"),
       confidence: s(r, "confidence"),
-      owner_project: s(r, "owner_project"),
+      owner_project: ownerOf(r),
       owner_path: s(r, "owner_path"),
       tags_json: s(r, "tags_json"),
       projects_json: s(r, "projects_json")
@@ -5685,7 +5713,7 @@ var Server = (() => {
       epss: risk.epss,
       cwe: s(r, "cwe"),
       language: s(r, "language"),
-      owner_project: s(r, "owner_project")
+      owner_project: ownerOf(r)
     };
   }
   var scanRowsMemo;
@@ -5714,6 +5742,7 @@ var Server = (() => {
       if (snap) {
         state.ledger = snap.ledger;
         state.episodes = snap.episodes;
+        scrubOrgWideOwners(state);
         stateMemo = state;
         return state;
       }

@@ -458,6 +458,55 @@ describe("ownership from projects[] (all three scopes)", () => {
     expect(row.owner_path).toBe("CE-TRANSPORT / VALUE-CHAIN");
     expect(row.tags_json).toContain('"value-chain": "VALUE-CHAIN"');
   });
+
+  // ------------------------------------------------------------------------- #
+  //  the organisation-wide tag is never an owner (config.ts's ORG_WIDE_PROJECTS)
+  // ------------------------------------------------------------------------- #
+  //
+  // GITHUB-DKTUNITED is a LEAF on every repository the connector ingests, so without the
+  // guard in ownerProject it wins the "first non-folder" pick on any node whose product
+  // project happens to sort after it — and on every node that has no product project at
+  // all. Either way the executive page and the concentration tables would grow one bucket
+  // named after the organisation that owns the whole register.
+
+  it("the org tag never wins the owner, even as the FIRST leaf in the array", () => {
+    const first = [
+      { id: "p4", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" },
+      { id: "p1", name: "VALUE-CHAIN", isFolder: true, slug: "value-chain" },
+      { id: "p2", name: "product-TATTOO-idp", isFolder: false, slug: "product-tattoo-idp" },
+    ];
+    expect(ownerProject({ projects: first })).toBe("product-TATTOO-idp");
+  });
+
+  it("a node whose ONLY project is the org tag has NO owner — null, never the tag", () => {
+    const orgOnly = [
+      { id: "p4", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" },
+    ];
+    expect(ownerProject({ projects: orgOnly })).toBeNull();
+    // Folder-shaped too: ownerProject falls back to the first project of ANY kind, and that
+    // fallback must not reintroduce what the leaf pick just excluded.
+    expect(ownerProject({ projects: [{ ...orgOnly[0]!, isFolder: true }] })).toBeNull();
+  });
+
+  it("owner_path skips it as well, should the API ever report it as a folder", () => {
+    const asFolder = [
+      { id: "p4", name: "GITHUB-DKTUNITED", isFolder: true, slug: "github-dktunited" },
+      { id: "p1", name: "VALUE-CHAIN", isFolder: true, slug: "value-chain" },
+    ];
+    expect(ownerPath({ projects: asFolder })).toBe("VALUE-CHAIN");
+  });
+
+  it("EXCLUDED FROM THE ANSWER, NOT FROM THE OBSERVATION — the stored columns keep it", () => {
+    const orgOnly = [
+      { id: "p4", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" },
+    ];
+    const row = run("sast", [sastNode({ projects: orgOnly })], {}, S1).ledger["sast:id:sast-1"];
+    expect(row.owner_project).toBeNull();
+    expect(row.tags_json).toBe('{"github-dktunited": "GITHUB-DKTUNITED"}');
+    expect(row.projects_json).toBe(
+      '[{"isFolder": false, "name": "GITHUB-DKTUNITED", "slug": "github-dktunited"}]',
+    );
+  });
 });
 
 // --------------------------------------------------------------------------- #

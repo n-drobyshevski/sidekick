@@ -14,6 +14,7 @@ import {
   unattributedCount,
   type ProjectRef,
 } from "../src/domain/projectScope";
+import type { Rec } from "../src/domain/util";
 
 // --------------------------------------------------------------------------- #
 //  parseProjects
@@ -215,5 +216,84 @@ describe("unattributedCount", () => {
       { projects_json: projectsListJson({ projects: [{ slug: "b", name: "B" }] }) },
     ];
     expect(unattributedCount(rows)).toBe(0);
+  });
+});
+
+// --------------------------------------------------------------------------- #
+//  organisation-wide projects — the tenant's connector tag is not a scope
+// --------------------------------------------------------------------------- #
+//
+// `GITHUB-DKTUNITED` reaches EVERY repository in this tenant (config.ts's ORG_WIDE_PROJECTS),
+// which is exactly what makes it useless as one: as a switcher row it is "everything synced"
+// under another name, and as a membership answer it is true of every row. The filter lives in
+// `parseProjects`, so these cases also pin that the catalogue, the predicate and the
+// unattributed count cannot disagree about it — there is one filter, not three.
+
+describe("organisation-wide projects", () => {
+  const withOrgTag = (extra: Rec[] = []): string | null =>
+    projectsListJson({
+      projects: [
+        { slug: "github-dktunited", name: "GITHUB-DKTUNITED", isFolder: false },
+        ...extra,
+      ],
+    });
+
+  it("parseProjects drops the org tag and keeps everything beside it", () => {
+    const json = withOrgTag([
+      { slug: "value-chain", name: "VALUE-CHAIN", isFolder: true },
+      { slug: "product-tattoo-idp", name: "product-TATTOO-idp", isFolder: false },
+    ]);
+    expect(parseProjects(json).map((p) => p.slug)).toEqual([
+      "product-tattoo-idp",
+      "value-chain",
+    ]);
+  });
+
+  it("matches on the NAME too, and case-insensitively — a hand-edited cell cannot smuggle "
+    + "it back in", () => {
+    const json = JSON.stringify([
+      { slug: "some-other-slug", name: "github-dktunited" },
+      { slug: "GITHUB-DKTUNITED", name: "Re-typed display name" },
+      { slug: " github-dktunited ", name: "padded" },
+    ]);
+    expect(parseProjects(json)).toEqual([]);
+  });
+
+  it("a project whose name merely CONTAINS the tag is a real project and stays", () => {
+    const json = projectsListJson({
+      projects: [
+        { slug: "github-dktunited-platform", name: "GITHUB-DKTUNITED-PLATFORM" },
+        { slug: "github-other", name: "GITHUB-OTHER" },
+      ],
+    });
+    expect(parseProjects(json).map((p) => p.slug)).toEqual([
+      "github-dktunited-platform",
+      "github-other",
+    ]);
+  });
+
+  it("the catalogue never offers it, so the switcher cannot offer a row that means "
+    + "'everything'", () => {
+    const rows = [
+      { projects_json: withOrgTag([{ slug: "a", name: "A" }]) },
+      { projects_json: withOrgTag([{ slug: "b", name: "B" }]) },
+    ];
+    expect(projectCatalogue(rows).map((c) => c.slug)).toEqual(["a", "b"]);
+  });
+
+  it("inProject answers false for it — the predicate and the catalogue agree", () => {
+    const projects = parseProjects(withOrgTag([{ slug: "a", name: "A" }]));
+    expect(inProject(projects, "github-dktunited")).toBe(false);
+    expect(inProject(projects, "a")).toBe(true);
+  });
+
+  it("a row whose ONLY project is the org tag counts as unattributed, not as attributed to "
+    + "the organisation", () => {
+    const rows = [
+      { projects_json: withOrgTag() },
+      { projects_json: withOrgTag([{ slug: "a", name: "A" }]) },
+    ];
+    expect(unattributedCount(rows)).toBe(1);
+    expect(projectCatalogue(rows).map((c) => c.slug)).toEqual(["a"]);
   });
 });

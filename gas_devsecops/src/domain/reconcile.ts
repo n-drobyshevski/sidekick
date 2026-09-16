@@ -65,6 +65,7 @@
 // columns and for validation_state alike.
 
 import {
+  isOrgWideProject,
   RESOLUTION_API,
   RESOLUTION_DISAPPEARED,
   RESOLVED_STATUSES,
@@ -279,9 +280,24 @@ export function projectsListJson(record: Rec): string | null {
  *
  * If a later package learns the real hierarchy (the `repos` tab carries `projects_json` for
  * exactly that), owner_path is the field to re-derive; owner_project is not affected.
+ *
+ * NEITHER OF THEM NAMES AN ORGANISATION-WIDE PROJECT (`config.ts::ORG_WIDE_PROJECTS`). The
+ * tenant's connector tag sits in `projects[]` as a LEAF on every repository, so without this
+ * guard `owner_project` — the column the executive page groups by and the concentration
+ * tables rank — would read `GITHUB-DKTUNITED` for every repository nobody has filed under a
+ * product project, i.e. one enormous bucket named after the organisation that owns all of
+ * them. A repository whose ONLY project is that tag comes back null instead, which is the
+ * state the pages already draw ("no owning project"); a fabricated owner is worse than a
+ * missing one, because only one of the two can be noticed.
+ *
+ * `projects_json` and `tags_json` still carry the tag, whole — see ORG_WIDE_PROJECTS on why
+ * the stored observation is not ours to edit. This pair is a CHOICE, as the paragraph above
+ * says, and the choice is where the tenant's convention belongs.
  */
 export function ownerProject(record: Rec): string | null {
-  const projects = projectList(record);
+  const projects = projectList(record).filter(
+    (p) => !isOrgWideProject(p["slug"], p["id"], p["name"]),
+  );
   const leaf = projects.find((p) => p["isFolder"] !== true);
   return str(leaf ?? projects[0] ?? {}, "name");
 }
@@ -290,6 +306,7 @@ export function ownerPath(record: Rec): string | null {
   const names: string[] = [];
   for (const p of projectList(record)) {
     if (p["isFolder"] !== true) continue;
+    if (isOrgWideProject(p["slug"], p["id"], p["name"])) continue;
     const n = str(p, "name");
     if (n !== null) names.push(n);
   }

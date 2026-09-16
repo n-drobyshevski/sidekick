@@ -118,11 +118,20 @@ const PROJECT_POOL: readonly ProjectSpec[] = [
   { folder: "GROWTH", folderSlug: "growth", leaf: "notifications-team", leafSlug: "notifications-team" },
 ];
 
+// The connector tag the tenant puts on EVERY repository — seeded here for the same reason the
+// pool above exists: so the harness shows what the deployment shows. It is an organisation-wide
+// project (src/domain/config.ts's ORG_WIDE_PROJECTS), so the switcher must NOT offer it and no
+// row may be filed under it as an owner; seeding it is what makes the dev register able to
+// disagree, rather than passing because the case never arrives.
+const ORG_TAG: Rec =
+  { id: "proj-org", name: "GITHUB-DKTUNITED", isFolder: false, slug: "github-dktunited" };
+
 function projectsFor(idx: number): Rec[] {
   const p = PROJECT_POOL[idx % PROJECT_POOL.length]!;
   return [
     { id: `proj-folder-${idx % PROJECT_POOL.length}`, name: p.folder, isFolder: true, slug: p.folderSlug },
     { id: `proj-leaf-${idx % PROJECT_POOL.length}`, name: p.leaf, isFolder: false, slug: p.leafSlug },
+    ORG_TAG,
   ];
 }
 

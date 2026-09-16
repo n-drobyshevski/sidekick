@@ -209,6 +209,27 @@ describe("devSeed.seedSampleLedger — the real battery, through the real pipeli
     expect(byScope).toEqual({ sca: 400, sast: 40, secrets: 114 });
   });
 
+  // THE ORGANISATION-WIDE TAG, END TO END OVER THE REAL SEED. dev/sampleData.dev.ts puts
+  // `GITHUB-DKTUNITED` on every node exactly as the tenant's connector does, so this is the
+  // one place the rule is asked of the whole pipeline rather than of a hand-built row: the
+  // observation keeps it, the two answers derived from it do not.
+  it("the seeded connector tag is stored but never offered as a scope or an owner", async () => {
+    const { devSeed, ledgerStore } = await mockSeamsAndImportDevSeed();
+    const { projectCatalogue } = await import("../src/domain/projectScope");
+    devSeed.seedSampleLedger();
+
+    const rows = Object.values(ledgerStore.loadState().ledger);
+    // THE OBSERVATION IS INTACT — this is an exclusion from the analysis, not from the ledger.
+    expect(rows.every((r) => (r.projects_json ?? "").includes("GITHUB-DKTUNITED"))).toBe(true);
+
+    const slugs = projectCatalogue(rows).map((c) => c.slug);
+    expect(slugs.length).toBeGreaterThan(1); // or there is nothing to have excluded it from
+    expect(slugs).not.toContain("github-dktunited");
+    expect(rows.some((r) => r.owner_project === "GITHUB-DKTUNITED")).toBe(false);
+    // And the seed still files every row under a real owner, so the exclusion cost nothing.
+    expect(rows.every((r) => r.owner_project !== null)).toBe(true);
+  });
+
   // THE DOMAIN AXIS, END TO END OVER THE REAL SEED. Everything else about the join is held in
   // test/repoDomains.test.ts against hand-built rows; what those cannot prove is the thing the
   // join actually risks — that the tokens a map is built under OVERLAP the ones the ledger's

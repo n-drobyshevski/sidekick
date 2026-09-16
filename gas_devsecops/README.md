@@ -57,6 +57,19 @@ units, support groups and leaves, read off `projects_json`) and a **business dom
 tenant says owns it, from the repository's `Wiz/Domain` tag). Picking either clears the other,
 because a header that carries two scopes cannot answer "what am I looking at" in one line.
 
+**One project is excluded from both, because it reaches everything.** Wiz files a repository
+under every project that touches it, and the tenant's GitHub connector puts `GITHUB-DKTUNITED`
+on all of them. As a switcher row that is "everything synced" under another name; as an
+`owner_project` it is a bucket named after the organisation that owns the whole register. So
+`src/domain/config.ts`'s `ORG_WIDE_PROJECTS` names it, `projectScope.ts::parseProjects` drops
+it before the catalogue, the membership predicate or the unattributed count see it, and
+`reconcile.ts::ownerProject` will not file a repository under it — a repository carrying only
+that tag reads as **no owning project**, and is counted in the header's `have no project`
+figure rather than quietly attributed to the organisation. The stored `projects_json` and
+`tags_json` keep it, whole: this is an exclusion from the analysis, not from the observation.
+A second connector tag is one edit to that list; it is spelled out rather than inferred from a
+`GITHUB-` prefix, so a business unit named after a tool is never hidden by accident.
+
 The domain arrives by a different route than the project, and the difference is the whole
 design: `projects[]` is in all three query documents, so it rides in on every finding, but
 **none of the three can select an asset's tags**. `VulnerableAssetRepositoryBranch` is the one

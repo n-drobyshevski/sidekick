@@ -100,7 +100,7 @@ describe("projectKind: the name rule wins over isFolder", () => {
   });
 
   it("isFolder: undefined (and not a support name) is unknown — never coerced to leaf", () => {
-    expect(projectKind({ name: "GITHUB-DKTUNITED" })).toBe("unknown");
+    expect(projectKind({ name: "product-KCONNECT" })).toBe("unknown");
   });
 });
 
@@ -111,7 +111,12 @@ describe("projectKind: the name rule wins over isFolder", () => {
 const P_UNIT = { slug: "value-chain", name: "VALUE-CHAIN", isFolder: true, findings: 826 };
 const P_LEAF = { slug: "product-tattoo-idp", name: "product-tattoo-idp", isFolder: false, findings: 40 };
 const P_SUPPORT = { slug: "ce-transport", name: "CE-TRANSPORT", isFolder: true, findings: 12 };
-const P_UNKNOWN = { slug: "github-dktunited", name: "GITHUB-DKTUNITED", findings: 5 }; // no isFolder at all
+// No isFolder at all. NOT the tenant's connector tag, which used to be this fixture and
+// cannot be one any more: `domain/projectScope.ts::parseProjects` drops organisation-wide
+// projects (config.ts's ORG_WIDE_PROJECTS), so `filterOptions.projectList` can never carry
+// one — a fixture that kept it would be pinning this file's behaviour on input it will never
+// receive.
+const P_UNKNOWN = { slug: "product-kconnect", name: "product-KCONNECT", findings: 5 };
 
 describe("scopeOptions: the anyRecorded gate", () => {
   it("isFolder: undefined across the WHOLE list claims no folder group at all — flat, not "
@@ -127,7 +132,7 @@ describe("scopeOptions: the anyRecorded gate", () => {
     const rows = scopeOptions([supportNoFlag, P_UNKNOWN]);
     const support = rows.find((r) => r.value === "ce-transport");
     expect(support.group).toBe("Support groups");
-    const unknown = rows.find((r) => r.value === "github-dktunited");
+    const unknown = rows.find((r) => r.value === "product-kconnect");
     expect(unknown.group).toBe(""); // still flat: nobody recorded isFolder
   });
 
@@ -136,7 +141,7 @@ describe("scopeOptions: the anyRecorded gate", () => {
     expect(rows.find((r) => r.value === "value-chain").group).toBe("Business units");
     expect(rows.find((r) => r.value === "product-tattoo-idp").group).toBe("Projects");
     // unknown still gets its own bucket rather than being folded into Projects or Business units
-    expect(rows.find((r) => r.value === "github-dktunited").group).toBe("Not yet recorded");
+    expect(rows.find((r) => r.value === "product-kconnect").group).toBe("Not yet recorded");
   });
 });
 
@@ -191,7 +196,7 @@ describe("scopeOptions: hints declare folder-ness in words, and the icon is deco
     expect(rows.find((r) => r.value === "value-chain").icon).toBe("folders");
     expect(rows.find((r) => r.value === "ce-transport").icon).toBe("folders");
     expect(rows.find((r) => r.value === "product-tattoo-idp").icon).toBe("folder");
-    expect(rows.find((r) => r.value === "github-dktunited").icon).toBe("folder");
+    expect(rows.find((r) => r.value === "product-kconnect").icon).toBe("folder");
   });
 });
 

@@ -200,6 +200,58 @@ export const SCOPE_LABELS: Record<Scope, string> = {
   secrets: "Secrets",
 };
 
+/**
+ * Projects that are an ORGANISATIONAL TAG rather than a scope.
+ *
+ * Wiz files a repository under every project that reaches it, and the tenant's GitHub
+ * connector puts one project on ALL of them — `GITHUB-DKTUNITED`. It is a true fact about
+ * every repository and therefore tells you nothing about any of them: as a switcher row it
+ * offers "everything synced" under another name, as an owner it files a repository under the
+ * organisation that owns all of them, and as a concentration bucket it answers the question
+ * with the population. A dimension that cannot discriminate is not a dimension.
+ *
+ * MATCHED ON SLUG OR NAME, CASE-INSENSITIVELY, because a project's machine identity here is
+ * its slug (`domain/projectScope.ts`) while what a person recognises is its name, and the
+ * tenant's slugs are the lower-cased names — listing the name once covers both.
+ *
+ * A LIST, EXPORTED, because this is the tenant's convention and conventions change: a second
+ * connector (a second `GITHUB-…` project, a `JIRA-…`) is one edit here rather than a hunt
+ * through the call sites. Spelled out rather than inferred from a `GITHUB-` prefix on
+ * purpose — a real business unit is free to be named after the tool it lives in, and guessing
+ * would silently hide it. If the list ever has to differ per deployment it becomes a stored
+ * setting; one tenant's one entry does not earn a settings page yet.
+ *
+ * EXCLUDED FROM ANALYSIS, NOT FROM THE LEDGER. `reconcile.ts`'s `projectsJson`/
+ * `projectsListJson` still write what Wiz reported, whole — the stored row is the
+ * OBSERVATION, and an observation is not ours to edit. The three places that turn projects
+ * into an ANSWER drop these: the switcher catalogue and membership predicate
+ * (`domain/projectScope.ts::parseProjects`), the owner a row is filed under
+ * (`reconcile.ts::ownerProject`, plus `server/ledgerStore.ts` on the way back in, for rows
+ * written before this rule existed).
+ */
+export const ORG_WIDE_PROJECTS: readonly string[] = ["GITHUB-DKTUNITED"];
+
+const ORG_WIDE_KEYS: ReadonlySet<string> = new Set(
+  ORG_WIDE_PROJECTS.map((p) => p.trim().toUpperCase()),
+);
+
+/**
+ * Is any of these labels an organisation-wide project.
+ *
+ * VARIADIC AND `unknown`-TYPED so the three call sites can each hand it what they hold
+ * without a cast: a parsed `{slug, name}`, a raw Wiz `Rec` (`slug` / `id` / `name`, any of
+ * them possibly absent), or the bare `owner_project` string read back off a sheet. Anything
+ * that is not a non-empty string is simply not a match.
+ */
+export function isOrgWideProject(...labels: readonly unknown[]): boolean {
+  for (const label of labels) {
+    if (typeof label !== "string") continue;
+    const key = label.trim().toUpperCase();
+    if (key !== "" && ORG_WIDE_KEYS.has(key)) return true;
+  }
+  return false;
+}
+
 
 
 /** Statuses that mean "not open". Mirrors brick/config.py RESOLVED_STATUSES. */

@@ -19,6 +19,7 @@
 // PURE. No Apps Script globals, no import from src/server/ — ledgerStore.ts and any later
 // UI/API package build on this module, never the other way around.
 
+import { isOrgWideProject } from "./config";
 import type { Rec } from "./util";
 
 /**
@@ -46,6 +47,18 @@ export interface ProjectRef {
  * rather than a caught exception every caller has to remember to guard against. A malformed
  * cell must degrade the project switcher to "no projects known for this row", not crash the
  * page it feeds.
+ *
+ * ORGANISATION-WIDE PROJECTS ARE DROPPED HERE, at the one place the stored column becomes
+ * something this app reasons about (`config.ts::ORG_WIDE_PROJECTS` says which and why). One
+ * filter rather than three: the catalogue, the membership predicate and the unattributed
+ * count below all read through this function, and so does every server caller
+ * (`api.ts` bootstrap, `readModels.ts`'s scoping), so the tenant's org tag cannot be offered
+ * as a switcher row in one place while still matching rows in another.
+ *
+ * A ROW WHOSE ONLY PROJECT IS THE ORG TAG THEREFORE COMES BACK `[]` — and is counted by
+ * `unattributedCount`, which is the honest answer rather than a rounding-down: nobody has
+ * filed that repository under anything you can pick, and the header caption says so out loud
+ * ("N have no project"). Silently leaving it in the catalogue would have said the opposite.
  */
 export function parseProjects(projectsJson: string | null | undefined): ProjectRef[] {
   if (!projectsJson) return [];
@@ -63,6 +76,7 @@ export function parseProjects(projectsJson: string | null | undefined): ProjectR
     const slug = rec["slug"];
     const name = rec["name"];
     if (typeof slug !== "string" || slug === "" || typeof name !== "string") continue;
+    if (isOrgWideProject(slug, name)) continue;
     const ref: ProjectRef = { slug, name };
     // Tri-state: only set the key when the parsed value is actually a boolean. A malformed or
     // missing isFolder must come back as `undefined`, never as `false`.
