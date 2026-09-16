@@ -2898,7 +2898,22 @@ export function getSettings(_p?: unknown): ApiResult {
     includeEol: settingsStore.getIncludeEol(),
     domains: settingsStore.getDomains(),
     riskRule: settingsStore.getRiskRule(),
+    // The four cold-zone fields, spread from the ONE door (settingsStore.getColdZone) rather
+    // than read field by field — the mode and the two numbers the relative mode needs travel
+    // together or the Cold zone page has a live way to be handed a share with nothing to aim at.
+    ...coldZoneSettingsPayload(),
   }));
+}
+
+/** The four cold-zone fields in the shape the Settings page's draft lifts them from. */
+function coldZoneSettingsPayload(): Rec {
+  const cold = settingsStore.getColdZone();
+  return {
+    coldZoneMode: cold.mode,
+    coldAfterDays: cold.coldAfterDays,
+    coldTargetSharePct: cold.targetSharePct,
+    coldFloorDays: cold.floorDays,
+  };
 }
 
 /**
@@ -2996,6 +3011,9 @@ export function saveSettings(p?: unknown): ApiResult {
       showNoFix: settingsStore.getShowNoFix(),
       includeEol: settingsStore.getIncludeEol(),
       riskRule: settingsStore.getRiskRule(),
+      // Echoed back CLEANED, so the page can report what was actually stored when the server
+      // clamped a value the reader typed (see the Settings page's own save reconciliation).
+      ...coldZoneSettingsPayload(),
     };
   });
 }

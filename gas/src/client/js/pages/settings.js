@@ -16,18 +16,20 @@ import { capacityView } from "../capacity.js";
 import { decodePrefill, PREFILL_KEY } from "../attributionPrefill.js";
 import { bootstrap, invalidateBootstrap, invalidateRpcCache, setParams } from "../../../../../gas_shared/store.js";
 import {
-  changeCountText, changeSummary, changedFields, clampDisplayToFetch, draftWarnings, fieldErrors,
+  changeCountText, changeSummary, changedFields, clampDisplayToFetch, COLD_AFTER_DAYS_MAX,
+  COLD_AFTER_DAYS_MIN, COLD_FLOOR_DAYS_MAX, COLD_FLOOR_DAYS_MIN, COLD_TARGET_SHARE_PCT_MAX,
+  COLD_TARGET_SHARE_PCT_MIN, draftWarnings, fieldErrors,
   normalizeTab, SETTINGS_TABS, settingsDraft, settingsPatch, TAB_FIELDS, tabStatus, validateDraft,
 } from "../settingsModel.js";
 import {
-  createRiskReadout, renderRetentionReadout, severityScopeReadout,
+  createRiskReadout, renderColdZoneReadout, renderRetentionReadout, severityScopeReadout,
 } from "../settingsReadouts.js";
 import {
-  absent, clear, confirmDialog, diagnosticsPanel, disclosure, el, errorCountBadge, errorLogBody,
-  heroLines,
+  absent, clear, confirmDialog, denomNote, diagnosticsPanel, disclosure, el, errorCountBadge,
+  errorLogBody, heroLines,
   fmtDateTime, impactSplit, impactSplitModel, normalizeErrorLog, openSheet, pageHeader, saveBar,
-  settingRow, settingsPanel, statusPill, storageBody, switchToggle, tabList, tip, tipAnchor,
-  tipLabel, toast,
+  segmented, settingRow, settingsPanel, statusPill, storageBody, switchToggle, tabList, tip,
+  tipAnchor, tipLabel, toast,
 } from "../ui.js";
 import { renderAccessPanel } from "./accessEditor.js";
 import { hubUrlPanel } from "../../../../../gas_shared/ui/hubPanel.js";
@@ -41,6 +43,27 @@ import { renderDomainsEditor } from "./domainsEditor.js";
 // (see settingsModel.js), so the clamp this names is a defence against a value that bypassed
 // this page entirely — a stale script-property edit, or a caller other than this UI.
 const RETENTION_FLOOR_DAYS = 30;
+
+// The three clamped cold-zone numbers, as a table rather than three near-identical blocks in
+// `saveReconciliation` below: unlike the four cleaners they mirror server-side — each of which
+// carries its own bounds, default and reason beside the field it governs — these three differ
+// in nothing but a label, a unit and two numbers. Bounds come from settingsModel.js, which is
+// where this app's client-side mirrors of src/domain/config.ts live and where a test holds
+// them equal to it.
+const COLD_NUMBER_FIELDS = [
+  {
+    key: "coldAfterDays", label: "Cold-zone window", unit: " days",
+    range: `${COLD_AFTER_DAYS_MIN}–${COLD_AFTER_DAYS_MAX}-day`,
+  },
+  {
+    key: "coldTargetSharePct", label: "Cold-zone target share", unit: "%",
+    range: `${COLD_TARGET_SHARE_PCT_MIN}–${COLD_TARGET_SHARE_PCT_MAX}%`,
+  },
+  {
+    key: "coldFloorDays", label: "Cold-zone floor", unit: " days",
+    range: `${COLD_FLOOR_DAYS_MIN}–${COLD_FLOOR_DAYS_MAX}-day`,
+  },
+];
 
 /**
  * What the server actually stored versus what was sent — the honest surface for the one field
@@ -65,6 +88,23 @@ export function saveReconciliation(sent, saved) {
       `Retention window saved as ${r.retentionDays} day(s) — raised to the `
       + `${RETENTION_FLOOR_DAYS}-day floor.`,
     );
+  }
+  // The three cold-zone NUMBERS are the same kind of drift, one step wider: the server clamps
+  // each into a RANGE (settingsLogic.ts's `withColdAfterDays` and its two siblings), at either
+  // end rather than only at a floor, so the note names the stored value and the range it was
+  // pulled into — never "it was rejected".
+  for (const f of COLD_NUMBER_FIELDS) {
+    if (Number.isFinite(Number(s[f.key])) && Number(s[f.key]) !== Number(r[f.key])) {
+      notes.push(
+        `${f.label} saved as ${r[f.key]}${f.unit} — clamped into the ${f.range} range.`,
+      );
+    }
+  }
+  // THE MODE IS THE ONE REWRITE THAT IS A FALLBACK RATHER THAN A CLAMP (settingsLogic.ts's
+  // `getColdZoneMode`), so its note names the string the server could not read instead of a
+  // range it was pulled into — "clamped into the fixed–relative range" would be nonsense.
+  if (typeof s.coldZoneMode === "string" && s.coldZoneMode !== r.coldZoneMode) {
+    notes.push(`Cold-zone mode saved as ${r.coldZoneMode} — "${s.coldZoneMode}" is not a mode.`);
   }
   return notes;
 }
@@ -440,6 +480,177 @@ export async function renderSettings(main, params, ctx) {
       retentionReadoutHost,
     ],
     footer: compactBtn,
+  });
+
+  // ------------------------------------------------------------------- the cold zone
+  // ON LIFECYCLE BESIDE RETENTION, AND NOT ONE OF IT. Retention says how long the register
+  // KEEPS a scan; these four say how long an asset may sit with open findings and nothing
+  // resolved on it before the register calls it cold. They share a tab because they are the
+  // same kind of fact — a deadline the operator sets over the whole estate, in days, that
+  // decides what the register does with time it has already recorded. An SLA target is the
+  // other kind: a promise about ONE finding. A threshold on a silence across a whole asset is
+  // a deadline, so it belongs here rather than beside the per-severity windows or on System,
+  // where a maintenance knob would live.
+  //
+  // THE RELATIVE-MODE CONTROLS ARE SHOWN AND HIDDEN, NEVER DISABLED. In fixed mode the target
+  // share and the floor are not merely inert — they are not what the register is measuring at
+  // all. A disabled control still says "this is part of the answer, you just may not touch
+  // it", which would be a lie; a control that is absent says the truth, that this reading has
+  // no such number. The DRAFT still carries all four either way (the nodes are built once and
+  // only their wrapper's `hidden` moves), so flipping back and forth never loses a value and
+  // `validateDraft` still checks every one of them — see settingsModel.js's fieldErrors.
+  //
+  // The WINDOW stays on screen in both modes, unlike the code register's version of this
+  // panel, because `coldZoneProfile` publishes it in both: `fixed_after_days` is what the
+  // operator asked for, printed beside whatever line the relative mode derived. Hiding it
+  // would hide the number the page still shows.
+  const coldModeSeg = segmented({
+    options: [
+      { value: "fixed", label: "Fixed window" },
+      { value: "relative", label: "Relative" },
+    ],
+    value: draft.coldZoneMode,
+    ariaLabel: "Cold-zone mode",
+    onChange: (v) => {
+      draft.coldZoneMode = v;
+      coldModeSeg.set(v);
+      syncColdMode();
+      onEdit();
+    },
+  });
+
+  const coldAfterDaysErrorId = "settings-cold-after-days-error";
+  const coldAfterDaysError = el(
+    "span",
+    { id: coldAfterDaysErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+  );
+  const coldAfterDays = el("input", {
+    type: "number", id: "settings-cold-after-days",
+    min: String(COLD_AFTER_DAYS_MIN), max: String(COLD_AFTER_DAYS_MAX), step: "1",
+    value: draft.coldAfterDays, style: "width:96px",
+    "aria-label": "Cold-zone window in days",
+    "aria-describedby": coldAfterDaysErrorId,
+    // Only a value that PARSES updates the draft — an in-progress "1" before a second digit
+    // lands is not "cold after one day" — but `onEdit()` runs either way, so a keystroke that
+    // never validated still tells the save bar and the tablist that something happened. Same
+    // shape as the retention-window handler above, for the same two reasons.
+    oninput: (e) => {
+      const n = Number(e.target.value);
+      if (Number.isFinite(n) && e.target.value.trim() !== "") draft.coldAfterDays = Math.floor(n);
+      onEdit();
+    },
+  });
+
+  const coldTargetErrorId = "settings-cold-target-share-error";
+  const coldTargetError = el(
+    "span",
+    { id: coldTargetErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+  );
+  const coldTargetShare = el("input", {
+    type: "number", id: "settings-cold-target-share",
+    min: String(COLD_TARGET_SHARE_PCT_MIN), max: String(COLD_TARGET_SHARE_PCT_MAX), step: "1",
+    value: draft.coldTargetSharePct, style: "width:96px",
+    "aria-label": "Cold-zone target share in per cent",
+    "aria-describedby": coldTargetErrorId,
+    oninput: (e) => {
+      const n = Number(e.target.value);
+      if (Number.isFinite(n) && e.target.value.trim() !== "") {
+        draft.coldTargetSharePct = Math.floor(n);
+      }
+      onEdit();
+    },
+  });
+
+  const coldFloorErrorId = "settings-cold-floor-days-error";
+  const coldFloorError = el(
+    "span",
+    { id: coldFloorErrorId, class: "small settings-field-error", role: "alert", hidden: true },
+  );
+  const coldFloorDays = el("input", {
+    type: "number", id: "settings-cold-floor-days",
+    min: String(COLD_FLOOR_DAYS_MIN), max: String(COLD_FLOOR_DAYS_MAX), step: "1",
+    value: draft.coldFloorDays, style: "width:96px",
+    "aria-label": "Cold-zone floor in days",
+    "aria-describedby": coldFloorErrorId,
+    oninput: (e) => {
+      const n = Number(e.target.value);
+      if (Number.isFinite(n) && e.target.value.trim() !== "") draft.coldFloorDays = Math.floor(n);
+      onEdit();
+    },
+  });
+
+  // The two relative-mode rows, wrapped so one `hidden` moves both. `denomNote` rides with the
+  // target share because that field is a RATE and every rate on this surface travels with the
+  // population it is a share OF: "20%" means nothing until the estate it counts against is
+  // named, and the population here is a narrow one the profile decides before any line is
+  // drawn — an asset the scanner stopped returning is not evidence about engagement, and one
+  // with nothing open cannot be in a zone that measures unclosed work.
+  const coldRelativeRows = el("div", {},
+    settingRow({
+      label: "Cold-zone target share", htmlFor: "settings-cold-target-share",
+      description: "The share of eligible assets the line aims to put in the cold zone. The "
+        + "idlest go first, and ties at the line are all cold, so the share actually reached "
+        + "can come out larger.",
+      control: el("div", {},
+        el("div", { style: "display:flex; align-items:center; gap:6px" },
+          coldTargetShare, el("span", { class: "muted small" }, "%")),
+        coldTargetError),
+    }),
+    denomNote(
+      "A share of the assets the scanner still returns that have at least one open finding; "
+      + "unobserved and clear assets are not in it. The Cold zone page reports the share "
+      + "actually reached against this target.",
+    ),
+    settingRow({
+      label: "Cold-zone floor", htmlFor: "settings-cold-floor-days",
+      description: "The fewest idle days the derived line may ever sit at. A share always "
+        + "names somebody, and on an estate where nothing has been quiet for long, this is "
+        + "what stops the zone being filled anyway.",
+      control: el("div", {},
+        el("div", { style: "display:flex; align-items:center; gap:6px" },
+          coldFloorDays, el("span", { class: "muted small" }, "days")),
+        coldFloorError),
+    }),
+  );
+
+  const coldReadoutHost = el("div", {});
+
+  function syncColdMode() {
+    coldRelativeRows.hidden = draft.coldZoneMode !== "relative";
+  }
+
+  const coldZonePanel = settingsPanel({
+    title: "Cold zone",
+    description: "Where remediation has stopped: assets still being scanned that have open "
+      + "findings and nothing resolved on them for longer than the line below.",
+    body: [
+      disclosure(
+        "Why this matters",
+        el("p", {}, "Backlog size cannot tell a busy asset from an abandoned one. This "
+          + "measures the silence instead — and an asset the scanner stopped returning is "
+          + "reported apart, because findings that vanish from a scan close as disappeared "
+          + "and a drop-out would otherwise read as a clean-up."),
+      ),
+      settingRow({
+        label: "Cold-zone mode",
+        description: "Fixed calls an asset cold after a set number of idle days. Relative "
+          + "draws the line wherever the idlest share of the estate begins, so a chosen share "
+          + "of the assets with open findings is cold whatever the idle times are.",
+        control: coldModeSeg,
+      }),
+      settingRow({
+        label: "Cold-zone window", htmlFor: "settings-cold-after-days",
+        description: "Days an asset may sit with open findings and nothing resolved before it "
+          + "is called cold. In relative mode this is still published as the window that was "
+          + "asked for, beside the line the estate produced.",
+        control: el("div", {},
+          el("div", { style: "display:flex; align-items:center; gap:6px" },
+            coldAfterDays, el("span", { class: "muted small" }, "days")),
+          coldAfterDaysError),
+      }),
+      coldRelativeRows,
+      coldReadoutHost,
+    ],
   });
 
   async function compactNow() {
@@ -828,7 +1039,7 @@ export async function renderSettings(main, params, ctx) {
   const registerTab = tabPanel("register", scopePanel, filterGrid);
   const riskTab = tabPanel("risk", riskPanel);
   const attributionTab = tabPanel("attribution", domainsPanel, attributionCrossRef);
-  const lifecycleTab = tabPanel("lifecycle", retentionPanel, jobsPanel);
+  const lifecycleTab = tabPanel("lifecycle", retentionPanel, coldZonePanel, jobsPanel);
   // THE ONE SECTION THAT MAY LEGITIMATELY VANISH — renderAccessPanel() (accessEditor.js)
   // answers null both for a reader who may not edit the roster and for a failed fetch, and its
   // own rule is that a non-editor gets no section at all rather than a disabled one. No `panels`
@@ -928,6 +1139,23 @@ export async function renderSettings(main, params, ctx) {
     retentionDaysError.hidden = !errors.retentionDays;
     retentionDaysError.textContent = errors.retentionDays || "";
     retentionDays.setAttribute("aria-invalid", errors.retentionDays ? "true" : "false");
+
+    // The cold three. Painted whichever mode is selected, because the draft carries all of
+    // them whichever mode is selected — a value left behind in the other mode is still what
+    // would be saved, and a span inside a hidden wrapper is silent rather than wrong. The
+    // MODE has no span of its own: the segmented control can only produce one of the two, so
+    // its error (settingsModel.js) is a claim about something upstream, not about a keystroke.
+    coldAfterDaysError.hidden = !errors.coldAfterDays;
+    coldAfterDaysError.textContent = errors.coldAfterDays || "";
+    coldAfterDays.setAttribute("aria-invalid", errors.coldAfterDays ? "true" : "false");
+
+    coldTargetError.hidden = !errors.coldTargetSharePct;
+    coldTargetError.textContent = errors.coldTargetSharePct || "";
+    coldTargetShare.setAttribute("aria-invalid", errors.coldTargetSharePct ? "true" : "false");
+
+    coldFloorError.hidden = !errors.coldFloorDays;
+    coldFloorError.textContent = errors.coldFloorDays || "";
+    coldFloorDays.setAttribute("aria-invalid", errors.coldFloorDays ? "true" : "false");
   }
 
   function syncDirty() {
@@ -952,6 +1180,12 @@ export async function renderSettings(main, params, ctx) {
   }
 
   function repaintReadouts() {
+    // The cold-zone sentence FIRST, and outside the impact gate below: it is built from the
+    // draft alone (see settingsReadouts.js's `coldZoneSentence` for why this block has no
+    // live impact preview), so it must repaint on every edit rather than only once the
+    // impact payload has landed.
+    clear(coldReadoutHost);
+    coldReadoutHost.append(renderColdZoneReadout(draft));
     if (!impact) return; // decorative — every control above already applied its own edit
     clear(scopeReadoutHost);
     scopeReadoutHost.append(severityScopeReadout(impact.census, draft, boot.palette.selectable));
@@ -1020,6 +1254,13 @@ export async function renderSettings(main, params, ctx) {
     retentionDays.disabled = draft.retentionDays === null;
     if (document.activeElement !== retentionDays) retentionDays.value = draft.retentionDays ?? 180;
     setSwitch(autoCompactSwitch, draft.autoCompact);
+    coldModeSeg.set(draft.coldZoneMode);
+    syncColdMode();
+    if (document.activeElement !== coldAfterDays) coldAfterDays.value = draft.coldAfterDays;
+    if (document.activeElement !== coldTargetShare) {
+      coldTargetShare.value = draft.coldTargetSharePct;
+    }
+    if (document.activeElement !== coldFloorDays) coldFloorDays.value = draft.coldFloorDays;
     onEdit();
   }
 

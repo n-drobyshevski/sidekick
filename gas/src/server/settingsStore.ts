@@ -56,6 +56,15 @@ export const getRiskRule = (): { version: number; rule: RiskRule } =>
   logic.getRiskRule(loadSettings());
 export const getDomains = (): { version: number; items: Rec[] } =>
   logic.getDomains(loadSettings());
+/**
+ * The cold-zone settings in force, as ONE object — the single door between the settings tab
+ * and `domain/coldZone.ts` (see `logic.effectiveColdZoneSettings` for why the four fields may
+ * never be read apart). Memoized only insofar as `loadSettings()` is: the read is one hash
+ * lookup per field off the per-execution settings memo, so the sibling getters' shape applies
+ * unchanged and there is nothing here worth a second cache.
+ */
+export const getColdZone = (): logic.EffectiveColdZone =>
+  logic.effectiveColdZoneSettings(loadSettings());
 // The subscription-identity → support-group map lives in its own tab (one row per token),
 // not a single settings cell — a large map overflows the ~50k-char Sheets cell limit and the
 // write throws, which is why a big-tenant refresh failed and the map never persisted. Memoized

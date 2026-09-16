@@ -272,3 +272,35 @@ export function renderRetentionReadout(scans, draft) {
     ariaLabel: `${fmt(sealedCount)} of ${fmt(total)} scans are sealed`,
   });
 }
+
+/**
+ * What the cold-zone controls currently say, in one sentence — the settings-page readout for a
+ * block that has no live impact preview.
+ *
+ * NO IMPACT SPLIT HERE, DELIBERATELY, and that is the one way this readout differs from every
+ * other on the page. `severityScopeReadout` and `renderRetentionReadout` can show what a knob
+ * would do because the population they measure is already on the client (the impact payload's
+ * census, the scan list). A cold-zone preview is not the same kind of cheap: it would need a
+ * full profile over the base rows — the per-asset idle fold, the observation join and, in
+ * relative mode, a rank over the whole estate — which is the Cold zone page's own server-side
+ * read model and not something a settings keystroke may re-derive. So this states what the
+ * saved line MEANS and points at the page that measures it, rather than inventing a figure.
+ *
+ * Pure: takes the draft, returns a sentence. The DOM half is one node in pages/settings.js.
+ */
+export function coldZoneSentence(draft) {
+  const d = draft || {};
+  if (d.coldZoneMode === "relative") {
+    return "Relative: the idlest " + d.coldTargetSharePct + "% of the assets the scanner still "
+      + "returns that have open findings are cold, and the line never sits below "
+      + d.coldFloorDays + " days. The Cold zone page reports the share actually reached "
+      + "against that target, and the line it drew in days.";
+  }
+  return "Fixed: an asset is cold once " + d.coldAfterDays + " days have passed with open "
+    + "findings and nothing resolved on it. The same number on every estate and in every week.";
+}
+
+/** The sentence above as a node, for the host the Cold zone panel keeps for it. */
+export function renderColdZoneReadout(draft) {
+  return el("p", { class: "small muted" }, coldZoneSentence(draft));
+}

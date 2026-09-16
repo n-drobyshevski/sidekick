@@ -4,6 +4,17 @@
 import { describe, expect, it } from "vitest";
 import {
   changeCountText,
+  COLD_AFTER_DAYS_MAX,
+  COLD_AFTER_DAYS_MIN,
+  COLD_FLOOR_DAYS_MAX,
+  COLD_FLOOR_DAYS_MIN,
+  COLD_MODES,
+  COLD_TARGET_SHARE_PCT_MAX,
+  COLD_TARGET_SHARE_PCT_MIN,
+  DEFAULT_COLD_AFTER_DAYS,
+  DEFAULT_COLD_FLOOR_DAYS,
+  DEFAULT_COLD_TARGET_SHARE_PCT,
+  DEFAULT_COLD_ZONE_MODE,
   changeSummary,
   changedFields,
   clampDisplayToFetch,
@@ -20,6 +31,7 @@ import {
   tabStatus,
   validateDraft,
 } from "../src/client/js/settingsModel.js";
+import * as config from "../src/domain/config";
 
 const BOOT = {
   fetchSeverities: ["CRITICAL", "HIGH", "MEDIUM"],
@@ -373,5 +385,164 @@ describe("clampDisplayToFetch", () => {
     d.fetchSeverities = ["CRITICAL"];
     clampDisplayToFetch(d);
     expect(validateDraft(d).ok).toBe(true);
+  });
+});
+
+// --------------------------------------------------------------------------- cold zone
+
+describe("the cold-zone mirrors of src/domain/config.ts", () => {
+  // The client never imports the TS domain modules, so settingsModel.js carries second
+  // literals for the bounds and defaults. This is the test that comment promises: the mirrors
+  // are held equal to the source of truth here rather than by an import.
+  it("match the domain constants exactly", () => {
+    expect(COLD_MODES).toEqual([...config.COLD_ZONE_MODES]);
+    expect(DEFAULT_COLD_ZONE_MODE).toBe(config.DEFAULT_COLD_ZONE_MODE);
+    expect(DEFAULT_COLD_AFTER_DAYS).toBe(config.DEFAULT_COLD_AFTER_DAYS);
+    expect(COLD_AFTER_DAYS_MIN).toBe(config.COLD_AFTER_DAYS_MIN);
+    expect(COLD_AFTER_DAYS_MAX).toBe(config.COLD_AFTER_DAYS_MAX);
+    expect(DEFAULT_COLD_TARGET_SHARE_PCT).toBe(config.DEFAULT_COLD_TARGET_SHARE_PCT);
+    expect(COLD_TARGET_SHARE_PCT_MIN).toBe(config.COLD_TARGET_SHARE_PCT_MIN);
+    expect(COLD_TARGET_SHARE_PCT_MAX).toBe(config.COLD_TARGET_SHARE_PCT_MAX);
+    expect(DEFAULT_COLD_FLOOR_DAYS).toBe(config.DEFAULT_COLD_FLOOR_DAYS);
+    expect(COLD_FLOOR_DAYS_MIN).toBe(config.COLD_FLOOR_DAYS_MIN);
+    expect(COLD_FLOOR_DAYS_MAX).toBe(config.COLD_FLOOR_DAYS_MAX);
+  });
+});
+
+describe("the cold-zone draft", () => {
+  it("puts all four knobs on the Lifecycle tab", () => {
+    for (const key of ["coldZoneMode", "coldAfterDays", "coldTargetSharePct", "coldFloorDays"]) {
+      expect(SETTING_FIELDS[key].tab).toBe("lifecycle");
+    }
+  });
+
+  it("lifts the four defaults when the bootstrap payload carries none of them", () => {
+    // A register nobody has configured, and a payload trimmed before these fields existed.
+    const d = settingsDraft(BOOT);
+    expect(d.coldZoneMode).toBe("fixed");
+    expect(d.coldAfterDays).toBe(90);
+    expect(d.coldTargetSharePct).toBe(20);
+    expect(d.coldFloorDays).toBe(14);
+  });
+
+  it("lifts stored values through", () => {
+    const d = settingsDraft({
+      ...BOOT,
+      coldZoneMode: "relative", coldAfterDays: 45, coldTargetSharePct: 35, coldFloorDays: 21,
+    });
+    expect(d).toMatchObject({
+      coldZoneMode: "relative", coldAfterDays: 45, coldTargetSharePct: 35, coldFloorDays: 21,
+    });
+  });
+
+  it("refuses an unknown mode from the payload rather than carrying it into the draft", () => {
+    expect(settingsDraft({ ...BOOT, coldZoneMode: "warm" }).coldZoneMode).toBe("fixed");
+  });
+
+  it.each([null, "", false, []])(
+    "does not cast %p to a number — Number() would make all four of these zero",
+    (junk) => {
+      const d = settingsDraft({ ...BOOT, coldAfterDays: junk, coldFloorDays: junk });
+      expect(d.coldAfterDays).toBe(90);
+      expect(d.coldFloorDays).toBe(14);
+    },
+  );
+
+  it("reads a numeric string, because a hand-edited settings cell is still an answer", () => {
+    expect(settingsDraft({ ...BOOT, coldTargetSharePct: "35" }).coldTargetSharePct).toBe(35);
+  });
+
+  it("sends all four in the patch when they are edited", () => {
+    const saved = settingsDraft(BOOT);
+    const d = settingsDraft(BOOT);
+    d.coldZoneMode = "relative";
+    d.coldAfterDays = 120;
+    d.coldTargetSharePct = 35;
+    d.coldFloorDays = 21;
+    expect(settingsPatch(saved, d)).toEqual({
+      coldZoneMode: "relative", coldAfterDays: 120, coldTargetSharePct: 35, coldFloorDays: 21,
+    });
+  });
+});
+
+describe("cold-zone field errors", () => {
+  const cold = (over) => ({ ...settingsDraft(BOOT), ...over });
+
+  it("passes a default draft", () => {
+    const errs = fieldErrors(cold({}));
+    expect(errs.coldZoneMode).toBeNull();
+    expect(errs.coldAfterDays).toBeNull();
+    expect(errs.coldTargetSharePct).toBeNull();
+    expect(errs.coldFloorDays).toBeNull();
+  });
+
+  it("words the window's bounds as \"at least\" and \"at most\", never as symbols", () => {
+    expect(fieldErrors(cold({ coldAfterDays: 3 })).coldAfterDays).toBe(
+      "The cold-zone window must be at least 7 days and at most 365 days.",
+    );
+    expect(fieldErrors(cold({ coldAfterDays: 400 })).coldAfterDays).toBe(
+      "The cold-zone window must be at least 7 days and at most 365 days.",
+    );
+  });
+
+  it("words the target share and the floor the same way", () => {
+    expect(fieldErrors(cold({ coldTargetSharePct: 0 })).coldTargetSharePct).toBe(
+      "The cold-zone target share must be at least 1% and at most 50%.",
+    );
+    expect(fieldErrors(cold({ coldFloorDays: 900 })).coldFloorDays).toBe(
+      "The cold-zone floor must be at least 1 day and at most 365 days.",
+    );
+  });
+
+  it("names both modes when the mode is neither of them", () => {
+    expect(fieldErrors(cold({ coldZoneMode: "warm" })).coldZoneMode).toBe(
+      "The cold-zone mode must be either fixed or relative.",
+    );
+  });
+
+  it("checks the relative-mode numbers in FIXED mode too", () => {
+    // The controls are hidden in fixed mode, never disabled, and the draft still carries
+    // them — so a bad value left behind in the other mode is still what would be saved.
+    const errs = fieldErrors(cold({ coldZoneMode: "fixed", coldFloorDays: 0 }));
+    expect(errs.coldFloorDays).not.toBeNull();
+  });
+
+  it("checks the window in RELATIVE mode too, because it is still published", () => {
+    const errs = fieldErrors(cold({ coldZoneMode: "relative", coldAfterDays: 0 }));
+    expect(errs.coldAfterDays).not.toBeNull();
+  });
+
+  it("lights every broken cold field at once, unlike validateDraft", () => {
+    const errs = fieldErrors(cold({ coldAfterDays: 1, coldTargetSharePct: 99, coldFloorDays: 0 }));
+    expect(errs.coldAfterDays).not.toBeNull();
+    expect(errs.coldTargetSharePct).not.toBeNull();
+    expect(errs.coldFloorDays).not.toBeNull();
+  });
+});
+
+describe("validateDraft over the cold zone", () => {
+  const cold = (over) => ({ ...settingsDraft(BOOT), ...over });
+
+  it("sends the reader to Lifecycle", () => {
+    const v = validateDraft(cold({ coldAfterDays: 400 }));
+    expect(v.ok).toBe(false);
+    expect(v.tab).toBe("lifecycle");
+  });
+
+  it("reports the MODE before any of the three numbers it governs", () => {
+    // The mode decides which controls are on screen; a message about a window the reader
+    // cannot reach would send them to a tab with no such control.
+    const v = validateDraft(cold({ coldZoneMode: "warm", coldAfterDays: 400 }));
+    expect(v.message).toBe("The cold-zone mode must be either fixed or relative.");
+  });
+
+  it("still reports the retention window first — the older field keeps its priority", () => {
+    const v = validateDraft(cold({ retentionDays: 5, coldAfterDays: 400 }));
+    expect(v.message).toBe("The retention window must be at least 30 days.");
+  });
+
+  it("passes a legal cold draft in both modes", () => {
+    expect(validateDraft(cold({ coldZoneMode: "fixed" })).ok).toBe(true);
+    expect(validateDraft(cold({ coldZoneMode: "relative" })).ok).toBe(true);
   });
 });
