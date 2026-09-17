@@ -353,8 +353,7 @@ header); what follows is what changed, or did not, on the way across.
 **The census is a part-to-whole unit chart, and two of its five segments are hatched.**
 `coldCensusModel` partitions every asset in the ledger — `cold + warm + watching + clear` is
 every OBSERVED asset, `+ unobserved` is every asset — into one `unitChart` (`unitGrid` +
-`unitKeyRow`, class `.cold-census`, capped at a 44rem max-width so the lattice stays a block a
-reader counts rather than a banner stretched to the page). `watching` (open findings, idle time
+`unitKeyRow`, class `.cold-census`). `watching` (open findings, idle time
 that could not be measured at all) and `unobserved` (the scanner has lost sight of the asset)
 are drawn `fill: "hatch"` — `--hatch` is the design system's own token for "this part is not a
 measurement", and both verdicts are exactly that: neither is a reading of idle time, and the
@@ -363,13 +362,34 @@ rather than a fill, for the opposite reason: it is measured, and it is fine, and
 solid would put "nothing open to go quiet on" in the same visual weight class as an actual
 problem. `cold` and `warm` are the only two solid fills.
 
-**What High Contrast costs this picture.** Emulated forced-colors mode keeps the hatch (it is
-ink at an alpha, not a hue, so "measured vs. not measured" survives), but `cold` and `warm`
-differ only by tone and flatten toward each other the same way `gas_devsecops/DESIGN.md`
-records for its own repository census — three or four silhouettes cannot carry five tones
-under forced colors. Nothing is actually lost: `unitKeyRow` prints every segment's label, count
-and share in text under the lattice regardless of mode, so the reading survives even where the
-picture's tones do not.
+**The two hatched segments are hatched in two different inks, and for a while they were not.**
+They are the same silhouette carrying different verdicts — `watching` is `warn`, `unobserved` is
+`neutral` — which is exactly the case `unitChart`'s two channels exist for. The shared
+stylesheet's `[data-fill="hatch"]` rule ignored `data-tone` altogether, so the pair shipped
+pixel-identical and the key row beneath was the only thing telling them apart; the comb now
+takes its ink from `color` the way the ring beside it always did. The page's claim is unchanged
+and now legible in the picture: an amber comb is a warm reading nobody could measure, a grey one
+is an asset nobody is looking at. `gas_shared/styles/components.css` carries the rule and the
+argument.
+
+**The lattice grows to its card instead of sitting in the corner of it.** The 44rem cap this
+section used to describe lived in `src/client/styles/pages.css` as a modifier on the wrap, where
+it never bound anything: the grid inside was `width: max-content` at the component's fixed cell
+size, so thirty assets drew a 64px block in a 704px card. Cap and lattice both moved into
+`.isotype--census` (`gas_shared/styles/components.css`), where a census block is laid out as flat
+as the module's row limit allows and each column is a range rather than a length — it grows to
+the card, stops at 30px per cell and at 44rem overall, and cannot overflow a phone because its
+minimum is the width the module already sized it to fit. `gas_devsecops` gets the same picture
+from the same rule, which it could not get from a cap that only this app had spelled.
+
+**What High Contrast costs this picture.** Emulated forced-colors mode keeps the hatch as a
+SILHOUETTE — a dashed border rather than the comb, since a toned comb is a hue now and `--warn`
+on a black High Contrast ground measures about 1.8:1 — so "measured vs. not measured" survives
+and the two hatched tones collapse into each other there. `cold` and `warm` flatten the same
+way, as `gas_devsecops/DESIGN.md` records for its own repository census: three or four
+silhouettes cannot carry five tones under forced colors. Nothing is actually lost:
+`unitKeyRow` prints every segment's label, count and share in text under the lattice regardless
+of mode, so the reading survives even where the picture's tones do not.
 
 **The support-group × idle-bucket heat table's ramp is neutral ink at four alphas, and that is
 a rule, not a preference.** `table.data.heat`'s cells (`gas/src/client/styles/pages.css`,

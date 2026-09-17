@@ -417,8 +417,68 @@
 .isotype-cell[data-fill="ring"][data-tone="ok"] { color: var(--ok); }
 .isotype-cell[data-fill="ring"][data-tone="warn"] { color: var(--warn); }
 .isotype-cell[data-fill="ring"][data-tone="bad"] { color: var(--bad); }
-.isotype-cell[data-fill="hatch"] { background-color: var(--surface); background-image: var(--hatch); }
+/* THE HATCH TAKES ITS TONE, THE WAY THE RING ABOVE IT ALREADY DOES. Two channels means two
+   channels: the hatch rule painted every hatched cell one ink at one alpha whatever its
+   `data-tone` was, which silently collapsed the tone channel for a third of the silhouette
+   vocabulary. The cold-zone census is where that showed: it has TWO hatched segments BY DESIGN
+   — an asset whose idle time could not be measured (warn) and one the scanner has lost sight
+   of (neutral) — and they rendered identically, leaving the key row beneath as the only thing
+   telling them apart.
+
+   ONE SPELLING OF THE COMB, as a custom property, taking its ink from `color` so `data-tone`
+   reaches it. It reproduces `--hatch`'s geometry exactly and its neutral default IS --hatch's
+   own rgba, so a hatch that was already neutral does not move by a pixel or a percent; the
+   token keeps its meaning and its users, and this is the tone-aware reading of it that a
+   two-channel component needs. The comb covers half the cell, so a toned hatch reads as its
+   tone at half weight — which is the claim it is making: this much, and not measured.
+
+   THE SWATCH RULES ARE FARTHER DOWN, beside the key row's own tone rules rather than here.
+   `.isotype-key-swatch[data-tone="warn"]` sets the `background` SHORTHAND, which clears
+   `background-image`; at equal specificity the later rule wins, so a swatch hatch declared up
+   here would render solid and the key would stop matching the lattice it stands for. */
+.isotype-cell, .isotype-key-swatch {
+  --isotype-comb: repeating-linear-gradient(
+    45deg, transparent, transparent 3px, currentColor 3px, currentColor 6px);
+}
+.isotype-cell[data-fill="hatch"] {
+  background-color: var(--surface);
+  background-image: var(--isotype-comb);
+  color: rgba(0, 0, 0, 0.14);
+}
+.isotype-cell[data-fill="hatch"][data-tone="ok"] { color: var(--ok); }
+.isotype-cell[data-fill="hatch"][data-tone="warn"] { color: var(--warn); }
+.isotype-cell[data-fill="hatch"][data-tone="bad"] { color: var(--bad); }
 .isotype-cell--empty { background: var(--surface-2); }
+
+/* THE BLOCK CENSUS FILLS THE CARD IT SITS IN. `width: max-content` over 9px cells drew thirty
+   assets as a 64px smudge in a 704px card — the same defect unitChart.js's cell-size rule was
+   written to fix for a strip, one size class along and left standing there. The COLUMN COUNT
+   stays the module's, because the shape of a picture is a decision about the picture; what
+   changes is that a column is a RANGE rather than a length, so the block grows to the room it
+   is given and stops at a width past which a cell stops reading as a mark and starts reading as
+   a tile. It cannot overflow at any viewport: the minimum is the size the module already laid
+   the lattice out to fit.
+
+   EXACT MODE ONLY. A 10x10 proportional waffle means one cell per percentage point, and a
+   stretched one would be a different claim wearing the same picture.
+
+   THE CAP IS HERE, NOT IN AN APP. `gas` carried it as `.cold-census { max-width: 44rem }` over
+   the wrap, where it was inert — the grid inside was `max-content` and never reached it — and
+   `gas_devsecops` passes the same class name with no rule behind it at all, so the one app that
+   spelled the intention was the one that could not act on it. A lattice stretched across a wide
+   page reads as a banner rather than as a countable set of marks, and that is true of every
+   census this component draws, in every register. Same reasoning as the cell-size rule it sits
+   beside: a local rule that agrees with the shared default today is one that disagrees with it
+   later. */
+.isotype--grid.isotype--census {
+  width: 100%;
+  max-width: 44rem;
+  justify-content: start;
+  grid-template-columns: repeat(
+    var(--isotype-cols, 10),
+    minmax(var(--isotype-cell, 14px), var(--isotype-cell-max, 30px)));
+}
+.isotype--census .isotype-cell { width: auto; height: auto; aspect-ratio: 1; }
 
 /* The key row is why a waffle owes no chart-table disclosure: every figure the lattice draws
    is printed here, on the surface, in real text. See ui/unitChart.js's unitKeyRow. */
@@ -430,7 +490,18 @@
 .isotype-key-swatch[data-tone="warn"] { background: var(--warn); }
 .isotype-key-swatch[data-tone="bad"] { background: var(--bad); }
 .isotype-key-swatch[data-fill="ring"] { background: var(--page); box-shadow: inset 0 0 0 2px currentColor; }
-.isotype-key-swatch[data-fill="hatch"] { background-color: var(--surface); background-image: var(--hatch); }
+/* The swatch's hatch, taking its tone the same way the cell's does above — the key has to say
+   what the cells it stands for say, or it is worse than no key. It has to sit AFTER the three
+   tone rules right above: those set the `background` SHORTHAND, which clears `background-image`,
+   and at equal specificity the later rule wins. */
+.isotype-key-swatch[data-fill="hatch"] {
+  background-color: var(--surface);
+  background-image: var(--isotype-comb);
+  color: rgba(0, 0, 0, 0.14);
+}
+.isotype-key-swatch[data-fill="hatch"][data-tone="ok"] { color: var(--ok); }
+.isotype-key-swatch[data-fill="hatch"][data-tone="warn"] { color: var(--warn); }
+.isotype-key-swatch[data-fill="hatch"][data-tone="bad"] { color: var(--bad); }
 .isotype-key-swatch--empty { background: var(--surface-2); }
 .isotype-caption { margin: 0; }
 
@@ -464,8 +535,15 @@
   .isotype-cell[data-fill="ring"], .isotype-key-swatch[data-fill="ring"] {
     background: Canvas; box-shadow: none; border: 2px solid CanvasText;
   }
+  /* THE COMB IS DROPPED HERE, and it has to be. Now that a hatch takes its `data-tone`, the
+     comb is a HUE, and `forced-color-adjust: none` above would pin --warn onto a possibly-black
+     ground at about 1.8:1 — the exact trade this block's note refuses everywhere else. The
+     dashed border is what the measurement below actually recorded ("ten solid cells and one
+     dashed"), so the silhouette that carries measured-versus-not-measured is untouched; what
+     goes is a texture that was near-invisible in this mode when it was ink-at-an-alpha and
+     would be a contrast failure now that it is not. */
   .isotype-cell[data-fill="hatch"], .isotype-key-swatch[data-fill="hatch"] {
-    background-color: Canvas; border: 1px dashed CanvasText;
+    background-color: Canvas; background-image: none; border: 1px dashed CanvasText;
   }
   .isotype-cell--empty, .isotype-key-swatch--empty {
     background: Canvas; border: 1px solid GrayText;
