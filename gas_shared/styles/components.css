@@ -1976,6 +1976,63 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
    the section's, so it exists only when the section is open. */
 .section-collapse__body { margin-top: var(--space-3); }
 
+/* --------------------------------------------- a distribution across ordered bands
+   The picture that let two registers fold a subject x band matrix into the roll-up table
+   keyed on the same subject. See ui/bandBar.js for why the scale is a property of the table
+   and why the bar is not a control.
+
+   THE RAMP IS `--rank-1..4`, AND THAT IS THE ORDINAL-FORK RULE RATHER THAN A PREFERENCE.
+   gas/DESIGN.md once argued this grid must be neutral ink at four alphas, and the argument it
+   actually made was against two candidates: SEVERITY (a 70-day cell in red reading as "HIGH")
+   and `--accent` (the one hue reserved for "the thing being pointed at"). The third was never
+   considered. gas_ai/DESIGN.md's Ordinal-Fork Rule names it: "the percentage BANDS are steps
+   and take the ordinal ramp, while the four posture STATES are kinds and keep the status
+   triad." An idle band is a step. The ramp is already measured, already documented as
+   not-severity, and costs no new token and no hex literal.
+
+   AND THE SHADE STOPPED MEANING MAGNITUDE. The old grid shaded a cell by `count / max` over
+   the whole grid, so red meant "a lot of subjects are here" — which in a security register
+   does read as a severity, exactly as that argument said. Here the tone is the band's own
+   identity, fixed and independent of any count. Rank 4 IS the cold band, which is the page's
+   alarm, already drawn as a `bad` verdict dot in the same row.
+
+   `--hatch` FOR THE BAND THAT IS NOT ON THE SCALE. "No movement on record yet" is not a point
+   on an idle ramp at all, and `--hatch` is the design system's token for "this part is not a
+   measurement". It also keeps the ramp at the four steps it was measured as. */
+.bandbar {
+  display: block; width: 100%; min-width: 72px; height: 16px;
+  border-radius: var(--radius-xs); overflow: hidden; background: var(--track-bg);
+}
+/* A row with nothing to distribute draws no track: an empty track is a claim that every band
+   is zero, and zero is a measurement. */
+.bandbar--empty { background: transparent; }
+.bandbar__fill { display: flex; height: 100%; }
+.bandbar__seg { display: block; height: 100%; }
+.bandbar__seg[data-rank="1"] { background: var(--rank-1-tint); }
+.bandbar__seg[data-rank="2"] { background: var(--rank-2-tint); }
+.bandbar__seg[data-rank="3"] { background: var(--rank-3-tint); }
+.bandbar__seg[data-rank="4"] { background: var(--rank-4-tint); }
+.bandbar__seg[data-rank="none"] { background-color: var(--surface-2); background-image: var(--hatch); }
+/* THE HAIRLINE IS THE SILHOUETTE, and it is what the picture falls back to. Adjacent tints at
+   .20/.28/.36/.52 are lighter than the solids the ramp's separation was measured on, so the
+   edge carries the boundary where the hue does not — for a dichromat, in greyscale, and under
+   forced colors, where `background` is overridden outright and every segment resolves to the
+   same forced ink. Borders are honoured there and redrawn in the system border colour, so the
+   bar stays a run of distinguishable blocks rather than one bar of solid colour. */
+.bandbar__seg + .bandbar__seg { border-inline-start: 1px solid var(--page); }
+/* THE DIM IS THE COLUMN READ, HANDED BACK. A matrix can be scanned down a column; a row of
+   bars cannot, so pressing a band in the key row above lights that band in every row at once.
+   Opacity rather than a colour change, so the band keeps its own identity while quiet. The
+   global prefers-reduced-motion block in overrides.css zeroes this duration; the rule does not
+   repeat the media query, and that dependency is stated here because a copy of this rule
+   somewhere without that override would animate for a reader who asked it not to. */
+.bandbar__seg[data-on="false"] { opacity: 0.22; }
+.bandbar__seg { transition: opacity var(--dur-quick) var(--ease-out); }
+@media (forced-colors: active) {
+  .bandbar { background: transparent; border: 1px solid CanvasText; }
+  .bandbar__seg[data-on="false"] { opacity: 1; }
+}
+
 /* ---------------------------------------------------- a verdict as a dot and a word
    PROMOTED from both registers' pages.css, where the two rulesets were BYTE-IDENTICAL.
    gas's copy carried the note "NOT PROMOTED TO gas_shared. One app draws it today; a second

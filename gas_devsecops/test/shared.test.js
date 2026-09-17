@@ -48,7 +48,9 @@ import { figureCardModel, openAndTotal, relativeAge } from "../../gas_shared/ui/
 import { registerFigureCardContract } from "../../gas_shared/test/contracts/figureCard.js";
 import { registerQuadContract } from "../../gas_shared/test/contracts/quad.js";
 import { quadModel } from "../../gas_shared/ui/quad.js";
+import { registerBandBarContract } from "../../gas_shared/test/contracts/bandBar.js";
 import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
+import { bandBarModel } from "../../gas_shared/ui/bandBar.js";
 import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
 import { registerUnitChartContract } from "../../gas_shared/test/contracts/unitChart.js";
 import {
@@ -285,6 +287,7 @@ registerSyncCaptionContract(base);
 // reads code rather than rendering.
 registerQuadContract({ ...base, quadModel });
 registerSparklineContract({ ...base, sparkPath, sparkLabel });
+registerBandBarContract({ ...base, bandBarModel });
 // The open-backlog isotype's arithmetic, which used to be test/executivePictogram.test.js
 // against this page's own exports. It moved wholesale when gas_shared/ui/unitChart.js took
 // the ladder: the cast-first perturbation is that file's, carried over intact, and the

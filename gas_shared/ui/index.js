@@ -58,6 +58,8 @@
 //                 breaks) and the role="img" SVG around it
 //   splitBar.js   one track split into labelled segments, with the figures repeated in words
 //                 beneath it — an in/out proportion, or a severity mix
+//   bandBar.js    a distribution across ordered bands at the size of a table cell: the
+//                 shared-scale model (pure) and the one role=img bar it draws
 //   verdict.js    a verdict as a dot AND a word, over one slug->tone table shared by the
 //                 capacity and cold-zone families; the word is the signal, the dot is
 //                 aria-hidden redundancy
@@ -126,6 +128,7 @@ export { quadModel, quadTable } from "./quad.js";
 export { sparkLabel, sparkPath, sparkline } from "./sparkline.js";
 export { rowDrag, ruleGrip } from "./rowReorder.js";
 export { splitBar } from "./splitBar.js";
+export { bandBar, bandBarModel } from "./bandBar.js";
 export { VERDICT_KINDS, verdictMark } from "./verdict.js";
 export {
   COUNT_UNITS, FILLS, FINE_UNITS, GRID_CELLS, MAX_EXACT_CELLS, MAX_MARKS, MAX_SEGMENTS,
