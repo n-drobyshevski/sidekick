@@ -400,3 +400,15 @@ move that sentence off the top.
 `coldZoneScatter` fills cold assets' `rectRot` points in `CATEGORICAL[0]` (`#2563eb`) and reads
 them back as canvas ink at the same 5.17:1 measurement §1 pins for text — one fewer token to
 reconcile than a register whose accent needed the five-token split.
+
+**The grain control above that scatter is a switch, not two charts sharing a heading.** Both
+sides plot the same two quantities — idle days against open findings — over the same population,
+and a support group's dot is an aggregation of the asset dots beside it: its backlog is theirs
+added up, and its idle reading is its median member's. A reader can therefore check one grain
+against the other by eye instead of taking two pictures on trust, which is the same bargain
+`gas_devsecops`'s repository/product grain switch makes and the reason both sides here keep
+identical columns in the `chartTable` twin. One `<canvas>` serves both: the grain changes the
+data and never the chart type, and `coldZoneScatter` destroys whatever chart is on the canvas
+before it draws, so there is no hidden second canvas to come back at the wrong size. Only one
+word moves with the grain, and it is in the alt text — a description naming assets over a canvas
+of support groups would mislead exactly the reader who cannot check it.

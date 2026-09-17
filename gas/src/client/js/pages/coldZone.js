@@ -33,16 +33,16 @@
 
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  coldAssetRows, coldCensusModel, coldGroupRows, coldKpiCards, coldModeCaption,
-  coldScatterPoints, coldZoneView, coldestShareNote, groupCountNote, heatModel, severitiesNote,
-  unmeasurableNote,
+  coldAssetRows, coldCensusModel, coldGroupRows, coldGroupScatterPoints, coldKpiCards,
+  coldModeCaption, coldScatterPoints, coldZoneView, coldestShareNote, groupCountNote, heatModel,
+  severitiesNote, unmeasurableNote,
 } from "./coldZoneModel.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
   DEFAULT_PAGE_SIZE, absent, absentText, chartTable, chartTableModel, clear, dataTable, days1,
   denomNote, el, emptyState, errorState, figureCard, firstRunNotice, fmtCount, meter,
-  onPageTeardown, pageHeader, pageOf, pct1, scopeBar, sectionLabel, skeletonStack, sortRows,
-  statusPill, tableFooter, tipLabel, unitGrid, unitKeyRow,
+  onPageTeardown, pageHeader, pageOf, pct1, scopeBar, sectionLabel, segmented, skeletonStack,
+  sortRows, statusPill, tableFooter, tipLabel, unitGrid, unitKeyRow,
 } from "../ui.js";
 
 // ------------------------------------------------------------------------- local helpers
@@ -175,6 +175,13 @@ export async function renderColdZone(main, _params, ctx) {
   const host = el("div", {});
   main.append(host);
   host.append(skeletonStack(4, { variant: "stat" }));
+
+  // OUTSIDE `paint`, WHICH REBUILDS EVERY SECTION. An SWR refresh repaints this page from the
+  // fresh payload, and a reader who switched the scatter to support groups a second earlier
+  // meant it about the section, not about the one paint that happened to be on screen. It is
+  // deliberately not in the URL: `setParams` replaces the whole query string and does not
+  // re-render, and a lens on one chart is not a different question being asked of the server.
+  let scatterGrain = "asset";
 
   let paint = null;
   const promise = swrCall(
@@ -510,17 +517,65 @@ export async function renderColdZone(main, _params, ctx) {
   }
 
   /**
-   * Idle time against backlog, one dot per asset the newest scan still returns.
+   * Idle time against backlog — one dot per asset, or one per support group.
+   *
+   * THE SWITCH IS A SWITCH BECAUSE BOTH GRAINS PLOT THE SAME TWO QUANTITIES over the same
+   * population: idle days against open findings, for the observed assets that still carry an
+   * open finding. A group's dot is an aggregation of the asset dots beside it — its backlog is
+   * their backlog added up, and its idle reading is its median member's — so a reader can check
+   * one grain against the other by eye rather than taking two pictures on trust.
+   * `coldGroupScatterPoints` is where that is argued and measured.
+   *
+   * ONE CANVAS, REPAINTED, not two canvases hidden past each other: the grain changes the data
+   * and never the chart type, and `coldZoneScatter` destroys whatever chart is already on the
+   * canvas before it draws. Nothing is refetched — both grains come off the payload this page
+   * already holds — and nothing is written to the URL, because the choice is a lens on one
+   * section rather than a different question being asked of the server.
    *
    * The loader dance every chart in this app does: Chart.js is a second bundle fetched on
    * demand, a deployment whose CSP refuses it falls back to `chartUnavailable` rather than to a
    * blank box, and the chart is destroyed on teardown so a route change does not leave a live
-   * Chart bound to a detached canvas.
+   * Chart bound to a detached canvas. `chartUnavailable` REPLACES the chart box for good, so it
+   * stays on the first build's catch and is never the answer to a grain switch.
    */
   function renderChart(view) {
-    const points = coldScatterPoints(view);
-    host.append(el("h3", { class: "section-label" }, "Idle time against backlog"));
-    if (!points.length) {
+    const byAsset = coldScatterPoints(view);
+    const byGroup = coldGroupScatterPoints(view);
+    const toggle = segmented({
+      options: [
+        {
+          value: "asset",
+          label: "Asset",
+          title: "One dot per asset the newest scan still returns, at its own idle time.",
+        },
+        {
+          value: "group",
+          label: "Support group",
+          title: "One dot per support group, at its median asset's idle time and its whole"
+            + " backlog. Past the line, at least half of its assets are cold.",
+        },
+      ],
+      value: scatterGrain,
+      ariaLabel: "Plot one dot per",
+      onChange: (v) => {
+        if (v === scatterGrain) return;
+        scatterGrain = v;
+        toggle.set(v);
+        paintScatter();
+      },
+    });
+    // NAMED FOR WHAT A DOT IS, so the control, the lead-in and the table's first column agree
+    // word for word — and drawn ABOVE the empty branch, so a reader is never shown a control
+    // that vanished with the thing it controls.
+    host.append(el("div", { class: "section-head" },
+      el("h3", { class: "section-label" }, "Idle time against backlog"),
+      el("div", { class: "toolbar-group" },
+        el("span", { class: "small muted" }, "One dot per"),
+        toggle)));
+    // ONE EMPTY STATE FOR BOTH GRAINS, and it is not a shortcut: the group points are folded
+    // out of exactly the assets the other grain plots, so the two are empty together and there
+    // is no grain a reader could be stranded on.
+    if (!byAsset.length) {
       host.append(emptyState(
         "No asset to plot yet.",
         "The scatter needs an asset the scanner still returns that has at least one open"
@@ -530,17 +585,31 @@ export async function renderColdZone(main, _params, ctx) {
       return;
     }
     const canvas = el("canvas");
+    const tableHost = el("div", {});
     host.append(el("div", { class: "chart-card" },
       el("div", { class: "chart-box" }, canvas),
-      chartTable({
+      tableHost));
+
+    let bound = false;
+    paintScatter();
+
+    function paintScatter() {
+      const group = scatterGrain === "group";
+      const points = group ? byGroup : byAsset;
+      clear(tableHost).append(chartTable({
         canvas,
-        caption: "Every asset the newest scan still returns that has an open finding, its idle"
-          + " time and its backlog. \"at least\" marks an asset with no movement on record —"
-          + " that figure is a lower bound counted from when this register started watching,"
-          + " not a measured silence.",
+        caption: group
+          ? "Every support group that still has an open finding, its median asset's idle time"
+            + " and the backlog of all of them. \"at least\" marks a group whose median asset"
+            + " has no movement on record — that figure is a lower bound counted from when"
+            + " this register started watching, not a measured silence."
+          : "Every asset the newest scan still returns that has an open finding, its idle"
+            + " time and its backlog. \"at least\" marks an asset with no movement on record —"
+            + " that figure is a lower bound counted from when this register started watching,"
+            + " not a measured silence.",
         model: chartTableModel({
           columns: [
-            { key: "label", label: "Asset", format: "text" },
+            { key: "label", label: group ? "Support group" : "Asset", format: "text" },
             { key: "idleDays", label: "Idle days", format: "days" },
             { key: "open", label: "Open", format: "count" },
             {
@@ -553,23 +622,31 @@ export async function renderColdZone(main, _params, ctx) {
           ],
           rows: points,
         }),
-      })));
-    loadCharts()
-      .then((api) => {
-        api.coldZoneScatter(canvas, points, {
-          thresholdDays: view.coldAfterDays,
-          // The rule's label says "(relative)" when the line was derived, because a dashed rule
-          // at 47 days is a different claim depending on where 47 came from.
-          mode: view.mode,
-        });
-        onPageTeardown(() => {
-          try {
-            api.destroyChart(canvas);
-          } catch (e) {
-            /* already detached */
-          }
-        });
-      })
-      .catch(() => chartUnavailable(canvas));
+      }));
+      loadCharts()
+        .then((api) => {
+          api.coldZoneScatter(canvas, points, {
+            thresholdDays: view.coldAfterDays,
+            // The rule's label says "(relative)" when the line was derived, because a dashed
+            // rule at 47 days is a different claim depending on where 47 came from.
+            mode: view.mode,
+            // Only the alt text moves with the grain: a description naming assets over a canvas
+            // of support groups would mislead exactly the reader who cannot check it.
+            unit: scatterGrain,
+          });
+          // ONCE PER CANVAS, not once per paint. The canvas outlives every switch, and a second
+          // registration would only destroy an already-destroyed chart on the way out.
+          if (bound) return;
+          bound = true;
+          onPageTeardown(() => {
+            try {
+              api.destroyChart(canvas);
+            } catch (e) {
+              /* already detached */
+            }
+          });
+        })
+        .catch(() => chartUnavailable(canvas));
+    }
   }
 }

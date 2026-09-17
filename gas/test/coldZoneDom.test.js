@@ -152,7 +152,45 @@ describe("the scatter follows the app's chart contract", () => {
     );
     expect(call).toContain("thresholdDays: view.coldAfterDays");
     expect(call).toContain("mode: view.mode");
+    expect(call).toContain("unit: scatterGrain");
     expect(call).not.toContain("fixedAfterDays");
+  });
+});
+
+// THE GRAIN SWITCH. Four claims, and each is a defect this section could plausibly acquire —
+// the first two are the difference between a switch and two charts wearing one heading.
+describe("the scatter's grain switch", () => {
+  it("is the shared segmented control, named for what a dot is", () => {
+    expect(CODE).toContain("const toggle = segmented({");
+    expect(CODE).toContain('value: "asset"');
+    expect(CODE).toContain('value: "group"');
+    expect(CODE).toContain('label: "Support group"');
+    expect(CODE).toContain('"One dot per"');
+  });
+
+  it("reads both grains off the payload in hand — a switch never refetches", () => {
+    expect(CODE).toContain("coldGroupScatterPoints(view)");
+    const section = CODE.slice(CODE.indexOf("function renderChart(view)"));
+    expect(section).not.toContain("swrCall");
+  });
+
+  it("keeps the grain outside paint(), so an SWR refresh does not undo the reader's pick", () => {
+    const declared = CODE.indexOf('let scatterGrain = "asset"');
+    expect(declared, "the grain is never declared").toBeGreaterThan(-1);
+    expect(declared).toBeLessThan(CODE.indexOf("paint = (model) =>"));
+    // Not in the URL either: setParams replaces the whole query string and does not re-render.
+    expect(CODE).not.toContain("setParams");
+  });
+
+  it("draws the control above the empty state, so no grain can strand a reader", () => {
+    const section = CODE.slice(CODE.indexOf("function renderChart(view)"));
+    expect(section.indexOf("toolbar-group")).toBeLessThan(section.indexOf("emptyState("));
+  });
+
+  it("repaints one canvas and registers the teardown once, not once per switch", () => {
+    const section = CODE.slice(CODE.indexOf("function renderChart(view)"));
+    expect(section.match(/el\("canvas"\)/g)).toHaveLength(1);
+    expect(section).toContain("if (bound) return;");
   });
 });
 

@@ -31,9 +31,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   COLD_VERDICT_LABEL, GROUP_VERDICT_LABEL, NO_GROUP, boundOnlySentence, coldAssetRows,
-  coldCensusModel, coldGroupRows, coldKpiCards, coldModeCaption, coldScatterPoints,
-  coldZoneView, coldestShareNote, groupCountNote, heatLevel, heatModel, severitiesNote,
-  unmeasurableNote,
+  coldCensusModel, coldGroupRows, coldGroupScatterPoints, coldKpiCards, coldModeCaption,
+  coldScatterPoints, coldZoneView, coldestShareNote, groupCountNote, heatLevel, heatModel,
+  severitiesNote, unmeasurableNote,
 } from "../src/client/js/pages/coldZoneModel.js";
 
 // --------------------------------------------------------------------------- fixtures
@@ -858,5 +858,119 @@ describe("coldScatterPoints: both filters earn their place", () => {
   it("is an empty list, never a throw, on an unmeasurable view", () => {
     expect(coldScatterPoints(coldZoneView(payload({ totals: null })))).toEqual([]);
     expect(coldScatterPoints(null)).toEqual([]);
+  });
+});
+
+describe("coldGroupScatterPoints: the same scatter, one grain up", () => {
+  /** An asset that qualifies for the scatter, named and placed in one call. */
+  const plot = (id, group, idle, open, over = {}) => asset({
+    asset_id: id, asset_name: id, support_group: group, idle_reading_days: idle,
+    open_findings: open, ...over,
+  });
+
+  it("files the null support group under its own label rather than dropping it", () => {
+    const v = coldZoneView(payload({
+      assets: [plot("a", null, 40, 2), plot("b", "Payments", 50, 3)],
+      groups: [group()],
+      totals: totals({ assets: 2, assets_with_open: 2 }),
+    }));
+    expect(coldGroupScatterPoints(v).map((p) => p.label).sort())
+      .toEqual([NO_GROUP, "Payments"]);
+  });
+
+  it("adds the members' backlog up, so the group dots total the asset dots", () => {
+    const v = coldZoneView(payload({
+      assets: [
+        plot("a", "Payments", 10, 2), plot("b", "Payments", 20, 3), plot("c", "Retail", 30, 4),
+      ],
+      groups: [group()],
+      totals: totals({ assets: 3, assets_with_open: 3 }),
+    }));
+    const groups = coldGroupScatterPoints(v);
+    const sum = (points) => points.reduce((n, p) => n + p.open, 0);
+    expect(sum(groups)).toBe(sum(coldScatterPoints(v)));
+    expect(groups.find((p) => p.label === "Payments").open).toBe(5);
+  });
+
+  it("takes the middle member's reading on an odd count", () => {
+    const v = coldZoneView(payload({
+      assets: [
+        plot("a", "Payments", 10, 1), plot("b", "Payments", 200, 1),
+        plot("c", "Payments", 50, 1),
+      ],
+      groups: [group()],
+      totals: totals({ assets: 3, assets_with_open: 3 }),
+    }));
+    expect(coldGroupScatterPoints(v)[0].idleDays).toBe(50);
+  });
+
+  it("takes the upper of the two middles on an even count, never their average", () => {
+    // 10, 20, 40, 80 — the average of the middles would be 30, which no asset ever read.
+    // The upper middle keeps "at least half have been idle at least this long" exact.
+    const v = coldZoneView(payload({
+      assets: [
+        plot("a", "Payments", 10, 1), plot("b", "Payments", 20, 1),
+        plot("c", "Payments", 40, 1), plot("d", "Payments", 80, 1),
+      ],
+      groups: [group()],
+      totals: totals({ assets: 4, assets_with_open: 4 }),
+    }));
+    expect(coldGroupScatterPoints(v)[0].idleDays).toBe(40);
+  });
+
+  it("inherits cold and bounded from the median asset, never re-deciding either", () => {
+    const v = coldZoneView(payload({
+      assets: [
+        plot("warm", "Payments", 10, 1),
+        plot("mid", "Payments", 120, 1, { cold: true, verdict: "cold", idle_is_bound: true }),
+        plot("cold", "Payments", 300, 1, { cold: true, verdict: "cold" }),
+      ],
+      groups: [group()],
+      totals: totals({ assets: 3, assets_with_open: 3 }),
+    }));
+    expect(coldGroupScatterPoints(v)[0]).toEqual({
+      label: "Payments", idleDays: 120, open: 3, cold: true, bounded: true,
+    });
+  });
+
+  it("excludes from both the median and the sum exactly what the asset grain excludes", () => {
+    const v = coldZoneView(payload({
+      assets: [
+        plot("keep", "Payments", 60, 2),
+        plot("gone", "Payments", 900, 9, { observed: false }),
+        plot("empty", "Payments", 10, 0),
+        plot("noidle", "Payments", null, 7),
+      ],
+      groups: [group()],
+      totals: totals({ assets: 4, assets_with_open: 1 }),
+    }));
+    expect(coldGroupScatterPoints(v)).toEqual([
+      { label: "Payments", idleDays: 60, open: 2, cold: false, bounded: false },
+    ]);
+  });
+
+  it("is empty exactly when the asset grain is, so no grain can strand a reader", () => {
+    const none = coldZoneView(payload({
+      assets: [plot("gone", "Payments", 900, 9, { observed: false })],
+      groups: [group()],
+      totals: totals({ assets: 1 }),
+    }));
+    expect(coldScatterPoints(none)).toEqual([]);
+    expect(coldGroupScatterPoints(none)).toEqual([]);
+    expect(coldGroupScatterPoints(coldZoneView(payload({ totals: null })))).toEqual([]);
+    expect(coldGroupScatterPoints(null)).toEqual([]);
+  });
+
+  it("orders cold groups first, then by backlog, so the alt text reads worst-first", () => {
+    const v = coldZoneView(payload({
+      assets: [
+        plot("a", "Small", 200, 1, { cold: true, verdict: "cold" }),
+        plot("b", "Busy", 10, 50),
+        plot("c", "Big", 200, 9, { cold: true, verdict: "cold" }),
+      ],
+      groups: [group()],
+      totals: totals({ assets: 3, assets_with_open: 3 }),
+    }));
+    expect(coldGroupScatterPoints(v).map((p) => p.label)).toEqual(["Big", "Small", "Busy"]);
   });
 });

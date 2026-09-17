@@ -98,6 +98,20 @@ describe("coldZoneScatter: a line dataset with no line is exactly a scatter", ()
     expect(config.options.scales.y.title.text).toBe("open findings");
   });
 
+  // A GROUPED ESTATE IS THE COMMON CASE HERE: a support group's median member is at most its
+  // idlest one, so a canvas of groups can easily sit entirely left of the line the page is
+  // about. `suggestedMax` only extends, so the dot at 210 is still plotted at 210.
+  it("stretches the x axis to the line, so the rule is never scaled off the canvas", async () => {
+    const { config } = await build({ thresholdDays: 400, mode: "fixed" });
+    expect(config.options.scales.x.suggestedMax).toBe(400);
+    expect(config.data.datasets[0].data[0]).toEqual({ x: 210, y: 12 });
+  });
+
+  it("suggests no maximum when there is no line to keep on the canvas", async () => {
+    const { config } = await build({ thresholdDays: null, mode: "fixed" });
+    expect(config.options.scales.x.suggestedMax).toBeUndefined();
+  });
+
   it("drops a point whose idle days or open count is not a finite number", async () => {
     const charts = await loadCharts();
     charts.coldZoneScatter(fakeCanvas(), [
@@ -163,6 +177,26 @@ describe("coldZoneScatter: the alt text says where the line came from", () => {
   it("still says where the line came from when there is no threshold to state", async () => {
     const { canvas } = await build({ thresholdDays: null, mode: "relative" });
     expect(canvas.attrs["aria-label"]).toContain("The cold-zone line comes from relative mode.");
+  });
+
+  // THE ONE WORD THAT MOVES WITH THE GRAIN. The page plots the same two quantities per asset
+  // or per support group, and the reader who depends on this sentence is the one who cannot
+  // check the picture against it — so a canvas of support groups must never say "asset".
+  it("names support groups when the caller says so, and assets when it says nothing", async () => {
+    const { canvas: groups } = await build({ thresholdDays: 90, mode: "fixed", unit: "group" });
+    expect(groups.attrs["aria-label"]).toContain(
+      "Idle days against open findings for each support group that still has an open finding:",
+    );
+    expect(groups.attrs["aria-label"]).not.toContain("each asset");
+
+    // The older contract, unchanged: no `unit` is assets, and so is the page's own "asset".
+    for (const opts of [{ thresholdDays: 90, mode: "fixed" },
+      { thresholdDays: 90, mode: "fixed", unit: "asset" }]) {
+      const { canvas } = await build(opts);
+      expect(canvas.attrs["aria-label"]).toContain(
+        "Idle days against open findings for each asset the newest scan still returns:",
+      );
+    }
   });
 });
 
