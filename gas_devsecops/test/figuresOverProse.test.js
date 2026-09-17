@@ -437,8 +437,10 @@ describe("the honesty statements stayed on the page, not in a tip", () => {
     // The term staying put is only correct because the specific reading is still said first —
     // otherwise a censored register's hero would offer a general definition and nothing about
     // the bound it is actually showing.
-    expect(EXEC_SRC).toMatch(/The survival curve never falls to half within the observed/);
-    expect(EXEC_SRC).toMatch(/This is “not measured”, not zero/);
+    // Reworded by the tip-budget round and re-pinned rather than relaxed: the claim is that
+    // the SPECIFIC reading leads, not that it leads in any particular number of words.
+    expect(EXEC_SRC).toMatch(/The curve never falls to half inside the window/);
+    expect(EXEC_SRC).toMatch(/“not measured”, not zero/);
     expect(MTTR_SRC).toMatch(/The curve never falls to half within the observed window/);
   });
 

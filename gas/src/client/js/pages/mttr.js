@@ -1342,9 +1342,8 @@ export async function renderMttr(main, _params, ctx) {
           key: "kmMedian",
           label: "Median MTTR (KM)",
           className: "num num--key",
-          help: [`Kaplan–Meier median time-to-remediation for this ${dim.noun} — the principal MTTR figure. `
-            + "Still-open findings count as censored instead of being ignored, so it isn't biased "
-            + "low by fresh fast-patched vulns."],
+          help: [`Kaplan–Meier median time-to-remediation for this ${dim.noun} — the principal figure.`,
+            "Still-open findings are censored, so fresh fast-patched vulns can't bias it low."],
           cell: (r) => fmtSpan(r.kmMedian),
         },
         {
@@ -1732,12 +1731,9 @@ export async function renderMttr(main, _params, ctx) {
         term: "sla-target",
         lines: [
           rate.baseEmpty
-            ? "Resolved inside the SLA window: not measured — nothing has closed yet, so there"
-              + " is no resolved population to compare against the target."
-            : "Taken over what CLOSED: of the findings that resolved, the share that resolved"
-              + " on or before their severity's target.",
-          "The clock starts when a vendor fix became available, and the comparison is"
-          + " inclusive — on or before the target.",
+            ? "Not measured: nothing has closed yet, so there is no resolved population."
+            : "Taken over what CLOSED: of what resolved, the share inside target.",
+          "The clock starts at a vendor fix, and the comparison is inclusive.",
         ],
       },
     );
@@ -1771,10 +1767,8 @@ export async function renderMttr(main, _params, ctx) {
       {
         term: "sla-target",
         lines: [
-          "Taken over what is still RUNNING: of the findings still open, the share already past"
-          + " their severity's target, measured from when a vendor fix became available.",
-          "Unlike In SLA — which only scores findings that closed — an aged-out open CRITICAL"
-          + " counts here.",
+          "Taken over what is still RUNNING: of what is open, the share past target.",
+          "Unlike In SLA, an aged-out open CRITICAL counts here.",
         ],
       },
     );
@@ -1787,9 +1781,8 @@ export async function renderMttr(main, _params, ctx) {
     return statRow("MTTR p90", p.value, p.note, null, {
       term: "half-life",
       lines: [
-        "Kaplan–Meier 90th-percentile time-to-remediation — the slow tail, read off the same"
-        + " survival curve as the half-life above.",
-        "Censoring-aware, so a wave of fresh fast-patched findings cannot bias it low.",
+        "Kaplan–Meier 90th-percentile time-to-remediation — the slow tail.",
+        "Off the same curve as the half-life, so fresh fast-patched findings cannot bias it low.",
       ],
     });
   }
@@ -1833,10 +1826,9 @@ export async function renderMttr(main, _params, ctx) {
       {
         term: "awaiting-fix",
         lines: [
-          "Open findings with no published fix. Those sit outside every deadline until a fix"
-          + " exists, which is why the actionable clock starts there and not at detection.",
-          "They are still counted in the survival estimate above as censored observations —"
-          + " dropping them would leave only the findings that got fixed.",
+          "Open findings with no published fix, outside every deadline until one exists.",
+          "Which is why the actionable clock starts at the fix and not at detection.",
+          "Still censored in the estimate above, not dropped.",
         ],
       },
     );
@@ -1875,10 +1867,9 @@ export async function renderMttr(main, _params, ctx) {
     fanHost.append(sectionLabel("The clock, by severity", {
       term: "half-life",
       lines: [
-        "Each severity's curve here and its row in the table below are one estimate read two"
-        + " ways — the table is that curve's median, its lower bound and its P90.",
-        "Open findings are in every curve as right-censored observations, so a staircase that"
-        + " stops stepping is a severity that stopped closing.",
+        "Each curve here and its row below are one estimate read two ways.",
+        "A staircase that stops stepping is a severity that stopped closing.",
+        "The table is that curve's median, its lower bound and its P90.",
       ],
     }));
 
@@ -1970,8 +1961,8 @@ export async function renderMttr(main, _params, ctx) {
     const heading = sectionLabel("Open findings by age", {
       term: "age",
       lines: [
-        "Open findings only, aged from first detection to now — a resolved finding stopped"
-        + " ageing and its lifetime is the survival curve's subject, not this one's.",
+        "Open findings only, aged from first detection to now.",
+        "A resolved finding stopped ageing; its lifetime is the survival curve's subject.",
         vm.denominator,
       ],
     });
@@ -2505,12 +2496,9 @@ export async function renderMttr(main, _params, ctx) {
           help: {
             term: "half-life",
             lines: [
-              "Kaplan–Meier median time-to-remediation for this severity — the principal MTTR "
-              + "figure. Still-open findings count as censored instead of being ignored, so it "
-              + "isn't biased low by fresh fast-patched vulns.",
-              "\u201c\u2265 N d\u201d means this severity's curve never fell to half inside the "
-              + "observed window, so the median is at least that far out and no exact figure "
-              + "exists to print.",
+              "Kaplan–Meier median time-to-remediation for this severity — the principal figure.",
+              "Still-open findings are censored, so fresh fast-patched vulns can't bias it low.",
+              "\u201c\u2265 N d\u201d means the curve never fell to half: no exact figure exists.",
             ],
           },
           cell: kmMedianCell,
@@ -2542,12 +2530,9 @@ export async function renderMttr(main, _params, ctx) {
           // per row.
           help: {
             lines: [
-              "Taken over what is still RUNNING: of the findings still open at this severity, "
-              + "the share already past the target, measured from when a vendor fix became "
-              + "available.",
-              "Unlike In SLA — which only scores findings that CLOSED — an aged-out open "
-              + "CRITICAL counts here. A single SLA percentage over everything would be "
-              + "neither of the two.",
+              "Taken over what is still RUNNING: of what is open here, the share past target.",
+              "Unlike In SLA, which scores only what CLOSED, an aged-out open CRITICAL counts.",
+              "Measured from when a vendor fix became available.",
             ],
           },
           // The count AND the rate AND the base. The count alone hides how big the backlog it
@@ -2564,9 +2549,9 @@ export async function renderMttr(main, _params, ctx) {
           help: {
             term: "sla-target",
             lines: [
-              "Taken over what CLOSED: of the findings that resolved at this severity, the "
-              + "share that resolved on or before the target. The comparison is inclusive.",
+              "Taken over what CLOSED: of what resolved here, the share inside the target.",
               "Targets are CRITICAL 7d · HIGH 14d · MEDIUM 30d · LOW 90d · INFO 180d.",
+              "The comparison is inclusive — on or before the target.",
             ],
           },
           // `rateCell(rateView(...))` — the figure, then the base it was taken over in a

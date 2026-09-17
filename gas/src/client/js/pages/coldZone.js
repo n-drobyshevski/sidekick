@@ -465,9 +465,8 @@ export async function renderColdZone(main, _params, ctx) {
             term: "returned",
             lines: [
               "The most recent finding resolved on this asset.",
-              "— N returned beside it counts the open findings that have come back at"
-              + " least once: a return clears the resolved date, which is why an asset with"
-              + " returns can show no movement at all.",
+              "N returned counts open findings that have come back at least once.",
+              "A return clears the resolved date, so an asset with returns can show none.",
             ],
           },
           cell: (r) => {

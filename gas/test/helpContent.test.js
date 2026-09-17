@@ -71,10 +71,22 @@ const EXPECTED_IDS = [
   "cold-zone", "coldest-share", "unobserved", "idle",
 ];
 
-// Long enough for the three-line entries in the file (the longest first-two line today is 218
-// characters), short enough that a paragraph masquerading as a tip line would still fail. The
-// tip card renders only the first two. Same figure gas_devsecops uses, for the same reason.
-const MAX_TIP_LINE_LENGTH = 220;
+// THE CARD IS 300px WIDE, which is about 45 characters to a rendered row. This was 220 — and
+// a 220-character ceiling on each of the two lines the card paints permits a ten-row wall
+// before the "Enter for the full definition" line is added. The book was written to it: the
+// longest opening line was 218 characters and the median card ran to 241, roughly seven rows
+// on hover.
+//
+// 120 is the line budget and it is deliberately looser than the 110/90 split root DESIGN.md
+// asks for, because a test should fail on a paragraph rather than on a well-judged clause.
+// What it cannot let through is prose. The card totals ~150 characters now.
+//
+// This does NOT shorten the book. The measurement assertions below read `lines.join(" ")`,
+// the whole entry, so a claim this register owes a reader is as load-bearing on line four as
+// on line one — displaced sentences moved DOWN, where the Key sheet still renders them, and
+// that is why the line-count ceiling below is 4 rather than 3. Same figure gas_devsecops uses,
+// for the same reason.
+const MAX_TIP_LINE_LENGTH = 120;
 
 describe("os: allEntries", () => {
   it("holds exactly the ids this register expects, in some order", () => {
@@ -99,11 +111,11 @@ describe("os: allEntries", () => {
     }
   });
 
-  it("gives every entry 2 or 3 lines, each a non-empty string", () => {
+  it("gives every entry 2 to 4 lines, each a non-empty string", () => {
     for (const e of ENTRIES) {
       expect(Array.isArray(e.lines), `${e.id}.lines is not an array`).toBe(true);
       expect(e.lines.length, `${e.id} has ${e.lines.length} lines`).toBeGreaterThanOrEqual(2);
-      expect(e.lines.length, `${e.id} has ${e.lines.length} lines`).toBeLessThanOrEqual(3);
+      expect(e.lines.length, `${e.id} has ${e.lines.length} lines`).toBeLessThanOrEqual(4);
       for (const line of e.lines) {
         expect(typeof line, `${e.id} has a non-string line`).toBe("string");
         expect(line.trim().length, `${e.id} has an empty line`).toBeGreaterThan(0);

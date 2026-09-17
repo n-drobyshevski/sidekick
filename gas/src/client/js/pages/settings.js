@@ -881,8 +881,9 @@ export async function renderSettings(main, params, ctx) {
           el("th", { scope: "col" },
             tipLabel("Last run", {
               lines: [
-                "History backfill records this. Domain-tag backfill and Support group " +
-                "refresh run synchronously and keep no record of when they last ran.",
+                "History backfill records this.",
+                "Domain-tag backfill and Support group refresh run synchronously and keep " +
+                "no record of when they last ran.",
               ],
             })),
           el("th", { scope: "col" }, "Status"),

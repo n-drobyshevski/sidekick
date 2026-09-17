@@ -1100,10 +1100,8 @@ export async function renderExecutive(main, _params, ctx) {
       return {
         term: "half-life",
         lines: [
-          "The survival curve never falls to half within the observed window, so there is no"
-          + " median to publish.",
-          "More than half of what is tracked is still open, so the half-life is at least the"
-          + " longest thing observed, which is the figure above.",
+          "The curve never falls to half inside the window, so there is no median.",
+          "The half-life is at least the longest thing observed — the figure above.",
         ],
       };
     }
@@ -1111,8 +1109,8 @@ export async function renderExecutive(main, _params, ctx) {
       return {
         term: "half-life",
         lines: [
-          "No lifecycle has a readable clock yet. This is not measured, not zero: the"
-          + " half-life needs at least one observation to rest on.",
+          "No lifecycle has a readable clock yet: not measured, not zero.",
+          "The half-life needs at least one observation to rest on.",
         ],
       };
     }
@@ -1130,8 +1128,8 @@ export async function renderExecutive(main, _params, ctx) {
     return el("p", { class: "small muted" },
       tipLabel("Survival curve", {
         lines: [
-          "This page is sent the estimate only, not the curve behind it. The curve, its"
-          + " censor markers and the per-severity split are on MTTR & SLA.",
+          "This page is sent the estimate only, not the curve behind it.",
+          "The curve, its censor markers and the per-severity split are on MTTR & SLA.",
         ],
       }),
       " → ",
@@ -1590,11 +1588,10 @@ export async function renderExecutive(main, _params, ctx) {
           help: {
             term: "half-life",
             lines: [
-              "Kaplan-Meier median time to remediation for this group, with still-open"
-              + " findings censored so it is not biased low by fresh, fast-patched findings.",
+              "Kaplan-Meier median time to remediation for this group.",
+              "Still-open findings are censored, so fresh fast-patched ones can't bias it low.",
               ...(view.anyBoundMissing
-                ? ["A dash means this group's curve never falls to half. The lower bound that"
-                  + " would replace it is not in this payload; MTTR & SLA publishes it."]
+                ? ["A dash means the curve never falls to half; MTTR & SLA publishes the bound."]
                 : []),
             ],
           },

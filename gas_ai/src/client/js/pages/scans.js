@@ -185,9 +185,8 @@ export async function renderScans(main, params, ctx) {
         term: "register-scope",
         lines: [
           "Sync cadence: daily at 05:00 Europe/Paris plus on-demand “Sync now”.",
-          "Every figure is the one the last sync produced, read through the project view"
-          + " currently set; an area with no figure says so rather than carrying a number from"
-          + " somewhere else.",
+          "Every figure is the one the last sync produced, through the project view set.",
+          "An area with no figure says so rather than carrying a number from somewhere else.",
         ],
       }),
       register(ranked, diagram),
@@ -399,9 +398,9 @@ export async function renderScans(main, params, ctx) {
 
     wrap.append(
       sectionLabel("Landscape reach", { lines: [
-        "Of everything on the AI register, how much the pipeline actually touched: five " +
-        "paired counts, never a bare percentage, because an empty denominator is a fact " +
-        "worth showing rather than a number to divide by.",
+        "Of everything on the AI register, how much the pipeline actually touched.",
+        "Five paired counts, never a bare percentage.",
+        "An empty denominator is a fact worth showing rather than a number to divide by.",
         REACH_VS_SCAN_AREA_NOTE,
       ] }),
       reachLadder(reach.stages),

@@ -649,7 +649,11 @@ function relationBlurb(fromKind, entry) {
     ? " " + entry.count.toLocaleString() + (entry.count === 1 ? " such relationship" : " such relationships")
       + " in this tenant."
     : "";
-  return sentence + tally + (help ? " " + help.blurb : "");
+  // `help.lines.join(" ")` and not the first two: this is the palette's DETAIL PANE, not a
+  // 300px tip card, so the whole entry belongs here. The book used to carry one `blurb`
+  // string and this read it directly; the lines are that same prose, written as a card lead
+  // plus the rest rather than as one paragraph.
+  return sentence + tally + (help ? " " + help.lines.join(" ") : "");
 }
 
 /** Kinds whose meaning the help book already explains, in the app's own words. */
@@ -677,7 +681,8 @@ function kindBlurb(kind, count) {
     ? count.toLocaleString() + " " + label + (count === 1 ? " node" : " nodes") + " in this tenant."
     : "No " + label + " nodes in this tenant — a query starting here will answer nothing.";
   const help = findEntry(HELP_FOR_KIND[kind] || "");
-  return tally + (help ? " " + help.blurb : "");
+  // The whole entry, for the same reason `relationBlurb` takes it: this is the detail pane.
+  return tally + (help ? " " + help.lines.join(" ") : "");
 }
 
 // ------------------------------------------------------------------------- the palette

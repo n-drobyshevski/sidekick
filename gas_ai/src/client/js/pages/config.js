@@ -484,8 +484,8 @@ export async function renderConfigFindings(main, params, ctx) {
           // Not a warning — a fact about where the control applies. It is the reason the
           // register's gap total and the inventory's per-asset counts differ.
           help: { lines: [
-            "How many of this control's failing evaluations are against a resource the AI " +
-            "inventory does not track — a region, an access policy, no asset to open.",
+            "How many failing evaluations are against a resource the inventory does not track.",
+            "A region, an access policy — no asset to open.",
           ] },
           cell: (g) => (g.unlinked
             ? tipAnchor(
@@ -623,9 +623,8 @@ export async function renderConfigFindings(main, params, ctx) {
         {
           key: "linked", label: "AI asset", sortable: false,
           help: { lines: [
-            "Whether this finding's resource matches an asset in the AI inventory — most " +
-            "findings do not, because they are evaluated against a region or a policy no " +
-            "asset models.",
+            "Whether this finding's resource matches an asset in the AI inventory.",
+            "Most do not: they are evaluated against a region or a policy no asset models.",
           ] },
           cell: (r) => (r.linked
             ? statusPill("neutral", "On inventory")

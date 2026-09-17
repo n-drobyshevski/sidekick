@@ -938,9 +938,8 @@ function paintSecrets(host, vm, filters) {
         term: "secret-resolved",
         lines: [
           vm.hero.denominator,
-          "Credentials committed to source. Removing one is not the same as fixing it: the"
-          + " string leaving HEAD closes the finding, and the credential stays live until it"
-          + " is rotated.",
+          "Credentials committed to source. Removing one is not the same as fixing it.",
+          "The string leaving HEAD closes the finding; the credential lives until rotated.",
         ],
       },
     ),
@@ -1026,10 +1025,9 @@ function paintSecrets(host, vm, filters) {
   host.append(sectionLabel("Validity and confidence", {
     term: "validation-state",
     lines: [
-      "The validation state says whether anybody asked the provider; the detector confidence"
-      + " says how sure the scanner was that the matched string is a credential at all.",
-      "The two are counted on separate axes, so a cross-tab would have to be multiplied out"
-      + " of two sets of totals — which is a fabrication, not a measurement.",
+      "Validation state says whether anybody asked the provider.",
+      "Detector confidence says how sure the scanner was it is a credential at all.",
+      "Counted on separate axes: a cross-tab would be multiplied out, not measured.",
     ],
   }));
   host.append(el("p", { class: "small muted" },
@@ -1051,9 +1049,9 @@ function paintSecrets(host, vm, filters) {
     term: "removed",
     lines: [
       vm.removalVsRotation.denominator,
-      "Two independent events, so two axes: a row is removed when the string leaves HEAD and"
-      + " rotated when the credential is observed dead. Neither implies the other, and the"
-      + " corner where they disagree is the one this page leads with.",
+      "Two independent events, so two axes. Neither implies the other.",
+      "Removed when the string leaves HEAD, rotated when the credential is observed dead.",
+      "The corner where they disagree is the one this page leads with.",
     ],
   },
     quadTable(
@@ -1136,9 +1134,8 @@ function paintSecrets(host, vm, filters) {
   host.append(sectionCard("Time to revoke", {
     term: "time-to-revoke",
     lines: [
-      "Detection to confirmed-invalid, with still-live credentials right-censored at today.",
-      "A credential nobody ever checked supports no claim in either direction, so it is"
-      + " excluded from this estimate rather than censored inside it.",
+      "Detection to confirmed-invalid, with still-live credentials censored at today.",
+      "One nobody checked is excluded rather than censored: it supports no claim.",
     ],
   },
     el("div", { class: "kpi-row" },
@@ -1318,9 +1315,9 @@ function paintSecrets(host, vm, filters) {
   // point on the page from the heading it is about.
   host.append(sectionCard("Every finding in the register", {
     lines: [
-      "Open and resolved, server-paged and server-sorted — click a column to ask for a"
-      + " different order rather than re-sorting what is already on screen, and open a row"
-      + " for everything the register holds about that one finding.",
+      "Open and resolved, server-paged and server-sorted.",
+      "Open a row for everything the register holds about that one finding.",
+      "A column asks for a different order rather than re-sorting what is on screen.",
       vm.missingColumns,
     ],
   },
@@ -1486,10 +1483,9 @@ function segmentCard(seg) {
               help: {
                 term: "validation-state",
                 lines: [
-                  "The count is how many of this segment's findings have ever been"
-                  + " validated; the bar beside it is that count as a share of the"
-                  + " segment's own total, so two segments of different sizes can be"
-                  + " compared down the column.",
+                  "How many of this segment's findings have ever been validated.",
+                  "The bar is that count as a share of the segment's own total.",
+                  "So two segments of different sizes can be compared down the column.",
                 ],
               },
             },

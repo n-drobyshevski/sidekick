@@ -210,11 +210,58 @@ describe("the entry list", () => {
     expect(n).toBe(ENTRIES.length);
   });
 
-  it("gives every entry a mark and a blurb", () => {
+  it("gives every entry a mark and lines", () => {
     for (const e of ENTRIES) {
       expect(typeof e.mark, e.id).toBe("function");
-      expect(e.blurb.length, e.id).toBeGreaterThan(40);
+      expect(Array.isArray(e.lines), e.id + ".lines is not an array").toBe(true);
+      expect(e.lines.length, e.id).toBeGreaterThanOrEqual(2);
+      for (const line of e.lines) {
+        expect(typeof line, e.id + " has a non-string line").toBe("string");
+        expect(line.trim().length, e.id + " has an empty line").toBeGreaterThan(0);
+      }
       expect(e.term.length, e.id).toBeGreaterThan(0);
+    }
+  });
+
+  // THE CEILING THIS BOOK NEVER HAD, and the defect it lets back in if it goes.
+  //
+  // Entries here carried a single `blurb` string and no `lines` array, so
+  // `glossaryTipLines` fell through to `tipLead(entry.blurb)` and CUT the card at the
+  // character cap. The median blurb was 443 characters and the worst 1,164, so 46 of the 51
+  // entries ended in an ellipsis and four fifths of the book never reached a reader who
+  // hovered — silently, because a truncation looks like a design.
+  //
+  // The entries carry `lines` now, the shape gas and gas_devsecops use and the one
+  // gas_shared/README.md documents. 120 is the same per-line budget those two books are held
+  // to; the card paints the first two, so this is what keeps a paragraph off it. Lines three
+  // and after are Help-page prose and deliberately unbounded.
+  const MAX_TIP_LINE_LENGTH = 120;
+
+  // The two generated families are Help-page-only. `vocab-*` indexes codebook.js's standing
+  // statements and `measure-*` mirrors measureSpec.ts's goal and formula — records this page
+  // INDEXES rather than restates (rule 4 in helpContent.js's own header), so their prose is
+  // split on sentences rather than rewritten to a card budget. Exempting them is only sound
+  // while no tip points at one, which the next test pins.
+  const HELP_PAGE_ONLY = (id) => id.startsWith("vocab-") || id.startsWith("measure-");
+
+  it("keeps the first two lines short enough to stand alone in a tip card", () => {
+    for (const e of ENTRIES) {
+      if (HELP_PAGE_ONLY(e.id)) continue;
+      for (const line of e.lines.slice(0, 2)) {
+        expect(line.length, e.id + "'s tip-card line is " + line.length + ' chars: "'
+          + line + '"').toBeLessThanOrEqual(MAX_TIP_LINE_LENGTH);
+      }
+    }
+  });
+
+  it("points no tip at a Help-page-only entry, which is what earns them the exemption", () => {
+    // A `term:` naming one would put codebook.js's or measureSpec.ts's unbudgeted prose on a
+    // 300px card, where `tipLead` would cut it mid-sentence — the exact defect this package
+    // removed. If a page genuinely needs one of these on a card, it needs written lines
+    // first, and this test is where that conversation starts.
+    for (const term of namedTerms()) {
+      expect(HELP_PAGE_ONLY(term), term + " is Help-page-only and cannot back a tip card")
+        .toBe(false);
     }
   });
 
@@ -262,7 +309,7 @@ describe("the prose, against the model it describes", () => {
   it("counts the pillars correctly in the score's own definition", () => {
     const word = PILLAR_WORDS[modelPillars().length];
     const aars = ENTRIES.find((e) => e.id === "aars");
-    expect(aars.blurb).toContain(word + " pillars");
+    expect(aars.lines.join(" ")).toContain(word + " pillars");
   });
 
   // The figure's callout copy CAN make the same claim, from a different file — and no
@@ -324,7 +371,12 @@ describe("the vocabulary it names", () => {
       const entry = ENTRIES.filter((e) => e.id === id)[0];
       expect(entry, "no glossary entry for " + id).toBeTruthy();
       expect(entry.drawnOn, id + " is drawn outside the workbench").toEqual(["aars"]);
-      expect(entry.blurb, id + " does not say it is experimental")
+      // ON THE CARD, NOT JUST IN THE BOOK. This checked `blurb`, and the experimental
+      // caveat sat at the END of a 400-to-800-character one — past the cut `tipLead` made,
+      // so the warning was in the source and never on screen for anyone who hovered. It
+      // leads line one now, which is what `slice(0, 2)` below actually pins.
+      const card = entry.lines.slice(0, 2).join(" ");
+      expect(card, id + " does not say it is experimental ON THE TIP CARD")
         .toContain("EXPERIMENTAL");
     }
   });
@@ -437,7 +489,7 @@ describe("the count resolvers", () => {
 
   it("degrades an entry whose resolver throws instead of failing the page", () => {
     const boom = {
-      id: "boom", term: "Boom", family: "graph", blurb: "x".repeat(50),
+      id: "boom", term: "Boom", family: "graph", lines: ["x".repeat(50), "y".repeat(50)],
       mark: () => null,
       count: () => { throw new Error("no such KPI"); },
     };

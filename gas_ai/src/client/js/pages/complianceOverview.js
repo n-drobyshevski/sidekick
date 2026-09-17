@@ -524,8 +524,8 @@ function renderWeakestAreas(host, data, view, actions) {
       {
         key: "posture", label: "Compliance posture",
         help: { lines: [
-          "The percentage of evaluated policies passing under this subcategory. Every row " +
-          "here was scored — an unscored subcategory carries no posture and cannot be ranked.",
+          "The percentage of evaluated policies passing under this subcategory.",
+          "Every row here was scored: an unscored one carries no posture and cannot rank.",
         ] },
         cell: (r) => postureCell(r),
       },

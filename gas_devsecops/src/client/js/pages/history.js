@@ -527,11 +527,9 @@ export async function renderHistory(host, _params, _ctx) {
       sectionLabel("What moved the number", {
         term: "movement",
         lines: [
-          "The change in each register's open count over the last 28-day window bounded by two"
-          + " of its own saved scans, split into the causes that moved it — and which of them"
-          + " are remediation the register actually observed.",
-          "The window is per register: three registers share one scan log, and a scan of one of"
-          + " them looked at none of the others.",
+          "Each register's open count over its own last 28-day window, split by cause.",
+          "The window is per register, not shared: a scan of one looked at none of the others.",
+          "The causes say which of the movement is remediation the register actually observed.",
         ],
       }),
       movementHost,
@@ -1134,8 +1132,8 @@ export async function renderHistory(host, _params, _ctx) {
         el("h3", { class: "section-label" }, tipLabel("MTTR trend (KM median)", {
           term: "censoring",
           lines: [
-            "Still-open findings stay in the curve behind this line rather than being dropped,"
-            + " which is what makes the median honest as of each replayed date.",
+            "Still-open findings stay in the curve behind this line rather than dropping out.",
+            "That is what makes the median honest as of each replayed date.",
           ],
         })),
         kmPoints.length > 1

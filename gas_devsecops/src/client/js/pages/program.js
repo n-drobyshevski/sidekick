@@ -666,13 +666,10 @@ export async function renderProgram(host, params, _ctx) {
         {
           term: "coverage",
           lines: [
-            "Of everything that deserved remediation, the share that was remediated — taken"
-            + " over " + view.coverage.denominatorLabel + ".",
-            "The bounds are the two extreme re-labellings of the unclassified rows, so the"
-            + " WIDTH of the interval is the size of the doubt.",
-            "Coverage and efficiency are published together because either one alone can be"
-            + " bought by moving the rule — widen it and coverage climbs while efficiency"
-            + " falls.",
+            "Of what deserved remediation, the share remediated — over "
+            + view.coverage.denominatorLabel + ".",
+            "The bounds re-label the unclassified rows both ways: the WIDTH is the doubt.",
+            "Published together: widen the rule and coverage climbs while efficiency falls.",
           ],
         },
       ),
@@ -714,9 +711,8 @@ export async function renderProgram(host, params, _ctx) {
           lines: [
             fmtCount(excluded) + " secret " + pluralize(excluded, "finding")
             + " are outside every figure on this page.",
-            "The risk rule refuses to score them rather than inventing a classification —"
-            + " severity on that register grades a detection, not whether a credential is"
-            + " live.",
+            "The rule refuses to score them rather than inventing a classification.",
+            "Severity there grades a detection, not whether a credential is live.",
           ],
         },
       )));
@@ -781,11 +777,10 @@ export async function renderProgram(host, params, _ctx) {
         tipLabel("Unclassified", {
           term: "unclassified",
           lines: [
-            "Held outside the four corners above, never folded into one: those sum to "
-            + fmtCount(view.cellTotal) + " classified findings, and these "
+            "Held outside the four corners above, never folded into one.",
+            "The coverage and efficiency bounds re-label exactly these rows.",
+            "The corners sum to " + fmtCount(view.cellTotal) + " classified findings; these "
             + fmtCount(view.unclassified.total) + " are the rows the rule could not place.",
-            "They are what the coverage and efficiency bounds are computed from — the two"
-            + " extreme re-labellings are of exactly these rows.",
           ],
         })),
       el("div", { class: "kpi-value num" }, fmtCount(view.unclassified.total)),
@@ -836,10 +831,10 @@ export async function renderProgram(host, params, _ctx) {
           help: {
             term: "signal-coverage",
             lines: [
-              "How much of the column this clause rests on was ever captured, over the rows"
-              + " the signal applies to.",
-              "A bar is drawn only where a share was measured: \"always present\" and"
-              + " \"not applicable\" are not zeroes and get no track.",
+              "How much of the column this clause rests on was captured, over the rows it"
+              + " applies to.",
+              "A bar is drawn only where a share was measured.",
+              "\"Always present\" and \"not applicable\" are not zeroes and get no track.",
             ],
           },
           cell: (r) => el("span", { class: "rate-with-meter" },
@@ -890,10 +885,9 @@ export async function renderProgram(host, params, _ctx) {
     // the rule in force is the direct-labelled one, is a definition of the whole section.
     sensitivityHost.append(sectionLabel("Rule sensitivity", {
       lines: [
-        "Every non-empty subset of that register's risk signals, scored exactly the way the"
-        + " headline pair above is — one point per candidate rule.",
-        "The rule actually in force is direct-labelled on the chart and marked “active” in"
-        + " the table behind it.",
+        "Every non-empty subset of that register's risk signals, one point per rule.",
+        "Each is scored exactly the way the headline pair above is.",
+        "The rule in force is direct-labelled on the chart and marked “active” in the table.",
       ],
     }));
     const view = sensitivityView(program && program.sensitivity);
@@ -1136,10 +1130,9 @@ export async function renderProgram(host, params, _ctx) {
           {
             term: "reconstructed",
             lines: [
-              "Those months are excluded from the headline close rate above rather than"
-              + " averaged into it.",
-              "A reconstructed month ended before this register started watching, so its"
-              + " backlog is real but nobody was looking in real time; a partial month is"
+              "Excluded from the headline close rate above rather than averaged into it.",
+              "A reconstructed month ended before this register started watching.",
+              "Its backlog is real but nobody was looking in real time; a partial month is"
               + " simply not over yet.",
             ],
           },
@@ -1159,10 +1152,9 @@ export async function renderProgram(host, params, _ctx) {
     trendHost.append(sectionLabel("Coverage and efficiency over time", {
       term: "reconstructed",
       lines: [
-        "Both rates on one axis, because the trade-off between them is the story: a coverage"
-        + " line climbing while efficiency falls is legible only when they share a scale.",
-        "The shaded band marks the reconstructed prefix — one point per day of pre-scan"
-        + " history rebuilt from first-detection dates, where closures are under-counted.",
+        "Both rates on one axis, because the trade-off between them is the story.",
+        "The shaded band marks the reconstructed prefix, where closures are under-counted.",
+        "The prefix is one point per day of pre-scan history, from first-detection dates.",
       ],
     }));
     if (program && program.trendSupported === false) {
