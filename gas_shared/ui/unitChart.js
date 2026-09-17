@@ -416,13 +416,35 @@ export function unitGrid(model, opts = {}) {
   // AND A CELL THAT IS ONE OF ELEVEN CAN AFFORD TO BE BIGGER THAN ONE OF A HUNDRED. 9px is sized
   // for a 10x10 waffle, where the block is the figure; at eleven cells it renders a census as a
   // smudge in the corner of its own card (measured on the shipped page before this rule).
+  //
+  // THAT RULE STOPPED AT ROW_MAX AND LEFT A CLIFF BEHIND IT. Twenty-four cells drew a 318px
+  // strip; twenty-five drew a 53px square, because one cell over the edge fell back to BOTH the
+  // square shape and the 9px waffle cell. A census does not stop being a census at 25 — thirty
+  // assets rendered as a 64px smudge in a 704px card, which is the very defect the rule above
+  // was written to fix, one size class along. So the two knobs part company here:
+  //
+  //   SHAPE — a census block is as FLAT as ROW_MAX allows (as few rows as will hold it, then
+  //   balanced across them), not square. Square is right for a PROPORTION, where 10x10 makes
+  //   one cell one percentage point and the block is the figure; for a census the shape carries
+  //   nothing, and rows a reader can scan beat a lump they have to decode.
+  //
+  //   SIZE — a census cell keeps the strip's 14px as its FLOOR rather than dropping to the
+  //   waffle's 9px, and `isotype--census` lets the stylesheet grow it from there to the width
+  //   of the card. The column count is a decision about the picture and stays here; how much
+  //   room those columns are given is a fact about the viewport and belongs in CSS, which is
+  //   the only one of the two that can see it.
   const ROW_MAX = 24;
-  const cols = model.cells <= ROW_MAX
+  const block = model.cells > ROW_MAX;
+  const rows = block ? Math.ceil(model.cells / ROW_MAX) : 1;
+  const cols = !block
     ? model.cells
-    : Math.max(1, Math.ceil(Math.sqrt(model.cells)));
-  const cell = model.cells <= ROW_MAX ? 14 : 9;
+    : model.exact
+      ? Math.ceil(model.cells / rows)
+      : Math.max(1, Math.ceil(Math.sqrt(model.cells)));
+  const cell = block && !model.exact ? 9 : 14;
+  const census = block && model.exact;
   const grid = el("div", {
-    class: "isotype isotype--grid",
+    class: census ? "isotype isotype--grid isotype--census" : "isotype isotype--grid",
     role: "img",
     "aria-label": model.aria,
     style: "--isotype-cols:" + cols + ";--isotype-cell:" + cell + "px",

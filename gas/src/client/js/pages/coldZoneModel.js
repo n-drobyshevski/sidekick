@@ -710,3 +710,74 @@ export function coldScatterPoints(view) {
   }
   return points;
 }
+
+/**
+ * The same scatter, one grain up: one point per SUPPORT GROUP, in the same shape.
+ *
+ * AN AGGREGATION OF THE DOTS ALREADY ON THE CHART, not a second measurement. The population is
+ * exactly `coldScatterPoints`' — observed assets that still carry an open finding — grouped by
+ * `support_group`, so the two grains are two readings of one set and are empty together. A
+ * group's `open` is the SUM of its members' open findings, which makes the identity a reader
+ * can check by eye: the group dots' backlog adds up to the asset dots' backlog.
+ *
+ * THE x IS THE MEDIAN MEMBER'S READING, and the median is a real asset rather than an average
+ * of two. A group has no idle time of its own, so this picks one an asset can vouch for: the
+ * reading at `floor(n / 2)` of the members sorted ascending, which makes "at least half this
+ * group's assets have been idle at least this long" exact at every n. `cold` and `bounded` are
+ * then that asset's own, so the `>=` edge that decides cold stays in the domain and is never
+ * re-derived here, and the lower-bound notation still marks exactly the readings that are one.
+ *
+ * A BOUNDED MEDIAN IS STILL HONEST. A bound understates the silence it stands for, so a median
+ * that lands on one — or that has bounded readings above it — is itself a valid lower bound on
+ * the group's median: the true figure can only be further right, never left.
+ *
+ * WHY NOT THE OTHER TWO CANDIDATES. The group's `last_movement_at` is the LEAST idle member, so
+ * one active asset would read a frozen group as active; the idlest member is the other extreme,
+ * and every group of any size would sit past the line. Only the middle separates groups.
+ */
+export function coldGroupScatterPoints(view) {
+  const assets = view && Array.isArray(view.assets) ? view.assets : [];
+  const byGroup = new Map();
+  for (const a of assets) {
+    if (!a || a.observed === false) continue;
+    const open = num(a.open_findings, 0);
+    const idle = num(a.idle_reading_days);
+    if (open <= 0 || idle === null) continue;
+    const label = a.support_group || NO_GROUP;
+    let bucket = byGroup.get(label);
+    if (!bucket) {
+      bucket = { label, open: 0, members: [] };
+      byGroup.set(label, bucket);
+    }
+    bucket.open += open;
+    bucket.members.push({
+      idleDays: idle,
+      cold: a.cold === true,
+      bounded: a.idle_is_bound === true,
+      // Only a tiebreak, so two members on the same reading always yield the same median
+      // whatever order the payload listed them in.
+      key: String(a.asset_name || a.asset_id || ""),
+    });
+  }
+
+  const points = [];
+  for (const bucket of byGroup.values()) {
+    const members = bucket.members.slice().sort(
+      (x, y) => x.idleDays - y.idleDays || x.key.localeCompare(y.key),
+    );
+    const mid = members[Math.floor(members.length / 2)];
+    points.push({
+      label: bucket.label,
+      idleDays: mid.idleDays,
+      open: bucket.open,
+      cold: mid.cold,
+      bounded: mid.bounded,
+    });
+  }
+  points.sort((a, b) => {
+    if (a.cold !== b.cold) return a.cold ? -1 : 1;
+    if (b.open !== a.open) return b.open - a.open;
+    return String(a.label).localeCompare(String(b.label));
+  });
+  return points;
+}

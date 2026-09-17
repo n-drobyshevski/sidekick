@@ -425,6 +425,34 @@ three is twelve distinguishable styles and zero new colour tokens; `--chart-cat-
 reserved and undefined. `--hatch` gets its first consumer as designed: a segment that is a
 coverage gap rather than a measurement.
 
+**Twelve styles was the claim; for a while nine of them existed.** `[data-fill="hatch"]` painted
+one ink at one alpha whatever the segment's `data-tone` was, so the tone channel reached solid
+and ring and stopped at the third silhouette — four hatched tones rendered as one. Both cold-zone
+censuses are built on that pair being distinguishable: they hatch `watching` (open findings whose
+idle time could not be measured) as `warn` and `unobserved` (the scanner has lost sight of it) as
+`neutral`, and shipped them pixel-identical, with the key row beneath as the only thing telling
+them apart. The comb now takes its ink from `color`, the way the ring already took its own, with
+`--hatch`'s geometry and its neutral rgba as the default so a hatch that was already neutral does
+not move. Under forced colours the comb is dropped rather than tone-mapped: it is a hue now, and
+`--warn` on a black High Contrast ground measures about 1.8:1 — the dashed border is what carries
+measured-versus-not-measured there, and that is what was measured.
+
+**A census block is as flat as it can be, and it grows to its card.** `unitGrid` lays an exact
+lattice of 24 or fewer out as one row at 14px; past that it used to fall back to BOTH a square
+shape and the waffle's 9px cell, so one repository over the edge turned a 318px strip into a 53px
+square and thirty assets rendered as a 64px smudge in a 704px card — the same defect the 14px
+rule was written to fix, one size class along. The shape and the size part company instead. A
+census block takes as few rows as `ROW_MAX` allows and balances across them, because square is
+right for a PROPORTION (10x10 makes one cell one percentage point) and carries nothing for a
+census; and it keeps 14px as a FLOOR, with `.isotype--census` in `styles/components.css` growing
+the column from there to the width of the card and capping it — at 30px, past which a cell stops
+reading as a mark, and at 44rem, past which the lattice reads as a banner. The column count stays
+in the module because the shape of a picture is a decision about the picture; how much room those
+columns get is a fact about the viewport, and CSS is the only one of the two that can see it.
+That cap used to be `gas`'s own `.cold-census { max-width: 44rem }`, where it was inert (the grid
+inside was `max-content` and never reached it) and where `gas_devsecops` — which passes the same
+class name — had no rule behind it at all.
+
 Refusals, all by type before any cast: an unmeasured count is `absentText` and contributes no
 cells and no share; a zero denominator is unmeasured and never `"0.0%"`; `unit` is required and
 throws; a segment with no `label` is refused outright; and segments summing PAST the stated

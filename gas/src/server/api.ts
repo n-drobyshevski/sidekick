@@ -1979,6 +1979,30 @@ function execColdSlice(model: Rec): Rec {
   };
 }
 
+/**
+ * THE CARD NEVER TAKES THE PAGE DOWN WITH IT.
+ *
+ * This is the only slice on the Executive whose compute reaches Drive on a miss — the durable
+ * layer's halves are total, but `coldZoneData` walks the base rows, which loads the ledger, which
+ * reads the snapshot — and the Executive is the DEFAULT landing page. A throw here is a throw out
+ * of `api_getExecutivePage`, which the client dresses as "Couldn't load remediation data." over
+ * the whole page for the sake of one card.
+ *
+ * A null `coldZone` is a shape the client already renders: `coldShareView` decides from what
+ * arrived rather than from a flag, so it answers the same not-measured notice it paints when no
+ * flat scan is on record. Recorded rather than swallowed, so Settings -> System -> Diagnostics
+ * still names the failure.
+ */
+function execColdSliceGuarded(p: unknown): Rec {
+  try {
+    return execColdSlice(cachedColdZoneData(p));
+  } catch (e) {
+    console.warn(`Executive cold-zone slice failed: ${e}`);
+    errorLog.recordError("executiveColdZone", e, "error");
+    return { coldZone: null, coldZoneAsOfSource: null };
+  }
+}
+
 /** The Cold zone page in one round trip: the profile, the clock and the classifier behind it. */
 export function getColdZonePage(p?: unknown): ApiResult {
   return run(() => cachedColdZoneData(p));
@@ -2602,7 +2626,7 @@ export function getExecutivePage(p?: unknown): ApiResult {
   return run(() => ({
     mttr: execMttrSlice(cachedMttrData(p)),
     ...(execInsightsSlice(cachedInsightsData(insightsParams)) ?? {}),
-    ...execColdSlice(cachedColdZoneData(coldParams)),
+    ...execColdSliceGuarded(coldParams),
     // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
     // domain yields a single row, so a domain scope splits by support group within it instead.
     byDomain: execGroupSlice(
@@ -3595,15 +3619,22 @@ function warmReadModelsInner(budgetMs: number): void {
     // backbone. `mttrBySupportGroup` is the split BOTH the MTTR and Executive pages switch to
     // the moment a domain scope is picked, and it was cold for the same reason.
     warm("program", () => cachedProgramData(p));
-    // The cold zone is on the DEFAULT landing page (the Executive card slices it) as well as
-    // behind its own route, and `durablyCached` only writes L2 during the warm — so without
-    // this line the durable file would never be written at all and every first load after a
-    // scan would pay the full profile over the base.
-    warm("coldZone", () => cachedColdZoneData(p));
     warm("programTrend", () => cachedProgramTrendData(p));
     warm("mttrBySupportGroup", () => cachedMttrBySupportGroupData(p));
     warm("grouping", () => cachedGroupingData({ ...p, keys: groupingKeys }));
     warm("attribution", () => cachedAttributionData({ severities }));
+  }
+  // THE COLD ZONE IS WARMED LAST, AND IN A PASS OF ITS OWN.
+  //
+  // It is on the DEFAULT landing page (the Executive card slices it) as well as behind its own
+  // route, and `durablyCached` only writes L2 during the warm — so without this the durable file
+  // would never be written at all and every first load after a scan would pay the full profile
+  // over the base. But it is also the newest and heaviest model here, and the warm runs under a
+  // budget: warmed in the middle of the loop it could spend what is left and leave `bootstrap`,
+  // `mttr` or `program` — the models every page has depended on for far longer — cold for the
+  // second severity scope. Last means it can only ever starve itself.
+  for (const severities of scopes) {
+    warm("coldZone", () => cachedColdZoneData({ domain: "", supportGroup: "", severities }));
   }
   if (skipped) {
     console.warn(`Cache warm: ran out of budget after ${warmed} entries, ${skipped} left cold`);

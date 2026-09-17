@@ -1844,12 +1844,20 @@ export function coverageEfficiencyScatter(canvas, points) {
  * that from the picture. Hence "(relative)" on the label and the mode in the description — no
  * second colour, no second line, no legend: one more word on a rule that was already labelled.
  *
+ * ONE WORD MOVES WITH THE GRAIN, AND IT IS IN THE ALT TEXT ONLY. The page can plot the same two
+ * quantities per asset or per support group (`unit`), and a description that named assets over
+ * a canvas of support groups would be the one reader who cannot see the picture being told the
+ * wrong thing. Everything else is grain-blind on purpose: the axes are already "idle days" and
+ * "open findings", the dot rules read `cold`, and the caller's `chartTable` twin is where the
+ * row header is named. `unit` absent means assets — the older contract, unchanged.
+ *
  * @param {*} canvas
  * @param {Array<{label: string, idleDays: number, open: number, cold: boolean,
- *                bounded: boolean}>} points  one per observed asset with open findings
- * @param {{thresholdDays: number, mode: string}} opts
+ *                bounded: boolean}>} points  one per observed asset with open findings, or
+ *                                            one per support group when `unit` is `"group"`
+ * @param {{thresholdDays: number, mode: string, unit: string}} opts
  */
-export function coldZoneScatter(canvas, points, { thresholdDays, mode } = {}) {
+export function coldZoneScatter(canvas, points, { thresholdDays, mode, unit } = {}) {
   destroyExisting(canvas);
   const plotted = (points || []).filter(
     (p) => typeof p.idleDays === "number" && Number.isFinite(p.idleDays)
@@ -1860,9 +1868,12 @@ export function coldZoneScatter(canvas, points, { thresholdDays, mode } = {}) {
   // Absent means the fixed window — the older contract — and only the exact word is relative.
   const relative = mode === "relative";
   const modeText = relative ? "relative mode" : "the fixed window";
+  const subject = unit === "group"
+    ? "each support group that still has an open finding"
+    : "each asset the newest scan still returns";
   describe(
     canvas,
-    "Idle days against open findings for each asset the newest scan still returns: "
+    "Idle days against open findings for " + subject + ": "
       + plotted
         .map(
           (p) =>
@@ -1881,6 +1892,13 @@ export function coldZoneScatter(canvas, points, { thresholdDays, mode } = {}) {
   const opts = baseOptions("");
   opts.scales.x.type = "linear";
   opts.scales.x.beginAtZero = true;
+  // THE AXIS ALWAYS REACHES THE LINE. `suggestedMax` only ever EXTENDS an axis, so this never
+  // truncates a dot; what it prevents is the rule being scaled off the canvas whenever nothing
+  // plotted has reached the threshold yet — the plugin below refuses to draw outside the chart
+  // area, and a scatter that quietly dropped its rule would put the reader back to knowing
+  // where 90 days is, which is the whole reason the rule is drawn. An estate sitting entirely
+  // left of the line is a reading, and it is one this chart should be able to show.
+  if (threshold !== null) opts.scales.x.suggestedMax = threshold;
   opts.scales.x.title = { display: true, text: "idle days", font: FONT, color: INK2 };
   opts.scales.y.title = { display: true, text: "open findings", font: FONT, color: INK2 };
   opts.plugins.tooltip.callbacks.title = (items) =>

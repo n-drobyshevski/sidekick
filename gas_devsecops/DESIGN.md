@@ -154,23 +154,44 @@ than for a canvas.
 insisting neither is warm — `--hatch` means "this part is not a measurement" and says it where
 the reader is already looking. `clear` is a ring rather than a fill: measured, and fine.
 
+**The two hatched verdicts are hatched in two different inks, and for a while they were not.**
+They are one silhouette carrying two verdicts — `watching` is `warn`, `unobserved` is `neutral`
+— which is the case the component's two channels exist for, and the shared `[data-fill="hatch"]`
+rule ignored `data-tone` entirely, so they shipped pixel-identical with the key row beneath as
+the only thing separating them. The comb takes its ink from `color` now, the way the ring beside
+it always did: an amber comb is a warm reading nobody could measure, a grey one is a repository
+nobody is looking at.
+
 **What High Contrast costs this picture, measured rather than assumed.** Emulated forced colours
-render the census as ten solid cells and one dashed: the hatch survives (it is ink at an alpha,
-not a hue), so measured-versus-not-measured — the distinction this section exists to make — is
-intact, but `cold` and `warm` differ only by `data-tone` and flatten into one run. Three
-silhouettes cannot carry four tones. It is accepted rather than fixed: `.sevbar-seg` takes the
-other road with `forced-color-adjust: none`, and that road is wrong here because `--warn` on a
-black High Contrast ground measures about 1.8:1 — keeping the hue would trade a lost DISTINCTION
-for a lost CELL. Nothing is actually lost, because `unitKeyRow` prints every segment's label,
-count and share in text directly beneath the lattice and the model refuses a segment with no
-label. `gas_shared/styles/components.css` carries the reasoning beside the rules.
+render the census as ten solid cells and one dashed: the hatch survives as a SILHOUETTE — the
+dashed border, with the comb dropped, because a toned comb is a hue now — so
+measured-versus-not-measured, the distinction this section exists to make, is intact, while the
+two hatched tones collapse into each other and `cold` and `warm` do the same. Three silhouettes
+cannot carry four tones. It is accepted rather than fixed: `.sevbar-seg` takes the other road
+with `forced-color-adjust: none`, and that road is wrong here because `--warn` on a black High
+Contrast ground measures about 1.8:1 — keeping the hue would trade a lost DISTINCTION for a lost
+CELL. Nothing is actually lost, because `unitKeyRow` prints every segment's label, count and
+share in text directly beneath the lattice and the model refuses a segment with no label.
+`gas_shared/styles/components.css` carries the reasoning beside the rules.
 
 **The lattice sizes itself to its population.** Eleven repositories at the waffle's 9px cell
-rendered as a smudge in the corner of a full-width card. `unitGrid` now lays an exact lattice of
-24 or fewer out as one row at 14px, and a larger one as a square block at 9px — a small census
-is a strip a reader counts, a large one is a block they read as a proportion. `gas_ai`'s Scans
+rendered as a smudge in the corner of a full-width card. `unitGrid` lays an exact lattice of
+24 or fewer out as one row at 14px — a small census is a strip a reader counts. `gas_ai`'s Scans
 page had a local rule doing the same thing by hand; it is gone, because a local rule that agrees
 with the shared default is one that will disagree with it later.
+
+**Past that row limit the same rule had a cliff in it, and the cliff is gone.** A lattice of 25
+fell back to BOTH a square shape and the waffle's 9px cell, so one repository over the edge
+turned a 318px strip into a 53px square — the very smudge the paragraph above describes,
+reintroduced one size class along. Shape and size part company now. A census BLOCK is as flat as
+the row limit allows rather than square, because square is right for a PROPORTION (10x10 makes
+one cell one percentage point) and carries nothing for a census; and it keeps 14px as a floor,
+with `.isotype--census` growing each column to the width of the card and capping it at 30px per
+cell and 44rem overall. Above `MAX_EXACT_CELLS` the lattice is a proportion again, and there it
+stays a 10x10 square at 9px — stretching that one would be a different claim wearing the same
+picture. This register saw the colour half of the round before the width half: its own census is
+eleven repositories, which is a strip either way, and the block form appears once a tenant passes
+twenty-four.
 
 **The six `denomNote` paragraphs on this page stay.** They were the obvious prose to remove and
 they are not restatements — `coldModeCaption` says which line drew the zone, `boundOnlySentence`

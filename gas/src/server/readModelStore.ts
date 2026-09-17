@@ -26,7 +26,9 @@
 // an init call on doGet, four trigger handlers and every api_* delegator, and a missed one
 // disables the L2 with no symptom but latency.
 
-import { listNames, readGzJsonNamed, trashNamed, writeGzJson, subfolder } from "./archiveStore";
+import {
+  findSubfolder, listNames, readGzJsonIn, trashNamed, writeGzJson, subfolder,
+} from "./archiveStore";
 import { cached, currentStamp, paramsHash } from "./serverCache";
 
 /** Envelope version. Bump only if the envelope itself changes shape. */
@@ -85,16 +87,34 @@ export function duringWarm<T>(fn: () => T): T {
 }
 
 /**
- * Per-execution circuit breaker. A missing ARCHIVE_FOLDER_ID (requireProp throws) or a revoked
- * Drive scope should cost ONE failed call, not one per durable read-model per request.
+ * Per-execution circuit breaker for the WRITE half. A missing ARCHIVE_FOLDER_ID (requireProp
+ * throws) or a revoked Drive scope should cost ONE failed call, not one per durable read-model
+ * per request. The read half is covered by the folder memo below instead: the archive layer's
+ * reads are total, so a Drive that cannot be reached resolves the folder to null ONCE and every
+ * later read answers "absent" off the memo without touching Drive again. It deliberately does
+ * NOT set this flag — an absent folder is also what a deployment that has never warmed looks
+ * like, and disabling the writes there would keep it from ever being created.
  */
 let disabled = false;
 
-/** Per-execution folder memo — `subfolder()` is getFolderById + getFoldersByName every call,
- *  and a page reading three durable models would otherwise pay six redundant Drive calls. */
-let folderMemo: GoogleAppsScript.Drive.Folder | undefined;
-function readModelFolder(): GoogleAppsScript.Drive.Folder {
-  if (folderMemo === undefined) folderMemo = subfolder("readmodels");
+/**
+ * Per-execution folder memo — resolving the folder is getFolderById + getFoldersByName every
+ * call, and a page reading three durable models would otherwise pay six redundant Drive calls.
+ * It served only the write half, so the READ path resolved the folder afresh per model; on the
+ * Executive, which now reads a durable entry of its own, that was the difference between one
+ * folder resolution per request and one per model.
+ *
+ * `create` is the read/write split: a read answers null for a folder that is not there (and for
+ * a Drive that could not be reached — `findSubfolder` is total), while the warm's write still
+ * creates it, so a deployment that never re-ran setup() self-heals on the first warm. A null
+ * memo is re-resolved only when a write asks for it, so a failing read costs ONE call per
+ * execution rather than one per model.
+ */
+let folderMemo: GoogleAppsScript.Drive.Folder | null | undefined;
+function readModelFolder(create: boolean): GoogleAppsScript.Drive.Folder | null {
+  if (folderMemo === undefined || (create && folderMemo === null)) {
+    folderMemo = create ? subfolder("readmodels") : findSubfolder("readmodels");
+  }
   return folderMemo;
 }
 
@@ -112,7 +132,9 @@ function l2Read(name: string, params: unknown):
 { hit: true; value: unknown } | { hit: false; why: MissReason } {
   if (disabled) return { hit: false, why: "disabled" };
   try {
-    const parsed = readGzJsonNamed("readmodels", readModelFileName(name, params));
+    const folder = readModelFolder(false);
+    if (folder === null) return { hit: false, why: "absent" };
+    const parsed = readGzJsonIn(folder, readModelFileName(name, params), "readModelRead");
     if (parsed === null || typeof parsed !== "object") return { hit: false, why: "absent" };
     const env = parsed as unknown as Envelope;
     if (env.v !== ENVELOPE_V || env.name !== name) return { hit: false, why: "stale" };
@@ -130,6 +152,14 @@ function l2Read(name: string, params: unknown):
   }
 }
 
+/**
+ * The ceiling on one durable entry. A read-model that serializes past this is not cached — it is
+ * a whole-register payload that would cost more to write and re-read than to recompute, and a
+ * write big enough to blow the execution cap would take the REST of the warm down with it,
+ * leaving the older models cold. Skipping one entry (and saying which) degrades instead.
+ */
+const MAX_L2_JSON_CHARS = 4_000_000;
+
 /** Total: never throws. */
 function l2Write(name: string, params: unknown, value: unknown): void {
   if (disabled) return;
@@ -138,7 +168,18 @@ function l2Write(name: string, params: unknown, value: unknown): void {
       v: ENVELOPE_V, stamp: currentStamp(), name,
       paramsHash: paramsHash(params), writtenAtMs: Date.now(), value,
     };
-    writeGzJson(readModelFolder(), readModelFileName(name, params), env);
+    const chars = JSON.stringify(env).length;
+    if (chars > MAX_L2_JSON_CHARS) {
+      // NOT `disabled`: this is one model being too big, not Drive being unreachable, and the
+      // other entries in the same warm are still worth writing.
+      console.warn(
+        `Durable read-model (${name}) is ${chars} chars, over the ${MAX_L2_JSON_CHARS} cap — not written`,
+      );
+      return;
+    }
+    const folder = readModelFolder(true);
+    if (folder === null) return;
+    writeGzJson(folder, readModelFileName(name, params), env);
   } catch (e) {
     disabled = true;
     console.warn(`Durable read-model write (${name}) failed, L2 disabled for this run: ${e}`);

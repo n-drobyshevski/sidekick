@@ -527,6 +527,27 @@ that row's severity — never the single newest scan overall. Two reasons:
    record is undecidable and resolves to observed, the conservative direction, and is named in
    `severities_without_scan` so the reader knows which way the doubt fell.
 
+### Reading the same scatter one grain up
+
+**Idle time against backlog** plots idle days against open findings, and its switch says
+whether a dot is an **asset** or a **support group**. Both grains plot the same two
+quantities over the same population — the observed assets that still carry an open finding —
+so a group's dot is an aggregation of the asset dots beside it, and its backlog is exactly
+theirs added up.
+
+A support group has no idle time of its own, so the group grain takes its **median member's
+reading**: the asset at the middle of the group once its members are ordered by idle time,
+never an average of two. That keeps the claim exact at every count — *at least half of this
+group's assets have been idle at least this long* — and it means a dot past the cold line is
+a group at least half of whose assets are cold. `cold` and the **"at least"** mark come from
+that one asset too, so the threshold is never re-decided outside the domain. A lower bound
+only ever understates, so a median that lands on one is still a lower bound on the group's
+median: the true figure can only be further right.
+
+The other two candidates are worse on purpose. A group's last movement is its *least* idle
+asset, so one busy asset would read a frozen group as active; its idlest asset is the other
+extreme, and every group of any size would sit past the line. Only the middle separates them.
+
 ### Two things this page counts rather than hides
 
 - **`unclassified_rows`** — open findings the active high-risk rule cannot classify at all,
