@@ -910,8 +910,8 @@ export async function renderCombos(main, params) {
         key: "status",
         label: "Status",
         help: { lines: [
-          "Wiz's own remediation status for this issue — In progress once somebody has " +
-          "started on it, Open otherwise. Every row here is unresolved either way.",
+          "Wiz's own remediation status: In progress once somebody started, Open otherwise.",
+          "Every row here is unresolved either way.",
         ] },
         cell: (i) => (i.status === "IN_PROGRESS"
           ? statusPill("warn", "In progress")
@@ -920,9 +920,8 @@ export async function renderCombos(main, params) {
       {
         key: "due", label: "Due",
         help: { lines: [
-          "The SLA verdict for this issue's due date — Overdue, Due soon or on track — " +
-          "against Wiz's own deadline. A blank cell means Wiz set no deadline, not that one " +
-          "was met.",
+          "The SLA verdict for this issue's due date: Overdue, Due soon or on track.",
+          "Against Wiz's own deadline. Blank means Wiz set none, not that one was met.",
         ] },
         cell: (i) => dueChip(i.dueAt) || absent(),
       },

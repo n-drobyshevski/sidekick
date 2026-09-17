@@ -110,8 +110,8 @@ const COLUMNS = [
   // for the identities Wiz never scores — see the note on the cell.
   { key: "dataFindings", label: "Classified data", sort: null, defaultHidden: true,
     help: { lines: [
-      "Classified findings this asset can reach — its own if it is a datastore, whatever " +
-      "its execution identity can read if it is an agent.",
+      "Classified findings this asset can reach.",
+      "Its own if it is a datastore, whatever its identity can read if it is an agent.",
       "Service accounts are unscored, so nothing persists their reach: an identity reads " +
       "as no answer rather than as zero.",
     ] } },
@@ -1500,9 +1500,9 @@ export async function renderInventory(main, params) {
       el("h3", {}, tipLabel("Remediation capacity", {
         lines: [
           readout.detail,
-          "Opened counts new and reopened issues; closed counts the ledger's own"
-          + " disappearance-dated resolutions. A sync that changed the register's scope, or"
-          + " resolved nothing by absence, is plotted but not compared.",
+          "Opened counts new and reopened issues; closed counts disappearance-dated ones.",
+          "A sync that changed the register's scope, or resolved nothing by absence, is"
+          + " plotted but not compared.",
         ].filter(Boolean),
       })),
       el("p", { class: "cap-verdict" },

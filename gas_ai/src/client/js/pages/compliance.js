@@ -105,8 +105,9 @@ const COLUMNS = [
   {
     key: "posture", label: "Compliance posture",
     help: { lines: [
-      "The percentage of evaluated policies passing in this row, or a state pill — NO_" +
-      "RESOURCES, NO_POLICIES — where Wiz never scored it. A state pill is never a 0%.",
+      "The percentage of evaluated policies passing in this row.",
+      "Or a state pill — NO_RESOURCES, NO_POLICIES — where Wiz never scored it.",
+      "A state pill is never a 0%.",
     ] },
     cell: (r) => r.posture,
   },

@@ -39,6 +39,13 @@ read the tree as `"type": "module"`.
 - **The vocabulary.** `helpContent.js` is each register's own book — which words it defines is
   the part that is genuinely per-app. Only the SHAPE of a definition is shared (`{ id, term,
   lines[] }`, kebab-case ids), so a `glossaryTip` behaves the same in all three.
+  That last clause was aspirational until the tip-budget round, and worth recording because
+  the gap was invisible: `gas_ai` carried one `blurb` string and no `lines`, so
+  `glossaryTipLines` fell through to `tipLead(entry.blurb)` and cut 46 of its 51 entries
+  mid-sentence. A `glossaryTip` there showed an ellipsis where the other two showed a
+  definition. All three carry `lines[]` now, and each app's `helpContent.test.js` holds the
+  first two of them to a card-sized budget (`MAX_TIP_LINE_LENGTH`), because those two are
+  what the card paints. Root `DESIGN.md` carries the rule.
 - **Page-shaped CSS**, with one exception: `styles/help.css`, which dresses the shared key
   sheet below. This bullet used to claim that sheet is "the shape every sidekick's key sheet
   has"; it is not, and was not when it was written — see the exception below. It is the shape

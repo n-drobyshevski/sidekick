@@ -686,8 +686,8 @@ export async function renderProblems(main, params) {
       {
         key: "due", label: "Due",
         help: { lines: [
-          "The SLA verdict for this row's due date — Overdue, Due soon or on track — " +
-          "against Wiz's own deadline. Blank means Wiz set no deadline, not that one was met.",
+          "The SLA verdict for this row's due date: Overdue, Due soon or on track.",
+          "Against Wiz's own deadline. Blank means Wiz set none, not that one was met.",
         ] },
         cell: (r) => dueChip(r.dueAt) || absent(),
       },
@@ -725,8 +725,8 @@ export async function renderProblems(main, params) {
         // answer the Cloud Configuration register's own IaC column gives, for the same reason.
         key: "iac", label: "IaC", sortable: false, defaultHidden: true,
         help: { lines: [
-          "Whether Wiz traced this row back to an Infrastructure-as-Code source — where the " +
-          "fix belongs in a repository rather than in the console.",
+          "Whether Wiz traced this row back to an Infrastructure-as-Code source.",
+          "The fix belongs in a repository rather than in the console.",
           "Only findings carry the link. An issue has no IaC field at all, so it reads as no " +
           "answer rather than as a no.",
         ] },
@@ -747,9 +747,9 @@ export async function renderProblems(main, params) {
       {
         key: "rank", label: "Rank", className: "num", defaultHidden: !rankLeads,
         help: { lines: [
-          "The experimental blended score — rule, clock, exploitation, adjacency — defined " +
-          "on the Scoring Models page. Nothing here sorts or filters by it unless Rank leads " +
-          "is turned on in Settings.",
+          "EXPERIMENTAL. The blended score: rule, clock, exploitation, adjacency.",
+          "Nothing sorts or filters by it unless Rank leads is on in Settings.",
+          "Defined on the Scoring Models page.",
         ] },
         cell: (r) => rankCell(r),
       },
@@ -1092,8 +1092,8 @@ export async function renderProblems(main, params) {
       {
         key: "iac", label: "IaC", className: "num", sortable: false, defaultHidden: true,
         help: { lines: [
-          "How many of this action's problems Wiz traced back to an Infrastructure-as-Code " +
-          "source — the share of this work that belongs in a repository rather than a console.",
+          "How many of this action's problems trace back to an Infrastructure-as-Code source.",
+          "The share of this work that belongs in a repository rather than a console.",
           "Only findings carry the link, so an action over issues alone reads zero.",
         ] },
         cell: (r) => (r.iac ? String(r.iac) : el("span", { class: "muted small" }, "0")),
