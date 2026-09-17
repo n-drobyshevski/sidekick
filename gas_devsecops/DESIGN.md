@@ -154,6 +154,18 @@ than for a canvas.
 insisting neither is warm — `--hatch` means "this part is not a measurement" and says it where
 the reader is already looking. `clear` is a ring rather than a fill: measured, and fine.
 
+**Warm takes `ok`, not `warn`, and amber is left to the one segment that is a caveat.** This
+reverses what the census first shipped. A warm repository carries open findings AND had one
+resolve inside the window, so on this section's own question — *has work stopped?* — it is the
+system working, and it is the LARGEST segment. Spent there, `--warn` made the census read as
+roughly half problem when the alarm is `cold` plus `unobserved_open` and nothing else, and it
+left `watching` — the one genuine caveat — wearing the same amber as the healthy majority.
+`--warn` is a text-grade value besides: `tokens.base.css` records it darkened to `#8a5406` so
+it would clear 4.5:1 *as text* on its own tint, and a large flat field of it reads as mud. So
+`warm` and `clear` share a tone and are told apart by SILHOUETTE, which makes the ring
+load-bearing where it used to be one of two separations. `gas/DESIGN.md` §11 carries the same
+change and the same argument for the asset census.
+
 **Unobserved is drawn as two segments, because it was never one piece of news.** `unobserved`
 is tested before `clear`, so a repository that was remediated and then archived stays unobserved
 for as long as the ledger remembers it — nothing open, and no scan will ever list it again. A

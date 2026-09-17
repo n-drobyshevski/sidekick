@@ -517,9 +517,25 @@ export function coldestShareNote(view) {
  * open half is `bad` HATCHED where `cold` is `bad` SOLID: the same alarm with the measurement
  * missing, told apart by silhouette rather than by colour alone.
  *
+ * `warm` IS `ok`, NOT `warn`, AND THAT IS A READING RATHER THAN A PALETTE PREFERENCE. A warm
+ * repository carries open findings AND had one resolve inside the window, so on this section's
+ * own question — has work stopped? — it is the system working. It is also the LARGEST segment
+ * here. Spent on it, `--warn` did two kinds of damage. The census read as roughly half problem,
+ * where the alarm is `cold` plus `unobserved_open` and nothing else; and `watching`, the one
+ * segment that IS a caveat, wore the same amber as the healthy majority, so the tone said
+ * nothing in particular. `--warn` is a text-grade value besides — tokens.base.css records it
+ * darkened to #8a5406 so it would clear 4.5:1 AS TEXT on its own tint — and a large flat field
+ * of it reads as mud rather than as a warning. Amber now marks exactly one thing on this
+ * lattice, and that thing is a measurement nobody could take. The sibling register's
+ * `coldCensusModel` carries the same tone and the same argument.
+ *
+ * SO `warm` AND `clear` SHARE A TONE AND ARE TOLD APART BY SILHOUETTE, which is the pair of
+ * channels this component exists to give. Both are fine; one still has work. It is the bargain
+ * the two `bad` segments strike above — same red, different shape — read from the other end.
+ *
  * `clear` IS A RING, NOT A FILL. It is measured and it is fine: nothing open to go quiet on.
- * Drawing it solid would put it in the same visual weight class as cold and warm, and the
- * silhouette channel exists so two segments differ by shape as well as by tone.
+ * The ring is what keeps it out of the weight class of the solid fills, and now that `warm`
+ * carries the same tone it is also the only channel telling the two of them apart.
  *
  * EXACT WHERE IT CAN BE. Under MAX_EXACT_CELLS repositories the lattice is one cell per
  * repository and there is no rounding to explain; above it the lattice is 100 cells and the
@@ -537,7 +553,7 @@ export function coldCensusModel(view) {
     cells: repos <= MAX_EXACT_CELLS ? "exact" : 100,
     segments: [
       { key: "cold", label: "Cold", count: num(t.cold_repos, 0), tone: "bad", fill: "solid" },
-      { key: "warm", label: "Warm", count: num(t.warm_repos, 0), tone: "warn", fill: "solid" },
+      { key: "warm", label: "Warm", count: num(t.warm_repos, 0), tone: "ok", fill: "solid" },
       {
         key: "watching", label: "Idle time not measured", count: num(t.watching_repos, 0),
         tone: "warn", fill: "hatch",

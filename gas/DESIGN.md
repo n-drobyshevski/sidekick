@@ -362,6 +362,23 @@ rather than a fill, for the opposite reason: it is measured, and it is fine, and
 solid would put "nothing open to go quiet on" in the same visual weight class as an actual
 problem. `cold` and `warm` are the only two solid fills.
 
+**Warm takes `ok`, not `warn`, and amber is left to the one segment that is a caveat.** This
+reverses what this section first shipped, and the argument is a reading rather than a palette
+preference. A warm asset carries open findings AND had one resolve inside the window, so on
+this page's own question — *has work stopped?* — it is the system working; it is also the
+LARGEST segment, at around a third of a typical estate. Spent there, `--warn` did two kinds of
+damage. The census read as roughly half problem, when the alarm is `cold` plus
+`unobserved_open` and nothing else. And `watching` — genuinely a caveat, an asset nobody could
+take a reading on — wore the same amber as the healthy majority, so the tone said nothing in
+particular. `--warn` is a text-grade value besides: `tokens.base.css` records it darkened to
+`#8a5406` so it would clear 4.5:1 *as text* on its own tint, and a large flat field of it
+reads as mud rather than as a warning. So `warm` and `clear` now share a tone and are told
+apart by SILHOUETTE — both are fine, one still has work — which is the same bargain the two
+`bad` segments strike (same red, different shape) read from the other end, and it makes the
+ring load-bearing where it used to be one of two separations. `gas_devsecops` carries the
+identical change for its repository census. Two tests in `coldZoneModel.test.js` pin it: that
+`watching` is the only `warn` segment, and that warm and clear differ by fill alone.
+
 **Unobserved is drawn as two segments, because it was never one piece of news.** `unobserved`
 is tested before `clear`, so an asset that was remediated and then decommissioned stays
 unobserved for as long as the ledger remembers it — nothing open, and no scan will ever list it

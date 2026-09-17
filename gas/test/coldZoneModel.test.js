@@ -559,6 +559,32 @@ describe("coldCensusModel: the five verdicts partition the register", () => {
     expect(seg.cold.fill).toBe("solid");
   });
 
+  // AMBER MEANS ONE THING ON THIS LATTICE, and `warm` is not it. A warm asset had a finding
+  // resolve inside the window, which on this page's question is the system working; drawing
+  // the LARGEST segment in `--warn` made the census read as roughly half problem and left
+  // `watching` — the one genuine caveat — wearing the same tone as the healthy majority.
+  it("keeps amber for the segment nobody could measure", () => {
+    const model = coldCensusModel({ totals: t });
+    const seg = Object.fromEntries(model.segments.map((s) => [s.key, s]));
+    expect(seg.warm.tone).toBe("ok");
+    expect(seg.watching.tone).toBe("warn");
+    // ...and it is the ONLY one. A second amber segment would put the caveat back in a crowd.
+    const amber = model.segments.filter((x) => x.tone === "warn").map((x) => x.key);
+    expect(amber).toEqual(["watching"]);
+  });
+
+  // WARM AND CLEAR SHARE A TONE, so the silhouette is the only channel left to separate them.
+  // This is the pair `unitChart`'s two channels exist for, and the assertion that would fail
+  // the day someone "tidied" clear into a solid to match its neighbour.
+  it("separates warm from clear by silhouette alone", () => {
+    const model = coldCensusModel({ totals: t });
+    const seg = Object.fromEntries(model.segments.map((s) => [s.key, s]));
+    expect(seg.warm.tone).toBe(seg.clear.tone);
+    expect(seg.warm.fill).not.toBe(seg.clear.fill);
+    expect(seg.warm.fill).toBe("solid");
+    expect(seg.clear.fill).toBe("ring");
+  });
+
   // PERTURBATION: unitChartModel is the guard that would catch a sixth verdict silently
   // renormalising the lattice, so show it actually refusing an overlapping partition.
   it("refuses segments that overflow the stated total", () => {
