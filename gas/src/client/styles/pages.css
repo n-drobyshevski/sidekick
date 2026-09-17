@@ -716,30 +716,9 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
   height: auto; border: none; border-radius: 0;
 }
 
-/* ------------------------------------------------- Cold zone: a verdict as a dot and a word
-   PORTED from gas_devsecops/src/client/styles/pages.css (which credits gas_ai's original
-   `.cap-verdict`), rule and reasoning intact: the WORD is the signal and the dot only repeats
-   it. States told apart by hue alone survive neither greyscale nor a dichromat, and the verdict
-   is the one thing a reader takes away from a row. Sized and spaced like gas_shared's
-   `.rail-status-dot` (styles/base.css), so the app has one dot vocabulary.
-
-   NOT PROMOTED TO gas_shared. One app draws it today; a second consumer is what promotes a
-   rule, and gas_devsecops's copy is not reachable from here. */
-.verdict-mark { display: inline-flex; align-items: center; gap: var(--space-2); }
-.verdict-word { font-size: var(--fs-lead); font-weight: 650; }
-.verdict-dot {
-  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
-  background: var(--text-3);
-}
-.verdict-dot--ok { background: var(--ok); }
-.verdict-dot--neutral { background: var(--text-3); }
-.verdict-dot--bad { background: var(--bad); }
-/* The fourth tone, and the cold zone's support-group rollup is why it exists. `partly-cold` —
-   some of a group's assets have gone quiet, not all of them — is a different claim from
-   `fully-cold`, and the two collapsed into one red dot would lose the only distinction the
-   group table's verdict column exists to draw. The WORD still carries it either way; this is
-   the tone that repeats it. */
-.verdict-dot--warn { background: var(--warn); }
+/* The verdict dot-and-word moved to gas_shared/styles/components.css, beside ui/verdict.js.
+   Two apps drew byte-identical rules for it, which is the promotion trigger this block's
+   own comment named. */
 
 /* ------------------------------ Cold zone: the support-group x idle-bucket heat table
    An app-local table (`table.data.heat`), not a component: this is the one grid in the app

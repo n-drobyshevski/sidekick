@@ -42,7 +42,7 @@ import {
   DEFAULT_PAGE_SIZE, absent, absentText, chartTable, chartTableModel, clear, dataTable, days1,
   denomNote, el, emptyState, errorState, figureCard, firstRunNotice, fmtCount, meter,
   onPageTeardown, pageHeader, pageOf, pct1, scopeBar, sectionLabel, segmented, skeletonStack,
-  sortRows, statusPill, tableFooter, tipLabel, unitGrid, unitKeyRow,
+  sortRows, statusPill, tableFooter, tipLabel, unitGrid, unitKeyRow, verdictMark,
 } from "../ui.js";
 
 // ------------------------------------------------------------------------- local helpers
@@ -89,50 +89,11 @@ function pagedTable(spec) {
   return host;
 }
 
-/**
- * verdict slug -> the dot's tone.
- *
- * WHY `unobserved` AND `watching` ARE NEUTRAL RATHER THAN BAD. Neither is a statement about a
- * support group. `unobserved` says the SCANNER stopped returning the asset — a fact about the
- * pipeline, which `coldZone.ts` tests first precisely so a drop-out is never read as
- * remediation — and `watching` says the clock has not run long enough to say anything yet.
- * Painting either of them red would publish a verdict nobody measured; both are still counted,
- * separately, and the word says which.
- *
- * `partly-cold` IS THE ONE `warn` TONE: a support group where SOME assets have gone quiet is
- * not the same claim as one where every asset with open findings has, and collapsing the two
- * into `bad` would lose the only distinction the group table's verdict column is there to
- * draw. The three capacity slugs ride along in the same table because the dot vocabulary is
- * one vocabulary — the word beside the dot is what says which question is being answered.
- */
-const VERDICT_KINDS = {
-  gaining: "ok",
-  "keeping-up": "neutral",
-  "falling-behind": "bad",
-  cold: "bad",
-  "fully-cold": "bad",
-  "partly-cold": "warn",
-  unobserved: "neutral",
-  watching: "neutral",
-  warm: "ok",
-  clear: "ok",
-};
-
-/**
- * A verdict as a dot AND a word.
- *
- * THE WORD IS THE SIGNAL AND THE DOT IS THE REDUNDANCY, never the other way round. States told
- * apart by hue alone survive neither greyscale nor a dichromat, which DESIGN.md's
- * accessibility bar forbids outright; the dot is `aria-hidden` for the same reason — it says
- * nothing the word beside it does not. A verdict of null or unrecognised still draws: a
- * neutral dot beside an em dash is the honest picture of a verdict nobody could reach.
- */
-function verdictMark(verdict, word) {
-  const kind = VERDICT_KINDS[verdict] || "neutral";
-  return el("span", { class: "verdict-mark" },
-    el("span", { class: "verdict-dot verdict-dot--" + kind, "aria-hidden": "true" }),
-    el("span", { class: "verdict-word" }, word === absentText ? absent() : word));
-}
+// `VERDICT_KINDS` and `verdictMark` USED TO LIVE HERE, as a copy of gas_devsecops's
+// `ui/verdict.js` — the same table, the same DOM, and a byte-identical ruleset in pages.css.
+// Both halves are `gas_shared` now (`ui/verdict.js`, `styles/components.css`); this page
+// imports the mark like any other component. The local copy's own comment named the trigger
+// for the move and then did not take it: "a second consumer is what promotes a rule".
 
 // ----------------------------------------------------------------------------- the page
 

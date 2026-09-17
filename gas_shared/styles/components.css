@@ -1976,6 +1976,39 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
    the section's, so it exists only when the section is open. */
 .section-collapse__body { margin-top: var(--space-3); }
 
+/* ---------------------------------------------------- a verdict as a dot and a word
+   PROMOTED from both registers' pages.css, where the two rulesets were BYTE-IDENTICAL.
+   gas's copy carried the note "NOT PROMOTED TO gas_shared. One app draws it today; a second
+   consumer is what promotes a rule, and gas_devsecops's copy is not reachable from here" —
+   and that second consumer is what arrived. Originally gas_ai's `.cap-verdict`
+   (inventory.css).
+
+   THE WORD IS THE SIGNAL AND THE DOT ONLY REPEATS IT. States told apart by hue alone survive
+   neither greyscale nor a dichromat, and the verdict is the one thing a reader takes away
+   from a row. The dot is `aria-hidden` in ui/verdict.js for the same reason. Sized and spaced
+   like `.rail-status-dot` (styles/base.css), so the family has one dot vocabulary.
+
+   `font-weight: 650` IS WRONG AND IS CARRIED ACROSS UNCHANGED. It is not one of the four
+   named steps (--fw-body/medium/semibold/hero = 400/500/600/700). Repointing it to
+   `var(--fw-semibold)` moves a shipped pixel in two apps at once, so it belongs in its own
+   measured commit rather than in the one that moves the file — the same rule splitBar.js
+   states for its hatch. */
+.verdict-mark { display: inline-flex; align-items: center; gap: var(--space-2); }
+.verdict-word { font-size: var(--fs-lead); font-weight: 650; }
+.verdict-dot {
+  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
+  background: var(--text-3);
+}
+.verdict-dot--ok { background: var(--ok); }
+.verdict-dot--neutral { background: var(--text-3); }
+.verdict-dot--bad { background: var(--bad); }
+/* The fourth tone, and a cold-zone rollup is why it exists. `partly-cold` — some of a group's
+   members have gone quiet, not all of them — is a different claim from `fully-cold`, and the
+   two collapsed into one red dot would lose the only distinction the rollup table's verdict
+   column exists to draw. The WORD still carries it either way; this is the tone that repeats
+   it. */
+.verdict-dot--warn { background: var(--warn); }
+
 /* ---------------------------------------------------------------------------- split bar */
 /* gas_shared/ui/splitBar.js: one track split into labelled segments, the caption beneath
    repeating every figure in words — the bar illustrates, the caption is the record a screen

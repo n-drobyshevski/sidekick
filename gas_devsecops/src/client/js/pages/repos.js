@@ -63,10 +63,10 @@ import {
   tipLabel,
 } from "../ui.js";
 // `verdictMark` is `pages/program.js`'s own dot-and-word for a capacity verdict, promoted to
-// `ui/verdict.js` in this same wave so this page's Capacity column can draw the identical
+// `gas_shared/ui/verdict.js`, so this page's Capacity column can draw the identical
 // mark rather than the plain word `VERDICT_LABEL[r.verdict]` printed alone — see that
 // module's header for the DOM and the tone mapping.
-import { verdictMark } from "../ui/verdict.js";
+import { verdictMark } from "../ui.js";
 
 const OVERALL = "OVERALL";
 
@@ -1302,7 +1302,7 @@ export async function renderRepos(host, _params, _ctx) {
         },
         {
           key: "verdict", label: "Verdict",
-          // The dot AND the word, never the dot alone — `ui/verdict.js` carries the mapping
+          // The dot AND the word, never the dot alone — `gas_shared/ui/verdict.js` carries the mapping
           // for both this page's verdict families.
           cell: (r) => verdictMark(r.verdict, r.verdictWord),
         },

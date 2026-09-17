@@ -400,6 +400,22 @@ optional resolver for one narrow reason — `tipLines({term})` reaches
 installed a manifest to get past that would install it for every other file sharing the
 vitest worker.
 
+**`ui/verdict.js` — a verdict as a dot AND a word.** The one that arrived by the placement
+rule catching up with itself. It had already been promoted once, out of `gas_devsecops`'s
+`renderProgram` into that app's `ui/verdict.js`, on the stated bar that "two pages
+independently wanting the same shape is what promotes a private inner function into a module".
+Its parity entry then explained why it stopped there: "never pushed down into gas_shared
+because neither sibling register has a capacity verdict to draw it for" — true of CAPACITY,
+and overtaken by the cold zone, which gave `gas` a second copy of the same slug-to-tone table,
+the same function, and a BYTE-IDENTICAL ruleset whose own comment said "NOT PROMOTED TO
+gas_shared. One app draws it today; a second consumer is what promotes a rule." Both halves
+are here now, JS beside CSS in `styles/components.css`. One table matters more than one
+function: the two apps' copies were kept in step by hand, and the mapping is where a drift
+would be invisible — `unobserved` and `watching` are `neutral` rather than `bad` because
+neither is a statement about a team, and an app that quietly reddened one would be publishing
+a verdict nobody measured. `.verdict-word`'s `font-weight: 650` came across unchanged and is
+wrong; repointing it moves a shipped pixel in two apps and owes its own commit.
+
 **`ui/unitChart.js` — a count as countable marks.** The fourth, and the one that arrived by
 promotion rather than by extraction: `gas_devsecops`'s Executive page had drawn unit marks for
 the open backlog since the cold-zone wave, with the ladder, the clipped partial mark and the

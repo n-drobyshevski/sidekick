@@ -47,9 +47,10 @@ import { endOfLifeExclusionNote, fmtCount, fmtDays } from "./mttr.js";
 import { chartCard } from "./sca.js";
 // `verdictMark` moved out to its own module in Wave C: `pages/repos.js` needed the identical
 // dot-and-word for its own Capacity column, and two pages wanting the same shape is what
-// promotes a helper. See ui/verdict.js's header for the DOM and the tone mapping this page no
+// promotes a helper. It has since moved again, to gas_shared/ui/verdict.js, once a second
+// APP wanted it. See that module's header for the DOM and the tone mapping this page no
 // longer carries a private copy of.
-import { verdictMark } from "../ui/verdict.js";
+import { verdictMark } from "../ui.js";
 
 // ---------------------------------------------------------------------------- formatting
 
