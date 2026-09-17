@@ -183,6 +183,10 @@ export async function renderColdZone(main, _params, ctx) {
   // re-render, and a lens on one chart is not a different question being asked of the server.
   let scatterGrain = "asset";
 
+  // The same reasoning, for the assets table's cut. A reader who narrowed to the backlog left
+  // behind means it about the section, not about the paint that happened to be on screen.
+  let assetCut = "all";
+
   let paint = null;
   const promise = swrCall(
     "api_getColdZonePage",
@@ -443,26 +447,149 @@ export async function renderColdZone(main, _params, ctx) {
         body)));
   }
 
+  /**
+   * Cold assets and the ones the scanner has lost sight of, over one table with three cuts.
+   *
+   * THE CUT EXISTS BECAUSE THE CENSUS CREATED A QUESTION IT COULD NOT ANSWER. "Out of sight,
+   * backlog open" is the one segment on this page that is unambiguously work — findings
+   * stranded on assets nobody is scanning any more — and a reader who saw the figure had a
+   * list of hundreds to go and find them in. Every row is already here; what was missing was a
+   * way to ask for the ones that matter.
+   *
+   * ALL THREE CUTS COME OFF ONE ARRAY. The rows are in the payload the page already holds, so
+   * the switch repaints and never refetches, and the counts sit on the option labels so a
+   * reader can see what each cut holds before choosing it.
+   *
+   * THE COLUMNS FOLLOW THE CUT, WHICH IS THIS FILE'S OWN ANSWER TO A PROBLEM IT ALREADY NAMES.
+   * `hideableColumn` / `columnsButton` exist in gas_shared and no page in this app wires the
+   * chooser, because that needs a column-choice store and a repaint path — a table-state
+   * feature rather than a cold-zone one, and still true. A cut that knows its own columns costs
+   * nothing and says more: on the out-of-sight cut the idle reading LEAVES (it measures a
+   * silence the scanner can no longer see) and the two observation columns arrive in its place.
+   */
   function renderAssets(view) {
-    const rows = coldAssetRows(view);
-    host.append(el("h3", { class: "section-label" }, "Cold and unobserved assets"));
-    if (!rows.length) {
-      host.append(emptyState(
-        "No asset is cold, and none has dropped out of the scanner.",
-        "Every asset with an open finding has moved inside the window.",
-        { variant: "notice" },
-      ));
-      return;
-    }
-    host.append(pagedTable({
-      columns: [
+    const all = coldAssetRows(view);
+    const cuts = {
+      all: { rows: all, label: "All" },
+      cold: { rows: all.filter((r) => r.cold), label: "Cold" },
+      lost: {
+        rows: all.filter((r) => !r.observed && r.open > 0),
+        label: "Out of sight, backlog open",
+      },
+    };
+
+    const toggle = segmented({
+      options: ["all", "cold", "lost"].map((value) => ({
+        value,
+        // THE COUNT RIDES ON THE LABEL. A cut a reader cannot size before opening it is a cut
+        // they open to find out, and the interesting one here is often empty — which is good
+        // news they should be able to read without a click.
+        label: cuts[value].label + " " + fmtCount(cuts[value].rows.length),
+        title: value === "lost"
+          ? "Assets the newest scan no longer returns that still carry open findings. Nobody"
+            + " will be told about that backlog again."
+          : value === "cold"
+            ? "Assets the scanner still returns, still carrying open findings, with nothing"
+              + " resolved for at least the window."
+            : "Both: every cold asset and every one the scanner has lost sight of.",
+      })),
+      value: assetCut,
+      ariaLabel: "Which assets to list",
+      onChange: (v) => {
+        if (v === assetCut) return;
+        assetCut = v;
+        toggle.set(v);
+        paintAssets();
+      },
+    });
+
+    host.append(el("div", { class: "section-head" },
+      el("h3", { class: "section-label" }, "Cold and unobserved assets"),
+      el("div", { class: "toolbar-group" },
+        el("span", { class: "small muted" }, "Show"),
+        toggle)));
+
+    const tableHost = el("div", {});
+    host.append(tableHost);
+    paintAssets();
+
+    function paintAssets() {
+      const lost = assetCut === "lost";
+      const rows = cuts[assetCut].rows;
+      clear(tableHost);
+      if (!rows.length) {
+        // EACH CUT'S ABSENCE IS ITS OWN SENTENCE, and the important one is GOOD NEWS. An empty
+        // out-of-sight cut means no backlog has been left behind anywhere, which is the best
+        // reading this page can produce; phrasing it as a bare "nothing to show" would file it
+        // beside a failure.
+        tableHost.append(emptyState(
+          lost
+            ? "No backlog has been left behind."
+            : assetCut === "cold"
+              ? "No asset is cold."
+              : "No asset is cold, and none has dropped out of the scanner.",
+          lost
+            ? "Every asset the scanner has lost sight of had already been cleared when it went."
+            : "Every asset with an open finding has moved inside the window.",
+          { variant: "notice" },
+        ));
+        return;
+      }
+      const columns = [
         { key: "label", label: "Asset", cell: (r) => r.label },
         { key: "group", label: "Support group", cell: (r) => r.group },
         { key: "verdict", label: "Verdict", cell: (r) => verdictMark(r.verdict, r.verdictWord) },
-        {
+      ];
+      if (lost) {
+        // WHY IT WENT QUIET, IN EVIDENCE RATHER THAN IN A VERDICT. Every asset in this cut is
+        // out of sight for the same structural reason — no finding of its reached the newest
+        // flat scan covering its severity — so there is no cause to name and naming one would
+        // be an invention. What differs is WHEN it stopped being returned and HOW, and these
+        // two columns are exactly that: a date with the silence since it, and the size of the
+        // exit. A big "closed at once" is the whole asset leaving in one scan; a 1 is an asset
+        // that faded as its last finding closed.
+        columns.push(
+          {
+            key: "lastSeen", label: "Last seen",
+            help: {
+              term: "unobserved",
+              lines: [
+                "The last time any finding on this asset reached a scan.",
+                "Nothing on it has reached the newest scan of any severity it has rows in since.",
+              ],
+            },
+            cell: (r) => {
+              if (r.unobservedForDays === null) return r.lastObservedText;
+              return el("span", {},
+                r.lastObservedText,
+                el("span", { class: "small muted" },
+                  " — " + days1(r.unobservedForDays) + " ago"));
+            },
+          },
+          {
+            key: "vanished", label: "Closed at once", className: "num",
+            help: {
+              term: "unobserved",
+              lines: [
+                "How many findings closed by disappearance at the same instant.",
+                "A large number is the whole asset leaving in one scan; a single one faded.",
+              ],
+            },
+            cell: (r) => {
+              if (!r.disappearedCount) return absent();
+              return el("span", {},
+                fmtCount(r.disappearedCount),
+                el("span", { class: "small muted" }, " on " + r.disappearedText));
+            },
+          },
+        );
+      } else {
+        columns.push({
           key: "idle", label: "Idle", className: "num", help: { term: "idle" },
           cell: (r) => r.idleText,
-        },
+        });
+      }
+      columns.push(
         {
           key: "movement", label: "Last movement",
           // THE TERM OF ART IN THIS COLUMN IS "returned", not "movement": the date needs no
@@ -490,30 +617,39 @@ export async function renderColdZone(main, _params, ctx) {
           key: "oldest", label: "Oldest open", className: "num",
           cell: (r) => (r.oldestOpenAgeDays === null ? absentText : days1(r.oldestOpenAgeDays)),
         },
-        // TYPE AND CLOUD AS PLAIN COLUMNS, NOT HIDEABLE ONES. `hideableColumn` /
-        // `columnsButton` exist in gas_shared, but no page in this app wires the chooser yet —
-        // it needs a column-choice store (a URL param or a localStorage key) and a repaint
-        // path, which is a table-state feature rather than a cold-zone one. Two descriptive
-        // columns are cheaper than being the app's first reader of that machinery, and the
-        // wrapper scrolls horizontally rather than overflowing the page. Last, because they
-        // describe the asset rather than say anything about its silence.
+        // TYPE AND CLOUD AS PLAIN COLUMNS, NOT HIDEABLE ONES — see the cut note above on why
+        // this page is not the place to become the app's first reader of the column chooser.
+        // Last, because they describe the asset rather than say anything about its silence.
         { key: "assetType", label: "Type", cell: (r) => r.assetType },
         { key: "cloud", label: "Cloud", cell: (r) => r.cloud },
-      ],
-      rows,
-      // NO SORT SPEC — `coldAssetRows` publishes cold first, then unobserved, biggest backlog
-      // first inside each, and that order is this page's whole argument.
-      emptyText: "No asset is cold, and none has dropped out of the scanner.",
-    }));
-    host.append(el("p", { class: "small muted" }, tipLabel(
-      fmtCount(rows.length) + " listed: cold, and out of sight",
-      {
-        lines: [
-          "Every cold asset and every one the scanner has lost sight of.",
-          "Warm, clear and not-yet-measurable assets are counted above and not listed here.",
-        ],
-      },
-    )));
+      );
+      tableHost.append(pagedTable({
+        columns,
+        rows,
+        // NO SORT SPEC — `coldAssetRows` publishes cold first, then unobserved, biggest backlog
+        // first inside each, and that order is this page's whole argument.
+        emptyText: "No asset is cold, and none has dropped out of the scanner.",
+      }));
+      tableHost.append(el("p", { class: "small muted" }, tipLabel(
+        lost
+          ? fmtCount(rows.length) + " listed: out of sight, backlog open"
+          : assetCut === "cold"
+            ? fmtCount(rows.length) + " listed: cold"
+            : fmtCount(rows.length) + " listed: cold, and out of sight",
+        {
+          lines: lost
+            ? [
+              "Assets the newest scan no longer returns that still carry open findings.",
+              "The ones it lost after they were already clear are counted in the census and"
+                + " not listed here.",
+            ]
+            : [
+              "Every cold asset and every one the scanner has lost sight of.",
+              "Warm, clear and not-yet-measurable assets are counted above and not listed here.",
+            ],
+        },
+      )));
+    }
   }
 
   /**

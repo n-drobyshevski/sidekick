@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "35fc7e62834f" : "dev";
+  var BUILD_ID = true ? "a4753597ea03" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -4248,6 +4248,7 @@ var Server = (() => {
         idle_reading_days: idleReading,
         observed,
         last_observed_at: toIso(acc.lastSeen),
+        unobserved_for_days: acc.lastSeen === null ? null : daysBetween(acc.lastSeen, nowMs),
         disappeared_at: toIso(disappearedAt),
         disappeared_at_last_observation: disappearedCount,
         reopened_open: acc.reopenedOpen,

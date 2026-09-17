@@ -287,6 +287,19 @@ export interface ColdAssetRow {
   /** The scanner still returns this asset in the newest flat scan of some severity it has rows in. */
   observed: boolean;
   last_observed_at: string | null;
+  /**
+   * How long the scanner has been silent about this asset, in days from `last_observed_at`.
+   *
+   * The duration rather than the two dates, for the reason `oldest_open_age_days` is a duration
+   * too: nothing in this client subtracts one timestamp from another, because a page that did
+   * would be measuring against the reader's clock instead of the ledger's. NULL when no row was
+   * ever seen at all, which is not "zero days invisible".
+   *
+   * Published for every asset and meaningful for the unobserved ones — an observed asset reads
+   * near zero here by construction, and the cost of computing it is one subtraction already in
+   * hand.
+   */
+  unobserved_for_days: number | null;
   /** The instant that closed the most findings by DISAPPEARANCE — the drop-out's fingerprint. */
   disappeared_at: string | null;
   /** How many findings closed at that instant. A big number beside a recent date is a drop-out. */
@@ -960,6 +973,7 @@ export function coldZoneProfile(rows: ColdRow[], opts: ColdZoneOptions): ColdZon
       idle_reading_days: idleReading,
       observed,
       last_observed_at: toIso(acc.lastSeen),
+      unobserved_for_days: acc.lastSeen === null ? null : daysBetween(acc.lastSeen, nowMs),
       disappeared_at: toIso(disappearedAt),
       disappeared_at_last_observation: disappearedCount,
       reopened_open: acc.reopenedOpen,

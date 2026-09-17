@@ -157,6 +157,55 @@ describe("the scatter follows the app's chart contract", () => {
   });
 });
 
+// THE ASSETS TABLE'S CUT. The census says how many assets are out of sight WITH backlog open;
+// this is the control that turns that figure into a list. Four claims, and each is a defect
+// the section could plausibly acquire.
+describe("the assets table's cut", () => {
+  const section = () => CODE.slice(
+    CODE.indexOf("function renderAssets(view)"),
+    CODE.indexOf("function renderChart(view)"),
+  );
+
+  it("offers the cut the census created, and sizes each one on its label", () => {
+    const s = section();
+    expect(s).toContain('label: "Out of sight, backlog open"');
+    expect(s).toContain("!r.observed && r.open > 0");
+    // The count rides on the label so an empty cut can be read without opening it.
+    expect(s).toContain("cuts[value].rows.length");
+  });
+
+  it("cuts one array it already holds — a cut is never a second request", () => {
+    const s = section();
+    expect(s).not.toContain("swrCall");
+    // The model runs ONCE and the three cuts are filters over its result, so switching costs
+    // nothing and the cuts cannot disagree about what a row says.
+    expect(s.match(/coldAssetRows\(/g)).toHaveLength(1);
+  });
+
+  it("keeps the cut outside paint(), and out of the URL", () => {
+    const declared = CODE.indexOf('let assetCut = "all"');
+    expect(declared, "the cut is never declared").toBeGreaterThan(-1);
+    expect(declared).toBeLessThan(CODE.indexOf("paint = (model) =>"));
+  });
+
+  // WHY, IN EVIDENCE RATHER THAN IN A VERDICT WORD. Every asset in the cut is out of sight for
+  // the same structural reason, so the columns carry the two facts that differ between them:
+  // when it was last seen, and how many findings left at once.
+  it("shows when it was last seen and how big the exit was, on that cut only", () => {
+    const s = section();
+    expect(s).toContain('label: "Last seen"');
+    expect(s).toContain('label: "Closed at once"');
+    expect(s).toContain("r.unobservedForDays");
+    expect(s).toContain("r.disappearedCount");
+    // The idle reading leaves: it measures a silence the scanner can no longer see.
+    expect(s).toMatch(/if \(lost\) \{[\s\S]{0,2000}\} else \{[\s\S]{0,200}label: "Idle"/);
+  });
+
+  it("reads an empty out-of-sight cut as the good news it is", () => {
+    expect(section()).toContain("No backlog has been left behind.");
+  });
+});
+
 // THE GRAIN SWITCH. Four claims, and each is a defect this section could plausibly acquire —
 // the first two are the difference between a switch and two charts wearing one heading.
 describe("the scatter's grain switch", () => {
