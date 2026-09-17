@@ -483,7 +483,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "59020211459f" : "dev";
+  var BUILD_ID = true ? "4f86b9d32a1c" : "dev";
 
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
@@ -6831,6 +6831,8 @@ var Server = (() => {
       const bucketOpen = [0, 0, 0, 0, 0];
       let observed = 0;
       let unobserved = 0;
+      let unobservedOpen = 0;
+      let unobservedClear = 0;
       let withOpen = 0;
       let coldRepos = 0;
       let watching = 0;
@@ -6850,6 +6852,8 @@ var Server = (() => {
         } else {
           unobserved += 1;
           openInUnobserved += r.open_findings;
+          if (r.open_findings > 0) unobservedOpen += 1;
+          else unobservedClear += 1;
         }
         if (r.bucket !== null) {
           buckets[r.bucket] += 1;
@@ -6894,6 +6898,8 @@ var Server = (() => {
         repos: list.length,
         repos_observed: observed,
         repos_unobserved: unobserved,
+        repos_unobserved_open: unobservedOpen,
+        repos_unobserved_clear: unobservedClear,
         repos_with_open: withOpen,
         cold_repos: coldRepos,
         watching_repos: watching,
@@ -6951,6 +6957,8 @@ var Server = (() => {
       repos: repos.length,
       repos_observed: 0,
       repos_unobserved: 0,
+      repos_unobserved_open: 0,
+      repos_unobserved_clear: 0,
       repos_with_open: 0,
       cold_repos: 0,
       watching_repos: 0,
@@ -6973,6 +6981,8 @@ var Server = (() => {
     for (const team of teams) {
       t.repos_observed += team.repos_observed;
       t.repos_unobserved += team.repos_unobserved;
+      t.repos_unobserved_open += team.repos_unobserved_open;
+      t.repos_unobserved_clear += team.repos_unobserved_clear;
       t.repos_with_open += team.repos_with_open;
       t.cold_repos += team.cold_repos;
       t.watching_repos += team.watching_repos;

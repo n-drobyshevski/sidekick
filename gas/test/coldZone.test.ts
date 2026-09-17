@@ -340,6 +340,48 @@ describe("a mass disappearance one day before the clock is still 'unobserved'", 
     expect(groupOf(out, "platform").last_movement_at).toBeNull();
     expect(groupOf(out, "platform").assets_unobserved).toBe(1);
   });
+
+  // THE TWO KINDS OF OUT OF SIGHT. This asset is the benign one: the scanner lost it and there
+  // is nothing open on it, which on a mature register describes a decommissioned machine. It
+  // is counted apart from the alarming kind — lost sight of WITH backlog still open — because
+  // a census that drew them as one segment made a healthy register look like a coverage
+  // catastrophe (1,947 of 2,404 on the tenant that prompted the split).
+  it("counts a nothing-open drop-out as the benign half of unobserved", () => {
+    expect(out.totals!.assets_unobserved).toBe(1);
+    expect(out.totals!.assets_unobserved_clear).toBe(1);
+    expect(out.totals!.assets_unobserved_open).toBe(0);
+    expect(out.totals!.open_in_unobserved).toBe(0);
+  });
+});
+
+describe("a drop-out that still carries open findings is the half worth the alarm", () => {
+  // Same disappearance, except one finding never closed: the scanner stopped returning the
+  // asset while backlog was still on it, so nobody will be told about that backlog again.
+  const out = profile([
+    row({
+      asset_id: "asset-stranded", asset_name: "stranded", last_scan_id: "scan-1",
+      status: "RESOLVED", resolution_src: RESOLUTION_DISAPPEARED, resolved_at: back(1),
+    }),
+    row({ asset_id: "asset-stranded", asset_name: "stranded", last_scan_id: "scan-1" }),
+  ]);
+
+  it("splits it away from the decommissioned kind, and both still sum to the whole", () => {
+    const t = out.totals!;
+    expect(assetOf(out, "asset-stranded").verdict).toBe("unobserved");
+    expect(t.assets_unobserved).toBe(1);
+    expect(t.assets_unobserved_open).toBe(1);
+    expect(t.assets_unobserved_clear).toBe(0);
+    expect(t.assets_unobserved_open + t.assets_unobserved_clear).toBe(t.assets_unobserved);
+    expect(t.open_in_unobserved).toBe(1);
+  });
+
+  it("still never counts it as cold, warm or clear — the verdict did not split", () => {
+    const t = out.totals!;
+    expect(t.cold_assets).toBe(0);
+    expect(t.warm_assets).toBe(0);
+    expect(t.clear_assets).toBe(0);
+    expect(t.assets_with_open).toBe(0);
+  });
 });
 
 // --------------------------------------------------------------------- unclassified rows

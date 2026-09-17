@@ -362,6 +362,19 @@ rather than a fill, for the opposite reason: it is measured, and it is fine, and
 solid would put "nothing open to go quiet on" in the same visual weight class as an actual
 problem. `cold` and `warm` are the only two solid fills.
 
+**Unobserved is drawn as two segments, because it was never one piece of news.** `unobserved`
+is tested before `clear`, so an asset that was remediated and then decommissioned stays
+unobserved for as long as the ledger remembers it — nothing open, and no scan will ever list it
+again. A register with ordinary asset churn accumulates those without bound, and on the tenant
+that prompted the split they were 1,947 of 2,404 assets: 81% of the picture, reading as a
+coverage catastrophe and describing machines that no longer exist. `coldCensusModel` splits on
+the one question that tells the two apart — is anything still open on it? — so the alarming half
+is the half that deserved the alarm: backlog stranded on assets nobody is scanning any more.
+The open half is `bad` HATCHED where `cold` is `bad` SOLID, which is the tone-plus-silhouette
+pair doing exactly its job: the same alarm with the measurement missing. The VERDICT does not
+split — `assets_unobserved` is still their sum — so the assets table, the group roll-up and the
+scatter are untouched, and six segments is `MAX_SEGMENTS` exactly.
+
 **The two hatched segments are hatched in two different inks, and for a while they were not.**
 They are the same silhouette carrying different verdicts — `watching` is `warn`, `unobserved` is
 `neutral` — which is exactly the case `unitChart`'s two channels exist for. The shared
@@ -376,11 +389,21 @@ argument.
 section used to describe lived in `src/client/styles/pages.css` as a modifier on the wrap, where
 it never bound anything: the grid inside was `width: max-content` at the component's fixed cell
 size, so thirty assets drew a 64px block in a 704px card. Cap and lattice both moved into
-`.isotype--census` (`gas_shared/styles/components.css`), where a census block is laid out as flat
-as the module's row limit allows and each column is a range rather than a length — it grows to
-the card, stops at 30px per cell and at 44rem overall, and cannot overflow a phone because its
+`.isotype--block` (`gas_shared/styles/components.css`), where a block is laid out as flat as the
+module's row limit allows and each column is a range rather than a length — it grows to the
+card, stops at 30px per cell and at 44rem overall, and cannot overflow a phone because its
 minimum is the width the module already sized it to fit. `gas_devsecops` gets the same picture
 from the same rule, which it could not get from a cap that only this app had spelled.
+
+**Above `MAX_EXACT_CELLS` the same card draws a PROPORTION, and that is the one this register
+actually shows.** At 2,404 assets the lattice is 100 cells rather than one per asset, and the
+flat rule first shipped for the exact census only — so the register that prompted the widening
+kept a 108px 10x10 square while every small register got the new picture. Both modes take the
+flat rule now, and nothing is lost by it: one cell is one percentage point at any size, and only
+the column count changes what a ROW reads as, from a tenth to a fifth. What the square was
+carrying was its own height — a 10x10 grown wide enough to look at is as tall as it is wide.
+The floors still know the two apart: 14px for a census, 9px for a proportion, because twenty
+columns at 14px do not fit a 360px card and at 9px they do.
 
 **What High Contrast costs this picture.** Emulated forced-colors mode keeps the hatch as a
 SILHOUETTE — a dashed border rather than the comb, since a toned comb is a hue now and `--warn`

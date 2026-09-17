@@ -423,28 +423,31 @@ export function unitGrid(model, opts = {}) {
   // assets rendered as a 64px smudge in a 704px card, which is the very defect the rule above
   // was written to fix, one size class along. So the two knobs part company here:
   //
-  //   SHAPE — a census block is as FLAT as ROW_MAX allows (as few rows as will hold it, then
-  //   balanced across them), not square. Square is right for a PROPORTION, where 10x10 makes
-  //   one cell one percentage point and the block is the figure; for a census the shape carries
-  //   nothing, and rows a reader can scan beat a lump they have to decode.
+  //   SHAPE — a block is as FLAT as ROW_MAX allows: as few rows as will hold it, balanced
+  //   across them. It replaces a square, and the square was never carrying what it looked like
+  //   it carried. ONE CELL IS ONE PERCENTAGE POINT IN A PROPORTION WHATEVER THE SHAPE IS — only
+  //   the COLUMN COUNT changes what a ROW reads as, from a tenth to a fifth, and a fifth is no
+  //   harder to read than a tenth. What a square does carry is its own height: a lattice that
+  //   fills the width of a card fills that much height too, and 10x10 at a size worth looking
+  //   at is a banner. Flat is the shape that can grow sideways without growing down. For a
+  //   CENSUS the shape carried nothing to begin with, and rows a reader can scan beat a lump
+  //   they have to decode.
   //
-  //   SIZE — a census cell keeps the strip's 14px as its FLOOR rather than dropping to the
-  //   waffle's 9px, and `isotype--census` lets the stylesheet grow it from there to the width
-  //   of the card. The column count is a decision about the picture and stays here; how much
-  //   room those columns are given is a fact about the viewport and belongs in CSS, which is
-  //   the only one of the two that can see it.
+  //   SIZE — the floor is the one thing that still knows the two modes apart, and it is doing
+  //   real work: a proportion has more columns (20 for a hundred cells) than a census of the
+  //   same block, so it keeps the waffle's 9px where a census keeps the strip's 14px. Twenty
+  //   columns at 14px is 318px and does not fit a 360px card; at 9px it is 218px and does.
+  //   From that floor `isotype--block` lets the stylesheet grow the cell to the width on offer.
+  //   The column count is a decision about the picture and stays here; how much room those
+  //   columns are given is a fact about the viewport, and CSS is the only one of the two that
+  //   can see it.
   const ROW_MAX = 24;
   const block = model.cells > ROW_MAX;
   const rows = block ? Math.ceil(model.cells / ROW_MAX) : 1;
-  const cols = !block
-    ? model.cells
-    : model.exact
-      ? Math.ceil(model.cells / rows)
-      : Math.max(1, Math.ceil(Math.sqrt(model.cells)));
+  const cols = block ? Math.ceil(model.cells / rows) : model.cells;
   const cell = block && !model.exact ? 9 : 14;
-  const census = block && model.exact;
   const grid = el("div", {
-    class: census ? "isotype isotype--grid isotype--census" : "isotype isotype--grid",
+    class: block ? "isotype isotype--grid isotype--block" : "isotype isotype--grid",
     role: "img",
     "aria-label": model.aria,
     style: "--isotype-cols:" + cols + ";--isotype-cell:" + cell + "px",

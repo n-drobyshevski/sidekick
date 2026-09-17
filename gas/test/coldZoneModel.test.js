@@ -44,6 +44,8 @@ function totals(over = {}) {
     assets: 0,
     assets_observed: 0,
     assets_unobserved: 0,
+    assets_unobserved_open: 0,
+    assets_unobserved_clear: 0,
     assets_with_open: 0,
     cold_assets: 0,
     watching_assets: 0,
@@ -406,6 +408,7 @@ describe("coldKpiCards: each card names the population it was taken over", () =>
     groups: [group()],
     totals: totals({
       assets: 20, assets_with_open: 8, assets_unobserved: 3, cold_assets: 2,
+      assets_unobserved_open: 2, assets_unobserved_clear: 1,
       open_findings: 100, open_in_cold: 30, high_risk_in_cold: 4, open_in_unobserved: 7,
       cold_asset_share_pct: 25, cold_backlog_share_pct: 30,
     }),
@@ -452,7 +455,16 @@ describe("coldKpiCards: each card names the population it was taken over", () =>
   it("counts unobserved assets against every asset in the ledger", () => {
     expect(by.unobserved.value).toBe("3");
     expect(by.unobserved.denominator).toContain("20 assets in the ledger");
-    expect(by.unobserved.sub).toContain("7 open findings on them");
+  });
+
+  // THE FIGURE IS EVERY ASSET THE SCANNER LOST; THE SUB-LINE IS THE PART THAT IS WORK. On a
+  // long-lived register most of the headline is assets that were fixed and then
+  // decommissioned, so a sub-line reading "7 open findings on them" invited a reader to treat
+  // all three as a coverage problem. It names the two still carrying backlog instead, and the
+  // denominator says how many of the rest have nothing open at all.
+  it("splits the sub-line and the denominator on which half is worth acting on", () => {
+    expect(by.unobserved.sub).toBe("2 still carrying 7 open findings");
+    expect(by.unobserved.denominator).toContain("1 of them have nothing open at all");
   });
 
   it("prints the em dash, not 0.0%, where a share is null", () => {
@@ -494,6 +506,7 @@ describe("coldKpiCards: each card names the population it was taken over", () =>
 describe("coldCensusModel: the five verdicts partition the register", () => {
   const t = totals({
     assets: 20, assets_observed: 17, assets_unobserved: 3,
+    assets_unobserved_open: 1, assets_unobserved_clear: 2,
     cold_assets: 4, warm_assets: 6, watching_assets: 2, clear_assets: 5,
   });
 
@@ -506,22 +519,43 @@ describe("coldCensusModel: the five verdicts partition the register", () => {
     expect(t.assets_observed + t.assets_unobserved).toBe(t.assets);
   });
 
+  it("holds the two unobserved halves summing to the whole on the fixture", () => {
+    expect(t.assets_unobserved_open + t.assets_unobserved_clear).toBe(t.assets_unobserved);
+  });
+
   it("builds a measured model whose segment counts sum to the stated total", () => {
     const model = coldCensusModel({ totals: t });
     expect(model.measured).toBe(true);
     expect(model.segments.map((s) => s.key))
-      .toEqual(["cold", "warm", "watching", "clear", "unobserved"]);
+      .toEqual(["cold", "warm", "watching", "clear", "unobserved_open", "unobserved_clear"]);
     const sum = model.segments.reduce((a, s) => a + s.count, 0);
     expect(sum).toBe(t.assets);
   });
 
-  it("hatches the two segments that are not measurements of idleness", () => {
+  it("hatches the three segments that are not measurements of idleness", () => {
     const model = coldCensusModel({ totals: t });
     const fills = Object.fromEntries(model.segments.map((s) => [s.key, s.fill]));
     expect(fills.watching).toBe("hatch");
-    expect(fills.unobserved).toBe("hatch");
+    expect(fills.unobserved_open).toBe("hatch");
+    expect(fills.unobserved_clear).toBe("hatch");
     // `clear` is a ring, not a fill: measured, and fine.
     expect(fills.clear).toBe("ring");
+  });
+
+  // THE SPLIT IS A SPLIT, NOT A RECOLOUR. The half carrying open findings is the alarm — same
+  // `bad` tone as cold, different silhouette, because it is the same backlog with the
+  // measurement missing. The half with nothing open is a decommissioned asset and stays
+  // neutral; drawing it red would put "this machine no longer exists" beside real backlog.
+  it("tells the two kinds of out-of-sight apart by tone as well as by word", () => {
+    const model = coldCensusModel({ totals: t });
+    const seg = Object.fromEntries(model.segments.map((s) => [s.key, s]));
+    expect(seg.unobserved_open.tone).toBe("bad");
+    expect(seg.unobserved_clear.tone).toBe("neutral");
+    expect(seg.unobserved_open.label).toContain("backlog open");
+    expect(seg.unobserved_clear.label).toContain("nothing open");
+    // Same tone as cold, and the silhouette is what separates them.
+    expect(seg.cold.tone).toBe("bad");
+    expect(seg.cold.fill).toBe("solid");
   });
 
   // PERTURBATION: unitChartModel is the guard that would catch a sixth verdict silently

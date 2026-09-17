@@ -450,7 +450,7 @@
 .isotype-cell[data-fill="hatch"][data-tone="bad"] { color: var(--bad); }
 .isotype-cell--empty { background: var(--surface-2); }
 
-/* THE BLOCK CENSUS FILLS THE CARD IT SITS IN. `width: max-content` over 9px cells drew thirty
+/* A BLOCK LATTICE FILLS THE CARD IT SITS IN. `width: max-content` over 9px cells drew thirty
    assets as a 64px smudge in a 704px card — the same defect unitChart.js's cell-size rule was
    written to fix for a strip, one size class along and left standing there. The COLUMN COUNT
    stays the module's, because the shape of a picture is a decision about the picture; what
@@ -459,18 +459,25 @@
    a tile. It cannot overflow at any viewport: the minimum is the size the module already laid
    the lattice out to fit.
 
-   EXACT MODE ONLY. A 10x10 proportional waffle means one cell per percentage point, and a
-   stretched one would be a different claim wearing the same picture.
+   BOTH MODES, WHICH THIS RULE ONCE REFUSED. It was `isotype--census` and ran on exact lattices
+   only, on the reasoning that a 10x10 proportional waffle means one cell per percentage point
+   and a stretched one would be a different claim. Half right: stretching a CELL changes nothing
+   — one cell is one point at any size — and it was only ever the COLUMN COUNT that could change
+   what a row reads as. The register that prompted this holds 2,404 assets, which is a
+   proportion rather than a census, so the exact-only gate meant the fix missed the very card it
+   was written for. A 10x10 was also the shape that could not be helped: a square that fills the
+   width fills that much height, so `unitGrid` lays a block flat now and the growth has somewhere
+   to go.
 
    THE CAP IS HERE, NOT IN AN APP. `gas` carried it as `.cold-census { max-width: 44rem }` over
    the wrap, where it was inert — the grid inside was `max-content` and never reached it — and
    `gas_devsecops` passes the same class name with no rule behind it at all, so the one app that
    spelled the intention was the one that could not act on it. A lattice stretched across a wide
    page reads as a banner rather than as a countable set of marks, and that is true of every
-   census this component draws, in every register. Same reasoning as the cell-size rule it sits
+   lattice this component draws, in every register. Same reasoning as the cell-size rule it sits
    beside: a local rule that agrees with the shared default today is one that disagrees with it
    later. */
-.isotype--grid.isotype--census {
+.isotype--grid.isotype--block {
   width: 100%;
   max-width: 44rem;
   justify-content: start;
@@ -478,7 +485,7 @@
     var(--isotype-cols, 10),
     minmax(var(--isotype-cell, 14px), var(--isotype-cell-max, 30px)));
 }
-.isotype--census .isotype-cell { width: auto; height: auto; aspect-ratio: 1; }
+.isotype--block .isotype-cell { width: auto; height: auto; aspect-ratio: 1; }
 
 /* The key row is why a waffle owes no chart-table disclosure: every figure the lattice draws
    is printed here, on the surface, in real text. See ui/unitChart.js's unitKeyRow. */

@@ -154,6 +154,19 @@ than for a canvas.
 insisting neither is warm — `--hatch` means "this part is not a measurement" and says it where
 the reader is already looking. `clear` is a ring rather than a fill: measured, and fine.
 
+**Unobserved is drawn as two segments, because it was never one piece of news.** `unobserved`
+is tested before `clear`, so a repository that was remediated and then archived stays unobserved
+for as long as the ledger remembers it — nothing open, and no scan will ever list it again. A
+register with ordinary churn accumulates those without bound until they dominate the picture
+(the sibling register that prompted the split read 1,947 of 2,404 assets out of sight, which
+looked like a coverage catastrophe and described machines that no longer exist).
+`coldCensusModel` splits on the one question that tells the two apart — is anything still open
+on it? — so the alarming half is the half that deserved the alarm: backlog stranded on
+repositories nobody is scanning any more. The open half is `bad` HATCHED where `cold` is `bad`
+SOLID, the same alarm with the measurement missing. The VERDICT does not split
+(`repos_unobserved` is still their sum), so the tables and the roll-up are untouched, and six
+segments is `MAX_SEGMENTS` exactly.
+
 **The two hatched verdicts are hatched in two different inks, and for a while they were not.**
 They are one silhouette carrying two verdicts — `watching` is `warn`, `unobserved` is `neutral`
 — which is the case the component's two channels exist for, and the shared `[data-fill="hatch"]`
@@ -183,15 +196,20 @@ with the shared default is one that will disagree with it later.
 **Past that row limit the same rule had a cliff in it, and the cliff is gone.** A lattice of 25
 fell back to BOTH a square shape and the waffle's 9px cell, so one repository over the edge
 turned a 318px strip into a 53px square — the very smudge the paragraph above describes,
-reintroduced one size class along. Shape and size part company now. A census BLOCK is as flat as
-the row limit allows rather than square, because square is right for a PROPORTION (10x10 makes
-one cell one percentage point) and carries nothing for a census; and it keeps 14px as a floor,
-with `.isotype--census` growing each column to the width of the card and capping it at 30px per
-cell and 44rem overall. Above `MAX_EXACT_CELLS` the lattice is a proportion again, and there it
-stays a 10x10 square at 9px — stretching that one would be a different claim wearing the same
-picture. This register saw the colour half of the round before the width half: its own census is
-eleven repositories, which is a strip either way, and the block form appears once a tenant passes
-twenty-four.
+reintroduced one size class along. Shape and size part company now. A BLOCK is as flat as the
+row limit allows rather than square, and it keeps its floor — 14px for a census, 9px for a
+proportion, which has more columns and needs the smaller minimum to fit a 360px card — with
+`.isotype--block` growing each column from there to the width of the card and capping it at 30px
+per cell and 44rem overall.
+
+**The proportional lattice takes the same rule, which it did not at first.** The flat shape
+shipped for exact censuses only, on the reasoning that a 10x10 waffle means one cell per
+percentage point and a stretched one would be a different claim. Only half of that was true:
+stretching a CELL changes nothing, and only the COLUMN COUNT could change what a ROW reads as,
+from a tenth to a fifth. What a square does carry is its own height, so a 10x10 grown wide
+enough to look at is a banner. Both modes are flat now. This register saw the colour half of the
+round before the width half either way: its own census is eleven repositories, which is a strip
+in every version, and a block appears once a tenant passes twenty-four.
 
 **The six `denomNote` paragraphs on this page stay.** They were the obvious prose to remove and
 they are not restatements — `coldModeCaption` says which line drew the zone, `boundOnlySentence`

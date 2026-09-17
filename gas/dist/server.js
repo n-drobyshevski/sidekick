@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "c2678f1fa5f3" : "dev";
+  var BUILD_ID = true ? "35fc7e62834f" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -4294,6 +4294,8 @@ var Server = (() => {
       const bucketOpen = [0, 0, 0, 0, 0];
       let observed = 0;
       let unobserved = 0;
+      let unobservedOpen = 0;
+      let unobservedClear = 0;
       let withOpen = 0;
       let coldAssets = 0;
       let watching = 0;
@@ -4313,6 +4315,8 @@ var Server = (() => {
         } else {
           unobserved += 1;
           openInUnobserved += a.open_findings;
+          if (a.open_findings > 0) unobservedOpen += 1;
+          else unobservedClear += 1;
         }
         if (a.bucket !== null) {
           buckets[a.bucket] += 1;
@@ -4347,6 +4351,8 @@ var Server = (() => {
         assets: list.length,
         assets_observed: observed,
         assets_unobserved: unobserved,
+        assets_unobserved_open: unobservedOpen,
+        assets_unobserved_clear: unobservedClear,
         assets_with_open: withOpen,
         cold_assets: coldAssets,
         watching_assets: watching,
@@ -4404,6 +4410,8 @@ var Server = (() => {
       assets: assets.length,
       assets_observed: 0,
       assets_unobserved: 0,
+      assets_unobserved_open: 0,
+      assets_unobserved_clear: 0,
       assets_with_open: 0,
       cold_assets: 0,
       watching_assets: 0,
@@ -4426,6 +4434,8 @@ var Server = (() => {
     for (const group of groups) {
       t.assets_observed += group.assets_observed;
       t.assets_unobserved += group.assets_unobserved;
+      t.assets_unobserved_open += group.assets_unobserved_open;
+      t.assets_unobserved_clear += group.assets_unobserved_clear;
       t.assets_with_open += group.assets_with_open;
       t.cold_assets += group.cold_assets;
       t.watching_assets += group.watching_assets;

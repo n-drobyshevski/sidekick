@@ -354,14 +354,32 @@ export function coldestShareNote(view) {
  * stops being true, which is the guard worth having here — the day a sixth verdict appears, a
  * silently-renormalised grid would be the last place anyone looked.
  *
- * TWO OF THE FIVE ARE HATCHED, AND THAT IS THE WHOLE POINT. `watching` is an asset with open
- * findings whose idle time could not be measured at all; `unobserved` is one the scanner has
- * lost sight of. Neither is a measurement of idleness, and the page spends most of its words
- * insisting they are not counted as warm. `--hatch` is the design system's own token for
- * exactly that claim — "this part is not a measurement".
+ * THREE OF THE SIX ARE HATCHED, AND THAT IS THE WHOLE POINT. `watching` is an asset with open
+ * findings whose idle time could not be measured at all; the two unobserved segments are ones
+ * the scanner has lost sight of. None is a measurement of idleness, and the page spends most of
+ * its words insisting they are not counted as warm. `--hatch` is the design system's own token
+ * for exactly that claim — "this part is not a measurement".
+ *
+ * UNOBSERVED IS DRAWN AS TWO, BECAUSE IT WAS NEVER ONE PIECE OF NEWS. `unobserved` is tested
+ * before `clear`, so an asset that was remediated and then decommissioned stays unobserved for
+ * as long as the ledger remembers it — and a register with ordinary asset churn accumulates
+ * those without bound. The tenant that prompted this read 1,947 of 2,404 assets "out of sight",
+ * 81% of the picture, which looks like a coverage catastrophe and was mostly machines that no
+ * longer exist. Split on the one question that tells the two apart — is anything still open on
+ * it? — the alarming half is the half that deserved the alarm: backlog stranded on assets
+ * nobody is scanning any more. The verdict itself does not split (`assets_unobserved` is still
+ * their sum), so the assets table, the group roll-up and the scatter are untouched.
+ *
+ * THE OPEN HALF IS `bad` HATCHED, WHICH `cold` IS NOT. Cold is `bad` SOLID: real backlog going
+ * quiet somewhere the scanner can still see. The open-and-out-of-sight half is the same alarm
+ * with the measurement missing, which is exactly what the tone-plus-silhouette pair is for —
+ * same red, different shape, and neither is read off colour alone.
  *
  * `clear` IS A RING, NOT A FILL. It is measured and it is fine: nothing open to go quiet on.
  * Drawing it solid would put it in the same visual weight class as cold and warm.
+ *
+ * SIX SEGMENTS IS `MAX_SEGMENTS`, EXACTLY. The next state this census wants will have to
+ * replace one rather than join them, which is the cap doing its job rather than a problem.
  *
  * EXACT WHERE IT CAN BE. Under MAX_EXACT_CELLS assets the lattice is one cell per asset and
  * there is no rounding to explain; above it the lattice is 100 cells and the model says so in
@@ -385,8 +403,12 @@ export function coldCensusModel(view) {
       },
       { key: "clear", label: "Clear", count: num(t.clear_assets, 0), tone: "ok", fill: "ring" },
       {
-        key: "unobserved", label: "Out of sight", count: num(t.assets_unobserved, 0),
-        tone: "neutral", fill: "hatch",
+        key: "unobserved_open", label: "Out of sight, backlog open",
+        count: num(t.assets_unobserved_open, 0), tone: "bad", fill: "hatch",
+      },
+      {
+        key: "unobserved_clear", label: "Gone, nothing open",
+        count: num(t.assets_unobserved_clear, 0), tone: "neutral", fill: "hatch",
       },
     ],
   });
@@ -492,13 +514,20 @@ export function coldKpiCards(view) {
       key: "unobserved",
       label: "Unobserved assets",
       value: fmtCount(num(t.assets_unobserved, 0)),
-      sub: fmtCount(openInUnobserved) + " open " + pluralize(openInUnobserved, "finding")
-        + " on them",
+      // THE SUB-LINE NAMES THE HALF THAT IS WORK. The headline figure counts every asset the
+      // scanner has lost sight of, and on a long-lived register most of those were fixed and
+      // then decommissioned — nothing open, nothing to do. The number a reader can act on is
+      // how many still carry backlog, so that is the one under the figure.
+      sub: fmtCount(num(t.assets_unobserved_open, 0)) + " still carrying "
+        + fmtCount(openInUnobserved) + " open " + pluralize(openInUnobserved, "finding"),
       help: { term: "unobserved" },
       denominator:
         "Of " + fmtCount(num(t.assets, 0)) + " assets in the ledger. The scanner returned"
         + " nothing for these in the newest scan of any severity they have rows in, so their"
-        + " findings close by disappearance — counted apart from cold, and never as warm.",
+        + " findings close by disappearance — counted apart from cold, and never as warm."
+        + " The ledger never forgets an asset, so this figure also holds every asset that was"
+        + " fixed and then decommissioned: "
+        + fmtCount(num(t.assets_unobserved_clear, 0)) + " of them have nothing open at all.",
     },
   ];
 }

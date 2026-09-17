@@ -305,6 +305,9 @@ export interface ColdGroupRow {
   assets: number;
   assets_observed: number;
   assets_unobserved: number;
+  /** See `ColdZoneTotals` — the two kinds of unobserved, summing to `assets_unobserved`. */
+  assets_unobserved_open: number;
+  assets_unobserved_clear: number;
   /** OBSERVED assets with at least one open finding — the denominator of `cold_share_pct`. */
   assets_with_open: number;
   cold_assets: number;
@@ -342,6 +345,23 @@ export interface ColdZoneTotals {
   assets: number;
   assets_observed: number;
   assets_unobserved: number;
+  /**
+   * The two kinds of unobserved, which are not the same news and were drawn as one.
+   *
+   * `unobserved` is tested before `clear`, so an asset that was remediated and then
+   * DECOMMISSIONED stays unobserved for as long as the ledger remembers it: nothing open, and
+   * no scan will ever list it again. On a register with ordinary asset churn that tail grows
+   * without bound and comes to dominate any picture drawn over `assets` — 1,947 of 2,404 on
+   * the tenant that prompted this, which read as a coverage catastrophe and was mostly
+   * machines that no longer exist. The other kind is the one this page exists for: an asset
+   * the scanner has lost sight of that is STILL CARRYING open findings — backlog nobody is
+   * looking at any more, and nobody will be told about again.
+   *
+   * They sum to `assets_unobserved`, so every existing reader is unaffected and the split
+   * proves itself. `open_in_unobserved` is the findings figure over the same population.
+   */
+  assets_unobserved_open: number;
+  assets_unobserved_clear: number;
   assets_with_open: number;
   cold_assets: number;
   watching_assets: number;
@@ -998,6 +1018,8 @@ function rollUp(assets: ColdAssetRow[]): ColdGroupRow[] {
     const bucketOpen = [0, 0, 0, 0, 0];
     let observed = 0;
     let unobserved = 0;
+    let unobservedOpen = 0;
+    let unobservedClear = 0;
     let withOpen = 0;
     let coldAssets = 0;
     let watching = 0;
@@ -1020,6 +1042,11 @@ function rollUp(assets: ColdAssetRow[]): ColdGroupRow[] {
       } else {
         unobserved += 1;
         openInUnobserved += a.open_findings;
+        // Split on the one question that separates a coverage problem from a decommissioning:
+        // is anything still open on it? The asset's verdict stays `unobserved` either way —
+        // this is a count, not a sixth state, so nothing downstream of the verdict moves.
+        if (a.open_findings > 0) unobservedOpen += 1;
+        else unobservedClear += 1;
       }
       if (a.bucket !== null) {
         buckets[a.bucket] += 1;
@@ -1057,6 +1084,8 @@ function rollUp(assets: ColdAssetRow[]): ColdGroupRow[] {
       assets: list.length,
       assets_observed: observed,
       assets_unobserved: unobserved,
+      assets_unobserved_open: unobservedOpen,
+      assets_unobserved_clear: unobservedClear,
       assets_with_open: withOpen,
       cold_assets: coldAssets,
       watching_assets: watching,
@@ -1154,6 +1183,8 @@ function totalsOf(assets: ColdAssetRow[], groups: ColdGroupRow[]): ColdZoneTotal
     assets: assets.length,
     assets_observed: 0,
     assets_unobserved: 0,
+    assets_unobserved_open: 0,
+    assets_unobserved_clear: 0,
     assets_with_open: 0,
     cold_assets: 0,
     watching_assets: 0,
@@ -1177,6 +1208,8 @@ function totalsOf(assets: ColdAssetRow[], groups: ColdGroupRow[]): ColdZoneTotal
   for (const group of groups) {
     t.assets_observed += group.assets_observed;
     t.assets_unobserved += group.assets_unobserved;
+    t.assets_unobserved_open += group.assets_unobserved_open;
+    t.assets_unobserved_clear += group.assets_unobserved_clear;
     t.assets_with_open += group.assets_with_open;
     t.cold_assets += group.cold_assets;
     t.watching_assets += group.watching_assets;

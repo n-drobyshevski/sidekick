@@ -437,21 +437,31 @@ not move. Under forced colours the comb is dropped rather than tone-mapped: it i
 `--warn` on a black High Contrast ground measures about 1.8:1 — the dashed border is what carries
 measured-versus-not-measured there, and that is what was measured.
 
-**A census block is as flat as it can be, and it grows to its card.** `unitGrid` lays an exact
-lattice of 24 or fewer out as one row at 14px; past that it used to fall back to BOTH a square
-shape and the waffle's 9px cell, so one repository over the edge turned a 318px strip into a 53px
-square and thirty assets rendered as a 64px smudge in a 704px card — the same defect the 14px
-rule was written to fix, one size class along. The shape and the size part company instead. A
-census block takes as few rows as `ROW_MAX` allows and balances across them, because square is
-right for a PROPORTION (10x10 makes one cell one percentage point) and carries nothing for a
-census; and it keeps 14px as a FLOOR, with `.isotype--census` in `styles/components.css` growing
-the column from there to the width of the card and capping it — at 30px, past which a cell stops
-reading as a mark, and at 44rem, past which the lattice reads as a banner. The column count stays
-in the module because the shape of a picture is a decision about the picture; how much room those
-columns get is a fact about the viewport, and CSS is the only one of the two that can see it.
-That cap used to be `gas`'s own `.cold-census { max-width: 44rem }`, where it was inert (the grid
-inside was `max-content` and never reached it) and where `gas_devsecops` — which passes the same
-class name — had no rule behind it at all.
+**A block lattice is as flat as it can be, and it grows to its card.** `unitGrid` lays a lattice
+of 24 or fewer out as one row at 14px; past that it used to fall back to BOTH a square shape and
+the waffle's 9px cell, so one repository over the edge turned a 318px strip into a 53px square
+and thirty assets rendered as a 64px smudge in a 704px card — the same defect the 14px rule was
+written to fix, one size class along. The shape and the size part company instead. A block takes
+as few rows as `ROW_MAX` allows and balances across them, and it keeps its floor — 14px for a
+census, 9px for a proportion, which has more columns and needs the smaller minimum to fit a
+360px card — with `.isotype--block` in `styles/components.css` growing the column from there to
+the width of the card and capping it at 30px, past which a cell stops reading as a mark, and at
+44rem, past which the lattice reads as a banner. The column count stays in the module because
+the shape of a picture is a decision about the picture; how much room those columns get is a
+fact about the viewport, and CSS is the only one of the two that can see it. That cap used to be
+`gas`'s own `.cold-census { max-width: 44rem }`, where it was inert (the grid inside was
+`max-content` and never reached it) and where `gas_devsecops` — which passes the same class
+name — had no rule behind it at all.
+
+**The square was the shape that could not be helped, and it was never carrying what it looked
+like it carried.** The flat rule first shipped for exact censuses only, on the reasoning that a
+10x10 waffle means one cell per percentage point and a stretched one would be a different claim.
+Half right: stretching a CELL changes nothing, and only the COLUMN COUNT could change what a ROW
+reads as — from a tenth to a fifth, which is no harder to read. What a square does carry is its
+own height, so a 10x10 grown to a size worth looking at is a banner. The gate also meant the fix
+missed the card it was written for: the register that prompted it holds 2,404 assets, which is a
+proportion rather than a census, so it kept its 108px block while every small register got the
+new one. Both modes take the flat rule now.
 
 Refusals, all by type before any cast: an unmeasured count is `absentText` and contributes no
 cells and no share; a zero denominator is unmeasured and never `"0.0%"`; `unit` is required and

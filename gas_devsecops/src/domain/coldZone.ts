@@ -351,6 +351,9 @@ export interface ColdTeamRow {
   repos: number;
   repos_observed: number;
   repos_unobserved: number;
+  /** See `ColdZoneTotals` — the two kinds of unobserved, summing to `repos_unobserved`. */
+  repos_unobserved_open: number;
+  repos_unobserved_clear: number;
   /** OBSERVED repos with at least one open finding — the denominator of `cold_share_pct`. */
   repos_with_open: number;
   cold_repos: number;
@@ -388,6 +391,21 @@ export interface ColdZoneTotals {
   repos: number;
   repos_observed: number;
   repos_unobserved: number;
+  /**
+   * The two kinds of unobserved, which are not the same news and were drawn as one.
+   *
+   * `unobserved` is tested before `clear`, so a repository that was remediated and then
+   * ARCHIVED stays unobserved for as long as the ledger remembers it: nothing open, and no
+   * scan will ever list it again. On a register with ordinary repository churn that tail grows
+   * without bound and comes to dominate any picture drawn over `repos`. The other kind is the
+   * one this section exists for: a repository the scanner has lost sight of that is STILL
+   * CARRYING open findings — backlog nobody is looking at any more.
+   *
+   * They sum to `repos_unobserved`, so every existing reader is unaffected and the split
+   * proves itself. `open_in_unobserved` is the findings figure over the same population.
+   */
+  repos_unobserved_open: number;
+  repos_unobserved_clear: number;
   repos_with_open: number;
   cold_repos: number;
   watching_repos: number;
@@ -1144,6 +1162,8 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
     const bucketOpen = [0, 0, 0, 0, 0];
     let observed = 0;
     let unobserved = 0;
+    let unobservedOpen = 0;
+    let unobservedClear = 0;
     let withOpen = 0;
     let coldRepos = 0;
     let watching = 0;
@@ -1166,6 +1186,11 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
       } else {
         unobserved += 1;
         openInUnobserved += r.open_findings;
+        // Split on the one question that separates a coverage problem from an archived
+        // repository: is anything still open on it? The verdict stays `unobserved` either
+        // way — this is a count, not a sixth state, so nothing downstream of it moves.
+        if (r.open_findings > 0) unobservedOpen += 1;
+        else unobservedClear += 1;
       }
       if (r.bucket !== null) {
         buckets[r.bucket] += 1;
@@ -1217,6 +1242,8 @@ function rollUp(repos: ColdRepoRow[]): ColdTeamRow[] {
       repos: list.length,
       repos_observed: observed,
       repos_unobserved: unobserved,
+      repos_unobserved_open: unobservedOpen,
+      repos_unobserved_clear: unobservedClear,
       repos_with_open: withOpen,
       cold_repos: coldRepos,
       watching_repos: watching,
@@ -1315,6 +1342,8 @@ function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
     repos: repos.length,
     repos_observed: 0,
     repos_unobserved: 0,
+    repos_unobserved_open: 0,
+    repos_unobserved_clear: 0,
     repos_with_open: 0,
     cold_repos: 0,
     watching_repos: 0,
@@ -1338,6 +1367,8 @@ function totalsOf(repos: ColdRepoRow[], teams: ColdTeamRow[]): ColdZoneTotals {
   for (const team of teams) {
     t.repos_observed += team.repos_observed;
     t.repos_unobserved += team.repos_unobserved;
+    t.repos_unobserved_open += team.repos_unobserved_open;
+    t.repos_unobserved_clear += team.repos_unobserved_clear;
     t.repos_with_open += team.repos_with_open;
     t.cold_repos += team.cold_repos;
     t.watching_repos += team.watching_repos;
