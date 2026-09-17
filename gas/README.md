@@ -483,6 +483,29 @@ losing coverage — the single worst thing this page could do — so an unobserv
 never warm, never cold, and sits in no idle bucket. It publishes `disappeared_at` and how
 many findings closed at that instant instead, so the shape of the drop-out is visible.
 
+### Two kinds of out of sight, and only one of them is work
+
+That order has a cost worth knowing about, because it surprises every reader once. **An asset
+that was fully remediated and then decommissioned is `unobserved` for as long as the ledger
+remembers it** — nothing open, and no scan will ever list it again. `reconcile` writes
+`last_scan_id` only on findings a scan actually returns and the disappearance branch never
+touches it, so once the scanner stops listing an asset its rows are frozen against an old scan
+permanently. The census denominator is every asset that has ever had a row here, so on a
+register with ordinary asset churn — retired VMs, deleted containers, rebuilt hosts, ephemeral
+cloud resources — that tail only grows. One real tenant read **1,947 of 2,404 assets out of
+sight**, which looks like a coverage catastrophe and is mostly machines that no longer exist.
+
+So the census draws the two apart, on the one question that separates them: **is anything still
+open on it?**
+
+- **Out of sight, backlog open** (`assets_unobserved_open`) — the scanner lost the asset while
+  findings were still on it. That backlog is real, and nobody will be told about it again. This
+  is the figure to act on, and it is the one under the Unobserved assets card.
+- **Gone, nothing open** (`assets_unobserved_clear`) — fixed, then decommissioned. Nothing to do.
+
+They sum to `assets_unobserved`, so the verdict itself never split: the assets table, the group
+roll-up and the scatter all still see one `unobserved` state.
+
 ### The lower bound
 
 An asset can carry open findings and have **never** had one resolve. That is not "0 days

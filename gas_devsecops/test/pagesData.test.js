@@ -294,6 +294,9 @@ function coldTotals(over = {}) {
     repos: 10,
     repos_observed: 9,
     repos_unobserved: 1,
+    // The one out-of-sight repository still carries backlog — the half worth the alarm.
+    repos_unobserved_open: 1,
+    repos_unobserved_clear: 0,
     repos_with_open: 6,
     cold_repos: 2,
     watching_repos: 1,
@@ -432,20 +435,38 @@ describe("repos: the cold-zone census is a real partition of the register", () =
     expect(m.exact).toBe(true);
     expect(m.cells).toBe(10);
     expect(m.segments.map((s) => [s.key, s.cells])).toEqual([
-      ["cold", 2], ["warm", 3], ["watching", 1], ["clear", 3], ["unobserved", 1],
+      ["cold", 2], ["warm", 3], ["watching", 1], ["clear", 3],
+      ["unobserved_open", 1], ["unobserved_clear", 0],
     ]);
     expect(m.rounded).toBe(false);
   });
 
-  it("hatches the two states that are not measurements of idleness, and only those", () => {
+  it("hatches the three states that are not measurements of idleness, and only those", () => {
     // `watching` is a repository with open findings whose idle time could not be measured at
-    // all; `unobserved` is one the scanner has lost sight of. The section spends most of its
-    // words insisting neither is warm — --hatch is the design system's token for that claim.
+    // all; both unobserved segments are ones the scanner has lost sight of. The section spends
+    // most of its words insisting none is warm — --hatch is the design system's token for
+    // that claim.
     const m = coldCensusModel(coldZoneView(coldModel()));
     const hatched = m.segments.filter((s) => s.fill === "hatch").map((s) => s.key);
-    expect(hatched).toEqual(["watching", "unobserved"]);
+    expect(hatched).toEqual(["watching", "unobserved_open", "unobserved_clear"]);
     expect(m.segments.find((s) => s.key === "clear").fill).toBe("ring");
     expect(m.segments.find((s) => s.key === "cold").fill).toBe("solid");
+  });
+
+  // THE SPLIT IS THE POINT, NOT A RENAME. Out of sight was one grey segment covering two
+  // unrelated facts: a repository the scanner lost while backlog was still open on it, and one
+  // that was remediated and then archived. The second accumulates forever on any register with
+  // churn, so drawn as one they made a healthy register look like a coverage catastrophe.
+  it("tells the two kinds of out-of-sight apart by tone as well as by word", () => {
+    const m = coldCensusModel(coldZoneView(coldModel()));
+    const seg = Object.fromEntries(m.segments.map((s) => [s.key, s]));
+    expect(seg.unobserved_open.tone).toBe("bad");
+    expect(seg.unobserved_clear.tone).toBe("neutral");
+    expect(seg.unobserved_open.label).toContain("backlog open");
+    expect(seg.unobserved_clear.label).toContain("nothing open");
+    // The same tone as cold, told apart by silhouette: cold is measured, this is not.
+    expect(seg.cold.tone).toBe("bad");
+    expect(seg.cold.fill).toBe("solid");
   });
 
   it("every segment carries a word, so no cell means anything by its fill alone", () => {

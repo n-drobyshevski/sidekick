@@ -499,13 +499,23 @@ export function coldestShareNote(view) {
  * stops being true, which is the guard worth having here — the day a sixth verdict appears, a
  * silently-renormalised grid would be the last place anyone looked.
  *
- * TWO OF THE FIVE ARE HATCHED, AND THAT IS THE WHOLE POINT. `watching` is a repository with
+ * THREE OF THE SIX ARE HATCHED, AND THAT IS THE WHOLE POINT. `watching` is a repository with
  * open findings whose idle time could not be measured at all (`idleDays === null` with no
- * usable bound); `unobserved` is one the scanner has lost sight of. Neither is a measurement of
- * idleness, and the section spends most of its words insisting they are not counted as warm.
- * `--hatch` is the design system's own token for exactly that claim — "this part is not a
- * measurement" — so the picture makes it where the reader is already looking, instead of only
- * in a sentence underneath.
+ * usable bound); the two unobserved segments are ones the scanner has lost sight of. None is a
+ * measurement of idleness, and the section spends most of its words insisting they are not
+ * counted as warm. `--hatch` is the design system's own token for exactly that claim — "this
+ * part is not a measurement" — so the picture makes it where the reader is already looking,
+ * instead of only in a sentence underneath.
+ *
+ * UNOBSERVED IS DRAWN AS TWO, BECAUSE IT WAS NEVER ONE PIECE OF NEWS. `unobserved` is tested
+ * before `clear`, so a repository that was remediated and then archived stays unobserved for as
+ * long as the ledger remembers it, and a register with ordinary churn accumulates those without
+ * bound until they dominate the picture. Split on the one question that tells the two apart —
+ * is anything still open on it? — the alarming half is the half that deserved the alarm:
+ * backlog stranded on repositories nobody is scanning any more. The verdict does not split
+ * (`repos_unobserved` is still their sum), so the tables and the roll-up are untouched. The
+ * open half is `bad` HATCHED where `cold` is `bad` SOLID: the same alarm with the measurement
+ * missing, told apart by silhouette rather than by colour alone.
  *
  * `clear` IS A RING, NOT A FILL. It is measured and it is fine: nothing open to go quiet on.
  * Drawing it solid would put it in the same visual weight class as cold and warm, and the
@@ -534,8 +544,12 @@ export function coldCensusModel(view) {
       },
       { key: "clear", label: "Clear", count: num(t.clear_repos, 0), tone: "ok", fill: "ring" },
       {
-        key: "unobserved", label: "Out of sight", count: num(t.repos_unobserved, 0),
-        tone: "neutral", fill: "hatch",
+        key: "unobserved_open", label: "Out of sight, backlog open",
+        count: num(t.repos_unobserved_open, 0), tone: "bad", fill: "hatch",
+      },
+      {
+        key: "unobserved_clear", label: "Gone, nothing open",
+        count: num(t.repos_unobserved_clear, 0), tone: "neutral", fill: "hatch",
       },
     ],
   });

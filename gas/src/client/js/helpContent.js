@@ -495,6 +495,7 @@ const ENTRIES = [
       "The scanner stopped returning this asset: nothing on it reached the newest scan.",
       "Its findings close by disappearance, which looks like a whole asset remediated at once.",
       "So it is tested first, counted apart, and never counted as warm or cold. No finding on it reached the newest scan of any severity it has rows in.",
+      "Two very different things land here, and the census draws them apart. An asset that was fixed and then decommissioned is unobserved for as long as the ledger remembers it — nothing open, nothing to do, and on a long-lived register most of the figure. The one worth acting on is an asset the scanner lost while findings were still open on it: that backlog is real and nobody will be told about it again.",
     ],
   },
   {
