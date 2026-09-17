@@ -33,16 +33,18 @@
 
 import { chartUnavailable, loadCharts } from "../chartsLoader.js";
 import {
-  coldAssetRows, coldCensusModel, coldGroupRows, coldGroupScatterPoints, coldKpiCards,
-  coldModeCaption, coldScatterPoints, coldZoneView, coldestShareNote, groupCountNote, heatModel,
-  severitiesNote, unmeasurableNote,
+  applyColdSelection, coldBandKeyModel, coldBandScale, coldCensusModel, coldGroupRows,
+  coldGroupScatterPoints, coldKpiCards, coldModeCaption, coldScatterPoints, coldSelection,
+  coldSelectionNote, coldZoneView, coldestShareNote, groupCountNote, severitiesNote,
+  unmeasurableNote,
 } from "./coldZoneModel.js";
 import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import {
-  DEFAULT_PAGE_SIZE, absent, absentText, chartTable, chartTableModel, clear, dataTable, days1,
-  denomNote, el, emptyState, errorState, figureCard, firstRunNotice, fmtCount, meter,
-  onPageTeardown, pageHeader, pageOf, pct1, scopeBar, sectionLabel, segmented, skeletonStack,
-  sortRows, statusPill, tableFooter, tipLabel, unitGrid, unitKeyRow,
+  DEFAULT_PAGE_SIZE, absent, absentText, bandBar, bandBarModel, chartTable, chartTableModel,
+  clear, dataTable, days1, denomNote, el, emptyState, errorState, figureCard, filterChipRow,
+  firstRunNotice, fmtCount, meter, onPageTeardown, pageHeader, pageOf, pct1, scopeBar,
+  sectionLabel, segmented, skeletonStack, sortRows, statusPill, tableFooter, tipLabel,
+  unitGrid, unitKeyRow, verdictMark,
 } from "../ui.js";
 
 // ------------------------------------------------------------------------- local helpers
@@ -89,50 +91,11 @@ function pagedTable(spec) {
   return host;
 }
 
-/**
- * verdict slug -> the dot's tone.
- *
- * WHY `unobserved` AND `watching` ARE NEUTRAL RATHER THAN BAD. Neither is a statement about a
- * support group. `unobserved` says the SCANNER stopped returning the asset — a fact about the
- * pipeline, which `coldZone.ts` tests first precisely so a drop-out is never read as
- * remediation — and `watching` says the clock has not run long enough to say anything yet.
- * Painting either of them red would publish a verdict nobody measured; both are still counted,
- * separately, and the word says which.
- *
- * `partly-cold` IS THE ONE `warn` TONE: a support group where SOME assets have gone quiet is
- * not the same claim as one where every asset with open findings has, and collapsing the two
- * into `bad` would lose the only distinction the group table's verdict column is there to
- * draw. The three capacity slugs ride along in the same table because the dot vocabulary is
- * one vocabulary — the word beside the dot is what says which question is being answered.
- */
-const VERDICT_KINDS = {
-  gaining: "ok",
-  "keeping-up": "neutral",
-  "falling-behind": "bad",
-  cold: "bad",
-  "fully-cold": "bad",
-  "partly-cold": "warn",
-  unobserved: "neutral",
-  watching: "neutral",
-  warm: "ok",
-  clear: "ok",
-};
-
-/**
- * A verdict as a dot AND a word.
- *
- * THE WORD IS THE SIGNAL AND THE DOT IS THE REDUNDANCY, never the other way round. States told
- * apart by hue alone survive neither greyscale nor a dichromat, which DESIGN.md's
- * accessibility bar forbids outright; the dot is `aria-hidden` for the same reason — it says
- * nothing the word beside it does not. A verdict of null or unrecognised still draws: a
- * neutral dot beside an em dash is the honest picture of a verdict nobody could reach.
- */
-function verdictMark(verdict, word) {
-  const kind = VERDICT_KINDS[verdict] || "neutral";
-  return el("span", { class: "verdict-mark" },
-    el("span", { class: "verdict-dot verdict-dot--" + kind, "aria-hidden": "true" }),
-    el("span", { class: "verdict-word" }, word === absentText ? absent() : word));
-}
+// `VERDICT_KINDS` and `verdictMark` USED TO LIVE HERE, as a copy of gas_devsecops's
+// `ui/verdict.js` — the same table, the same DOM, and a byte-identical ruleset in pages.css.
+// Both halves are `gas_shared` now (`ui/verdict.js`, `styles/components.css`); this page
+// imports the mark like any other component. The local copy's own comment named the trigger
+// for the move and then did not take it: "a second consumer is what promotes a rule".
 
 // ----------------------------------------------------------------------------- the page
 
@@ -185,7 +148,23 @@ export async function renderColdZone(main, _params, ctx) {
 
   // The same reasoning, for the assets table's cut. A reader who narrowed to the backlog left
   // behind means it about the section, not about the paint that happened to be on screen.
+  //
+  // THE BAND RIDES INSIDE THIS VALUE rather than beside it: "all" | "cold" | "lost" |
+  // "band:N". `coldSelection` reads the two apart. Fusing them is what removes the corner a
+  // reader could otherwise ask for and never get — an unobserved asset has no bucket, so "out
+  // of sight" crossed with an idle band is empty by construction.
   let assetCut = "all";
+
+  // The other axis. A support group, or null. Same argument as the cut for why it is a
+  // module-local `let` and not a URL parameter — `setParams` replaces the whole query string
+  // and does not re-render, and every asset a selection can reach is already in the payload
+  // this page holds, so a selection repaints and never refetches. A group in the URL would
+  // also be a SECOND spelling of "which support group", beside the header scope chip that
+  // really does refetch, and the two could disagree.
+  let coldGroup = null;
+
+  // Set by `renderAssets`, called by whichever control changed the selection.
+  let repaintAssets = null;
 
   let paint = null;
   const promise = swrCall(
@@ -195,7 +174,7 @@ export async function renderColdZone(main, _params, ctx) {
   );
 
   /**
-   * Four figures, two tables, a grid and a scatter — or one notice.
+   * Four figures, a census, one table, a list and a scatter — or one notice.
    *
    * NEITHER ABSENCE IS AN ERROR, and both are drawn with `emptyState(…, {variant:"notice"})`
    * rather than `errorState`. A register with no flat scan on record has no clock to measure
@@ -232,7 +211,6 @@ export async function renderColdZone(main, _params, ctx) {
     }
     renderKpis(view);
     renderGroups(view);
-    renderHeat(view);
     renderAssets(view);
     renderChart(view);
   };
@@ -250,8 +228,22 @@ export async function renderColdZone(main, _params, ctx) {
     }));
   }
 
+  /**
+   * The four figures and the census they give a shape to, side by side.
+   *
+   * ONE BAND INSTEAD OF TWO. The figures and the lattice answer the same question at two
+   * grains — how much of the estate has gone quiet, and what the whole estate looks like — and
+   * stacking them put a screen of scroll between a number and the picture of it. `.card-pair`
+   * is the shared two-column grid (components.css), with its own 1100px breakpoint, so this
+   * costs no layout rule and collapses to the old stack on a narrow viewport.
+   *
+   * THE FIGURES ARE NOT IN A CARD. `.card-pair` gives its `.card` children their surface, and
+   * the census is the one that has content genuinely distinct from the page around it; a card
+   * around the figure strip as well would be a card inside a card, which DESIGN.md forbids
+   * outright, and `.kpi-card` already carries its own border.
+   */
   function renderKpis(view) {
-    const row = el("div", { class: "kpi-row" });
+    const row = el("div", { class: "kpi-row cold-figures" });
     for (const card of coldKpiCards(view)) {
       row.append(figureCard({
         label: card.label,
@@ -261,39 +253,68 @@ export async function renderColdZone(main, _params, ctx) {
         denominator: card.denominator,
       }));
     }
-    host.append(row);
-    // The assets none of the four figures can speak for, said out loud rather than left to the
-    // heat table's fifth column to imply. Null when there are none — an always-printed
-    // sentence about zero assets is noise.
+    const census = censusCard(view);
+    // No census to draw — an unmeasured denominator — leaves the figures the full width rather
+    // than a half-width column beside an empty track.
+    host.append(census ? el("div", { class: "card-pair" }, row, census) : row);
+    // The assets none of the four figures can speak for, said out loud rather than left to a
+    // column of the distribution to imply. Null when there are none — an always-printed
+    // sentence about zero assets is noise. It stays on the SURFACE: it is an honesty
+    // statement about what the figures above it cannot speak for, not an explanation of one.
     const note = unmeasurableNote(view);
     if (note) host.append(denomNote(note));
     // The severities observation could not be decided for. The rail here is single-scope, so
     // this is the analogue of the sibling register's per-scope caveat.
     const sevs = severitiesNote(view);
     if (sevs) host.append(denomNote(sevs));
-    renderCensus(view);
   }
 
   /**
-   * The census, under the four figures it gives a shape to. Drawn only where the register has
+   * The census, beside the four figures it gives a shape to. Drawn only where the register has
    * assets to count: `coldCensusModel` returns null otherwise, and a lattice over an unmeasured
    * denominator is the confident zero this page refuses everywhere else.
    *
    * The key row carries every figure in words, which is why this owes no `chartTable`
    * disclosure the way a canvas on this page does.
    */
-  function renderCensus(view) {
+  function censusCard(view) {
     const model = coldCensusModel(view);
-    if (!model || !model.measured) return;
-    host.append(el("div", { class: "card" },
+    if (!model || !model.measured) return null;
+    // THE CLASS IS ON THE CARD, not only on the lattice inside it: the key row is a SIBLING
+    // of the grid, and its swatches have to take the same field-grade fills or the key and
+    // the picture stop being obviously one vocabulary.
+    return el("div", { class: "card cold-census" },
       sectionLabel("Every asset, by what the clock can say"),
       unitGrid(model, { className: "cold-census" }),
-      unitKeyRow(model)));
+      unitKeyRow(model));
   }
 
+  /**
+   * One row per support group, with its idle distribution in the row rather than in a second
+   * table a screen below.
+   *
+   * THE GRID FOLDED INTO THIS TABLE. `renderHeat` drew a support-group x idle-band matrix,
+   * keyed on exactly the same support group as the roll-up above it, so a reader comparing
+   * "who is coldest" with "where is their idle time" did it by scrolling between two tables.
+   * `bandBar` puts the distribution in the row it describes.
+   *
+   * WHAT THE FOLD COST, AND WHERE IT WENT. A matrix can be read DOWN a column ("who else is
+   * past 90 days?"); a column of bars cannot. Three things buy that back. The bars share ONE
+   * scale (`coldBandScale`), so length still compares down the table. The grid's totals row is
+   * still on the surface, as the band key row above — which is also the control. And pressing
+   * a band dims every other band in every row at once, which is the column read as an action
+   * rather than as a layout. The per-cell figures the grid printed are in each bar's
+   * `aria-label` and its tip: one level down, not gone.
+   */
   function renderGroups(view) {
     const rows = coldGroupRows(view);
-    host.append(el("h3", { class: "section-label" }, "By support group"));
+    // THE DENOMINATOR RIDES ON THE HEADING rather than as a paragraph under the table. It
+    // explains a count the footer already prints on the surface — "6 support groups, including
+    // the 1 asset with no support group recorded" — and `gas_devsecops/DESIGN.md`'s rule is
+    // that an honesty statement stays on the surface and an EXPLANATION goes one level down.
+    // This is the second kind. The unmapped-map warning below is the first, and it stays.
+    host.append(el("h3", { class: "section-label" },
+      tipLabel("By support group", { lines: [groupCountNote(view, rows.length)] })));
     if (!rows.length) {
       host.append(emptyState(
         "No support group has an asset to report on yet.",
@@ -302,9 +323,27 @@ export async function renderColdZone(main, _params, ctx) {
       ));
       return;
     }
+
+    // ONE SCALE FOR THE WHOLE TABLE. See `coldBandScale`, and gas_shared/ui/bandBar.js for the
+    // defect it refuses: a bar normalised to its own row draws 280 assets and 30 assets the
+    // same length, and the column stops being readable — which is what the fold was paid for.
+    const scale = coldBandScale(rows);
+    renderBandKeys(view);
+
     host.append(pagedTable({
       columns: [
-        { key: "label", label: "Support group", cell: (r) => r.label },
+        {
+          key: "label", label: "Support group",
+          // THE ROW'S NAME IS THE CONTROL, and it is one tab stop per row — the stop a
+          // clickable row already costs. The bars are NOT controls: five segments per row
+          // times N rows is 5N new stops, which is the arity rule `quad.js` states and
+          // `bandBar`'s own contract holds it to.
+          cell: (r) => el("button", {
+            type: "button", class: "linklike group-pick", "data-group-pick": r.key,
+            "aria-pressed": coldGroup === r.key ? "true" : "false",
+            onclick: () => pickGroup(r.key),
+          }, r.label),
+        },
         {
           key: "verdict", label: "Verdict",
           // The dot AND the word, never the dot alone.
@@ -312,19 +351,45 @@ export async function renderColdZone(main, _params, ctx) {
         },
         { key: "assets", label: "Assets", className: "num", cell: (r) => fmtCount(r.assets) },
         {
-          key: "coldAssets", label: "Cold assets", className: "num",
-          help: { term: "cold-zone" },
-          cell: (r) => fmtCount(r.coldAssets),
+          // THE OLD HEAT ROW, IN ONE CELL. `assets` stays a real column beside it: `buckets`
+          // sums only to the assets that HAVE an idle reading, and an unobserved or clear
+          // asset sits in no band at all, so deriving the count from the distribution would be
+          // wrong by exactly the population this page exists to talk about.
+          key: "bands", label: "Idle profile",
+          help: {
+            term: "idle",
+            lines: [
+              "Every asset with an idle reading, in the band that reading falls in.",
+              "Assets the scanner has lost sight of, and ones with nothing open, are in no"
+                + " band.",
+            ],
+          },
+          cell: (r) => {
+            const model = bandBarModel({
+              bands: r.bands, max: scale, unit: "assets", name: r.label,
+            });
+            const wrap = el("span", { class: "bandcell" });
+            // Kept on the node so a selection change repaints the bar without rebuilding the
+            // table under the reader's focus.
+            wrap.bandModel = model;
+            wrap.append(bandBar(model, { selected: selectedBand() }));
+            return wrap;
+          },
         },
         {
-          key: "share", label: "Cold share", className: "num",
-          // The percentage plus a picture of it, `decorative` because the figure is already in
-          // words beside it. A null share draws NO meter: see `coldGroupRows` for the refusal
-          // and why an empty track would be a claim rather than a blank.
+          // COUNT AND SHARE IN ONE COLUMN, because they are one fact at two grains and the
+          // distribution beside them needs the width more. Two columns of four characters each
+          // squeezed the share's meter onto its own line, where a decorative track under a
+          // number reads as a second figure rather than as a picture of the first.
+          key: "cold", label: "Cold", className: "num",
+          help: { term: "cold-zone" },
           cell: (r) => {
-            if (r.sharePct === null) return absentText;
+            const count = fmtCount(r.coldAssets);
+            // A null share draws NO meter and no percentage: see `coldGroupRows` for the
+            // refusal, and why an empty track would be a claim rather than a blank.
+            if (r.sharePct === null) return el("span", {}, count, " ", absent());
             return el("span", { class: "rate-with-meter" },
-              pct1(r.sharePct),
+              count + " · " + pct1(r.sharePct),
               meter(r.sharePct, { className: "meter--stat", decorative: true }));
           },
         },
@@ -335,7 +400,15 @@ export async function renderColdZone(main, _params, ctx) {
           // `warn` rather than `bad` on purpose: being the coldest support group on a healthy
           // estate is a POSITION, not a verdict, and the Verdict column earlier in the same
           // row is where the absolute reading lives.
-          key: "coldestRank", label: "Coldest rank", help: { term: "coldest-share" },
+          // THE CLAMP THAT DECIDES WHO IS MARKED, on the column that carries the mark, rather
+          // than as a fifth paragraph under the table. Null in fixed mode, where nothing is
+          // marked and there is no claim to explain.
+          key: "coldestRank",
+          label: "Coldest rank",
+          help: {
+            term: "coldest-share",
+            lines: coldestShareNote(view) ? [coldestShareNote(view)] : [],
+          },
           cell: (r) => {
             const rank = r.relativeRank === null ? absentText : fmtCount(r.relativeRank);
             if (!r.inColdestShare) return rank;
@@ -371,7 +444,6 @@ export async function renderColdZone(main, _params, ctx) {
       // `sortRows` leaves a list untouched when it is given no value function.
       emptyText: "No support group has an asset to report on yet.",
     }));
-    host.append(denomNote(groupCountNote(view, rows.length)));
     // UNDER AN ACTIVE SUPPORT-GROUP SCOPE THIS TABLE IS ONE ROW, and that is the scope doing
     // its job rather than a group having vanished. Said here because a one-row roll-up with no
     // explanation reads as a broken join — the header chip is several inches away and answers
@@ -392,61 +464,84 @@ export async function renderColdZone(main, _params, ctx) {
         + " aren’t mapped yet. Use “Refresh support groups” in Settings to build the map;"
         + " Attribution shows what the map currently joins."));
     }
-    // The marks in the column above, counted — and the clamp that decides how many there are,
-    // stated. Null when nobody is marked, which is every group in fixed mode.
-    const coldest = coldestShareNote(view);
-    if (coldest) host.append(denomNote(coldest));
+  }
+
+  /** The band currently selected, as a key, or null. */
+  function selectedBand() {
+    return assetCut.indexOf("band:") === 0 ? assetCut : null;
   }
 
   /**
-   * The support-group × idle-bucket grid.
+   * The band key row: the heat grid's totals row, still on the surface, now doing a second job.
    *
-   * HAND-BUILT RATHER THAN `dataTable`, and that is the exception this page makes rather than
-   * a component it is missing: no table in `gas_shared` takes a per-cell ordinal shade, and the
-   * one this needs (`data-level` off `heatLevel`, styled in pages.css) is meaningful on exactly
-   * one grid in one app. Adding it to the shared component would put a shading channel in front
-   * of every register that has no use for one.
-   *
-   * THE HEADER COMES FROM THE PAYLOAD. `bucket_labels` moves with the operator's threshold — at
-   * 120 days the columns are 0-40/40-80/80-120/≥ 120 — so a header spelled here would be a
-   * second, silently wrong statement of the setting.
+   * WHERE THE FIVE TAB STOPS GO. The bars below refuse to be controls because five per row
+   * times N rows is 5N stops; this row spends five ONCE, for the whole table. It is the
+   * `sevKeyRow({variant:"toggle"})` recipe: an `aria-pressed` button per band, carrying the
+   * band's word and its estate-wide count, so the row reads as information whether or not
+   * anyone presses it.
    */
-  function renderHeat(view) {
-    const heat = heatModel(view);
-    if (!heat) return;
-    const head = el("tr", {}, el("th", { scope: "col" }, "Support group"));
-    for (const label of heat.columns) head.append(el("th", { scope: "col", class: "num" }, label));
-    const body = el("tbody", {});
-    const paintRow = (r) => {
-      const tr = el("tr", {}, el("th", { scope: "row" }, r.label));
-      for (const cell of r.cells) {
-        tr.append(el("td", {
-          class: "num heat-cell",
-          // Every cell prints its own count and the open findings under it, shaded or not:
-          // the shade repeats the number, it never replaces it.
-          "data-level": String(cell.level),
-        }, fmtCount(cell.count), el("span", { class: "small muted" },
-          fmtCount(cell.open) + " open")));
-      }
-      return tr;
-    };
-    for (const r of heat.rows) body.append(paintRow(r));
-    if (heat.totals) body.append(paintRow(heat.totals));
-    host.append(el("h3", { class: "section-label" }, tipLabel("Idle time by support group", {
-      lines: [
-        "The last column is the assets with no movement on record yet — not idle for zero"
-        + " days, but not yet measurable.",
-        "Unobserved assets and assets with nothing open are in no column.",
-      ],
-    })));
-    host.append(el("div", { class: "table-wrap" },
-      el("table", { class: "data heat" },
-        el("caption", { class: "small muted" },
-          "Assets per support group by idle band, with the open findings in each."),
-        el("thead", {}, head),
-        body)));
+  function renderBandKeys(view) {
+    const keys = coldBandKeyModel(view);
+    if (!keys.length) return;
+    const row = el("div", { class: "bandkeys", role: "group", "aria-label": "Filter by idle band" });
+    for (const k of keys) {
+      row.append(el("button", {
+        type: "button", class: "bandkey", "data-band-key": k.key,
+        "data-rank": k.rank === null ? "none" : String(k.rank),
+        "aria-pressed": selectedBand() === k.key ? "true" : "false",
+        onclick: () => pickBand(k.key),
+      },
+      el("span", { class: "bandkey__swatch", "aria-hidden": "true" }),
+      el("span", { class: "bandkey__label" }, k.label),
+      el("span", { class: "bandkey__num num" }, fmtCount(k.count))));
+    }
+    host.append(row);
   }
 
+  /**
+   * Pressing a band, and pressing it again to let go.
+   *
+   * IT MOVES THE CUT rather than setting a second state beside it, so the three-way control
+   * below and the band can never disagree. Choosing All / Cold / Out-of-sight clears the band
+   * for the same reason, and neither control is ever disabled.
+   */
+  function pickBand(key) {
+    assetCut = assetCut === key ? "all" : key;
+    syncSelection();
+  }
+
+  function pickGroup(key) {
+    coldGroup = coldGroup === key ? null : key;
+    syncSelection();
+  }
+
+  /**
+   * Repaint what the selection changed, and nothing else.
+   *
+   * MARKED IN PLACE, NEVER REBUILT. The controls are the band key row and the group name
+   * buttons; rebuilding either would tear the focused button out from under the reader
+   * mid-press. So the buttons keep their nodes and only their `aria-pressed` moves, the bars
+   * are redrawn inside cells nobody is focused in, and the assets table — which holds no
+   * control that could have started this — is the one thing rebuilt wholesale.
+   */
+  function syncSelection() {
+    const band = selectedBand();
+    for (const btn of host.querySelectorAll("[data-band-key]")) {
+      btn.setAttribute("aria-pressed",
+        btn.getAttribute("data-band-key") === band ? "true" : "false");
+    }
+    for (const btn of host.querySelectorAll("[data-group-pick]")) {
+      const on = btn.getAttribute("data-group-pick") === coldGroup;
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      const row = btn.closest("tr");
+      if (row) row.classList.toggle("is-picked", on);
+    }
+    for (const cell of host.querySelectorAll(".bandcell")) {
+      if (!cell.bandModel) continue;
+      clear(cell).append(bandBar(cell.bandModel, { selected: band }));
+    }
+    if (repaintAssets) repaintAssets();
+  }
   /**
    * Cold assets and the ones the scanner has lost sight of, over one table with three cuts.
    *
@@ -468,15 +563,7 @@ export async function renderColdZone(main, _params, ctx) {
    * silence the scanner can no longer see) and the two observation columns arrive in its place.
    */
   function renderAssets(view) {
-    const all = coldAssetRows(view);
-    const cuts = {
-      all: { rows: all, label: "All" },
-      cold: { rows: all.filter((r) => r.cold), label: "Cold" },
-      lost: {
-        rows: all.filter((r) => !r.observed && r.open > 0),
-        label: "Out of sight, backlog open",
-      },
-    };
+    const countOf = (cut) => applyColdSelection(view, coldSelection(cut, coldGroup)).length;
 
     const toggle = segmented({
       options: ["all", "cold", "lost"].map((value) => ({
@@ -484,7 +571,8 @@ export async function renderColdZone(main, _params, ctx) {
         // THE COUNT RIDES ON THE LABEL. A cut a reader cannot size before opening it is a cut
         // they open to find out, and the interesting one here is often empty — which is good
         // news they should be able to read without a click.
-        label: cuts[value].label + " " + fmtCount(cuts[value].rows.length),
+        label: (value === "all" ? "All" : value === "cold" ? "Cold" : "Out of sight, backlog open")
+          + " " + fmtCount(countOf(value)),
         title: value === "lost"
           ? "Assets the newest scan no longer returns that still carry open findings. Nobody"
             + " will be told about that backlog again."
@@ -497,40 +585,86 @@ export async function renderColdZone(main, _params, ctx) {
       ariaLabel: "Which assets to list",
       onChange: (v) => {
         if (v === assetCut) return;
+        // CHOOSING ONE OF THE THREE CLEARS THE BAND, because the band lives in this same
+        // value. Nothing is disabled and nothing is hidden: the two readings cannot disagree
+        // because there is only one of them.
         assetCut = v;
-        toggle.set(v);
-        paintAssets();
+        syncSelection();
       },
     });
+
+    // WHAT IS CURRENTLY BEING ASKED FOR, said where the answer is. A reader who pressed a band
+    // four sections up needs the narrowing named beside the list it narrowed, and needs to be
+    // able to let go of it without hunting back for the control. `filterChipRow` already moves
+    // focus correctly when a chip is removed.
+    const chips = filterChipRow({
+      onPatch: (patch) => {
+        if (patch.band) assetCut = "all";
+        if (patch.group) coldGroup = null;
+        syncSelection();
+      },
+      onClearAll: () => { assetCut = "all"; coldGroup = null; syncSelection(); },
+      emptyText: "Showing every asset this page is about.",
+      ariaLabel: "Applied filters",
+    });
+
+    // THE LIST MOVED, SAID OUT LOUD. A selection made three sections away changes this table
+    // silently for a reader who cannot see it; one polite live region is the whole fix, and it
+    // speaks the same sentence the count under the table prints.
+    const live = el("p", { class: "sr-only", role: "status", "aria-live": "polite" });
 
     host.append(el("div", { class: "section-head" },
       el("h3", { class: "section-label" }, "Cold and unobserved assets"),
       el("div", { class: "toolbar-group" },
         el("span", { class: "small muted" }, "Show"),
         toggle)));
+    host.append(chips);
+    host.append(live);
 
     const tableHost = el("div", {});
     host.append(tableHost);
+    repaintAssets = paintAssets;
     paintAssets();
 
     function paintAssets() {
-      const lost = assetCut === "lost";
-      const rows = cuts[assetCut].rows;
+      const sel = coldSelection(assetCut, coldGroup);
+      const lost = sel.cut === "lost";
+      const rows = applyColdSelection(view, sel);
+      toggle.set(["all", "cold", "lost"].indexOf(sel.cut) === -1 ? "all" : sel.cut);
+      const entries = [];
+      if (sel.band !== null) {
+        const def = coldBandKeyModel(view).find((k) => k.key === sel.cut);
+        if (def) entries.push({ label: "Idle band", value: def.label, patch: { band: true } });
+      }
+      if (sel.group !== null) {
+        entries.push({ label: "Support group", value: sel.group, patch: { group: true } });
+      }
+      chips.sync(entries);
+      live.textContent = coldSelectionNote(view, sel, rows.length);
       clear(tableHost);
       if (!rows.length) {
         // EACH CUT'S ABSENCE IS ITS OWN SENTENCE, and the important one is GOOD NEWS. An empty
         // out-of-sight cut means no backlog has been left behind anywhere, which is the best
         // reading this page can produce; phrasing it as a bare "nothing to show" would file it
         // beside a failure.
+        // A NARROWED CUT THAT IS EMPTY IS A DIFFERENT SENTENCE from an estate that has nothing
+        // to report. "No asset is cold" over a support group the reader just picked would be a
+        // claim about the whole register, read off a filtered list.
+        const narrowed = sel.band !== null || sel.group !== null;
         tableHost.append(emptyState(
-          lost
-            ? "No backlog has been left behind."
-            : assetCut === "cold"
-              ? "No asset is cold."
-              : "No asset is cold, and none has dropped out of the scanner.",
-          lost
-            ? "Every asset the scanner has lost sight of had already been cleared when it went."
-            : "Every asset with an open finding has moved inside the window.",
+          narrowed
+            ? "Nothing in this cut."
+            : lost
+              ? "No backlog has been left behind."
+              : sel.cut === "cold"
+                ? "No asset is cold."
+                : "No asset is cold, and none has dropped out of the scanner.",
+          narrowed
+            ? coldSelectionNote(view, sel, 0) + " Clear the filter to see the whole list."
+            : lost
+              ? "Every asset the scanner has lost sight of had already been cleared when it"
+                + " went."
+              : "Every asset with an open finding has moved inside the window.",
           { variant: "notice" },
         ));
         return;
@@ -633,9 +767,11 @@ export async function renderColdZone(main, _params, ctx) {
       tableHost.append(el("p", { class: "small muted" }, tipLabel(
         lost
           ? fmtCount(rows.length) + " listed: out of sight, backlog open"
-          : assetCut === "cold"
-            ? fmtCount(rows.length) + " listed: cold"
-            : fmtCount(rows.length) + " listed: cold, and out of sight",
+          : sel.band !== null || sel.group !== null
+            ? coldSelectionNote(view, sel, rows.length)
+            : sel.cut === "cold"
+              ? fmtCount(rows.length) + " listed: cold"
+              : fmtCount(rows.length) + " listed: cold, and out of sight",
         {
           lines: lost
             ? [

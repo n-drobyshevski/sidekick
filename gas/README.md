@@ -506,9 +506,23 @@ open on it?**
 They sum to `assets_unobserved`, so the verdict itself never split: the assets table, the group
 roll-up and the scatter all still see one `unobserved` state.
 
-**To go from the figure to the list**, the "Cold and unobserved assets" table below has a cut
-control: **All**, **Cold**, and **Out of sight, backlog open**, each labelled with its count so
-an empty cut can be read without opening it. On that last cut the table swaps the idle reading
+**To go from the picture to the list**, the page cross-filters. Two controls narrow the "Cold
+and unobserved assets" table below: the **band key row** above the support-group table (every
+idle band, its estate-wide count, and press to filter), and a **support group's own name** in
+its row. Either alone or both together; pressing again lets go, and a chip above the table
+names whatever is currently applied. Nothing refetches — every asset a selection can reach is
+already in the payload the page holds — and nothing goes in the URL.
+
+Picking a band also **dims that band's complement in every row's idle profile at once**, which
+is how the column-wise read survives the heat table folding into the roll-up. Note the band
+selection reaches assets the cold list never holds on its own: bands 0–2 are warm assets, and
+`coldBandRows` widens the population to match rather than lighting a picture that lists
+nothing.
+
+The same table keeps its cut control: **All**, **Cold**, and **Out of sight, backlog open**,
+each labelled with its count so an empty cut can be read without opening it. The band rides
+inside that same value rather than beside it, so the two can never disagree — and the corner
+that would be empty by construction (an unobserved asset has no band) cannot be asked for. On that last cut the table swaps the idle reading
 — which measures a silence the scanner can no longer see — for the two facts that say why an
 asset went quiet:
 

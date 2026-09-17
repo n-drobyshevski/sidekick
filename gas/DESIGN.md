@@ -362,6 +362,44 @@ rather than a fill, for the opposite reason: it is measured, and it is fine, and
 solid would put "nothing open to go quiet on" in the same visual weight class as an actual
 problem. `cold` and `warm` are the only two solid fills.
 
+**Warm takes `ok`, not `warn`, and amber is left to the one segment that is a caveat.** This
+reverses what this section first shipped, and the argument is a reading rather than a palette
+preference. A warm asset carries open findings AND had one resolve inside the window, so on
+this page's own question — *has work stopped?* — it is the system working; it is also the
+LARGEST segment, at around a third of a typical estate. Spent there, `--warn` did two kinds of
+damage. The census read as roughly half problem, when the alarm is `cold` plus
+`unobserved_open` and nothing else. And `watching` — genuinely a caveat, an asset nobody could
+take a reading on — wore the same amber as the healthy majority, so the tone said nothing in
+particular. `--warn` is a text-grade value besides: `tokens.base.css` records it darkened to
+`#8a5406` so it would clear 4.5:1 *as text* on its own tint, and a large flat field of it
+reads as mud rather than as a warning. So `warm` and `clear` now share a tone and are told
+apart by SILHOUETTE — both are fine, one still has work — which is the same bargain the two
+`bad` segments strike (same red, different shape) read from the other end, and it makes the
+ring load-bearing where it used to be one of two separations. `gas_devsecops` carries the
+identical change for its repository census. Two tests in `coldZoneModel.test.js` pin it: that
+`watching` is the only `warn` segment, and that warm and clear differ by fill alone.
+
+**The solid fills take a field grade, because the status triad is text-grade.** `--ok` and
+`--bad` were darkened until they cleared 4.5:1 *as text on their own tints* — `tokens.base.css`
+records that — and the census spends them as a solid fill over a hundred cells. Against the
+card that measures 6.14:1 and 6.10:1, twice the 3:1 a non-text graphic owes, and a lattice that
+is two-thirds one saturated hue reads as a shout rather than as a count. `--ok-field` and
+`--bad-field` are the same hues with less chroma, lighter, at 3.58:1 and 4.70:1 — the floor
+cleared with margin on both grounds a lattice is drawn over.
+
+The accessibility argument runs the same way, and it is the stronger one. At 6.14 and 6.10 the
+text pair is the SAME cell in greyscale: a dichromat, or a black-and-white print, reads a cold
+asset and a warm one as one block, and only the key row beneath rescues the reading. The field
+pair is 1.31 apart in greyscale and 2.18 under a deuteranope simulation, so the picture now
+carries some of that itself. **Only the SOLID fills move**: a ring is a 2px stroke and a hatch
+is a comb, neither is a large field, and both keep the full-strength ink to stay legible at a
+9px cell. The class sits on the CARD rather than the lattice, because the key row is a sibling
+of the grid and its swatches have to move with it.
+
+Scoped to `.cold-census`, which is both registers' cold zone and nothing else. `gas_ai`'s
+coverage census is the same shape with the same defect and is deliberately **not** repainted
+here: that is its own register's round to measure.
+
 **Unobserved is drawn as two segments, because it was never one piece of news.** `unobserved`
 is tested before `clear`, so an asset that was remediated and then decommissioned stays
 unobserved for as long as the ledger remembers it — nothing open, and no scan will ever list it
@@ -414,22 +452,83 @@ silhouettes cannot carry five tones under forced colors. Nothing is actually los
 `unitKeyRow` prints every segment's label, count and share in text under the lattice regardless
 of mode, so the reading survives even where the picture's tones do not.
 
-**The support-group × idle-bucket heat table's ramp is neutral ink at four alphas, and that is
-a rule, not a preference.** `table.data.heat`'s cells (`gas/src/client/styles/pages.css`,
-"Cold zone: the support-group x idle-bucket heat table") carry the one ordinal shading channel
-in this app outside the severity palette — `rgba(23,23,23, .06/.12/.20/.30)` over the page's own
-ground, never a severity colour and never `--accent`. Severity is the OTHER ordinal scale a
-reader of this register already knows the meaning of, and idle time is not severity: a 70-day
-cell in red would read as "HIGH" regardless of what the caption says. `--accent` is out for the
-same reason §1 gives it exactly one job — "the thing being pointed at" — and four steps of it
-spent on a table background would compete with the scatter's own use of it below. This is the
-same discipline §9 states for `pages/overview.js`'s tier card, which rejected recolouring
-`unitChart`'s four-tone vocabulary to carry a five-step ordinal scale rather than lie about the
-order; here the ordinal scale gets its own local rule instead of borrowing one built for a
-different meaning. The shade is always redundant, never load-bearing: every cell also prints
-its asset count and, under it, the open findings in that bucket, and `forced-colors: active`
-strips the `background` outright, so the grid survives greyscale, a dichromat and High Contrast
-on the printed numbers alone.
+**The heat table folded into the roll-up above it, and its ramp went from magnitude to
+position.** `table.data.heat` drew a support-group × idle-bucket matrix keyed on exactly the
+same support group as the roll-up a screen above it, so a reader comparing "who is coldest"
+with "where their idle time sits" did it by scrolling between two tables. It is one
+`bandBar` cell per row now (`gas_shared/ui/bandBar.js`), in the row it describes.
+
+That table's ramp was neutral ink at four alphas, and this section argued at length that it
+had to be: severity is the other ordinal scale a reader of this register knows, and a 70-day
+cell in red would read as "HIGH"; `--accent` has exactly one job and four steps of it would
+spend that signal on a background. **Both objections stand, and neither applies any more,
+because what the shade encodes changed.** `heatLevel` shaded a cell by `count / max` over the
+whole grid — the tone meant *how many assets are here*, which in a security register does read
+as a severity. A band's tone is now the band's own fixed position: rank 4 **is** the cold band,
+which is this page's alarm, already drawn as a `bad` verdict dot in the same row. That is a
+STEP, not a kind, and `gas_ai/DESIGN.md`'s Ordinal-Fork Rule names the instrument it takes:
+"the percentage *bands* are steps and take the ordinal ramp". So the bands take `--rank-1..4`,
+which already existed, was already measured, and is already documented as not-severity — no
+new token, no hex literal. The band that is not on the scale at all ("no movement on record
+yet") takes `--hatch` rather than a fifth step, which keeps the ramp at the four its
+separations were measured as.
+
+**What the fold cost, and the three things that buy it back.** A matrix can be read DOWN a
+column — *who else is past 90 days?* — and a column of bars cannot. First, every bar is drawn
+against `coldBandScale`, the largest row total in the table, so length still compares down the
+column; a bar normalised to its own row would draw 280 assets and 30 assets identically, and
+`bandBar`'s contract perturbs exactly that. Second, the grid's totals row is still on the
+surface, as the band key row above the table. Third, pressing a band dims that band's
+complement in every row at once, which is the column read as an action. The per-cell figures
+the grid printed are in each bar's `aria-label` and its tip: one level down, which is this
+file's own ladder, and it is a demotion rather than a win — worth saying plainly.
+
+**The cross-filter is two axes, and the band lives inside the cut.** A support group (the row's
+own name is the control) crossed with an idle band (the key row). The band is not a state
+beside the three-way cut but a value *of* it — `"all" | "cold" | "lost" | "band:N"` — and that
+fusion is what removes a corner a reader could otherwise ask for and never get: an unobserved
+asset has no bucket, so "out of sight" crossed with an idle band is empty by construction.
+`coldBandRows` widens the population to match, because `coldAssetRows` is deliberately
+cold-and-unobserved only and a band-0 press over it would light the picture and list nothing.
+
+**None of it is in the URL, and the bars are not controls.** The selection is a module-local
+`let` for the reason this file already gives for `assetCut` and `scatterGrain`: `setParams`
+replaces the whole query string and does not re-render, every row a selection can reach is
+already in the payload, and a group in the URL would be a second spelling of "which support
+group" beside the header scope chip that really does refetch. And five segments per row times N
+rows is 5N tab stops, against `quad.js`'s arity rule — so the bar is one `role="img"`, the key
+row spends five stops once, and the group costs the one stop a clickable row already costs. A
+selection change marks in place rather than rebuilding, because rebuilding the key row would
+tear the focused button out from under the reader mid-press.
+
+**Two of the notes moved onto the control they explain, and two did not.**
+`gas_devsecops/DESIGN.md` states the rule this page obeys: an honesty statement stays on the
+surface, and only an EXPLANATION goes one level down. `groupCountNote` explains a count the
+table footer already prints, so it is the heading's tip; `coldestShareNote` explains a mark
+that appears in exactly one column, so it is that column's help lines and is null in fixed
+mode where nothing is marked. `unmeasurableNote` stays a paragraph — it says what the four
+figures above it CANNOT speak for, which is not an explanation of anything on screen — and so
+does the unmapped-support-group warning, which is an actionable diagnostic rather than a
+footnote.
+
+**Measured, one ruler over both trees, at 1280px on the same seed.** Before is `3e590bc`:
+
+| | words | prose blocks | prose words | numbers | table cells | pictures |
+|---|---|---|---|---|---|---|
+| before | 1,059 | 4 | 102 | 207 | 215 | 8 |
+| after | 910 | 3 | 86 | 143 | 167 | 14 |
+
+The pictures are one band bar per support-group row, and the walker only counts them from the
+commit after the one that drew them — editing the instrument in the wave that uses it as
+evidence would give two columns measured by two different rulers. **`numbers` falling by a
+third is not a win and should not be read as one**: those are the heat grid's per-cell figures,
+and they moved into each bar's `aria-label` and tip rather than leaving the page. `table cells`
+falling is the fold itself — an N × 5 grid of two-figure cells became one cell per row.
+
+`npm run density` could not produce these numbers in the container this round ran in: it
+reported 0 words on every route, including untouched ones, and says in its own output not to
+trust a run that does. The figures above come from a script applying the same counts to both
+trees, which is the property a comparison needs.
 
 **One paragraph is pinned on purpose.** `renderColdZone` prints `denomNote(coldModeCaption(view))`
 first, above everything else, in all three branches — the two `emptyState` notices (not

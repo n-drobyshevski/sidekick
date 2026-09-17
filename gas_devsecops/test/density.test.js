@@ -473,8 +473,28 @@ describe("countVisuals() counts every picture once, and the right ones", () => {
     ));
     expect(v).toMatchObject({
       canvas: 1, meter: 1, sevbar: 1, axisBar: 1, isotype: 1, quad: 1, spark: 0, svg: 0,
+      bandbar: 0,
     });
     expect(v.total).toBe(6);
+  });
+
+  // ONE BAND BAR IS ONE PICTURE, not one per segment. A row's distribution is a single
+  // `role="img"`, and counting its segments would report a nine-row table as forty-five
+  // pictures — the walker would then "prove" that folding a grid into a column of bars tripled
+  // the page's visual density, which is the opposite of what it did.
+  it("counts a band bar once, however many segments it carries", () => {
+    const bar = node("SPAN", ["bandbar"]);
+    bar.children = [
+      node("SPAN", ["bandbar__fill"]),
+    ];
+    bar.children[0].children = [
+      node("SPAN", ["bandbar__seg"]),
+      node("SPAN", ["bandbar__seg"]),
+      node("SPAN", ["bandbar__seg"]),
+    ];
+    const v = countVisuals(wrap(bar));
+    expect(v.bandbar).toBe(1);
+    expect(v.total).toBe(1);
   });
 
   // THE SECOND DEAD PREDICATE. It read `classes.includes("spark")`, and the shared component
@@ -521,7 +541,9 @@ describe("countVisuals() counts every picture once, and the right ones", () => {
     const v = countVisuals(null);
     expect(v.total).toBe(0);
     // Every bucket present, so a failed route's row lines up with a measured one's.
-    for (const key of ["canvas", "svg", "meter", "sevbar", "axisBar", "isotype", "quad", "spark"]) {
+    for (const key of [
+      "canvas", "svg", "meter", "sevbar", "axisBar", "isotype", "quad", "spark", "bandbar",
+    ]) {
       expect(v[key], key).toBe(0);
     }
   });

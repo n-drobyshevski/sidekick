@@ -108,30 +108,8 @@
 .coverage-headline { display: grid; gap: var(--space-1); margin: 0 0 var(--space-3); }
 .coverage-headline .meter { max-width: 28rem; height: 10px; }
 
-/* --------------------------------- Coverage & efficiency: the capacity verdict, as a word
-   Ported from gas_ai's `.cap-verdict` (inventory.css), rule and reasoning intact: the WORD is
-   the signal and the dot only repeats it. Three states told apart by hue alone survive
-   neither greyscale nor a dichromat, and this is the one figure on the card a reader takes
-   away. Sized and spaced like gas_shared's `.rail-status-dot` (styles/base.css), so the app
-   has one dot vocabulary.
-
-   The dot takes the ok / neutral / bad tones the per-month pills used to carry, rather than a
-   second list keyed by verdict slug. */
-.verdict-mark { display: inline-flex; align-items: center; gap: var(--space-2); }
-.verdict-word { font-size: var(--fs-lead); font-weight: 650; }
-.verdict-dot {
-  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
-  background: var(--text-3);
-}
-.verdict-dot--ok { background: var(--ok); }
-.verdict-dot--neutral { background: var(--text-3); }
-.verdict-dot--bad { background: var(--bad); }
-/* The fourth tone, added with the cold zone's project rollup. `partly-cold` — some of a
-   project's repositories have gone quiet, not all of them — is a different claim from
-   `fully-cold`, and the two collapsed into one red dot would lose the only distinction the
-   team table's verdict column exists to draw. The WORD still carries it either way
-   (ui/verdict.js); this is the tone that repeats it. */
-.verdict-dot--warn { background: var(--warn); }
+/* The verdict dot-and-word moved to gas_shared/styles/components.css, beside ui/verdict.js.
+   gas drew byte-identical rules for it, which is the promotion trigger. */
 
 /* ------------------------------------------ Repositories: the team x idle-bucket heatmap
    An app-local table (`table.data.heat`), not a component: this is the one grid in the app

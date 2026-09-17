@@ -412,6 +412,17 @@
 .isotype-cell[data-tone="ok"] { background: var(--ok); }
 .isotype-cell[data-tone="warn"] { background: var(--warn); }
 .isotype-cell[data-tone="bad"] { background: var(--bad); }
+/* THE CENSUS TAKES THE FIELD GRADE, and only the SOLID fills. A ring is a 2px stroke and a
+   hatch is a comb — neither is a large field, and both want the full-strength ink to stay
+   legible at a 9px cell. tokens.base.css carries the measurements, and why gas_ai's coverage
+   census is left alone. The `[data-fill="solid"]` is load-bearing: without it these would also
+   repaint the ring's `--page` core, declared two rules below. */
+.cold-census .isotype-cell[data-fill="solid"][data-tone="ok"] { background: var(--ok-field); }
+.cold-census .isotype-cell[data-fill="solid"][data-tone="bad"] { background: var(--bad-field); }
+/* The key row's swatch is the same mark at 10px, so it moves with the lattice or the two stop
+   being obviously one vocabulary. */
+.cold-census .isotype-key-swatch[data-fill="solid"][data-tone="ok"] { background: var(--ok-field); }
+.cold-census .isotype-key-swatch[data-fill="solid"][data-tone="bad"] { background: var(--bad-field); }
 .isotype-cell[data-fill="ring"] { background: var(--page); box-shadow: inset 0 0 0 2px currentColor; }
 .isotype-cell[data-fill="ring"][data-tone="neutral"] { color: var(--ink); }
 .isotype-cell[data-fill="ring"][data-tone="ok"] { color: var(--ok); }
@@ -1975,6 +1986,177 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
 /* `h2.section-label`'s own bottom margin, moved onto the body: the gap under the heading is
    the section's, so it exists only when the section is open. */
 .section-collapse__body { margin-top: var(--space-3); }
+
+/* --------------------------------------------- a distribution across ordered bands
+   The picture that let two registers fold a subject x band matrix into the roll-up table
+   keyed on the same subject. See ui/bandBar.js for why the scale is a property of the table
+   and why the bar is not a control.
+
+   THE RAMP IS `--rank-1..4`, AND THAT IS THE ORDINAL-FORK RULE RATHER THAN A PREFERENCE.
+   gas/DESIGN.md once argued this grid must be neutral ink at four alphas, and the argument it
+   actually made was against two candidates: SEVERITY (a 70-day cell in red reading as "HIGH")
+   and `--accent` (the one hue reserved for "the thing being pointed at"). The third was never
+   considered. gas_ai/DESIGN.md's Ordinal-Fork Rule names it: "the percentage BANDS are steps
+   and take the ordinal ramp, while the four posture STATES are kinds and keep the status
+   triad." An idle band is a step. The ramp is already measured, already documented as
+   not-severity, and costs no new token and no hex literal.
+
+   AND THE SHADE STOPPED MEANING MAGNITUDE. The old grid shaded a cell by `count / max` over
+   the whole grid, so red meant "a lot of subjects are here" — which in a security register
+   does read as a severity, exactly as that argument said. Here the tone is the band's own
+   identity, fixed and independent of any count. Rank 4 IS the cold band, which is the page's
+   alarm, already drawn as a `bad` verdict dot in the same row.
+
+   `--hatch` FOR THE BAND THAT IS NOT ON THE SCALE. "No movement on record yet" is not a point
+   on an idle ramp at all, and `--hatch` is the design system's token for "this part is not a
+   measurement". It also keeps the ramp at the four steps it was measured as. */
+.bandbar {
+  display: block; width: 100%; min-width: 72px; height: 16px;
+  border-radius: var(--radius-xs); overflow: hidden; background: var(--track-bg);
+}
+/* A row with nothing to distribute draws no track: an empty track is a claim that every band
+   is zero, and zero is a measurement. */
+.bandbar--empty { background: transparent; }
+.bandbar__fill { display: flex; height: 100%; }
+.bandbar__seg { display: block; height: 100%; }
+.bandbar__seg[data-rank="1"] { background: var(--rank-1-tint); }
+.bandbar__seg[data-rank="2"] { background: var(--rank-2-tint); }
+.bandbar__seg[data-rank="3"] { background: var(--rank-3-tint); }
+.bandbar__seg[data-rank="4"] { background: var(--rank-4-tint); }
+.bandbar__seg[data-rank="none"] { background-color: var(--surface-2); background-image: var(--hatch); }
+/* THE HAIRLINE IS THE SILHOUETTE, and it is what the picture falls back to. Adjacent tints at
+   .20/.28/.36/.52 are lighter than the solids the ramp's separation was measured on, so the
+   edge carries the boundary where the hue does not — for a dichromat, in greyscale, and under
+   forced colors, where `background` is overridden outright and every segment resolves to the
+   same forced ink. Borders are honoured there and redrawn in the system border colour, so the
+   bar stays a run of distinguishable blocks rather than one bar of solid colour. */
+.bandbar__seg + .bandbar__seg { border-inline-start: 1px solid var(--page); }
+/* THE DIM IS THE COLUMN READ, HANDED BACK. A matrix can be scanned down a column; a row of
+   bars cannot, so pressing a band in the key row above lights that band in every row at once.
+   Opacity rather than a colour change, so the band keeps its own identity while quiet. The
+   global prefers-reduced-motion block in overrides.css zeroes this duration; the rule does not
+   repeat the media query, and that dependency is stated here because a copy of this rule
+   somewhere without that override would animate for a reader who asked it not to. */
+.bandbar__seg[data-on="false"] { opacity: 0.22; }
+.bandbar__seg { transition: opacity var(--dur-quick) var(--ease-out); }
+@media (forced-colors: active) {
+  .bandbar { background: transparent; border: 1px solid CanvasText; }
+  .bandbar__seg[data-on="false"] { opacity: 1; }
+}
+
+/* -------------------------------------- the band key row, and the row a reader picked
+   The chrome around `.bandbar`: the control that selects a band, the cell the bar sits in,
+   and the mark on a row whose name was pressed. Promoted from gas's pages.css the moment
+   gas_devsecops drew the same three things around the same component — components.css is
+   where gas_shared/README.md's placement rule puts the stylesheet half of a ui/ export, and
+   this is that half's own neighbourhood rather than a second copy of it. */
+
+/* The key row is the old totals row doing a second job, so it reads as information first and
+   as a control second: the band's word and its estate-wide count are printed whether or not
+   anyone presses it. Sized as a pill row, not as a toolbar. */
+.bandkeys {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+.bandkey {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+  font-size: var(--fs-label); line-height: 1.6; cursor: pointer;
+  transition: border-color var(--dur-quick) var(--ease-out),
+    background-color var(--dur-quick) var(--ease-out);
+}
+.bandkey:hover { background: var(--wash-hover); border-color: var(--hairline-strong); }
+.bandkey:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+/* PRESSED IS NOT A COLOUR ALONE. The ring and the weight carry it too, because this control
+   selects and a reader who cannot see the wash still has to know what is on. */
+.bandkey[aria-pressed="true"] {
+  border-color: var(--accent-text); background: var(--accent-wash);
+  color: var(--accent-text); font-weight: var(--fw-semibold);
+}
+/* The swatch takes the SAME ramp as the bar it filters, so the key and the picture are
+   obviously the same vocabulary. `none` is the band that is not on the scale. */
+.bandkey__swatch {
+  width: 10px; height: 10px; border-radius: var(--radius-xs); flex: 0 0 auto;
+}
+.bandkey[data-rank="1"] .bandkey__swatch { background: var(--rank-1-tint); }
+.bandkey[data-rank="2"] .bandkey__swatch { background: var(--rank-2-tint); }
+.bandkey[data-rank="3"] .bandkey__swatch { background: var(--rank-3-tint); }
+.bandkey[data-rank="4"] .bandkey__swatch { background: var(--rank-4-tint); }
+.bandkey[data-rank="none"] .bandkey__swatch {
+  background-color: var(--surface-2); background-image: var(--hatch);
+}
+.bandkey__num { color: var(--ink); font-weight: var(--fw-semibold); }
+
+/* ONE BAND, AS A WORD. Where a row sits in exactly one band there is no distribution to draw,
+   and a one-segment bar would be a picture of nothing; the band's own word, on the same ramp
+   the bars and the key row use, is the whole reading. This is what a grid of N rows x 5
+   columns with one lit cell per row collapses to. The tint carries its own text token, which
+   is the pair `.pill--rank1..4` already uses and the reason the ramp ships four of each. */
+.bandpill {
+  display: inline-block; padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-label); font-weight: var(--fw-semibold); line-height: 1.7;
+  white-space: nowrap;
+}
+.bandpill[data-rank="1"] { background: var(--rank-1-tint); color: var(--rank-1-text); }
+.bandpill[data-rank="2"] { background: var(--rank-2-tint); color: var(--rank-2-text); }
+.bandpill[data-rank="3"] { background: var(--rank-3-tint); color: var(--rank-3-text); }
+.bandpill[data-rank="4"] { background: var(--rank-4-tint); color: var(--rank-4-text); }
+/* The band that is not on the scale keeps the hatch and plain ink: it is not a step. */
+.bandpill[data-rank="none"] {
+  background-color: var(--surface-2); background-image: var(--hatch); color: var(--text-2);
+}
+
+/* The distribution's cell: the bar fills it, so the column's width is the picture's width. */
+.bandcell { display: block; min-width: 96px; }
+
+/* THE PICKED ROW, marked on the row and not only on the button inside it. A reader who picked
+   a support group is now looking at a list several sections down, and the mark is what says
+   where the list came from when they scroll back. An inset bar rather than a background
+   alone, for the same non-colour reason the key row carries a ring. */
+tr.is-picked > * { background: var(--accent-wash); }
+tr.is-picked > :first-child { box-shadow: inset 2px 0 0 var(--accent-text); }
+.group-pick { font: inherit; text-align: left; }
+
+@media (forced-colors: active) {
+  .bandkey[aria-pressed="true"] { outline: 2px solid CanvasText; outline-offset: -3px; }
+  tr.is-picked > :first-child { box-shadow: none; outline: 2px solid CanvasText; }
+}
+
+/* ---------------------------------------------------- a verdict as a dot and a word
+   PROMOTED from both registers' pages.css, where the two rulesets were BYTE-IDENTICAL.
+   gas's copy carried the note "NOT PROMOTED TO gas_shared. One app draws it today; a second
+   consumer is what promotes a rule, and gas_devsecops's copy is not reachable from here" —
+   and that second consumer is what arrived. Originally gas_ai's `.cap-verdict`
+   (inventory.css).
+
+   THE WORD IS THE SIGNAL AND THE DOT ONLY REPEATS IT. States told apart by hue alone survive
+   neither greyscale nor a dichromat, and the verdict is the one thing a reader takes away
+   from a row. The dot is `aria-hidden` in ui/verdict.js for the same reason. Sized and spaced
+   like `.rail-status-dot` (styles/base.css), so the family has one dot vocabulary.
+
+   `font-weight: 650` IS WRONG AND IS CARRIED ACROSS UNCHANGED. It is not one of the four
+   named steps (--fw-body/medium/semibold/hero = 400/500/600/700). Repointing it to
+   `var(--fw-semibold)` moves a shipped pixel in two apps at once, so it belongs in its own
+   measured commit rather than in the one that moves the file — the same rule splitBar.js
+   states for its hatch. */
+.verdict-mark { display: inline-flex; align-items: center; gap: var(--space-2); }
+.verdict-word { font-size: var(--fs-lead); font-weight: 650; }
+.verdict-dot {
+  width: 9px; height: 9px; border-radius: var(--radius-pill); flex: 0 0 auto;
+  background: var(--text-3);
+}
+.verdict-dot--ok { background: var(--ok); }
+.verdict-dot--neutral { background: var(--text-3); }
+.verdict-dot--bad { background: var(--bad); }
+/* The fourth tone, and a cold-zone rollup is why it exists. `partly-cold` — some of a group's
+   members have gone quiet, not all of them — is a different claim from `fully-cold`, and the
+   two collapsed into one red dot would lose the only distinction the rollup table's verdict
+   column exists to draw. The WORD still carries it either way; this is the tone that repeats
+   it. */
+.verdict-dot--warn { background: var(--warn); }
 
 /* ---------------------------------------------------------------------------- split bar */
 /* gas_shared/ui/splitBar.js: one track split into labelled segments, the caption beneath

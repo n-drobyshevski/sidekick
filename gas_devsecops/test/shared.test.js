@@ -48,7 +48,9 @@ import { figureCardModel, openAndTotal, relativeAge } from "../../gas_shared/ui/
 import { registerFigureCardContract } from "../../gas_shared/test/contracts/figureCard.js";
 import { registerQuadContract } from "../../gas_shared/test/contracts/quad.js";
 import { quadModel } from "../../gas_shared/ui/quad.js";
+import { registerBandBarContract } from "../../gas_shared/test/contracts/bandBar.js";
 import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
+import { bandBarModel } from "../../gas_shared/ui/bandBar.js";
 import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
 import { registerUnitChartContract } from "../../gas_shared/test/contracts/unitChart.js";
 import {
@@ -139,13 +141,15 @@ registerPageHeaderContract({
 
 registerParityContract({
   ...base,
-  // Two modules that are genuinely this register's, neither a fork of a shared one:
+  // One module that is genuinely this register's, and not a fork of a shared one:
   // `projectScope.js` reads src/domain/projectScope.ts and means nothing in a sibling with no
-  // repositories; `verdict.js` is the capacity dot-and-word `pages/program.js` and
-  // `pages/repos.js` both draw — promoted out of program.js in Wave C once a second page
-  // wanted the identical mark, but never pushed down into gas_shared because neither sibling
-  // register has a capacity verdict to draw it for.
-  localUiModules: ["projectScope.js", "verdict.js"],
+  // repositories.
+  //
+  // `verdict.js` HAS LEFT. It was kept local because "neither sibling register has a capacity
+  // verdict to draw it for" — true of CAPACITY, and overtaken by the cold zone, which gave
+  // `gas` a byte-identical copy of the same table, the same function and the same CSS. It is
+  // `gas_shared/ui/verdict.js` now and arrives through the wholesale re-export in ui.js.
+  localUiModules: ["projectScope.js"],
   sheetOrder: [
     "../../../gas_shared/styles/tokens.base.css",
     "./styles/tokens.css",
@@ -283,6 +287,7 @@ registerSyncCaptionContract(base);
 // reads code rather than rendering.
 registerQuadContract({ ...base, quadModel });
 registerSparklineContract({ ...base, sparkPath, sparkLabel });
+registerBandBarContract({ ...base, bandBarModel });
 // The open-backlog isotype's arithmetic, which used to be test/executivePictogram.test.js
 // against this page's own exports. It moved wholesale when gas_shared/ui/unitChart.js took
 // the ladder: the cast-first perturbation is that file's, carried over intact, and the

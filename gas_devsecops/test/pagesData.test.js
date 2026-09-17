@@ -33,7 +33,8 @@ import {
   boundedDays, capacityVerdict, capacityView, coldestShareNote, coldKpiCards, coldModeCaption,
   coldCensusModel,
   coldRepoRows, coldScatterPoints, coldTeamRows, coldZoneView, coverageMeterPct, densityView,
-  footholdCellKind, footholdView, groupRows, halfLifeView, heatLevel, heatModel, overallRow,
+  coldBandDefs, coldBandKeyModel,
+  footholdCellKind, footholdView, groupRows, halfLifeView, overallRow,
   tableRow, unmeasurableNote, productCountNote, endOfLifeNote,
 } from "../src/client/js/pages/repos.js";
 import {
@@ -384,7 +385,10 @@ describe("repos: coldZoneView refuses a shape it cannot draw, rather than throwi
     expect(coldTeamRows(v)).toEqual([]);
     expect(coldRepoRows(v)).toEqual([]);
     expect(coldScatterPoints(v)).toEqual([]);
-    expect(heatModel(v)).toBeNull();
+    // The band vocabulary and its control are empty too: an unmeasurable block has no labels
+    // to derive them from, so the page draws no control rather than an empty one.
+    expect(coldBandDefs(v)).toEqual([]);
+    expect(coldBandKeyModel(v)).toEqual([]);
     expect(unmeasurableNote(v)).toBeNull();
   });
 
@@ -550,119 +554,7 @@ describe("repos: unmeasurableNote — the repositories no figure can speak for",
   });
 });
 
-describe("repos: heatLevel — the ordinal shade, refused before the cast", () => {
-  it("a count of zero is level 0, not the lightest shade", () => {
-    // An empty cell means nothing is there; the lightest shade means "something, and it is the
-    // least of it". The table prints the 0 either way.
-    expect(heatLevel(0, 10)).toBe(0);
-  });
 
-  it("the maximum is the top step, and nothing asks for a fifth", () => {
-    expect(heatLevel(10, 10)).toBe(4);
-    // `count/max*4` is exactly 4 at the maximum; without the min() this would be level 5, a
-    // value the stylesheet has no rule for.
-    expect(heatLevel(9.9, 10)).toBe(4);
-  });
-
-  it("walks the four steps in order", () => {
-    expect(heatLevel(1, 10)).toBe(1);
-    expect(heatLevel(3, 10)).toBe(2);
-    expect(heatLevel(5, 10)).toBe(3);
-    expect(heatLevel(8, 10)).toBe(4);
-  });
-
-  it("refuses every non-finite input rather than emitting data-level=\"NaN\"", () => {
-    // `data-level="NaN"` matches no rule in pages.css: the cell keeps its number and silently
-    // loses its shade, which is exactly the kind of failure nobody sees in review.
-    for (const bad of [null, undefined, "", "4", [], {}, false, NaN, Infinity]) {
-      expect(heatLevel(bad, 10), `count=${String(bad)}`).toBe(0);
-      expect(heatLevel(4, bad), `max=${String(bad)}`).toBe(0);
-    }
-    expect(heatLevel(4, 0)).toBe(0); // no maximum to scale against
-    expect(heatLevel(-1, 10)).toBe(0);
-  });
-});
-
-describe("repos: heatModel — one row per repository, and the unshaded totals row", () => {
-  // Three repositories across three bands, so the ramp has something to compare and the
-  // ordering has something to sort.
-  const threeRepos = coldModel({
-    repos: [
-      coldRepo({ repo_id: "r1", repo_name: "acme/api", bucket: 3, open_findings: 12 }),
-      coldRepo({ repo_id: "r2", repo_name: "acme/web", bucket: 0, open_findings: 5 }),
-      coldRepo({ repo_id: "r3", repo_name: "acme/etl", bucket: 3, open_findings: 40 }),
-    ],
-  });
-
-  it("takes its columns from the payload and never spells them itself", () => {
-    const model = heatModel(coldZoneView(coldModel()));
-    expect(model.columns)
-      .toEqual(["0–30 d", "30–60 d", "60–90 d", "≥ 90 d", "not yet measurable"]);
-  });
-
-  it("ONE LIT CELL PER ROW — a repository has one idle reading, so it sits in one band", () => {
-    const model = heatModel(coldZoneView(threeRepos));
-    const first = model.rows[0];
-    expect(first.cells.filter((c) => c.lit)).toHaveLength(1);
-    expect(first.cells.findIndex((c) => c.lit)).toBe(first.bucket);
-  });
-
-  it("the unlit cells are EMPTY, not zero — four measurements nobody took", () => {
-    // The row's own `open` is the only figure it has; a 0 in the other four bands would be a
-    // reading, and there is none. `lit` is what the renderer draws a blank from.
-    const model = heatModel(coldZoneView(threeRepos));
-    const unlit = model.rows[0].cells.filter((c) => !c.lit);
-    expect(unlit).toHaveLength(4);
-    expect(unlit.every((c) => c.level === 0)).toBe(true);
-  });
-
-  it("the cell carries the BACKLOG, and the ramp is taken over it — not over a count of one", () => {
-    // Every lit cell would hold `1`, so a ramp over counts would shade every row identically.
-    const model = heatModel(coldZoneView(threeRepos));
-    const byRepo = Object.fromEntries(model.rows.map((r) => [r.label, r]));
-    expect(byRepo["acme/etl"].cells[3].open).toBe(40);   // the biggest backlog…
-    expect(byRepo["acme/etl"].cells[3].level).toBe(4);   // …takes the top of the scale
-    expect(byRepo["acme/web"].cells[0].open).toBe(5);
-    expect(byRepo["acme/web"].cells[0].level).toBeLessThan(4);
-    expect(model.max).toBe(40);
-  });
-
-  it("sorts longest-idle first, then by backlog, then by name", () => {
-    const model = heatModel(coldZoneView(threeRepos));
-    // Band 3 before band 0; within band 3, 40 open before 12.
-    expect(model.rows.map((r) => r.label)).toEqual(["acme/etl", "acme/api", "acme/web"]);
-  });
-
-  it("a repository in NO band is in no row — it has no idle position to draw", () => {
-    const model = heatModel(coldZoneView(coldModel({
-      repos: [
-        coldRepo({ repo_id: "r1", repo_name: "acme/api", bucket: 3 }),
-        // Unobserved and clear repositories carry a null bucket.
-        coldRepo({ repo_id: "r2", repo_name: "acme/gone", bucket: null, observed: false }),
-      ],
-    })));
-    expect(model.rows.map((r) => r.label)).toEqual(["acme/api"]);
-  });
-
-  it("the totals row keeps BOTH figures and is unshaded", () => {
-    // A summary over many repositories, so "how many are in this band" is a real question
-    // again — unlike a single repository's row, where the answer is always one.
-    const model = heatModel(coldZoneView(coldModel()));
-    expect(model.totals.label).toBe("All repositories");
-    expect(model.totals.cells.map((c) => c.count)).toEqual([2, 1, 0, 2, 1]);
-    // The ramp compares repositories with each other; shaded on the same scale every cell in
-    // this row would saturate and say only "this row is bigger".
-    expect(model.totals.cells.every((c) => c.level === 0)).toBe(true);
-  });
-
-  it("draws nothing rather than an empty table when there is no grid", () => {
-    expect(heatModel(coldZoneView(coldModel({ repos: [] })))).toBeNull();
-    // Every repository out of the bands is the same "nothing to draw" as no repositories.
-    expect(heatModel(coldZoneView(coldModel({ repos: [coldRepo({ bucket: null })] })))).toBeNull();
-    expect(heatModel(coldZoneView(coldModel({ bucket_labels: null })))).toBeNull();
-    expect(heatModel(null)).toBeNull();
-  });
-});
 
 describe("repos: coldTeamRows — a share nobody could take draws no meter", () => {
   it("carries the product's figures and its verdict word", () => {
@@ -1382,21 +1274,32 @@ describe("repos: the mode reaches the section, the column and the canvas", () =>
     expect(section).not.toMatch(/label: "Project"/);
   });
 
-  it("the idle grid is headed by repo, and its row header names a repository", () => {
-    expect(section).toMatch(/tipLabel\("Idle time by repo"/);
-    expect(section).toMatch(/el\("th", \{ scope: "col" \}, "Repository"\)/);
-    // The grain it replaced is gone from this section entirely — a heading and a row header
-    // that disagreed about what a row is would be worse than either alone.
-    expect(section).not.toMatch(/Idle time by product/);
-    expect(section).not.toMatch(/"All products"/);
+  // THE IDLE GRID IS GONE, and this holds what replaced it. It drew one row per REPOSITORY
+  // with exactly one lit cell in it — an N x 5 grid carrying N values, which is a column of
+  // data wearing a matrix. That one fact is a pill on the repositories table now.
+  it("draws no per-repository grid any more", () => {
+    expect(section).not.toMatch(/tipLabel\("Idle time by repo"/);
+    expect(section).not.toMatch(/cell\.lit/);
+    expect(section).not.toMatch(/data-level/);
+    // Not `heatModel`: the comment standing where it used to be names it, and a raw-text sweep
+    // that failed on the sentence explaining a removal rather than on the removal itself is
+    // the trap this package's contracts strip comments to avoid.
+    expect(section).not.toMatch(/heatModel\(/);
   });
 
-  it("an unlit cell is drawn EMPTY, and only a lit one prints a figure", () => {
-    // The model says which is which; this pins that the renderer acts on it, because a `0`
-    // here would claim four idle readings a repository never had.
-    expect(section).toMatch(/cell\.lit/);
-    expect(section).toMatch(/paintRepo/);
-    expect(section).toMatch(/paintTotals/);
+  it("bands a repository where the reading it bands already is", () => {
+    expect(section).toMatch(/label: "Idle band"/);
+    expect(section).toMatch(/class: "bandpill"/);
+    // The band comes from the domain's own bucket, never re-derived from days and a threshold.
+    expect(section).toMatch(/coldBandDefs\(view\)\.find/);
+  });
+
+  it("puts a PRODUCT's distribution in the roll-up row that owns it", () => {
+    expect(section).toMatch(/label: "Idle profile"/);
+    expect(section).toMatch(/bandBarModel\(\{/);
+    // One scale for the table, never per row.
+    expect(section).toMatch(/const scale = coldBandScale\(rows\);/);
+    expect(section).toMatch(/max: scale/);
   });
 
   it("the scatter is told which mode drew the line it is about to draw a rule at", () => {

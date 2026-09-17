@@ -30,9 +30,10 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  COLD_VERDICT_LABEL, GROUP_VERDICT_LABEL, NO_GROUP, boundOnlySentence, coldAssetRows,
-  coldCensusModel, coldGroupRows, coldGroupScatterPoints, coldKpiCards, coldModeCaption,
-  coldScatterPoints, coldZoneView, coldestShareNote, groupCountNote, heatLevel, heatModel,
+  COLD_VERDICT_LABEL, GROUP_VERDICT_LABEL, NO_GROUP, applyColdSelection, boundOnlySentence,
+  coldAssetRows, coldBandDefs, coldBandKeyModel, coldBandRows, coldBandScale, coldCensusModel,
+  coldGroupRows, coldGroupScatterPoints, coldKpiCards, coldModeCaption, coldScatterPoints,
+  coldSelection, coldSelectionNote, coldZoneView, coldestShareNote, groupCountNote,
   severitiesNote, unmeasurableNote,
 } from "../src/client/js/pages/coldZoneModel.js";
 
@@ -559,6 +560,32 @@ describe("coldCensusModel: the five verdicts partition the register", () => {
     expect(seg.cold.fill).toBe("solid");
   });
 
+  // AMBER MEANS ONE THING ON THIS LATTICE, and `warm` is not it. A warm asset had a finding
+  // resolve inside the window, which on this page's question is the system working; drawing
+  // the LARGEST segment in `--warn` made the census read as roughly half problem and left
+  // `watching` — the one genuine caveat — wearing the same tone as the healthy majority.
+  it("keeps amber for the segment nobody could measure", () => {
+    const model = coldCensusModel({ totals: t });
+    const seg = Object.fromEntries(model.segments.map((s) => [s.key, s]));
+    expect(seg.warm.tone).toBe("ok");
+    expect(seg.watching.tone).toBe("warn");
+    // ...and it is the ONLY one. A second amber segment would put the caveat back in a crowd.
+    const amber = model.segments.filter((x) => x.tone === "warn").map((x) => x.key);
+    expect(amber).toEqual(["watching"]);
+  });
+
+  // WARM AND CLEAR SHARE A TONE, so the silhouette is the only channel left to separate them.
+  // This is the pair `unitChart`'s two channels exist for, and the assertion that would fail
+  // the day someone "tidied" clear into a solid to match its neighbour.
+  it("separates warm from clear by silhouette alone", () => {
+    const model = coldCensusModel({ totals: t });
+    const seg = Object.fromEntries(model.segments.map((s) => [s.key, s]));
+    expect(seg.warm.tone).toBe(seg.clear.tone);
+    expect(seg.warm.fill).not.toBe(seg.clear.fill);
+    expect(seg.warm.fill).toBe("solid");
+    expect(seg.clear.fill).toBe("ring");
+  });
+
   // PERTURBATION: unitChartModel is the guard that would catch a sixth verdict silently
   // renormalising the lattice, so show it actually refusing an overlapping partition.
   it("refuses segments that overflow the stated total", () => {
@@ -643,7 +670,7 @@ describe("coldestShareNote", () => {
 });
 
 // =========================================================================================
-//  6. coldGroupRows / heatLevel / heatModel
+//  6. coldGroupRows (and the bands it now carries)
 // =========================================================================================
 
 describe("coldGroupRows", () => {
@@ -703,75 +730,7 @@ describe("coldGroupRows", () => {
   });
 });
 
-describe("heatLevel: refused before any cast, and clamped at the top of the sheet", () => {
-  it("is 0 for anything that was not a finite number", () => {
-    for (const bad of [null, undefined, "3", [], {}, NaN, Infinity]) {
-      expect(heatLevel(bad, 10), String(bad)).toBe(0);
-      expect(heatLevel(3, bad), String(bad)).toBe(0);
-    }
-  });
 
-  it("is 0 for a zero count and for a non-positive maximum", () => {
-    expect(heatLevel(0, 10)).toBe(0);
-    expect(heatLevel(-1, 10)).toBe(0);
-    expect(heatLevel(3, 0)).toBe(0);
-    expect(heatLevel(3, -2)).toBe(0);
-  });
-
-  it("walks 1..4 and never asks for a fifth step", () => {
-    expect(heatLevel(1, 100)).toBe(1);
-    expect(heatLevel(30, 100)).toBe(2);
-    expect(heatLevel(60, 100)).toBe(3);
-    expect(heatLevel(80, 100)).toBe(4);
-    expect(heatLevel(100, 100)).toBe(4);
-  });
-
-  // PERTURBATION: without the clamp, count === max lands on floor(4) + 1 = 5 — a data-level
-  // that matches no rule in the sheet, so the cell loses its shade while keeping its number.
-  it("the unclamped arithmetic would have asked for level 5", () => {
-    expect(1 + Math.floor((100 / 100) * 4)).toBe(5);
-  });
-});
-
-describe("heatModel", () => {
-  const view = () => coldZoneView(payload({
-    assets: [asset()],
-    groups: [
-      group({ support_group: "A", label: "A", buckets: [4, 0, 0, 0, 1], bucket_open: [8, 0, 0, 0, 2] }),
-      group({ support_group: "B", label: "B", buckets: [1, 2, 0, 0, 0], bucket_open: [1, 5, 0, 0, 0] }),
-    ],
-    totals: totals({
-      assets: 8, assets_with_open: 8, buckets: [5, 2, 0, 0, 1], bucket_open: [9, 5, 0, 0, 2],
-    }),
-  }));
-
-  it("takes its columns from the payload, never from a hardcoded list", () => {
-    expect(heatModel(view()).columns)
-      .toEqual(["0–30 d", "30–60 d", "60–90 d", "≥ 90 d", "not yet measurable"]);
-  });
-
-  it("shades against the biggest single cell in the grid", () => {
-    const heat = heatModel(view());
-    expect(heat.max).toBe(4);
-    expect(heat.rows[0].cells[0].level).toBe(4);
-    expect(heat.rows[1].cells[0].level).toBe(2);
-    expect(heat.rows[0].cells[2].level).toBe(0);
-  });
-
-  it("gives the totals row no shade at all", () => {
-    const heat = heatModel(view());
-    expect(heat.totals.label).toBe("All support groups");
-    expect(heat.totals.cells.every((c) => c.level === 0)).toBe(true);
-    expect(heat.totals.cells[0].count).toBe(5);
-  });
-
-  it("is null with no columns and null with no groups", () => {
-    expect(heatModel(coldZoneView(payload({ totals: null })))).toBeNull();
-    expect(heatModel(coldZoneView(payload({
-      assets: [asset()], groups: [], totals: totals({ assets: 1, assets_with_open: 1 }),
-    })))).toBeNull();
-  });
-});
 
 // =========================================================================================
 //  7. coldAssetRows and coldScatterPoints
@@ -1047,5 +1006,199 @@ describe("coldGroupScatterPoints: the same scatter, one grain up", () => {
       totals: totals({ assets: 3, assets_with_open: 3 }),
     }));
     expect(coldGroupScatterPoints(v).map((p) => p.label)).toEqual(["Big", "Small", "Busy"]);
+  });
+});
+
+// --------------------------------------------------------- the bands, and the cross-filter
+
+const BAND_LABELS = ["0–30 d", "30–60 d", "60–90 d", "≥ 90 d", "not yet measurable"];
+
+function bandView(over = {}) {
+  return {
+    bucketLabels: BAND_LABELS,
+    groups: [],
+    assets: [],
+    totals: totals(),
+    ...over,
+  };
+}
+
+describe("coldBandDefs: the labels are the payload's, the ranks are the positions'", () => {
+  it("gives the four idle steps a rank and the unmeasurable tail none", () => {
+    const defs = coldBandDefs(bandView());
+    expect(defs.map((d) => d.rank)).toEqual([1, 2, 3, 4, null]);
+    expect(defs.map((d) => d.label)).toEqual(BAND_LABELS);
+    expect(defs.map((d) => d.key)).toEqual(
+      ["band:0", "band:1", "band:2", "band:3", "band:4"]);
+  });
+
+  // THE LABELS MOVE WITH THE OPERATOR'S THRESHOLD and are never spelled here. At 120 days the
+  // columns read 0-40/40-80/80-120; a hard-coded label would be a second, wrong statement of
+  // the setting.
+  it("takes whatever labels the payload sent", () => {
+    const defs = coldBandDefs(bandView({ bucketLabels: ["0–40 d", "40–80 d", "x", "y", "z"] }));
+    expect(defs[0].label).toBe("0–40 d");
+  });
+
+  it("draws nothing where nothing is measurable", () => {
+    expect(coldBandDefs(bandView({ bucketLabels: [] }))).toEqual([]);
+    expect(coldBandDefs(null)).toEqual([]);
+  });
+});
+
+describe("coldGroupRows: the idle distribution arrives in the row it belongs to", () => {
+  const groups = [
+    { support_group: "A", label: "A", assets: 10, buckets: [4, 3, 2, 1, 0], bucket_open: [8, 6, 4, 2, 0] },
+    { support_group: "B", label: "B", assets: 3, buckets: [1, 1, 1, 0, 0], bucket_open: [0, 0, 0, 0, 0] },
+  ];
+
+  it("carries every band, with the open findings as the segment's second figure", () => {
+    const [a] = coldGroupRows(bandView({ groups }));
+    expect(a.bands.map((b) => b.count)).toEqual([4, 3, 2, 1, 0]);
+    expect(a.bands[0].extra).toBe("8 open");
+    expect(a.bands.map((b) => b.rank)).toEqual([1, 2, 3, 4, null]);
+    expect(a.bandTotal).toBe(10);
+  });
+
+  // A BAND WITH NOTHING OPEN CARRIES NO SECOND FIGURE. "0 open" in a sentence about an empty
+  // band is noise, and the bar leaves the band out entirely.
+  it("says nothing about open findings where there are none", () => {
+    const [, b] = coldGroupRows(bandView({ groups }));
+    expect(b.bands.every((x) => x.extra === "")).toBe(true);
+  });
+});
+
+describe("coldBandScale: one unit per table, never per row", () => {
+  it("is the largest row total", () => {
+    expect(coldBandScale([{ bandTotal: 10 }, { bandTotal: 3 }, { bandTotal: 7 }])).toBe(10);
+  });
+
+  it("is 0 where there is nothing to scale against", () => {
+    expect(coldBandScale([])).toBe(0);
+    expect(coldBandScale(null)).toBe(0);
+    expect(coldBandScale([{ bandTotal: null }])).toBe(0);
+  });
+});
+
+describe("coldBandKeyModel: the heat table's totals row, still on the surface", () => {
+  it("carries every band's estate-wide count and its open findings", () => {
+    const keys = coldBandKeyModel(bandView({
+      totals: totals({ buckets: [7, 5, 3, 2, 1], bucket_open: [14, 10, 6, 9, 0] }),
+    }));
+    expect(keys.map((k) => k.count)).toEqual([7, 5, 3, 2, 1]);
+    expect(keys.map((k) => k.open)).toEqual([14, 10, 6, 9, 0]);
+    expect(keys.map((k) => k.rank)).toEqual([1, 2, 3, 4, null]);
+  });
+
+  it("draws no control where nothing is measurable", () => {
+    expect(coldBandKeyModel(bandView({ bucketLabels: [] }))).toEqual([]);
+    expect(coldBandKeyModel({ bucketLabels: BAND_LABELS, totals: null })).toEqual([]);
+  });
+});
+
+describe("coldBandRows: a band reaches assets the cold list never held", () => {
+  const assets = [
+    { asset_id: "warm1", asset_name: "warm1", support_group: "A", bucket: 0, open_findings: 2, cold: false, observed: true },
+    { asset_id: "warm2", asset_name: "warm2", support_group: "B", bucket: 0, open_findings: 9, cold: false, observed: true },
+    { asset_id: "cold1", asset_name: "cold1", support_group: "A", bucket: 3, open_findings: 5, cold: true, observed: true },
+    { asset_id: "gone1", asset_name: "gone1", support_group: "A", bucket: null, open_findings: 4, cold: false, observed: false },
+  ];
+  const view = bandView({ assets });
+
+  // THE WHOLE REASON THIS FUNCTION EXISTS. `coldAssetRows` is cold-or-unobserved only, so a
+  // band-0 selection over it would light the picture and list nothing.
+  it("lists warm assets, which coldAssetRows deliberately does not", () => {
+    expect(coldAssetRows(view).map((r) => r.key)).toEqual(["cold1", "gone1"]);
+    expect(coldBandRows(view, 0).map((r) => r.key)).toEqual(["warm2", "warm1"]);
+  });
+
+  // NULL IS A REAL ANSWER. An unobserved or clear asset has no bucket and belongs to no band;
+  // a cast or a `== null` comparison would drop it into band 0.
+  it("puts an asset with no bucket in no band at all", () => {
+    for (const band of [0, 1, 2, 3, 4]) {
+      expect(coldBandRows(view, band).map((r) => r.key)).not.toContain("gone1");
+    }
+  });
+
+  it("refuses a band that is not a number", () => {
+    for (const junk of [null, undefined, "0", NaN, {}]) {
+      expect(coldBandRows(view, junk)).toEqual([]);
+    }
+  });
+
+  it("carries the band on every row, so the table can name it without re-deriving it", () => {
+    expect(coldBandRows(view, 3)[0].band).toBe(3);
+  });
+});
+
+describe("coldSelection / applyColdSelection: two axes over rows already in hand", () => {
+  const assets = [
+    { asset_id: "c-a", asset_name: "c-a", support_group: "A", bucket: 3, open_findings: 5, cold: true, observed: true },
+    { asset_id: "c-b", asset_name: "c-b", support_group: "B", bucket: 3, open_findings: 3, cold: true, observed: true },
+    { asset_id: "w-a", asset_name: "w-a", support_group: "A", bucket: 1, open_findings: 2, cold: false, observed: true },
+    { asset_id: "gone", asset_name: "gone", support_group: "A", bucket: null, open_findings: 4, cold: false, observed: false },
+  ];
+  const view = bandView({ assets });
+
+  it("reads a band out of the cut rather than standing beside it", () => {
+    expect(coldSelection("band:2", null).band).toBe(2);
+    expect(coldSelection("cold", null).band).toBe(null);
+    expect(coldSelection("all", "A").group).toBe("A");
+  });
+
+  it("refuses a cut that is not one", () => {
+    for (const junk of [null, undefined, "", 7, {}]) {
+      expect(coldSelection(junk, null).cut).toBe("all");
+    }
+    expect(coldSelection("band:x", null).band).toBe(null);
+    expect(coldSelection("band:-1", null).band).toBe(null);
+  });
+
+  it("crosses a band with a support group", () => {
+    const sel = coldSelection("band:3", "A");
+    expect(applyColdSelection(view, sel).map((r) => r.key)).toEqual(["c-a"]);
+  });
+
+  it("falls back to the cold list when no band is chosen", () => {
+    expect(applyColdSelection(view, coldSelection("all", null)).map((r) => r.key))
+      .toEqual(["c-a", "c-b", "gone"]);
+    expect(applyColdSelection(view, coldSelection("cold", null)).map((r) => r.key))
+      .toEqual(["c-a", "c-b"]);
+    expect(applyColdSelection(view, coldSelection("lost", null)).map((r) => r.key))
+      .toEqual(["gone"]);
+  });
+
+  // THE CORNER THAT CANNOT HAPPEN, and the reason the band lives inside the cut. An unobserved
+  // asset has no bucket, so "out of sight" crossed with any band is empty by construction —
+  // and because the two share one control, a reader can never ask for it.
+  it("cannot be asked for out-of-sight in an idle band", () => {
+    expect(coldSelection("band:3", null).cut).toBe("band:3");
+    expect(coldSelection("lost", null).band).toBe(null);
+  });
+
+  it("survives an absent selection", () => {
+    expect(applyColdSelection(view, null).map((r) => r.key)).toEqual(["c-a", "c-b", "gone"]);
+  });
+});
+
+describe("coldSelectionNote: one sentence, three consumers", () => {
+  const view = bandView();
+
+  it("names the group and the band it is showing", () => {
+    const note = coldSelectionNote(view, coldSelection("band:3", "Payments"), 4);
+    expect(note).toContain("Listing 4 assets");
+    expect(note).toContain("Payments");
+    expect(note).toContain("≥ 90 d");
+  });
+
+  it("names the cut where the cut is what narrowed it", () => {
+    expect(coldSelectionNote(view, coldSelection("cold", null), 2)).toContain("cold only");
+    expect(coldSelectionNote(view, coldSelection("lost", null), 1))
+      .toContain("out of sight with backlog open");
+  });
+
+  it("says only the count where nothing is selected", () => {
+    expect(coldSelectionNote(view, coldSelection("all", null), 12)).toBe("Listing 12 assets.");
+    expect(coldSelectionNote(view, coldSelection("all", null), 1)).toBe("Listing 1 asset.");
   });
 });

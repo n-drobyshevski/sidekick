@@ -168,18 +168,30 @@ describe("the assets table's cut", () => {
 
   it("offers the cut the census created, and sizes each one on its label", () => {
     const s = section();
-    expect(s).toContain('label: "Out of sight, backlog open"');
-    expect(s).toContain("!r.observed && r.open > 0");
-    // The count rides on the label so an empty cut can be read without opening it.
-    expect(s).toContain("cuts[value].rows.length");
+    expect(s).toContain('"Out of sight, backlog open"');
+    // The count rides on the label so an empty cut can be read without opening it, and it is
+    // counted through the SAME selection the table paints with — a label that counted a
+    // different population from the list under it is the defect this shares one function for.
+    expect(s).toContain("countOf(value)");
+    expect(s).toContain("applyColdSelection(view, coldSelection(cut, coldGroup))");
   });
 
   it("cuts one array it already holds — a cut is never a second request", () => {
     const s = section();
     expect(s).not.toContain("swrCall");
-    // The model runs ONCE and the three cuts are filters over its result, so switching costs
-    // nothing and the cuts cannot disagree about what a row says.
-    expect(s.match(/coldAssetRows\(/g)).toHaveLength(1);
+    // Every row a selection can reach is already in the payload this page holds, so the cut,
+    // the band and the group are all filters over it.
+    expect(s).not.toContain("api_");
+  });
+
+  // THE BAND LIVES INSIDE THE CUT, which is what stops the two controls disagreeing. An
+  // unobserved asset has no bucket, so "out of sight" crossed with an idle band is empty by
+  // construction — and because they share one value, a reader cannot ask for it.
+  it("folds the idle band into the same value as the three-way cut", () => {
+    expect(CODE).toContain('assetCut.indexOf("band:") === 0');
+    expect(CODE).toContain("coldSelection(assetCut, coldGroup)");
+    // Pressing one of the three clears the band rather than disabling it.
+    expect(section()).toContain("assetCut = v;");
   });
 
   it("keeps the cut outside paint(), and out of the URL", () => {
@@ -243,14 +255,67 @@ describe("the scatter's grain switch", () => {
   });
 });
 
-describe("the heat table carries its shade as a redundancy, never as the reading", () => {
-  it("stamps data-level from the model and still prints both numbers in the cell", () => {
-    expect(CODE).toContain('"data-level": String(cell.level)');
-    expect(CODE).toContain("fmtCount(cell.count)");
-    expect(CODE).toContain('fmtCount(cell.open) + " open"');
+// THE HEAT TABLE IS GONE, and these hold what took its place. It drew a support-group x
+// idle-band matrix keyed on the same support group as the roll-up above it, so a reader
+// cross-referenced the two by scrolling; it is one bar per row now. What the fold cost — the
+// column-wise read — is bought back by a shared scale, by the totals row surviving as the band
+// key, and by a band press dimming every other band in every row at once.
+describe("the idle distribution rides in the row it describes", () => {
+  it("draws no heat table any more", () => {
+    expect(CODE).not.toContain("data-level");
+    expect(CODE).not.toContain("heat-cell");
+    expect(CODE).not.toContain("table.data.heat");
+    expect(CODE).not.toContain("heatModel");
   });
 
-  it("takes its header from the payload's own bucket labels", () => {
-    expect(CODE).toContain("for (const label of heat.columns)");
+  it("scales every bar against the table, never against its own row", () => {
+    expect(CODE).toContain("const scale = coldBandScale(rows);");
+    expect(CODE).toContain("max: scale");
+  });
+
+  it("keeps the grid's totals row on the surface, as the control", () => {
+    expect(CODE).toContain("coldBandKeyModel(view)");
+    expect(CODE).toContain('"data-band-key"');
+    expect(CODE).toContain("fmtCount(k.count)");
+  });
+
+  // THE ARITY RULE. Five segments per row times N rows is 5N tab stops; the bands are pressed
+  // in the key row above the table, which spends five once, and the group in the row's own
+  // name, which is the one stop a clickable row already costs.
+  it("makes the key row and the row name the controls, never the bar", () => {
+    const from = CODE.indexOf('key: "bands"');
+    const to = CODE.indexOf('key: "cold"', from);
+    // A slice that lost its anchor would silently become the whole file and pass nothing.
+    expect(from).toBeGreaterThan(-1);
+    expect(to).toBeGreaterThan(from);
+    const cell = CODE.slice(from, to);
+    expect(cell).not.toContain("button");
+    expect(cell).not.toContain("onclick");
+    expect(cell).toContain("bandBar(model");
+    // The five stops live on the key row instead.
+    expect(CODE).toContain('class: "bandkey"');
+    expect(CODE).toContain("onclick: () => pickBand(k.key)");
+  });
+
+  // MARKED IN PLACE, NEVER REBUILT: rebuilding the key row or the group buttons would tear the
+  // focused control out from under the reader mid-press.
+  it("repaints a selection without rebuilding the controls that set it", () => {
+    const sync = CODE.slice(CODE.indexOf("function syncSelection()"), CODE.indexOf("function renderAssets"));
+    expect(sync).toContain('setAttribute("aria-pressed"');
+    expect(sync).toContain("cell.bandModel");
+    expect(sync).not.toContain("pagedTable");
+  });
+
+  it("says out loud that the list moved", () => {
+    expect(CODE).toContain('role: "status", "aria-live": "polite"');
+    expect(CODE).toContain("coldSelectionNote(view, sel, rows.length)");
+  });
+
+  // Same refusal the cut has always carried, now covering the band and the group too.
+  it("keeps the whole selection out of the URL", () => {
+    expect(CODE).not.toContain("setParams");
+    const declared = CODE.indexOf("let coldGroup = null");
+    expect(declared).toBeGreaterThan(-1);
+    expect(declared).toBeLessThan(CODE.indexOf("paint = (model) =>"));
   });
 });

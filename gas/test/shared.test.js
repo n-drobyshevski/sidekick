@@ -40,7 +40,9 @@ import { ratio, registerTokenContract } from "../../gas_shared/test/contracts/to
 import { registerZScaleContract } from "../../gas_shared/test/contracts/zscale.js";
 import { registerRelativeAgeContract } from "../../gas_shared/test/contracts/relativeAge.js";
 import { openAndTotal, relativeAge } from "../../gas_shared/ui/figures.js";
+import { registerBandBarContract } from "../../gas_shared/test/contracts/bandBar.js";
 import { registerSparklineContract } from "../../gas_shared/test/contracts/sparkline.js";
+import { bandBarModel } from "../../gas_shared/ui/bandBar.js";
 import { sparkLabel, sparkPath } from "../../gas_shared/ui/sparkline.js";
 import { registerUnitChartContract } from "../../gas_shared/test/contracts/unitChart.js";
 import {
@@ -450,6 +452,7 @@ registerSyncCaptionContract(base);
 // `sparkLabel` directly, so this register's own KPI-band sparklines are held to the same
 // refuse-before-cast contract `gas_devsecops`'s Scan History page already registers.
 registerSparklineContract({ ...base, sparkPath, sparkLabel });
+registerBandBarContract({ ...base, bandBarModel });
 
 // The unit chart. This register draws no isotype yet at the time the contract lands, and
 // registering it anyway is the point: the arithmetic is the design system's, and the page

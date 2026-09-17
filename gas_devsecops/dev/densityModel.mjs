@@ -121,7 +121,9 @@ export function isIconSvg(node) {
  * buckets are last, with `svg` explicitly declining anything a named bucket already claimed.
  * A double count would show up as the wave inventing a picture it did not draw.
  */
-const NAMED_VISUAL_CLASSES = ["meter", "sevbar", "axis-bar", "isotype", "quad", "sparkline"];
+const NAMED_VISUAL_CLASSES = [
+  "meter", "sevbar", "axis-bar", "isotype", "quad", "sparkline", "bandbar",
+];
 
 function hasNamedVisual(node) {
   return !!node && Array.isArray(node.classes)
@@ -139,6 +141,13 @@ export const VISUAL_PREDICATES = [
   ["isotype", hasClass("isotype")],
   ["quad", hasClass("quad")],
   ["spark", hasClass("sparkline")],
+  // A DISTRIBUTION ACROSS ORDERED BANDS, at the size of a table cell (gas_shared/ui/
+  // bandBar.js). It arrives in this list AFTER the two registers that draw it shipped, and in
+  // its own commit, on this file's own rule: editing the instrument in the wave that uses it
+  // as evidence gives a before-column and an after-column measured by two different rulers.
+  // The wave that folded two subject x band grids into their roll-up tables therefore reads as
+  // `visuals` UNCHANGED in its own diff, and gains one per row here.
+  ["bandbar", hasClass("bandbar")],
   ["canvas", (n) => tagOf(n) === "CANVAS"],
   ["svg", (n) => tagOf(n) === "SVG" && !isIconSvg(n) && !hasNamedVisual(n)],
 ];
