@@ -720,49 +720,82 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
    Two apps drew byte-identical rules for it, which is the promotion trigger this block's
    own comment named. */
 
-/* ------------------------------ Cold zone: the support-group x idle-bucket heat table
-   An app-local table (`table.data.heat`), not a component: this is the one grid in the app
-   whose cells carry an ordinal shade, and nothing in `gas_shared` draws one. Adding a shading
-   channel to the shared table would put it in front of every register that has no use for one.
+/* The four figures as a 2x2 beside the census, rather than a column of four.
+   `.kpi-row`'s own track is `repeat(auto-fit, minmax(160px, 1fr))`, which in a 564px half of
+   `.card-pair` packs THREE across and leaves the fourth alone on a second row; `--column`, the
+   other shipped modifier, stacks all four and makes the left side twice the height of the card
+   beside it. Two-up is the one that squares the band: two rows of two stand level with the
+   lattice, and at ~270px a tile still fits its figure and a two-line sentence under it. Page
+   local because it is a fact about THIS pairing, not a property of the component. */
+.cold-figures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (max-width: 1099px) { .cold-figures { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); } }
 
-   THE RAMP IS NEUTRAL INK, AND THAT IS A RULE RATHER THAN A PREFERENCE. The severity palette is
-   the other ordinal scale a reader of this register already knows the meaning of, and idle time
-   is not severity: borrowing red/orange/amber here would have a 70-day-idle cell read as
-   "HIGH". The brand is out too — `--accent` is the one hue this app reserves for "the thing
-   being pointed at", and four steps of it would spend that signal on a background. What is left
-   is ink at four alphas over the page's own ground: a scale with no second meaning to mistake
-   it for.
+/* ------------------------------ Cold zone: the band key row, and the picked group row
+   THE HEAT TABLE THAT WAS HERE IS GONE. `table.data.heat` drew a support-group x idle-band
+   matrix keyed on the same support group as the roll-up above it, and its ordinal shading was
+   the one such channel in this app — neutral ink at four alphas, argued at length in
+   DESIGN.md because severity and --accent were both wrong for it. The matrix folded into the
+   roll-up as one `bandBar` per row (gas_shared/ui/bandBar.js, and components.css for the
+   ramp), so both the table and its local shading rule leave together. What replaced the ramp
+   is not a fourth candidate: the shade stopped encoding MAGNITUDE (count/max over the grid,
+   which is where "a 70-day cell in red reads as HIGH" came from) and started encoding the
+   band's own fixed position, which is what the ordinal ramp is for.
 
-   AND THE COUNT IS ALWAYS PRINTED. The shade is the redundancy, never the reading: every cell
-   spells its asset count and, under it, the open findings sitting in that bucket, so the grid
-   survives greyscale, a dichromat, and the forced-colors rule below that strips the fills
-   outright (`background` is one of the properties forced-colors mode overrides, so the alphas
-   would land on a system ground they were never measured against). */
-/* The caption is the grid's method sentence and reads as prose, so it is left-aligned and sits
-   above the header rather than centred over it the way a browser's default caption does. No
-   other table in this app has one — `dataTable` puts its explanation in a `<p>` beside the
-   table — but this grid's columns move with the operator's threshold, and a sentence a reader
-   might not connect to the table it belongs to is worse than no sentence. */
-table.data.heat caption {
-  caption-side: top; text-align: left; padding: 0 0 var(--space-2);
+   WHAT STAYS HERE IS THE PAGE'S OWN CHROME: the key row that is now the band control, and the
+   mark on a picked group row. Neither is a component a sibling draws. */
+
+/* The key row is the old totals row doing a second job, so it reads as information first and
+   as a control second: the band's word and its estate-wide count are printed whether or not
+   anyone presses it. Sized as a pill row, not as a toolbar. */
+.bandkeys {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  margin: 0 0 var(--space-3);
 }
-/* A support-group name is a row LABEL, not a column heading: the base `table.data th` rule
-   dresses every `th` as an uppercase micro-label, which is right above a column of numbers and
-   wrong in front of one. Only the alignment, weight and case are restored; the ground stays. */
-table.data.heat th[scope="row"] {
-  font-size: var(--fs-body); font-weight: 600; letter-spacing: normal;
-  text-transform: none; color: var(--ink);
+.bandkey {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+  font-size: var(--fs-label); line-height: 1.6; cursor: pointer;
+  transition: border-color var(--dur-quick) var(--ease-out),
+    background-color var(--dur-quick) var(--ease-out);
 }
-.heat-cell[data-level="0"] { background: transparent; }
-.heat-cell[data-level="1"] { background: rgba(23, 23, 23, 0.06); }
-.heat-cell[data-level="2"] { background: rgba(23, 23, 23, 0.12); }
-.heat-cell[data-level="3"] { background: rgba(23, 23, 23, 0.20); }
-.heat-cell[data-level="4"] { background: rgba(23, 23, 23, 0.30); }
-/* The open-findings line under the count, on its own line rather than trailing it: a cell is a
-   figure and its denominator-in-miniature, and inline they read as one run-on number. */
-.heat-cell > .small { display: block; }
+.bandkey:hover { background: var(--wash-hover); border-color: var(--hairline-strong); }
+.bandkey:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+/* PRESSED IS NOT A COLOUR ALONE. The ring and the weight carry it too, because this control
+   selects and a reader who cannot see the wash still has to know what is on. */
+.bandkey[aria-pressed="true"] {
+  border-color: var(--accent-text); background: var(--accent-wash);
+  color: var(--accent-text); font-weight: var(--fw-semibold);
+}
+/* The swatch takes the SAME ramp as the bar it filters, so the key and the picture are
+   obviously the same vocabulary. `none` is the band that is not on the scale. */
+.bandkey__swatch {
+  width: 10px; height: 10px; border-radius: var(--radius-xs); flex: 0 0 auto;
+}
+.bandkey[data-rank="1"] .bandkey__swatch { background: var(--rank-1-tint); }
+.bandkey[data-rank="2"] .bandkey__swatch { background: var(--rank-2-tint); }
+.bandkey[data-rank="3"] .bandkey__swatch { background: var(--rank-3-tint); }
+.bandkey[data-rank="4"] .bandkey__swatch { background: var(--rank-4-tint); }
+.bandkey[data-rank="none"] .bandkey__swatch {
+  background-color: var(--surface-2); background-image: var(--hatch);
+}
+.bandkey__num { color: var(--ink); font-weight: var(--fw-semibold); }
+
+/* The distribution's cell: the bar fills it, so the column's width is the picture's width. */
+.bandcell { display: block; min-width: 96px; }
+
+/* THE PICKED ROW, marked on the row and not only on the button inside it. A reader who picked
+   a support group is now looking at a list several sections down, and the mark is what says
+   where the list came from when they scroll back. An inset bar rather than a background
+   alone, for the same non-colour reason the key row carries a ring. */
+tr.is-picked > * { background: var(--accent-wash); }
+tr.is-picked > :first-child { box-shadow: inset 2px 0 0 var(--accent-text); }
+.group-pick { font: inherit; text-align: left; }
+
 @media (forced-colors: active) {
-  .heat-cell { background: transparent; }
+  .bandkey[aria-pressed="true"] { outline: 2px solid CanvasText; outline-offset: -3px; }
+  tr.is-picked > :first-child { box-shadow: none; outline: 2px solid CanvasText; }
 }
 
 /* ------------------------------------------------------- Cold zone: the verdict census

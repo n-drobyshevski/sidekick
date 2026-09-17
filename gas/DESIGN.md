@@ -431,22 +431,54 @@ silhouettes cannot carry five tones under forced colors. Nothing is actually los
 `unitKeyRow` prints every segment's label, count and share in text under the lattice regardless
 of mode, so the reading survives even where the picture's tones do not.
 
-**The support-group × idle-bucket heat table's ramp is neutral ink at four alphas, and that is
-a rule, not a preference.** `table.data.heat`'s cells (`gas/src/client/styles/pages.css`,
-"Cold zone: the support-group x idle-bucket heat table") carry the one ordinal shading channel
-in this app outside the severity palette — `rgba(23,23,23, .06/.12/.20/.30)` over the page's own
-ground, never a severity colour and never `--accent`. Severity is the OTHER ordinal scale a
-reader of this register already knows the meaning of, and idle time is not severity: a 70-day
-cell in red would read as "HIGH" regardless of what the caption says. `--accent` is out for the
-same reason §1 gives it exactly one job — "the thing being pointed at" — and four steps of it
-spent on a table background would compete with the scatter's own use of it below. This is the
-same discipline §9 states for `pages/overview.js`'s tier card, which rejected recolouring
-`unitChart`'s four-tone vocabulary to carry a five-step ordinal scale rather than lie about the
-order; here the ordinal scale gets its own local rule instead of borrowing one built for a
-different meaning. The shade is always redundant, never load-bearing: every cell also prints
-its asset count and, under it, the open findings in that bucket, and `forced-colors: active`
-strips the `background` outright, so the grid survives greyscale, a dichromat and High Contrast
-on the printed numbers alone.
+**The heat table folded into the roll-up above it, and its ramp went from magnitude to
+position.** `table.data.heat` drew a support-group × idle-bucket matrix keyed on exactly the
+same support group as the roll-up a screen above it, so a reader comparing "who is coldest"
+with "where their idle time sits" did it by scrolling between two tables. It is one
+`bandBar` cell per row now (`gas_shared/ui/bandBar.js`), in the row it describes.
+
+That table's ramp was neutral ink at four alphas, and this section argued at length that it
+had to be: severity is the other ordinal scale a reader of this register knows, and a 70-day
+cell in red would read as "HIGH"; `--accent` has exactly one job and four steps of it would
+spend that signal on a background. **Both objections stand, and neither applies any more,
+because what the shade encodes changed.** `heatLevel` shaded a cell by `count / max` over the
+whole grid — the tone meant *how many assets are here*, which in a security register does read
+as a severity. A band's tone is now the band's own fixed position: rank 4 **is** the cold band,
+which is this page's alarm, already drawn as a `bad` verdict dot in the same row. That is a
+STEP, not a kind, and `gas_ai/DESIGN.md`'s Ordinal-Fork Rule names the instrument it takes:
+"the percentage *bands* are steps and take the ordinal ramp". So the bands take `--rank-1..4`,
+which already existed, was already measured, and is already documented as not-severity — no
+new token, no hex literal. The band that is not on the scale at all ("no movement on record
+yet") takes `--hatch` rather than a fifth step, which keeps the ramp at the four its
+separations were measured as.
+
+**What the fold cost, and the three things that buy it back.** A matrix can be read DOWN a
+column — *who else is past 90 days?* — and a column of bars cannot. First, every bar is drawn
+against `coldBandScale`, the largest row total in the table, so length still compares down the
+column; a bar normalised to its own row would draw 280 assets and 30 assets identically, and
+`bandBar`'s contract perturbs exactly that. Second, the grid's totals row is still on the
+surface, as the band key row above the table. Third, pressing a band dims that band's
+complement in every row at once, which is the column read as an action. The per-cell figures
+the grid printed are in each bar's `aria-label` and its tip: one level down, which is this
+file's own ladder, and it is a demotion rather than a win — worth saying plainly.
+
+**The cross-filter is two axes, and the band lives inside the cut.** A support group (the row's
+own name is the control) crossed with an idle band (the key row). The band is not a state
+beside the three-way cut but a value *of* it — `"all" | "cold" | "lost" | "band:N"` — and that
+fusion is what removes a corner a reader could otherwise ask for and never get: an unobserved
+asset has no bucket, so "out of sight" crossed with an idle band is empty by construction.
+`coldBandRows` widens the population to match, because `coldAssetRows` is deliberately
+cold-and-unobserved only and a band-0 press over it would light the picture and list nothing.
+
+**None of it is in the URL, and the bars are not controls.** The selection is a module-local
+`let` for the reason this file already gives for `assetCut` and `scatterGrain`: `setParams`
+replaces the whole query string and does not re-render, every row a selection can reach is
+already in the payload, and a group in the URL would be a second spelling of "which support
+group" beside the header scope chip that really does refetch. And five segments per row times N
+rows is 5N tab stops, against `quad.js`'s arity rule — so the bar is one `role="img"`, the key
+row spends five stops once, and the group costs the one stop a clickable row already costs. A
+selection change marks in place rather than rebuilding, because rebuilding the key row would
+tear the focused button out from under the reader mid-press.
 
 **One paragraph is pinned on purpose.** `renderColdZone` prints `denomNote(coldModeCaption(view))`
 first, above everything else, in all three branches — the two `emptyState` notices (not

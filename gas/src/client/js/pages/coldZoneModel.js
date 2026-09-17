@@ -591,72 +591,188 @@ export function coldGroupRows(view) {
     lastMovementText: typeof g.last_movement_at === "string"
       ? fmtDate(g.last_movement_at)
       : absentText,
+    // THE ROW'S OWN IDLE DISTRIBUTION, which used to be a second full-width table a screen
+    // below this one, keyed on the same support group. `buckets` and `bucket_open` have been
+    // on every group row since the domain first published them; nothing here is a new
+    // measurement, only the same five figures arriving where the group already is.
+    bands: bandSpecs(view, g),
+    bandTotal: bandTotal(g),
   }));
 }
 
 /**
- * Which of the five shades a heat cell takes: 0 for nothing at all, then four steps.
+ * What the two controls above the assets table currently ask for, as one value.
  *
- * REFUSED BEFORE ANY CAST, both arguments. `count / max` with either side a string, an array
- * or null produces a NaN that `Math.floor` passes straight through, and `data-level="NaN"`
- * matches no rule in the sheet — a cell that silently loses its shade while still printing its
- * number. Anything that was not a finite number to begin with, and any non-positive maximum,
- * is level 0: no shade, which is what an unshadeable cell should look like.
+ * TWO AXES, AND VERDICT IS NOT ONE OF THEM. For an observed asset the verdict IS a function of
+ * the band — band 3 is cold, the last band is watching, the rest are warm — so a verdict axis
+ * would be a second, partly-redundant selector that can contradict the band. The existing
+ * three-way cut (all / cold / out-of-sight) already is that axis, and the band joins it rather
+ * than standing beside it: `cut` is "all" | "cold" | "lost" | a band key. That fusion is what
+ * removes the incoherent corner — an unobserved asset has NO bucket, so "out of sight" crossed
+ * with "60-90 days" is empty by construction, and a reader should never be handed a pair of
+ * controls that can produce it.
  *
- * A COUNT OF ZERO IS LEVEL 0 AND NOT LEVEL 1. The lightest shade means "something is here, and
- * it is the least of it"; an empty cell means nothing is there. The table prints the 0 either
- * way — the shade is the redundancy, never the reading.
- *
- * FOUR STEPS, NOT A CONTINUOUS RAMP, and `Math.min(3, …)` is what keeps the top of the scale
- * inside the sheet: `count === max` lands on `floor(4)` and would ask for a fifth step that
- * does not exist.
+ * @param {string} cut    the assets table's cut
+ * @param {string|null} group  a support-group key, or null
  */
-export function heatLevel(count, max) {
-  if (typeof count !== "number" || !Number.isFinite(count)) return 0;
-  if (typeof max !== "number" || !Number.isFinite(max)) return 0;
-  if (count <= 0 || max <= 0) return 0;
-  return 1 + Math.min(3, Math.floor((count / max) * 4));
+export function coldSelection(cut, group) {
+  const c = typeof cut === "string" && cut ? cut : "all";
+  const band = c.indexOf("band:") === 0 ? num(Number(c.slice(5))) : null;
+  return {
+    cut: c,
+    band: band !== null && Number.isInteger(band) && band >= 0 ? band : null,
+    group: typeof group === "string" && group ? group : null,
+  };
 }
 
 /**
- * The support-group × idle-bucket grid: the columns from the payload, one row per group, and a
- * totals row under them.
+ * The rows one selection asks for, over the rows the page already holds.
  *
- * THE TOTALS ROW CARRIES NO SHADE, deliberately. The ramp compares groups with each other, and
- * the totals are the sum of every one of them — shaded on the same scale, every cell in that
- * row would saturate at the darkest step and say nothing except "this row is bigger", which
- * the reader can already see from the numbers.
- *
- * Returns null where there is no grid to draw — no columns (nothing measurable) or no groups.
- * A caller draws nothing rather than an empty table.
+ * NO REFETCH, EVER. Every asset is in the payload `api_getColdZonePage` already answered with,
+ * so a selection repaints and never asks the server a new question — the same bargain the cut
+ * control has always made, and the reason none of this belongs in the URL.
  */
-export function heatModel(view) {
-  const columns = view && Array.isArray(view.bucketLabels) ? view.bucketLabels : null;
-  const groups = view && Array.isArray(view.groups) ? view.groups : [];
-  if (!columns || !columns.length || !groups.length) return null;
-  const cellsOf = (row) => columns.map((_, i) => ({
-    count: num(row && Array.isArray(row.buckets) ? row.buckets[i] : null, 0),
-    open: num(row && Array.isArray(row.bucket_open) ? row.bucket_open[i] : null, 0),
+export function applyColdSelection(view, sel) {
+  const s = sel || coldSelection("all", null);
+  const base = s.band !== null ? coldBandRows(view, s.band) : coldAssetRows(view);
+  const rows = s.cut === "cold"
+    ? base.filter((r) => r.cold)
+    : s.cut === "lost"
+      ? base.filter((r) => !r.observed && r.open > 0)
+      : base;
+  return s.group === null ? rows : rows.filter((r) => r.group === s.group);
+}
+
+/**
+ * What the selection is, in words — for the chip row, for the count under the table, and for
+ * the live region that tells a screen reader the list moved.
+ *
+ * ONE SENTENCE, THREE CONSUMERS. A second spelling of "what am I looking at" is where two
+ * surfaces drift apart, and the live region is the one nobody would notice had gone stale.
+ */
+export function coldSelectionNote(view, sel, rowCount) {
+  const s = sel || coldSelection("all", null);
+  const parts = [];
+  if (s.group !== null) parts.push(s.group);
+  if (s.band !== null) {
+    const def = coldBandDefs(view).find((d) => d.index === s.band);
+    if (def) parts.push("idle " + def.label);
+  } else if (s.cut === "cold") {
+    parts.push("cold only");
+  } else if (s.cut === "lost") {
+    parts.push("out of sight with backlog open");
+  }
+  const n = num(rowCount, 0);
+  const head = "Listing " + fmtCount(n) + " " + pluralize(n, "asset");
+  return parts.length ? head + ": " + parts.join(", ") + "." : head + ".";
+}
+
+/**
+ * The band vocabulary, derived once from the payload's own column labels.
+ *
+ * THE LABELS COME FROM THE PAYLOAD AND THE RANKS DO NOT. `bucket_labels` moves with the
+ * operator's threshold — at 120 days the bands are 0-40/40-80/80-120/>= 120 — so a label
+ * spelled here would be a second, silently wrong statement of the setting. The RANK is a
+ * property of the position, not of the number: band 0 is always the most recently moved and
+ * band 3 is always the cold one, whatever days they stand for.
+ *
+ * THE LAST BAND HAS NO RANK. "No movement on record yet" is not a point on the idle scale at
+ * all — not idle for zero days, not idle for a lot — so it takes no step of the ordinal ramp
+ * and is drawn as `--hatch`, the design system's mark for "this part is not a measurement".
+ * That also keeps the ramp at the four steps its separations were measured as.
+ */
+export function coldBandDefs(view) {
+  const labels = view && Array.isArray(view.bucketLabels) ? view.bucketLabels : [];
+  return labels.map((label, i) => ({
+    key: "band:" + i,
+    index: i,
+    label: String(label),
+    // Four steps, then the unmeasurable tail — however many columns the payload sends.
+    rank: i < 4 && i < labels.length - 1 ? i + 1 : null,
   }));
-  const rows = groups.map((g) => ({
-    key: g.support_group === null || g.support_group === undefined
-      ? NO_GROUP
-      : String(g.support_group),
-    label: g.label || NO_GROUP,
-    cells: cellsOf(g),
-  }));
+}
+
+/**
+ * One row's bands, in the shape `bandBarModel` takes. The open findings ride along as the
+ * segment's `extra` so they reach the bar's sentence — that is where the heat table's second
+ * figure per cell went, one level down rather than away.
+ */
+function bandSpecs(view, g) {
+  const buckets = g && Array.isArray(g.buckets) ? g.buckets : [];
+  const opens = g && Array.isArray(g.bucket_open) ? g.bucket_open : [];
+  return coldBandDefs(view).map((d) => {
+    const open = num(opens[d.index], 0);
+    return {
+      key: d.key,
+      label: d.label,
+      count: num(buckets[d.index]),
+      rank: d.rank,
+      extra: open > 0 ? fmtCount(open) + " open" : "",
+    };
+  });
+}
+
+function bandTotal(g) {
+  const buckets = g && Array.isArray(g.buckets) ? g.buckets : [];
+  let total = 0;
+  for (const b of buckets) {
+    const n = num(b);
+    if (n !== null && n > 0) total += n;
+  }
+  return total;
+}
+
+/**
+ * The largest row total in the table, which is the scale every bar is drawn against.
+ *
+ * ONE UNIT PER TABLE, NEVER PER ROW. `gas_shared/ui/bandBar.js` states the defect and its
+ * contract perturbs it: a bar normalised to its own row draws a support group of 280 assets
+ * and one of 30 at the same length, and the column stops being readable — which is the whole
+ * thing the merge was paid for. Derived here, over the formatted rows, so the page never has
+ * to know how to compute it.
+ */
+export function coldBandScale(rows) {
   let max = 0;
-  for (const row of rows) for (const cell of row.cells) if (cell.count > max) max = cell.count;
-  for (const row of rows) for (const cell of row.cells) cell.level = heatLevel(cell.count, max);
-  const totals = view.totals
-    ? {
-      key: "__all__",
-      label: "All support groups",
-      cells: cellsOf(view.totals).map((c) => ({ ...c, level: 0 })),
-    }
-    : null;
-  return { columns: columns.slice(), rows, totals, max };
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const n = num(r && r.bandTotal, 0);
+    if (n > max) max = n;
+  }
+  return max;
 }
+
+/**
+ * The band key row above the table: every band, its label, its estate-wide count, and the open
+ * findings sitting in it.
+ *
+ * THIS IS THE OLD TOTALS ROW, STILL ON THE SURFACE. The heat grid's last row carried exactly
+ * these figures; folding the grid into the table would have taken them with it, so they become
+ * the control instead — which is also where the five tab stops the bars refuse are spent.
+ *
+ * Returns an empty list where nothing is measurable, so a caller draws no control rather than
+ * an empty one.
+ */
+export function coldBandKeyModel(view) {
+  const t = view && view.totals;
+  const defs = coldBandDefs(view);
+  if (!t || !defs.length) return [];
+  const buckets = Array.isArray(t.buckets) ? t.buckets : [];
+  const opens = Array.isArray(t.bucket_open) ? t.bucket_open : [];
+  return defs.map((d) => ({
+    key: d.key,
+    index: d.index,
+    label: d.label,
+    rank: d.rank,
+    count: num(buckets[d.index], 0),
+    open: num(opens[d.index], 0),
+  }));
+}
+
+// `heatLevel` AND `heatModel` USED TO LIVE HERE, and they went with the table that drew
+// them. The grid shaded a cell by `count / max` over the whole grid, so its ramp encoded
+// MAGNITUDE — which is where DESIGN.md's objection came from, a 70-day cell in red reading
+// as "HIGH". The distribution is one `bandBar` per row now (`coldGroupRows`' `bands`), and
+// a band's tone is its own fixed position on the ordinal ramp rather than a count relative
+// to the busiest cell on screen. Nothing derives a shade from a ratio any more.
 
 /**
  * The assets the page is actually about: the cold ones and the ones the scanner has lost sight
@@ -677,66 +793,109 @@ export function coldAssetRows(view) {
   const assets = view && Array.isArray(view.assets) ? view.assets : [];
   const rows = assets
     .filter((a) => a && (a.cold === true || a.observed === false))
-    .map((a) => {
-      const label = a.asset_name || a.asset_id || absentText;
-      const bounded = a.idle_is_bound === true;
-      const reading = num(a.idle_reading_days);
-      // THE ONE BOUND FORMATTER, not a second spelling of it. `boundedDays` is what puts "≥"
-      // in front of a lower bound everywhere in this app, and it decides which it is from
-      // WHICH ARGUMENT is non-null — so `idle_is_bound` chooses the slot and
-      // `idle_reading_days` is the number either way, exactly as the domain publishes them.
-      const idle = boundedDays(bounded ? null : reading, bounded ? reading : null);
-      const movementAt = typeof a.last_movement_at === "string" ? a.last_movement_at : null;
-      const lastObservedAt = typeof a.last_observed_at === "string" ? a.last_observed_at : null;
-      const disappearedAt = typeof a.disappeared_at === "string" ? a.disappeared_at : null;
-      return {
-        key: a.asset_id || label,
-        label,
-        group: a.support_group === null || a.support_group === undefined
-          ? NO_GROUP
-          : String(a.support_group),
-        assetType: a.asset_type === null || a.asset_type === undefined
-          ? absentText
-          : String(a.asset_type),
-        cloud: a.cloud === null || a.cloud === undefined ? absentText : String(a.cloud),
-        verdict: a.verdict || null,
-        verdictWord: COLD_VERDICT_LABEL[a.verdict] || absentText,
-        cold: a.cold === true,
-        observed: a.observed !== false,
-        idleText: idle.text,
-        idleBounded: idle.bounded,
-        idleDays: reading,
-        movementAt,
-        movementText: movementAt === null ? absentText : fmtDate(movementAt),
-        // WHY AN ASSET CAN HAVE NO MOVEMENT AT ALL, printed beside the absence rather than
-        // left as a mystery: a reopen clears `resolved_at`, so an asset whose only close came
-        // back reads as never having moved. `returned` is this register's word for that and
-        // has its own glossary entry.
-        reopenedOpen: num(a.reopened_open, 0),
-        // THE THREE FACTS THAT ANSWER "WHY DID THIS GO QUIET", which the domain has always
-        // published and this row used to drop on the floor. Every unobserved asset is
-        // unobserved for the same structural reason — no finding of its reached the newest flat
-        // scan covering its severity — so there is no cause to name. What differs between two
-        // of them is WHEN the scanner stopped returning it and HOW: `disappearedCount` on
-        // `disappearedAt` is the shape of the exit, a big number being the whole asset leaving
-        // in one scan and a 1 being an asset that faded as its last finding closed.
-        lastObservedAt: lastObservedAt,
-        lastObservedText: lastObservedAt === null ? absentText : fmtDate(lastObservedAt),
-        unobservedForDays: num(a.unobserved_for_days),
-        disappearedAt: disappearedAt,
-        disappearedText: disappearedAt === null ? absentText : fmtDate(disappearedAt),
-        disappearedCount: num(a.disappeared_at_last_observation, 0),
-        open: num(a.open_findings, 0),
-        highRisk: num(a.open_high_risk, 0),
-        oldestOpenAgeDays: num(a.oldest_open_age_days),
-      };
-    });
+    .map(coldAssetRow);
+  return sortColdRows(rows);
+}
+
+/**
+ * The assets sitting in one idle band, whatever their verdict.
+ *
+ * WHY THIS IS NOT `coldAssetRows` WITH A FILTER. That list is deliberately narrow: cold assets
+ * and ones the scanner has lost sight of, because they are what the page is FOR. Bands 0-2 are
+ * warm assets, and none of them is in it — so a band selection that reached only the existing
+ * rows would light up the picture and then list nothing, which is worse than not being
+ * selectable at all. The population is every asset the domain gave a bucket to.
+ *
+ * `bucket` IS THE DOMAIN'S OWN, and null is a real answer. `coldZone.ts` publishes it as
+ * "0..3, or 4 for not yet measurable. NULL for unobserved and clear assets" — so an asset with
+ * no bucket matches no band rather than falling into band 0, which is what a `== null`
+ * comparison or a cast would do.
+ */
+export function coldBandRows(view, band) {
+  if (typeof band !== "number" || !Number.isFinite(band)) return [];
+  const assets = view && Array.isArray(view.assets) ? view.assets : [];
+  const rows = assets
+    .filter((a) => a && num(a.bucket) === band)
+    .map(coldAssetRow);
+  return sortColdRows(rows);
+}
+
+/**
+ * ONE ORDER FOR BOTH CUTS. Cold first, then the biggest backlog, then the name as a tie-break
+ * so two paints over the same payload cannot reshuffle. The table is given no sort spec, so
+ * this order survives to the screen (`sortRows` returns a list untouched with no `value`).
+ */
+function sortColdRows(rows) {
   rows.sort((a, b) => {
     if (a.cold !== b.cold) return a.cold ? -1 : 1;
     if (b.open !== a.open) return b.open - a.open;
     return String(a.label).localeCompare(String(b.label));
   });
   return rows;
+}
+
+/**
+ * One asset, formatted. EXTRACTED so `coldAssetRows` and `coldBandRows` cannot drift: two
+ * copies of a twenty-field mapping is where a column quietly means something different
+ * depending on which control the reader used to get there.
+ */
+function coldAssetRow(a) {
+  const label = a.asset_name || a.asset_id || absentText;
+  const bounded = a.idle_is_bound === true;
+  const reading = num(a.idle_reading_days);
+  // THE ONE BOUND FORMATTER, not a second spelling of it. `boundedDays` is what puts "≥"
+  // in front of a lower bound everywhere in this app, and it decides which it is from
+  // WHICH ARGUMENT is non-null — so `idle_is_bound` chooses the slot and
+  // `idle_reading_days` is the number either way, exactly as the domain publishes them.
+  const idle = boundedDays(bounded ? null : reading, bounded ? reading : null);
+  const movementAt = typeof a.last_movement_at === "string" ? a.last_movement_at : null;
+  const lastObservedAt = typeof a.last_observed_at === "string" ? a.last_observed_at : null;
+  const disappearedAt = typeof a.disappeared_at === "string" ? a.disappeared_at : null;
+  return {
+    key: a.asset_id || label,
+    label,
+    group: a.support_group === null || a.support_group === undefined
+      ? NO_GROUP
+      : String(a.support_group),
+    assetType: a.asset_type === null || a.asset_type === undefined
+      ? absentText
+      : String(a.asset_type),
+    cloud: a.cloud === null || a.cloud === undefined ? absentText : String(a.cloud),
+    verdict: a.verdict || null,
+    verdictWord: COLD_VERDICT_LABEL[a.verdict] || absentText,
+    cold: a.cold === true,
+    observed: a.observed !== false,
+    idleText: idle.text,
+    idleBounded: idle.bounded,
+    idleDays: reading,
+    movementAt,
+    movementText: movementAt === null ? absentText : fmtDate(movementAt),
+    // WHY AN ASSET CAN HAVE NO MOVEMENT AT ALL, printed beside the absence rather than
+    // left as a mystery: a reopen clears `resolved_at`, so an asset whose only close came
+    // back reads as never having moved. `returned` is this register's word for that and
+    // has its own glossary entry.
+    reopenedOpen: num(a.reopened_open, 0),
+    // THE THREE FACTS THAT ANSWER "WHY DID THIS GO QUIET", which the domain has always
+    // published and this row used to drop on the floor. Every unobserved asset is
+    // unobserved for the same structural reason — no finding of its reached the newest flat
+    // scan covering its severity — so there is no cause to name. What differs between two
+    // of them is WHEN the scanner stopped returning it and HOW: `disappearedCount` on
+    // `disappearedAt` is the shape of the exit, a big number being the whole asset leaving
+    // in one scan and a 1 being an asset that faded as its last finding closed.
+    lastObservedAt: lastObservedAt,
+    lastObservedText: lastObservedAt === null ? absentText : fmtDate(lastObservedAt),
+    unobservedForDays: num(a.unobserved_for_days),
+    disappearedAt: disappearedAt,
+    disappearedText: disappearedAt === null ? absentText : fmtDate(disappearedAt),
+    disappearedCount: num(a.disappeared_at_last_observation, 0),
+    open: num(a.open_findings, 0),
+    highRisk: num(a.open_high_risk, 0),
+oldestOpenAgeDays: num(a.oldest_open_age_days),
+// THE BAND THE DOMAIN PUT IT IN, which this mapping used to drop on the floor. It is what
+// makes a band selectable at all, and what lets the assets table say which band a row is
+// in without re-deriving it from the idle reading and the threshold.
+band: num(a.bucket),
+  };
 }
 
 /**
