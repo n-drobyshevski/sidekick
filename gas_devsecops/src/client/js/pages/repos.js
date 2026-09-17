@@ -55,8 +55,9 @@ import { bootstrap, swrCall } from "../../../../../gas_shared/store.js";
 import { chartUnavailable, loadCharts } from "../../../../../gas_shared/ui/chartsLoader.js";
 import { pagedTable } from "./sca.js";
 import {
-  absentText, boundedDays, chartTable, chartTableModel, clear, days1, denomNote, el,
-  emptyState, errorState, figureCard, firstRunNotice, fmtCount, fmtDate, fmtDays, meter,
+  absent, absentText, bandBar, bandBarModel, boundedDays, chartTable, chartTableModel, clear,
+  days1, denomNote, el, emptyState, errorState, figureCard, filterChipRow, firstRunNotice,
+  fmtCount, fmtDate, fmtDays, meter,
   num, onPageTeardown, pageHeader, pct1, pluralize, sectionLabel, segmented, skeletonStack,
   statusPill,
   uiIcon, MAX_EXACT_CELLS, unitChartModel, unitGrid, unitKeyRow,
@@ -758,117 +759,169 @@ export function coldTeamRows(view) {
     lastMovementText: typeof t.last_movement_at === "string"
       ? fmtDate(t.last_movement_at)
       : absentText,
+    // THE PRODUCT'S OWN IDLE DISTRIBUTION. `buckets` and `bucket_open` have been on every team
+    // row since the domain first published them; nothing here is a new measurement, only the
+    // same five figures arriving where the product already is instead of in a grid below.
+    bands: bandSpecs(view, t),
+    bandTotal: bandTotal(t),
   }));
 }
 
 /**
- * Which of the five shades a cell takes: 0 for nothing at all, then four steps.
+ * The band vocabulary, derived once from the payload's own column labels.
  *
- * REFUSED BEFORE ANY CAST, both arguments. `count / max` with either side a string, an array
- * or null produces a NaN that `Math.floor` passes straight through, and `data-level="NaN"`
- * matches no rule in the sheet — a cell that silently loses its shade while still printing
- * its number. Anything that was not a finite number to begin with, and any non-positive
- * maximum, is level 0: no shade, which is what an unshadeable cell should look like.
+ * THE LABELS COME FROM THE PAYLOAD AND THE RANKS DO NOT. `bucket_labels` moves with the
+ * operator's threshold, so a label spelled here would be a second, silently wrong statement of
+ * the setting. The RANK is a property of the position: band 0 is always the most recently
+ * moved and band 3 is always the cold one, whatever days they stand for.
  *
- * A COUNT OF ZERO IS LEVEL 0 AND NOT LEVEL 1. The lightest shade means "something is here,
- * and it is the least of it"; an empty cell means nothing is there. The table prints the 0
- * either way — the shade is the redundancy, never the reading.
- *
- * FOUR STEPS, NOT A CONTINUOUS RAMP, and `Math.min(3, …)` is what keeps the top of the scale
- * inside the sheet: `count === max` lands on `floor(4)` and would ask for a fifth step that
- * does not exist.
+ * THE LAST BAND HAS NO RANK. "No movement on record yet" is not a point on the idle scale at
+ * all, so it takes no step of the ordinal ramp and is drawn as `--hatch`. That also keeps the
+ * ramp at the four steps its separations were measured as. Ported from the sibling register's
+ * `coldZoneModel.js`, which carries the same argument for assets.
  */
-export function heatLevel(count, max) {
-  if (typeof count !== "number" || !Number.isFinite(count)) return 0;
-  if (typeof max !== "number" || !Number.isFinite(max)) return 0;
-  if (count <= 0 || max <= 0) return 0;
-  return 1 + Math.min(3, Math.floor((count / max) * 4));
+export function coldBandDefs(view) {
+  const labels = view && Array.isArray(view.bucketLabels) ? view.bucketLabels : [];
+  return labels.map((label, i) => ({
+    key: "band:" + i,
+    index: i,
+    label: String(label),
+    rank: i < 4 && i < labels.length - 1 ? i + 1 : null,
+  }));
+}
+
+/** One row's bands, in the shape `bandBarModel` takes. */
+function bandSpecs(view, t) {
+  const buckets = t && Array.isArray(t.buckets) ? t.buckets : [];
+  const opens = t && Array.isArray(t.bucket_open) ? t.bucket_open : [];
+  return coldBandDefs(view).map((d) => {
+    const open = num(opens[d.index], 0);
+    return {
+      key: d.key,
+      label: d.label,
+      count: num(buckets[d.index]),
+      rank: d.rank,
+      extra: open > 0 ? fmtCount(open) + " open" : "",
+    };
+  });
+}
+
+function bandTotal(t) {
+  const buckets = t && Array.isArray(t.buckets) ? t.buckets : [];
+  let total = 0;
+  for (const b of buckets) {
+    const n = num(b);
+    if (n !== null && n > 0) total += n;
+  }
+  return total;
 }
 
 /**
- * The repository × idle-bucket grid: the columns from the payload, one row per REPOSITORY, and
- * a totals row under them.
+ * The largest row total in the table, which is the scale every bar is drawn against.
  *
- * ONE LIT CELL PER ROW, AND THAT IS THE SHAPE OF THE DATA rather than a rendering choice. A
- * repository has exactly ONE idle reading, so it sits in exactly one band — where the
- * per-product grid this replaced showed a real distribution (a product's repositories spread
- * across the bands), a per-repository row can only mark a position. The other four cells are
- * left BLANK rather than printed as `0`: a zero would claim four measurements that were never
- * taken, and "absent is never zero" is the rule that is actually at stake in a row where the
- * absence is structural.
- *
- * SO THE CELL CARRIES THE BACKLOG, NOT A COUNT OF ONE. `1` in every lit cell would be noise —
- * the row IS one repository — and it would flatten the ramp, since a scale whose maximum is
- * one shades every lit cell identically. The number that varies, and the one a reader is
- * actually comparing across rows, is how many open findings sit at that position. The totals
- * row keeps BOTH figures, because there it is a summary over many repositories and "how many
- * repositories are in this band" is a real question again.
- *
- * SORTED LONGEST-IDLE FIRST, then by backlog, then by name. The grid grows with the estate now
- * that a row is a repository rather than a product, so the order has to put the end of it that
- * anyone is looking for at the top; the tie-breaks are total so two paints over one payload
- * cannot reshuffle.
- *
- * A REPOSITORY IN NO BAND IS IN NO ROW. `bucket` is null for the unobserved and for those with
- * nothing open — they have no idle position to draw — and the heading's tip says so, the same
- * contract the per-product grid kept for its columns.
- *
- * THE TOTALS ROW CARRIES NO SHADE, deliberately. The ramp compares repositories with each
- * other, and the totals are the sum of every one of them — shaded on the same scale, every
- * cell in that row would saturate at the darkest step and say nothing except "this row is
- * bigger", which the reader can already see from the numbers.
- *
- * Returns null where there is no grid to draw — no columns (nothing measurable) or no
- * repository in any band. A caller draws nothing rather than an empty table.
+ * ONE UNIT PER TABLE, NEVER PER ROW — `gas_shared/ui/bandBar.js` states the defect and its
+ * contract perturbs it: a bar normalised to its own row draws a product of 280 repositories
+ * and one of 30 at the same length, and the column stops being readable.
  */
-export function heatModel(view) {
-  const columns = view && Array.isArray(view.bucketLabels) ? view.bucketLabels : null;
-  const repos = view && Array.isArray(view.repos) ? view.repos : [];
-  if (!columns || !columns.length) return null;
-  const placed = repos.filter((r) => {
-    const bucket = num(r && r.bucket);
-    return bucket !== null && bucket >= 0 && bucket < columns.length;
-  });
-  if (!placed.length) return null;
-  const rows = placed
-    .map((r) => {
-      const bucket = num(r.bucket);
-      const open = num(r.open_findings, 0);
-      const label = r.repo_name === null || r.repo_name === undefined || r.repo_name === ""
-        ? String(r.repo_id ?? "")
-        : String(r.repo_name);
-      return {
-        key: String(r.repo_id ?? label),
-        label,
-        bucket,
-        open,
-        cells: columns.map((_, i) => (i === bucket
-          ? { count: 1, open, lit: true }
-          : { count: 0, open: 0, lit: false })),
-      };
-    })
-    .sort((a, b) => (b.bucket - a.bucket) || (b.open - a.open) || a.label.localeCompare(b.label));
+export function coldBandScale(rows) {
   let max = 0;
-  for (const row of rows) if (row.open > max) max = row.open;
-  for (const row of rows) {
-    for (const cell of row.cells) cell.level = cell.lit ? heatLevel(cell.open, max) : 0;
+  for (const r of Array.isArray(rows) ? rows : []) {
+    const n = num(r && r.bandTotal, 0);
+    if (n > max) max = n;
   }
-  const totals = view.totals
-    ? {
-        key: "__all__",
-        label: "All repositories",
-        bucket: null,
-        open: 0,
-        cells: columns.map((_, i) => ({
-          count: num(Array.isArray(view.totals.buckets) ? view.totals.buckets[i] : null, 0),
-          open: num(Array.isArray(view.totals.bucket_open) ? view.totals.bucket_open[i] : null, 0),
-          lit: true,
-          level: 0,
-        })),
-      }
-    : null;
-  return { columns: columns.slice(), rows, totals, max };
+  return max;
 }
+
+/**
+ * The band key row above the table: every band, its estate-wide count, and the open findings
+ * sitting in it.
+ *
+ * THIS IS WHERE THE PER-REPOSITORY GRID WENT. `renderColdHeat` drew one row per REPOSITORY
+ * with exactly one lit cell in it — an N x 5 grid carrying N values, which is a column of data
+ * wearing a matrix. The per-repository fact is one pill on the repositories table now; the
+ * estate-wide distribution is this row, which is also the control.
+ */
+export function coldBandKeyModel(view) {
+  const t = view && view.totals;
+  const defs = coldBandDefs(view);
+  if (!t || !defs.length) return [];
+  const buckets = Array.isArray(t.buckets) ? t.buckets : [];
+  const opens = Array.isArray(t.bucket_open) ? t.bucket_open : [];
+  return defs.map((d) => ({
+    key: d.key,
+    index: d.index,
+    label: d.label,
+    rank: d.rank,
+    count: num(buckets[d.index], 0),
+    open: num(opens[d.index], 0),
+  }));
+}
+
+/**
+ * What the two controls above the repositories table currently ask for, as one value.
+ *
+ * TWO AXES, AND VERDICT IS NOT ONE OF THEM. For an observed repository the verdict IS a
+ * function of the band, so a verdict axis would be a second, partly-redundant selector that
+ * can contradict it. The band rides inside the cut — "all" | "cold" | "lost" | "band:N" —
+ * which removes the corner a reader could otherwise ask for and never get: an unobserved
+ * repository has NO bucket, so "out of sight" crossed with an idle band is empty by
+ * construction.
+ *
+ * THIS REGISTER HAD NO CUT CONTROL BEFORE. The sibling's three-way cut arrives here with the
+ * band, because the band needed a home and the two registers' repository/asset tables answer
+ * the same question.
+ */
+export function coldSelection(cut, product) {
+  const c = typeof cut === "string" && cut ? cut : "all";
+  const band = c.indexOf("band:") === 0 ? num(Number(c.slice(5))) : null;
+  return {
+    cut: c,
+    band: band !== null && Number.isInteger(band) && band >= 0 ? band : null,
+    product: typeof product === "string" && product ? product : null,
+  };
+}
+
+/**
+ * The rows one selection asks for, over the rows the page already holds. No refetch, ever.
+ */
+export function applyColdSelection(view, sel) {
+  const s = sel || coldSelection("all", null);
+  const base = s.band !== null ? coldBandRows(view, s.band) : coldRepoRows(view);
+  const rows = s.cut === "cold"
+    ? base.filter((r) => r.cold)
+    : s.cut === "lost"
+      ? base.filter((r) => !r.observed && r.open > 0)
+      : base;
+  return s.product === null ? rows : rows.filter((r) => r.product === s.product);
+}
+
+/**
+ * What the selection is, in words — for the chip row, the count under the table, and the live
+ * region that tells a screen reader the list moved. One sentence, three consumers.
+ */
+export function coldSelectionNote(view, sel, rowCount) {
+  const s = sel || coldSelection("all", null);
+  const parts = [];
+  if (s.product !== null) parts.push(s.product);
+  if (s.band !== null) {
+    const def = coldBandDefs(view).find((d) => d.index === s.band);
+    if (def) parts.push("idle " + def.label);
+  } else if (s.cut === "cold") {
+    parts.push("cold only");
+  } else if (s.cut === "lost") {
+    parts.push("out of sight with backlog open");
+  }
+  const n = num(rowCount, 0);
+  // NOT `pluralize`, which appends an "s" and would say "repositorys". The register already
+  // spells this one out in `coldModeCaption` and in mttr.js, for the same reason.
+  const head = "Listing " + fmtCount(n) + " " + (n === 1 ? "repository" : "repositories");
+  return parts.length ? head + ": " + parts.join(", ") + "." : head + ".";
+}
+
+// `heatLevel` AND `heatModel` USED TO LIVE HERE, and they went with the table that drew
+// them. The grid shaded a cell by `count / max` over the whole grid, so its ramp encoded
+// MAGNITUDE. A band's tone is its own fixed position on the ordinal ramp now
+// (gas_shared/ui/bandBar.js), and nothing derives a shade from a ratio any more.
 
 /**
  * The repositories the section is actually about: the cold ones and the ones the scanner has
@@ -889,7 +942,50 @@ export function coldRepoRows(view) {
   const repos = view && Array.isArray(view.repos) ? view.repos : [];
   const rows = repos
     .filter((r) => r && (r.cold === true || r.observed === false))
-    .map((r) => {
+    .map(coldRepoRow);
+  return sortColdRows(rows);
+}
+
+/**
+ * The repositories sitting in one idle band, whatever their verdict.
+ *
+ * WHY NOT `coldRepoRows` WITH A FILTER. That list is deliberately narrow — cold repositories
+ * and ones the scanner has lost sight of, because they are what the section is FOR. Bands 0-2
+ * are warm repositories and none of them is in it, so a band selection over that list would
+ * light the picture and then list nothing, which is worse than not being selectable at all.
+ *
+ * `bucket` IS THE DOMAIN'S OWN, and null is a real answer: "0..3, or 4 for not yet measurable,
+ * NULL for unobserved and clear repositories". A cast or a `== null` comparison would drop a
+ * repository with no bucket into band 0.
+ */
+export function coldBandRows(view, band) {
+  if (typeof band !== "number" || !Number.isFinite(band)) return [];
+  const repos = view && Array.isArray(view.repos) ? view.repos : [];
+  const rows = repos
+    .filter((r) => r && num(r.bucket) === band)
+    .map(coldRepoRow);
+  return sortColdRows(rows);
+}
+
+/**
+ * ONE ORDER FOR BOTH CUTS. Cold first, then the biggest backlog, then the name as a tie-break
+ * so two paints over the same payload cannot reshuffle.
+ */
+function sortColdRows(rows) {
+  rows.sort((a, b) => {
+    if (a.cold !== b.cold) return a.cold ? -1 : 1;
+    if (b.open !== a.open) return b.open - a.open;
+    return String(a.label).localeCompare(String(b.label));
+  });
+  return rows;
+}
+
+/**
+ * One repository, formatted. EXTRACTED so `coldRepoRows` and `coldBandRows` cannot drift: two
+ * copies of a twenty-field mapping is where a column quietly means something different
+ * depending on which control the reader used to get there.
+ */
+function coldRepoRow(r) {
       const label = r.repo_name || r.repo_id || absentText;
       const bounded = r.idle_is_bound === true;
       const reading = num(r.idle_reading_days);
@@ -934,14 +1030,12 @@ export function coldRepoRows(view) {
         open: num(r.open_findings, 0),
         highRisk: num(r.open_high_risk, 0),
         oldestOpenAgeDays: num(r.oldest_open_age_days),
+        // THE BAND THE DOMAIN PUT IT IN, which this mapping used to drop on the floor. It is
+        // what makes a band selectable, and what lets the table name a repository's band
+        // without re-deriving it from the idle reading and the threshold — which is the whole
+        // of what the per-repository grid used to draw.
+        band: num(r.bucket),
       };
-    });
-  rows.sort((a, b) => {
-    if (a.cold !== b.cold) return a.cold ? -1 : 1;
-    if (b.open !== a.open) return b.open - a.open;
-    return String(a.label).localeCompare(String(b.label));
-  });
-  return rows;
 }
 
 /**
@@ -1069,6 +1163,19 @@ export async function renderRepos(host, _params, _ctx) {
 
   const densityHost = el("div", { class: "kpi-row" });
   const coldHost = el("div", {});
+
+  // THE TWO AXES OF THE COLD ZONE'S CROSS-FILTER, and the repaint that serves them. Both are
+  // module-local rather than URL parameters, for the reason the sibling register states at
+  // length: `setParams` replaces the whole query string and does not re-render, and every row
+  // a selection can reach is already in the payload this page holds, so a selection repaints
+  // and never refetches.
+  //
+  // THE BAND RIDES INSIDE THE CUT — "all" | "cold" | "lost" | "band:N" — so the two controls
+  // cannot disagree, and the corner that is empty by construction (an unobserved repository
+  // has no bucket) cannot be asked for.
+  let repoCut = "all";
+  let coldProduct = null;
+  let repaintRepos = null;
   const repoHost = el("div", {});
   // WHICH GRAIN THE ONE TABLE IS SHOWING. Client-side only: both cuts are in the payload
   // already (`byRepo` and `byProduct`), so flipping it is a repaint and never a refetch —
@@ -1235,7 +1342,6 @@ export async function renderRepos(host, _params, _ctx) {
     }
     renderColdKpis(view);
     renderColdTeams(view);
-    renderColdHeat(view);
     renderColdRepos(view);
     renderColdChart(view);
   }
@@ -1288,9 +1394,24 @@ export async function renderRepos(host, _params, _ctx) {
       ));
       return;
     }
+    // ONE SCALE FOR THE WHOLE TABLE. See `coldBandScale`, and gas_shared/ui/bandBar.js for the
+    // defect it refuses.
+    const scale = coldBandScale(rows);
+    renderBandKeys(view);
+
     coldHost.append(pagedTable({
       columns: [
-        { key: "label", label: "Product", cell: (r) => r.label },
+        {
+          key: "label", label: "Product",
+          // THE ROW'S NAME IS THE CONTROL, one tab stop per row — the stop a clickable row
+          // already costs. The bars are NOT controls: five segments per row times N rows is
+          // 5N stops, which is the arity rule `quad.js` states.
+          cell: (r) => el("button", {
+            type: "button", class: "linklike group-pick", "data-group-pick": r.key,
+            "aria-pressed": coldProduct === r.key ? "true" : "false",
+            onclick: () => pickProduct(r.key),
+          }, r.label),
+        },
         {
           // THE ESCALATION PATH, beside the grain that has gone cold. The roll-up itself is
           // NOT a second table: the verdicts and the coldest-share badge are calibrated on
@@ -1308,20 +1429,45 @@ export async function renderRepos(host, _params, _ctx) {
         },
         { key: "repos", label: "Repos", className: "num", cell: (r) => fmtCount(r.repos) },
         {
-          key: "coldRepos", label: "Cold repos", className: "num",
-          help: { term: "cold-zone" },
-          cell: (r) => fmtCount(r.coldRepos),
+          // THE PER-REPOSITORY GRID, ROLLED UP TO WHERE IT READS. `renderColdHeat` drew one
+          // row per repository with exactly one lit cell in it — an N x 5 grid carrying N
+          // values. The per-repository fact is a pill on the repositories table now; the
+          // shape of a PRODUCT's idle time is this bar, in the row that owns it.
+          //
+          // `repos` stays a real column beside it: `buckets` sums only to the repositories
+          // that HAVE an idle reading, and an unobserved or clear one sits in no band at all,
+          // so deriving the count from the distribution would be wrong by exactly the
+          // population this section exists to talk about.
+          key: "bands", label: "Idle profile",
+          help: {
+            term: "cold-zone",
+            lines: [
+              "Every repository with an idle reading, in the band that reading falls in.",
+              "Ones the scanner has lost sight of, and ones with nothing open, are in no band.",
+            ],
+          },
+          cell: (r) => {
+            const model = bandBarModel({
+              bands: r.bands, max: scale, unit: "repositories", name: r.label,
+            });
+            const wrap = el("span", { class: "bandcell" });
+            wrap.bandModel = model;
+            wrap.append(bandBar(model, { selected: selectedBand() }));
+            return wrap;
+          },
         },
         {
-          key: "share", label: "Cold share", className: "num",
-          // The percentage plus a picture of it, `decorative` because the figure is already in
-          // words beside it — the same `.rate-with-meter` recipe the Coverage column above
-          // uses. A null share draws NO meter: see `coldTeamRows` for the refusal and why an
-          // empty track would be a claim rather than a blank.
+          // COUNT AND SHARE IN ONE COLUMN, because they are one fact at two grains and the
+          // distribution beside them needs the width more.
+          key: "cold", label: "Cold", className: "num",
+          help: { term: "cold-zone" },
           cell: (r) => {
-            if (r.sharePct === null) return absentText;
+            const count = fmtCount(r.coldRepos);
+            // A null share draws NO meter: see `coldTeamRows` for the refusal and why an
+            // empty track would be a claim rather than a blank.
+            if (r.sharePct === null) return el("span", {}, count, " ", absent());
             return el("span", { class: "rate-with-meter" },
-              pct1(r.sharePct),
+              count + " · " + pct1(r.sharePct),
               meter(r.sharePct, { className: "meter--stat", decorative: true }));
           },
         },
@@ -1380,82 +1526,185 @@ export async function renderRepos(host, _params, _ctx) {
     if (coldest) coldHost.append(denomNote(coldest));
   }
 
-  /**
-   * The repository × idle-bucket grid.
-   *
-   * HAND-BUILT RATHER THAN `dataTable`, and that is the exception this page makes rather than
-   * a component it is missing: no table in `gas_shared` takes a per-cell ordinal shade, and
-   * the one this needs (`data-level` off `heatLevel`, styled in pages.css) is meaningful on
-   * exactly one grid in one app. Adding it to the shared component would put a shading channel
-   * in front of every register that has no use for one.
-   *
-   * THE HEADER COMES FROM THE PAYLOAD. `bucket_labels` moves with the operator's threshold —
-   * at 120 days the columns are 0-40/40-80/80-120/≥ 120 — so a header spelled here would be a
-   * second, silently wrong statement of the setting.
-   */
-  function renderColdHeat(view) {
-    const heat = heatModel(view);
-    if (!heat) return;
-    const head = el("tr", {}, el("th", { scope: "col" }, "Repository"));
-    for (const label of heat.columns) head.append(el("th", { scope: "col", class: "num" }, label));
-    const body = el("tbody", {});
-    // A REPOSITORY ROW PRINTS ONLY WHERE IT SITS. One idle reading means one lit cell; the
-    // rest are empty, not zero (see `heatModel`). The totals row prints both figures in every
-    // cell, because there a count of repositories is a real question again.
-    const paintRepo = (r) => {
-      const tr = el("tr", {}, el("th", { scope: "row" }, r.label));
-      for (const cell of r.cells) {
-        tr.append(cell.lit
-          ? el("td", {
-            class: "num heat-cell",
-            // The shade repeats the number, it never replaces it.
-            "data-level": String(cell.level),
-          }, el("span", { class: "small muted" }, `${fmtCount(cell.open)} open`))
-          : el("td", { class: "num heat-cell", "data-level": "0" }));
-      }
-      return tr;
-    };
-    const paintTotals = (r) => {
-      const tr = el("tr", {}, el("th", { scope: "row" }, r.label));
-      for (const cell of r.cells) {
-        tr.append(el("td", { class: "num heat-cell", "data-level": String(cell.level) },
-          fmtCount(cell.count),
-          el("span", { class: "small muted" }, `${fmtCount(cell.open)} open`)));
-      }
-      return tr;
-    };
-    for (const r of heat.rows) body.append(paintRepo(r));
-    if (heat.totals) body.append(paintTotals(heat.totals));
-    // The caption keeps what the cells COUNT; what the last column means and who is in no
-    // row are the heading's tip — the 51-word caption was the page's largest prose block.
-    coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by repo", {
-      lines: [
-        "The last column is the repositories with no movement on record yet.",
-        "Not idle for zero days — not yet measurable.",
-        "Unobserved repositories, and those with nothing open, have no idle reading at all.",
-      ],
-    })));
-    coldHost.append(el("div", { class: "table-wrap" },
-      el("table", { class: "data heat" },
-        el("caption", { class: "small muted" },
-          "One row per repository, in the idle band its reading falls in, with the open"
-          + " findings sitting there. The last row is every repository together."),
-        el("thead", {}, head),
-        body)));
+  /** The band currently selected, as a key, or null. */
+  function selectedBand() {
+    return repoCut.indexOf("band:") === 0 ? repoCut : null;
   }
 
-  function renderColdRepos(view) {
-    const rows = coldRepoRows(view);
-    coldHost.append(el("h3", { class: "section-label" }, "Cold and unobserved repositories"));
-    if (!rows.length) {
-      coldHost.append(emptyState(
-        "No repository is cold, and none has dropped out of the scanner.",
-        "Every repository with an open finding has moved inside the window.",
-        { variant: "notice" },
-      ));
-      return;
+  /**
+   * The band key row: the grid's estate-wide totals, still on the surface, now the control.
+   *
+   * WHERE THE FIVE TAB STOPS GO. The bars refuse to be controls because five per row times N
+   * rows is 5N stops; this row spends five ONCE, for the whole table, and reads as information
+   * whether or not anyone presses it.
+   */
+  function renderBandKeys(view) {
+    const keys = coldBandKeyModel(view);
+    if (!keys.length) return;
+    const row = el("div", {
+      class: "bandkeys", role: "group", "aria-label": "Filter by idle band",
+    });
+    for (const k of keys) {
+      row.append(el("button", {
+        type: "button", class: "bandkey", "data-band-key": k.key,
+        "data-rank": k.rank === null ? "none" : String(k.rank),
+        "aria-pressed": selectedBand() === k.key ? "true" : "false",
+        onclick: () => pickBand(k.key),
+      },
+      el("span", { class: "bandkey__swatch", "aria-hidden": "true" }),
+      el("span", { class: "bandkey__label" }, k.label),
+      el("span", { class: "bandkey__num num" }, fmtCount(k.count))));
     }
-    coldHost.append(pagedTable({
+    coldHost.append(row);
+  }
+
+  /** Pressing a band, and pressing it again to let go. It MOVES THE CUT rather than sitting
+   * beside it, so the two controls can never disagree. */
+  function pickBand(key) {
+    repoCut = repoCut === key ? "all" : key;
+    syncSelection();
+  }
+
+  function pickProduct(key) {
+    coldProduct = coldProduct === key ? null : key;
+    syncSelection();
+  }
+
+  /**
+   * Repaint what the selection changed, and nothing else.
+   *
+   * MARKED IN PLACE, NEVER REBUILT. The controls are the band key row and the product name
+   * buttons; rebuilding either would tear the focused button out from under the reader
+   * mid-press. So the buttons keep their nodes and only their `aria-pressed` moves, the bars
+   * are redrawn inside cells nobody is focused in, and the repositories table — which holds no
+   * control that could have started this — is the one thing rebuilt wholesale.
+   */
+  function syncSelection() {
+    const band = selectedBand();
+    for (const btn of coldHost.querySelectorAll("[data-band-key]")) {
+      btn.setAttribute("aria-pressed",
+        btn.getAttribute("data-band-key") === band ? "true" : "false");
+    }
+    for (const btn of coldHost.querySelectorAll("[data-group-pick]")) {
+      const on = btn.getAttribute("data-group-pick") === coldProduct;
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+      const row = btn.closest("tr");
+      if (row) row.classList.toggle("is-picked", on);
+    }
+    for (const cell of coldHost.querySelectorAll(".bandcell")) {
+      if (!cell.bandModel) continue;
+      clear(cell).append(bandBar(cell.bandModel, { selected: band }));
+    }
+    if (repaintRepos) repaintRepos();
+  }
+
+  // `renderColdHeat` USED TO LIVE HERE, and it was the worst of the two grids this wave
+  // folded. It drew one row per REPOSITORY with exactly one lit cell in it -- an N x 5 grid
+  // carrying N values, a column of data wearing a matrix. The per-repository fact is one
+  // pill on the repositories table now; the shape of a PRODUCT's idle time is a `bandBar` in
+  // the roll-up above; and the estate-wide totals row is the band key, which is also the
+  // control. `heatLevel` and `heatModel` went with it.
+
+  function renderColdRepos(view) {
+    const countOf = (cut) => applyColdSelection(view, coldSelection(cut, coldProduct)).length;
+
+    // THE THREE-WAY CUT ARRIVES IN THIS REGISTER WITH THE BAND. The sibling has had it since
+    // the census created a question it could not answer ("out of sight, backlog open" is the
+    // one segment that is unambiguously work); here it is new, and it is what gives the band
+    // a home — the band is a value OF this control rather than a second state beside it.
+    const toggle = segmented({
+      options: ["all", "cold", "lost"].map((value) => ({
+        value,
+        // THE COUNT RIDES ON THE LABEL. A cut a reader cannot size before opening it is a cut
+        // they open to find out, and the interesting one here is often empty — good news they
+        // should be able to read without a click.
+        label: (value === "all" ? "All" : value === "cold" ? "Cold" : "Out of sight, backlog open")
+          + " " + fmtCount(countOf(value)),
+        title: value === "lost"
+          ? "Repositories the newest scan no longer returns that still carry open findings."
+            + " Nobody will be told about that backlog again."
+          : value === "cold"
+            ? "Repositories the scanner still returns, still carrying open findings, with"
+              + " nothing resolved for at least the window."
+            : "Both: every cold repository and every one the scanner has lost sight of.",
+      })),
+      value: repoCut,
+      ariaLabel: "Which repositories to list",
+      onChange: (v) => {
+        if (v === repoCut) return;
+        // Choosing one of the three clears the band, because the band lives in this value.
+        repoCut = v;
+        syncSelection();
+      },
+    });
+
+    const chips = filterChipRow({
+      onPatch: (patch) => {
+        if (patch.band) repoCut = "all";
+        if (patch.product) coldProduct = null;
+        syncSelection();
+      },
+      onClearAll: () => { repoCut = "all"; coldProduct = null; syncSelection(); },
+      emptyText: "Showing every repository this section is about.",
+      ariaLabel: "Applied filters",
+    });
+
+    // THE LIST MOVED, SAID OUT LOUD. A band pressed two sections up changes this table
+    // silently for a reader who cannot see it.
+    const live = el("p", { class: "sr-only", role: "status", "aria-live": "polite" });
+
+    coldHost.append(el("div", { class: "section-head" },
+      el("h3", { class: "section-label" }, "Cold and unobserved repositories"),
+      el("div", { class: "toolbar-group" },
+        el("span", { class: "small muted" }, "Show"),
+        toggle)));
+    coldHost.append(chips);
+    coldHost.append(live);
+
+    const tableHost = el("div", {});
+    coldHost.append(tableHost);
+    repaintRepos = paintRepos;
+    paintRepos();
+
+    function paintRepos() {
+      const sel = coldSelection(repoCut, coldProduct);
+      const rows = applyColdSelection(view, sel);
+      toggle.set(["all", "cold", "lost"].indexOf(sel.cut) === -1 ? "all" : sel.cut);
+      const entries = [];
+      if (sel.band !== null) {
+        const def = coldBandKeyModel(view).find((k) => k.key === sel.cut);
+        if (def) entries.push({ label: "Idle band", value: def.label, patch: { band: true } });
+      }
+      if (sel.product !== null) {
+        entries.push({ label: "Product", value: sel.product, patch: { product: true } });
+      }
+      chips.sync(entries);
+      live.textContent = coldSelectionNote(view, sel, rows.length);
+      clear(tableHost);
+      if (!rows.length) {
+        // A NARROWED CUT THAT IS EMPTY IS A DIFFERENT SENTENCE from an estate with nothing to
+        // report. "No repository is cold" over a product the reader just picked would be a
+        // claim about the whole register, read off a filtered list.
+        const narrowed = sel.band !== null || sel.product !== null;
+        tableHost.append(emptyState(
+          narrowed
+            ? "Nothing in this cut."
+            : sel.cut === "lost"
+              ? "No backlog has been left behind."
+              : sel.cut === "cold"
+                ? "No repository is cold."
+                : "No repository is cold, and none has dropped out of the scanner.",
+          narrowed
+            ? coldSelectionNote(view, sel, 0) + " Clear the filter to see the whole list."
+            : sel.cut === "lost"
+              ? "Every repository the scanner lost sight of had already been cleared when it"
+                + " went."
+              : "Every repository with an open finding has moved inside the window.",
+          { variant: "notice" },
+        ));
+        return;
+      }
+      tableHost.append(pagedTable({
       columns: [
         { key: "label", label: "Repository", cell: (r) => r.label },
         { key: "product", label: "Product", cell: (r) => r.product },
@@ -1471,6 +1720,20 @@ export async function renderRepos(host, _params, _ctx) {
         {
           key: "idle", label: "Idle", className: "num", help: { term: "idle" },
           cell: (r) => r.idleText,
+        },
+        {
+          // THE PER-REPOSITORY GRID, AS ONE CELL. `renderColdHeat` drew a whole N x 5 table to
+          // say which band each repository sits in — one lit cell per row. That is one fact,
+          // and it belongs beside the reading it bands.
+          key: "band", label: "Idle band",
+          cell: (r) => {
+            const def = coldBandDefs(view).find((d) => d.index === r.band);
+            if (!def) return absent();
+            return el("span", {
+              class: "bandpill",
+              "data-rank": def.rank === null ? "none" : String(def.rank),
+            }, def.label);
+          },
         },
         {
           key: "movement", label: "Last movement",
@@ -1508,19 +1771,29 @@ export async function renderRepos(host, _params, _ctx) {
       // NO SORT SPEC — `coldRepoRows` publishes cold first, then unobserved, biggest backlog
       // first inside each, and that order is the section's whole argument.
       emptyText: "No repository is cold, and none has dropped out of the scanner.",
-    }));
-    // WHICH VERDICTS ARE IN THE LIST, as a short lead with the exclusions behind it. It was a
-    // 27-word paragraph; the two words a reader needs without hovering are "cold" and "out of
-    // sight", and the census above already draws every verdict with its count.
-    coldHost.append(el("p", { class: "small muted" }, tipLabel(
-      `${fmtCount(rows.length)} listed: cold, and out of sight`,
-      {
-        lines: [
-          "Every cold repository and every one the scanner has lost sight of.",
-          "Warm, clear and not-yet-measurable repositories are counted above and not listed here.",
-        ],
-      },
-    )));
+      }));
+      // WHICH VERDICTS ARE IN THE LIST, as a short lead with the exclusions behind it. It was
+      // a 27-word paragraph; the two words a reader needs without hovering are "cold" and "out
+      // of sight", and the census above already draws every verdict with its count. Under a
+      // band or a product the lead is the selection's own sentence instead, because "cold, and
+      // out of sight" over a narrowed list would describe a population that is not on screen.
+      tableHost.append(el("p", { class: "small muted" }, tipLabel(
+        sel.band !== null || sel.product !== null
+          ? coldSelectionNote(view, sel, rows.length)
+          : sel.cut === "lost"
+            ? fmtCount(rows.length) + " listed: out of sight, backlog open"
+            : sel.cut === "cold"
+              ? fmtCount(rows.length) + " listed: cold"
+              : fmtCount(rows.length) + " listed: cold, and out of sight",
+        {
+          lines: [
+            "Every cold repository and every one the scanner has lost sight of.",
+            "Warm, clear and not-yet-measurable repositories are counted above and not listed"
+              + " here.",
+          ],
+        },
+      )));
+    }
   }
 
   /**

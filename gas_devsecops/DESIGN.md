@@ -154,6 +154,39 @@ than for a canvas.
 insisting neither is warm — `--hatch` means "this part is not a measurement" and says it where
 the reader is already looking. `clear` is a ring rather than a fill: measured, and fine.
 
+**The per-repository grid folded into the roll-up, and it was the worse of the two.**
+`renderColdHeat` drew one row per REPOSITORY against five idle bands, and `paintRepo` lit
+exactly one cell in each — an N × 5 table carrying N values, which is a column of data wearing
+a matrix. It is gone. That one fact is a `.bandpill` beside the idle reading it bands, on the
+repositories table; the shape of a PRODUCT's idle time is a `bandBar` in the roll-up row that
+owns it; and the grid's estate-wide totals row survives as the band key row, which is also the
+control. `heatLevel` and `heatModel` went with the table.
+
+The ramp moved with it, from neutral ink to `--rank-1..4`, and §4's own prediction is what
+licenses that: this file already said that if this register ever grew an ordinal scale the
+brand yellow would be tier 2 of 4 — it is literally `--rank-2-solid` — and that at that point
+"the ramp moves, not the brand". This is that scale. Nothing here takes `var(--accent)`; the
+bands take the rank tokens, and the coincidence that one of them shares a hex with the brand is
+named rather than relied on. The shade also stopped meaning magnitude: `heatLevel` shaded by
+`count / max` over the grid, and a band's tone is now its own fixed position.
+
+**The cross-filter is two axes, and this register gains a cut control with it.** A product (the
+row's own name) crossed with an idle band (the key row). The band is a value OF the three-way
+cut — `"all" | "cold" | "lost" | "band:N"` — rather than a state beside it, which removes a
+corner a reader could otherwise ask for and never get: an unobserved repository has no bucket,
+so "out of sight" crossed with an idle band is empty by construction. The three-way cut itself
+is new here, ported from the sibling: the band needed a home, and both registers' detail tables
+answer the same question. `coldBandRows` widens the listed population to match, because
+`coldRepoRows` is cold-and-unobserved only and a band-0 press over it would light the picture
+and list nothing.
+
+**The bars are not controls.** Five segments per row times N rows is 5N tab stops, against
+`quad.js`'s arity rule; the key row spends five once and a product costs the one stop a
+clickable row already costs. A selection marks in place rather than rebuilding, because
+rebuilding the key row would tear the focused button out from under the reader mid-press, and a
+polite live region says the list moved. None of it is in the URL — every row a selection can
+reach is already in the payload this page holds.
+
 **Warm takes `ok`, not `warn`, and amber is left to the one segment that is a caveat.** This
 reverses what the census first shipped. A warm repository carries open findings AND had one
 resolve inside the window, so on this section's own question — *has work stopped?* — it is the
@@ -250,7 +283,7 @@ already returned its parts, only the drawing changed, and the joined sentence is
 `aria-label`. The three severity scan-scope bars on Settings draw a key row under the track
 (`splitBar` given the model's new `keys`) instead of a 45-word caption: swatch, word, figure
 per severity, the out-of-scope ones hatched with "not scanned" beside their figure, and one
-summary line under the keys. `repos`'s 51-word heat-map caption and 27-word list note each kept
+summary line under the keys. `repos`'s 51-word heat-map caption (the grid it belonged to is gone) and 27-word list note each kept
 the clause a reader needs without hovering and put the rest on the nearest heading.
 
 **The one paragraph that stays is pinned on purpose.** `renderColdZone` prints

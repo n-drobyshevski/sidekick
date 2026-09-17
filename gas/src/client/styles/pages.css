@@ -744,59 +744,10 @@ table.data.jobs-table td.job-status-cell { white-space: normal; max-width: 420px
    WHAT STAYS HERE IS THE PAGE'S OWN CHROME: the key row that is now the band control, and the
    mark on a picked group row. Neither is a component a sibling draws. */
 
-/* The key row is the old totals row doing a second job, so it reads as information first and
-   as a control second: the band's word and its estate-wide count are printed whether or not
-   anyone presses it. Sized as a pill row, not as a toolbar. */
-.bandkeys {
-  display: flex; flex-wrap: wrap; gap: var(--space-2);
-  margin: 0 0 var(--space-3);
-}
-.bandkey {
-  display: inline-flex; align-items: center; gap: var(--space-2);
-  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
-  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
-  background: var(--page); color: var(--text-2);
-  font-size: var(--fs-label); line-height: 1.6; cursor: pointer;
-  transition: border-color var(--dur-quick) var(--ease-out),
-    background-color var(--dur-quick) var(--ease-out);
-}
-.bandkey:hover { background: var(--wash-hover); border-color: var(--hairline-strong); }
-.bandkey:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
-/* PRESSED IS NOT A COLOUR ALONE. The ring and the weight carry it too, because this control
-   selects and a reader who cannot see the wash still has to know what is on. */
-.bandkey[aria-pressed="true"] {
-  border-color: var(--accent-text); background: var(--accent-wash);
-  color: var(--accent-text); font-weight: var(--fw-semibold);
-}
-/* The swatch takes the SAME ramp as the bar it filters, so the key and the picture are
-   obviously the same vocabulary. `none` is the band that is not on the scale. */
-.bandkey__swatch {
-  width: 10px; height: 10px; border-radius: var(--radius-xs); flex: 0 0 auto;
-}
-.bandkey[data-rank="1"] .bandkey__swatch { background: var(--rank-1-tint); }
-.bandkey[data-rank="2"] .bandkey__swatch { background: var(--rank-2-tint); }
-.bandkey[data-rank="3"] .bandkey__swatch { background: var(--rank-3-tint); }
-.bandkey[data-rank="4"] .bandkey__swatch { background: var(--rank-4-tint); }
-.bandkey[data-rank="none"] .bandkey__swatch {
-  background-color: var(--surface-2); background-image: var(--hatch);
-}
-.bandkey__num { color: var(--ink); font-weight: var(--fw-semibold); }
-
-/* The distribution's cell: the bar fills it, so the column's width is the picture's width. */
-.bandcell { display: block; min-width: 96px; }
-
-/* THE PICKED ROW, marked on the row and not only on the button inside it. A reader who picked
-   a support group is now looking at a list several sections down, and the mark is what says
-   where the list came from when they scroll back. An inset bar rather than a background
-   alone, for the same non-colour reason the key row carries a ring. */
-tr.is-picked > * { background: var(--accent-wash); }
-tr.is-picked > :first-child { box-shadow: inset 2px 0 0 var(--accent-text); }
-.group-pick { font: inherit; text-align: left; }
-
-@media (forced-colors: active) {
-  .bandkey[aria-pressed="true"] { outline: 2px solid CanvasText; outline-offset: -3px; }
-  tr.is-picked > :first-child { box-shadow: none; outline: 2px solid CanvasText; }
-}
+/* The band key row, the distribution cell and the picked-row mark moved to
+   gas_shared/styles/components.css, beside the `.bandbar` they dress: gas_devsecops draws
+   the identical chrome around the identical component, which is the promotion trigger.
+   What stays in this file is the argument above for why the heat table is gone. */
 
 /* ------------------------------------------------------- Cold zone: the verdict census
    `.cold-census { max-width: 44rem }` LEFT WITH THE CENSUS'S OWN RULE. It was written here as a

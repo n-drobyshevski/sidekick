@@ -2033,6 +2033,87 @@ tr.rule-drop-after > td { box-shadow: inset 0 -2px 0 var(--accent-text); }
   .bandbar__seg[data-on="false"] { opacity: 1; }
 }
 
+/* -------------------------------------- the band key row, and the row a reader picked
+   The chrome around `.bandbar`: the control that selects a band, the cell the bar sits in,
+   and the mark on a row whose name was pressed. Promoted from gas's pages.css the moment
+   gas_devsecops drew the same three things around the same component — components.css is
+   where gas_shared/README.md's placement rule puts the stylesheet half of a ui/ export, and
+   this is that half's own neighbourhood rather than a second copy of it. */
+
+/* The key row is the old totals row doing a second job, so it reads as information first and
+   as a control second: the band's word and its estate-wide count are printed whether or not
+   anyone presses it. Sized as a pill row, not as a toolbar. */
+.bandkeys {
+  display: flex; flex-wrap: wrap; gap: var(--space-2);
+  margin: 0 0 var(--space-3);
+}
+.bandkey {
+  display: inline-flex; align-items: center; gap: var(--space-2);
+  padding: var(--space-1) var(--space-3) var(--space-1) var(--space-2);
+  border: 1px solid var(--hairline); border-radius: var(--radius-pill);
+  background: var(--page); color: var(--text-2);
+  font-size: var(--fs-label); line-height: 1.6; cursor: pointer;
+  transition: border-color var(--dur-quick) var(--ease-out),
+    background-color var(--dur-quick) var(--ease-out);
+}
+.bandkey:hover { background: var(--wash-hover); border-color: var(--hairline-strong); }
+.bandkey:focus-visible { outline: 2px solid var(--accent-text); outline-offset: 2px; }
+/* PRESSED IS NOT A COLOUR ALONE. The ring and the weight carry it too, because this control
+   selects and a reader who cannot see the wash still has to know what is on. */
+.bandkey[aria-pressed="true"] {
+  border-color: var(--accent-text); background: var(--accent-wash);
+  color: var(--accent-text); font-weight: var(--fw-semibold);
+}
+/* The swatch takes the SAME ramp as the bar it filters, so the key and the picture are
+   obviously the same vocabulary. `none` is the band that is not on the scale. */
+.bandkey__swatch {
+  width: 10px; height: 10px; border-radius: var(--radius-xs); flex: 0 0 auto;
+}
+.bandkey[data-rank="1"] .bandkey__swatch { background: var(--rank-1-tint); }
+.bandkey[data-rank="2"] .bandkey__swatch { background: var(--rank-2-tint); }
+.bandkey[data-rank="3"] .bandkey__swatch { background: var(--rank-3-tint); }
+.bandkey[data-rank="4"] .bandkey__swatch { background: var(--rank-4-tint); }
+.bandkey[data-rank="none"] .bandkey__swatch {
+  background-color: var(--surface-2); background-image: var(--hatch);
+}
+.bandkey__num { color: var(--ink); font-weight: var(--fw-semibold); }
+
+/* ONE BAND, AS A WORD. Where a row sits in exactly one band there is no distribution to draw,
+   and a one-segment bar would be a picture of nothing; the band's own word, on the same ramp
+   the bars and the key row use, is the whole reading. This is what a grid of N rows x 5
+   columns with one lit cell per row collapses to. The tint carries its own text token, which
+   is the pair `.pill--rank1..4` already uses and the reason the ramp ships four of each. */
+.bandpill {
+  display: inline-block; padding: 0 var(--space-2);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-label); font-weight: var(--fw-semibold); line-height: 1.7;
+  white-space: nowrap;
+}
+.bandpill[data-rank="1"] { background: var(--rank-1-tint); color: var(--rank-1-text); }
+.bandpill[data-rank="2"] { background: var(--rank-2-tint); color: var(--rank-2-text); }
+.bandpill[data-rank="3"] { background: var(--rank-3-tint); color: var(--rank-3-text); }
+.bandpill[data-rank="4"] { background: var(--rank-4-tint); color: var(--rank-4-text); }
+/* The band that is not on the scale keeps the hatch and plain ink: it is not a step. */
+.bandpill[data-rank="none"] {
+  background-color: var(--surface-2); background-image: var(--hatch); color: var(--text-2);
+}
+
+/* The distribution's cell: the bar fills it, so the column's width is the picture's width. */
+.bandcell { display: block; min-width: 96px; }
+
+/* THE PICKED ROW, marked on the row and not only on the button inside it. A reader who picked
+   a support group is now looking at a list several sections down, and the mark is what says
+   where the list came from when they scroll back. An inset bar rather than a background
+   alone, for the same non-colour reason the key row carries a ring. */
+tr.is-picked > * { background: var(--accent-wash); }
+tr.is-picked > :first-child { box-shadow: inset 2px 0 0 var(--accent-text); }
+.group-pick { font: inherit; text-align: left; }
+
+@media (forced-colors: active) {
+  .bandkey[aria-pressed="true"] { outline: 2px solid CanvasText; outline-offset: -3px; }
+  tr.is-picked > :first-child { box-shadow: none; outline: 2px solid CanvasText; }
+}
+
 /* ---------------------------------------------------- a verdict as a dot and a word
    PROMOTED from both registers' pages.css, where the two rulesets were BYTE-IDENTICAL.
    gas's copy carried the note "NOT PROMOTED TO gas_shared. One app draws it today; a second
