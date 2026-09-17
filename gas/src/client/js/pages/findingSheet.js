@@ -158,9 +158,9 @@ function exploitationSection(r) {
         r.internet_exposed === null || r.internet_exposed === undefined
           ? {
             term: "internet-exposed",
-            lines: ["Not captured in the last scan — either the scan predates the exposure "
-              + "fields, or this finding is no longer in the current frame at all. Not the "
-              + "same as unreachable."],
+            lines: ["Not captured in the last scan. Not the same as unreachable.",
+              "Either the scan predates the exposure fields, or this finding has left the "
+              + "current frame."],
           }
           : { term: "internet-exposed" },
         { kind: "tri", tri: r.internet_exposed ?? null },

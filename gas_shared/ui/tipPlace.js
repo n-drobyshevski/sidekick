@@ -111,9 +111,22 @@ export function tipDelay(state) {
  *
  * A tip is a reminder, not the entry. The book keeps the whole thing and the trigger leads
  * to it, so a card that ran to eight lines would be the Help page in the wrong place.
+ *
+ * THE CAP WAS 240 AND THAT WAS TOO GENEROUS BY HALF. At the card's own
+ * `max-width: min(300px, 100vw - 32px)` and 12px/1.45 copy, ~45 characters fit on a rendered
+ * row: a 240-character line is five and a half rows, and `glossaryTipLines` shows TWO of them,
+ * so the ceiling permitted an eleven-row wall above the `aka` and "full definition" lines. The
+ * hover-card literature puts a tooltip at 150 characters or so — past that it is a popover or
+ * a help page wearing a tooltip — and the register's own voice rule (PRODUCT.md: "states what
+ * is true and what needs attention, and otherwise stays quiet") says the same thing.
+ *
+ * This is the BACKSTOP, not the budget. It catches prose that reaches the card unrewritten;
+ * the per-line budget the books are actually held to is `MAX_TIP_LINE_LENGTH` in each app's
+ * test/helpContent.test.js, which is tighter. A line that gets truncated here is a line
+ * someone still has to rewrite — the ellipsis is a symptom, never the fix.
  */
 export function tipLead(text, max) {
-  const cap = max === undefined ? 240 : max;
+  const cap = max === undefined ? 150 : max;
   const s = String(text === null || text === undefined ? "" : text).trim();
   if (s.length <= cap) return s;
   const cut = s.slice(0, cap);

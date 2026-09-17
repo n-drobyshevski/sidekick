@@ -214,8 +214,8 @@ export function overviewHeroView(insights, firstRun) {
           : "no clock running",
         emptyLabel: "no open finding has an SLA clock running",
         sub: "past it, on the vendor-fix clock",
-        lines: ["On the vendor-fix clock, matching the MTTR page — a finding with no patch "
-          + "available yet is not counted as a breach, because its clock has not started."],
+        lines: ["On the vendor-fix clock, matching the MTTR page.",
+          "A finding with no patch yet is not a breach: its clock has not started."],
         term: "actionable-age",
       },
       {

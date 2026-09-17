@@ -572,8 +572,8 @@ export async function renderProgram(main, _params, ctx) {
           "Of everything remediated, the share that was actually high risk. TP / (TP + FP) —"
           + " here " + m.tp.toLocaleString() + " of " + (m.tp + m.fp).toLocaleString() + ".",
           m.prevalence !== null
-            ? "Picking findings at random would score about " + pct(m.prevalence) +
-              " here, because that is the share of classified findings that are high risk."
+            ? "Picking at random would score about " + pct(m.prevalence)
+              + " — the share of classified findings that are high risk."
             : null,
         ].filter(Boolean),
       },
@@ -624,13 +624,14 @@ export async function renderProgram(main, _params, ctx) {
           {
             term: "closed-per-month",
             lines: [
-              "Mean findings closed per calendar month — the close rate above as a count, "
-              + "over the same months.",
+              "Mean findings closed per calendar month — the close rate above, as a count.",
               capOverall.monthsCounted
-                ? "Averaged over " + capOverall.monthsCounted
-                  + " complete, directly-observed month(s); the month in progress and any "
-                  + "month before the first saved scan are excluded from both figures."
+                ? "Over " + capOverall.monthsCounted
+                  + " complete, directly-observed month(s)."
                 : "No complete, directly-observed month yet, so there is nothing to average.",
+              capOverall.monthsCounted
+                ? "The month in progress and anything before the first scan are excluded."
+                : null,
             ],
           },
         ),
@@ -1008,8 +1009,9 @@ export async function renderProgram(main, _params, ctx) {
         "High risk when ",
         tipLabel(el("strong", {}, p.ruleSentence || absent()), {
           lines: [
-            "The clauses overlap — a finding can satisfy several — so these counts do not sum"
-            + " to the " + (s.anyOf || 0).toLocaleString() + " findings flagged high risk overall.",
+            "The clauses overlap: a finding can satisfy several.",
+            "So these counts do not sum to the " + (s.anyOf || 0).toLocaleString()
+            + " findings flagged high risk overall.",
           ],
         }),
         "."),
@@ -1029,10 +1031,9 @@ export async function renderProgram(main, _params, ctx) {
         el("h3", {}, tipLabel("How much the rule choice matters", {
           term: "rule-sensitivity",
           lines: [
-            "Each point is scored against its own definition of high risk, so the points are"
-            + " not competing on a common yardstick: a narrow rule reaches high coverage by"
-            + " flagging little. Read this as how sensitive the headline is to the rule, not"
-            + " as which rule is right.",
+            "Each point is scored against its own definition of high risk.",
+            "So they are not competing on a common yardstick.",
+            "Read it as how sensitive the headline is to the rule, not which rule is right.",
           ],
         })),
         box,
@@ -1066,8 +1067,8 @@ export async function renderProgram(main, _params, ctx) {
     // known (`capacityBase`, below): the label's tip then carries definition, benchmark and
     // base in one card.
     const CAPACITY_LINES = [
-      "How much of the open backlog the program closes per month, and whether high-risk work"
-      + " is arriving faster than it is being cleared.",
+      "How much of the open backlog the program closes per month.",
+      "And whether high-risk work arrives faster than it is cleared.",
       "The research benchmark is that a typical organization closes about one in ten open"
       + " findings per month, largely regardless of size.",
     ];
@@ -1213,10 +1214,9 @@ export async function renderProgram(main, _params, ctx) {
     const view = capacityHindcastView(p.capacityHindcast);
     capacityHost.append(sectionLabel("Verdict track record", {
       lines: [
-        "For each saved scan, the verdict this page would have shown that day, beside what the"
-        + " following month actually did.",
-        "The verdict is the net capacity figure in the header — high-risk findings closed"
-        + " against high-risk findings arriving.",
+        "For each saved scan, the verdict that day beside what the following month did.",
+        "The verdict is the net capacity figure in the header.",
+        "High-risk findings closed against high-risk findings arriving.",
         view.capNote,
       ],
     }));

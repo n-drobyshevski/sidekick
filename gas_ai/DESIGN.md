@@ -409,10 +409,24 @@ before anything is hovered, because a definition nobody can see is not help. A b
 per row does **not** become a control; it answers on hover and its definition lives on the column
 heading, which is asked once.
 
-**Its ceiling is real and load-bearing.** Roughly four or five short lines, a 240-character lead,
-and **no links or focusable content, ever** — that constraint is what lets it keep a clean role and
+**Its ceiling is real and load-bearing.** **Two lines and about 150 characters in total**, and
+**no links or focusable content, ever** — that constraint is what lets it keep a clean role and
 stay out of a sheet's tab trap. The trigger navigates to the full Help entry instead. So prose
-demoted out of a page splits in two: a ≤240-character lead into the tip, the remainder into Help.
+demoted out of a page splits in two: a card-sized definition into the tip, the remainder into Help.
+
+**The card is a definition, not a paragraph.** Line one says what the thing *is*, at or under 110
+characters — about fifteen words, the length a reader takes at a glance without stopping to parse.
+Line two, where it earns itself, says the one operational consequence, at or under 90. Everything
+after that is a Help line: `glossaryTipLines` paints only the first two, and `helpPage` renders
+them all, so a third line is already the right place to put a sentence rather than a deletion.
+
+This ceiling was 240 characters *per line*, for four or five lines, and the prose round below
+filled it. At 300px and 12px/1.45 a rendered row holds ~45 characters, so that permitted an
+eleven-row wall on hover; the median card in the sibling registers reached seven rows. A tooltip
+past ~150 characters is a popover wearing a tooltip, and the register's own voice rule
+(`PRODUCT.md`: "states what is true and what needs attention, and otherwise stays quiet") had
+already said so. `tipLead`'s 150-character cut is the backstop for copy that arrives unrewritten;
+each book's `MAX_TIP_LINE_LENGTH` is the budget that actually holds.
 
 ### Signature component: The Record Sheet
 

@@ -550,9 +550,9 @@ export async function renderOverview(main, params, ctx) {
     const trend = insights.tierTrend || [];
     const card = el("div", { class: "chart-card" }, el("h3", {}, tipLabel("Tier trend", {
       lines: [
-        "Tiers are computed from today's signals and applied backwards: has_kev and"
-        + " has_exploit never revert, and EPSS is the peak observed. So this traces the"
-        + " BACKLOG moving between tiers, not intelligence arriving.",
+        "Tiers come from today's signals, applied backwards.",
+        "So this traces the BACKLOG moving between tiers, not intelligence arriving.",
+        "has_kev and has_exploit never revert, and EPSS is the peak observed.",
       ],
     })));
     if (trend.length < 2) {
@@ -648,10 +648,8 @@ export async function renderOverview(main, params, ctx) {
       // its tip; the sub-line says only what the bars count.
       el("h3", {}, tipLabel(headline, {
         lines: [
-          "SLA is measured on the vendor-fix clock, so a finding still awaiting a patch is not"
-          + " counted as a breach.",
-          "Rows with no recorded age are omitted from the bars, which is why this total can"
-          + " trail the open count above.",
+          "SLA runs on the vendor-fix clock: a finding awaiting a patch is not a breach.",
+          "Rows with no recorded age are omitted, so this total can trail the open count.",
         ],
       })),
       el("div", { class: "small muted", style: "margin-bottom:8px" },
@@ -1013,9 +1011,8 @@ export async function renderOverview(main, params, ctx) {
   function renderMovement(insights) {
     const m = insights.movement;
     insightsHost.append(sectionLabel("Scan-over-scan movement", { lines: [
-      "Four counts against the previous scan: New, Newly resolved, Reopened and Persisting — "
-      + "not a comparison to a calendar date, since the register only learns something on the "
-      + "days it scans.",
+      "Four counts against the previous scan: New, Newly resolved, Reopened, Persisting.",
+      "Not a comparison to a calendar date — the register only learns on the days it scans.",
     ] }));
     if (!m.hasPrevious) {
       insightsHost.append(el("p", { class: "muted" },
@@ -1162,10 +1159,9 @@ export async function renderOverview(main, params, ctx) {
     const section = el("section", { id: "findings" });
     section.append(sectionLabel("Findings", {
       lines: [
-        "Every finding the register holds, open and resolved, one row each — server-paged "
-        + "and server-sorted, so pressing a heading asks for a different order rather than "
-        + "re-arranging what is already on screen.",
+        "Every finding the register holds, open and resolved, one row each.",
         "Open a row for everything the register knows about that finding.",
+        "Server-paged and server-sorted: a heading asks for a new order, it does not re-sort.",
       ],
     }));
     section.append(registerToolbar(filters, insights));
@@ -1296,8 +1292,8 @@ export async function renderOverview(main, params, ctx) {
       {
         key: "risk_tier", label: "Tier", sortable: true,
         help: { term: "unclassified", lines: [
-          "Which exploit signal put this finding where it is, under the risk rule in force. "
-          + "Unclassified is a measurement gap, not a low score.",
+          "Which exploit signal put this finding where it is, under the rule in force.",
+          "Unclassified is a measurement gap, not a low score.",
         ] },
         cell: (r) => (r.risk_tier ? (TIER_LABELS[r.risk_tier] || r.risk_tier) : absent()),
       },
@@ -1346,9 +1342,8 @@ export async function renderOverview(main, params, ctx) {
       {
         key: "internet_exposed", label: "Reachable", sortable: true,
         help: { term: "internet-exposed", lines: [
-          "A dash is not a No: either the scan carried no exposure field, or the finding is "
-          + "no longer in the current frame at all, which every row resolved by "
-          + "disappearance is.",
+          "A dash is not a No.",
+          "Either the scan carried no exposure field, or the finding has left the frame.",
         ] },
         cell: (r) => triCell(r.internet_exposed),
       },

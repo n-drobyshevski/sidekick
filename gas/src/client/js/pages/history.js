@@ -142,9 +142,8 @@ export async function renderHistory(main, _params, ctx) {
   main.append(
     noticeHost, freshLine, kpiLabelHost, kpiRow, scansLabelHost, scansHost,
     sectionLabel("What moved the number", { lines: [
-      "Two tables, not one: an API-confirmed resolution and a finding that merely stopped "
-      + "appearing in a scan are counted separately, because only one of them is a confirmed "
-      + "remediation.",
+      "Two tables, not one: a confirmed resolution and a disappearance are counted apart.",
+      "Only one of them is a confirmed remediation.",
     ] }),
     el("p", { class: "section-note" },
       "The change in the open count over the last 28-day window bounded by two saved scans, "
