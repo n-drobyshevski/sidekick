@@ -36,11 +36,12 @@ import type { Rec } from "./util";
 /**
  * The tag key this register reads a lifecycle off, when nothing overrides it.
  *
- * A BARE WORD, where the domain's default is the Wiz-namespaced `Wiz/Domain`, and the
- * difference is a statement about where each tag comes from rather than a style choice. The
- * domain tag is one Wiz's own console writes and namespaces; a repository's lifecycle is a
- * property the tenant carries on the repository itself (a GitHub custom property, a platform
- * catalogue) and reaches Wiz under whatever key that system already used.
+ * A BARE WORD, AND SO IS THE DOMAIN'S — the two are twins here, where gas/ reads a namespaced
+ * `Wiz/Domain`, and the difference is a statement about where each tag comes from rather than a
+ * style choice. Both of this register's tags describe a REPOSITORY: properties the tenant
+ * carries on the repository itself (a GitHub custom property, a platform catalogue) which reach
+ * Wiz under whatever key that system already used, rather than keys Wiz's own console writes
+ * and namespaces onto a cloud resource.
  *
  * WHICH MEANS THE DEFAULT IS A GUESS, AND IT IS BUILT TO BE A CHEAP ONE. `WIZ_LIFECYCLE_TAG_KEY`
  * overrides it (server/props.ts), the key match is case-insensitive (`tagValue`), and

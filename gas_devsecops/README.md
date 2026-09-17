@@ -54,7 +54,7 @@ reporting new/resolved/reopened of 0/0/0. See [PROBE_FINDINGS.md](PROBE_FINDINGS
 **Two ways to slice it, and neither is nested inside the other.** The app header carries one
 scope control with two dimensions: a **project** (where Wiz files the repository — business
 units, support groups and leaves, read off `projects_json`) and a **business domain** (who the
-tenant says owns it, from the repository's `Wiz/Domain` tag). Picking either clears the other,
+tenant says owns it, from the repository's `domain` tag). Picking either clears the other,
 because a header that carries two scopes cannot answer "what am I looking at" in one line.
 
 **The project axis has two grains, and the app keeps them apart.** The tenant files every
@@ -109,7 +109,8 @@ tab, and attaches those tags to rows **on read**, never baked into the ledger. T
 shape `gas/src/server/supportGroups.ts` already uses for a `Wiz/provisioning` tag that lives on
 a subscription findings carry without its tags.
 
-**Two tags travel that road, not one.** Beside the business domain, the same fetch carries each
+**Two tags travel that road, not one.** The domain itself is read off the repository's bare
+`domain` tag (`WIZ_DOMAIN_TAG_KEY` overrides the key), and beside it the same fetch carries each
 repository's **lifecycle** — `END_OF_LIFE`, `IN_PRODUCTION`, whatever the tenant writes, read
 off its `lifecycle` tag (`WIZ_LIFECYCLE_TAG_KEY` overrides the key). It is attached as
 `_lifecycle` at the same point, appears as a **Lifecycle** column on the Repositories tables,
@@ -126,9 +127,17 @@ lifecycles: the switcher simply has no Domains group, the caption counts the row
 domain`, the Lifecycle column is empty, and the Settings card says *Never refreshed* rather
 than letting an unrefreshed map look like an untagged tenant. An unreachable map degrades the
 same way rather than taking the pages down with it. The card reports the **two tags'
-placements separately**, because they fail separately: `Wiz/Domain` is a key Wiz's own console
-writes, while the lifecycle key is whatever the tenant's catalogue used — so the default is a
-guess, and a zero beside a healthy domain count is how an operator finds that out.
+placements separately**, because they fail separately: both keys are whatever the tenant's own
+catalogue used — neither is a key Wiz's console writes — so both defaults are guesses, and a
+zero beside a healthy count on the other is how an operator finds out which one missed.
+
+The card also says when the **persisted map answers under an older key**. A map outlives the
+key that built it, so changing `WIZ_DOMAIN_TAG_KEY` — or taking a release that changes a
+default — would otherwise leave the tab serving the old attribution with the new key printed
+over it, looking perfectly healthy. `setRepoTagMap` records the pair it was built under and the
+card compares them; a map written before that record existed reads as *unknown* rather than as
+agreement, because that is exactly the population a key change strands. Pressing Refresh clears
+it either way.
 
 **The registers page server-side**, because SCA is 17,991 rows and the reader looks at fifty.
 `src/server/readModels.ts`'s `registerRowsModel` (through `serverCache.ts`'s durable, 1-hour
@@ -300,7 +309,23 @@ about at least two of them, and the clock is the product.
       editor runs; the `/exec` URL keeps serving the version it was pinned to.
    4. Check the daily sync trigger still fires. A scope change is the one thing that can
       suspend an installable trigger with nothing in the UI to say so.
-6. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
+6. Optionally, set the two **repository tag keys** in Project Settings → Script Properties.
+   Both are the tenant's own vocabulary rather than anything Wiz writes, so both defaults are
+   guesses and both are matched case-insensitively:
+
+   - `WIZ_DOMAIN_TAG_KEY` — the repository tag whose value is the owning **business domain**.
+     Defaults to `domain`. A tenant whose repositories carry the Wiz-namespaced `Wiz/Domain`
+     instead — which is what `gas/` reads, on cloud resources — sets that here.
+   - `WIZ_LIFECYCLE_TAG_KEY` — the repository tag whose value is where the repository is in
+     its **life** (`END_OF_LIFE`, `IN_PRODUCTION`, …). Defaults to `lifecycle`.
+
+   Both are resolved **on read**, so correcting one repaints on the next request rather than
+   needing a re-scan. **Press Refresh repository tags after changing either**: the join map on
+   the `domain_map` tab was built under the old key and keeps answering until it is rebuilt.
+   The card under Settings → System says so when they disagree, and reports how many
+   repositories each key actually placed — a default that matches nothing shows up there as a
+   zero rather than as a quietly empty column.
+7. Run `deploymentDiagnostic()` if anything looks wrong; it reports every check at once
    rather than stopping at the first failure. `wizDiagnostic()` is its network-touching
    sibling: it does the real token exchange and one query, and names which of the two failed
    — they look identical from the app and have different remedies.
@@ -342,7 +367,7 @@ WIZ_API_URL=https://api.<dc>.app.wiz.io/graphql
 WIZ_API_TOKEN=...          # or WIZ_CLIENT_ID + WIZ_CLIENT_SECRET
 WIZ_PROJECT_ID_V2=...      # optional; scopes every query
 WIZ_DOMAIN_TAG_KEY=...     # optional; the repository tag whose value is a business domain
-                           # (default Wiz/Domain) — see "Two ways to slice it" below
+                           # (default domain) — see "Two ways to slice it" below
 WIZ_LIFECYCLE_TAG_KEY=...  # optional; the repository tag whose value is a lifecycle
                            # (default lifecycle) — read beside the domain, in one refresh
 ```

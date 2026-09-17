@@ -1,9 +1,15 @@
-// The business domain a repository belongs to, read off its `Wiz/Domain` tag.
+// The business domain a repository belongs to, read off its `domain` tag.
 //
 // Ported from gas/src/domain/domainTag.ts, which carries the same idea for the OS-vulnerability
 // register. The tenant tags each repository with the domain that owns it; that is the one
 // attribution fact this register can carry without deriving anything — not a rule, not a
 // score, not a verdict, just a string the tenant wrote on the resource.
+//
+// THE TWO PORTS READ DIFFERENT KEYS, AND THAT IS THE DATA, NOT A DRIFT. gas/ defaults to
+// `Wiz/Domain`, the namespaced key Wiz's own console writes onto a cloud resource. This
+// register's subject is a repository, and a repository's domain reaches Wiz from the tenant's
+// own catalogue under the bare word `domain` — the same road, and the same spelling habit, the
+// `lifecycle` tag arrives by. See DEFAULT_DOMAIN_TAG_KEY.
 //
 // WHY THE TAG CANNOT COME OFF A FINDING HERE, which is the whole reason this register went
 // without a domain axis until now and the reason `src/server/repoTags.ts` exists at all.
@@ -41,8 +47,26 @@
 
 import { present, type Rec } from "./util";
 
-/** The tag key as Wiz spells it. Capital D — but see the fold in `domainOfTags`. */
-export const DEFAULT_DOMAIN_TAG_KEY = "Wiz/Domain";
+/**
+ * The tag key this register reads a domain off, when nothing overrides it.
+ *
+ * A BARE WORD, and `lifecycleTag.DEFAULT_LIFECYCLE_TAG_KEY`'s twin rather than gas/'s
+ * `Wiz/Domain`. The difference is a statement about where each tag COMES FROM. gas/'s subject
+ * is a cloud resource and its key is the one Wiz's console writes and namespaces; this
+ * register's subject is a repository, and a repository's domain is a property the tenant
+ * carries on the repository itself (a GitHub custom property, a platform catalogue) which
+ * reaches Wiz under whatever key that system already used. Both tags this register reads
+ * travel that road, so both default to the word the tenant's own catalogue uses.
+ *
+ * WHICH MAKES THE DEFAULT A GUESS, where gas/'s is a fact — and the same cheap-guess discharge
+ * `lifecycleTag.ts` documents applies here: `WIZ_DOMAIN_TAG_KEY` overrides it
+ * (server/props.ts), the key match is case-insensitive (`tagValue`), and `repoTags.mapHealth`
+ * publishes how many repositories the key actually PLACED. A default that matches nothing shows
+ * up on the Settings page as a zero an operator can act on, rather than as a column that is
+ * quietly empty everywhere. A tenant that does spell it `Wiz/Domain` sets the Script Property;
+ * README.md's Setup section names it.
+ */
+export const DEFAULT_DOMAIN_TAG_KEY = "domain";
 
 /** The configured key, else the default — one source of truth for fold and read alike. */
 export function resolveDomainTagKey(configured: string | null | undefined): string {
@@ -68,21 +92,30 @@ export function resolveDomainTagKey(configured: string | null | undefined): stri
  * two different objects. Here they arrive on the same axis, so they are one function — two
  * normalisers is how a codebase ends up with two answers to "what tags does this carry".
  *
- * `tags_json` IN THIS REGISTER IS USUALLY NOT TAGS, and reading this function without knowing
- * that is how someone later concludes the join is redundant. reconcile.ts writes
- * `tags_json: projectsJson(rec) ?? tagsJson(rec)`, and every node carries `projects[]`, so in
- * practice the column holds the collapsed `{slug: name}` project map and the real tag bag is
- * never reached. It is read here anyway, first, because the column is what its NAME promises on
- * any row where a tag bag did land (the SCA fixture that keeps `tagsJson` live), and because a
- * register that later learns to fetch tags per finding should not need this function changed.
+ * `tags_json` IN THIS REGISTER IS NOT TAGS, and reading this function without knowing that is
+ * how someone later concludes the join is redundant. reconcile.ts writes
+ * `tags_json: projectsJson(rec) ?? tagsJson(rec)`, and every node carries `projects[]`, so the
+ * column holds the collapsed `{slug: name}` PROJECT MAP. The fallback half of that expression
+ * cannot fire on a live row either: `tagsJson` reads `vulnerableAsset.tags`, and
+ * `server/wizQueries.ts` does not select `tags` anywhere in any of the three documents — that
+ * absence is the premise this whole module rests on. So on a ledger row the column is the
+ * project map or it is null; it is never a tag bag.
  *
- * The column is deliberately left as it is rather than "corrected": `projects_json` already
- * carries the uncollapsed list, `test/reconcile.test.ts` pins this output byte-for-byte, and
- * deployed sheets hold project maps in it today — so rewriting it would churn a persisted
- * schema to no gain, since the domain does not come from that column at all. The one cost is
- * real and worth stating: a `WIZ_DOMAIN_TAG_KEY` that collides with a PROJECT SLUG would read
- * a project name as a domain. Slugs carry no `/` and the default key does, so the default
- * cannot collide; an operator who overrides it to a bare word can.
+ * It is still read HERE, first, because the column is what its NAME promises on any row where a
+ * tag bag did land (the SCA fixture that keeps `tagsJson` live), and because a register that
+ * later learns to fetch tags per finding should not need this function changed. What changed is
+ * WHO TRUSTS IT: `carriedTags` below is this same fold minus that one source, and
+ * `repoTags.resolveRepoTags` — the only reader that meets a ledger row — uses that instead.
+ *
+ * THAT SPLIT IS WHAT LETS THE DEFAULT KEY BE A BARE WORD. The column is deliberately left as it
+ * is rather than "corrected": `projects_json` already carries the uncollapsed list,
+ * `test/reconcile.test.ts` pins this output byte-for-byte, and deployed sheets hold project maps
+ * in it today. But the own-bag read runs BEFORE the join map and wins, so a tag key that
+ * collides with a PROJECT SLUG would have read a project name as a domain, for every finding in
+ * that project. `Wiz/Domain` could not collide (slugs carry no `/`) and `domain` plainly can —
+ * as `lifecycle` already could. Excluding the column closes it for both, by construction, and
+ * without asking the reader to hold "unless the slug happens to be spelled like the key" in
+ * their head.
  *
  * NEVER THROWS. Every input is either a spreadsheet cell or a tenant-dependent `properties`
  * blob; an unreadable one yields `{}` so the caller reports "no domain known" rather than
@@ -90,9 +123,21 @@ export function resolveDomainTagKey(configured: string | null | undefined): stri
  */
 export function recordTags(record: Rec | null | undefined): Rec {
   if (!record) return {};
-  const out: Rec = {};
+  // The column goes in FIRST and `carriedTags` overwrites it, which is the precedence the
+  // single fold had when all four shapes wrote into one bag in this order. A spread copies
+  // every own enumerable key regardless of value, so a carried key explicitly set to
+  // `undefined` still wins, exactly as `out[k] = v` did.
+  return { ...tagsJsonColumn(record), ...carriedTags(record) };
+}
 
-  // `tags_json` — the ledger's own column, canonical JSON written by reconcile.ts.
+/**
+ * The `tags_json` COLUMN, parsed — `{}` for absent, blank, non-JSON, or a JSON array.
+ *
+ * Private, and split out of `recordTags` only so `carriedTags` can be the SAME fold minus this
+ * one source rather than a second normaliser with its own answer to "what tags does this carry".
+ */
+function tagsJsonColumn(record: Rec): Rec {
+  const out: Rec = {};
   const raw = record["tags_json"];
   if (typeof raw === "string" && raw) {
     try {
@@ -104,6 +149,38 @@ export function recordTags(record: Rec | null | undefined): Rec {
       // A hand-edited cell that is not JSON carries no tags, and is not a broken page.
     }
   }
+  return out;
+}
+
+/**
+ * The tags a record genuinely CARRIES — every shape `recordTags` folds except the `tags_json`
+ * COLUMN. This is the bag a repository tag is resolved from (`server/repoTags.resolveRepoTags`).
+ *
+ * WHY THE COLUMN IS REFUSED AT THE SOURCE rather than discriminated per row. See `recordTags`
+ * above for what that column actually holds here; the question this comment answers is why the
+ * obvious narrower guard was rejected. `projects_json` being non-empty looks like it identifies
+ * exactly the rows whose `tags_json` is a project map, and it does at the moment reconcile
+ * writes them — `projectsJson` and `projectsListJson` iterate the same `projectList` and both
+ * return null on an empty result. It does NOT survive the round trip, in both directions:
+ *
+ *   * A row last written before `projects_json` existed as a column carries the project map
+ *     with that column blank. `domain/projectGrain.ts`'s `owner_path` fallback exists for
+ *     exactly that population, and it is the population a register knows least about.
+ *   * `reconcile.ts:1032-1033` never erases either column independently, so a finding seen once
+ *     WITH `projects[]` and later without it can end up with a stale `projects_json` beside a
+ *     fresh `tags_json` — and the guard would then suppress a bag that is real.
+ *
+ * The column is not a tag source in this register at all. That is a fact about the QUERY
+ * DOCUMENTS, not about any row, so it is answered where facts about documents belong.
+ *
+ * IF SCA EVER SELECTS `tags`, this function is still right and `reconcile.ts:461` is what needs
+ * changing: it writes `projectsJson(rec)` first, so the column would keep holding the project
+ * map no matter what the document grew. Do not "restore" the column read on the strength of a
+ * query change alone.
+ */
+export function carriedTags(record: Rec | null | undefined): Rec {
+  if (!record) return {};
+  const out: Rec = {};
 
   // The asset's own bag, nested or flattened. Both asset spellings, because SCA's node calls
   // it `vulnerableAsset` and SAST's and secrets' call it `resource` (reconcile.ts's
@@ -160,9 +237,10 @@ function addTagList(out: Rec, tags: unknown): void {
  * rules below are properties of a TAG, not of a domain. A second copy of them is how one of the
  * two later grows a case-sensitivity the other does not have.
  *
- * The KEY match is case-insensitive: Wiz spells it `Wiz/Domain` while most people writing
- * about it say `Wiz/domain`, and an operator who types the latter into a Script Property must
- * not silently select nothing.
+ * The KEY match is case-insensitive: a tenant's catalogue writes `Domain` or `domain` as its
+ * own conventions had it, and the operator typing a Script Property need not have guessed which.
+ * Either way the tag must not silently select nothing. (The same reason held when the default
+ * was the namespaced `Wiz/Domain`, which most people writing about it spelled `Wiz/domain`.)
  *
  * The VALUE comes back as written, only trimmed. It is a label a person chose, and folding its
  * case would print something the Wiz console does not. (`lifecycleTag.isEndOfLife` folds a COPY

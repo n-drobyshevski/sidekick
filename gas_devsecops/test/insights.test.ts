@@ -4,8 +4,8 @@
 // (cve -> identifier, asset_name -> repo_name, vuln_key -> finding_key, asset -> repo).
 //
 // `domain` was on that dropped list and is not any more: the tenant does tag its repositories
-// with `Wiz/Domain`, and the value now reaches rows through the join in
-// src/server/repoDomains.ts. It is a GROUP_COLUMNS dimension below. `oldestOpen`'s `byDomain`
+// with a `domain` tag, and the value now reaches rows through the join in
+// src/server/repoTags.ts. It is a GROUP_COLUMNS dimension below. `oldestOpen`'s `byDomain`
 // view stays dropped — the concentration card already answers "which domain carries the most",
 // and "which domain holds the oldest" has not been asked for.
 //

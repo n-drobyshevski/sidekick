@@ -32,8 +32,8 @@
 //                                   `CS-…`/`CE-…`/`LU-…`, and it rides in on every finding.
 //   domain                         DROPPED THEN, RESTORED SINCE — see GROUP_COLUMNS below.
 //   (GROUP_COLUMNS dim, and        The original entry said a source repository carries no such
-//   oldestOpen's byDomain view)    taxonomy. It does: the tenant tags repositories with
-//                                   `Wiz/Domain`. What is true is that the three finding
+//   oldestOpen's byDomain view)    taxonomy. It does: the tenant tags repositories with a
+//                                   `domain` tag. What is true is that the three finding
 //                                   documents cannot SELECT an asset's tags, so the value
 //                                   arrives through a separate graphSearch join
 //                                   (src/server/repoTags.ts) and is attached to rows on
@@ -475,7 +475,7 @@ export function movement(
 //
 // The module header above records `domain` as DROPPED, host-only, on the grounds that "a source
 // repository carries no such taxonomy". That was wrong about the tenant — its repositories do
-// carry `Wiz/Domain` — and right only about the QUERIES: the three finding documents cannot
+// carry a `domain` tag — and right only about the QUERIES: the three finding documents cannot
 // select an asset's tags, which is why the value arrives through `src/server/repoTags.ts`
 // rather than off the row.
 //

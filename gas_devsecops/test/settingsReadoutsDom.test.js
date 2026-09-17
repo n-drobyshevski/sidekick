@@ -182,3 +182,33 @@ describe("[] means every severity — the one rule this file must not get wrong"
     expect(READOUTS_CODE).toMatch(/if \(!requested\.length\) \{ byScope\[scope\] = 0; continue; \}/);
   });
 });
+
+// =========================================================================================
+//  The repository-tag card's stale-key state
+// =========================================================================================
+//
+// `domain_map` outlives the keys that built it, so a card that only ever prints the key in
+// FORCE will report a healthy join over an attribution nobody reads any more. The verdict is
+// the model's (`repoTags.keysAreStale`), and these pin that the card asks for it rather than
+// re-deriving it, and that it says something different when nothing recorded the provenance.
+
+describe("the repository-tag card says when the map answers under an older key", () => {
+  // Perturbation, run and reverted: deleting the `if (h.staleKeys)` block fails this case with
+  // `expected '…' to match /if \(h\.staleKeys\)/` — and the card goes back to printing a key
+  // the persisted map was never built under.
+  it("branches on the model's verdict, and never recomputes the comparison itself", () => {
+    expect(SETTINGS_CODE).toMatch(/if \(h\.staleKeys\)/);
+    // No second copy of the rule: the card must not compare the keys on its own, because two
+    // copies of "what counts as stale" is how the card and the model come to disagree.
+    expect(SETTINGS_CODE).not.toMatch(/builtUnder[\s\S]{0,80}toLowerCase\(\)/);
+  });
+
+  // Perturbation, run and reverted: collapsing the two arms to the `under` one fails this case
+  // with `expected '…' to match /predates/`. Every sheet written before the stamp existed has
+  // no provenance, and naming a key nobody recorded would be a worse lie than the one this
+  // state exists to prevent.
+  it("words the NO-PROVENANCE case for what is actually known", () => {
+    expect(SETTINGS_CODE).toMatch(/predates/);
+    expect(SETTINGS_CODE).toMatch(/under\.domain/);
+  });
+});

@@ -4,12 +4,13 @@
 // test/shared.test.js already use in this repo (vitest.config.ts sets no `environment`, so
 // there is no jsdom to boot a real combobox in).
 //
-// NO DOMAINS HERE. `gas_ai/src/client/js/ui/projectScope.js` fronts a second switcher axis
-// (`Wiz/Domain`) this register does not have — `domain/maintenance.ts:256` says the tag never
-// existed for source-repo findings — so every assertion below is single-axis: a bare slug, no
-// `d:` prefix, no domain-coverage clause. The unattributed clause is what replaces it, for the
-// analogous reason: scoped, "N of M findings" alone silently attributes the OTHER rows to some
-// project, when some of them may carry none at all.
+// NO DOMAINS IN THESE CASES. This register DOES front a second switcher axis now — the
+// repository `domain` tag, joined by `src/server/repoTags.ts` and offered by
+// `ui/projectScope.js`'s `domainScopeOptions` — but every assertion below is deliberately
+// single-axis: a bare slug, no `d:` prefix, no domain-coverage clause. The unattributed clause
+// is what stands in for the domain-coverage one here, for the analogous reason: scoped,
+// "N of M findings" alone silently attributes the OTHER rows to some project, when some of
+// them may carry none at all.
 
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";

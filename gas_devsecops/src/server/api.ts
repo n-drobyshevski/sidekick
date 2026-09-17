@@ -255,7 +255,7 @@ export interface Bootstrap {
     register: number;
     unattributed: number;
     /**
-     * Rows whose repository carries no `Wiz/Domain` tag — or whose repository the join map has
+     * Rows whose repository carries no `domain` tag — or whose repository the join map has
      * never seen, because the map has not been refreshed. The switcher's caption must say this
      * OUT LOUD for `unattributed`'s reason exactly: without it, "1,204 of 8,331" quietly
      * attributes the other 7,127 to some other domain when the truth for most of them is that

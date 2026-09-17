@@ -1,13 +1,14 @@
-// The pure half of the business-domain axis: reading a `Wiz/Domain` tag out of every shape this
+// The pure half of the business-domain axis: reading a `domain` tag out of every shape this
 // register carries tags in, and the catalogue/predicate/coverage trio built on it.
 //
 // Both modules under test are DOM-free and Sheets-free by construction (domainTag.ts and
 // domainScope.ts import nothing from src/server/), which is the whole reason the axis can be
 // held here rather than behind a spreadsheet mock. The join itself — repository identity →
-// domain — is src/server/repoDomains.ts and is covered in repoDomains.test.ts.
+// domain — is src/server/repoTags.ts and is covered in repoTags.test.ts.
 
 import { describe, expect, it } from "vitest";
 import {
+  carriedTags,
   DEFAULT_DOMAIN_TAG_KEY,
   domainOf,
   domainOfTags,
@@ -23,6 +24,12 @@ import {
 import type { Rec } from "../src/domain/util";
 
 describe("resolveDomainTagKey", () => {
+  it("the default is a BARE WORD, the lifecycle key's twin rather than gas/'s namespaced one", () => {
+    // Both of this register's tags describe a REPOSITORY and reach Wiz from the tenant's own
+    // catalogue, so both defaults are that catalogue's vocabulary. See DEFAULT_DOMAIN_TAG_KEY.
+    expect(DEFAULT_DOMAIN_TAG_KEY).toBe("domain");
+  });
+
   it("falls back to the default for every shape of 'not configured'", () => {
     for (const v of [null, undefined, "", "   "]) {
       expect(resolveDomainTagKey(v)).toBe(DEFAULT_DOMAIN_TAG_KEY);
@@ -36,35 +43,37 @@ describe("resolveDomainTagKey", () => {
 
 describe("domainOfTags", () => {
   it("matches the key case-insensitively", () => {
-    // The captures spell it `Wiz/Domain`; everyone writing about it says `Wiz/domain`. An
-    // operator who types the latter into the Script Property must not silently select nothing.
+    // A tenant's catalogue writes `Domain` or `domain` as its own conventions had it, and the
+    // operator typing the Script Property need not have guessed which.
+    expect(domainOfTags({ Domain: "SAP" }, "domain")).toBe("SAP");
+    expect(domainOfTags({ domain: "SAP" }, "Domain")).toBe("SAP");
+    // The namespaced spelling an operator may configure folds the same way.
     expect(domainOfTags({ "Wiz/Domain": "SAP" }, "wiz/domain")).toBe("SAP");
-    expect(domainOfTags({ "wiz/domain": "SAP" }, "Wiz/Domain")).toBe("SAP");
   });
 
   it("returns the value as written, only trimmed", () => {
     // A label a person chose. Folding its case would print something the Wiz console does not.
-    expect(domainOfTags({ "Wiz/Domain": "  Value Chain  " })).toBe("Value Chain");
+    expect(domainOfTags({ domain: "  Value Chain  " })).toBe("Value Chain");
   });
 
   it("is null for a tag present with a blank value", () => {
     // An empty string is not an owner, and a switcher row with no name is not a scope.
     for (const v of ["", "   ", null, undefined]) {
-      expect(domainOfTags({ "Wiz/Domain": v })).toBeNull();
+      expect(domainOfTags({ domain: v })).toBeNull();
     }
   });
 
   it("is null for no tags, no key and no match", () => {
     expect(domainOfTags(null)).toBeNull();
     expect(domainOfTags(undefined)).toBeNull();
-    expect(domainOfTags({ "Wiz/Domain": "SAP" }, "")).toBeNull();
+    expect(domainOfTags({ domain: "SAP" }, "")).toBeNull();
     expect(domainOfTags({ env: "prod" })).toBeNull();
   });
 });
 
 describe("recordTags — one normaliser, four shapes", () => {
   it("reads the ledger's tags_json column", () => {
-    expect(recordTags({ tags_json: '{"Wiz/Domain": "SAP"}' })).toEqual({ "Wiz/Domain": "SAP" });
+    expect(recordTags({ tags_json: '{"domain": "SAP"}' })).toEqual({ "domain": "SAP" });
   });
 
   it("never throws on a tags_json cell that is not JSON", () => {
@@ -77,26 +86,26 @@ describe("recordTags — one normaliser, four shapes", () => {
   it("reads a nested asset bag under either spelling", () => {
     // SCA's node calls it `vulnerableAsset`; SAST's and secrets' call it `resource` —
     // reconcile.ts's `attributes` dispatch is the same asymmetry.
-    expect(recordTags({ vulnerableAsset: { tags: { "Wiz/Domain": "A" } } }))
-      .toEqual({ "Wiz/Domain": "A" });
-    expect(recordTags({ resource: { tags: { "Wiz/Domain": "B" } } }))
-      .toEqual({ "Wiz/Domain": "B" });
+    expect(recordTags({ vulnerableAsset: { tags: { "domain": "A" } } }))
+      .toEqual({ "domain": "A" });
+    expect(recordTags({ resource: { tags: { "domain": "B" } } }))
+      .toEqual({ "domain": "B" });
   });
 
   it("reads a flattened frame record's dotted columns", () => {
-    expect(recordTags({ "vulnerableAsset.tags.Wiz/Domain": "SAP" }))
-      .toEqual({ "Wiz/Domain": "SAP" });
+    expect(recordTags({ "vulnerableAsset.tags.domain": "SAP" }))
+      .toEqual({ "domain": "SAP" });
   });
 
   it("reads a graphSearch entity's [{key, value}] array", () => {
-    // THE SHAPE THAT ACTUALLY MATTERS in this register: repoDomains.ts reads repository
+    // THE SHAPE THAT ACTUALLY MATTERS in this register: repoTags.ts reads repository
     // entities, and this is how their `properties.tags` comes back.
-    expect(recordTags({ tags: [{ key: "Wiz/Domain", value: "SAP" }, { key: "env", value: "prod" }] }))
-      .toEqual({ "Wiz/Domain": "SAP", env: "prod" });
+    expect(recordTags({ tags: [{ key: "domain", value: "SAP" }, { key: "env", value: "prod" }] }))
+      .toEqual({ "domain": "SAP", env: "prod" });
   });
 
   it("reads flat `tag:<key>` properties", () => {
-    expect(recordTags({ "tag:Wiz/Domain": "SAP" })).toEqual({ "Wiz/Domain": "SAP" });
+    expect(recordTags({ "tag:domain": "SAP" })).toEqual({ "domain": "SAP" });
   });
 
   it("skips array entries with no key rather than indexing them under 'undefined'", () => {
@@ -110,27 +119,72 @@ describe("recordTags — one normaliser, four shapes", () => {
     expect(recordTags({ repo_name: "svc" })).toEqual({});
   });
 
-  it("THE PROJECTS-MAP TRAP: tags_json usually holds projects, and no default key can collide", () => {
+  it("THE PROJECTS-MAP TRAP: tags_json holds projects here, and recordTags still reads it", () => {
     // reconcile.ts writes `tags_json: projectsJson(rec) ?? tagsJson(rec)` and every node carries
-    // projects[], so in practice this column holds `{slug: name}`. That is documented rather
-    // than corrected (see recordTags' own comment). What must hold is that the DEFAULT key
-    // cannot read a project as a domain: slugs carry no "/", the default key does.
-    const row = { tags_json: '{"value-chain": "VALUE-CHAIN", "ce-transport": "CE-TRANSPORT"}' };
+    // projects[], so this column holds `{slug: name}`. The column is documented rather than
+    // corrected (a persisted schema, pinned byte-for-byte by test/reconcile.test.ts), and
+    // `recordTags` is still the function that reads every shape the NAME promises.
+    const row = { tags_json: '{"value-chain": "VALUE-CHAIN", "domain": "CE-TRANSPORT"}' };
     expect(recordTags(row)).toEqual({
-      "value-chain": "VALUE-CHAIN", "ce-transport": "CE-TRANSPORT",
+      "value-chain": "VALUE-CHAIN", domain: "CE-TRANSPORT",
     });
-    expect(domainOf(row)).toBeNull();
-    // And the documented residual risk is real, which is why it is written down: an operator
-    // who overrides the key to a bare word CAN collide with a slug.
-    expect(domainOf(row, "value-chain")).toBe("VALUE-CHAIN");
+    // Which is why a project SLUG spelled like the key reads as a domain through THIS door —
+    // the whole reason the join uses `carriedTags` instead. See `carriedTags` below and
+    // repoTags.test.ts's "A PROJECT SLUG IS NOT A TAG KEY".
+    expect(domainOf(row)).toBe("CE-TRANSPORT");
+    expect(carriedTags(row)).toEqual({});
+  });
+});
+
+describe("carriedTags — recordTags minus the tags_json COLUMN, and nothing else", () => {
+  // THE CLAIM IS "SAME FOLD, ONE SOURCE FEWER" — which is why `carriedTags` IS the body and
+  // `recordTags` composes it, rather than the two carrying a shape list each. So the
+  // perturbation is the split the module header warns about: run and reverted, giving
+  // `carriedTags` its own fold that omits the `tag:` shape while `recordTags` keeps all four
+  // fails this case with `expected {} to deeply equal { domain: 'SAP' }` on the fifth record.
+  // (Simply deleting a shape from `carriedTags` does NOT fail it — `recordTags` loses the
+  // same shape and they still agree. That is the composition working, not the test passing
+  // for free, and the two other cases below are what catch it.)
+  it("agrees with recordTags on every record that carries no tags_json column", () => {
+    for (const r of [
+      { vulnerableAsset: { tags: { domain: "A" } } },
+      { "vulnerableAsset.tags.domain": "SAP" },
+      { resource: { tags: { domain: "B" } } },
+      { tags: [{ key: "domain", value: "SAP" }] },
+      { "tag:domain": "SAP" },
+      { repo_name: "svc" },
+    ]) expect(carriedTags(r)).toEqual(recordTags(r));
+  });
+
+  // Perturbation, run and reverted: having `carriedTags` fold `tagsJsonColumn` too fails this
+  // case with `expected { a: '1', b: '2' } to deeply equal { b: '2' }`.
+  it("DROPS THE COLUMN AND ONLY THE COLUMN", () => {
+    const row = { tags_json: '{"a": "1"}', "tag:b": "2" };
+    expect(recordTags(row)).toEqual({ a: "1", b: "2" });
+    expect(carriedTags(row)).toEqual({ b: "2" });
+  });
+
+  it("is {} for null and undefined, like its parent", () => {
+    expect(carriedTags(null)).toEqual({});
+    expect(carriedTags(undefined)).toEqual({});
+  });
+
+  // Perturbation, run and reverted: composing `recordTags` the other way round —
+  // `{ ...carriedTags(record), ...tagsJsonColumn(record) }` — fails this case with
+  // `expected { domain: 'COLUMN' } to deeply equal { domain: 'CARRIED' }`.
+  it("recordTags keeps the COLUMN at lowest precedence, as the single fold always did", () => {
+    // The four shapes wrote into one bag in order and later ones overwrote earlier ones.
+    // Splitting the fold must not quietly reverse that for a row carrying both.
+    const row = { tags_json: '{"domain": "COLUMN"}', "tag:domain": "CARRIED" };
+    expect(recordTags(row)).toEqual({ domain: "CARRIED" });
   });
 });
 
 describe("domainOf", () => {
   it("resolves through recordTags, so every shape reaches the same answer", () => {
-    expect(domainOf({ tags_json: '{"Wiz/Domain": "SAP"}' })).toBe("SAP");
-    expect(domainOf({ resource: { tags: { "Wiz/Domain": "SAP" } } })).toBe("SAP");
-    expect(domainOf({ tags: [{ key: "Wiz/Domain", value: "SAP" }] })).toBe("SAP");
+    expect(domainOf({ tags_json: '{"domain": "SAP"}' })).toBe("SAP");
+    expect(domainOf({ resource: { tags: { domain: "SAP" } } })).toBe("SAP");
+    expect(domainOf({ tags: [{ key: "domain", value: "SAP" }] })).toBe("SAP");
   });
 });
 
