@@ -2,11 +2,16 @@
 // two-pass fetch, and the fail-soft posture that keeps an unreachable map from taking down
 // every page.
 //
-// TWO TAGS ON ONE ROAD. A business domain (`Wiz/Domain`) and a lifecycle (`lifecycle`) are both
+// TWO TAGS ON ONE ROAD. A business domain (`domain`) and a lifecycle (`lifecycle`) are both
 // carried by a REPOSITORY and by no finding, so both are graphSearched and joined by identity
 // through this one module. What that buys — and what these cases are mostly about — is that a
 // repository carrying only one of the two is still reached: the fetch pages once per key and
 // reads BOTH tags off every entity either pass returns.
+//
+// BOTH DEFAULT KEYS ARE BARE WORDS, which is why `resolveRepoTags` reads `carriedTags` and not
+// `recordTags`: this register fills the `tags_json` COLUMN with the collapsed project map, so a
+// bare key that matches a project SLUG would have answered with a project name, ahead of the
+// map. See "a project slug is not a tag key" below.
 //
 // `wizClient` and `sheetsDb` are mocked, so what is under test is the JOIN — which tokens a
 // repository is indexed under, which tokens a finding is probed with, and what happens when
@@ -30,6 +35,8 @@ const H = vi.hoisted(() => ({
   sheetsThrow: false,
   prop: null as string | null,
   lifecycleProp: null as string | null,
+  /** `REPO_TAG_MAP_KEYS` — the provenance stamp `setRepoTagMap` writes beside the tab. */
+  stamp: null as string | null,
   bumped: 0,
 }));
 
@@ -69,21 +76,33 @@ vi.mock("../src/server/sheetsDb", async (orig) => {
 });
 
 vi.mock("../src/server/props", () => ({
-  PROP_KEYS: { wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY", wizLifecycleTagKey: "WIZ_LIFECYCLE_TAG_KEY" },
-  getProp: (key: string) => (key === "WIZ_LIFECYCLE_TAG_KEY" ? H.lifecycleProp : H.prop),
+  PROP_KEYS: {
+    wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
+    wizLifecycleTagKey: "WIZ_LIFECYCLE_TAG_KEY",
+    repoTagMapKeys: "REPO_TAG_MAP_KEYS",
+  },
+  getProp: (key: string) => {
+    if (key === "WIZ_LIFECYCLE_TAG_KEY") return H.lifecycleProp;
+    if (key === "REPO_TAG_MAP_KEYS") return H.stamp;
+    return H.prop;
+  },
+  setProp: (key: string, value: string) => {
+    if (key === "REPO_TAG_MAP_KEYS") H.stamp = value;
+  },
 }));
 
 vi.mock("../src/server/serverCache", () => ({ bumpDataVersion: () => { H.bumped += 1; } }));
 
 const {
-  attachRepoTags, configuredDomainTagKey, configuredLifecycleTagKey, fetchRepoTags, foldToken,
-  getRepoTagMap, mapHealth, parseRepoEntity, refreshRepoTags, resetRepoTagMapMemo, resolveDomain,
-  resolveLifecycle, resolveRepoTags, setRepoTagMap,
+  attachRepoTags, builtUnderKeys, configuredDomainTagKey, configuredLifecycleTagKey,
+  fetchRepoTags, foldToken, getRepoTagMap, keysAreStale, mapHealth, parseRepoEntity,
+  refreshRepoTags, resetRepoTagMapMemo, resolveDomain, resolveLifecycle, resolveRepoTags,
+  setRepoTagMap,
 } = await import("../src/server/repoTags");
 const { isSafeTagKey, reposByTagQuery } = await import("../src/server/wizReposQuery");
 
 /** The default pair, spelled once — every `resolve*` case below probes with it. */
-const KEYS = { domain: "Wiz/Domain", lifecycle: "lifecycle" };
+const KEYS = { domain: "domain", lifecycle: "lifecycle" };
 
 beforeEach(() => {
   H.pages = [];
@@ -94,6 +113,7 @@ beforeEach(() => {
   H.reposThrow = false;
   H.prop = null;
   H.lifecycleProp = null;
+  H.stamp = null;
   H.bumped = 0;
   resetRepoTagMapMemo();
   vi.restoreAllMocks();
@@ -107,10 +127,14 @@ describe("reposByTagQuery", () => {
   it("inlines the tag key into the where literal, not as a $variable", () => {
     // gas_ai found a $variable inside a graphSearch `where` literal fragile against this
     // gateway; gas/ has shipped the inlined form since. Paging still rides $first/$after.
-    const q = reposByTagQuery("Wiz/Domain");
-    expect(q).toContain('where: { tags: { CONTAINS: [{ key: "Wiz/Domain" }] } }');
+    const q = reposByTagQuery("domain");
+    expect(q).toContain('where: { tags: { CONTAINS: [{ key: "domain" }] } }');
     expect(q).toContain("$first: Int");
     expect(q).toContain("$after: String");
+    // A configured key gets the same treatment — the namespaced spelling gas/ defaults to is
+    // just another value here, not a special case.
+    expect(reposByTagQuery("Wiz/Domain"))
+      .toContain('where: { tags: { CONTAINS: [{ key: "Wiz/Domain" }] } }');
   });
 
   it("is ONE KEY PER DOCUMENT — the caller pages it twice rather than widening the where", () => {
@@ -119,13 +143,13 @@ describe("reposByTagQuery", () => {
     // has been in production since it shipped.
     const q = reposByTagQuery("lifecycle");
     expect(q).toContain('CONTAINS: [{ key: "lifecycle" }]');
-    expect(q).not.toContain("Wiz/Domain");
+    expect(q).not.toContain("domain");
   });
 
   it("asks for both repository entity types", () => {
     // SCA names a repository BRANCH and SAST/secrets a repository; the tenant may carry the
     // tag on either, and nothing here can verify which without the live tenant.
-    expect(reposByTagQuery("Wiz/Domain")).toContain("type: [REPOSITORY, REPOSITORY_BRANCH]");
+    expect(reposByTagQuery("domain")).toContain("type: [REPOSITORY, REPOSITORY_BRANCH]");
   });
 
   it("REFUSES an unsafe key rather than escaping it or falling back", () => {
@@ -156,7 +180,7 @@ describe("parseRepoEntity", () => {
     // ALL OF THEM, because whether a graphSearch entity's `id` is the same identifier a
     // finding's `repo_id` holds is not verifiable from here. Any one overlap is enough.
     const { domain, tokens } = parseRepoEntity(
-      entity({ tags: [{ key: "Wiz/Domain", value: "SAP" }], id: "r-1", externalId: "EXT-1", name: "svc-api" }),
+      entity({ tags: [{ key: "domain", value: "SAP" }], id: "r-1", externalId: "EXT-1", name: "svc-api" }),
       KEYS,
     );
     expect(domain).toBe("SAP");
@@ -171,7 +195,7 @@ describe("parseRepoEntity", () => {
     const parsed = parseRepoEntity(
       entity({
         id: "r-1",
-        tags: [{ key: "Wiz/Domain", value: "SAP" }, { key: "lifecycle", value: "END_OF_LIFE" }],
+        tags: [{ key: "domain", value: "SAP" }, { key: "lifecycle", value: "END_OF_LIFE" }],
       }),
       KEYS,
     );
@@ -204,7 +228,7 @@ describe("parseRepoEntity", () => {
 
   it("accepts properties as a JSON string, which some tenants return", () => {
     const { domain } = parseRepoEntity(
-      entity({} as Rec, { properties: JSON.stringify({ "tag:Wiz/Domain": "CROSS" }) }),
+      entity({} as Rec, { properties: JSON.stringify({ "tag:domain": "CROSS" }) }),
       KEYS,
     );
     expect(domain).toBe("CROSS");
@@ -227,7 +251,7 @@ describe("parseRepoEntity", () => {
 describe("fetchRepoTags", () => {
   const tagged = (id: string, tags: Rec[]): Rec => ({ id, name: id, properties: { id, tags } });
   const domainOf = (id: string, domain: string): Rec =>
-    tagged(id, [{ key: "Wiz/Domain", value: domain }]);
+    tagged(id, [{ key: "domain", value: domain }]);
   const lifeOf = (id: string, lifecycle: string): Rec =>
     tagged(id, [{ key: "lifecycle", value: lifecycle }]);
   /** One page, terminal. */
@@ -241,7 +265,7 @@ describe("fetchRepoTags", () => {
     const { map, stats } = fetchRepoTags();
     expect(map["r-1"]!.domain).toBe("SAP");
     expect(map["r-2"]!.domain).toBe("CROSS");
-    expect(stats).toMatchObject({ repos: 2, domains: 2, tagKey: "Wiz/Domain" });
+    expect(stats).toMatchObject({ repos: 2, domains: 2, tagKey: "domain" });
     expect(H.calls[1]!.variables.after).toBe("c1");
   });
 
@@ -255,7 +279,7 @@ describe("fetchRepoTags", () => {
     ];
     const { map, stats } = fetchRepoTags();
     expect(H.calls).toHaveLength(2);
-    expect(H.calls[0]!.query).toContain('key: "Wiz/Domain"');
+    expect(H.calls[0]!.query).toContain('key: "domain"');
     expect(H.calls[1]!.query).toContain('key: "lifecycle"');
     expect(map["r-1"]!.domain).toBe("SAP");
     expect(map["r-9"]!.lifecycle).toBe("END_OF_LIFE");
@@ -328,14 +352,14 @@ describe("resolveRepoTags", () => {
   it("matches a ledger row on repo_id, and answers both tags at once", () => {
     expect(resolveRepoTags({ repo_id: "r-1" }, map, KEYS))
       .toEqual({ domain: "SAP", lifecycle: "END_OF_LIFE" });
-    expect(resolveDomain({ repo_id: "r-1" }, map, "Wiz/Domain")).toBe("SAP");
+    expect(resolveDomain({ repo_id: "r-1" }, map, "domain")).toBe("SAP");
     expect(resolveLifecycle({ repo_id: "r-1" }, map, "lifecycle")).toBe("END_OF_LIFE");
   });
 
   it("matches on repo_name when the id does not overlap", () => {
     // The whole point of indexing under several tokens: the id spaces may not line up, and a
     // join that depended on one of them would silently match nothing.
-    expect(resolveDomain({ repo_id: "unknown", repo_name: "svc-api" }, map, "Wiz/Domain")).toBe("CROSS");
+    expect(resolveDomain({ repo_id: "unknown", repo_name: "svc-api" }, map, "domain")).toBe("CROSS");
   });
 
   it("EACH TAG IS ANSWERED INDEPENDENTLY — one being absent never suppresses the other", () => {
@@ -347,27 +371,75 @@ describe("resolveRepoTags", () => {
 
   it("folds case and whitespace on both sides", () => {
     expect(foldToken("  R-1  ")).toBe("r-1");
-    expect(resolveDomain({ repo_id: "  R-1  " }, map, "Wiz/Domain")).toBe("SAP");
+    expect(resolveDomain({ repo_id: "  R-1  " }, map, "domain")).toBe("SAP");
   });
 
   it("matches a frame record's nested and dotted asset identity", () => {
-    expect(resolveDomain({ resource: { id: "r-1" } }, map, "Wiz/Domain")).toBe("SAP");
-    expect(resolveDomain({ "vulnerableAsset.id": "r-1" }, map, "Wiz/Domain")).toBe("SAP");
+    expect(resolveDomain({ resource: { id: "r-1" } }, map, "domain")).toBe("SAP");
+    expect(resolveDomain({ "vulnerableAsset.id": "r-1" }, map, "domain")).toBe("SAP");
   });
 
-  it("PREFERS A TAG THE ROW ALREADY CARRIES over the join", () => {
+  // Perturbation, run and reverted: replacing `carriedTags(record)` with `{}` at
+  // repoTags.ts's `resolveRepoTags` fails this case with `expected 'SAP' to be 'DIRECT'`.
+  it("PREFERS A TAG THE ROW GENUINELY CARRIES over the join", () => {
     // Nothing produces such a row today — that is why the map exists — but a register that
     // later learns to fetch the tag per finding must not keep answering from a stale join.
-    const row = { repo_id: "r-1", tags_json: '{"Wiz/Domain": "DIRECT"}' };
-    expect(resolveDomain(row, map, "Wiz/Domain")).toBe("DIRECT");
+    // The carrier is a REAL tag shape (`tag:<key>`); the `tags_json` COLUMN is not one here,
+    // which is the case below.
+    const row = { repo_id: "r-1", "tag:domain": "DIRECT" };
+    expect(resolveDomain(row, map, "domain")).toBe("DIRECT");
   });
 
   // Perturbation, run and reverted: returning early when the bag answered EITHER tag — rather
   // than per tag — fails this case with `expected null to be 'END_OF_LIFE'`.
   it("the own-bag preference is PER TAG, so knowing one does not lose the other", () => {
-    const row = { repo_id: "r-1", tags_json: '{"Wiz/Domain": "DIRECT"}' };
+    const row = { repo_id: "r-1", "tag:domain": "DIRECT" };
     expect(resolveRepoTags(row, map, KEYS))
       .toEqual({ domain: "DIRECT", lifecycle: "END_OF_LIFE" });
+  });
+
+  // ------------------------------------------------------------------------------------- #
+  //  The `tags_json` COLUMN is not a tag bag in this register
+  // ------------------------------------------------------------------------------------- #
+  //
+  // reconcile.ts writes the collapsed `{slug: name}` PROJECT MAP into that column, and the own
+  // bag is consulted BEFORE the join map and wins. With `Wiz/Domain` that could not collide —
+  // a project slug carries no `/`. With the bare `domain` and `lifecycle` this register
+  // actually reads, it plainly can, so `resolveRepoTags` reads `carriedTags` instead.
+
+  // Perturbation, run and reverted: restoring `recordTags(record)` in `resolveRepoTags` fails
+  // this case with
+  // `expected { domain: 'VALUE-CHAIN', …(1) } to deeply equal { domain: 'SAP', …(1) }`.
+  it("A PROJECT SLUG IS NOT A TAG KEY — the project map cannot answer either bare-word key", () => {
+    const row = {
+      repo_id: "r-1",
+      tags_json: '{"domain": "VALUE-CHAIN", "lifecycle": "CE-TRANSPORT"}',
+      projects_json: '[{"isFolder": true, "name": "VALUE-CHAIN", "slug": "domain"}]',
+    };
+    expect(resolveRepoTags(row, map, KEYS))
+      .toEqual({ domain: "SAP", lifecycle: "END_OF_LIFE" });
+  });
+
+  // Perturbation, run and reverted: gating the column on `!record["projects_json"]` — the
+  // narrower guard this one was first drafted as — PASSES the case above and fails this one
+  // with `expected 'VALUE-CHAIN' to be 'SAP'`. A row last written before `projects_json`
+  // existed carries the project map with that column blank (projectGrain.ts's `owner_path`
+  // fallback is for exactly that population), so the narrower guard leaks on the oldest rows.
+  it("...including on a LEGACY row, written before `projects_json` existed as a column", () => {
+    const row = { repo_id: "r-1", tags_json: '{"domain": "VALUE-CHAIN"}' };
+    expect(resolveDomain(row, map, "domain")).toBe("SAP");
+  });
+
+  it("and a stale projects_json never suppresses a tag the row genuinely carries", () => {
+    // The other direction of the same refutation: reconcile.ts never erases either column
+    // independently, so a finding seen once WITH projects and later without can end up with a
+    // stale `projects_json` beside a real bag. Refusing the column outright is unaffected.
+    const row = {
+      repo_id: "r-1",
+      projects_json: '[{"isFolder": true, "name": "VALUE-CHAIN", "slug": "value-chain"}]',
+      resource: { tags: { domain: "DIRECT" } },
+    };
+    expect(resolveDomain(row, map, "domain")).toBe("DIRECT");
   });
 
   it("is null when no token overlaps — degrades to 'no tags', never to wrong ones", () => {
@@ -456,9 +528,22 @@ describe("the persisted map", () => {
     expect(H.bumped).toBe(1);
   });
 
+  // Perturbation, run and reverted: dropping the `setProp` line from `setRepoTagMap` fails
+  // this case with `expected null to deeply equal { domain: 'Org/Team', …(1) }` — and takes
+  // the whole stale-key readout with it, since a map that never records its provenance reads
+  // as unknown forever.
+  it("STAMPS THE KEYS IT WAS BUILT UNDER, beside the tab", () => {
+    // A persisted map outlives a key. Without this, a deployment that changes a Script
+    // Property — or takes a release that changes a DEFAULT — goes on serving values fetched
+    // under the old key with the new one printed over them.
+    H.prop = "Org/Team";
+    setRepoTagMap({ "r-1": { domain: "SAP", lifecycle: null } });
+    expect(builtUnderKeys()).toEqual({ domain: "Org/Team", lifecycle: "lifecycle" });
+  });
+
   it("refreshRepoTags fetches, persists and reports in one step", () => {
     H.pages = [{
-      nodes: [{ entities: [{ id: "r-1", properties: { id: "r-1", tags: [{ key: "Wiz/Domain", value: "SAP" }] } }] }],
+      nodes: [{ entities: [{ id: "r-1", properties: { id: "r-1", tags: [{ key: "domain", value: "SAP" }] } }] }],
       hasNextPage: false, endCursor: null,
     }];
     expect(refreshRepoTags()).toMatchObject({ repos: 1, domains: 1 });
@@ -510,7 +595,7 @@ describe("mapHealth — the three states, and why it measures the join", () => {
     const h = mapHealth();
     // Three keys, two domains: the map indexes a repository under several tokens, so keys
     // outrunning domains is the healthy shape rather than a sign of anything.
-    expect(h).toMatchObject({ keys: 3, domains: 2, tagKey: "Wiz/Domain", repos: 3, placed: 2 });
+    expect(h).toMatchObject({ keys: 3, domains: 2, tagKey: "domain", repos: 3, placed: 2 });
     expect(h.sampleUnplaced).toEqual(["svc-jobs"]);
     expect(H.calls).toHaveLength(0);
   });
@@ -583,5 +668,66 @@ describe("mapHealth — the three states, and why it measures the join", () => {
     const h = mapHealth();
     expect(h).toMatchObject({ keys: 1, domains: 1, repos: 0, placed: 0, lifecyclePlaced: 0 });
     expect(warn).toHaveBeenCalledOnce();
+  });
+});
+
+// =========================================================================================
+//  The provenance stamp — which keys the PERSISTED map actually answers under
+// =========================================================================================
+//
+// `domain_map` outlives the keys that built it. Change a Script Property, or take a release
+// that changes a DEFAULT, and the tab keeps answering under the old key while the Settings
+// card prints the new one over it — a healthy-looking join over an attribution nobody is
+// reading any more. These pin the three states the card has to tell apart.
+
+describe("the keys the map was built under", () => {
+  it("is null when nothing recorded them, and null is UNKNOWN rather than agreement", () => {
+    expect(builtUnderKeys()).toBeNull();
+    // Every sheet written before the stamp existed reads this way, and that population is
+    // exactly the one a key change strands — so it must not be folded into "matches".
+    expect(keysAreStale(3, null, KEYS)).toBe(true);
+  });
+
+  it("is null for a property that is not readable as a pair, rather than throwing", () => {
+    for (const junk of ["", "not json", "[]", "42", '{"domain": 7}']) {
+      H.stamp = junk;
+      expect(builtUnderKeys(), junk).toBeNull();
+    }
+  });
+
+  // Perturbation, run and reverted: comparing with `===` instead of the trimmed lower-case
+  // fold fails this case with `expected true to be false` — an operator would be told to
+  // refresh a map that is already answering under the right key.
+  it("MATCHES CASE-INSENSITIVELY, because the key read does too", () => {
+    expect(keysAreStale(3, { domain: "  Domain ", lifecycle: "LIFECYCLE" }, KEYS)).toBe(false);
+  });
+
+  it("is stale when either key moved — the two are wrong independently", () => {
+    expect(keysAreStale(3, { domain: "Wiz/Domain", lifecycle: "lifecycle" }, KEYS)).toBe(true);
+    expect(keysAreStale(3, { domain: "domain", lifecycle: "Repo/Stage" }, KEYS)).toBe(true);
+    expect(keysAreStale(3, { domain: "domain", lifecycle: "lifecycle" }, KEYS)).toBe(false);
+  });
+
+  // Perturbation, run and reverted: dropping the `keyCount <= 0` guard fails this case with
+  // `expected true to be false`. A deployment that has never pressed Refresh already reads
+  // "Never refreshed"; telling it its map is also out of date names a remedy it has no map
+  // to apply.
+  it("A MAP THAT DOES NOT EXIST IS NOT STALE", () => {
+    expect(keysAreStale(0, null, KEYS)).toBe(false);
+    expect(keysAreStale(0, { domain: "Wiz/Domain", lifecycle: "lifecycle" }, KEYS)).toBe(false);
+  });
+
+  it("mapHealth carries both the stamp and the verdict, so the card decides nothing", () => {
+    H.mapRows = [{ token: "r-1", domain: "SAP", lifecycle: "END_OF_LIFE" }];
+    H.stamp = JSON.stringify({ domain: "Wiz/Domain", lifecycle: "lifecycle" });
+    const h = mapHealth();
+    expect(h.builtUnder).toEqual({ domain: "Wiz/Domain", lifecycle: "lifecycle" });
+    expect(h.tagKey).toBe("domain");
+    expect(h.staleKeys).toBe(true);
+
+    // And a refresh clears it, because `setRepoTagMap` re-stamps.
+    setRepoTagMap({ "r-1": { domain: "SAP", lifecycle: "END_OF_LIFE" } });
+    resetRepoTagMapMemo();
+    expect(mapHealth().staleKeys).toBe(false);
   });
 });

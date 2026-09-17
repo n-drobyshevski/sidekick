@@ -9,9 +9,11 @@
 // `countUnknownRisk` — is not ported. Every one of them recovers a column onto rows written
 // before that column existed: exploit signals onto pre-`has_kev` lifecycles, and `tags_json`
 // onto episodes sealed before `EpisodeRow` carried the domain tag bag. This register is
-// fresh — it has no rows predating its own schema, `EpisodeRow` here has no `tags_json`
-// column at all, and there is no `Wiz/Domain` tag or `domainOfTags` in the tree (ownership
-// here is `owner_project`, which ledgerCore's episode-collision branch already transfers).
+// fresh — it has no rows predating its own schema, and `EpisodeRow` here has no `tags_json`
+// column at all, so a sealed episode is attributed by `owner_project` (which ledgerCore's
+// episode-collision branch already transfers). It DOES have a domain axis — `domainTag.ts`,
+// added after this note was written — but that tag reaches a row through the repository join
+// (`server/repoTags.ts`) and is attached on read, so there is no persisted tag bag to recover.
 // Porting them would add recovery paths for a history that does not exist, keyed on columns
 // that do not exist. gas/'s fourth stats-identity leg (`attributionOf`, which counts tag
 // bags) goes with them for the same reason; the other three legs are kept.
@@ -252,8 +254,9 @@ export function settledEpisodeRows(
  * and this register classifies sast rows on `cwe` / `ai_verdict` as well as sca rows on the
  * exploit triple. `ai_verdict` is NOT on EpisodeRow (the tab has no column), so a sealed sast
  * lifecycle keeps only its CWE clause; that is the tab's shape, not a decision made here.
- * `owner_project` is what a sealed episode is attributed by — this register has no tag bag
- * and no `Wiz/Domain` tag, so gas/'s `tags_json` line has no counterpart.
+ * `owner_project` is what a sealed episode is attributed by — `EpisodeRow` carries no tag bag,
+ * and this register's domain arrives through the repository join and is attached on read
+ * (`server/repoTags.ts`), so gas/'s `tags_json` line has no counterpart.
  */
 export function toEpisodeRow(live: LedgerRow, compactionId: string): EpisodeRow {
   return {

@@ -1,5 +1,5 @@
 // Repository-tag ingestion + join. This register reads TWO tags off a repository — the
-// business domain (`Wiz/Domain`, `domain/domainTag.ts`) and the lifecycle (`lifecycle`,
+// business domain (`domain`, `domain/domainTag.ts`) and the lifecycle (`lifecycle`,
 // `domain/lifecycleTag.ts`) — and findings carry their repository without either of them, so
 // both are graphSearched once over repository entities, folded into one repository-identity →
 // tags map, and attached to each record live: `_domain` and `_lifecycle`, never baked into the
@@ -37,11 +37,11 @@
 // write without anybody migrating anything (`sheetsDb.ensureHeaders`). The FILE is named for
 // what it does, because nothing persists a file name.
 
-import { domainOfTags, recordTags, resolveDomainTagKey } from "../domain/domainTag";
+import { carriedTags, domainOfTags, recordTags, resolveDomainTagKey } from "../domain/domainTag";
 import { DOMAIN_FIELD } from "../domain/domainScope";
 import { LIFECYCLE_FIELD, lifecycleOfTags, resolveLifecycleTagKey } from "../domain/lifecycleTag";
 import { present, type Rec } from "../domain/util";
-import { getProp, PROP_KEYS } from "./props";
+import { getProp, PROP_KEYS, setProp } from "./props";
 import { bumpDataVersion } from "./serverCache";
 import { ensureTab, overwrite, readAll, TABS } from "./sheetsDb";
 import { queryPage } from "./wizClient";
@@ -146,9 +146,16 @@ function recordIdentityTokens(record: Rec): string[] {
  * carries its own lifecycle but no domain still gets its domain from the map. Falling back on
  * the pair — "the bag answered nothing at all, so look it up" — would have that row report no
  * domain because it happened to know its own lifecycle.
+ *
+ * `carriedTags`, NOT `recordTags` — what the row CARRIES, not what its `tags_json` column
+ * stores. This is the only reader in the tree that meets a ledger row, and in this register
+ * that column holds the collapsed `{slug: name}` project map; read as a tag bag it would answer
+ * a bare-word key with a project NAME, and win, because the own bag is consulted first.
+ * domainTag.ts's `carriedTags` carries the argument and the two reasons a per-row guard on
+ * `projects_json` was not enough.
  */
 export function resolveRepoTags(record: Rec, map: RepoTagMap, keys: TagKeys): RepoTags {
-  const own = recordTags(record);
+  const own = carriedTags(record);
   let domain = domainOfTags(own, keys.domain);
   let lifecycle = lifecycleOfTags(own, keys.lifecycle);
   if (domain !== null && lifecycle !== null) return { domain, lifecycle };
@@ -252,10 +259,18 @@ export function getRepoTagMap(): RepoTagMap {
 }
 
 /**
- * Persist the map and invalidate every cached read.
+ * Persist the map, stamp the keys it was built under, and invalidate every cached read.
  *
  * The version bump is not optional: read models are keyed by it, so a refreshed map that did
  * not bump would leave every cached domain figure answering for the old attribution.
+ *
+ * THE STAMP IS TAKEN HERE because this is the single write point for the map, and taking it
+ * anywhere else is how a map and its provenance drift apart. For the only real writer the keys
+ * in force ARE the keys the map was fetched under: `fetchRepoTags` reads them from
+ * `configuredTagKeys()` one call earlier and pages once per key. `devSeed.seedRepoTagMap` also
+ * lands here, and stamping the configured keys is right for it too — a seeded map is not
+ * fetched under any key, so the honest reading is "current", which is what keeps the harness
+ * from showing a stale-map warning it cannot act on.
  */
 export function setRepoTagMap(map: RepoTagMap): void {
   ensureTab(TABS.domainMap);
@@ -267,8 +282,35 @@ export function setRepoTagMap(map: RepoTagMap): void {
       lifecycle: tags.lifecycle ?? null,
     }));
   overwrite(TABS.domainMap, rows);
+  setProp(PROP_KEYS.repoTagMapKeys, JSON.stringify(configuredTagKeys()));
   mapMemo = { ...map };
   bumpDataVersion();
+}
+
+/**
+ * The keys the persisted map was built under, or null when nothing recorded them.
+ *
+ * NULL IS "UNKNOWN", NOT "THE SAME". Every sheet written before the stamp existed reads null
+ * here, and that population is exactly the one a key change strands — so it must not be folded
+ * into agreement. `mapHealth` reports the distinction and the card words it for what is known.
+ *
+ * Fails soft, like every other read in this file: a hand-edited or truncated property is one
+ * unknown provenance, not a Settings page that will not paint.
+ */
+export function builtUnderKeys(): TagKeys | null {
+  const raw = getProp(PROP_KEYS.repoTagMapKeys);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const rec = parsed as Rec;
+    const domain = typeof rec["domain"] === "string" ? rec["domain"] : "";
+    const lifecycle = typeof rec["lifecycle"] === "string" ? rec["lifecycle"] : "";
+    if (!domain && !lifecycle) return null;
+    return { domain, lifecycle };
+  } catch {
+    return null;
+  }
 }
 
 // ----------------------------------------------------------------------------- fetch
@@ -316,6 +358,12 @@ export function parseRepoEntity(
   // ONE normaliser for every tag shape — see domainTag.recordTags. The graphSearch array form
   // (`properties.tags` as `[{key, value}]`), the object form and the flat `tag:<key>` form are
   // all read by it, so this function does not carry a fourth copy of that logic.
+  //
+  // `recordTags` HERE AND `carriedTags` IN `resolveRepoTags`, which is not an oversight. This
+  // blob is the TENANT's own `properties`; no reconcile pass ever wrote a project map into it,
+  // and a tenant property literally named `tags_json` holding a tag object is the one case that
+  // branch is still for. The ledger column that had to be refused is a thing this register
+  // writes, and it is never on an entity.
   const bag = recordTags(props);
   const domain = domainOfTags(bag, keys.domain);
   const lifecycle = lifecycleOfTags(bag, keys.lifecycle);
@@ -448,6 +496,27 @@ export interface MapHealth {
   lifecycles: number;
   tagKey: string;
   lifecycleTagKey: string;
+  /**
+   * The keys the PERSISTED map was built under, when anything recorded them.
+   *
+   * THREE STATES, AND THE CARD MUST TELL THEM APART. `null` is "nothing recorded it" — a map
+   * written before the stamp existed, which is precisely the population a key change strands,
+   * so it is never folded into agreement. Equal to the keys above is the healthy case. Unequal
+   * means the map on the tab answers under a key this register no longer reads, and a refresh
+   * is what fixes it. Only meaningful when `keys > 0`: with no map at all there is no
+   * provenance to disagree with, and the card already says "Never refreshed".
+   */
+  builtUnder: TagKeys | null;
+  /**
+   * `builtUnder` disagrees with the keys in force — the map answers under a key this register
+   * no longer reads, and a refresh is what fixes it.
+   *
+   * DECIDED SERVER-SIDE AND SHIPPED, rather than re-derived on the card. The comparison has
+   * rules (case-insensitive, trimmed, and an unknown provenance counts as stale) and a second
+   * copy of them on the client is how the card and the model come to disagree about what the
+   * operator is being told.
+   */
+  staleKeys: boolean;
   /** Repositories in the `repos` tab — the register's own asset dimension. */
   repos: number;
   /** Of those, how many the map places a DOMAIN for. THE FIGURE THAT MATTERS. */
@@ -535,16 +604,42 @@ export function mapHealth(): MapHealth {
     if (t.lifecycle) lifecycles.add(t.lifecycle);
   }
 
+  const builtUnder = builtUnderKeys();
   return {
     keys: tokens.length,
     domains: domains.size,
     lifecycles: lifecycles.size,
     tagKey: keys.domain,
     lifecycleTagKey: keys.lifecycle,
+    builtUnder,
+    staleKeys: keysAreStale(tokens.length, builtUnder, keys),
     repos,
     placed,
     lifecyclePlaced,
     sampleTokens: tokens.slice(0, SAMPLE),
     sampleUnplaced,
   };
+}
+
+/**
+ * Does a map of `keyCount` tokens, built under `built`, answer under keys this register no
+ * longer reads?
+ *
+ * EXPORTED SO THE RULE HAS ONE HOME. Compared case-insensitively and trimmed, for `tagValue`'s
+ * reason: a map fetched under `Domain` against a property now reading `domain` is the SAME key,
+ * and a warning there would send an operator to refresh something that is already right.
+ *
+ * FALSE WITH NO MAP. There is nothing stale about a map that does not exist, and the card
+ * already says "Never refreshed" for that — a deployment that has never pressed the button
+ * must not be told its map is out of date on top of it.
+ */
+export function keysAreStale(
+  keyCount: number,
+  built: TagKeys | null,
+  inForce: TagKeys,
+): boolean {
+  if (keyCount <= 0) return false;
+  if (!built) return true; // unknown provenance is not agreement — see `builtUnderKeys`.
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+  return !same(built.domain, inForce.domain) || !same(built.lifecycle, inForce.lifecycle);
 }

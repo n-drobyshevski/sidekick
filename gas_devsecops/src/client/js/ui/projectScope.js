@@ -22,7 +22,7 @@
 //     of the other M-N carry no project at all.
 //
 // TWO DIMENSIONS NOW, ONE CONTROL, ONE AT A TIME. This file carried only projects until the
-// `Wiz/Domain` tag became reachable. It was never that the tenant did not tag its repositories
+// repository `domain` tag became reachable. It was never that the tenant did not tag its repos
 // — it does — but that the tag could not be FETCHED: the three finding documents cannot select
 // `tags` on a repository asset, so the tag arrives through a separate graphSearch join
 // (`src/server/repoTags.ts`), and until that existed a domain picker would have offered

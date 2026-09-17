@@ -11,20 +11,31 @@ export const PROP_KEYS = {
   wizAuthUrl: "WIZ_AUTH_URL",
   wizApiUrl: "WIZ_API_URL",
   wizProjectIdV2: "WIZ_PROJECT_ID_V2",
-  // The repository tag key whose VALUE is a business domain. Unset means `Wiz/Domain`, which
-  // is what this tenant writes; a property rather than a setting because it is a fact about
-  // the tenant's tagging convention, not a per-operator view preference — the same tier
-  // WIZ_PROJECT_ID_V2 sits in. See domain/domainTag.ts for why it is resolved on READ: a key
-  // baked into the ledger would make correcting a typo cost a full re-scan.
+  // The repository tag key whose VALUE is a business domain. Unset means `domain`, the bare
+  // word this tenant writes on the repository itself; a property rather than a setting because
+  // it is a fact about the tenant's tagging convention, not a per-operator view preference —
+  // the same tier WIZ_PROJECT_ID_V2 sits in. See domain/domainTag.ts for why it is resolved on
+  // READ: a key baked into the ledger would make correcting a typo cost a full re-scan. A
+  // tenant whose repositories carry the namespaced `Wiz/Domain` instead sets it here.
   wizDomainTagKey: "WIZ_DOMAIN_TAG_KEY",
   // The repository tag key whose VALUE is where that repository is in its life
   // (`END_OF_LIFE`, `IN_PRODUCTION`, …). Unset means `lifecycle`. Same tier and same reasoning
-  // as the domain key above it, with one difference worth stating: `Wiz/Domain` is a key Wiz's
-  // own console writes, so its default is a FACT, while a repository's lifecycle reaches Wiz
-  // under whatever key the tenant's own catalogue used — so this default is a GUESS, and
-  // `repoTags.mapHealth` publishes how many repositories it actually placed so a wrong guess
-  // shows up as a zero on the Settings page rather than as a quietly empty column.
+  // as the domain key above it, and the same standing of default: BOTH tags reach Wiz from the
+  // tenant's own catalogue under whatever key that system already used, so both defaults are
+  // GUESSES rather than facts about Wiz. That is why `repoTags.mapHealth` publishes how many
+  // repositories each key actually placed, SEPARATELY — a wrong guess shows up as a zero on the
+  // Settings page rather than as a quietly empty column, and the two keys can be wrong alone.
   wizLifecycleTagKey: "WIZ_LIFECYCLE_TAG_KEY",
+  // The two keys the PERSISTED repository-tag map was actually built under, as
+  // `{"domain":"…","lifecycle":"…"}`, written by repoTags.setRepoTagMap on every refresh.
+  //
+  // WHY A MAP NEEDS TO REMEMBER ITS OWN PROVENANCE. `domain_map` outlives the keys above: a
+  // deployment that changes one — or takes a release that changes a DEFAULT — keeps serving
+  // values fetched under the old key until somebody presses Refresh, and the Settings card
+  // would print the new key over them and look perfectly healthy. That is the one picture
+  // `settings.js`'s domainMapCard exists to prevent, so the card compares the two and says so.
+  // Not a column on the tab: this is one fact about the whole map, not a fact per token.
+  repoTagMapKeys: "REPO_TAG_MAP_KEYS",
   ledgerSpreadsheetId: "LEDGER_SPREADSHEET_ID",
   archiveFolderId: "ARCHIVE_FOLDER_ID",
   // Who may open the web app, on top of the deployment's own "anyone within <domain>" fence.

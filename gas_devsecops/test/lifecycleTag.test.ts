@@ -49,6 +49,10 @@ describe("lifecycleOfTags", () => {
   });
 
   it("another key's value is not a lifecycle", () => {
+    // Both of this register's keys are bare words off the same tag bag now, so the one that
+    // matters most is that they do not read each other: a repository's `domain` is never its
+    // lifecycle, however the bag arrived.
+    expect(lifecycleOfTags({ domain: "SAP" })).toBeNull();
     expect(lifecycleOfTags({ "Wiz/Domain": "SAP" })).toBeNull();
     expect(lifecycleOfTags({ lifecycle: "RETIRED" }, "Repo/Lifecycle")).toBeNull();
   });

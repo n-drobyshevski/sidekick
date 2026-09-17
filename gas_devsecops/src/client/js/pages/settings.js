@@ -1305,13 +1305,13 @@ export async function renderSettings(host, params, ctx) {
   /**
    * The repository → tags join, and whether it is actually joining.
    *
-   * TWO TAGS, ONE MAP, TWO PLACEMENT FIGURES. The register joins a business domain
-   * (`Wiz/Domain`) and a lifecycle (`lifecycle`) off the same repository entities in one
-   * refresh, and this card reports each one's reach SEPARATELY, because they fail separately:
-   * the domain key is one Wiz's own console writes, while the lifecycle key is whatever the
-   * tenant's own catalogue used, so a perfectly healthy domain half can sit beside a lifecycle
-   * half that matches nothing. A single collapsed "placed" would hide exactly that, and the
-   * Lifecycle column would just be quietly blank everywhere with nothing on screen saying why.
+   * TWO TAGS, ONE MAP, TWO PLACEMENT FIGURES. The register joins a business domain (`domain`)
+   * and a lifecycle (`lifecycle`) off the same repository entities in one refresh, and this
+   * card reports each one's reach SEPARATELY, because they fail separately: both keys are the
+   * tenant's own catalogue vocabulary rather than anything Wiz writes, and a tenant is free to
+   * have named one of them something else — so a perfectly healthy domain half can sit beside a
+   * lifecycle half that matches nothing, or the reverse. A single collapsed "placed" would hide
+   * exactly that, and a column would just be quietly blank with nothing on screen saying why.
    *
    * WHY THIS CARD EXISTS AT ALL. The domain scope in the app header and the "By business
    * domain" breakdowns are drawn from a map this register fetches SEPARATELY from any sync —
@@ -1402,6 +1402,27 @@ export async function renderSettings(host, params, ctx) {
               + "Lifecycle column is empty and the end-of-life exclusion removes nothing."
             : `Lifecycle tag key: ${lifeKey}`
               + (keys ? ` — placed on ${fmtCount(lifePlaced)} of ${fmtCount(repos)} repositories` : "")));
+        // WHAT THE MAP ON THE TAB WAS ACTUALLY BUILT UNDER, when that is not what is being
+        // read now. Every state above describes the map as though it answered under the keys
+        // printed beside it, and a persisted map outlives a key: change one Script Property,
+        // or take a release that changes a DEFAULT, and the pills would go on reporting a
+        // healthy join over values fetched under a key this register no longer reads. That is
+        // the confident lie this card's header sets out to prevent, so it is said here — with
+        // the remedy, which is the button directly below.
+        //
+        // `staleKeys` IS THE MODEL'S ANSWER, not a comparison redone here (repoTags.keysAreStale).
+        // A map with no recorded provenance — every sheet written before the stamp existed —
+        // is stale by that rule, and the wording says what is actually known rather than
+        // naming a key nobody recorded.
+        if (h.staleKeys) {
+          const under = h.builtUnder;
+          wrap.append(el("span", { class: "settings-remedy muted small" },
+            under
+              ? `This map was built under ${under.domain || "—"} and ${under.lifecycle || "—"}.`
+                + " Refresh to rebuild it under the keys above."
+              : "This map predates the record of which keys it was built under. Refresh to"
+                + " rebuild it under the keys above."));
+        }
       } else {
         wrap.append(statusPill("neutral", "Not checked"));
       }
