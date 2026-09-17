@@ -379,6 +379,27 @@ ring load-bearing where it used to be one of two separations. `gas_devsecops` ca
 identical change for its repository census. Two tests in `coldZoneModel.test.js` pin it: that
 `watching` is the only `warn` segment, and that warm and clear differ by fill alone.
 
+**The solid fills take a field grade, because the status triad is text-grade.** `--ok` and
+`--bad` were darkened until they cleared 4.5:1 *as text on their own tints* — `tokens.base.css`
+records that — and the census spends them as a solid fill over a hundred cells. Against the
+card that measures 6.14:1 and 6.10:1, twice the 3:1 a non-text graphic owes, and a lattice that
+is two-thirds one saturated hue reads as a shout rather than as a count. `--ok-field` and
+`--bad-field` are the same hues with less chroma, lighter, at 3.58:1 and 4.70:1 — the floor
+cleared with margin on both grounds a lattice is drawn over.
+
+The accessibility argument runs the same way, and it is the stronger one. At 6.14 and 6.10 the
+text pair is the SAME cell in greyscale: a dichromat, or a black-and-white print, reads a cold
+asset and a warm one as one block, and only the key row beneath rescues the reading. The field
+pair is 1.31 apart in greyscale and 2.18 under a deuteranope simulation, so the picture now
+carries some of that itself. **Only the SOLID fills move**: a ring is a 2px stroke and a hatch
+is a comb, neither is a large field, and both keep the full-strength ink to stay legible at a
+9px cell. The class sits on the CARD rather than the lattice, because the key row is a sibling
+of the grid and its swatches have to move with it.
+
+Scoped to `.cold-census`, which is both registers' cold zone and nothing else. `gas_ai`'s
+coverage census is the same shape with the same defect and is deliberately **not** repainted
+here: that is its own register's round to measure.
+
 **Unobserved is drawn as two segments, because it was never one piece of news.** `unobserved`
 is tested before `clear`, so an asset that was remediated and then decommissioned stays
 unobserved for as long as the ledger remembers it — nothing open, and no scan will ever list it

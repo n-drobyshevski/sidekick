@@ -412,6 +412,17 @@
 .isotype-cell[data-tone="ok"] { background: var(--ok); }
 .isotype-cell[data-tone="warn"] { background: var(--warn); }
 .isotype-cell[data-tone="bad"] { background: var(--bad); }
+/* THE CENSUS TAKES THE FIELD GRADE, and only the SOLID fills. A ring is a 2px stroke and a
+   hatch is a comb — neither is a large field, and both want the full-strength ink to stay
+   legible at a 9px cell. tokens.base.css carries the measurements, and why gas_ai's coverage
+   census is left alone. The `[data-fill="solid"]` is load-bearing: without it these would also
+   repaint the ring's `--page` core, declared two rules below. */
+.cold-census .isotype-cell[data-fill="solid"][data-tone="ok"] { background: var(--ok-field); }
+.cold-census .isotype-cell[data-fill="solid"][data-tone="bad"] { background: var(--bad-field); }
+/* The key row's swatch is the same mark at 10px, so it moves with the lattice or the two stop
+   being obviously one vocabulary. */
+.cold-census .isotype-key-swatch[data-fill="solid"][data-tone="ok"] { background: var(--ok-field); }
+.cold-census .isotype-key-swatch[data-fill="solid"][data-tone="bad"] { background: var(--bad-field); }
 .isotype-cell[data-fill="ring"] { background: var(--page); box-shadow: inset 0 0 0 2px currentColor; }
 .isotype-cell[data-fill="ring"][data-tone="neutral"] { color: var(--ink); }
 .isotype-cell[data-fill="ring"][data-tone="ok"] { color: var(--ok); }

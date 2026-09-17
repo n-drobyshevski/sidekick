@@ -280,7 +280,10 @@ export async function renderColdZone(main, _params, ctx) {
   function censusCard(view) {
     const model = coldCensusModel(view);
     if (!model || !model.measured) return null;
-    return el("div", { class: "card" },
+    // THE CLASS IS ON THE CARD, not only on the lattice inside it: the key row is a SIBLING
+    // of the grid, and its swatches have to take the same field-grade fills or the key and
+    // the picture stop being obviously one vocabulary.
+    return el("div", { class: "card cold-census" },
       sectionLabel("Every asset, by what the clock can say"),
       unitGrid(model, { className: "cold-census" }),
       unitKeyRow(model));
