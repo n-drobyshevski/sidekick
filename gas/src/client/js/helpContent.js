@@ -426,8 +426,8 @@ const ENTRIES = [
     id: "kev",
     term: "On KEV",
     lines: [
-      "CISA's catalogue of CVEs with reliable evidence of actual exploitation somewhere.",
-      "Exploitation of the CVE, not a claim this finding is reachable here.",
+      "CISA's Known Exploited Vulnerabilities catalogue: CVEs someone has actually exploited.",
+      "Reliable evidence about the CVE, not a claim this finding is reachable here.",
       "It raises the priority of a finding; it does not decide it.",
       "A row Wiz never evaluated against the catalogue is unknown, not absent from it, which is why these counts are reported as a floor.",
     ],

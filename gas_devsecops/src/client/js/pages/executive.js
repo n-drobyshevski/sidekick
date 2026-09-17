@@ -840,10 +840,8 @@ export async function renderExecutive(host, params, _ctx) {
       return {
         term: "half-life",
         lines: [
-          "The survival curve never falls to half within the observed window, so there is no"
-          + " median to publish.",
-          "More than half of what is tracked is still open, so the half-life is at least the"
-          + " longest thing observed — which is the figure above.",
+          "The curve never falls to half inside the window, so there is no median.",
+          "The half-life is at least the longest thing observed — the figure above.",
         ],
       };
     }
@@ -851,8 +849,8 @@ export async function renderExecutive(host, params, _ctx) {
       return {
         term: "half-life",
         lines: [
-          "No lifecycle has a readable clock yet. This is “not measured”, not zero — the"
-          + " half-life needs at least one observation to rest on.",
+          "No lifecycle has a readable clock yet: “not measured”, not zero.",
+          "The half-life needs at least one observation to rest on.",
         ],
       };
     }
@@ -877,8 +875,8 @@ export async function renderExecutive(host, params, _ctx) {
     return el("p", { class: "small muted" },
       tipLabel("Survival curve", {
         lines: [
-          "This page is sent the estimate only, not the curve behind it — the curve, its"
-          + " censor markers and the per-severity split are on MTTR & SLA.",
+          "This page is sent the estimate only, not the curve behind it.",
+          "The curve, its censor markers and the per-severity split are on MTTR & SLA.",
         ],
       }),
       " → ",
@@ -1135,9 +1133,9 @@ export async function renderExecutive(host, params, _ctx) {
     // sits on the heading rather than under the picture.
     const label = sectionLabel("Open findings by severity", {
       lines: [
-        "Severity is the grade Wiz put on the detection, counted over OPEN findings only.",
-        "On the secrets register it grades the detection and not whether the credential is"
-        + " live, which is why that register is segmented differently on its own page.",
+        "Severity is the grade Wiz put on the detection, over OPEN findings only.",
+        "On secrets it grades the detection, not whether the credential is live.",
+        "Which is why that register is segmented differently on its own page.",
       ],
     });
     sevHost.append(label);
@@ -1258,9 +1256,8 @@ export async function renderExecutive(host, params, _ctx) {
           help: {
             term: "half-life",
             lines: [
-              "Three registers, three clocks. The same CVE arriving through a dependency and"
-              + " through first-party code is two findings with two clocks, so these are never"
-              + " summed into one number.",
+              "Three registers, three clocks, never summed into one number.",
+              "The same CVE through a dependency and through code is two findings.",
               ...(view.anyBoundMissing
                 ? ["A dash means that register's curve never falls to half. Its lower bound is"
                   + " not in this payload; MTTR & SLA publishes it."]

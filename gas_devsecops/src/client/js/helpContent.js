@@ -2,6 +2,18 @@
 // `tip` carries `{ term }`. The tip card shows the first two lines; the Help page (when it
 // arrives) shows the whole entry.
 //
+// THE FIRST TWO LINES ARE A CARD, AND A CARD IS 300px WIDE — about 45 characters to a
+// rendered row. Line one says what the thing IS in 110 characters or fewer, line two says the
+// one consequence worth a row in 90 or fewer, and the card totals ~150. Everything after line
+// two is Help-page prose and can breathe. See root DESIGN.md for the family rule, and
+// test/helpContent.test.js's MAX_TIP_LINE_LENGTH for the ceiling this file is held to.
+//
+// Entries this register shares WORD FOR WORD with gas/helpContent.js — lower-bound, half-life,
+// censoring, sla-target, sla-band, kev, known-exploit, epss, sla-edge, returned, episode — are
+// kept byte-identical to their opposite numbers there. The vocabulary is per-app on purpose
+// (gas_shared/README.md: only the SHAPE of a definition is shared), so the two books cannot be
+// merged; keeping the words the same is what stops them drifting apart instead.
+//
 // Every entry here is a term this register uses in a way a reader could reasonably get
 // wrong — which is why "SAST" is defined and "repository" is not. Where a definition
 // encodes a measurement decision, the entry states the decision, because that is exactly
@@ -13,23 +25,25 @@ const ENTRIES = [
     term: "Sync",
     lines: [
       "The act: one run reads all three registers from Wiz and saves what it found.",
-      "Started from the Run sync button in the rail. One sync saves one scan per register, so a sync and a scan are never the same thing.",
+      "One sync saves one scan per register, so a sync and a scan are never the same thing.",
+      "Started from the Run sync button in the rail.",
     ],
   },
   {
     id: "scan",
     term: "Scan",
     lines: [
-      "The record a sync wrote for one register: what was asked for, when, and how many findings came back.",
-      "Three per sync — dependencies, code and secrets — unless a sweep covered fewer. You run a sync; you browse scans.",
-      "Wiz's own detectors are a third thing, called the scanner.",
+      "The record a sync wrote for one register: what was asked for, when, how many came back.",
+      "Three per sync — dependencies, code and secrets — unless a sweep covered fewer.",
+      "You run a sync; you browse scans. Wiz's own detectors are a third thing, called the scanner.",
     ],
   },
   {
     id: "lower-bound",
     term: "Lower bound",
     lines: [
-      "A duration the curve never reached: more than half of what was tracked is still open, so the median is at least this far out and cannot be read exactly.",
+      "A duration the curve never reached, so the median is at least this far out.",
+      "More than half of what was tracked is still open and it cannot be read exactly.",
       "Prose says \"at least N days\" and a figure says \"≥ N\" — one notation per context, and inclusive either way, which is why \"more than\" would be a different claim.",
     ],
   },
@@ -38,7 +52,7 @@ const ENTRIES = [
     term: "Remediation half-life",
     lines: [
       "How long it takes for half of what is open today to be remediated.",
-      "Read off a Kaplan–Meier survival curve, so findings that are still open count as evidence rather than being dropped.",
+      "Off a Kaplan–Meier curve, so still-open findings count as evidence, not as gaps.",
       "Preferred to a mean because remediation is long-tailed: a mean moves when a batch of easy findings closes, and can improve while real exposure does not.",
     ],
   },
@@ -46,8 +60,8 @@ const ENTRIES = [
     id: "censoring",
     term: "Censored",
     lines: [
-      "A finding that is still open has been open at least this long, but we do not know how long it will end up taking.",
-      "Dropping those rows and averaging what is left is the single most common way a remediation figure flatters its owner.",
+      "A still-open finding has been open at least this long; how long it will take is unknown.",
+      "Dropping those rows and averaging the rest is how a remediation figure flatters its owner.",
       "The curve keeps them as right-censored observations, which is what makes the half-life honest.",
     ],
   },
@@ -59,8 +73,9 @@ const ENTRIES = [
     id: "disappearance",
     term: "Dated by disappearance",
     lines: [
-      "A finding dated closed at the first scan that stopped returning it, because the API publishes no resolution date for it.",
-      "An upper bound whose error is the interval between two scans: \"gone by 12 Aug\", never \"resolved 12 Aug\".",
+      "A finding dated closed at the first scan that stopped returning it.",
+      "An upper bound: \"gone by 12 Aug\", never \"resolved 12 Aug\".",
+      "The API publishes no resolution date for it, so the error is the interval between two scans.",
       "Until two syncs have run and findings have begun to disappear between them, a register dated this way reads near-zero — an absence of observations, not a fast team.",
     ],
   },
@@ -85,7 +100,7 @@ const ENTRIES = [
     term: "SCA",
     lines: [
       "Software composition analysis: a known CVE in a third-party package at a version.",
-      "Fixed by upgrading the dependency — which means it cannot be fixed at all until a fixed version exists.",
+      "Fixed by upgrading the dependency, so it cannot be fixed at all until a fixed version exists.",
     ],
   },
   {
@@ -93,15 +108,16 @@ const ENTRIES = [
     term: "Awaiting a fix",
     lines: [
       "An open SCA finding whose package has no fixed version published yet.",
-      "Counting the wait for a vendor as remediation time measures the vendor, not the team, so these rows are reported separately.",
+      "Reported separately: the wait measures the vendor, not the team.",
+      "Counting it as remediation time would credit or blame the wrong party.",
     ],
   },
   {
     id: "two-clocks",
     term: "The two clocks",
     lines: [
-      "Detection to remediation is one clock; it includes any time spent waiting for a fix to exist.",
-      "Actionable time is the second: it starts when a fix becomes available, and is the only one the team controls.",
+      "Detection to remediation is one clock, including any wait for a fix to exist.",
+      "Actionable time starts once a fix exists — the only one the team controls.",
       "Both are published, because either alone can be read as the whole story.",
     ],
   },
@@ -110,7 +126,7 @@ const ENTRIES = [
     term: "Resolved (secret)",
     lines: [
       "A secret finding leaves the register when the credential is out of the code.",
-      "That is not the same as the credential being safe: a committed secret stays live until it is rotated, and git history keeps it readable.",
+      "Not the same as safe: it stays live until rotated, and git history keeps it.",
       "Removal and rotation are tracked separately for that reason.",
     ],
   },
@@ -134,8 +150,8 @@ const ENTRIES = [
     id: "validation-state",
     term: "Validation state",
     lines: [
-      "Whether Wiz has confirmed a detected credential still works: UNKNOWN, VALID, INVALID or ERROR.",
-      "VALID means live, INVALID means confirmed dead — UNKNOWN and ERROR mean nobody has checked, which is neither.",
+      "Whether Wiz confirmed a credential still works: UNKNOWN, VALID, INVALID, ERROR.",
+      "VALID is live, INVALID confirmed dead; UNKNOWN and ERROR are neither.",
       "393,443 of 394,927 secret instances in this tenant read UNKNOWN, so folding that into \"not rotated\" would misprice 99.6% of the register.",
     ],
   },
@@ -152,15 +168,16 @@ const ENTRIES = [
     term: "Removed",
     lines: [
       "The secret's string left the repository's HEAD.",
-      "Removed is not rotated: the credential is live until Rotated says otherwise, and it is still readable in git history.",
+      "Removed is not rotated: it is live until Rotated says otherwise.",
+      "And it is still readable in git history.",
     ],
   },
   {
     id: "time-to-revoke",
     term: "Time to revoke",
     lines: [
-      "The clock from detection to confirmed-invalid, reported as median, P90 and share within SLA.",
-      "A secret that was never validated is excluded, not censored — it supports no claim about whether it is still alive.",
+      "Detection to confirmed-invalid, as median, P90 and share within SLA.",
+      "A never-validated secret is excluded, not censored: it supports no claim.",
       "The excluded count is published beside the figure so the denominator can be checked.",
     ],
   },
@@ -176,16 +193,18 @@ const ENTRIES = [
     id: "capacity",
     term: "Capacity",
     lines: [
-      "Whether remediation is keeping up with new findings arriving, read month by month.",
-      "A month is gaining, keeping up or falling behind: only capacity absorbs inflow, so the verdict compares the close rate with the arrival rate, not a count, with a dead band around zero.",
+      "Whether remediation is keeping up with new findings arriving, month by month.",
+      "Gaining, keeping up or falling behind — the close rate against the arrival rate.",
+      "Only capacity absorbs inflow, so the verdict compares rates rather than counts, with a dead band around zero.",
     ],
   },
   {
     id: "mmcr",
     term: "Monthly mean closure rate",
     lines: [
-      "Each month's close rate — closings divided by what was already open at the start of that month — averaged across the months actually observed.",
-      "Not closings over new arrivals, and not closings over the whole register: the denominator is that month's starting backlog.",
+      "Each month's close rate, averaged across the months actually observed.",
+      "The denominator is that month's starting backlog, nothing else.",
+      "Closings divided by what was already open at the start of that month — not over new arrivals, and not over the whole register.",
     ],
   },
   {
@@ -196,8 +215,9 @@ const ENTRIES = [
     id: "closed-per-month",
     term: "Findings closed per month",
     lines: [
-      "The mean number of findings closed in a calendar month, averaged over exactly the months the closure rate is averaged over.",
-      "The rate's absolute half: one in ten a month is four findings on a small register and four hundred on a large one, and the rate alone cannot tell them apart.",
+      "Findings closed in a mean calendar month, over the months the rate averages over.",
+      "The rate's absolute half, which the rate alone cannot supply.",
+      "One in ten a month is four findings on a small register and four hundred on a large one.",
     ],
   },
   // THE THREE EXPLOITATION SIGNALS, one entry each. They used to share the "sca" entry — the
@@ -210,8 +230,9 @@ const ENTRIES = [
     id: "kev",
     term: "On KEV",
     lines: [
-      "CISA's Known Exploited Vulnerabilities catalogue: CVEs with reliable evidence that someone, somewhere, has actually exploited them.",
-      "Observed exploitation of the CVE — not a statement that this finding is reachable here. It raises the priority of a finding; it does not decide it.",
+      "CISA's Known Exploited Vulnerabilities catalogue: CVEs someone has actually exploited.",
+      "Reliable evidence about the CVE, not a claim this finding is reachable here.",
+      "It raises the priority of a finding; it does not decide it.",
       "A row Wiz never evaluated against the catalogue is unknown, not absent from it, which is why these counts are reported as a floor.",
     ],
   },
@@ -220,15 +241,17 @@ const ENTRIES = [
     term: "Known exploit",
     lines: [
       "Public exploit code exists for the CVE.",
-      "A weaker claim than KEV and a different one: code being published is not the same as exploitation having been observed. A CVE can carry this and not be on KEV, and the reverse.",
+      "Weaker than KEV: code published is not exploitation observed.",
+      "A CVE can carry this and not be on KEV, and the reverse.",
     ],
   },
   {
     id: "epss",
     term: "EPSS score",
     lines: [
-      "Exploit Prediction Scoring System: the estimated probability that a CVE will be exploited in the next 30 days.",
-      "A FORECAST, not an observation — the one signal here that says what may happen rather than what has. It is a probability, so a high score on a large register still describes many findings that will never be attacked.",
+      "Exploit Prediction Scoring System: the odds a CVE is exploited in the next 30 days.",
+      "A FORECAST, not an observation — what may happen rather than what has.",
+      "It is a probability, so a high score on a large register still describes many findings that will never be attacked.",
     ],
   },
   // The Code register's one signal, and the only one here that is somebody else's OPINION
@@ -238,7 +261,8 @@ const ENTRIES = [
     id: "ai-verdict",
     term: "AI triage verdict",
     lines: [
-      "The scanner's own judgement that a static-analysis finding is real. A vendor opinion, not a measurement this register made — which is why it is one clause of the high-risk rule and never the whole of it.",
+      "The scanner's own judgement that a static-analysis finding is real.",
+      "A vendor opinion, not a measurement: one clause of the high-risk rule, never the whole.",
       "It has never actually fired in this tenant: every SAST node captured so far carries a null aiAnalysis, so a zero beside it means nobody was asked, not that the AI looked and disagreed.",
       "The values that count are EXPLOITABLE, TRUE_POSITIVE, CONFIRMED and VULNERABLE (domain/config.ts's AI_VERDICTS_HIGH). That vocabulary is UNVERIFIED against this tenant, so a register where every row reads unevaluated means either the field is not being returned or those are the wrong strings — both worth knowing, and neither of them a finding about the code.",
     ],
@@ -247,8 +271,9 @@ const ENTRIES = [
     id: "signal-coverage",
     term: "Signal coverage",
     lines: [
-      "How much of the column a risk clause rests on was ever captured, over the rows that clause applies to.",
-      "A measured 0% is a measurement: it separates \u201cthe AI agreed with nothing\u201d from \u201cnobody asked the AI\u201d. \u201cNot applicable\u201d is a third statement \u2014 no row in scope has such a column at all.",
+      "How much of the column a risk clause rests on was captured, over the rows it applies to.",
+      "A measured 0% is a measurement, not a blank.",
+      "It separates \u201cthe AI agreed with nothing\u201d from \u201cnobody asked the AI\u201d. \u201cNot applicable\u201d is a third statement \u2014 no row in scope has such a column at all.",
       "The clauses are OR'd and overlap, so what each one fired on never sums to the high-risk count.",
     ],
   },
@@ -256,32 +281,35 @@ const ENTRIES = [
     id: "reconstructed",
     term: "Reconstructed month",
     lines: [
-      "A month whose figures were rebuilt rather than directly observed, because it ends before this register started watching.",
-      "Marked so it is not read as measured — the backlog it describes is real, but nobody was looking in real time.",
+      "A month rebuilt rather than observed, ending before this register started watching.",
+      "Marked so it is not read as measured: the backlog is real, but nobody was watching.",
     ],
   },
   {
     id: "unclassified",
     term: "Unclassified",
     lines: [
-      "A finding the risk rule could not place as high-risk or not — most often a secret, which this register refuses to score by severity.",
-      "Reported outside the 2×2 rather than folded into a corner, so it can never be mistaken for a quadrant.",
+      "A finding the risk rule could not place as high-risk or not.",
+      "Reported outside the 2×2, never folded into a corner of it.",
+      "Most often a secret, which this register refuses to score by severity.",
     ],
   },
   {
     id: "cwe-top-25",
     term: "CWE Top 25",
     lines: [
-      "MITRE's 2024 list of the most dangerous software weakness classes, which the SAST risk rule scores against.",
-      "A child weakness folds onto its Top-25 ancestor first — CWE-23 counts as CWE-22, CWE-80 as CWE-79 — because scanners report leaves and the list is mostly interior nodes.",
+      "MITRE's 2024 list of the most dangerous weakness classes, which SAST scores against.",
+      "A child weakness folds onto its Top-25 ancestor first.",
+      "CWE-23 counts as CWE-22, CWE-80 as CWE-79 — scanners report leaves and the list is mostly interior nodes.",
     ],
   },
   {
     id: "twin",
     term: "Twin",
     lines: [
-      "One secret at one line, reported once against its repository and once against a branch of it.",
-      "The ledger keys on (secret, path, line) and keeps the earlier of the two birth dates — 187 keys in this tenant span both, a median 19.9 days apart.",
+      "One secret at one line, reported once against its repository and once against a branch.",
+      "The ledger keys on (secret, path, line) and keeps the earlier birth date.",
+      "187 keys in this tenant span both, a median 19.9 days apart.",
       "Keying on Wiz's externalId instead would look unique and quietly double the register.",
     ],
   },
@@ -295,7 +323,8 @@ const ENTRIES = [
     term: "SLA band",
     lines: [
       "An SLA is a band the population is kept inside, not a wall a single finding hits.",
-      "Read it as a distribution: how much of the window each open finding has consumed, and how many are already past it.",
+      "Read it as a distribution: how much of the window each open finding has consumed.",
+      "And how many are already past it.",
     ],
   },
   {
@@ -310,8 +339,8 @@ const ENTRIES = [
     id: "rail-status",
     term: "Rail status",
     lines: [
-      "Only exceptions speak: a sync running, a sync that failed, nothing to sync with, a register never measured, a scan gone old, or current.",
-      "Never-measured outranks old: a register nobody has looked at is unmeasured, not stale.",
+      "Only exceptions speak: a sync running or failed, nothing to sync with, a register never measured, a scan gone old.",
+      "Never-measured outranks old: a register nobody looked at is unmeasured, not stale.",
     ],
   },
   {
@@ -321,24 +350,27 @@ const ENTRIES = [
     id: "compaction",
     term: "Compaction",
     lines: [
-      "Folding the oldest saved scans into episodes: their per-finding observations are pruned and the scan's own totals are kept.",
-      "It reclaims spreadsheet cells and archive bytes. The most recent scans are never candidates, and the dry run states what would go before anything goes.",
+      "Folds the oldest saved scans into episodes, keeping their totals.",
+      "Their per-finding observations are pruned, reclaiming cells and archive bytes.",
+      "The most recent scans are never candidates, and the dry run states what would go before anything goes.",
     ],
   },
   {
     id: "sealed",
     term: "Sealed",
     lines: [
-      "A saved scan whose per-finding observations compaction has already pruned. Its totals stay; the detail behind them is gone.",
-      "A sealed scan cannot be deleted from the Storage page — the archive it pointed at was reclaimed when it was sealed.",
+      "A saved scan whose per-finding observations compaction has already pruned.",
+      "Its totals stay; the detail behind them is gone.",
+      "It cannot be deleted from the Storage page — the archive it pointed at was reclaimed when it was sealed.",
     ],
   },
   {
     id: "episode",
     term: "Episode",
     lines: [
-      "One finding's settled lifetime — first seen, how it ended, when — kept after the scan that carried it was sealed.",
-      "The clock survives compaction; the per-scan observations behind it do not. A finding seen again after its episode begins a new one.",
+      "One finding's settled lifetime — first seen, how it ended, when.",
+      "The clock survives compaction; the per-scan observations behind it do not.",
+      "A finding seen again after its episode begins a new one.",
     ],
   },
   {
@@ -355,8 +387,9 @@ const ENTRIES = [
     id: "movement",
     term: "Movement",
     lines: [
-      "The open backlog now against the same register at the previous sync. A rising count is worse.",
-      "The comparison is between two syncs, not between two calendar dates — a register only learns anything on the days it looks.",
+      "The open backlog now against the same register at the previous sync.",
+      "A rising count is worse. The comparison is between two syncs, not two dates.",
+      "A register only learns anything on the days it looks.",
       "Each register has its own window: the three share one scan log, and a scan of one of them looked at none of the others.",
     ],
   },
@@ -367,8 +400,9 @@ const ENTRIES = [
     id: "fix-next",
     term: "Fix next",
     lines: [
-      "Ranked by what cannot wait rather than by severity: a credential somebody confirmed is live, then a fixable dependency finding already late, then a critical code weakness already late.",
-      "Grouped by repository, because that is the smallest unit somebody can be asked to own.",
+      "Ranked by what cannot wait rather than by severity.",
+      "Grouped by repository — the smallest unit somebody can be asked to own.",
+      "The order is: a credential somebody confirmed is live, then a fixable dependency finding already late, then a critical code weakness already late.",
     ],
   },
   {
@@ -379,7 +413,8 @@ const ENTRIES = [
     id: "sla-edge",
     term: "SLA edge",
     lines: [
-      "The day count that splits one severity's open findings into late and not late — its own SLA target, read against the age buckets.",
+      "The day count splitting one severity's open findings into late and not late.",
+      "Its own SLA target, read against the age buckets.",
       "A deadline rarely lands on a bucket's boundary, so a bucket is usually part in and part out; a rule is drawn on the chart only where every severity shares one exact edge.",
     ],
   },
@@ -393,7 +428,8 @@ const ENTRIES = [
     id: "cold-zone",
     term: "Cold zone",
     lines: [
-      "A repository with open findings where nothing has moved for at least the cold-zone window: no finding resolved, removed or rotated in that time.",
+      "A repository with open findings and no movement for the whole cold-zone window.",
+      "Nothing resolved, removed or rotated on it in that time.",
       "Measured at the last scan, never against today, so the same saved ledger always reads the same. With no movement on record the figure is a lower bound \u2014 see Lower bound.",
       "The window is either a fixed number of days or a share of the estate \u2014 see Cold-zone mode. A repository the scanner has stopped returning is Unobserved instead: counted apart, and never counted as warm.",
     ],
@@ -406,8 +442,9 @@ const ENTRIES = [
     id: "cold-zone-mode",
     term: "Cold-zone mode",
     lines: [
-      "Fixed window: a repository is cold after a set number of idle days \u2014 the same number on every estate and in every week, and the one an operator can be held to.",
-      "Relative: the line is derived so that the idlest share of the repositories with open findings are cold. It follows the population instead of standing still while the population moves, and it never falls below the floor.",
+      "Fixed window: cold after a set number of idle days, the same number every week.",
+      "Relative: the line follows the population, so the idlest share is always cold.",
+      "Fixed is the number an operator can be held to. Relative never falls below the floor, and moves as the population moves instead of standing still while it does.",
       "Whichever mode is on, the page prints the line it produced in days, the share it was aiming at and the share it actually drew — those last two disagree in both directions by design. Set on the Deadlines tab in Settings.",
     ],
   },
@@ -418,7 +455,8 @@ const ENTRIES = [
     id: "lifecycle",
     term: "Lifecycle",
     lines: [
-      "Where the tenant says a repository is in its life \u2014 in production, in development, end of life. Read off the repository's lifecycle tag in Wiz, printed as written.",
+      "Where the tenant says a repository is in its life: production, development, end of life.",
+      "Read off its lifecycle tag in Wiz and printed as written.",
       "Blank means no lifecycle is known: either the repository carries no such tag, or the tag map has never been refreshed. It is never read as \u201calive\u201d, and a blank tag excludes a repository from nothing.",
       "Refresh it from Settings > System, which also reports how many repositories the key actually placed.",
     ],
@@ -430,7 +468,8 @@ const ENTRIES = [
     id: "end-of-life",
     term: "End of life",
     lines: [
-      "A repository the tenant has retired, by its lifecycle tag. Nobody is closing findings on one because nobody is meant to, so both its silence and its clock mean something other than they look like.",
+      "A repository the tenant has retired, by its lifecycle tag.",
+      "Nobody closes findings on one, so its silence and its clock both mislead.",
       "Settings > Deadlines carries two switches: one leaves these out of the cold zone, the other out of the remediation-speed figures. Both off by default, and neither guesses at an unfamiliar word.",
       "Whichever is on, a retired repository's findings stay in every count of what is open \u2014 the backlog, the density and the severity breakdowns are untouched by either.",
     ],
@@ -445,7 +484,8 @@ const ENTRIES = [
     id: "coldest-share",
     term: "Coldest share",
     lines: [
-      "In relative mode, the products with the highest share of their open-finding repositories cold — a position relative to the other products, not a verdict about any one of them.",
+      "In relative mode, the products with the highest share of their repositories cold.",
+      "A position relative to the other products, never a verdict about any one of them.",
       "A product with no cold repository is never marked, however small the estate; products tied at the cutoff are all marked rather than split by name.",
       "Ranked over the products that have at least one repository with an open finding. A product with nothing open has no share to rank and carries no position at all.",
     ],
@@ -454,16 +494,18 @@ const ENTRIES = [
     id: "unobserved",
     term: "Unobserved",
     lines: [
-      "The scanner stopped returning this repository: no finding on it reached the last scan of any register it has rows in.",
-      "Its findings close by disappearance, which looks like a whole repository being remediated at once — so it is tested first, counted apart, and never counted as warm or cold.",
+      "The scanner stopped returning this repository: nothing on it reached the last scan.",
+      "Its findings close by disappearance, like a whole repository remediated at once.",
+      "So it is tested first, counted apart, and never counted as warm or cold. No finding on it reached the last scan of any register it has rows in.",
     ],
   },
   {
     id: "idle",
     term: "Idle days",
     lines: [
-      "Days since the last movement on a repository: the most recent finding resolved, removed or rotated, whichever came last.",
-      "Measured from the last scan, never from today. Where nothing has ever moved there is no measurement, so the count runs from when we started watching and is published as a lower bound.",
+      "Days since the last finding resolved, removed or rotated on a repository.",
+      "Measured from the last scan, never from today.",
+      "Where nothing has ever moved there is no measurement, so the count runs from when we started watching and is published as a lower bound.",
     ],
   },
   {
@@ -471,7 +513,7 @@ const ENTRIES = [
     term: "Returned",
     lines: [
       "Seen again after it had been resolved. Its clock restarted on this sighting.",
-      "The earlier episode is not in this figure — a returned finding's age counts only from the return.",
+      "The earlier episode is not in this figure: age counts only from the return.",
     ],
   },
 ];

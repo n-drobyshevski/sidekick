@@ -1046,10 +1046,8 @@ export async function renderMttr(host, params, _ctx) {
         term: "sla-target",
         lines: [
           rate.baseEmpty
-            ? "Resolved inside the SLA window: not measured — nothing has closed yet, so there"
-              + " is no resolved population to compare against the target."
-            : "Taken over what CLOSED: of the findings that resolved, the share that resolved"
-              + " on or before their severity's target.",
+            ? "Not measured: nothing has closed yet, so there is no resolved population."
+            : "Taken over what CLOSED: of what resolved, the share inside its severity's target.",
           "The comparison is inclusive — on or before the target.",
         ],
       },
@@ -1079,14 +1077,12 @@ export async function renderMttr(host, params, _ctx) {
         term: "awaiting-fix",
         lines: [
           rate.baseEmpty
-            ? "Awaiting a vendor fix: not measured — no SCA finding is open, so there is no"
-              + " backlog to take a share of."
-            : "Open SCA findings with no published fix. Those sit outside every deadline until"
-              + " a fix exists.",
+            ? "Not measured: no SCA finding is open, so there is no backlog to share."
+            : "Open SCA findings with no published fix, outside every deadline until one exists.",
           ...(awaiting.notApplicable
             ? ["Refused: " + fmtCount(awaiting.notApplicable) + " open findings outside SCA"
-              + " carried the flag anyway. SAST and secrets have no vendor to wait on, so the"
-              + " flag cannot be true there and the rows were declined rather than counted."]
+              + " carried the flag anyway.",
+              "SAST and secrets have no vendor to wait on, so the flag cannot be true there."]
             : []),
         ],
       },
@@ -1198,10 +1194,8 @@ export async function renderMttr(host, params, _ctx) {
     curveHost.append(sectionLabel("Survival curve", {
       term: "censoring",
       lines: [
-        "Closed findings are events; open findings enter as right-censored observations at"
-        + " their current age.",
-        "The closed-only comparison markers are not in this payload, so the two markers drawn"
-        + " are both Kaplan-Meier.",
+        "Closed findings are events; open ones enter as censored observations at their age.",
+        "Both markers drawn are Kaplan-Meier: the closed-only pair is not in this payload.",
       ],
     }));
 
@@ -1254,11 +1248,10 @@ export async function renderMttr(host, params, _ctx) {
     sevHost.append(sectionLabel("The clock, by severity", {
       term: "half-life",
       lines: [
-        "Each severity's curve and its row in the table below are one estimate read two ways —"
-        + " the table is that curve's median, its lower bound and its P90.",
-        "“at least N days” means that curve never fell to half. Open findings are in"
-        + " every curve as right-censored observations, so a staircase that stops stepping is"
-        + " a severity that stopped closing.",
+        "Each severity's curve and its row below are one estimate read two ways.",
+        "A staircase that stops stepping is a severity that stopped closing.",
+        "The table is that curve's median, its lower bound and its P90.",
+        "“at least N days” means the curve never fell to half.",
       ],
     }));
     if (!rows.length) {
@@ -1372,8 +1365,8 @@ export async function renderMttr(host, params, _ctx) {
           help: {
             term: "sla-target",
             lines: [
-              "Taken over what CLOSED: of the findings that resolved, the share that resolved"
-              + " on or before the target. The comparison is inclusive.",
+              "Taken over what CLOSED: of what resolved, the share inside the target.",
+              "The comparison is inclusive — on or before.",
             ],
           },
           cell: (r) => withMeter(r.inSla),
@@ -1383,10 +1376,9 @@ export async function renderMttr(host, params, _ctx) {
           label: "Open past SLA",
           help: {
             lines: [
-              "Taken over what is still RUNNING: of the findings still open, the share already"
-              + " past the target.",
-              "The two denominators in this table are not interchangeable — a single SLA"
-              + " percentage over everything would be neither.",
+              "Taken over what is still RUNNING: of what is open, the share past target.",
+              "The two denominators here are not interchangeable.",
+              "A single SLA percentage over everything would be neither of them.",
             ],
           },
           // The count AND the rate AND the base. The count alone hides how big the backlog
@@ -1456,8 +1448,8 @@ export async function renderMttr(host, params, _ctx) {
     // form of the same two counts is under the canvas.
     agingHost.append(sectionLabel("Open findings by age", {
       lines: [
-        "Open findings only, aged from first_seen to now — a resolved finding stopped ageing"
-        + " and its lifetime is the survival curve's subject, not this one's.",
+        "Open findings only, aged from first_seen to now.",
+        "A resolved finding stopped ageing; its lifetime is the survival curve's subject.",
         vm.denominator,
       ],
     }));
@@ -1586,10 +1578,9 @@ export async function renderMttr(host, params, _ctx) {
       // in `slaConsumedCaption`, which is also where the two counts that are NOT drawn are
       // stated — so it is deliberately not restated here.
       lines: [
-        "A 3-day CRITICAL and a 39-day LOW stand in the same bar: each is placed by the"
-        + " fraction of its OWN deadline it has used, not by its age.",
-        "Every bar drawn is inside its own window, which is why this axis carries no SLA rule"
-        + " the way the age chart above can.",
+        "Each finding is placed by the fraction of its OWN deadline used, not by its age.",
+        "So a 3-day CRITICAL and a 39-day LOW stand in the same bar.",
+        "Every bar is inside its own window, so this axis carries no SLA rule.",
       ],
     }));
     // NO SECTION BODY AT ALL rather than an empty state: "no open findings with a window"
@@ -1662,8 +1653,8 @@ export async function renderMttr(host, params, _ctx) {
     bucketHost.append(sectionLabel("Time to close", {
       term: "censoring",
       lines: [
-        "Resolved lifecycles only. Open findings are not in this distribution at any bucket —"
-        + " they are in the curve above, as censored observations.",
+        "Resolved lifecycles only: open findings are in no bucket here.",
+        "They are in the curve above, as censored observations.",
       ],
     }));
     if (!view.show || !view.total) {
@@ -1791,10 +1782,9 @@ export async function renderMttr(host, params, _ctx) {
         tipLabel("How the vendor wait divides", {
           term: "awaiting-fix",
           lines: [
-            "The population the wait-for-a-vendor estimate was taken over, split by how each"
-            + " finding left it.",
-            "The hatched part is not a measurement: those rows carry no readable origin and"
-            + " sit outside the estimate rather than being counted as a zero-day wait.",
+            "The population the wait-for-a-vendor estimate was taken over, by how each left.",
+            "The hatched part is not a measurement: those rows carry no readable origin.",
+            "They sit outside the estimate rather than counting as a zero-day wait.",
           ],
         })),
       bar);
@@ -1813,10 +1803,10 @@ export async function renderMttr(host, params, _ctx) {
     trendHost.append(sectionLabel("Half-life over time", {
       term: "reconstructed",
       lines: [
-        "The Kaplan-Meier median re-evaluated as of each date — the same series the sparkline"
-        + " beside the hero draws.",
-        "One point per saved scan, plus one per day of pre-scan history rebuilt from"
-        + " first-detection dates, where closures are under-counted.",
+        "The Kaplan-Meier median re-evaluated as of each date.",
+        "The same series the sparkline beside the hero draws.",
+        "One point per saved scan, plus one per day of rebuilt pre-scan history.",
+        "Closures are under-counted across that rebuilt stretch.",
       ],
     }));
     if (points.length < 2) {

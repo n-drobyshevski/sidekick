@@ -1331,8 +1331,8 @@ export async function renderRepos(host, _params, _ctx) {
           help: {
             term: "idle",
             lines: [
-              "The most recent finding resolved, removed or rotated anywhere in the product,"
-              + " over the repositories the scanner still returns.",
+              "The most recent finding resolved, removed or rotated anywhere in the product.",
+              "Over the repositories the scanner still returns.",
             ],
           },
           cell: (r) => r.lastMovementText,
@@ -1400,10 +1400,9 @@ export async function renderRepos(host, _params, _ctx) {
     // row are the heading's tip — the 51-word caption was the page's largest prose block.
     coldHost.append(el("h3", { class: "section-label" }, tipLabel("Idle time by repo", {
       lines: [
-        "The last column is the repositories with no movement on record yet — not idle for"
-        + " zero days, but not yet measurable.",
-        "Unobserved repositories and repositories with nothing open have no idle reading, so"
-        + " they are in no row.",
+        "The last column is the repositories with no movement on record yet.",
+        "Not idle for zero days — not yet measurable.",
+        "Unobserved repositories, and those with nothing open, have no idle reading at all.",
       ],
     })));
     coldHost.append(el("div", { class: "table-wrap" },
@@ -1453,9 +1452,9 @@ export async function renderRepos(host, _params, _ctx) {
             term: "returned",
             lines: [
               "The most recent finding resolved, removed or rotated on this repository.",
-              "\u2014 N returned beside it counts the open findings that have come back at"
-              + " least once: a return clears the movement columns, which is why a repository"
-              + " with returns can show no movement at all.",
+              "N returned counts open findings that have come back at least once.",
+              "A return clears the movement columns, so a repository with returns can show"
+              + " none at all.",
             ],
           },
           cell: (r) => {

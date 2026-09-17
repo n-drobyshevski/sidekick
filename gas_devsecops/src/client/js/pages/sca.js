@@ -1285,10 +1285,9 @@ function paintSca(host, vm, filters) {
   const clocks = sectionCard("The clock splits", {
     term: "two-clocks",
     lines: [
-      "An SCA finding cannot be fixed before somebody else publishes a fixed version, so the"
-      + " wait for a vendor and the wait for a team are counted separately.",
-      "This page publishes no figure that averages the two together — an average across both"
-      + " measures the vendor and the team at once and names neither.",
+      "Nothing is fixable before somebody else publishes a fixed version.",
+      "So the wait for a vendor and the wait for a team are counted separately.",
+      "No figure here averages them: one across both names neither.",
     ],
   },
     // ONE COLUMN, because this card is now half the page wide. `.kpi-row`'s default track is
@@ -1337,8 +1336,8 @@ function paintSca(host, vm, filters) {
     sectionCard("Exploitation signals", {
       term: "sca",
       lines: [
-        "Three states, never two: a signal Wiz never evaluated is unknown, not clean, and"
-        + " rendering it as a No is what makes an unassessed finding look assessed.",
+        "Three states, never two: a signal Wiz never evaluated is unknown, not clean.",
+        "Rendering it as a No is what makes an unassessed finding look assessed.",
       ],
     },
       el("div", { class: "signal-rows" },
@@ -1504,8 +1503,8 @@ function paintSca(host, vm, filters) {
   // than a paragraph below 18 columns of table nobody reads to the end of.
   host.append(sectionCard("Every finding in the register", {
     lines: [
-      "Click a column to ask the server for a different order rather than re-sorting what is"
-      + " already on screen; open a row for everything the register holds about that finding.",
+      "Open a row for everything the register holds about that finding.",
+      "A column asks the server for a different order, it does not re-sort the page.",
       vm.missingColumns,
     ],
   },
