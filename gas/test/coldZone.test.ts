@@ -334,6 +334,7 @@ describe("a mass disappearance one day before the clock is still 'unobserved'", 
     expect(asset.disappeared_at_last_observation).toBe(5);
   });
 
+
   it("keeps the disappearance out of the group's last movement", () => {
     // The group rolls movement over OBSERVED assets only — a scanner event is not this
     // group's work, and must not refresh their date.
@@ -357,12 +358,18 @@ describe("a mass disappearance one day before the clock is still 'unobserved'", 
 describe("a drop-out that still carries open findings is the half worth the alarm", () => {
   // Same disappearance, except one finding never closed: the scanner stopped returning the
   // asset while backlog was still on it, so nobody will be told about that backlog again.
+  // `last_seen` is stale here as well as `last_scan_id`, which is what a real drop-out looks
+  // like: the scanner stopped returning the rows, so nothing has refreshed either column since.
   const out = profile([
     row({
       asset_id: "asset-stranded", asset_name: "stranded", last_scan_id: "scan-1",
+      last_seen: back(40),
       status: "RESOLVED", resolution_src: RESOLUTION_DISAPPEARED, resolved_at: back(1),
     }),
-    row({ asset_id: "asset-stranded", asset_name: "stranded", last_scan_id: "scan-1" }),
+    row({
+      asset_id: "asset-stranded", asset_name: "stranded", last_scan_id: "scan-1",
+      last_seen: back(40),
+    }),
   ]);
 
   it("splits it away from the decommissioned kind, and both still sum to the whole", () => {
@@ -373,6 +380,20 @@ describe("a drop-out that still carries open findings is the half worth the alar
     expect(t.assets_unobserved_clear).toBe(0);
     expect(t.assets_unobserved_open + t.assets_unobserved_clear).toBe(t.assets_unobserved);
     expect(t.open_in_unobserved).toBe(1);
+  });
+
+  // HOW LONG THE SCANNER HAS BEEN SILENT, as a duration rather than as two dates for the page
+  // to subtract. Nothing in this client does date arithmetic: a page that did would measure
+  // against the reader's clock instead of the ledger's, which is the same reason
+  // `oldest_open_age_days` is a duration and the row's stored `age_days` is never read. This
+  // is the figure the assets table prints beside the last-seen date, and with the drop-out's
+  // own fingerprint it is the whole of what the page can say about WHY an asset went quiet.
+  it("publishes the silence as a duration, measured against the ledger's clock", () => {
+    const asset = assetOf(out, "asset-stranded");
+    expect(asset.last_observed_at).toBe(iso(40));
+    expect(asset.unobserved_for_days).toBeCloseTo(40, 6);
+    expect(asset.disappeared_at).toBe(iso(1));
+    expect(asset.disappeared_at_last_observation).toBe(1);
   });
 
   it("still never counts it as cold, warm or clear — the verdict did not split", () => {

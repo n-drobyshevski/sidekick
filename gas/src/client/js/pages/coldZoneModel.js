@@ -671,6 +671,8 @@ export function coldAssetRows(view) {
       // `idle_reading_days` is the number either way, exactly as the domain publishes them.
       const idle = boundedDays(bounded ? null : reading, bounded ? reading : null);
       const movementAt = typeof a.last_movement_at === "string" ? a.last_movement_at : null;
+      const lastObservedAt = typeof a.last_observed_at === "string" ? a.last_observed_at : null;
+      const disappearedAt = typeof a.disappeared_at === "string" ? a.disappeared_at : null;
       return {
         key: a.asset_id || label,
         label,
@@ -695,6 +697,19 @@ export function coldAssetRows(view) {
         // back reads as never having moved. `returned` is this register's word for that and
         // has its own glossary entry.
         reopenedOpen: num(a.reopened_open, 0),
+        // THE THREE FACTS THAT ANSWER "WHY DID THIS GO QUIET", which the domain has always
+        // published and this row used to drop on the floor. Every unobserved asset is
+        // unobserved for the same structural reason — no finding of its reached the newest flat
+        // scan covering its severity — so there is no cause to name. What differs between two
+        // of them is WHEN the scanner stopped returning it and HOW: `disappearedCount` on
+        // `disappearedAt` is the shape of the exit, a big number being the whole asset leaving
+        // in one scan and a 1 being an asset that faded as its last finding closed.
+        lastObservedAt: lastObservedAt,
+        lastObservedText: lastObservedAt === null ? absentText : fmtDate(lastObservedAt),
+        unobservedForDays: num(a.unobserved_for_days),
+        disappearedAt: disappearedAt,
+        disappearedText: disappearedAt === null ? absentText : fmtDate(disappearedAt),
+        disappearedCount: num(a.disappeared_at_last_observation, 0),
         open: num(a.open_findings, 0),
         highRisk: num(a.open_high_risk, 0),
         oldestOpenAgeDays: num(a.oldest_open_age_days),

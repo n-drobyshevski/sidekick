@@ -506,6 +506,20 @@ open on it?**
 They sum to `assets_unobserved`, so the verdict itself never split: the assets table, the group
 roll-up and the scatter all still see one `unobserved` state.
 
+**To go from the figure to the list**, the "Cold and unobserved assets" table below has a cut
+control: **All**, **Cold**, and **Out of sight, backlog open**, each labelled with its count so
+an empty cut can be read without opening it. On that last cut the table swaps the idle reading
+— which measures a silence the scanner can no longer see — for the two facts that say why an
+asset went quiet:
+
+- **Last seen** — the last time any finding on it reached a scan, with the silence since.
+- **Closed at once** — how many of its findings closed by disappearance at the same instant. A
+  large number is the whole asset leaving in one scan; a single one faded as its last finding
+  closed.
+
+There is no cause to name beyond that. Every asset in this cut is out of sight for the same
+structural reason, so the columns carry the evidence and leave the reading to you.
+
 ### The lower bound
 
 An asset can carry open findings and have **never** had one resolve. That is not "0 days

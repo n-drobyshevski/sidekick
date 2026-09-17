@@ -116,6 +116,7 @@ function asset(over = {}) {
     idle_reading_days: null,
     observed: true,
     last_observed_at: null,
+    unobserved_for_days: null,
     disappeared_at: null,
     disappeared_at_last_observation: 0,
     reopened_open: 0,
@@ -846,6 +847,46 @@ describe("coldAssetRows: cold first, then unobserved, and nothing else in the li
       }));
       expect(coldAssetRows(v)[0].verdictWord).toBe(COLD_VERDICT_LABEL[verdict]);
     }
+  });
+
+  // WHY AN ASSET WENT QUIET, CARRIED RATHER THAN DERIVED. The domain has published these three
+  // since the module shipped and this row dropped all of them, which left the page unable to
+  // say anything about an out-of-sight asset beyond the fact that it was one. Nothing here
+  // decides anything: the row is a faithful carrier and the columns do the reading.
+  it("carries the observation facts the domain publishes about a drop-out", () => {
+    const v = coldZoneView(payload({
+      assets: [asset({
+        asset_id: "gone", observed: false, verdict: "unobserved", open_findings: 9,
+        last_observed_at: "2026-03-04T00:00:00.000Z",
+        unobserved_for_days: 197.4,
+        disappeared_at: "2026-03-05T00:00:00.000Z",
+        disappeared_at_last_observation: 12,
+      })],
+      groups: [group()],
+      totals: totals({ assets: 1, assets_unobserved: 1, assets_unobserved_open: 1 }),
+    }));
+    const [row] = coldAssetRows(v);
+    expect(row.lastObservedAt).toBe("2026-03-04T00:00:00.000Z");
+    expect(row.lastObservedText).toBe("2026-03-04");
+    expect(row.unobservedForDays).toBe(197.4);
+    expect(row.disappearedText).toBe("2026-03-05");
+    expect(row.disappearedCount).toBe(12);
+  });
+
+  // An explicit absence stays an absence: an asset nothing was ever seen on has no last-seen
+  // date and no silence to measure, and "0 days invisible" would be a claim nobody made.
+  it("prints an em dash rather than a date where nothing was ever observed", () => {
+    const v = coldZoneView(payload({
+      assets: [asset({ asset_id: "never", observed: false, verdict: "unobserved" })],
+      groups: [group()],
+      totals: totals({ assets: 1, assets_unobserved: 1 }),
+    }));
+    const [row] = coldAssetRows(v);
+    expect(row.lastObservedAt).toBeNull();
+    expect(row.lastObservedText).toBe("—");
+    expect(row.unobservedForDays).toBeNull();
+    expect(row.disappearedText).toBe("—");
+    expect(row.disappearedCount).toBe(0);
   });
 
   it("carries the returned count beside a missing movement date", () => {
