@@ -305,7 +305,13 @@ export async function renderColdZone(main, _params, ctx) {
    */
   function renderGroups(view) {
     const rows = coldGroupRows(view);
-    host.append(el("h3", { class: "section-label" }, "By support group"));
+    // THE DENOMINATOR RIDES ON THE HEADING rather than as a paragraph under the table. It
+    // explains a count the footer already prints on the surface — "6 support groups, including
+    // the 1 asset with no support group recorded" — and `gas_devsecops/DESIGN.md`'s rule is
+    // that an honesty statement stays on the surface and an EXPLANATION goes one level down.
+    // This is the second kind. The unmapped-map warning below is the first, and it stays.
+    host.append(el("h3", { class: "section-label" },
+      tipLabel("By support group", { lines: [groupCountNote(view, rows.length)] })));
     if (!rows.length) {
       host.append(emptyState(
         "No support group has an asset to report on yet.",
@@ -391,7 +397,15 @@ export async function renderColdZone(main, _params, ctx) {
           // `warn` rather than `bad` on purpose: being the coldest support group on a healthy
           // estate is a POSITION, not a verdict, and the Verdict column earlier in the same
           // row is where the absolute reading lives.
-          key: "coldestRank", label: "Coldest rank", help: { term: "coldest-share" },
+          // THE CLAMP THAT DECIDES WHO IS MARKED, on the column that carries the mark, rather
+          // than as a fifth paragraph under the table. Null in fixed mode, where nothing is
+          // marked and there is no claim to explain.
+          key: "coldestRank",
+          label: "Coldest rank",
+          help: {
+            term: "coldest-share",
+            lines: coldestShareNote(view) ? [coldestShareNote(view)] : [],
+          },
           cell: (r) => {
             const rank = r.relativeRank === null ? absentText : fmtCount(r.relativeRank);
             if (!r.inColdestShare) return rank;
@@ -427,7 +441,6 @@ export async function renderColdZone(main, _params, ctx) {
       // `sortRows` leaves a list untouched when it is given no value function.
       emptyText: "No support group has an asset to report on yet.",
     }));
-    host.append(denomNote(groupCountNote(view, rows.length)));
     // UNDER AN ACTIVE SUPPORT-GROUP SCOPE THIS TABLE IS ONE ROW, and that is the scope doing
     // its job rather than a group having vanished. Said here because a one-row roll-up with no
     // explanation reads as a broken join — the header chip is several inches away and answers
@@ -448,10 +461,6 @@ export async function renderColdZone(main, _params, ctx) {
         + " aren’t mapped yet. Use “Refresh support groups” in Settings to build the map;"
         + " Attribution shows what the map currently joins."));
     }
-    // The marks in the column above, counted — and the clamp that decides how many there are,
-    // stated. Null when nobody is marked, which is every group in fixed mode.
-    const coldest = coldestShareNote(view);
-    if (coldest) host.append(denomNote(coldest));
   }
 
   /** The band currently selected, as a key, or null. */

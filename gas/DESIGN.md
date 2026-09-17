@@ -480,6 +480,35 @@ row spends five stops once, and the group costs the one stop a clickable row alr
 selection change marks in place rather than rebuilding, because rebuilding the key row would
 tear the focused button out from under the reader mid-press.
 
+**Two of the notes moved onto the control they explain, and two did not.**
+`gas_devsecops/DESIGN.md` states the rule this page obeys: an honesty statement stays on the
+surface, and only an EXPLANATION goes one level down. `groupCountNote` explains a count the
+table footer already prints, so it is the heading's tip; `coldestShareNote` explains a mark
+that appears in exactly one column, so it is that column's help lines and is null in fixed
+mode where nothing is marked. `unmeasurableNote` stays a paragraph — it says what the four
+figures above it CANNOT speak for, which is not an explanation of anything on screen — and so
+does the unmapped-support-group warning, which is an actionable diagnostic rather than a
+footnote.
+
+**Measured, one ruler over both trees, at 1280px on the same seed.** Before is `3e590bc`:
+
+| | words | prose blocks | prose words | numbers | table cells | pictures |
+|---|---|---|---|---|---|---|
+| before | 1,059 | 4 | 102 | 207 | 215 | 8 |
+| after | 910 | 3 | 86 | 143 | 167 | 14 |
+
+The pictures are one band bar per support-group row, and the walker only counts them from the
+commit after the one that drew them — editing the instrument in the wave that uses it as
+evidence would give two columns measured by two different rulers. **`numbers` falling by a
+third is not a win and should not be read as one**: those are the heat grid's per-cell figures,
+and they moved into each bar's `aria-label` and tip rather than leaving the page. `table cells`
+falling is the fold itself — an N × 5 grid of two-figure cells became one cell per row.
+
+`npm run density` could not produce these numbers in the container this round ran in: it
+reported 0 words on every route, including untouched ones, and says in its own output not to
+trust a run that does. The figures above come from a script applying the same counts to both
+trees, which is the property a comparison needs.
+
 **One paragraph is pinned on purpose.** `renderColdZone` prints `denomNote(coldModeCaption(view))`
 first, above everything else, in all three branches — the two `emptyState` notices (not
 measured yet; nothing to be idle) and the fully-populated page. The same number
