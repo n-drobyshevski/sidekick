@@ -4061,7 +4061,7 @@ var Server = (() => {
   }
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "995c64cd58da" : "dev";
+  var BUILD_ID = true ? "1f1a95d93656" : "dev";
   function buildInfo() {
     return { id: BUILD_ID };
   }
