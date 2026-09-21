@@ -43,7 +43,7 @@ export const LANE_ICONS = {
 // it is this register's own claim. Every route still has exactly one visible entry below, in
 // rail order, so the whole nav is readable in one file.
 
-import { cylinder, sliders, trays } from "../../../../gas_shared/shell/navIcons.js";
+import { book, cylinder, sliders, trays } from "../../../../gas_shared/shell/navIcons.js";
 
 export const ROUTE_ICONS = {
   graph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="7" r="2.3"/><circle cx="18.5" cy="6" r="2.3"/><circle cx="12" cy="17.5" r="2.3"/><path d="M7.6 8.1l3 7.3"/><path d="M16.6 7.7l-3.3 8"/><path d="M7.7 7.2l8.6-0.7"/></svg>',
@@ -69,5 +69,5 @@ export const ROUTE_ICONS = {
   // A circled question mark rather than a book or a key: the page IS a key sheet, but the
   // nav slot has to be recognised before it is read, and "?" is the convention every
   // reader already holds (PRODUCT.md, Earned familiarity).
-  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M9.5 9.4a2.6 2.6 0 1 1 3.4 2.5c-.7.3-.9.8-.9 1.5v.4"/><path d="M12 16.8h.01"/></svg>',
+  help: book,
 };

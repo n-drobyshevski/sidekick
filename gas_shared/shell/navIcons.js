@@ -64,3 +64,31 @@ export const sheets = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor
 // uniqueness rule in gas_shared/test/contracts/navGroups.js catches, one app over from
 // where it used to be able to see it.
 export const trays = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 15.5L12 19.5l8.5-4"/><path d="M3.5 11.5L12 15.5l8.5-4"/><path d="M12 4.5l8.5 4-8.5 4-8.5-4z"/></svg>';
+
+// ONE TALL BAR BESIDE TWO SHORT: a headline number with the figures that support it.
+//
+// gas drew a GAUGE here — a semicircular arc with a needle and a pivot dot — and PRODUCT.md
+// rules gauges out in as many words ("no wall of red/orange cells, no gauges, no blinking
+// risk drama"), echoed at gas_ai/DESIGN.md. Nothing had ever held a nav mark against that
+// line, so the violation shipped. This is the one of these picks decided by a written rule
+// rather than by taste.
+export const bars = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16"/><path d="M7.5 20V13"/><path d="M12 20V4.5"/><path d="M16.5 20v-4.6"/></svg>';
+
+// A STOPWATCH — dial, hands, and the crown stem above it. MTTR is a DURATION, and a plain
+// clock face says time of day. gas_devsecops drew the plain clock, which also could not sit
+// beside `backClock` below without the two reading as one mark used twice.
+export const stopwatch = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13.5" r="7"/><path d="M12 13.5V9.5"/><path d="M12 13.5l3 2"/><path d="M9.5 3.5h5"/></svg>';
+
+// RINGS WITH THE SHOT OFF-CENTRE. Coverage and efficiency are exactly the question of
+// whether effort landed where it was aimed, and a clean bullseye would claim it did. gas
+// drew concentric rings with four ticks, which were near-twins of the crosshair on its own
+// now-retired Security lane.
+export const shotTarget = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="3.6"/><circle cx="14.1" cy="9.9" r="1"/></svg>';
+
+// A CLOCK WITH ITS ARROW RUNNING BACKWARDS: the record of what ran, not a duration.
+//
+// THIS ONE RETIRES A CROSS-APP DUPLICATE. gas_devsecops drew a sweep line with a dot here,
+// BYTE-IDENTICAL to gas_ai's `scans` mark — one picture for two different pages in two
+// different apps, which no in-app uniqueness rule can see. The sweep means one thing now
+// and belongs to one page.
+export const backClock = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M3.5 4.5V9h4.5"/><path d="M12 8.5v4l2.8 1.7"/></svg>';

@@ -15,7 +15,7 @@
 // rail order, so the whole nav is readable in one file.
 
 import {
-  book, curve, cylinder, sheets, sliders, trays,
+  backClock, bars, book, curve, cylinder, sheets, shotTarget, sliders, stopwatch, trays,
 } from "../../../../gas_shared/shell/navIcons.js";
 
 // The LANE marks — one per labelled lane, drawn on the rail where the lane, not the page, is
@@ -45,9 +45,9 @@ export const LANE_ICONS = {
 // route must have one — gas_shared/test/contracts/navGroups.js holds both halves, and holds
 // every mark here distinct from every other.
 export const ROUTE_ICONS = {
-  executive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l4-3"/><circle cx="12" cy="15" r="1"/></svg>',
-  mttr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="13.5" r="7"/><path d="M12 13.5V9.5"/><path d="M12 13.5l3 2"/><path d="M9.5 3.5h5"/></svg>',
-  program: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="7.5"/><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v3"/><path d="M12 18.5v3"/><path d="M2.5 12h3"/><path d="M18.5 12h3"/></svg>',
+  executive: bars,
+  mttr: stopwatch,
+  program: shotTarget,
   overview: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.2l7 2.4v5.2c0 4.2-2.9 7-7 8.4-4.1-1.4-7-4.2-7-8.4V5.6z"/><path d="M12 8.5v3.4"/><path d="M12 15h.01"/></svg>',
   // A snowflake: three axes through one centre, each tipped with a pair of barbs. The page is
   // about what has stopped moving, and a flake is the one figure in this set that says "frozen"
@@ -55,7 +55,7 @@ export const ROUTE_ICONS = {
   // not a target (program and the Security lane both draw concentric rings); the six barbs are
   // what keeps it legible at 18px rather than reading as a plain asterisk.
   coldZone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M4.2 7.5l15.6 9"/><path d="M19.8 7.5l-15.6 9"/><path d="M9.6 4.8L12 6.4l2.4-1.6"/><path d="M9.6 19.2L12 17.6l2.4 1.6"/><path d="M4.6 11.2l-.4-2.8 2.7-.9"/><path d="M19.4 12.8l.4 2.8-2.7.9"/><path d="M17.1 7.5l2.7.9-.4 2.8"/><path d="M6.9 16.5l-2.7-.9.4-2.8"/></svg>',
-  history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M3.5 4.5V9h4.5"/><path d="M12 8.5v4l2.8 1.7"/></svg>',
+  history: backClock,
   attribution: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4.5h6.5l9 9-6.5 6.5-9-9z"/><path d="M8 8.5h.01"/></svg>',
   data: cylinder,
   // An open book on its spine — the key sheet, and the one route mark that names a thing to

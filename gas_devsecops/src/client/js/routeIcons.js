@@ -18,7 +18,7 @@
 // rail order, so the whole nav is readable in one file.
 
 import {
-  book, curve, cylinder, sheets, sliders, trays,
+  backClock, bars, book, curve, cylinder, sheets, shotTarget, sliders, stopwatch, trays,
 } from "../../../../gas_shared/shell/navIcons.js";
 
 // The LANE marks. A lane's mark has to be recognisable BESIDE the page marks its own panel
@@ -40,13 +40,13 @@ export const LANE_ICONS = {
 export const ROUTE_ICONS = {
   // A single tall bar beside two short ones: the page is one headline number with its
   // supporting counts, and the mark says so before the label does.
-  executive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16"/><path d="M7.5 20V13"/><path d="M12 20V4.5"/><path d="M16.5 20v-4.6"/></svg>',
+  executive: bars,
   // A clock. The page is time-to-remediate and nothing else, and the clock is the only
   // glyph a reader needs no label to place.
-  mttr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 6.8V12l3.4 2.2"/></svg>',
+  mttr: stopwatch,
   // A target with the shot off-centre: coverage and efficiency are precisely the question
   // of whether effort landed where it was aimed, and a bullseye alone would claim it did.
-  program: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="3.6"/><circle cx="14.1" cy="9.9" r="1"/></svg>',
+  program: shotTarget,
   // A package. SCA is third-party code arriving as a unit, and the box is that unit.
   sca: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.3l7.6 3.9v9.6L12 20.7l-7.6-3.9V7.2z"/><path d="M4.6 7.3L12 11.1l7.4-3.8"/><path d="M12 11.1v9.5"/></svg>',
   // Angle brackets with a mark between them: first-party source, and the mark is the
@@ -59,7 +59,7 @@ export const ROUTE_ICONS = {
   // ledger keys on, so the mark is the thing itself.
   repos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="5.6" r="2.2"/><circle cx="7" cy="18.4" r="2.2"/><circle cx="17" cy="9.4" r="2.2"/><path d="M7 7.8v8.4"/><path d="M17 11.6c0 3.4-3 4.3-6.6 4.9"/></svg>',
   // A sweep line with a mark on it: one scan is one dated observation of the register.
-  history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-4.3-7.1"/><path d="M12 12l5.2-3.2"/><circle cx="12" cy="12" r="1"/></svg>',
+  history: backClock,
   data: cylinder,
   // An open book. Every other Data-lane mark is a record of what happened; this is the one
   // page that records nothing and defines everything, so the mark is deliberately not a

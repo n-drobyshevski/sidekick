@@ -16,6 +16,8 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
+import * as SHARED_MARKS from "../../shell/navIcons.js";
+
 /**
  * The PAGES table as an ordered list, which is the shape every rule below reads.
  *
@@ -141,6 +143,28 @@ export function registerNavGroupContract(ctx) {
 
     it("give every route exactly one", () => {
       expect(Object.keys(ctx.ROUTE_ICONS).sort()).toEqual(PAGES.map((p) => p.route).sort());
+    });
+
+    // A SHARED MARK IS NAMED, NEVER RE-PASTED.
+    //
+    // The rule above compares VALUES, so it cannot tell a shared mark that was imported from
+    // one that was copied back in as a literal — both are the same bytes at runtime. This
+    // reads routeIcons.js as SOURCE and refuses any inline `<svg …>` that is byte-identical
+    // to something shell/navIcons.js already exports. That is the realistic way the four
+    // private icon sets would grow back: not by anyone deciding to fork one, but by someone
+    // pasting a drawing "since it is only a string" and nothing noticing for two years —
+    // which is exactly how gas_devsecops's history mark and gas_ai's scans mark came to be
+    // the same picture.
+    it("re-pastes no mark that gas_shared/shell/navIcons.js already draws", () => {
+      const src = readFileSync(resolve(root, "src/client/js/routeIcons.js"), "utf8");
+      const inline = [...src.matchAll(/'(<svg [^']*<\/svg>)'/g)].map((m) => m[1]);
+      for (const [name, svg] of Object.entries(SHARED_MARKS)) {
+        expect(
+          inline.includes(svg),
+          'routeIcons.js pastes the "' + name + '" mark navIcons.js already exports — '
+            + "import it instead",
+        ).toBe(false);
+      }
     });
 
     // PROMOTED FROM gas/test/navGroups.test.js, WHERE IT COULD ONLY SEE ONE APP.
