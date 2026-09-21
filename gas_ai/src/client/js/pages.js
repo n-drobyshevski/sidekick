@@ -107,13 +107,25 @@ export const PAGES = {
     fullBleed: true,
     experimental: true,
   },
-  // The tail: chrome, not a lane. A rule separates it and nothing labels it — "Data" under
-  // a heading reading DATA, and "Help" under HELP, were two lines that restated the link
-  // beneath them, and "Preferences" over "Settings" was the same line in a synonym.
-  data: { title: "Data", group: null, render: renderData },
+  // A DATA LANE, WHERE THERE WAS A THREE-PAGE TAIL. The old objection to labelling these
+  // was exact and is answered rather than overruled: "Data" over a link reading Data, and
+  // "Help" over a link reading Help, were two headings restating the links beneath them.
+  // Both pages are renamed here, so the lane now says what KIND of page these are and each
+  // link says which page it is — Storage and the Key sheet, under Data. That is also the
+  // filing both sibling registers use, which is the disagreement this wave came to settle:
+  // gas's own table recorded it as an open question in as many words.
+  //
+  // Two pages, so the lane earns its heading under the rule navModel.railItems applies.
+  data: { title: "Storage", group: "Data", render: renderData },
+  // "Key sheet", not "Help": it is the book — every glossary tip's "Enter for the full
+  // definition" lands here — and this page's own hero already called it the key sheet while
+  // the nav said Help.
+  help: { title: "Key sheet", group: "Data", render: renderHelp },
+  // The tail is Settings alone now: a page that names itself, drawn under a rule rather than
+  // under a heading, because "Preferences" over one link is a synonym restating it.
+  //
+  // Still last, and still not the front door. MANIFEST.defaultRoute names that, and this map
+  // does not decide it by position — which is what made the old coupling worth stating and
+  // then worth retiring: the fallback said "problems" while route() still said graph.
   settings: { title: "Settings", group: null, render: renderSettings },
-  // Last on purpose. MANIFEST.defaultRoute names the front door, and this map no longer
-  // decides it by position — which is what made the old coupling worth stating and then
-  // worth retiring: the fallback said "problems" while route() still said graph.
-  help: { title: "Help", group: null, render: renderHelp },
 };

@@ -17,20 +17,24 @@
 // it is this register's own claim. Every route still has exactly one visible entry below, in
 // rail order, so the whole nav is readable in one file.
 
-import { book, cylinder, sliders } from "../../../../gas_shared/shell/navIcons.js";
+import {
+  book, curve, cylinder, sheets, sliders, trays,
+} from "../../../../gas_shared/shell/navIcons.js";
 
 // The LANE marks. A lane's mark has to be recognisable BESIDE the page marks its own panel
 // lists, so none of these is a copy of a route glyph below.
 export const LANE_ICONS = {
-  // A descending curve. The lane is how the programme is doing over time — the shape every
-  // page under it draws. Deliberately not a clock: `mttr` owns that below, and a lane's
-  // mark has to be recognisable beside the page marks its own panel lists.
-  "Program": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5v14h17"/><path d="M6.5 8.5c3.6 0 4.2 7.5 11 7.5"/></svg>',
-  // Stacked sheets: three registers side by side, which is exactly what the panel lists.
-  "Registers": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3.8h9a1.4 1.4 0 0 1 1.4 1.4v10.4a1.4 1.4 0 0 1-1.4 1.4h-9A1.4 1.4 0 0 1 6.1 15.6V5.2a1.4 1.4 0 0 1 1.4-1.4z"/><path d="M9 20.2h9.2a1.9 1.9 0 0 0 1.9-1.9V8.2"/></svg>',
-  // Ruled rows with marks on them: the stored record, and the panel says which part of it.
-  "Data": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.2h15"/><path d="M4.5 12h15"/><path d="M4.5 17.8h15"/><circle cx="8.4" cy="6.2" r="1.6"/><circle cx="14.8" cy="12" r="1.6"/><circle cx="10.6" cy="17.8" r="1.6"/></svg>',
+  // All three are gas_shared/shell/navIcons.js's now, shared with gas/, which arrived at
+  // these same three lanes. The curve and the sheets are this register's own drawings,
+  // promoted unchanged.
+  Program: curve,
+  Registers: sheets,
+  // TRAYS, NOT THE RULED ROWS THIS USED TO DRAW. The rows-with-dots were all but identical
+  // to gas_ai's `aars` mark, and gas_ai gains a Data lane in this wave — two near-twin
+  // marks in one nav is exactly what the uniqueness rule refuses.
+  Data: trays,
 };
+
 
 
 export const ROUTE_ICONS = {

@@ -12,7 +12,7 @@
 // be present before anything draws. These specs enumerate the orderings, because a DOM test
 // would exercise whichever interleaving the harness happened to produce and call it proof.
 //
-// Plain .js for the reason navGroups.test.js writes out.
+// Plain .js for the reason attributionPrefill.test.js writes out.
 
 import { describe, expect, it } from "vitest";
 

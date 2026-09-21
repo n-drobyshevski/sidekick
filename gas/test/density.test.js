@@ -11,7 +11,7 @@
 // back with gas's real nine routes, in rail order — the exact claim `npm run density` depends
 // on to walk the right pages.
 //
-// Plain .js on purpose, matching navGroups.test.js/navModel.test.js in this same directory:
+// Plain .js on purpose, matching navModel.test.js in this same directory:
 // tsconfig has no allowJs and includes test/**/*.ts, so a .ts test importing a client .js
 // module fails `tsc --noEmit`, and `npm run check` is typecheck && test && build — vitest
 // would never run. Vitest picks up **/*.test.{js,ts} either way.

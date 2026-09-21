@@ -12,7 +12,7 @@
 // real eleven routes, in rail order — the exact claim `npm run density` depends on to walk
 // the right pages.
 //
-// Plain .js on purpose, matching navGroups.test.js/navModel.test.js in this same directory:
+// Plain .js on purpose, matching navModel.test.js in this same directory:
 // tsconfig has no allowJs and includes test/**/*.ts, so a .ts test importing a client .js
 // module fails `tsc --noEmit`, and `npm run check` is typecheck && test && build — vitest
 // would never run. Vitest picks up **/*.test.{js,ts} either way.
@@ -34,7 +34,7 @@ describe("parsePages() against gas_ai's own pages.js — the route list `npm run
     // (compliance, scans), the Labs gate (aars), then the chrome tail (data, settings, help).
     const expectedRoutes = [
       "graph", "inventory", "problems", "combos", "config", "compliance", "scans", "aars",
-      "data", "settings", "help",
+      "data", "help", "settings",
     ];
     const routes = parsePages(PAGES_JS).map((p) => p.route);
     expect(routes).toEqual(expectedRoutes);

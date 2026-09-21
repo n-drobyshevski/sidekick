@@ -100,7 +100,9 @@ const OPENING_NOUN = "graph";
 // Every route in PAGES order. Moves only when a route is added or removed on purpose.
 const ROUTES = [
   "graph", "inventory", "problems", "combos", "config",
-  "compliance", "scans", "aars", "data", "settings", "help",
+  // `help` ahead of `settings`: the two content pages became a Data lane and lanes are
+  // contiguous, so Settings is the whole chrome tail now.
+  "compliance", "scans", "aars", "data", "help", "settings",
 ];
 
 registerTokenContract({

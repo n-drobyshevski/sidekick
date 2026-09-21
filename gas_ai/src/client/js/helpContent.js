@@ -78,7 +78,7 @@ export const ROUTE_TITLES = {
   config: "Cloud Configuration",
   aars: "Scoring Models",
   scans: "Wiz Scans",
-  data: "Data",
+  data: "Storage",
   settings: "Settings",
 };
 

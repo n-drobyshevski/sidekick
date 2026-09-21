@@ -143,6 +143,24 @@ export function registerNavGroupContract(ctx) {
       expect(Object.keys(ctx.ROUTE_ICONS).sort()).toEqual(PAGES.map((p) => p.route).sort());
     });
 
+    // PROMOTED FROM gas/test/navGroups.test.js, WHERE IT COULD ONLY SEE ONE APP.
+    //
+    // The rail puts a lane's mark beside the page marks its own panel lists, so a lane that
+    // borrowed one of them would draw the same picture twice in one nav and mean two things.
+    // That was true of any sidekick and was held in one app's own test file, which is why
+    // two cross-app duplicates lived for as long as they did: gas_devsecops's history mark
+    // was byte-identical to gas_ai's scans mark, and its Data lane mark was all but gas_ai's
+    // aars mark. Neither is visible from inside one app — but both become in-app collisions
+    // the moment a mark is shared, which is exactly when this needs to bite.
+    it("draw each lane differently from every other lane, and from every page", () => {
+      const seen = new Map();
+      for (const [name, svg] of [...Object.entries(ctx.LANE_ICONS),
+        ...Object.entries(ctx.ROUTE_ICONS)]) {
+        expect(seen.has(svg), name + " draws the same mark as " + seen.get(svg)).toBe(false);
+        seen.set(svg, name);
+      }
+    });
+
     it("draw them all on the same 24 grid, on currentColor", () => {
       const all = [...Object.entries(ctx.LANE_ICONS), ...Object.entries(ctx.ROUTE_ICONS)];
       for (const [name, svg] of all) {

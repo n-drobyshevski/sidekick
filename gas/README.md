@@ -39,16 +39,18 @@ describe the whole app rather than any one page: the switcher scopes every figur
 page, so it reads as chrome rather than as one page's filter. Everything else stays in the
 rail: the nav, **Run scan** and **Quick refresh**, the credentials pill and the last-scan line.
 
-Above 800px the nav's **first tier** is a 76px icon rail: one item per lane — _Overview_,
-_Security_ (MTTR & SLA, Program performance, OS vulnerabilities), _Data_ (Data, Scan History,
-Attribution) — then a rule, then Settings, which names itself and so sits in an unlabelled
-chrome tail rather than under a "Preferences" heading over one link. **A lane holding one
-visible page is drawn AS that page**, which is why Overview appears on the rail as _Executive_.
-Pointing at a lane opens the **second tier**: a full-height 280px panel listing that lane's
-pages. **A rail item earns a panel by having something to put in it**, so the two multi-page
-lanes have one and Executive and Settings are plain links; the rail draws nothing to advertise
-which is which — the panel is what shows up, and `aria-haspopup` is what says so to a reader
-who cannot see it.
+Above 800px the nav's **first tier** is a 76px icon rail: one item per lane — _Program_
+(Executive, MTTR & SLA, Coverage & efficiency), _Registers_ (OS vulnerabilities, Cold zone),
+_Data_ (Storage, Scan history, Attribution, Key sheet) — then a rule, then Settings, which
+names itself and so sits in an unlabelled chrome tail rather than under a "Preferences"
+heading over one link. These are the lanes `gas_devsecops` arrived at independently, and the
+words are shared with it on purpose: the same question gets the same name in both registers.
+**A lane holding one visible page is drawn AS that page**, which is why an earlier
+one-page _Overview_ lane had to be folded into a real one. Pointing at a lane opens the
+**second tier**: a full-height 280px panel listing that lane's pages. **A rail item earns a
+panel by having something to put in it**, so the three lanes have one and Settings is a plain
+link; the rail draws nothing to advertise which is which — the panel is what shows up, and
+`aria-haspopup` is what says so to a reader who cannot see it.
 
 The panel opens on a 220ms cold delay (nothing inside a 400ms warm window, and a grace period
 long enough for the pointer to cross the gap — SC 1.4.13), on `ArrowRight` from the keyboard,
@@ -56,9 +58,10 @@ and on the first tap where there is no hover at all. Its `→|` control **pins**
 second column, which is what the old collapsed/expanded rail preference became — same
 `localStorage` key, so a reader who had widened the rail keeps a wide left edge. Below 800px
 the rail is a stacked list instead: every page, lane headings as words, one rule above the
-tail, and no panel. `test/navGroups.test.js` and `test/navModel.test.js` hold the shape —
-lanes contiguous, every lane and page marked, the tail drawn once, and the landing route the
-same in `app.js` and `store.js`.
+tail, and no panel. `gas_shared/test/contracts/navGroups.js` and `test/navModel.test.js` hold
+the shape — lanes contiguous, every lane and page marked, no two marks alike, the tail drawn
+once, and the landing route the manifest's. The route table itself is `src/client/js/pages.js`,
+its own module so the contract can import it rather than parse it.
 
 The switcher fronts the two dimensions this register scopes by, as two groups in one list:
 
@@ -339,7 +342,7 @@ none                 === rows classified "low"
 unknown              === rows classified "unknown"
 ```
 
-That matters because this page and **Program performance** both publish an unclassified
+That matters because this page and **Coverage & efficiency** both publish an unclassified
 count over the same fleet. Two independent classifiers would eventually disagree, and a
 reader would have no way to tell which one was lying. `unknown` is a first-class tier for the
 same reason it is a first-class verdict there — see _Unclassified findings are not "low risk"_.
@@ -372,9 +375,9 @@ KEV is rare and that rarity is exactly what makes it the day's work. It also kee
 clear of the wall of red DESIGN.md rejects. The unclassified tier is **hatched**, never
 filled: a measurement gap is not a low score.
 
-## Program performance (coverage, efficiency, capacity)
+## Coverage & efficiency (coverage, efficiency, capacity)
 
-The **Program performance** page answers the question MTTR cannot: not _how fast_ risk is
+The **Coverage & efficiency** page answers the question MTTR cannot: not _how fast_ risk is
 closed, but whether the _right_ risk is closed. The metrics are the Cisco Kenna / Cyentia
 "Prioritization to Prediction" family (`src/domain/program.ts`):
 
@@ -462,7 +465,7 @@ computing a rate over the slice that happens to have data.
 
 ## The cold zone
 
-Where **Program performance** asks whether the right risk is closing, the **Cold zone**
+Where **Coverage & efficiency** asks whether the right risk is closing, the **Cold zone**
 page (`#/coldZone`, and its "Backlog in the cold zone" card on the Executive page) asks
 where remediation has stopped altogether. Backlog size cannot tell an actively-worked asset
 from an abandoned one; idle time can. `src/domain/coldZone.ts` measures, per **asset**
@@ -1055,7 +1058,7 @@ Things node tests cannot cover — verify after the first deployment:
       again must reclaim the dead job and start a new one rather than re-adopting it. Confirm a
       scan can start afterwards (jobs are single-flight across kinds, so a wedged backfill
       blocks scanning).
-- [ ] Program performance: after `setup()`, run a scan and confirm the `vuln_ledger` tab has
+- [ ] Coverage & efficiency: after `setup()`, run a scan and confirm the `vuln_ledger` tab has
       `has_kev` / `has_exploit` / `epss` / `risk_observed_at` populated. Then
       **Settings → Risk-signal backfill**: it survives the 6-min cap via its own
       `trigger_continueBackfill` one-shot trigger, is safe to re-run, and a mid-run Stop
@@ -1074,7 +1077,7 @@ Things node tests cannot cover — verify after the first deployment:
       `shrinkTab` failed — check the reported `cellsBefore`/`cellsAfter` pair). Then confirm
       the walk resumes across `trigger_continuePurge` hops (this needs a register large enough
       to exceed one 4.5-min hop — the node tests cover the cursor logic, not the real trigger
-      timing), and that a mid-purge **Delete selected** on Scan History is refused rather than
+      timing), and that a mid-purge **Delete selected** on Scan history is refused rather than
       replaying half-rewritten archives.
 - [ ] After the purge completes, delete an unsealed scan and confirm the purged severities do
       **not** reappear — the archive rewrite is the only thing preventing it.

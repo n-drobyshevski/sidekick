@@ -104,7 +104,9 @@ export async function renderData(main, params, ctx) {
   main.append(sectionLabel("Maintenance"));
   renderMaintenanceSection(main, boot, ctx);
 
-  main.append(sectionLabel("Storage", { term: "compaction" }));
+  // "Space in use", not "Storage": the page's own h1 is Storage now, and a section
+  // restating its page's title says nothing. gas_devsecops named it this first.
+  main.append(sectionLabel("Space in use", { term: "compaction" }));
   renderStorageSection(main);
 }
 

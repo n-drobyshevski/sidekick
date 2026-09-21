@@ -62,7 +62,9 @@ export async function renderData(main, _params, ctx) {
     // whose own rows are the raw material that precedence is derived from.
     sectionLabel("Sync history", { term: "rail-status" }),
     historyHost,
-    sectionLabel("Storage"),
+    // "Space in use", not "Storage": the page's own h1 is Storage now. Named to match
+    // both sibling registers.
+    sectionLabel("Space in use"),
     statsHost,
   );
 

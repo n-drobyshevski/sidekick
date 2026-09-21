@@ -51,19 +51,25 @@ The reference screen's search box, notification icons and avatar are deliberatel
 none of them has anything behind it here. Everything else stays in the rail: the nav, the
 collapse control, **Sync now**, the credential pill and the last-sync line.
 
-The nav runs in **three lanes, a gate and a tail**: *Landscape* (Security Graph, AI
+The nav runs in **four lanes, a gate and a tail**: *Landscape* (Security Graph, AI
 Inventory — what we have), *Risk* (Priorities, Toxic Combinations, Cloud Configuration —
 what is open and what to do first), *Assurance* (Compliance Posture, Wiz Scans — how we
-score, and where the figures came from), then the gated *Labs*, then Data, Settings and Help
-under a rule with no heading over them, because those three name themselves.
+score, and where the figures came from), then the gated *Labs*, then *Data* (Storage, the
+Key sheet — what is stored and what the words mean), and Settings alone under a rule with no
+heading over it, because it names itself.
+
+Data used to be part of that tail, on the argument that a heading reading DATA over a link
+reading Data restates it. The pages are named Storage and Key sheet now, so the lane says
+what kind of page they are and each link says which page it is — and the key sheet is filed
+where both sibling registers file it, which was an open disagreement across the three.
 
 Above 800px those lanes are the nav's **first tier**: a 76px icon rail, one item per lane
-plus the three chrome pages, each a link that navigates. Pointing at one opens the **second
+plus Settings, each a link that navigates. Pointing at one opens the **second
 tier** — a full-height 280px panel listing that lane's pages and, under a heading, its own
 instances: the reader's saved graph queries and inventory views under *Saved*, the
 toxic-combination patterns under *Combination patterns*. **A rail item earns a panel by
 having something to put in it**, the same rule that makes a labelled lane earn its heading by
-holding two pages, so Labs and the chrome pages are plain links. The rail draws nothing to
+holding two pages, so Labs and Settings are plain links. The rail draws nothing to
 advertise which is which: the panel is what shows up, and `aria-haspopup` is what says so to
 a reader who cannot see it. The panel lists only destinations that already deep-link, and
 never fetches: pointing at a rail item costs a `localStorage` read, not a round trip — which

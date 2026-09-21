@@ -59,7 +59,7 @@ const MANIFEST = {
   // The first key of PAGES below, and the only place the two can disagree — which is what
   // test/shared.test.js's navGroups contract checks. It used to be a bare "executive"
   // literal inside store.js's parseHash AND a second `|| PAGES.executive` in route(); the
-  // two agreed by hand and test/navGroups.test.js existed to keep them agreeing.
+  // two agreed by hand and the shared navGroups contract exists to keep them agreeing.
   defaultRoute: "executive",
   // THIS REGISTER HAS A HELP BOOK NOW, and this line used to be the placeholder that said it
   // did not: `findHelpEntry: () => null` — a resolver that resolves nothing, which made every

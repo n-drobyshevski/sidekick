@@ -47,3 +47,20 @@ export const sliders = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColo
 // sweep, which asserts every mark an app ends up with carries `viewBox="0 0 24 24"`,
 // `currentColor` and `aria-hidden`, and names the offending route or lane when one does
 // not.
+
+// LANE. A descending curve: how the programme is doing over time, the shape every page under
+// it draws. Deliberately not a clock — a lane's mark has to be recognisable beside the page
+// marks its own panel lists, and `mttr` owns the dial.
+export const curve = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5v14h17"/><path d="M6.5 8.5c3.6 0 4.2 7.5 11 7.5"/></svg>';
+
+// LANE. Stacked sheets: the population the register holds, which is what the panel lists.
+export const sheets = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3.8h9a1.4 1.4 0 0 1 1.4 1.4v10.4a1.4 1.4 0 0 1-1.4 1.4h-9A1.4 1.4 0 0 1 6.1 15.6V5.2a1.4 1.4 0 0 1 1.4-1.4z"/><path d="M9 20.2h9.2a1.9 1.9 0 0 0 1.9-1.9V8.2"/></svg>';
+
+// LANE. Stacked trays: the stored record, layered.
+//
+// gas_devsecops drew ruled rows with offset dots for this lane, and that drawing is
+// all but identical to gas_ai's `aars` mark. gas_ai gains a Data lane in this wave, so
+// taking the rows would have put two near-twin marks in ONE nav — which is what the
+// uniqueness rule in gas_shared/test/contracts/navGroups.js catches, one app over from
+// where it used to be able to see it.
+export const trays = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 15.5L12 19.5l8.5-4"/><path d="M3.5 11.5L12 15.5l8.5-4"/><path d="M12 4.5l8.5 4-8.5 4-8.5-4z"/></svg>';

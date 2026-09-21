@@ -21,6 +21,7 @@ read the tree as `"type": "module"`.
 | `api.js` | the `google.script.run` bridge and the `{ok,data}` envelope |
 | `store.js` | the bootstrap cache, the SWR RPC cache and hash routing |
 | `icons.js` | node-kind SVG (512 lines; only `ui/nodeCell.js` and `ui/uiIcons.js` reach it) |
+| `shell/` | the SPA chrome: `appShell.js` (boot, the hash router, the per-route `<main>` swap), `appbar.js`, `navModel.js` (the rail's arithmetic, DOM-free), `navRail.js`, `navFlyout.js`, `navIcons.js` — the nav marks with more than one consumer, one named export each so esbuild drops what an app does not name — plus `bootSplash.js`, `routeOverlay.js`, `experimental.js` and the one `index.template.html` every app renders from |
 | `ui/` | 37 component modules plus `index.js`, the one import surface, `helpPage.js` — a page, not a component, so deliberately not in the barrel — and `settingsForm.js` — a DOM-free model reached only by direct path, deliberately not in the barrel either (see "The settings seam" below) |
 | `styles/` | nine stylesheets: `tokens.base.css` first, `overrides.css` last |
 | `test/contracts/` | twenty-one spec factories the apps register from their own test files (the count was stale at "sixteen" before `collapsibleSection.js` was counted in; it is `grep -l 'export function register' test/contracts/*.js`) |
@@ -33,9 +34,17 @@ read the tree as `"type": "module"`.
 - **Anything that reads an app's domain layer.** `gas_devsecops/ui/projectScope.js` reads
   `src/domain/projectScope.ts` and means nothing in a sibling with no repositories, so it
   stays in that app. The parity contract holds the allow-list.
-- **The shell.** `app.js`, `navModel.js`, `navFlyout.js`, `routeIcons.js`, `helpContent.js`
-  and the pages are still per-app. Some of that is genuinely per-app; some is a later
-  package's job.
+- **The shell.** `app.js`, `pages.js`, `helpContent.js` and the pages are per-app.
+  `navModel.js` and `navFlyout.js` moved here; `routeIcons.js` is now a per-app MERGE — the
+  marks with a second consumer live in `shell/navIcons.js` and each app names the ones it
+  uses beside its own.
+
+  `pages.js` is per-app BY CONSTRUCTION rather than by default: its entries close over that
+  app's own render functions, so there is nothing to promote. What changed is that it is a
+  module at all. The table used to sit inside `app.js`, which touches the DOM at module
+  scope, so five separate readers recovered it by regex over that file's source — and a
+  line-shaped pattern can only read line-shaped source, which is why one app's route entry
+  carried a comment forbidding anyone to wrap it. The contracts import it now.
 - **The vocabulary.** `helpContent.js` is each register's own book — which words it defines is
   the part that is genuinely per-app. Only the SHAPE of a definition is shared (`{ id, term,
   lines[] }`, kebab-case ids), so a `glossaryTip` behaves the same in all three.
