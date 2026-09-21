@@ -47,7 +47,6 @@ export function registerHelpContract(ctx) {
   const lane = ctx.lane || "Data";
   const root = fileURLToPath(ctx.appRoot);
   const PAGES_SRC = readFileSync(resolve(root, "src/client/js/pages.js"), "utf8");
-  const ROUTE_ICONS_SRC = readFileSync(resolve(root, "src/client/js/routeIcons.js"), "utf8");
   const PAGE_SRC = readFileSync(resolve(root, "src/client/js/pages/help.js"), "utf8");
   const SHARED_SRC = readFileSync(
     fileURLToPath(new URL("../../ui/helpPage.js", import.meta.url)), "utf8",
@@ -215,9 +214,13 @@ export function registerHelpContract(ctx) {
     });
 
     it("routeIcons.js gives the help route exactly one mark, on the shared 24-grid", () => {
-      const m = ROUTE_ICONS_SRC.match(/help:\s*'([^']+)'/);
-      expect(m, "routeIcons.js has no help icon").toBeTruthy();
-      const svg = m[1];
+      // READ FROM THE IMPORTED MAP, not from routeIcons.js's source. It used to match a
+      // quoted literal on a `help:` line, which stopped existing the moment the book mark
+      // was promoted into gas_shared/shell/navIcons.js and named here rather than restated.
+      // The claim was always about the VALUE the nav renders; the regex was only ever a way
+      // of reaching it.
+      const svg = (ctx.ROUTE_ICONS || {}).help;
+      expect(svg, "routeIcons.js has no help icon").toBeTruthy();
       expect(svg).toContain('viewBox="0 0 24 24"');
       expect(svg).toContain("currentColor");
       expect(svg).toContain('aria-hidden="true"');

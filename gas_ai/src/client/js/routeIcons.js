@@ -32,6 +32,13 @@ export const LANE_ICONS = {
   // does — which is the whole reason this lane keeps a heading it could not otherwise earn.
   Labs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9.8 3.5h4.4"/><path d="M10.8 3.5v5.3l-4.9 8.4a2 2 0 0 0 1.7 3h8.8a2 2 0 0 0 1.7-3l-4.9-8.4V3.5"/><path d="M8.3 14.6h7.4"/></svg>',
 };
+//
+// THE SHARED MARKS COME FROM gas_shared/shell/navIcons.js. A mark with a second consumer is
+// drawn once there and named here; a mark with one consumer is drawn here, in full, because
+// it is this register's own claim. Every route still has exactly one visible entry below, in
+// rail order, so the whole nav is readable in one file.
+
+import { cylinder, sliders } from "../../../../gas_shared/shell/navIcons.js";
 
 export const ROUTE_ICONS = {
   graph: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="5.5" cy="7" r="2.3"/><circle cx="18.5" cy="6" r="2.3"/><circle cx="12" cy="17.5" r="2.3"/><path d="M7.6 8.1l3 7.3"/><path d="M16.6 7.7l-3.3 8"/><path d="M7.7 7.2l8.6-0.7"/></svg>',
@@ -52,8 +59,8 @@ export const ROUTE_ICONS = {
   compliance: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4.5h6v2.2H9z"/><path d="M15 5.6h2.2A1.3 1.3 0 0 1 18.5 6.9v11.8a1.3 1.3 0 0 1-1.3 1.3H6.8a1.3 1.3 0 0 1-1.3-1.3V6.9a1.3 1.3 0 0 1 1.3-1.3H9"/><path d="M8.6 11.2h6.8"/><path d="M8.6 15.2h3.4"/></svg>',
   aars: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 6h14"/><path d="M5 12h14"/><path d="M5 18h14"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="11" cy="18" r="2"/></svg>',
   scans: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-4.3-7.1"/><path d="M12 12l5.2-3.2"/><circle cx="12" cy="12" r="1"/></svg>',
-  data: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.3" ry="2.8"/><path d="M4.7 5.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/><path d="M4.7 11.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5h8"/><path d="M16 7.5h4"/><circle cx="14" cy="7.5" r="2"/><path d="M4 16.5h4"/><path d="M12 16.5h8"/><circle cx="10" cy="16.5" r="2"/></svg>',
+  data: cylinder,
+  settings: sliders,
   // A circled question mark rather than a book or a key: the page IS a key sheet, but the
   // nav slot has to be recognised before it is read, and "?" is the convention every
   // reader already holds (PRODUCT.md, Earned familiarity).

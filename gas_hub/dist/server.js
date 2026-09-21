@@ -324,7 +324,7 @@ var Server = (() => {
   });
 
   // ../gas_shared/server/buildInfo.ts
-  var BUILD_ID = true ? "1bc46de50b96" : "dev";
+  var BUILD_ID = true ? "38f67c6912ff" : "dev";
 
   // src/server/urls.ts
   var TILE_ORDER = ["os", "ai", "devsecops"];

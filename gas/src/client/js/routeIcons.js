@@ -8,6 +8,13 @@
 // imports every page module, so a page importing app.js just to reach these icons would be a
 // cycle. This module has neither problem — any page can import it directly, and
 // test/navGroups.test.js can hold LANE_ICONS against the lanes PAGES declares.
+//
+// THE SHARED MARKS COME FROM gas_shared/shell/navIcons.js. A mark with a second consumer is
+// drawn once there and named here; a mark with one consumer is drawn here, in full, because
+// it is this register's own claim. Every route still has exactly one visible entry below, in
+// rail order, so the whole nav is readable in one file.
+
+import { book, cylinder, sliders } from "../../../../gas_shared/shell/navIcons.js";
 
 // The LANE marks — one per labelled lane, drawn on the rail where the lane, not the page, is
 // the item. Deliberately NOT a copy of any route glyph below: a lane's mark has to be
@@ -44,13 +51,13 @@ export const ROUTE_ICONS = {
   coldZone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v18"/><path d="M4.2 7.5l15.6 9"/><path d="M19.8 7.5l-15.6 9"/><path d="M9.6 4.8L12 6.4l2.4-1.6"/><path d="M9.6 19.2L12 17.6l2.4 1.6"/><path d="M4.6 11.2l-.4-2.8 2.7-.9"/><path d="M19.4 12.8l.4 2.8-2.7.9"/><path d="M17.1 7.5l2.7.9-.4 2.8"/><path d="M6.9 16.5l-2.7-.9.4-2.8"/></svg>',
   history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12a8 8 0 1 0 2.5-5.8"/><path d="M3.5 4.5V9h4.5"/><path d="M12 8.5v4l2.8 1.7"/></svg>',
   attribution: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 4.5h6.5l9 9-6.5 6.5-9-9z"/><path d="M8 8.5h.01"/></svg>',
-  data: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.3" ry="2.8"/><path d="M4.7 5.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/><path d="M4.7 11.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/></svg>',
+  data: cylinder,
   // An open book on its spine — the key sheet, and the one route mark that names a thing to
   // READ rather than a thing to measure. Deliberately the same glyph gas_devsecops draws for
   // the same route: a severity means one thing everywhere and so does the book, and two
   // different marks for one page would be the drift this package exists to undo.
-  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.4c-1.4-1.3-3.4-1.9-6.4-1.9v13.6c3 0 5 .6 6.4 1.9"/><path d="M12 6.4c1.4-1.3 3.4-1.9 6.4-1.9v13.6c-3 0-5 .6-6.4 1.9"/><path d="M12 6.4v13.6"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5h8"/><path d="M16 7.5h4"/><circle cx="14" cy="7.5" r="2"/><path d="M4 16.5h4"/><path d="M12 16.5h8"/><circle cx="10" cy="16.5" r="2"/></svg>',
+  help: book,
+  settings: sliders,
 };
 
 // The play triangle on the rail's Run scan button, and the tick that marks the scope

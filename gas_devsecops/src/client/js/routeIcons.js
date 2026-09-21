@@ -11,6 +11,13 @@
 //
 // test/shared.test.js holds both halves against PAGES: every lane has exactly one mark,
 // every route has exactly one, and neither set carries an entry for something that is gone.
+//
+// THE SHARED MARKS COME FROM gas_shared/shell/navIcons.js. A mark with a second consumer is
+// drawn once there and named here; a mark with one consumer is drawn here, in full, because
+// it is this register's own claim. Every route still has exactly one visible entry below, in
+// rail order, so the whole nav is readable in one file.
+
+import { book, cylinder, sliders } from "../../../../gas_shared/shell/navIcons.js";
 
 // The LANE marks. A lane's mark has to be recognisable BESIDE the page marks its own panel
 // lists, so none of these is a copy of a route glyph below.
@@ -49,10 +56,10 @@ export const ROUTE_ICONS = {
   repos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="5.6" r="2.2"/><circle cx="7" cy="18.4" r="2.2"/><circle cx="17" cy="9.4" r="2.2"/><path d="M7 7.8v8.4"/><path d="M17 11.6c0 3.4-3 4.3-6.6 4.9"/></svg>',
   // A sweep line with a mark on it: one scan is one dated observation of the register.
   history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-4.3-7.1"/><path d="M12 12l5.2-3.2"/><circle cx="12" cy="12" r="1"/></svg>',
-  data: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.3" ry="2.8"/><path d="M4.7 5.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/><path d="M4.7 11.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/></svg>',
+  data: cylinder,
   // An open book. Every other Data-lane mark is a record of what happened; this is the one
   // page that records nothing and defines everything, so the mark is deliberately not a
   // fourth variation on rows-and-marks.
-  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.4c-1.4-1.3-3.4-1.9-6.4-1.9v13.6c3 0 5 .6 6.4 1.9"/><path d="M12 6.4c1.4-1.3 3.4-1.9 6.4-1.9v13.6c-3 0-5 .6-6.4 1.9"/><path d="M12 6.4v13.6"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5h8"/><path d="M16 7.5h4"/><circle cx="14" cy="7.5" r="2"/><path d="M4 16.5h4"/><path d="M12 16.5h8"/><circle cx="10" cy="16.5" r="2"/></svg>',
+  help: book,
+  settings: sliders,
 };
