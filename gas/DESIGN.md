@@ -124,7 +124,8 @@ censored curve prints "at least N days" and an unread ledger prints "Not measure
 movement aside of per-severity rows against the newest scan a week or more older, and a
 stat strip closed by a hairline; then the open severity strip with its key row WHERE THAT
 MOVEMENT COMPARISON DOES NOT EXIST (see below); then the cold-backlog card (§11); then the
-by-domain table; then the last-scan block; and LAST, behind its own heading, Fix next — a
+remediation split's table — by domain unscoped, by support group inside a domain, by asset
+inside a support group; then the last-scan block; and LAST, behind its own heading, Fix next — a
 ranked table of (tier, owner) groups (an ordered list until the prose round of 2026-09-16 —
 see §9) with its denominator ("25 of 70 open findings ranked") and a disclosure naming every
 unranked reason with its count. The centred 720px `.exec` column and the page-level Run
@@ -137,7 +138,7 @@ hero states the register's claim about itself and the ranking states what follow
 What that order actually did was put the page's longest block — eight rows of eight columns,
 its denominator, its disclosure and up to three task notes — between the one figure a leader
 opens this page for and every other figure that qualifies it. The severity strip, the
-by-domain split and the last-scan caption are one glance each and now sit together; the
+remediation split and the last-scan caption are one glance each and now sit together; the
 ranked list is a WORKLIST, a different reader on a different errand, and it is at the end,
 shut, opened on purpose. `gas_shared/ui/sheet.js`'s `collapsibleSection` is the component —
 a `<details>` whose `<summary>` holds the h2 itself, so the heading is the toggle and the
@@ -152,7 +153,12 @@ there is no state in which the list is legible and its constraints are not. The 
 does have to be readable while the section is shut is its denominator, and that is why
 `rankedShort` moved UP onto the heading (as `collapsibleSection`'s `hint`) instead of staying
 a paragraph under the table. `test/wordsOneLevelDown.test.js` still holds `cutNote`,
-`exposureNote` and `rankedShort` out of any `disclosure(`; `test/executiveFixNext.test.js`
+`exposureNote` and `rankedShort` out of any `disclosure(` — and now checks EVERY occurrence of
+each, not just the first, because `cutNote` is rendered twice: Fix next's cap and the
+remediation split's. The split's is the by-asset bound (top 20 of an estate-sized dimension,
+the only one of the three that is capped), and it is a POPULATION statement rather than a
+definition, so it stays on the surface beside the awaiting-vendor-fix footnote rather than
+joining the dash's explanation on the column heading's tip. `test/executiveFixNext.test.js`
 holds the new half — `fixHost` last in `main.append`, the section built through
 `collapsibleSection`, and the two notes appended to the section's body rather than outside it.
 The open state is the page's (`fixOpen`, because swrCall paints twice on a warm cache) and is

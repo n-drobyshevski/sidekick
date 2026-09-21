@@ -50,6 +50,40 @@ function insideDisclosure(src, needle) {
   return false;
 }
 
+/**
+ * Whether ANY occurrence of `needle` sits inside a `disclosure(` span — `insideDisclosure`
+ * answers only for the first.
+ *
+ * This exists because one field name can be rendered by more than one section. `view.cutNote`
+ * is now two: Fix next's ("N more groups holding M findings are not shown") and the remediation
+ * split's, which says the same kind of thing about the by-asset cap. Checking the first
+ * occurrence alone would have let the second be quietly buried in a disclosure while this file
+ * went on reporting the rule as held — the precise failure the bracket walk was written to stop,
+ * reintroduced one section later.
+ *
+ * Returns `null` when the needle appears nowhere, like its sibling.
+ */
+function anyInsideDisclosure(src, needle) {
+  // Every `disclosure(` call's span, by the same paren-depth walk as above.
+  const spans = [];
+  for (let d = src.indexOf("disclosure("); d !== -1; d = src.indexOf("disclosure(", d + 1)) {
+    let depth = 1;
+    let j = d + "disclosure(".length;
+    while (j < src.length && depth > 0) {
+      if (src[j] === "(") depth++;
+      else if (src[j] === ")") depth--;
+      j++;
+    }
+    spans.push([d, j]);
+  }
+  let found = false;
+  for (let i = src.indexOf(needle); i !== -1; i = src.indexOf(needle, i + 1)) {
+    found = true;
+    if (spans.some(([a, b]) => i > a && i < b)) return true;
+  }
+  return found ? false : null;
+}
+
 describe("insideDisclosure (the sweep function itself)", () => {
   it("finds a needle nested inside a disclosure( call", () => {
     const src = 'x.append(disclosure("Why", el("p", {}, view.cutNote)));';
@@ -63,6 +97,24 @@ describe("insideDisclosure (the sweep function itself)", () => {
 
   it("returns null when the needle is not in the source at all", () => {
     expect(insideDisclosure("nothing here", "view.cutNote")).toBeNull();
+  });
+
+  // The blind spot the every-occurrence walker exists to cover: one surface render followed by
+  // one buried render reads as "on the surface" to the first-occurrence sweep.
+  it("insideDisclosure sees only the first occurrence — anyInsideDisclosure sees both", () => {
+    const src = 'a.append(el("p", {}, view.cutNote));'
+      + ' b.append(disclosure("Why", el("p", {}, view.cutNote)));';
+    expect(insideDisclosure(src, "view.cutNote")).toBe(false);
+    expect(anyInsideDisclosure(src, "view.cutNote")).toBe(true);
+  });
+
+  it("anyInsideDisclosure agrees when every occurrence is on the surface", () => {
+    const src = 'a.append(el("p", {}, view.cutNote)); b.append(el("p", {}, view.cutNote));';
+    expect(anyInsideDisclosure(src, "view.cutNote")).toBe(false);
+  });
+
+  it("anyInsideDisclosure returns null for a needle that is not there", () => {
+    expect(anyInsideDisclosure("nothing here", "view.cutNote")).toBeNull();
   });
 });
 
@@ -105,15 +157,26 @@ describe("executive — linkNote moved off the surface, onto the Fix next headin
   });
 
 describe("executive — cutNote, exposureNote and rankedShort MAY NEVER LEAVE THE SURFACE", () => {
+  // EVERY occurrence, not the first. `cutNote` is rendered twice now — Fix next's cap and the
+  // remediation split's by-asset cap — and a rule that only inspected the first would have gone
+  // on passing while the second was buried.
   for (const field of ["cutNote", "exposureNote", "rankedShort"]) {
     it(`view.${field} is not nested inside any disclosure(`, () => {
-      expect(insideDisclosure(EXECUTIVE_CODE, "view." + field)).toBe(false);
+      expect(anyInsideDisclosure(EXECUTIVE_CODE, "view." + field)).toBe(false);
     });
   }
 
   it("cutNote and exposureNote both still print as their own <p>, when present", () => {
     expect(EXECUTIVE_CODE).toContain('el("p", { class: "small muted" }, view.cutNote)');
     expect(EXECUTIVE_CODE).toContain('el("p", { class: "small muted" }, view.exposureNote)');
+  });
+
+  // Both renders of it, so a future edit that keeps Fix next's and drops the split's — or
+  // reshapes one into something a reader has to open — fails here rather than on the page.
+  it("renders cutNote on both surfaces that have a cap to confess", () => {
+    expect((EXECUTIVE_CODE.match(/view\.cutNote/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    const split = EXECUTIVE_CODE.slice(EXECUTIVE_CODE.indexOf("function renderByDomain("));
+    expect(split).toContain('el("p", { class: "small muted" }, view.cutNote)');
   });
 
   it("rankedShort still prints ahead of the disclosure holding the full accounting", () => {
@@ -209,7 +272,22 @@ describe("PERTURBATION: honesty moved into a disclosure fails the surface sweep"
     expect(insideDisclosure(defective, "view.cutNote")).toBe(true);
   });
 
-  it("does NOT flag the real page's own render of cutNote", () => {
-    expect(insideDisclosure(EXECUTIVE_CODE, "view.cutNote")).toBe(false);
+  it("does NOT flag the real page's own renders of cutNote", () => {
+    expect(anyInsideDisclosure(EXECUTIVE_CODE, "view.cutNote")).toBe(false);
+  });
+
+  // The same perturbation one section over: the split's bound is the tempting one to fold away,
+  // because the section already carries an awaiting-vendor-fix footnote and a second grey line
+  // under a table looks like clutter. It is not clutter — without it the table reads as the
+  // whole estate.
+  it("catches the split's cut note wrapped in a disclosure(", () => {
+    const defective = `
+      byDomainHost.append(tableWrap);
+      byDomainHost.append(disclosure(
+        "About this table",
+        el("p", { class: "small muted" }, view.cutNote),
+      ));
+    `;
+    expect(anyInsideDisclosure(defective, "view.cutNote")).toBe(true);
   });
 });

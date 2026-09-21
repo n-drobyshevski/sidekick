@@ -1396,16 +1396,34 @@ function mttrTrendData(p?: unknown): Rec {
   };
 }
 
-// The "(none)" bucket label for rows the support-group map can't resolve — one bucket so an
-// unattributed tail doesn't fragment the split.
-const NONE_SUPPORT_GROUP = "(none)";
+// The "(none)" bucket label for rows whose grouping key is missing — the support-group map
+// couldn't resolve one, or the asset carries no name. One bucket, so an unattributed tail
+// doesn't fragment the split. Same string `insights.rankGroups` folds blanks to.
+const NONE_BUCKET = "(none)";
 
-// Shared per-group remediation rows + trend for the MTTR breakdown, used by both the by-domain
-// and by-support-group variants. `rows` must already carry the grouping key at `keyField`
-// (e.g. "_domain" / "_supportGroup"); `orderedNames` fixes the table order (names with no rows
-// are skipped). Each row is keyed by a generic `group` label; the trend is the canonical
-// top-5-by-resolved (median + KM) over the same population. Reuses mttrFromLedger /
-// overallSlaOldest / kaplanMeier, so no domain-layer change.
+// How many assets the by-asset split lists. Domains and support groups are operator-configured,
+// so those splits list every bucket; assets are ESTATE-SIZED and cannot. The bound is not about
+// compute — `kmCurve` is quadratic WITHIN a bucket, so splitting the same rows into 2,000 asset
+// buckets costs less Kaplan-Meier work than into 8 domain buckets, and the trend half is capped
+// at 5 groups regardless. It is about what the payload and the DOM can carry: `execGroupSlice`
+// ships these rows eagerly to the LANDING page, and `dataTable` has no virtualization. 20
+// matches `insights.groupTree`'s `perLevelCap` — this repo's bound for a list you scan, as
+// against `rankGroups`/`concentration`'s 7 and 5, which bound a ranked callout. It also strictly
+// contains the charts' canonical top-5, so the two surfaces inside one section agree. What falls
+// off is reported as `cut` and said out loud under both tables; it is never silently dropped.
+const ASSET_TOP_N = 20;
+
+// Shared per-group remediation rows + trend for the MTTR breakdown, used by all three variants
+// — by-domain, by-support-group and by-asset. `rows` must already carry the grouping key at
+// `keyField` (e.g. "_domain" / "_supportGroup" / "_asset"); `orderedNames` fixes the table order
+// (names with no rows are skipped). Each row is keyed by a generic `group` label; the trend is
+// the canonical top-5-by-resolved (median + KM) over the same population. Reuses mttrFromLedger
+// / overallSlaOldest / kaplanMeier, so no domain-layer change.
+//
+// `orderedNames` IS ALSO THE CAP. Buckets outside it are built but never statted, so a caller
+// with an estate-sized key (the by-asset split) bounds both the work and the payload by passing
+// a shortened list — while still passing ALL rows, so the trend's `keyOf` folds the unlisted
+// tail into the pooled "Other" series rather than pretending it isn't there.
 function remediationGroups(
   rows: Rec[],
   keyField: string,
@@ -1469,7 +1487,8 @@ function remediationGroups(
 // Per-domain remediation summary for the "By domain" section shown at the unscoped
 // (aggregate) view — this splits the same ledger base rows the MTTR hero uses by their
 // resolved domain. Tag values first, then the manual groups in priority order, then Unassigned
-// and Not attributable; empty buckets omitted.
+// and Not attributable; empty buckets omitted. One of three dimensions the section serves; see
+// `cachedMttrGroupSplit` for which scope picks which.
 function mttrByDomainData(p?: unknown): Rec {
   const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
   let rows = filterSeverities(
@@ -1479,6 +1498,10 @@ function mttrByDomainData(p?: unknown): Rec {
   // Same show-no-fix toggle as mttrData, so the by-domain split matches the hero.
   rows = visibleBase(rows);
   supportGroups.attachSupportGroups(rows);
+  // A header support-group scope routes to the BY-ASSET split now (cachedMttrGroupSplit), so
+  // this filter no longer fires. It is kept rather than deleted because it is correct, inert,
+  // and the only thing standing between a future caller that passes both scopes and a payload
+  // computed over the wrong population — the exact bug the `bizDomain` key omission once was.
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
   // THE INPUT-LESS ROWS ARE NO LONGER DROPPED. They used to be filtered out here behind a
   // footnote, because counting them as Unassigned "would swamp the breakdown with a giant fake
@@ -1529,10 +1552,11 @@ function mttrBySupportGroupData(p?: unknown): Rec {
     bizDomains.attachBizDomains(rows);
     rows = rows.filter((r) => resolveDomainName(r, compiled) === domain);
   }
-  // A header support-group scope narrows to that one group (the split then collapses to a
-  // single row and the client hides it) — applied so the population matches the hero.
+  // A header support-group scope routes to the by-asset split now, so this no longer fires
+  // either. Kept for the same reason as its by-domain twin: a future caller passing both scopes
+  // should get a payload over the scoped population, not a silently wider one.
   if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
-  for (const r of rows) r["_supportGroup"] = String(r["_supportGroup"] ?? "") || NONE_SUPPORT_GROUP;
+  for (const r of rows) r["_supportGroup"] = String(r["_supportGroup"] ?? "") || NONE_BUCKET;
   // Order the table by bucket size (largest support group first), "(none)" always last.
   const sizes = new Map<string, number>();
   for (const r of rows) {
@@ -1540,13 +1564,89 @@ function mttrBySupportGroupData(p?: unknown): Rec {
     sizes.set(g, (sizes.get(g) ?? 0) + 1);
   }
   const orderedNames = [...sizes.keys()].sort((a, b) => {
-    if (a === NONE_SUPPORT_GROUP) return 1;
-    if (b === NONE_SUPPORT_GROUP) return -1;
+    if (a === NONE_BUCKET) return 1;
+    if (b === NONE_BUCKET) return -1;
     return (sizes.get(b) ?? 0) - (sizes.get(a) ?? 0);
   });
   const scanRows = ledgerStore.loadScanRows() as unknown as Rec[];
   const { rows: out, trend } = remediationGroups(rows, "_supportGroup", orderedNames, scanRows);
   return { dimension: "supportGroup", rows: out, trend };
+}
+
+// Per-asset remediation for the "By asset" section shown when a single support group is
+// selected. THIS REPLACES A WORKING VIEW, and not for the reason its two siblings swap: the
+// by-domain split under a support-group scope was a genuine multi-row answer ("which domains
+// does this team carry risk in?"), not the single row restating the hero that justifies the
+// domain → support-group swap. It is replaced because a support group is a TEAM, and the thing
+// a team patches is a host — so the split that tells them where to go on Monday is by asset.
+//
+// Keyed on `asset_name`, not `asset_id`, and that divergence from `coldZone.ts` is deliberate.
+// `remediationGroups` keys AND labels off one string field, so `asset_id` would put Wiz GUIDs
+// on the bar axis and in the trend legend. Cold zone keys on the id because it runs an asset
+// CENSUS, where merging two same-named hosts understates a count; this split reports statistics
+// over findings, where pooling a label still yields correct statistics over a labelled
+// population — and the label is the part a reader can act on. `GROUP_BASE_FIELDS.asset` and
+// `insights.oldestOpen.byAsset` already key on the name for the same reason.
+//
+// Compacted episodes never arrive here and no filter drops them: they carry a null subscription
+// (ledgerCore), so `resolveSupportGroup` leaves `_supportGroup` unset and the scope filter below
+// has already removed them. A "(compacted)" bucket is not a case this function has to handle —
+// see test/mttrByAsset.test.ts, which pins the fact rather than a guard that fires on nothing.
+function mttrByAssetData(p?: unknown): Rec {
+  const supportGroup = String((p as Rec)?.["supportGroup"] ?? "");
+  let rows = filterSeverities(
+    ledgerStore.loadBaseRows() as unknown as Rec[],
+    readSeverities(p),
+  );
+  rows = visibleBase(rows);
+  supportGroups.attachSupportGroups(rows);
+  // Not a guard — the population statement. The router only reaches this with a scope set, and
+  // an asset split over the whole estate would be a different (and unbounded) section.
+  if (supportGroup) rows = rows.filter((r) => String(r["_supportGroup"] ?? "") === supportGroup);
+  // No attachBizDomains / compileDomains / resolveDomainName: nothing below reads `_domain`, and
+  // resolving it would compile every manual rule's regex over every row for a column no reader
+  // of this payload ever sees. The by-support-group sibling pays that cost because it scopes BY
+  // domain; this one does not.
+  for (const r of rows) r["_asset"] = String(r["asset_name"] ?? "").trim() || NONE_BUCKET;
+  // RANK BEFORE STATTING. One counting pass decides which assets are worth a Kaplan-Meier curve,
+  // so the cap bounds the table, the payload and the work in one place. Open backlog leads
+  // because that is what the section is about — which hosts is this team carrying — with
+  // resolved as the tie-break so a busy host outranks an idle one of the same size.
+  const sizes = new Map<string, { open: number; resolved: number }>();
+  for (const r of rows) {
+    const g = String(r["_asset"]);
+    let acc = sizes.get(g);
+    if (!acc) sizes.set(g, (acc = { open: 0, resolved: 0 }));
+    // `resolved_at`, not `isOpenStatus` — because the open/resolved COLUMNS come from
+    // `mttrFromLedger`, which counts on `resolved_at` too (via summarize). reconcile keeps the
+    // two in step, but the cut note's arithmetic has to be in the same currency as the table it
+    // sits under, or a row where they ever disagree makes the footnote quietly wrong.
+    if (String(r["resolved_at"] ?? "").trim()) acc.resolved += 1;
+    else acc.open += 1;
+  }
+  const ranked = [...sizes.keys()].sort((a, b) => {
+    if (a === NONE_BUCKET) return 1;
+    if (b === NONE_BUCKET) return -1;
+    const sa = sizes.get(a)!, sb = sizes.get(b)!;
+    return (sb.open - sa.open) || (sb.resolved - sa.resolved) || (a < b ? -1 : a > b ? 1 : 0);
+  });
+  const orderedNames = ranked.slice(0, ASSET_TOP_N);
+  // What fell off, carried as data so neither table can draw a bounded list without saying so.
+  // `resolved` is in here for the chart: mttr.js derives its pooled "Other" bar from the rows it
+  // was sent, which after the cap are the kept 20 — without this the server would draw an
+  // "Other" trend series the client's bar table silently omits.
+  const cut = ranked.slice(ASSET_TOP_N).reduce(
+    (acc, g) => {
+      const sz = sizes.get(g)!;
+      return { groups: acc.groups + 1, open: acc.open + sz.open, resolved: acc.resolved + sz.resolved };
+    },
+    { groups: 0, open: 0, resolved: 0 },
+  );
+  const scanRows = ledgerStore.loadScanRows() as unknown as Rec[];
+  // ALL rows, not just the kept ones — see the note on remediationGroups: the tail is bucketed
+  // but never statted, and the trend folds it into "Other" instead of losing it.
+  const { rows: out, trend } = remediationGroups(rows, "_asset", orderedNames, scanRows);
+  return { dimension: "asset", rows: out, trend, cut };
 }
 
 // Cached per DATA_VERSION, keyed on exactly the params each computation reads — so
@@ -1701,10 +1801,11 @@ const cachedMttrByDomainData = (p?: unknown) =>
     // The key still omits `bizDomain`, and that is now correct rather than a defect: it used to
     // be one, because `mttrByDomainData` filtered on a param the key never carried, so a scoped
     // payload could be served from another scope's entry. That dimension is gone. `domain` is
-    // omitted for a different reason and it is NOT a repeat of that bug: both callers route a
-    // domain scope to `cachedMttrBySupportGroupData` instead (getMttrPage, getExecutivePage), so
-    // this entry is only ever reached with `domain === ""` and cannot be read at another. The
-    // `supportGroup` it DOES read is in the key.
+    // omitted for a different reason and it is NOT a repeat of that bug: `cachedMttrGroupSplit`
+    // routes a domain scope to the by-support-group split and a support-group scope to the
+    // by-asset split, so this entry is only ever reached with BOTH scopes empty. `supportGroup`
+    // stays in the key anyway, matching the inert filter it keys: an entry that can only be
+    // reached one way is not a reason to make it wrong for the other.
     "mttrByDomain14",
     {
       supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
@@ -1733,6 +1834,54 @@ const cachedMttrBySupportGroupData = (p?: unknown) =>
     3600,
   );
 
+// The by-asset split shown when a support group is selected. 1h TTL like both siblings (the
+// rows carry wall-clock-relative open ages).
+const cachedMttrByAssetData = (p?: unknown) =>
+  cached(
+    // A new namespace rather than a bump: nothing ever served this shape, so no stale entry can
+    // survive the persistent dataVersion. Bump to "mttrByAsset2" on any change to `rows`,
+    // `trend` or `cut` — AND on any change to ASSET_TOP_N. A different cap is not a smaller
+    // version of the same answer, it is a different cut of it, with a different `cut` footnote
+    // attached; that is precisely the case a TTL cannot ride out.
+    //
+    // `domain` is omitted and, unlike the by-domain entry's omission, needs no caveat at all:
+    // `cachedMttrGroupSplit` reaches this only with `supportGroup` non-empty, `scopeKinds()`
+    // makes the two scopes mutually exclusive, and `mttrByAssetData` reads no `domain` at all.
+    "mttrByAsset1",
+    {
+      supportGroup: String((p as Rec)?.["supportGroup"] ?? ""),
+      severities: readSeverities(p),
+      showNoFix: settingsStore.getShowNoFix(),
+    },
+    () => mttrByAssetData(p),
+    3600,
+  );
+
+/**
+ * The remediation split's dimension, which follows the scope — the one place that decides it,
+ * for all three endpoints that serve the section.
+ *
+ * A support-group scope splits BY ASSET (a support group is a team; the thing a team patches is
+ * a host), a domain scope by support group within it, and the unscoped view by domain. Only the
+ * middle one is a degeneracy fix — splitting by domain while scoped to one domain is a single
+ * row restating the hero. The asset case replaces a split that worked: by-domain-within-a-
+ * support-group was a real multi-row answer, and it is gone on purpose, not because it broke.
+ *
+ * `supportGroup` is tested first because it is the narrowest scope. `scopeKinds()` makes the two
+ * mutually exclusive, so the order is belt-and-braces rather than a precedence rule any caller
+ * can actually reach.
+ *
+ * This EXISTS as a function because the three call sites must agree key-for-key: getMttrPage and
+ * getMttrByDomainTrend have to land on the entry the other warmed, and getExecutivePage on the
+ * same one again. That used to be three copies of one ternary with a comment asking the next
+ * reader to keep them in step.
+ */
+function cachedMttrGroupSplit(p?: unknown): Rec {
+  if (String((p as Rec)?.["supportGroup"] ?? "")) return cachedMttrByAssetData(p);
+  if (String((p as Rec)?.["domain"] ?? "")) return cachedMttrBySupportGroupData(p);
+  return cachedMttrByDomainData(p);
+}
+
 export function getMttr(p?: unknown): ApiResult {
   return run(() => cachedMttrData(p));
 }
@@ -1745,11 +1894,10 @@ export function getMttrTrend(p?: unknown): ApiResult {
 }
 
 /** MTTR page in one round trip (summary + trends share one state load). The breakdown section
- *  adapts to the scope: at the whole-chain view it's the per-domain split; when a single Value
- *  Chain is selected the by-domain split would be one row, so it becomes the per-support-group
- *  split within that domain. Both carry a `dimension` tag so the client relabels accordingly. */
+ *  adapts to the scope — per-domain unscoped, per-support-group inside a domain, per-asset
+ *  inside a support group; `cachedMttrGroupSplit` owns that choice and the reasoning behind it.
+ *  All three carry a `dimension` tag so the client relabels accordingly. */
 export function getMttrPage(p?: unknown): ApiResult {
-  const domain = String((p as Rec)?.["domain"] ?? "");
   return run(() => ({
     // THE SUMMARY IS NOT MISSING — it is the other RPC's job. `mttr.js` already fires
     // `api_getMttr` with identical params, and both endpoints resolve the SAME
@@ -1758,9 +1906,7 @@ export function getMttrPage(p?: unknown): ApiResult {
     // worse than duplicate transfer — the two RPCs are separate GAS executions, so both
     // computed it. The page composes the two payloads instead; see `mttrPaintPlan`.
     trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
-    byDomain: mttrGroupTableSlice(
-      domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
-    ),
+    byDomain: mttrGroupTableSlice(cachedMttrGroupSplit(p)),
   }));
 }
 
@@ -1768,15 +1914,16 @@ export function getMttrPage(p?: unknown): ApiResult {
  *  it is the per-point KM replay, the heavy half of that section, and keeping it out lets the
  *  breakdown table paint with the page while these two charts land underneath it. (It used to
  *  be fetched when a drawer opened; the section is on the page now, so the client fires this on
- *  render. Nothing about the endpoint changed.) Repeats getMttrPage's dimension switch verbatim
- *  — it has to, both because the switch reads `domain` and because the params must match
- *  key-for-key to hit the entry that page already warmed. Deliberately NOT folded into
- *  `getGroupTrend`, which serves Overview's breakdown and is a different series. */
+ *  render. Nothing about the endpoint changed.) Shares getMttrPage's dimension switch through
+ *  `cachedMttrGroupSplit` rather than repeating it — the two must land on the same cache entry
+ *  key-for-key or this fires a second cold computation of what that page already warmed, and one
+ *  function is a guarantee of that where two copies of a ternary were a request. Deliberately
+ *  NOT folded into `getGroupTrend`, which serves Overview's breakdown and is a different series.
+ *
+ *  THE NAME STILL SAYS DOMAIN and stays that way: it is the wire name three dimensions now come
+ *  back on, and renaming an RPC churns every client and cache key for nothing a reader sees. */
 export function getMttrByDomainTrend(p?: unknown): ApiResult {
-  const domain = String((p as Rec)?.["domain"] ?? "");
-  return run(() => mttrGroupTrendSlice(
-    domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
-  ));
+  return run(() => mttrGroupTrendSlice(cachedMttrGroupSplit(p)));
 }
 
 /** Kick off the risk-signal backfill (recovers exploit intelligence from scan archives). */
@@ -2627,11 +2774,9 @@ export function getExecutivePage(p?: unknown): ApiResult {
     mttr: execMttrSlice(cachedMttrData(p)),
     ...(execInsightsSlice(cachedInsightsData(insightsParams)) ?? {}),
     ...execColdSliceGuarded(coldParams),
-    // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
-    // domain yields a single row, so a domain scope splits by support group within it instead.
-    byDomain: execGroupSlice(
-      domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p),
-    ),
+    // The same three-way dimension switch getMttrPage makes, through the same function so the
+    // two pages cannot disagree about what a scope means — or miss each other's cache entry.
+    byDomain: execGroupSlice(cachedMttrGroupSplit(p)),
     // Already minimal — four scalars and a per-severity tally — so these two ship whole.
     weekTrend: cachedExecutiveWeekTrend(p),
     severityCounts: cachedExecutiveSeverityCounts(p),
