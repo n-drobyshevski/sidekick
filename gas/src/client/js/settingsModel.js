@@ -285,7 +285,7 @@ export function draftWarnings(saved, draft) {
       tab: "risk",
       title: "Save a rule with no signals?",
       body: "A rule with every signal disabled decides nothing, so every finding will read as "
-        + "unclassified on Program performance. Nothing is restored for you.",
+        + "unclassified on Coverage & efficiency. Nothing is restored for you.",
       confirmLabel: "Save anyway",
     });
   }

@@ -103,7 +103,7 @@ export async function renderColdZone(main, _params, ctx) {
   const boot = await bootstrap();
 
   // Which severities every figure on this page reflects — the app-wide "Display severity"
-  // setting, so the page opens scoped exactly like Overview, MTTR and Program performance.
+  // setting, so the page opens scoped exactly like Overview, MTTR and Coverage & efficiency.
   const sevScope = boot.settings.displaySeverities?.length
     ? [...boot.settings.displaySeverities]
     : [...boot.palette.selectable];

@@ -336,29 +336,49 @@ export function collectProseBlocks(root, minWords = PROSE_MIN_WORDS) {
 }
 
 // ============================================================================================
-//  Route list — parsed from app.js's own PAGES table, never hand-typed
+//  Route list — parsed from pages.js's own PAGES table, never hand-typed
 // ============================================================================================
 
 /**
- * The exact regex `test/pagesLit.test.js`'s own `parsePages()` uses, lifted here rather than
- * imported (that file is a `describe`/`it` module, not an export site, and duplicating six
- * lines of regex is cheaper than making a test file importable). If `app.js`'s PAGES table
- * ever changes shape, that test fails first — this function failing alongside it, rather than
- * silently returning `[]` and making the walker "measure" zero routes, is the point of
- * `density.test.js`'s own parsePages coverage below.
+ * READ AS TEXT ON PURPOSE, unlike the test contracts. The route table moved out of app.js
+ * into its own importable `pages.js`, and `gas_shared/test/contracts/navGroups.js` dropped its
+ * regex for a real import the same day — but this walker is a CLI that points `--root` at a
+ * SIBLING app and reads it from a Node process that has not installed that app's deps. Text is
+ * what it can honestly read there, so the regex stays; only the file it opens changed.
+ *
+ * If that table ever changes shape, `density.test.js`'s own coverage below fails first — this
+ * function failing alongside it, rather than silently returning `[]` and making the walker
+ * "measure" zero routes, is the point of that coverage.
  */
-export function parsePages(appSrc) {
-  const marker = "const PAGES = {";
-  const start = appSrc.indexOf(marker);
+export function parsePages(pagesSrc) {
+  const marker = "export const PAGES = {";
+  const start = pagesSrc.indexOf(marker);
   if (start === -1) return [];
-  const end = appSrc.indexOf("\n};", start);
-  const body = appSrc.slice(start, end === -1 ? undefined : end);
+  const end = pagesSrc.indexOf("\n};", start);
+  const body = pagesSrc.slice(start, end === -1 ? undefined : end);
   const out = [];
+  // MULTI-LINE ENTRIES ARE READ, not skipped. This used to take `render:` off the same line
+  // as the key, which quietly made "one line per route" a rule nobody had chosen: gas_ai's
+  // `aars` entry carried a comment warning future readers not to wrap it. An entry is open
+  // from its `  key: {` until the `  },` that closes it, and `render:` is looked for across
+  // that span — so an entry may be shaped for a reader.
+  let current = null;
   for (const line of body.split("\n")) {
-    const m = line.match(/^\s{2}(\w+):\s*\{(.*)$/);
-    if (!m) continue;
-    const renderMatch = m[2].match(/render:\s*(\w+)/);
-    out.push({ route: m[1], render: renderMatch ? renderMatch[1] : null });
+    // Comments first: an entry's prose can NAME the render function it sets, and a scan
+    // that counted those would credit the wrong line.
+    if (/^\s*\/\//.test(line)) continue;
+    const key = line.match(/^\s{2}(\w+):\s*\{(.*)$/);
+    if (key) {
+      current = { route: key[1], render: null };
+      out.push(current);
+    }
+    if (current) {
+      const renderMatch = line.match(/render:\s*(\w+)/);
+      if (renderMatch) current.render = renderMatch[1];
+    }
+    // A `  },` at entry indentation closes a multi-line entry; a one-line entry closed on
+    // its own line and `current` is simply replaced by the next key.
+    if (/^\s{2}\},?\s*$/.test(line)) current = null;
   }
   return out;
 }

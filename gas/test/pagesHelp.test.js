@@ -17,6 +17,8 @@ import { allEntries } from "../src/client/js/helpContent.js";
 import { registerHelpContract } from "../../gas_shared/test/contracts/help.js";
 import { buildHash } from "../../gas_shared/store.js";
 import { code } from "../../gas_shared/test/contracts/emptyStates.js";
+import { PAGES } from "../src/client/js/pages.js";
+import { ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 
 const ENTRIES = allEntries();
 const APP_ROOT = new URL("../", import.meta.url);
@@ -32,7 +34,7 @@ const TIP_SRC = readFileSync(new URL("../../gas_shared/ui/tip.js", import.meta.u
 //  The shared page's whole contract, registered with this register's book
 // =========================================================================================
 registerHelpContract({
-  describe, it, expect, appRoot: APP_ROOT, app: "os", entries: ENTRIES,
+  describe, it, expect, appRoot: APP_ROOT, PAGES, ROUTE_ICONS, app: "os", entries: ENTRIES,
   // Not passed as an override — "Data" is the default — but the lane is the one argument that
   // decides where this register files the key sheet, and gas_ai files it in the chrome tail
   // instead. Naming it here rather than defaulting is how that disagreement stays visible.

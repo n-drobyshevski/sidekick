@@ -1657,7 +1657,7 @@ export async function renderExecutive(main, _params, ctx) {
         ],
       }),
       " → ",
-      el("a", { class: "linklike", href: "#/history" }, "Scan History")));
+      el("a", { class: "linklike", href: "#/history" }, "Scan history")));
     // A STATE, DRAWN AS A STATE. "Dry run" is what these figures ARE, and a pill is the
     // component this design system already has for a state: two words plus a tint, with the
     // sentence behind it.

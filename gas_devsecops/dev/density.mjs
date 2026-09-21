@@ -21,18 +21,20 @@
 // `context.addInitScript()` so `localStorage.setItem("<storagePrefix>showExperimental", "1")`
 // is set before the app's own JS ever runs — the same key
 // `gas_shared/shell/experimental.js`'s `key()` composes, built from `MANIFEST.storagePrefix`
-// (`densityModel.mjs`'s `parseStoragePrefix()`, read off `--root`'s own app.js the same way
-// `parsePages()` reads its route table). Refuses rather than walking half-blind if that app's
-// `app.js` carries no `storagePrefix` to compose the key from.
+// (`densityModel.mjs`'s `parseStoragePrefix()`, read off `--root`'s own app.js as text, the
+// same way `parsePages()` reads its route table out of pages.js). Refuses rather than walking
+// half-blind if that app's `app.js` carries no `storagePrefix` to compose the key from.
 //
-// ROUTES COME FROM app.js's OWN PAGES TABLE (densityModel.mjs's `parsePages`, the exact regex
-// test/pagesLit.test.js's own parser uses), never hand-typed here — a renamed or added route
-// shows up next run with no second list to forget.
+// ROUTES COME FROM pages.js's OWN PAGES TABLE (densityModel.mjs's `parsePages`), never
+// hand-typed here — a renamed or added route shows up next run with no second list to forget.
+// The table used to sit in app.js and the test contracts used to parse it there too; they
+// import it now, and this still reads text because a CLI pointed at a sibling app cannot
+// import that app's modules.
 //
 // `--root` IS WHY THIS WALKS FOUR APPS FROM ONE FILE. The route table, the git sha and the
 // report's own label all come from ONE directory, which defaulted to this script's own parent
 // and so could only ever be gas_devsecops. `parsePages()` was already generic — the PAGES
-// literal has the same two-space `key: {` shape in all four apps' `src/client/js/app.js`,
+// literal has the same two-space `key: {` shape in all four apps' `src/client/js/pages.js`,
 // which is a fact this file MEASURES (it refuses an empty walk) rather than assumes — so
 // pointing the root at `../gas`, `../gas_ai` or `../gas_hub` and the port at that app's own
 // dev server is the whole of what a cross-app run needs. A shared-CSS change is invisible to
@@ -387,19 +389,22 @@ async function runMeasure(args) {
   const appRoot = args.root;
   const appName = basename(appRoot);
   const appJs = join(appRoot, "src/client/js/app.js");
-  if (!existsSync(appJs)) {
-    console.error(`--root ${appRoot} has no src/client/js/app.js — that is not one of this `
-      + "design system's apps, and walking it would report someone else's routes.");
+  // TWO FILES NOW, BECAUSE THE TABLE MOVED OUT OF THE MANIFEST'S. Routes come from pages.js;
+  // `storagePrefix` is still part of app.js's MANIFEST and is read from there below.
+  const pagesJs = join(appRoot, "src/client/js/pages.js");
+  if (!existsSync(appJs) || !existsSync(pagesJs)) {
+    console.error(`--root ${appRoot} has no src/client/js/app.js and pages.js — that is not `
+      + "one of this design system's apps, and walking it would report someone else's routes.");
     process.exit(2);
   }
   const appSrc = readFileSync(appJs, "utf8");
-  const allRoutes = parsePages(appSrc).map((p) => p.route);
+  const allRoutes = parsePages(readFileSync(pagesJs, "utf8")).map((p) => p.route);
   // THE REFUSAL IS THE POINT OF `--root`, not a formality: `parsePages()` returning [] on a
   // sibling app would print a clean, empty, entirely believable table. A zero has to prove it
   // looked (CLAUDE.md), so an empty route list ends the run instead of reporting it.
   if (!allRoutes.length) {
-    console.error(`parsePages() found no routes in ${appJs}'s PAGES table — refusing to report `
-      + "an empty walk as a measurement.");
+    console.error(`parsePages() found no routes in ${pagesJs}'s PAGES table — refusing to `
+      + "report an empty walk as a measurement.");
     process.exit(1);
   }
   const routes = args.routes && args.routes.length
@@ -407,11 +412,11 @@ async function runMeasure(args) {
     : allRoutes;
   const missing = (args.routes || []).filter((r) => !allRoutes.includes(r));
   if (missing.length) {
-    console.error(`--routes named route(s) not in app.js's PAGES table: ${missing.join(", ")}`);
+    console.error(`--routes named route(s) not in pages.js's PAGES table: ${missing.join(", ")}`);
     process.exit(2);
   }
 
-  // `--experimental`'s whole key, off the SAME app.js text `allRoutes` above was read from —
+  // `--experimental`'s whole key, off app.js's own MANIFEST text —
   // see the file header. Computed and checked before Chromium even launches: a walk that
   // opened a browser and then discovered it could not compose the key would still have spent
   // the time the refusal exists to save.

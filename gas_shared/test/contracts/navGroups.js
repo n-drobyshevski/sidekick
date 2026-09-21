@@ -1,6 +1,6 @@
 // The information architecture has ONE source, and this is what keeps it that way.
 //
-// PAGES in app.js is the only list of routes; navModel derives the rail from it and
+// PAGES in pages.js is the only list of routes; navModel derives the rail from it and
 // routeIcons has to keep step. The failures below are all silent at runtime — a lane with
 // no mark draws an empty 76px square, a route with no mark draws a nameless row, and a lane
 // split in two draws its heading twice — so they are worth a test rather than a convention.
@@ -16,32 +16,73 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
-/** Read the PAGES table out of app.js as text — importing it would need a DOM. */
-export function parsePages(appSrc) {
-  const start = appSrc.indexOf("const PAGES = {");
-  if (start === -1) throw new Error("parsePages(): no `const PAGES = {` in app.js");
-  const body = appSrc.slice(start, appSrc.indexOf("\n};", start));
-  const out = [];
-  for (const line of body.split("\n")) {
-    const m = line.match(/^\s{2}(\w+):\s*\{(.*)$/);
-    if (!m) continue;
-    const groupMatch = m[2].match(/group:\s*(null|"([^"]*)")/);
-    out.push({
-      route: m[1],
-      group: groupMatch ? (groupMatch[1] === "null" ? null : groupMatch[2]) : undefined,
-      title: (m[2].match(/title:\s*"([^"]*)"/) || [])[1],
-      // Whether this route is gated behind Settings -> Show experimental content — read so
-      // ctx.frontDoorIsFirst: false can assert the manifest's front door is actually reachable
-      // rather than only present in the table.
-      experimental: /experimental:\s*true/.test(m[2]),
-      // Whether this route owns the whole content pane (no main padding, no max-width).
-      // Read here rather than by a second parser because `test/contracts/pageHeader.js`
-      // turns it into a rule: a full-bleed route is the ONLY kind allowed to render its own
-      // `<h1>` instead of the shared pageHeader's. One PAGES parser, two contracts.
-      fullBleed: /fullBleed:\s*true/.test(m[2]),
-    });
-  }
-  return out;
+import * as SHARED_MARKS from "../../shell/navIcons.js";
+
+/**
+ * THE WORDS THE REGISTERS AGREED ON, held in one place so they stay agreed.
+ *
+ * The same route key used to carry two names: `program` was "Program performance" in one
+ * register and "Coverage & efficiency" in another, `history` was "Scan History" and "Scan
+ * history", `data` was "Data" and "Storage", `help` was "Key sheet" and "Help". Nothing was
+ * wrong in either app — each title was reasonable where it sat — which is why the
+ * disagreement survived: a rule that lives in no file is a rule nobody can fail.
+ *
+ * A ROUTE IS ONLY LISTED HERE IF MORE THAN ONE APP HAS IT, and the check below is silent
+ * about every route that is not. This is not a naming scheme apps must conform to; it is a
+ * record of where two registers ask the same question, so that they answer it with the same
+ * word. gas_ai's "Priorities" and gas's "Cold zone" are that register's own vocabulary and
+ * have no business in a shared table.
+ *
+ * The LANES are here for the same reason and with the same limit: Program, Registers and
+ * Data are the three lanes two registers arrived at independently. gas_ai's Landscape, Risk,
+ * Assurance and Labs describe a different subject and are deliberately absent — a shared
+ * table naming them would put one register's reading of its own domain into a package the
+ * other two have never heard of.
+ */
+export const SHARED_TITLES = {
+  executive: "Executive",
+  mttr: "MTTR & SLA",
+  program: "Coverage & efficiency",
+  history: "Scan history",
+  data: "Storage",
+  help: "Key sheet",
+  settings: "Settings",
+};
+
+/** The lanes more than one register composes, and the mark each one is drawn with. */
+export const SHARED_LANES = {
+  Program: "curve",
+  Registers: "sheets",
+  Data: "trays",
+};
+
+/**
+ * The PAGES table as an ordered list, which is the shape every rule below reads.
+ *
+ * THIS USED TO BE A REGEX OVER app.js. The table sat inline in app.js, which touches the DOM
+ * at module scope, so a node test could not import it and this read it back out of the file
+ * as text instead. A line-shaped pattern can only see line-shaped source: an entry wrapped
+ * across three lines parsed as a route with no title and no lane, and gas_ai's `aars` entry
+ * still carries the "ONE LINE, and it has to stay one line" warning that cost.
+ *
+ * The table lives in its own `pages.js` now and every app's `test/shared.test.js` imports it
+ * and hands it over as `ctx.PAGES`, so what these rules read is the real object — `render`
+ * included, which is why the page-module rule below can check a function rather than an
+ * import line.
+ */
+export function pageList(pages) {
+  return Object.entries(pages || {}).map(([route, page]) => ({
+    route,
+    // Left `undefined` when the entry declares no group at all, because that is the thing
+    // the "declares a group for every route, null included" rule below is looking for: null
+    // is a real answer (the chrome tail) and absence is a mistake.
+    group: page.group,
+    title: page.title,
+    experimental: page.experimental === true,
+    fullBleed: page.fullBleed === true,
+    hidden: page.hidden === true,
+    render: page.render,
+  }));
 }
 
 /**
@@ -51,6 +92,7 @@ export function parsePages(appSrc) {
  * @param {Function} ctx.expect
  * @param {URL}      ctx.appRoot
  * @param {string}   ctx.app
+ * @param {object}   ctx.PAGES        the route table, imported from the app's pages.js
  * @param {object}   ctx.LANE_ICONS   from the app's routeIcons.js
  * @param {object}   ctx.ROUTE_ICONS  from the app's routeIcons.js
  * @param {string[]} ctx.expectedRoutes  the route list, in order — moves only on purpose
@@ -76,8 +118,12 @@ export function parsePages(appSrc) {
 export function registerNavGroupContract(ctx) {
   const { describe, it, expect, app } = ctx;
   const root = fileURLToPath(ctx.appRoot);
+  // app.js is still read as TEXT, and only for the manifest: the claim is that
+  // MANIFEST.defaultRoute names the front door, which is about what app.js DECLARES rather
+  // than about what the table holds.
   const APP = readFileSync(resolve(root, "src/client/js/app.js"), "utf8");
-  const PAGES = parsePages(APP);
+  const PAGES_SRC = readFileSync(resolve(root, "src/client/js/pages.js"), "utf8");
+  const PAGES = pageList(ctx.PAGES);
   const LANES = [...new Set(PAGES.map((p) => p.group).filter(Boolean))];
 
   describe(app + ": the route table", () => {
@@ -137,6 +183,46 @@ export function registerNavGroupContract(ctx) {
       expect(Object.keys(ctx.ROUTE_ICONS).sort()).toEqual(PAGES.map((p) => p.route).sort());
     });
 
+    // A SHARED MARK IS NAMED, NEVER RE-PASTED.
+    //
+    // The rule above compares VALUES, so it cannot tell a shared mark that was imported from
+    // one that was copied back in as a literal — both are the same bytes at runtime. This
+    // reads routeIcons.js as SOURCE and refuses any inline `<svg …>` that is byte-identical
+    // to something shell/navIcons.js already exports. That is the realistic way the four
+    // private icon sets would grow back: not by anyone deciding to fork one, but by someone
+    // pasting a drawing "since it is only a string" and nothing noticing for two years —
+    // which is exactly how gas_devsecops's history mark and gas_ai's scans mark came to be
+    // the same picture.
+    it("re-pastes no mark that gas_shared/shell/navIcons.js already draws", () => {
+      const src = readFileSync(resolve(root, "src/client/js/routeIcons.js"), "utf8");
+      const inline = [...src.matchAll(/'(<svg [^']*<\/svg>)'/g)].map((m) => m[1]);
+      for (const [name, svg] of Object.entries(SHARED_MARKS)) {
+        expect(
+          inline.includes(svg),
+          'routeIcons.js pastes the "' + name + '" mark navIcons.js already exports — '
+            + "import it instead",
+        ).toBe(false);
+      }
+    });
+
+    // PROMOTED FROM gas/test/navGroups.test.js, WHERE IT COULD ONLY SEE ONE APP.
+    //
+    // The rail puts a lane's mark beside the page marks its own panel lists, so a lane that
+    // borrowed one of them would draw the same picture twice in one nav and mean two things.
+    // That was true of any sidekick and was held in one app's own test file, which is why
+    // two cross-app duplicates lived for as long as they did: gas_devsecops's history mark
+    // was byte-identical to gas_ai's scans mark, and its Data lane mark was all but gas_ai's
+    // aars mark. Neither is visible from inside one app — but both become in-app collisions
+    // the moment a mark is shared, which is exactly when this needs to bite.
+    it("draw each lane differently from every other lane, and from every page", () => {
+      const seen = new Map();
+      for (const [name, svg] of [...Object.entries(ctx.LANE_ICONS),
+        ...Object.entries(ctx.ROUTE_ICONS)]) {
+        expect(seen.has(svg), name + " draws the same mark as " + seen.get(svg)).toBe(false);
+        seen.set(svg, name);
+      }
+    });
+
     it("draw them all on the same 24 grid, on currentColor", () => {
       const all = [...Object.entries(ctx.LANE_ICONS), ...Object.entries(ctx.ROUTE_ICONS)];
       for (const [name, svg] of all) {
@@ -145,6 +231,31 @@ export function registerNavGroupContract(ctx) {
         expect(svg, name + " is not hidden from assistive tech").toContain('aria-hidden="true"');
         // A CDN or icon-font reference would be blocked by the GAS sandbox at runtime only.
         expect(svg, name + " reaches outside the bundle").not.toContain("url(");
+      }
+    });
+  });
+
+  describe(app + ": the shared vocabulary", () => {
+    it("calls a page what the other registers call it", () => {
+      for (const p of PAGES) {
+        if (!Object.prototype.hasOwnProperty.call(SHARED_TITLES, p.route)) continue;
+        expect(
+          p.title,
+          p.route + ' is titled "' + p.title + '" here and "' + SHARED_TITLES[p.route]
+            + '" in its sibling. If this register genuinely means something different, the '
+            + "route is the wrong one to share; if it does not, the word is.",
+        ).toBe(SHARED_TITLES[p.route]);
+      }
+    });
+
+    it("draws a shared lane with the shared mark", () => {
+      for (const [lane, mark] of Object.entries(SHARED_LANES)) {
+        if (!Object.prototype.hasOwnProperty.call(ctx.LANE_ICONS, lane)) continue;
+        expect(
+          ctx.LANE_ICONS[lane],
+          'the "' + lane + '" lane is drawn with something other than navIcons.js\'s "'
+            + mark + '" — one lane, one picture, across the registers that have it',
+        ).toBe(SHARED_MARKS[mark]);
       }
     });
   });
@@ -178,9 +289,19 @@ export function registerNavGroupContract(ctx) {
   });
 
   describe(app + ": every route has a page module behind it", () => {
-    it("imports one render function per route", () => {
+    // TWO HALVES, AND THE SECOND IS NOT REDUNDANT. The function is what the router actually
+    // calls, so checking it is the stronger claim — an import line proves nothing about what
+    // the entry points at. But the import line is what pins the MODULE NAME to the route key,
+    // which is the coupling that renamed `scan_history` to `history`, so the text scan stays.
+    it("gives every route a render function", () => {
       for (const p of PAGES) {
-        expect(APP, p.route + " has no import").toMatch(
+        expect(typeof p.render, p.route + " has no render function").toBe("function");
+      }
+    });
+
+    it("imports each one from pages/<route>.js, so the key names its own module", () => {
+      for (const p of PAGES) {
+        expect(PAGES_SRC, p.route + " has no import").toMatch(
           new RegExp('from "\\./pages/' + p.route + '\\.js"'),
         );
       }

@@ -61,10 +61,14 @@ export const FAMILIES = [
 /**
  * Route titles for the "drawn on" line.
  *
- * Deliberately NOT imported from app.js: app.js reads `document` at module scope, so
- * importing it here would drag the whole SPA into a unit test and into this module's
- * import graph. helpContent.test.js asserts these keys against the PAGES object in
- * app.js by reading its source, which keeps the two in step without the cycle.
+ * A SECOND COPY OF THE TITLES, and it stays one — but it is now a CHECKED copy.
+ *
+ * It cannot import the table: `pages.js` imports the page modules, the page modules import
+ * this file, and closing that loop would be an import cycle. What changed is that the table
+ * is importable at all, so `helpContent.test.js` holds every key AND every title here equal
+ * to the real entry instead of only checking that the keys exist. A title that drifts from
+ * the nav's own word for the page now fails a test rather than shipping two names for one
+ * page.
  */
 export const ROUTE_TITLES = {
   graph: "Security Graph",
@@ -74,7 +78,7 @@ export const ROUTE_TITLES = {
   config: "Cloud Configuration",
   aars: "Scoring Models",
   scans: "Wiz Scans",
-  data: "Data",
+  data: "Storage",
   settings: "Settings",
 };
 

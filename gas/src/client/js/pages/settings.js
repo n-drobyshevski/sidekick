@@ -341,7 +341,7 @@ export async function renderSettings(main, params, ctx) {
 
   const riskPanel = settingsPanel({
     title: "High-risk classifier",
-    description: "Which findings the Program performance page counts as high risk.",
+    description: "Which findings the Coverage & efficiency page counts as high risk.",
     body: [
       disclosure("Why this matters", el("p", {},
         "A finding qualifies when ANY enabled signal fires — the research behind these metrics " +

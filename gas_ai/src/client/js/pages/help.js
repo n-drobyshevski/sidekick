@@ -164,8 +164,11 @@ export async function renderHelp(main, params, _ctx) {
   doc.append(
     pageHeader({
       route: "help",
+      // ONE LINE, because the h1 above it now says the other one. pageHeader draws the
+      // route's own PAGES title, and that title is "Key sheet" since this page moved out of
+      // the chrome tail and into the Data lane — so leading the lede with the same two words
+      // printed them twice, one under the other.
       lede: heroLines(
-        "Key sheet",
         "What every word and mark means, and how much of each this tenant holds.",
       ),
     }),

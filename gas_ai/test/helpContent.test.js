@@ -39,47 +39,35 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => readFileSync(join(root, p), "utf8");
 
 const APP_JS = read("src/client/js/app.js");
+import { PAGES } from "../src/client/js/pages.js";
 const HELP_CONTENT_JS = read("src/client/js/helpContent.js");
 const HELP_PAGE_JS = read("src/client/js/pages/help.js");
 
 /**
- * The PAGES keys, read from app.js source rather than imported.
+ * The PAGES keys.
  *
- * app.js touches `document` at module scope, so importing it would drag the whole SPA
- * into a node test. The regex reads the object literal's keys between `const PAGES = {`
- * and its closing brace.
+ * IMPORTED, NOT PARSED, and the difference paid for itself here. This used to read app.js as
+ * text — app.js touches `document` at module scope, so importing it would drag the whole SPA
+ * into a node test — and a line-shaped regex can only read line-shaped source. That is the
+ * whole reason the `aars` entry carried a "ONE LINE, and it has to stay one line" warning:
+ * wrapped across three lines it parsed as a route with no title and no lane, and the
+ * experimental scan below had to strip comments first because the prose beside an entry
+ * NAMES the flag it sets. The table lives in its own `pages.js` now, which touches no
+ * document, so both functions read the real objects.
  */
 function pageKeys() {
-  const block = APP_JS.match(/const PAGES = \{([\s\S]*?)\n\};/);
-  expect(block, "PAGES object literal not found in app.js").toBeTruthy();
-  return block[1]
-    .split("\n")
-    .map((line) => line.match(/^\s{2}(\w+):\s*\{/))
-    .filter(Boolean)
-    .map((m) => m[1]);
+  return Object.keys(PAGES);
 }
 
 /**
- * The PAGES keys marked `experimental: true`, read from the same source block.
+ * The PAGES keys marked `experimental: true`.
  *
  * A page's own entry is where the gate is declared, so this is where a new Labs page has to
  * come and be counted — the assertion below turns "someone added a page to Labs and did not
  * decide whether it is opt-in" into a failing test rather than a shipped surprise.
  */
 function experimentalPageKeys() {
-  const block = APP_JS.match(/const PAGES = \{([\s\S]*?)\n\};/);
-  expect(block, "PAGES object literal not found in app.js").toBeTruthy();
-  const out = [];
-  let current = null;
-  // Comments dropped first: the entries here carry long prose blocks that NAME the flag
-  // they set, and a scan that counted those would credit the page above the comment.
-  for (const line of block[1].split("\n").filter((l) => !/^\s*\/\//.test(l))) {
-    const key = line.match(/^\s{2}(\w+):\s*\{/);
-    if (key) current = key[1];
-    if (current && /\bexperimental:\s*true\b/.test(line)) out.push(current);
-    if (/^\s{2}\},?\s*$/.test(line)) current = null; // end of a multi-line entry
-  }
-  return [...new Set(out)];
+  return Object.keys(PAGES).filter((k) => PAGES[k].experimental === true);
 }
 
 /**
@@ -353,6 +341,14 @@ describe("the vocabulary it names", () => {
     expect(pages).toContain("help");
     for (const route of Object.keys(ROUTE_TITLES)) {
       expect(pages, "ROUTE_TITLES names " + route).toContain(route);
+      // AND IT NAMES IT THE SAME WAY. ROUTE_TITLES is a second copy of every title (it
+      // cannot import the table without an import cycle — see its own comment), and until
+      // the table was importable this test could only check that the KEYS lined up. A title
+      // that disagreed with the nav's own word for the page shipped two names for one page.
+      expect(
+        ROUTE_TITLES[route],
+        "ROUTE_TITLES calls " + route + " something PAGES does not",
+      ).toBe(PAGES[route].title);
     }
     for (const e of ENTRIES) {
       for (const route of e.drawnOn || []) {

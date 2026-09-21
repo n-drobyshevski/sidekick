@@ -11,31 +11,42 @@
 //
 // test/shared.test.js holds both halves against PAGES: every lane has exactly one mark,
 // every route has exactly one, and neither set carries an entry for something that is gone.
+//
+// THE SHARED MARKS COME FROM gas_shared/shell/navIcons.js. A mark with a second consumer is
+// drawn once there and named here; a mark with one consumer is drawn here, in full, because
+// it is this register's own claim. Every route still has exactly one visible entry below, in
+// rail order, so the whole nav is readable in one file.
+
+import {
+  backClock, bars, book, curve, cylinder, sheets, shotTarget, sliders, stopwatch, trays,
+} from "../../../../gas_shared/shell/navIcons.js";
 
 // The LANE marks. A lane's mark has to be recognisable BESIDE the page marks its own panel
 // lists, so none of these is a copy of a route glyph below.
 export const LANE_ICONS = {
-  // A descending curve. The lane is how the programme is doing over time — the shape every
-  // page under it draws. Deliberately not a clock: `mttr` owns that below, and a lane's
-  // mark has to be recognisable beside the page marks its own panel lists.
-  "Program": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3.5 5v14h17"/><path d="M6.5 8.5c3.6 0 4.2 7.5 11 7.5"/></svg>',
-  // Stacked sheets: three registers side by side, which is exactly what the panel lists.
-  "Registers": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7.5 3.8h9a1.4 1.4 0 0 1 1.4 1.4v10.4a1.4 1.4 0 0 1-1.4 1.4h-9A1.4 1.4 0 0 1 6.1 15.6V5.2a1.4 1.4 0 0 1 1.4-1.4z"/><path d="M9 20.2h9.2a1.9 1.9 0 0 0 1.9-1.9V8.2"/></svg>',
-  // Ruled rows with marks on them: the stored record, and the panel says which part of it.
-  "Data": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4.5 6.2h15"/><path d="M4.5 12h15"/><path d="M4.5 17.8h15"/><circle cx="8.4" cy="6.2" r="1.6"/><circle cx="14.8" cy="12" r="1.6"/><circle cx="10.6" cy="17.8" r="1.6"/></svg>',
+  // All three are gas_shared/shell/navIcons.js's now, shared with gas/, which arrived at
+  // these same three lanes. The curve and the sheets are this register's own drawings,
+  // promoted unchanged.
+  Program: curve,
+  Registers: sheets,
+  // TRAYS, NOT THE RULED ROWS THIS USED TO DRAW. The rows-with-dots were all but identical
+  // to gas_ai's `aars` mark, and gas_ai gains a Data lane in this wave — two near-twin
+  // marks in one nav is exactly what the uniqueness rule refuses.
+  Data: trays,
 };
+
 
 
 export const ROUTE_ICONS = {
   // A single tall bar beside two short ones: the page is one headline number with its
   // supporting counts, and the mark says so before the label does.
-  executive: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 20h16"/><path d="M7.5 20V13"/><path d="M12 20V4.5"/><path d="M16.5 20v-4.6"/></svg>',
+  executive: bars,
   // A clock. The page is time-to-remediate and nothing else, and the clock is the only
   // glyph a reader needs no label to place.
-  mttr: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.4"/><path d="M12 6.8V12l3.4 2.2"/></svg>',
+  mttr: stopwatch,
   // A target with the shot off-centre: coverage and efficiency are precisely the question
   // of whether effort landed where it was aimed, and a bullseye alone would claim it did.
-  program: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.2"/><circle cx="12" cy="12" r="3.6"/><circle cx="14.1" cy="9.9" r="1"/></svg>',
+  program: shotTarget,
   // A package. SCA is third-party code arriving as a unit, and the box is that unit.
   sca: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3.3l7.6 3.9v9.6L12 20.7l-7.6-3.9V7.2z"/><path d="M4.6 7.3L12 11.1l7.4-3.8"/><path d="M12 11.1v9.5"/></svg>',
   // Angle brackets with a mark between them: first-party source, and the mark is the
@@ -48,11 +59,11 @@ export const ROUTE_ICONS = {
   // ledger keys on, so the mark is the thing itself.
   repos: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="7" cy="5.6" r="2.2"/><circle cx="7" cy="18.4" r="2.2"/><circle cx="17" cy="9.4" r="2.2"/><path d="M7 7.8v8.4"/><path d="M17 11.6c0 3.4-3 4.3-6.6 4.9"/></svg>',
   // A sweep line with a mark on it: one scan is one dated observation of the register.
-  history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 12a8 8 0 1 1-4.3-7.1"/><path d="M12 12l5.2-3.2"/><circle cx="12" cy="12" r="1"/></svg>',
-  data: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.3" ry="2.8"/><path d="M4.7 5.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/><path d="M4.7 11.5v6c0 1.55 3.27 2.8 7.3 2.8s7.3-1.25 7.3-2.8v-6"/></svg>',
+  history: backClock,
+  data: cylinder,
   // An open book. Every other Data-lane mark is a record of what happened; this is the one
   // page that records nothing and defines everything, so the mark is deliberately not a
   // fourth variation on rows-and-marks.
-  help: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 6.4c-1.4-1.3-3.4-1.9-6.4-1.9v13.6c3 0 5 .6 6.4 1.9"/><path d="M12 6.4c1.4-1.3 3.4-1.9 6.4-1.9v13.6c-3 0-5 .6-6.4 1.9"/><path d="M12 6.4v13.6"/></svg>',
-  settings: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7.5h8"/><path d="M16 7.5h4"/><circle cx="14" cy="7.5" r="2"/><path d="M4 16.5h4"/><path d="M12 16.5h8"/><circle cx="10" cy="16.5" r="2"/></svg>',
+  help: book,
+  settings: sliders,
 };

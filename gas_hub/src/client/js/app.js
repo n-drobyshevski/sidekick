@@ -11,8 +11,7 @@
 
 import { configureApp } from "../../../../gas_shared/appConfig.js";
 import { createAppShell } from "../../../../gas_shared/shell/appShell.js";
-import { renderHub } from "./pages/hub.js";
-import { renderSettings } from "./pages/settings.js";
+import { PAGES } from "./pages.js";
 import { LANE_ICONS, ROUTE_ICONS } from "./routeIcons.js";
 
 // ============================================================================ the manifest
@@ -40,19 +39,6 @@ const MANIFEST = {
   ROUTE_ICONS,
 };
 
-// TWO PAGES, BOTH `group: null`. Neither is a lane beside the other — a two-item rail with an
-// invented heading over it would name a category nobody asked for. navModel.js draws an
-// unlabelled `kind: "page"` item per route in that shape, one per page, and the leading
-// `.nav-rule` navRail.js expects to separate a labelled lane from a chrome TAIL has no tail to
-// separate here — styles/pages.css hides that stray hairline (see its own comment for the two
-// draw sites it comes from: the icon rail and the sub-800px stacked list both key off the
-// same `group === null` test with no check for "and something labelled came before it").
-const PAGES = {
-  // The front door. MANIFEST.defaultRoute names it — a reader wanting a register passes
-  // straight through this page and lands on the one they came for.
-  hub: { title: "Registers", group: null, render: renderHub },
-  settings: { title: "Settings", group: null, render: renderSettings },
-};
 
 // PAGES JOINS THE MANIFEST HERE, below the table, so pageHeader({ route }) reads the same
 // title this table declares rather than a second copy of the string living in each page

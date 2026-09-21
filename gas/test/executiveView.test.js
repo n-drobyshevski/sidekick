@@ -1,7 +1,7 @@
 // What the Executive page CLAIMS once it answers for the header scope: which population its
 // severity tiles counted, and which dimension its remediation split is drawn over.
 //
-// Plain .js for the reason navGroups.test.js writes out. executive.js exports these two
+// Plain .js for the reason attributionPrefill.test.js writes out. executive.js exports these two
 // functions so this file can exist — the split scanProgress.js and capacity.js already use.
 //
 // The failure mode this guards is not a crash. It is a page that answers for one domain in its
