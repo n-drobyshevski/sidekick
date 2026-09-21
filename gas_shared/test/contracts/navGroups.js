@@ -1,6 +1,6 @@
 // The information architecture has ONE source, and this is what keeps it that way.
 //
-// PAGES in app.js is the only list of routes; navModel derives the rail from it and
+// PAGES in pages.js is the only list of routes; navModel derives the rail from it and
 // routeIcons has to keep step. The failures below are all silent at runtime — a lane with
 // no mark draws an empty 76px square, a route with no mark draws a nameless row, and a lane
 // split in two draws its heading twice — so they are worth a test rather than a convention.
@@ -16,32 +16,33 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
-/** Read the PAGES table out of app.js as text — importing it would need a DOM. */
-export function parsePages(appSrc) {
-  const start = appSrc.indexOf("const PAGES = {");
-  if (start === -1) throw new Error("parsePages(): no `const PAGES = {` in app.js");
-  const body = appSrc.slice(start, appSrc.indexOf("\n};", start));
-  const out = [];
-  for (const line of body.split("\n")) {
-    const m = line.match(/^\s{2}(\w+):\s*\{(.*)$/);
-    if (!m) continue;
-    const groupMatch = m[2].match(/group:\s*(null|"([^"]*)")/);
-    out.push({
-      route: m[1],
-      group: groupMatch ? (groupMatch[1] === "null" ? null : groupMatch[2]) : undefined,
-      title: (m[2].match(/title:\s*"([^"]*)"/) || [])[1],
-      // Whether this route is gated behind Settings -> Show experimental content — read so
-      // ctx.frontDoorIsFirst: false can assert the manifest's front door is actually reachable
-      // rather than only present in the table.
-      experimental: /experimental:\s*true/.test(m[2]),
-      // Whether this route owns the whole content pane (no main padding, no max-width).
-      // Read here rather than by a second parser because `test/contracts/pageHeader.js`
-      // turns it into a rule: a full-bleed route is the ONLY kind allowed to render its own
-      // `<h1>` instead of the shared pageHeader's. One PAGES parser, two contracts.
-      fullBleed: /fullBleed:\s*true/.test(m[2]),
-    });
-  }
-  return out;
+/**
+ * The PAGES table as an ordered list, which is the shape every rule below reads.
+ *
+ * THIS USED TO BE A REGEX OVER app.js. The table sat inline in app.js, which touches the DOM
+ * at module scope, so a node test could not import it and this read it back out of the file
+ * as text instead. A line-shaped pattern can only see line-shaped source: an entry wrapped
+ * across three lines parsed as a route with no title and no lane, and gas_ai's `aars` entry
+ * still carries the "ONE LINE, and it has to stay one line" warning that cost.
+ *
+ * The table lives in its own `pages.js` now and every app's `test/shared.test.js` imports it
+ * and hands it over as `ctx.PAGES`, so what these rules read is the real object — `render`
+ * included, which is why the page-module rule below can check a function rather than an
+ * import line.
+ */
+export function pageList(pages) {
+  return Object.entries(pages || {}).map(([route, page]) => ({
+    route,
+    // Left `undefined` when the entry declares no group at all, because that is the thing
+    // the "declares a group for every route, null included" rule below is looking for: null
+    // is a real answer (the chrome tail) and absence is a mistake.
+    group: page.group,
+    title: page.title,
+    experimental: page.experimental === true,
+    fullBleed: page.fullBleed === true,
+    hidden: page.hidden === true,
+    render: page.render,
+  }));
 }
 
 /**
@@ -51,6 +52,7 @@ export function parsePages(appSrc) {
  * @param {Function} ctx.expect
  * @param {URL}      ctx.appRoot
  * @param {string}   ctx.app
+ * @param {object}   ctx.PAGES        the route table, imported from the app's pages.js
  * @param {object}   ctx.LANE_ICONS   from the app's routeIcons.js
  * @param {object}   ctx.ROUTE_ICONS  from the app's routeIcons.js
  * @param {string[]} ctx.expectedRoutes  the route list, in order — moves only on purpose
@@ -76,8 +78,12 @@ export function parsePages(appSrc) {
 export function registerNavGroupContract(ctx) {
   const { describe, it, expect, app } = ctx;
   const root = fileURLToPath(ctx.appRoot);
+  // app.js is still read as TEXT, and only for the manifest: the claim is that
+  // MANIFEST.defaultRoute names the front door, which is about what app.js DECLARES rather
+  // than about what the table holds.
   const APP = readFileSync(resolve(root, "src/client/js/app.js"), "utf8");
-  const PAGES = parsePages(APP);
+  const PAGES_SRC = readFileSync(resolve(root, "src/client/js/pages.js"), "utf8");
+  const PAGES = pageList(ctx.PAGES);
   const LANES = [...new Set(PAGES.map((p) => p.group).filter(Boolean))];
 
   describe(app + ": the route table", () => {
@@ -178,9 +184,19 @@ export function registerNavGroupContract(ctx) {
   });
 
   describe(app + ": every route has a page module behind it", () => {
-    it("imports one render function per route", () => {
+    // TWO HALVES, AND THE SECOND IS NOT REDUNDANT. The function is what the router actually
+    // calls, so checking it is the stronger claim — an import line proves nothing about what
+    // the entry points at. But the import line is what pins the MODULE NAME to the route key,
+    // which is the coupling that renamed `scan_history` to `history`, so the text scan stays.
+    it("gives every route a render function", () => {
       for (const p of PAGES) {
-        expect(APP, p.route + " has no import").toMatch(
+        expect(typeof p.render, p.route + " has no render function").toBe("function");
+      }
+    });
+
+    it("imports each one from pages/<route>.js, so the key names its own module", () => {
+      for (const p of PAGES) {
+        expect(PAGES_SRC, p.route + " has no import").toMatch(
           new RegExp('from "\\./pages/' + p.route + '\\.js"'),
         );
       }

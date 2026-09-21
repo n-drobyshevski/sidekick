@@ -23,6 +23,7 @@ import { describe, expect, it } from "vitest";
 import { allEntries } from "../src/client/js/helpContent.js";
 import { registerHelpContract } from "../../gas_shared/test/contracts/help.js";
 import { buildHash } from "../../gas_shared/store.js";
+import { PAGES } from "../src/client/js/pages.js";
 
 const ENTRIES = allEntries();
 const APP_ROOT = new URL("../", import.meta.url);
@@ -36,7 +37,7 @@ const HELP_TEST_SRC = readFileSync(
 //  The shared page's whole contract, registered with this register's book
 // =========================================================================================
 registerHelpContract({
-  describe, it, expect, appRoot: APP_ROOT, app: "dso", entries: ENTRIES, lane: "Data",
+  describe, it, expect, appRoot: APP_ROOT, PAGES, app: "dso", entries: ENTRIES, lane: "Data",
 });
 
 // =========================================================================================

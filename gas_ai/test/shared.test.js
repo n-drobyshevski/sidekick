@@ -78,11 +78,16 @@ import { registerSettingsReadoutsContract } from "../../gas_shared/test/contract
 import {
   createCutHistogram, impactSplitModel, severitySplitModel, tickTimeline,
 } from "../../gas_shared/ui/settingsReadouts.js";
+// THE ROUTE TABLE, IMPORTED. It lives in its own `pages.js` precisely so this line can
+// exist: the nav and page-header contracts used to read it back out of app.js with a regex,
+// because app.js touches the DOM at module scope. pages.js does not, so they get the real
+// objects — `render` included — instead of whatever a line-shaped pattern could match.
+import { PAGES } from "../src/client/js/pages.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
 
 const base = {
-  describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, app: "ai",
+  describe, it, expect, beforeAll, afterAll, appRoot: APP_ROOT, PAGES, app: "ai",
 };
 
 // The manifest, restated. app.js is the source (configureApp) and the navGroups contract

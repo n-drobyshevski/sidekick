@@ -62,9 +62,14 @@ import { DEFAULT_TAB, SETTINGS_TABS, SETTING_FIELDS } from "../src/client/js/set
 import { LANE_ICONS, ROUTE_ICONS } from "../src/client/js/routeIcons.js";
 import { scopeChrome, scopeKinds } from "../src/client/js/scopeKinds.js";
 import * as SCOPE_MODEL from "../../gas_shared/ui/scopeModel.js";
+// THE ROUTE TABLE, IMPORTED. It lives in its own `pages.js` precisely so this line can
+// exist: the nav and page-header contracts used to read it back out of app.js with a regex,
+// because app.js touches the DOM at module scope. pages.js does not, so they get the real
+// objects — `render` included — instead of whatever a line-shaped pattern could match.
+import { PAGES } from "../src/client/js/pages.js";
 
 const APP_ROOT = new URL("../", import.meta.url);
-const base = { describe, it, expect, appRoot: APP_ROOT, app: "os" };
+const base = { describe, it, expect, appRoot: APP_ROOT, PAGES, app: "os" };
 
 // What the splash is held to. Written out here rather than read from app.js, which is the
 // point: the contract compares these against the MANIFEST and against the rendered markup, so

@@ -21,6 +21,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
 
+import { pageList } from "./navGroups.js";
 import { helpModel } from "../../ui/helpPage.js";
 
 /** Source with comments removed. Every sweep below is a claim about CODE; a header that
@@ -30,24 +31,6 @@ function code(src) {
   return src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^[ \t]*\/\/.*$/gm, "");
 }
 
-/** Read the PAGES table out of app.js as text — importing it would need a DOM. */
-function parsePages(appSrc) {
-  const start = appSrc.indexOf("const PAGES = {");
-  if (start === -1) throw new Error("parsePages(): no `const PAGES = {` in app.js");
-  const body = appSrc.slice(start, appSrc.indexOf("\n};", start));
-  const out = [];
-  for (const line of body.split("\n")) {
-    const m = line.match(/^\s{2}(\w+):\s*\{(.*)$/);
-    if (!m) continue;
-    const groupMatch = m[2].match(/group:\s*(null|"([^"]*)")/);
-    out.push({
-      route: m[1],
-      group: groupMatch ? (groupMatch[1] === "null" ? null : groupMatch[2]) : undefined,
-      title: (m[2].match(/title:\s*"([^"]*)"/) || [])[1],
-    });
-  }
-  return out;
-}
 
 /**
  * @param {object}   ctx
@@ -63,7 +46,7 @@ export function registerHelpContract(ctx) {
   const { describe, it, expect, app, entries } = ctx;
   const lane = ctx.lane || "Data";
   const root = fileURLToPath(ctx.appRoot);
-  const APP_SRC = readFileSync(resolve(root, "src/client/js/app.js"), "utf8");
+  const PAGES_SRC = readFileSync(resolve(root, "src/client/js/pages.js"), "utf8");
   const ROUTE_ICONS_SRC = readFileSync(resolve(root, "src/client/js/routeIcons.js"), "utf8");
   const PAGE_SRC = readFileSync(resolve(root, "src/client/js/pages/help.js"), "utf8");
   const SHARED_SRC = readFileSync(
@@ -192,7 +175,10 @@ export function registerHelpContract(ctx) {
   //  2. The route exists, in the lane the shared hero claims
   // =======================================================================================
   describe(app + ": the help route exists", () => {
-    const pages = parsePages(APP_SRC);
+    // ONE SHAPE FUNCTION, THREE CONTRACTS. This carried its own copy of a regex over app.js
+    // until the route table moved into an importable `pages.js`; navGroups.js's `pageList`
+    // is the one place that shape is derived now.
+    const pages = pageList(ctx.PAGES);
     const help = pages.find((p) => p.route === "help");
 
     it("PAGES carries a help route, in the " + lane + " lane", () => {
@@ -224,8 +210,8 @@ export function registerHelpContract(ctx) {
         .not.toMatch(/heroStat\(\s*\n?\s*"/);
     });
 
-    it("app.js imports renderHelp from ./pages/help.js", () => {
-      expect(APP_SRC).toMatch(/import \{ renderHelp \} from "\.\/pages\/help\.js";/);
+    it("pages.js imports renderHelp from ./pages/help.js", () => {
+      expect(PAGES_SRC).toMatch(/import \{ renderHelp \} from "\.\/pages\/help\.js";/);
     });
 
     it("routeIcons.js gives the help route exactly one mark, on the shared 24-grid", () => {
