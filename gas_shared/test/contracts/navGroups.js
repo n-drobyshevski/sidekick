@@ -19,6 +19,44 @@ import { resolve } from "node:path";
 import * as SHARED_MARKS from "../../shell/navIcons.js";
 
 /**
+ * THE WORDS THE REGISTERS AGREED ON, held in one place so they stay agreed.
+ *
+ * The same route key used to carry two names: `program` was "Program performance" in one
+ * register and "Coverage & efficiency" in another, `history` was "Scan History" and "Scan
+ * history", `data` was "Data" and "Storage", `help` was "Key sheet" and "Help". Nothing was
+ * wrong in either app — each title was reasonable where it sat — which is why the
+ * disagreement survived: a rule that lives in no file is a rule nobody can fail.
+ *
+ * A ROUTE IS ONLY LISTED HERE IF MORE THAN ONE APP HAS IT, and the check below is silent
+ * about every route that is not. This is not a naming scheme apps must conform to; it is a
+ * record of where two registers ask the same question, so that they answer it with the same
+ * word. gas_ai's "Priorities" and gas's "Cold zone" are that register's own vocabulary and
+ * have no business in a shared table.
+ *
+ * The LANES are here for the same reason and with the same limit: Program, Registers and
+ * Data are the three lanes two registers arrived at independently. gas_ai's Landscape, Risk,
+ * Assurance and Labs describe a different subject and are deliberately absent — a shared
+ * table naming them would put one register's reading of its own domain into a package the
+ * other two have never heard of.
+ */
+export const SHARED_TITLES = {
+  executive: "Executive",
+  mttr: "MTTR & SLA",
+  program: "Coverage & efficiency",
+  history: "Scan history",
+  data: "Storage",
+  help: "Key sheet",
+  settings: "Settings",
+};
+
+/** The lanes more than one register composes, and the mark each one is drawn with. */
+export const SHARED_LANES = {
+  Program: "curve",
+  Registers: "sheets",
+  Data: "trays",
+};
+
+/**
  * The PAGES table as an ordered list, which is the shape every rule below reads.
  *
  * THIS USED TO BE A REGEX OVER app.js. The table sat inline in app.js, which touches the DOM
@@ -193,6 +231,31 @@ export function registerNavGroupContract(ctx) {
         expect(svg, name + " is not hidden from assistive tech").toContain('aria-hidden="true"');
         // A CDN or icon-font reference would be blocked by the GAS sandbox at runtime only.
         expect(svg, name + " reaches outside the bundle").not.toContain("url(");
+      }
+    });
+  });
+
+  describe(app + ": the shared vocabulary", () => {
+    it("calls a page what the other registers call it", () => {
+      for (const p of PAGES) {
+        if (!Object.prototype.hasOwnProperty.call(SHARED_TITLES, p.route)) continue;
+        expect(
+          p.title,
+          p.route + ' is titled "' + p.title + '" here and "' + SHARED_TITLES[p.route]
+            + '" in its sibling. If this register genuinely means something different, the '
+            + "route is the wrong one to share; if it does not, the word is.",
+        ).toBe(SHARED_TITLES[p.route]);
+      }
+    });
+
+    it("draws a shared lane with the shared mark", () => {
+      for (const [lane, mark] of Object.entries(SHARED_LANES)) {
+        if (!Object.prototype.hasOwnProperty.call(ctx.LANE_ICONS, lane)) continue;
+        expect(
+          ctx.LANE_ICONS[lane],
+          'the "' + lane + '" lane is drawn with something other than navIcons.js\'s "'
+            + mark + '" — one lane, one picture, across the registers that have it',
+        ).toBe(SHARED_MARKS[mark]);
       }
     });
   });
