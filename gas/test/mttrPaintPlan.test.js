@@ -44,6 +44,20 @@ describe("the invariant: nothing draws without a summary", () => {
   });
 });
 
+// The slot is named `byDomain` and stays that way — it is the section's wire name, and all
+// three dimensions come back on it. The plan must not start reading the tag and deciding
+// anything from it: which dimension arrived is the renderer's business, WHETHER to repaint is
+// the plan's, and a scope change is already a `pageChanged`.
+describe("the byDomain slot is dimension-blind", () => {
+  for (const dimension of ["domain", "supportGroup", "asset"]) {
+    it(`schedules the section identically for the ${dimension} split`, () => {
+      const page = { ...PAGE, byDomain: { dimension, rows: [] } };
+      expect(drawn(plan({ mttr: MTTR, page, pageChanged: true })))
+        .toEqual(["byDomain", "charts", "hero"]);
+    });
+  }
+});
+
 describe("summary first, page second — the common cold path", () => {
   it("draws the summary sections and holds the page ones", () => {
     expect(drawn(plan({ mttr: MTTR, summaryChanged: true })))

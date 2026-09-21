@@ -63,6 +63,7 @@ import {
 // into a sentence has to be the same rule on both pages or the front door and the detail page
 // could describe the same estimate differently. It lives on the page that owns the clock.
 import { kmHalfLifeView } from "./mttr.js";
+import { groupCutNote } from "./_groupSplit.js";
 // `findEntry` READS THE BOOK'S OWN "fix-next" LINES so the heading's tip can carry BOTH the
 // ranking rule and what a click does, in one trigger — see `renderFixNext`'s own comment on
 // why `linkNote` moved off the surface and onto here rather than growing a second `?`.
@@ -290,37 +291,54 @@ function line(open, openAll) {
  * What the per-group remediation split says, and whether it is worth drawing at all.
  *
  * THE DIMENSION FOLLOWS THE SCOPE, server-tagged: per-domain at the whole-register view,
- * per-support-group when a domain is picked — because splitting BY domain while scoped TO one
- * domain is a single row restating the hero. Only `mttrByDomainData` aliases `group` into
- * `domain`, so the name has to be read through `group ?? domain` or the support-group split
- * renders a column of blanks.
+ * per-support-group when a domain is picked, per-ASSET when a support group is picked. Only the
+ * middle one is a degeneracy fix — splitting BY domain while scoped TO one domain is a single
+ * row restating the hero. The asset case replaces a split that worked (by-domain inside a
+ * support group was a real multi-row answer); it is an editorial choice, because a support
+ * group is a team and the thing a team patches is a host. Only `mttrByDomainData` aliases
+ * `group` into `domain`, so the name has to be read through `group ?? domain` or the other two
+ * splits render a column of blanks.
  *
- * THE ONE-ROW GUARD APPLIES TO BOTH DIMENSIONS HERE, which is a deliberate divergence from
- * mttr.js (it guards only the support-group branch). Under a support-group scope the dimension
- * is still "domain" while `domainNames` stays register-wide, so that gate alone would happily
- * draw a one-row table for a group living in a single domain.
+ * THE ONE-ROW GUARD APPLIES TO EVERY DIMENSION HERE. It used to be a deliberate divergence from
+ * mttr.js, which guarded only the support-group branch; mttr.js now guards all three too, so
+ * the two pages agree. The `domainNames` gate stays on the domain dimension alone: it is the
+ * CONFIGURED universe, and a register with one configured domain has nothing to split by.
  *
- * EVERY GROUP IS LISTED. This used to cap at five and call itself a summary, which quietly made
- * the section unable to answer the question it poses: a domain outside the top five by open
- * backlog could carry the worst MTTR on the page and never appear, with nothing on screen
- * saying rows had been dropped. Ordering still puts the biggest backlog first.
+ * EVERY GROUP IT IS GIVEN IS LISTED. This used to cap at five and call itself a summary, which
+ * quietly made the section unable to answer the question it poses: a domain outside the top five
+ * by open backlog could carry the worst MTTR on the page and never appear, with nothing on
+ * screen saying rows had been dropped. That is still the rule — but for an ESTATE-SIZED
+ * dimension "everything" is not a payload the landing page can carry, so the asset split is
+ * bounded upstream (`ASSET_TOP_N`) and arrives with a `cut` describing exactly what it lost.
+ * The difference from the old five-row cap is the whole point: the bound is stated on the page.
+ * Ordering still puts the biggest backlog first.
  *
  * @param {object|null|undefined} byDomain  the server's `byDomain` slice
  * @param {{domainNames: string[]}} args
  */
 export function executiveByDomainView(byDomain, { domainNames }) {
   if (!byDomain || !byDomain.rows || !byDomain.rows.length) return { show: false };
-  const isSg = byDomain.dimension === "supportGroup";
-  if (!isSg && (domainNames || []).length < 2) return { show: false };
+  const dim = byDomain.dimension;
+  if (dim !== "supportGroup" && dim !== "asset" && (domainNames || []).length < 2) {
+    return { show: false };
+  }
   if (byDomain.rows.length < 2) return { show: false };
   const rows = [...byDomain.rows]
     .sort((a, b) => (b.open ?? 0) - (a.open ?? 0))
     .map((r) => ({ name: r.group ?? r.domain, kmMedian: r.kmMedian, open: r.open ?? 0 }));
+  const TITLES = {
+    supportGroup: "MTTR by support group",
+    asset: "MTTR by asset",
+  };
+  const HEADERS = { supportGroup: "Support group", asset: "Asset" };
   return {
     show: true,
-    title: isSg ? "MTTR by support group" : "MTTR by domain",
-    columnHeader: isSg ? "Support group" : "Domain",
+    title: TITLES[dim] || "MTTR by domain",
+    columnHeader: HEADERS[dim] || "Domain",
     rows,
+    // What the split's cap dropped, or null where nothing did. Read off the payload, not off
+    // the dimension: which dimensions are bounded is the server's fact to state.
+    cutNote: groupCutNote(byDomain.cut, (HEADERS[dim] || "Domain").toLowerCase()),
     // True where at least one group's curve never fell to half. `execGroupSlice` ships
     // `kmMedian` and drops `kmMedianLowerBound`, so such a group arrives as null with no
     // bound behind it: the cell is a dash and the footnote says what the dash means.
@@ -1023,7 +1041,7 @@ export async function renderExecutive(main, _params, ctx) {
     guard("the fix-next list", fixHost, () => renderFixNext(payload));
     guard("open findings by severity", sevHost, () => renderSeverity(payload));
     guard("the cold zone", coldHost, () => renderColdShare(payload));
-    guard("MTTR by domain", byDomainHost, () => renderByDomain(payload && payload.byDomain));
+    guard("the remediation split", byDomainHost, () => renderByDomain(payload && payload.byDomain));
   };
 
   try {
@@ -1610,12 +1628,19 @@ export async function renderExecutive(main, _params, ctx) {
       ],
       rows: view.rows,
     }));
-    // NO FOOTNOTE HERE ANY MORE. The dash was explained twice: once on the KM-median column's
+    // NO DEFINITION FOOTNOTE HERE. The dash was once explained twice: on the KM-median column's
     // own heading tip (`view.anyBoundMissing`'s extra line above, "A dash means this group's
     // curve never falls to half…") and again in a paragraph under the table restating the same
     // fact in different words. A column heading is asked once — that is `ui/tip.js`'s own rule
     // for a definition — so the second statement was the explanation repeating itself one level
     // UP rather than staying down, and it is gone rather than kept as a second surface sentence.
+    //
+    // THE CUT NOTE BELOW IS NOT THAT, and the rule above is not a reason to delete it. A bound
+    // is not a definition: nothing else on this page says the asset split is a top-20, so this
+    // sentence is asked once too, and §6 puts a population statement on the SURFACE of its
+    // section — never in a tip, never behind a disclosure. `wordsOneLevelDown.test.js` holds it
+    // there.
+    if (view.cutNote) byDomainHost.append(el("p", { class: "small muted" }, view.cutNote));
   }
 
   // ------------------------------------------------------------------------- last scan

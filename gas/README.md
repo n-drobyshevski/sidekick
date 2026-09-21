@@ -99,7 +99,10 @@ answered**, by a per-source strip: `tag` rising and `rule` falling is the estate
 
 **The code still says `domain`.** That is the wire and storage name — the `domains` settings
 blob, the RPC params, the ledger's `_domain` column, `api_getMttrByDomain` — and renaming it
-would churn a persisted schema and every cache key for nothing a reader can see.
+would churn a persisted schema and every cache key for nothing a reader can see. The same goes
+for the remediation split, whose RPC, host element, renderer and two persisted chart preferences
+are all still called `byDomain` although three dimensions now arrive on them: they name the
+*section*, not the dimension it happens to be showing.
 
 It is not a Wiz _project_ picker, and cannot be: `src/domain/transform.ts` drops the
 `projects[]` array Wiz returns on every finding, and `WIZ_PROJECT_ID_V2` scopes the SYNC rather
@@ -124,8 +127,24 @@ worse than answering for everything, not narrower. A scoped current-scan tally
 (`api.ts:executiveSeverityCounts`) removes the obstacle, and with it the exemption. The
 remediation split follows the same dimension swap the MTTR page makes: by domain at the whole
 register, by support group **within** a picked domain, since splitting by domain while scoped to
-one is a single row restating the hero. A scope holding only resolved history says so
-(`No open findings in this scope.`) rather than showing a row of bare zeros under a live hero.
+one is a single row restating the hero — and **by asset** within a picked support group. A scope
+holding only resolved history says so (`No open findings in this scope.`) rather than showing a
+row of bare zeros under a live hero.
+
+**The by-asset case is a choice, not a degeneracy fix, and the one-row argument above does not
+stretch to cover it.** By domain *within a support group* was a perfectly good multi-row answer —
+"which domains does this team carry risk in?" — and it is gone. It is gone because a support
+group is a **team**, and the thing a team patches is a **host**: the split that tells them where
+to go on Monday is the one over their assets. Anyone restoring the old view should do it on its
+own merits rather than on the strength of the sentence before this one.
+
+It is also the only one of the three that is **capped**, at 20 assets. Domains and support groups
+are configured by an operator, so the register knows how many there are and lists them all;
+assets come from the estate, and a team can own thousands. The cap is not about compute — the
+Kaplan–Meier curve behind each row is quadratic *within* a bucket, so more, smaller buckets cost
+*less* — it is about what the landing page's payload and the DOM can carry. What falls outside
+the 20 is reported, not dropped in silence: a line under both tables says how many assets and how
+many open findings are not shown, and the register itself still lists every one of them.
 
 The caption beside the trigger always carries the **denominator** (`31 of 161 findings`), since
 a bare count cannot tell a small support group from a small register, and a **second figure**

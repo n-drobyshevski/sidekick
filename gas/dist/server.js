@@ -512,7 +512,7 @@ var Server = (() => {
   // src/server/serverCache.ts
   var VERSION_PROP = "DATA_VERSION";
   var KEY_PREFIX = "wsk";
-  var BUILD_ID = true ? "9ec75a1a3da8" : "dev";
+  var BUILD_ID = true ? "023ff247a67b" : "dev";
   var CHUNK_CHARS = 9e4;
   var DEFAULT_TTL_SEC = 21600;
   function dataVersion() {
@@ -6892,19 +6892,21 @@ var Server = (() => {
     };
   }
   function execGroupSlice(byGroup) {
+    var _a;
     if (!byGroup || typeof byGroup !== "object") return null;
     const b = byGroup;
     const rows = Array.isArray(b["rows"]) ? b["rows"] : [];
     return {
       dimension: b["dimension"],
       rows: rows.map((r) => {
-        var _a;
+        var _a2;
         return {
-          group: (_a = r["group"]) != null ? _a : r["domain"],
+          group: (_a2 = r["group"]) != null ? _a2 : r["domain"],
           kmMedian: r["kmMedian"],
           open: r["open"]
         };
-      })
+      }),
+      cut: (_a = b["cut"]) != null ? _a : null
     };
   }
   function pickRows(rows, keys) {
@@ -6977,9 +6979,14 @@ var Server = (() => {
     return { view: known, rows: Array.isArray(rows) ? rows : [] };
   }
   function mttrGroupTableSlice(byGroup) {
+    var _a;
     if (!byGroup || typeof byGroup !== "object") return null;
     const b = byGroup;
-    return { dimension: b["dimension"], rows: Array.isArray(b["rows"]) ? b["rows"] : [] };
+    return {
+      dimension: b["dimension"],
+      rows: Array.isArray(b["rows"]) ? b["rows"] : [],
+      cut: (_a = b["cut"]) != null ? _a : null
+    };
   }
   function mttrGroupTrendSlice(byGroup) {
     var _a;
@@ -10790,7 +10797,8 @@ var Server = (() => {
       trend: loadTrend(severities, getShowNoFix2(), rows)
     };
   }
-  var NONE_SUPPORT_GROUP = "(none)";
+  var NONE_BUCKET = "(none)";
+  var ASSET_TOP_N = 20;
   function remediationGroups(rows, keyField, orderedNames, scanRows) {
     var _a, _b, _c, _d;
     const buckets = /* @__PURE__ */ new Map();
@@ -10890,7 +10898,7 @@ var Server = (() => {
       var _a2;
       return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
     });
-    for (const r of rows) r["_supportGroup"] = String((_c = r["_supportGroup"]) != null ? _c : "") || NONE_SUPPORT_GROUP;
+    for (const r of rows) r["_supportGroup"] = String((_c = r["_supportGroup"]) != null ? _c : "") || NONE_BUCKET;
     const sizes = /* @__PURE__ */ new Map();
     for (const r of rows) {
       const g = String(r["_supportGroup"]);
@@ -10898,13 +10906,53 @@ var Server = (() => {
     }
     const orderedNames = [...sizes.keys()].sort((a, b) => {
       var _a2, _b2;
-      if (a === NONE_SUPPORT_GROUP) return 1;
-      if (b === NONE_SUPPORT_GROUP) return -1;
+      if (a === NONE_BUCKET) return 1;
+      if (b === NONE_BUCKET) return -1;
       return ((_a2 = sizes.get(b)) != null ? _a2 : 0) - ((_b2 = sizes.get(a)) != null ? _b2 : 0);
     });
     const scanRows = loadScanRows();
     const { rows: out, trend } = remediationGroups(rows, "_supportGroup", orderedNames, scanRows);
     return { dimension: "supportGroup", rows: out, trend };
+  }
+  function mttrByAssetData(p) {
+    var _a, _b, _c;
+    const supportGroup = String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : "");
+    let rows = filterSeverities(
+      loadBaseRows(),
+      readSeverities(p)
+    );
+    rows = visibleBase(rows);
+    attachSupportGroups(rows);
+    if (supportGroup) rows = rows.filter((r) => {
+      var _a2;
+      return String((_a2 = r["_supportGroup"]) != null ? _a2 : "") === supportGroup;
+    });
+    for (const r of rows) r["_asset"] = String((_b = r["asset_name"]) != null ? _b : "").trim() || NONE_BUCKET;
+    const sizes = /* @__PURE__ */ new Map();
+    for (const r of rows) {
+      const g = String(r["_asset"]);
+      let acc = sizes.get(g);
+      if (!acc) sizes.set(g, acc = { open: 0, resolved: 0 });
+      if (String((_c = r["resolved_at"]) != null ? _c : "").trim()) acc.resolved += 1;
+      else acc.open += 1;
+    }
+    const ranked = [...sizes.keys()].sort((a, b) => {
+      if (a === NONE_BUCKET) return 1;
+      if (b === NONE_BUCKET) return -1;
+      const sa = sizes.get(a), sb = sizes.get(b);
+      return sb.open - sa.open || sb.resolved - sa.resolved || (a < b ? -1 : a > b ? 1 : 0);
+    });
+    const orderedNames = ranked.slice(0, ASSET_TOP_N);
+    const cut = ranked.slice(ASSET_TOP_N).reduce(
+      (acc, g) => {
+        const sz = sizes.get(g);
+        return { groups: acc.groups + 1, open: acc.open + sz.open, resolved: acc.resolved + sz.resolved };
+      },
+      { groups: 0, open: 0, resolved: 0 }
+    );
+    const scanRows = loadScanRows();
+    const { rows: out, trend } = remediationGroups(rows, "_asset", orderedNames, scanRows);
+    return { dimension: "asset", rows: out, trend, cut };
   }
   var cachedMttrData = (p) => {
     var _a, _b;
@@ -11058,10 +11106,11 @@ var Server = (() => {
       // The key still omits `bizDomain`, and that is now correct rather than a defect: it used to
       // be one, because `mttrByDomainData` filtered on a param the key never carried, so a scoped
       // payload could be served from another scope's entry. That dimension is gone. `domain` is
-      // omitted for a different reason and it is NOT a repeat of that bug: both callers route a
-      // domain scope to `cachedMttrBySupportGroupData` instead (getMttrPage, getExecutivePage), so
-      // this entry is only ever reached with `domain === ""` and cannot be read at another. The
-      // `supportGroup` it DOES read is in the key.
+      // omitted for a different reason and it is NOT a repeat of that bug: `cachedMttrGroupSplit`
+      // routes a domain scope to the by-support-group split and a support-group scope to the
+      // by-asset split, so this entry is only ever reached with BOTH scopes empty. `supportGroup`
+      // stays in the key anyway, matching the inert filter it keys: an entry that can only be
+      // reached one way is not a reason to make it wrong for the other.
       "mttrByDomain14",
       {
         supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
@@ -11089,6 +11138,34 @@ var Server = (() => {
       3600
     );
   };
+  var cachedMttrByAssetData = (p) => {
+    var _a;
+    return cached(
+      // A new namespace rather than a bump: nothing ever served this shape, so no stale entry can
+      // survive the persistent dataVersion. Bump to "mttrByAsset2" on any change to `rows`,
+      // `trend` or `cut` — AND on any change to ASSET_TOP_N. A different cap is not a smaller
+      // version of the same answer, it is a different cut of it, with a different `cut` footnote
+      // attached; that is precisely the case a TTL cannot ride out.
+      //
+      // `domain` is omitted and, unlike the by-domain entry's omission, needs no caveat at all:
+      // `cachedMttrGroupSplit` reaches this only with `supportGroup` non-empty, `scopeKinds()`
+      // makes the two scopes mutually exclusive, and `mttrByAssetData` reads no `domain` at all.
+      "mttrByAsset1",
+      {
+        supportGroup: String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : ""),
+        severities: readSeverities(p),
+        showNoFix: getShowNoFix2()
+      },
+      () => mttrByAssetData(p),
+      3600
+    );
+  };
+  function cachedMttrGroupSplit(p) {
+    var _a, _b;
+    if (String((_a = p == null ? void 0 : p["supportGroup"]) != null ? _a : "")) return cachedMttrByAssetData(p);
+    if (String((_b = p == null ? void 0 : p["domain"]) != null ? _b : "")) return cachedMttrBySupportGroupData(p);
+    return cachedMttrByDomainData(p);
+  }
   function getMttr(p) {
     return run(() => cachedMttrData(p));
   }
@@ -11096,8 +11173,6 @@ var Server = (() => {
     return run(() => historyTrendSlice(cachedMttrTrendData(p)));
   }
   function getMttrPage(p) {
-    var _a;
-    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
     return run(() => ({
       // THE SUMMARY IS NOT MISSING — it is the other RPC's job. `mttr.js` already fires
       // `api_getMttr` with identical params, and both endpoints resolve the SAME
@@ -11106,17 +11181,11 @@ var Server = (() => {
       // worse than duplicate transfer — the two RPCs are separate GAS executions, so both
       // computed it. The page composes the two payloads instead; see `mttrPaintPlan`.
       trends: mttrPageTrendSlice(cachedMttrTrendData(p)),
-      byDomain: mttrGroupTableSlice(
-        domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
-      )
+      byDomain: mttrGroupTableSlice(cachedMttrGroupSplit(p))
     }));
   }
   function getMttrByDomainTrend(p) {
-    var _a;
-    const domain = String((_a = p == null ? void 0 : p["domain"]) != null ? _a : "");
-    return run(() => mttrGroupTrendSlice(
-      domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
-    ));
+    return run(() => mttrGroupTrendSlice(cachedMttrGroupSplit(p)));
   }
   function startRiskBackfill(_p) {
     return mutate(() => startBackfill());
@@ -11599,11 +11668,9 @@ var Server = (() => {
         mttr: execMttrSlice(cachedMttrData(p)),
         ...(_a2 = execInsightsSlice(cachedInsightsData(insightsParams))) != null ? _a2 : {},
         ...execColdSliceGuarded(coldParams),
-        // The same dimension switch getMttrPage makes: splitting BY domain while scoped TO one
-        // domain yields a single row, so a domain scope splits by support group within it instead.
-        byDomain: execGroupSlice(
-          domain ? cachedMttrBySupportGroupData(p) : cachedMttrByDomainData(p)
-        ),
+        // The same three-way dimension switch getMttrPage makes, through the same function so the
+        // two pages cannot disagree about what a scope means — or miss each other's cache entry.
+        byDomain: execGroupSlice(cachedMttrGroupSplit(p)),
         // Already minimal — four scalars and a per-severity tally — so these two ship whole.
         weekTrend: cachedExecutiveWeekTrend(p),
         severityCounts: cachedExecutiveSeverityCounts(p)

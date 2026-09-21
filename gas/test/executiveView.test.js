@@ -286,6 +286,23 @@ describe("executiveByDomainView — the dimension follows the scope", () => {
     expect(v.columnHeader).toBe("Support group");
     expect(v.rows.map((r) => r.name)).toEqual(["Team X", "Team Y"]);
   });
+
+  // The third dimension, shown under a support-group scope. Like the support-group split it
+  // writes `group` alone, so the same unaliased read has to hold.
+  it("titles and labels the asset split, reading the unaliased name", () => {
+    const v = dView({ dimension: "asset", rows: [row("web-01", 5), row("db-02", 3)] });
+    expect(v.title).toBe("MTTR by asset");
+    expect(v.columnHeader).toBe("Asset");
+    expect(v.rows.map((r) => r.name)).toEqual(["web-01", "db-02"]);
+  });
+
+  // An unknown tag is not a reason to blank the section: the domain copy is the fallback, the
+  // same one the renderer picks.
+  it("falls back to the domain copy on an unrecognised dimension tag", () => {
+    const v = dView({ dimension: "galaxy", rows: [row("A", 5), row("B", 3)] });
+    expect(v.title).toBe("MTTR by domain");
+    expect(v.columnHeader).toBe("Domain");
+  });
 });
 
 describe("executiveByDomainView — when there is no split worth drawing", () => {
@@ -296,9 +313,21 @@ describe("executiveByDomainView — when there is no split worth drawing", () =>
 
   // domainNames is register-wide, so under a support-group scope that gate passes for a group
   // that lives in a single domain — and a one-row table just restates the hero.
-  it("hides a one-row table on either dimension", () => {
+  it("hides a one-row table on every dimension", () => {
     expect(dView({ dimension: "domain", rows: [byDomainRow("A", 5)] }).show).toBe(false);
     expect(dView({ dimension: "supportGroup", rows: [row("Team X", 5)] }).show).toBe(false);
+    expect(dView({ dimension: "asset", rows: [row("web-01", 5)] }).show).toBe(false);
+  });
+
+  // The domainNames gate is the CONFIGURED domain universe — it says nothing about whether a
+  // support group has assets worth splitting, so it must not reach the asset dimension. A
+  // single-domain register scoped to a team still gets its by-asset table.
+  it("does not let the domain-count gate hide the asset or support-group split", () => {
+    const one = ["A"];
+    expect(dView({ dimension: "asset", rows: [row("web-01", 5), row("db-02", 3)] }, one).show)
+      .toBe(true);
+    expect(dView({ dimension: "supportGroup", rows: [row("X", 5), row("Y", 3)] }, one).show)
+      .toBe(true);
   });
 
   it("hides an absent or empty payload", () => {
@@ -325,6 +354,36 @@ describe("executiveByDomainView — ranking", () => {
   it("treats a missing open count as zero rather than dropping the row", () => {
     const v = dView({ dimension: "domain", rows: [{ group: "A" }, byDomainRow("B", 3)] });
     expect(v.rows.map((r) => [r.name, r.open])).toEqual([["B", 3], ["A", 0]]);
+  });
+});
+
+// The asset dimension is the only bounded one — "lists every group" above is now "lists every
+// group IT IS GIVEN", and this is the sentence that makes the difference visible on the page
+// rather than leaving the reader to assume the table is the whole estate.
+describe("executiveByDomainView — the cut note", () => {
+  const assets = { dimension: "asset", rows: [row("web-01", 5), row("db-02", 3)] };
+
+  it("says what the cap dropped", () => {
+    const v = dView({ ...assets, cut: { groups: 7, open: 31, resolved: 12 } });
+    expect(v.cutNote)
+      .toBe("7 more assets holding 31 open findings are not shown; the register lists"
+        + " every open finding.");
+  });
+
+  it("agrees in number with itself for a single dropped asset", () => {
+    const v = dView({ ...assets, cut: { groups: 1, open: 1, resolved: 0 } });
+    expect(v.cutNote)
+      .toBe("1 more asset holding 1 open finding is not shown; the register lists"
+        + " every open finding.");
+  });
+
+  // Two silences that must read alike: an uncapped dimension sends no `cut` at all, and a
+  // capped one that fit inside its cap sends zeroes. Neither has anything to confess.
+  it("stays silent when nothing was cut", () => {
+    expect(dView({ dimension: "domain", rows: [byDomainRow("A", 5), byDomainRow("B", 3)] })
+      .cutNote).toBeNull();
+    expect(dView({ ...assets, cut: null }).cutNote).toBeNull();
+    expect(dView({ ...assets, cut: { groups: 0, open: 0, resolved: 0 } }).cutNote).toBeNull();
   });
 });
 
