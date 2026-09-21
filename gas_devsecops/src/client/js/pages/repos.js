@@ -2064,7 +2064,12 @@ export async function renderRepos(host, _params, _ctx) {
       })));
     loadCharts()
       .then((api) => {
-        api.trendLine(canvas, points, { yLabel: "days" });
+        // NOT A TIME SERIES. Every other `trendLine` caller puts a DATE on x and gets the
+        // proportional day axis for it; this chart ranks REPOSITORIES, so `dayOf` of its x
+        // would be NaN and the index spacing is the right one. `categoryAxis` says that out
+        // loud at the call site rather than leaving the odd one out to be inferred — and it
+        // marks the real smell, which is a ranked series borrowing a trend wrapper.
+        api.trendLine(canvas, points, { yLabel: "days", categoryAxis: true });
         onPageTeardown(() => {
           try {
             api.destroyChart(canvas);
