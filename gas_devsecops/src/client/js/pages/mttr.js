@@ -272,10 +272,35 @@ export function endOfLifeExclusionNote(block, what = "these figures") {
  * own.
  *
  * A slot with no `date` is dropped rather than plotted: the x axis is the date.
+ *
+ * AND THE LEADING RUN OF NEVER-MEASURED SLOTS GOES WITH IT, BECAUSE THAT RUN IS AXIS RATHER
+ * THAN DATA — and because the ASIDE cannot drop it for itself. `trend.trendFromBase(...,
+ * {backfill: true})` seeds one synthetic point per DAY between the earliest `first_seen` and
+ * the first saved scan, and `trend.withKmMedian` marks every one of them null until the
+ * estimator has anything to say at all, so a register with a long pre-scan history opens with
+ * months of slots holding nothing. `sparkPath` positions by INDEX, not by date: that stretch
+ * held the aside's drawn run under the width of its own end dot and had the picture refused
+ * outright (`MIN_TREND_SPAN_PX`, `gas_shared/ui/sparkline.js`). The line chart escapes it a
+ * different way — `renderTrend` draws on `charts.trendLine`'s `dateAxis` and plots the
+ * readings alone — but the aside has only slots, so the trim has to happen here, on the array
+ * they share. The series STARTS at the first index carrying a reading.
+ *
+ * A NULL AFTER THAT POINT IS KEPT, INTERIOR AND TRAILING ALIKE, and the trailing case is the
+ * one worth stating. An interior null is a gap: dropping it HERE would compress time and get
+ * the aside's slope wrong, `ui/sparkline.js`'s rule applied one level up. A TRAILING null is
+ * not even that — `trendFromBase` only ever seeds synthetic days BEFORE the first real scan,
+ * so a null at the end is always a real, current scan date where survival has not reached half
+ * yet. That is a measured absence, the same one `kmHalfLifeView` publishes as "Not measured"
+ * further up this page rather than hiding, and trimming it would leave the newest thing the
+ * aside shows a stale reading standing where the current one should be.
  */
 export function halfLifeTrendPoints(trends) {
   const raw = trends && Array.isArray(trends.trend) ? trends.trend : [];
-  return raw.filter((p) => p && p.date);
+  const dated = raw.filter((p) => p && p.date);
+  // `num` rather than a bare `!== null`, for the reason every other reader on this page goes
+  // through it: "" and undefined are not readings either, and neither may anchor the axis.
+  const first = dated.findIndex((p) => num(p.km_median_days) !== null);
+  return first < 0 ? [] : dated.slice(first);
 }
 
 /** The restricted mean, and the "≥" it earns when survival never reached zero. */
@@ -1142,14 +1167,14 @@ export async function renderMttr(host, params, _ctx) {
     const list = Array.isArray(points) ? points : [];
     const values = list.map((p) => p.km_median_days);
     const model = sparkPath(values, { w: 220, h: 40 });
-    // THE GAPS ARE IN THE CAPTION, NOT ONLY IN THE aria-label. Measured on the dev seed: 208
-    // evaluated dates, 3 of which carry a half-life — the register's curve does not reach half
-    // on any earlier date, so `km_median_days` is null there and the three readings sit
-    // adjacent at the right-hand edge. THE PICTURE IS NOW REFUSED FOR THAT SHAPE (2.09px of
-    // run under a 4px dot; see `sparkPath`'s header), which makes this caption the whole
-    // reading rather than a qualifier on one — a caption saying "3 readings" over a 220px box
-    // would let a reader take the empty 97% for a flat line rather than for dates nobody
-    // could measure. `sparkPath` counts the gaps; this prints them.
+    // THE GAPS ARE IN THE CAPTION, NOT ONLY IN THE aria-label — and they are the gaps that are
+    // LEFT. `halfLifeTrendPoints` has already dropped the leading run of dates nobody could
+    // measure, which is what gives this strip a run wide enough to draw at all (see its header:
+    // that stretch used to hold the run to 2.09px under a 4px end dot, and `sparkPath` refused
+    // the picture for it). What reaches here is the evaluated span, gaps and all, and those
+    // gaps are still a qualifier this caption has to carry: "N readings" over a 220px box would
+    // let a reader take an interior or trailing blank for a flat line rather than for a date
+    // where survival never reached half. `sparkPath` counts the gaps; this prints them.
     const measured = model.gaps
       ? fmtCount(model.n) + " of " + fmtCount(values.length) + " readings measured"
       : fmtCount(model.n) + " readings";
@@ -1167,6 +1192,7 @@ export async function renderMttr(host, params, _ctx) {
         lines: [
           "One reading per saved scan, plus one per day of pre-scan history reconstructed from"
           + " first-detection dates.",
+          "It starts where the first half-life could be measured, not where the register does.",
           "The full line, and which readings are reconstructed, is at the foot of this page.",
         ],
       })),
@@ -1806,18 +1832,30 @@ export async function renderMttr(host, params, _ctx) {
         "The Kaplan-Meier median re-evaluated as of each date.",
         "The same series the sparkline beside the hero draws.",
         "One point per saved scan, plus one per day of rebuilt pre-scan history.",
+        "Only the dates it could be measured on are drawn, spaced by the real interval.",
+        "So the axis starts at the first of them, not at the day the register began.",
         "Closures are under-counted across that rebuilt stretch.",
       ],
     }));
-    if (points.length < 2) {
+    // THE LINE IS THE READINGS, AND THE DAY AXIS IS WHAT LETS IT BE. An unmeasured slot is
+    // kept in the shared array because `sparkPath` positions by index and dropping one there
+    // would compress time; `charts.trendLine` on `dateAxis` positions by the DATE, so leaving
+    // one out moves nothing and costs no width. That is what the backbone's shape demands
+    // here: its reconstructed stretch is one point per DAY and the estimator reports on very
+    // few of them, so plotted as slots the readings crush into the right-hand edge — and with
+    // `pointRadius` dropped above 40 points, an isolated reading between two gaps draws
+    // NOTHING AT ALL. The elided dates are not lost, they are counted in the note below.
+    const drawn = points.filter((p) => num(p.km_median_days) !== null);
+    const unmeasured = points.length - drawn.length;
+    if (drawn.length < 2) {
       trendHost.append(el("div", { class: "card" }, emptyState(
         "Not enough history to draw a line.",
-        "The backbone emits one point per saved scan plus one per day of pre-scan history;"
-        + " two points are the minimum.",
+        "The line is the dates a half-life could be measured, and two of them are the"
+        + " minimum — a register whose curve has never reached half has none.",
       )));
       return;
     }
-    const reconstructed = points.filter((p) => p.reconstructed).length;
+    const reconstructed = drawn.filter((p) => p.reconstructed).length;
     const canvas = el("canvas", { "aria-label": "Remediation half-life over time, in days" });
     trendHost.append(el("section", { class: "chart-card" },
       // THE LEGEND IS THE COUNT AND THE WORD, not the sentence. "reconstructed" is the
@@ -1834,18 +1872,27 @@ export async function renderMttr(host, params, _ctx) {
         "Kaplan-Meier median days, as of each date. ",
         reconstructed
           ? tipLabel(
-            fmtCount(reconstructed) + " of " + fmtCount(points.length) + " points"
+            fmtCount(reconstructed) + " of " + fmtCount(drawn.length) + " points"
             + " reconstructed",
             { term: "reconstructed" },
           )
+          : null,
+        // WHAT THE AXIS LEAVES OFF, AS A FIGURE. PRODUCT.md's seventh principle and its
+        // "absent is never zero" corollary: an evaluated date with no measurable half-life
+        // is a third state, not a zero and not an absence of the date. It cannot be a mark
+        // on this chart, so it is a count beside it — otherwise a reader takes the axis's
+        // left edge for the day the register began.
+        unmeasured
+          ? (reconstructed ? ". " : "") + fmtCount(unmeasured) + " further "
+            + pluralize(unmeasured, "date") + " evaluated to no measurable half-life."
           : null),
       el("div", { class: "chart-box" }, canvas),
-      // `points` — the same array the wrapper below plots — read once, into both.
+      // `drawn` — the same array the wrapper below plots — read once, into both.
       chartTable({
         canvas,
-        caption: "The half-life the line above plots, one row per evaluated date. A"
-          + " reconstructed row is one dated before the first saved scan, where closures are"
-          + " under-counted.",
+        caption: "The half-life the line above plots, one row per date it could be measured"
+          + " on. A reconstructed row is one dated before the first saved scan, where"
+          + " closures are under-counted.",
         model: chartTableModel({
           columns: [
             {
@@ -1863,7 +1910,7 @@ export async function renderMttr(host, params, _ctx) {
               value: (p) => (p.reconstructed ? "yes" : "no"),
             },
           ],
-          rows: points,
+          rows: drawn,
         }),
       })));
 
@@ -1872,13 +1919,14 @@ export async function renderMttr(host, params, _ctx) {
       onPageTeardown(() => charts.destroyChart(canvas));
       charts.trendLine(
         canvas,
-        points.map((p) => ({ x: p.date, y: p.km_median_days })),
+        drawn.map((p) => ({ x: p.date, y: p.km_median_days })),
         {
           yLabel: "days",
+          dateAxis: true,
           series: [{
             label: "Half-life (KM)",
             color: charts.ACCENT,
-            data: points.map((p) => p.km_median_days),
+            data: drawn.map((p) => p.km_median_days),
           }],
         },
       );

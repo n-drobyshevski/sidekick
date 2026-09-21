@@ -285,11 +285,28 @@ function reconstructedBand(flags, xDays) {
  * draws the accent-colored single line the sync trend uses; several draw one line per
  * severity, each in its own severity token, with the legend on (the only way to tell
  * them apart, so color is never carrying it alone).
+ *
+ * `dateAxis` SWAPS THE CATEGORY AXIS FOR THE PROPORTIONAL DAY ONE, and it is opt-in because
+ * it changes what the same array means. The default category axis spaces points BY INDEX, so
+ * a series whose slots are not evenly spaced in time — anything built on `trend.trendFromBase`,
+ * which emits one point per DAY of rebuilt pre-scan history and then one per SAVED SCAN — is
+ * drawn with its early stretch stretched and its recent one crushed, and a caller that drops
+ * an unmeasured slot silently moves every point after it. On `dateAxis` the x value IS the
+ * date (`dayOf`, whole UTC days, `bounds: "data"` so the axis ends where the data does), which
+ * makes both true at once: the range follows the readings rather than the backbone, and a slot
+ * the caller left out costs nothing, because nothing was positioned by counting.
  */
-export function trendLine(canvas, points, { yLabel, series } = {}) {
+export function trendLine(canvas, points, { yLabel, series, dateAxis } = {}) {
   destroyExisting(canvas);
   const opts = baseOptions();
   opts.scales.y.beginAtZero = true;
+  const days = dateAxis ? points.map((p) => dayOf(p.x)) : null;
+  if (dateAxis) {
+    dayAxis(opts);
+    // The x value is a number now, so the tooltip's default title would read as one. The
+    // card is the app's own (`chartTipHandler`); only what it says changes here.
+    opts.plugins.tooltip.callbacks.title = (items) => fmtDay(items[0].parsed.x);
+  }
   if (yLabel) {
     // An empty yLabel means the caller already names the axis outside the canvas (the
   // header's own "Cumulative cover" label). A rotated title in a 124px-tall chart clips.
@@ -310,7 +327,7 @@ export function trendLine(canvas, points, { yLabel, series } = {}) {
   const datasets = (series && series.length ? series : [{ color: ACCENT, data: points.map((p) => p.y) }])
     .map((s) => ({
       label: s.label,
-      data: s.data,
+      data: days ? s.data.map((y, i) => ({ x: days[i], y })) : s.data,
       borderColor: s.color || ACCENT,
       backgroundColor: multi ? s.color || ACCENT : "rgba(124, 74, 10, 0.08)",
       fill: !multi,
@@ -321,7 +338,9 @@ export function trendLine(canvas, points, { yLabel, series } = {}) {
     }));
   return new Chart(canvas, {
     type: "line",
-    data: { labels: points.map((p) => String(p.x).slice(0, 10)), datasets },
+    // No `labels` on the day axis: the x value carries the date, and a label array beside it
+    // would be a second, index-ordered claim about the same points.
+    data: days ? { datasets } : { labels: points.map((p) => String(p.x).slice(0, 10)), datasets },
     options: opts,
   });
 }
