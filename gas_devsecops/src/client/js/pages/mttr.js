@@ -281,7 +281,7 @@ export function endOfLifeExclusionNote(block, what = "these figures") {
  * months of slots holding nothing. `sparkPath` positions by INDEX, not by date: that stretch
  * held the aside's drawn run under the width of its own end dot and had the picture refused
  * outright (`MIN_TREND_SPAN_PX`, `gas_shared/ui/sparkline.js`). The line chart escapes it a
- * different way — `renderTrend` draws on `charts.trendLine`'s `dateAxis` and plots the
+ * different way — `renderTrend` draws on `charts.trendLine`'s day axis and plots the
  * readings alone — but the aside has only slots, so the trim has to happen here, on the array
  * they share. The series STARTS at the first index carrying a reading.
  *
@@ -1839,7 +1839,7 @@ export async function renderMttr(host, params, _ctx) {
     }));
     // THE LINE IS THE READINGS, AND THE DAY AXIS IS WHAT LETS IT BE. An unmeasured slot is
     // kept in the shared array because `sparkPath` positions by index and dropping one there
-    // would compress time; `charts.trendLine` on `dateAxis` positions by the DATE, so leaving
+    // would compress time; `charts.trendLine` positions by the DATE, so leaving
     // one out moves nothing and costs no width. That is what the backbone's shape demands
     // here: its reconstructed stretch is one point per DAY and the estimator reports on very
     // few of them, so plotted as slots the readings crush into the right-hand edge — and with
@@ -1863,11 +1863,12 @@ export async function renderMttr(host, params, _ctx) {
       // word MEANS — rebuilt rather than observed, closures under-counted, read as not
       // measured — is the `reconstructed` entry the trigger routes to.
       //
-      // NOT "shaded = reconstructed": `charts.trendLine` draws one flat series and shades
-      // nothing, so a legend claiming a shading nobody can see would be a picture described
-      // rather than a picture drawn. `charts.js`'s `hatchPattern()` is the hook that would
-      // make that legend true, and wiring it is a change to a shipped chart rather than to
-      // this page's words.
+      // AND NOW IT IS ALSO SHADED. This note used to say the opposite — "`charts.trendLine`
+      // draws one flat series and shades nothing, so a legend claiming a shading nobody can
+      // see would be a picture described rather than a picture drawn" — and it was right at
+      // the time. `trendLine` shades the rebuilt prefix now, the way `gas/`'s always did, so
+      // the sentence is true and the count keeps its place as the legend for the band rather
+      // than as a substitute for one.
       el("p", { class: "chart-note" },
         "Kaplan-Meier median days, as of each date. ",
         reconstructed
@@ -1922,7 +1923,6 @@ export async function renderMttr(host, params, _ctx) {
         drawn.map((p) => ({ x: p.date, y: p.km_median_days })),
         {
           yLabel: "days",
-          dateAxis: true,
           series: [{
             label: "Half-life (KM)",
             color: charts.ACCENT,

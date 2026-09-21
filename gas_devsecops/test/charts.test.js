@@ -500,42 +500,32 @@ describe("chartsBundle.js hands the loader every wrapper a page calls", () => {
 });
 
 // =========================================================================================
-//  trendLine — the axis follows the readings, not the backbone
+//  trendLine — the axis IS the date
 //
 //  `trend.trendFromBase` emits one point per DAY of rebuilt pre-scan history and then one
-//  per SAVED SCAN, and the estimator reports on very few of the first kind. Drawn on the
-//  default CATEGORY axis that is a line crushed into the right-hand edge of its box, because
-//  a category axis spaces points BY INDEX and every unmeasured day costs a slot. `dateAxis`
-//  is the opt-in that puts the x value back on the date, which is what lets a caller plot
-//  the readings alone without moving any of them.
+//  per SAVED SCAN, and the estimator reports on very few of the first kind. Drawn on
+//  Chart.js's default CATEGORY axis that is a line crushed into the right-hand edge of its
+//  box, because a category axis spaces points BY INDEX and every unmeasured day costs a slot.
+//  `gas/`'s `trendLine` has always put the x value back on the date; this register's port
+//  dropped it, and these are the guards on putting it back.
 // =========================================================================================
 
-describe("trendLine: the dateAxis option", () => {
+describe("trendLine: the day axis", () => {
   const POINTS = [
     { x: "2026-01-16", y: 75 },
     { x: "2026-06-01", y: 199 },
     { x: "2026-06-15", y: 204 },
   ];
-  // 2026-01-16 and 2026-06-15 in whole UTC days, the unit `dayOf` produces.
   const DAY = 86400000;
   const day = (iso) => Math.floor(Date.parse(iso) / DAY);
 
-  it("stays on the category axis by default, where the labels ARE the axis", async () => {
+  it("puts the x value on the date, and the range on the data, BY DEFAULT", async () => {
     const charts = await loadCharts();
     charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days" });
     const cfg = state.calls[state.calls.length - 1];
-    expect(cfg.data.labels).toEqual(["2026-01-16", "2026-06-01", "2026-06-15"]);
-    expect(cfg.options.scales.x.type).toBeUndefined();
-    expect(cfg.data.datasets[0].data).toEqual([75, 199, 204]);
-  });
-
-  it("puts the x value on the date, and the range on the data", async () => {
-    const charts = await loadCharts();
-    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days", dateAxis: true });
-    const cfg = state.calls[state.calls.length - 1];
     expect(cfg.options.scales.x.type).toBe("linear");
     // `bounds: "data"` and NO min/max: the axis ends where the readings do rather than at a
-    // round tick or a pinned window — which is the whole point of the option.
+    // round tick or a pinned window — which is what "dynamic range" means here.
     expect(cfg.options.scales.x.bounds).toBe("data");
     expect(cfg.options.scales.x.min).toBeUndefined();
     expect(cfg.options.scales.x.max).toBeUndefined();
@@ -551,7 +541,7 @@ describe("trendLine: the dateAxis option", () => {
 
   it("is not a relabelling — the gap between readings is DRAWN, not spaced away", async () => {
     const charts = await loadCharts();
-    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days", dateAxis: true });
+    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days" });
     const xs = state.calls[state.calls.length - 1].data.datasets[0].data.map((p) => p.x);
     // 136 days, then 14. On the category axis both are one slot; here they are not within
     // an order of magnitude of each other, which is what makes the slope honest.
@@ -562,9 +552,64 @@ describe("trendLine: the dateAxis option", () => {
 
   it("names the date in the tooltip, since the x value is now a number", async () => {
     const charts = await loadCharts();
-    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days", dateAxis: true });
+    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days" });
     const cfg = state.calls[state.calls.length - 1];
     const title = cfg.options.plugins.tooltip.callbacks.title;
     expect(title([{ parsed: { x: day("2026-06-15") } }])).toBe("15-jun-2026");
+    expect(title([])).toBe("");
+  });
+
+  it("shades the rebuilt prefix, and only when a point says it is rebuilt", async () => {
+    const charts = await loadCharts();
+    charts.trendLine(fakeCanvas(), POINTS, { yLabel: "days" });
+    expect(state.calls[state.calls.length - 1].plugins).toEqual([]);
+    charts.trendLine(
+      fakeCanvas(),
+      [{ ...POINTS[0], reconstructed: true }, POINTS[1], POINTS[2]],
+      { yLabel: "days" },
+    );
+    const withBand = state.calls[state.calls.length - 1];
+    expect(withBand.plugins.map((pl) => pl.id)).toEqual(["reconstructedBand"]);
+  });
+
+  // =======================================================================================
+  //  THE ONE ESCAPE, AND THE CALLER IT EXISTS FOR
+  // =======================================================================================
+
+  it("hands the labels back on categoryAxis, for a series whose x is not a date", async () => {
+    const charts = await loadCharts();
+    const ranked = [{ x: "repo-alpha", y: 310 }, { x: "repo-beta", y: 204 }];
+    charts.trendLine(fakeCanvas(), ranked, { yLabel: "days", categoryAxis: true });
+    const cfg = state.calls[state.calls.length - 1];
+    expect(cfg.data.labels).toEqual(["repo-alpha", "repo-beta"]);
+    expect(cfg.options.scales.x.type).toBeUndefined();
+    expect(cfg.data.datasets[0].data).toEqual([310, 204]);
+    expect(cfg.plugins).toEqual([]);
+  });
+
+  // PERTURBATION. The escape is not decoration: the default path run over the same ranked
+  // input puts NaN on every x, which is a chart with nothing drawable on it. That is what
+  // `repos.js` would get if the flag were ever dropped from its call.
+  it("is not a vacuous flag — the day axis cannot read a repository name", async () => {
+    const charts = await loadCharts();
+    const ranked = [{ x: "repo-alpha", y: 310 }, { x: "repo-beta", y: 204 }];
+    charts.trendLine(fakeCanvas(), ranked, { yLabel: "days" });
+    const xs = state.calls[state.calls.length - 1].data.datasets[0].data.map((p) => p.x);
+    expect(xs.every((v) => Number.isNaN(v))).toBe(true);
+  });
+
+  it("the ONE caller that passes it is the ranked one, and it says why", () => {
+    const reposSrc = readFileSync(
+      new URL("../src/client/js/pages/repos.js", import.meta.url), "utf8",
+    );
+    expect(reposSrc).toMatch(/categoryAxis: true/);
+    expect(reposSrc).toContain("NOT A TIME SERIES");
+    // And nobody else reaches for it: the other two callers are dates and take the default.
+    for (const page of ["mttr.js", "history.js"]) {
+      const src = readFileSync(
+        new URL(`../src/client/js/pages/${page}`, import.meta.url), "utf8",
+      );
+      expect(src, `${page} should not opt out of the day axis`).not.toMatch(/categoryAxis/);
+    }
   });
 });

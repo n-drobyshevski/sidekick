@@ -288,7 +288,7 @@ describe("halfLifeTrendPoints: the sparkline and the line chart read the SAME se
   // What they may differ on is how each POSITIONS them, and that difference is earned rather
   // than drifted into. `sparkPath` places a point by its index, so a gap there has to keep its
   // slot or the run compresses and the slope lies. `renderTrend` draws on `charts.trendLine`'s
-  // `dateAxis`, where the x value IS the date — so it takes the measured subset of this same
+  // day axis, where the x value IS the date — so it takes the measured subset of this same
   // array and leaving a slot out moves nothing. Filtering HERE would be the drift: it would
   // hand the sparkline a compressed axis to answer a question only the chart had.
   it("is not a vacuous guard — a second, tighter filter changes the picture's shape", () => {
@@ -425,7 +425,10 @@ describe("halfLifeTrendPoints: the sparkline and the line chart read the SAME se
     // table would break.
     expect(MTTR_SRC).toMatch(
       /const drawn = points\.filter\(\(p\) => num\(p\.km_median_days\) !== null\)/);
-    expect(MTTR_SRC).toMatch(/dateAxis: true/);
+    // The day axis is `trendLine`'s DEFAULT now (it was an opt-in when this page first took
+    // it), so what there is to pin here is the opposite: this caller must NOT opt out of it.
+    // `test/charts.test.js` owns the axis itself.
+    expect(MTTR_SRC).not.toMatch(/categoryAxis/);
     expect(MTTR_SRC).toMatch(/drawn\.map\(\(p\) => \(\{ x: p\.date, y: p\.km_median_days \}\)\)/);
     expect(MTTR_SRC).toMatch(/rows: drawn,/);
     // The subset is the CHART's, never the aside's: `trendAside` still reads every slot it
